@@ -315,7 +315,8 @@ jobs:
               exit 1
               ;;
           esac
-      - name: Build and ad-hoc sign unnotarized release DMG
+      - if: steps.metadata.outputs.stage != 'stable'
+        name: Build and ad-hoc sign unnotarized release DMG
         env:
           CODEX_MCP_BRIDGE_SKIP_IMAGE_RENDER_TESTS: ${{ matrix.skipImageRendering }}
           MACOS_BUNDLE_VERSION: ${{ github.run_number }}
@@ -324,6 +325,25 @@ jobs:
         run: |
           mkdir -p release-assets
           npm run macos:package -- \
+            --architecture "$MACOS_TARGET_ARCHITECTURE" \
+            --output "release-assets/$MACOS_FILE"
+      - if: steps.metadata.outputs.stage == 'stable'
+        name: Promote the source RC macOS app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MACOS_BUNDLE_VERSION: ${{ github.run_number }}
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
+          MACOS_FILE: ${{ steps.macos-metadata.outputs.file }}
+          SOURCE_CANDIDATE_TAG: ${{ steps.metadata.outputs.source_candidate_tag }}
+          SOURCE_MACOS_FILE: ${{ steps.macos-metadata.outputs.source_file }}
+        run: |
+          mkdir -p candidate-assets release-assets
+          gh release download "$SOURCE_CANDIDATE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$SOURCE_MACOS_FILE" \
+            --dir candidate-assets
+          ./macos/promote-release.sh \
+            --candidate "candidate-assets/$SOURCE_MACOS_FILE" \
             --architecture "$MACOS_TARGET_ARCHITECTURE" \
             --output "release-assets/$MACOS_FILE"
       - name: Audit DMG DB and UI compatibility against published v0.3
@@ -375,16 +395,9 @@ jobs:
       - if: steps.metadata.outputs.stage == 'stable'
         name: Compare stable macOS payload with the source RC
         env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_CANDIDATE_TAG: ${{ steps.metadata.outputs.source_candidate_tag }}
           SOURCE_MACOS_FILE: ${{ steps.macos-metadata.outputs.source_file }}
           STABLE_MACOS_FILE: ${{ steps.macos-metadata.outputs.file }}
         run: |
-          mkdir -p candidate-assets
-          gh release download "$SOURCE_CANDIDATE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "$SOURCE_MACOS_FILE" \
-            --dir candidate-assets
           npm run release:payload -- compare \
             --kind macos \
             --candidate "candidate-assets/$SOURCE_MACOS_FILE" \

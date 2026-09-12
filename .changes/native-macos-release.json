@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: 네이티브 macOS 메뉴 막대 앱과 통합 배포 정책을 추가하고 브리지의 UI·실행 계약을 확장합니다.",
+  "breaking": true,
+  "migration": "기존 npm 서버 사용자는 기존 방식으로 계속 실행할 수 있으며, macOS 사용자는 앱의 설정에서 기존 .env 값을 불러와 확인합니다."
+}

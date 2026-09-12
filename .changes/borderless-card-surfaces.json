@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "현황카드와 설정카드가 ChatGPT 호스트 외곽 테두리와 배경을 요청하지 않도록 통일합니다.",
+  "breaking": false,
+  "migration": null
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Apple Silicon과 함께 Intel Mac용 네이티브 앱과 아키텍처별 릴리스 검증을 추가합니다.",
+  "breaking": false,
+  "migration": null
+}

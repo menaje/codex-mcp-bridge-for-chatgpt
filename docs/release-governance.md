@@ -140,11 +140,16 @@ and consume its active fragments:
 npm run release:promote
 ```
 
-The same pull request then reruns in `stable` mode, compares both rebuilt
-payloads with the latest published source RC, and passes the required gate only
-after every read-only job succeeds. Merge that exact promotion into `main` for
-the stable publication. After the stable state is merged back to `dev`, restore
-the non-publishing stage without changing the product number:
+The same pull request then reruns in `stable` mode. The npm distribution is
+rebuilt and compared with the latest published source RC. Each stable macOS DMG
+is produced from the corresponding published candidate app by replacing only
+the enumerated version and build metadata, then re-signing and repackaging it.
+The strict payload comparison still covers executable code, symbols, data,
+runtime files and permissions; it normalizes only signature data and the
+page-rounded Mach-O `__LINKEDIT` allocation left by re-signing. The required
+gate passes only after every read-only job succeeds. Merge that exact promotion
+into `main` for the stable publication. After the stable state is merged back to
+`dev`, restore the non-publishing stage without changing the product number:
 
 ```bash
 npm run release:development

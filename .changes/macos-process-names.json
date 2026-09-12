@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Identify macOS background processes as Codex MCP Bridge Helper, Launcher, and Server in Activity Monitor.",
+  "breaking": false,
+  "migration": null
+}

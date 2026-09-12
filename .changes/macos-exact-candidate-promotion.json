@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Promote the published candidate macOS app directly into the stable DMGs so Swift build nondeterminism cannot change the executable payload during release promotion.",
+  "breaking": false,
+  "migration": null
+}

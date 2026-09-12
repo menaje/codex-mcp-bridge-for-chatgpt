@@ -75,7 +75,51 @@ describe("RC-to-stable payload equivalence", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it.skipIf(process.platform !== "darwin")("normalizes the linkedit allocation left by re-signing promoted app metadata", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-promoted-dmg-"));
+    try {
+      const sourceBinary = path.join(root, "probe");
+      execFileSync("cc", ["-x", "c", "-", "-o", sourceBinary], { input: "int main(void) { return 0; }\n" });
+      const archives: string[] = [];
+      let candidateApp = "";
+      for (const [name, version, build] of [["candidate", "0.4.0-rc.7", "101"], ["stable", "0.4.0", "102"]] as const) {
+        const staging = path.join(root, name);
+        const app = path.join(staging, "Probe.app");
+        if (candidateApp) {
+          mkdirSync(staging, { recursive: true });
+          execFileSync("ditto", [candidateApp, app]);
+        } else {
+          const executable = path.join(app, "Contents", "MacOS", "probe");
+          mkdirSync(path.dirname(executable), { recursive: true });
+          copyFileSync(sourceBinary, executable);
+          chmodSync(executable, 0o755);
+          candidateApp = app;
+        }
+        writeFileSync(path.join(app, "Contents", "Info.plist"), plist(version, build));
+        execFileSync("codesign", ["--force", "--deep", "--sign", "-", app], { stdio: "pipe" });
+        const archive = path.join(root, `${name}.dmg`);
+        execFileSync("hdiutil", ["create", "-srcfolder", staging, "-format", "UDZO", archive], { stdio: "pipe" });
+        archives.push(archive);
+      }
+      expect(compareReleaseArtifacts(archives[0], archives[1], "macos")).toMatchObject({ equivalent: true });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
+
+function plist(version: string, build: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>probe</string>
+<key>CFBundleIdentifier</key><string>com.menaje.release-payload-probe</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>${version}</string>
+<key>CFBundleVersion</key><string>${build}</string>
+</dict></plist>\n`;
+}
 
 function fixture(
   version: string,

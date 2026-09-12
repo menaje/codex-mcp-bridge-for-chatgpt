@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Make artifact compatibility audits install only the production dependency graph without resolving omitted development peer dependencies.",
+  "breaking": false,
+  "migration": null
+}

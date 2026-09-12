@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "브리지 운영 장애 알림과 메모리 진단 로그 보존 제한을 추가하고, Swift HTTPS 연결 및 대화 연속성 검사와 ChatGPT 평가 절차를 정리합니다.",
+  "breaking": false,
+  "migration": null
+}

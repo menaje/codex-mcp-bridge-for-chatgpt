@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Build notification authorization checks across macOS SDK versions and retain native build diagnostics during app packaging.",
+  "breaking": false,
+  "migration": "No action required."
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Let GPT read and answer ordinary Codex questions, present GPT-authored user questions, and retain scoped answers with explicit delivery and consumption states.",
+  "breaking": false,
+  "migration": "SQLite schema 12 is migrated additively to 13 for scoped user questions and answer delivery records. Older bridge versions require a pre-migration state backup to roll back."
+}

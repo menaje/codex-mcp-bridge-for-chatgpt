@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Ignore late approval and input replies after their Codex process closes so they cannot terminate the bridge.",
+  "breaking": false,
+  "migration": null
+}

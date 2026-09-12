@@ -321,7 +321,10 @@ ready before stable promotion makes the gate fail.
 Use `npm run release:next-rc` after any candidate payload change and
 `npm run release:promote` only after the final candidate passes every gate.
 The promotion preserves the numeric version, records the source RC, removes the
-RC suffix, and reruns the same PR's stable payload comparisons before merge. See
+RC suffix, rebuilds and compares the npm distribution, and promotes each
+published candidate app into its stable DMG by updating only version/build
+metadata before re-signing. The same PR then reruns the strict stable payload
+comparisons before merge. See
 [release-governance.md](release-governance.md) for the full lifecycle and
 validation ladder.
 
@@ -390,9 +393,10 @@ only a source-RC-backed stable promotion. The workflow:
    files and writing deterministic aggregate checksums;
 6. aggregates the read-only jobs for release PRs and prevents candidate state
    from being merged to `main`;
-7. compares unpacked npm and macOS payloads with the latest named source RC in
-   both the stable PR and final publication run, allowing only enumerated
-   release/build/signature metadata;
+7. compares the rebuilt npm payload with the latest named source RC, promotes
+   each published candidate app into the stable DMG with only enumerated
+   release/build/signature metadata changes, and compares the unpacked macOS
+   payload after re-signing in both the stable PR and final publication run;
 8. refuses a repository mismatch or conflicting tag and skips an already
    published release rather than replacing it;
 9. publishes all five assets together and marks only candidate-stage runs as

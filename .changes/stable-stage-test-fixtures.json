@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "릴리스 정책과 상태 프로필 검사를 후보·정식 단계 모두에서 실행할 수 있게 합니다.",
+  "breaking": false,
+  "migration": null
+}

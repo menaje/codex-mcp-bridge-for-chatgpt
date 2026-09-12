@@ -162,6 +162,9 @@ function isMachO(file) {
 }
 
 function normalizedFileContent(file, relative, kind) {
+  if (kind === "macos" && isMachO(file)) {
+    return normalizedMachOContent(file);
+  }
   if (kind === "macos" && (relative === "Contents/Info.plist" || relative.endsWith("/Contents/Info.plist"))) {
     const json = execFileSync("plutil", ["-convert", "json", "-o", "-", file], { encoding: "utf8" });
     const value = JSON.parse(json);
@@ -201,6 +204,32 @@ function normalizedFileContent(file, relative, kind) {
     return Buffer.from(stableJson(value));
   }
   return readFileSync(file);
+}
+
+function normalizedMachOContent(file) {
+  const content = Buffer.from(readFileSync(file));
+  // Re-signing an otherwise identical thin Mach-O can leave a different
+  // page-rounded __LINKEDIT vmsize after codesign removes the signature. The
+  // signature bytes and LC_CODE_SIGNATURE are already removed above; clear
+  // this remaining container-allocation field without ignoring executable
+  // code, symbols, data, permissions, or file length.
+  if (content.length < 32 || content.readUInt32LE(0) !== 0xfeedfacf) return content;
+  const commandCount = content.readUInt32LE(16);
+  let offset = 32;
+  for (let index = 0; index < commandCount; index += 1) {
+    if (offset + 8 > content.length) throw new Error(`Malformed Mach-O load commands in ${file}.`);
+    const command = content.readUInt32LE(offset);
+    const commandSize = content.readUInt32LE(offset + 4);
+    if (commandSize < 8 || offset + commandSize > content.length) {
+      throw new Error(`Malformed Mach-O load command size in ${file}.`);
+    }
+    if (command === 0x19 && commandSize >= 72) {
+      const segmentName = content.subarray(offset + 8, offset + 24).toString("ascii").replace(/\0+$/, "");
+      if (segmentName === "__LINKEDIT") content.fill(0, offset + 32, offset + 40);
+    }
+    offset += commandSize;
+  }
+  return content;
 }
 
 function excludedPayloadPath(relative, kind) {

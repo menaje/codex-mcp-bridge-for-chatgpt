@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Preserve the first notification permission prompt, publish runtime leases atomically, retain private question drafts in ChatGPT widget state, and show network loss without stale tunnel readiness.",
+  "breaking": false,
+  "migration": null
+}

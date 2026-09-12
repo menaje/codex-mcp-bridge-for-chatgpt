@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Preserve unsubmitted question-card selections and text across document reloads in the same browser tab without exposing drafts to GPT.",
+  "breaking": false,
+  "migration": null
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Give macOS app icons rounded silhouettes and transparent margins, improve small icon legibility, and use circular menu-bar status badges without clipping or ambiguous diagonal slashes.",
+  "breaking": false,
+  "migration": null
+}

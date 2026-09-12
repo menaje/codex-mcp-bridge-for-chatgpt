@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "summary": "Show successful validation on draft release candidates while preserving the stable merge gate.",
+  "bump": "patch",
+  "breaking": false,
+  "migration": null
+}

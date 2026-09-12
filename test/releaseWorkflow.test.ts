@@ -7,6 +7,7 @@ import { deriveReleaseMetadata, loadReleaseManifest } from "../scripts/release-m
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const WORKFLOW = readFileSync(path.join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
 const MACOS_PACKAGER = readFileSync(path.join(REPO_ROOT, "macos/package-release.sh"), "utf8");
+const MACOS_PROMOTER = readFileSync(path.join(REPO_ROOT, "macos/promote-release.sh"), "utf8");
 const MACOS_BUILDER = readFileSync(path.join(REPO_ROOT, "macos/build-app.sh"), "utf8");
 
 describe("macOS and generic npm release workflow", () => {
@@ -61,6 +62,8 @@ describe("macOS and generic npm release workflow", () => {
       expect(WORKFLOW).toContain(`${job}:`);
     }
     expect(WORKFLOW).toContain("npm run macos:package");
+    expect(WORKFLOW).toContain("name: Promote the source RC macOS app");
+    expect(WORKFLOW).toContain("./macos/promote-release.sh");
     expect(MACOS_PACKAGER).toContain('CODE_SIGN_IDENTITY="-"');
     expect(MACOS_PACKAGER.match(/\^Signature=adhoc\$/g)).toHaveLength(2);
     expect(MACOS_BUILDER).toContain("supports ad-hoc macOS signing only");
@@ -69,6 +72,10 @@ describe("macOS and generic npm release workflow", () => {
     expect(MACOS_BUILDER).toContain("--disable-swift-testing");
     expect(MACOS_BUILDER).not.toContain("--options runtime");
     expect(MACOS_PACKAGER).not.toContain("notarytool");
+    expect(MACOS_PROMOTER).toContain('manifest.release.stage !== "stable"');
+    expect(MACOS_PROMOTER).toContain('manifest.release?.stage !== "candidate"');
+    expect(MACOS_PROMOTER).toContain('cp "$repository_root/dist/build-info.json"');
+    expect(MACOS_PROMOTER).toContain('codesign --force --deep --sign - "$app_bundle"');
     expect(WORKFLOW).not.toContain("MACOS_DEVELOPER_ID");
     expect(WORKFLOW).not.toContain("APPLE_NOTARY");
     expect(WORKFLOW).not.toContain("skills:package");
