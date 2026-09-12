@@ -77,9 +77,11 @@ jobs:
           - architecture: arm64
             machine: arm64
             runner: macos-15
+            skipImageRendering: "0"
           - architecture: x64
             machine: x86_64
             runner: macos-15-intel
+            skipImageRendering: "1"
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     steps:
@@ -106,6 +108,7 @@ jobs:
       - run: npm ci
       - name: Build and test native app bundle
         env:
+          CODEX_MCP_BRIDGE_SKIP_IMAGE_RENDER_TESTS: ${{ matrix.skipImageRendering }}
           MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
         run: npm run macos:bundle
       - name: Verify development app bundle signature
@@ -259,9 +262,11 @@ jobs:
           - architecture: arm64
             machine: arm64
             runner: macos-15
+            skipImageRendering: "0"
           - architecture: x64
             machine: x86_64
             runner: macos-15-intel
+            skipImageRendering: "1"
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
@@ -311,6 +316,7 @@ jobs:
           esac
       - name: Build and ad-hoc sign unnotarized release DMG
         env:
+          CODEX_MCP_BRIDGE_SKIP_IMAGE_RENDER_TESTS: ${{ matrix.skipImageRendering }}
           MACOS_BUNDLE_VERSION: ${{ github.run_number }}
           MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
           MACOS_FILE: ${{ steps.macos-metadata.outputs.file }}

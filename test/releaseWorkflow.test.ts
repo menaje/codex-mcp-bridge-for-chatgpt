@@ -21,6 +21,10 @@ describe("macOS and generic npm release workflow", () => {
     expect(WORKFLOW).toContain("runner: macos-15-intel");
     expect(WORKFLOW).toContain("runs-on: ${{ matrix.runner }}");
     expect(WORKFLOW).toContain("MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}");
+    expect(WORKFLOW.match(/CODEX_MCP_BRIDGE_SKIP_IMAGE_RENDER_TESTS: \$\{\{ matrix\.skipImageRendering \}\}/g))
+      .toHaveLength(2);
+    expect(WORKFLOW.match(/skipImageRendering: "0"/g)).toHaveLength(2);
+    expect(WORKFLOW.match(/skipImageRendering: "1"/g)).toHaveLength(2);
     expect(WORKFLOW).toContain("--architecture \"$MACOS_TARGET_ARCHITECTURE\"");
     expect(WORKFLOW).toContain("name: macos-release-asset-${{ matrix.architecture }}");
     expect(WORKFLOW).toContain("pattern: macos-release-asset-*");
