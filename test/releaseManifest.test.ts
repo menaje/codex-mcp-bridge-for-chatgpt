@@ -42,7 +42,7 @@ describe("release manifest", () => {
     expect(output).toContain("codex_cli_version=0.153.3\n");
   });
 
-  it("requires the dual-architecture macOS and generic npm manifestVersion 4 release asset contract", () => {
+  it("requires the dual-architecture macOS, npm, and state manifestVersion 5 contract", () => {
     const manifest = structuredClone(loadReleaseManifest(REPO_ROOT));
     expect(validateReleaseManifest(manifest)).toBe(manifest);
     expect(manifest.release.assets).toEqual([
@@ -71,7 +71,59 @@ describe("release manifest", () => {
     });
 
     manifest.manifestVersion = 3;
-    expect(() => validateReleaseManifest(manifest)).toThrow("manifestVersion must be 4");
+    expect(() => validateReleaseManifest(manifest)).toThrow("manifestVersion must be 5");
+  });
+
+  it("publishes one complete schema-3-through-19 compatibility and recovery contract", () => {
+    const manifest = loadReleaseManifest(REPO_ROOT);
+    const catalog = readJson(path.join(REPO_ROOT, "state-migrations.json"));
+    expect(manifest.stateCompatibility).toMatchObject({
+      currentSchema: 19,
+      supportedSourceSchemas: Array.from({ length: 16 }, (_, index) => index + 3),
+      unsupportedSourceSchemas: [1, 2],
+      retiredLegacyImports: [
+        "settings-state-json",
+        "session-state-json",
+        "job-state-json"
+      ],
+      migrationCatalog: "state-migrations.json",
+      stateProfilePolicy: "release-stage-isolated-v1",
+      rollbackPolicy: "verified-original-before-service-open-v1",
+      persistentContracts: {
+        userSettingsSchema: 4,
+        taskInputContract: 2,
+        macosHelperProtocol: 2,
+        localCompanionProtocol: 2,
+        remoteCompanionProtocol: 1
+      }
+    });
+    expect(catalog).toMatchObject({
+      catalogVersion: 1,
+      immutabilityPolicy: "append-only-after-release-v1",
+      currentSchema: 19,
+      supportedSourceSchemas: manifest.stateCompatibility.supportedSourceSchemas
+    });
+    expect(catalog.fixtures).toEqual(expect.arrayContaining([
+      expect.objectContaining({ schema: 3, kind: "published-release", source: "v0.3.0" }),
+      expect.objectContaining({ schema: 16, kind: "deployed-development" }),
+      expect.objectContaining({ schema: 18, kind: "deployed-development" })
+    ]));
+    for (const source of manifest.stateCompatibility.supportedSourceSchemas) {
+      let schema = source;
+      const visited = new Set<number>();
+      while (schema !== 19) {
+        expect(visited.has(schema)).toBe(false);
+        visited.add(schema);
+        const migration = catalog.migrations.find((entry: any) => entry.fromSchema === schema);
+        expect(migration).toMatchObject({
+          id: `bridge-state-${schema}-to-${migration?.toSchema}`,
+          fromSchema: schema,
+          sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+          introducedCommit: expect.stringMatching(/^[0-9a-f]{40}$/)
+        });
+        schema = migration.toSchema;
+      }
+    }
   });
 
   it("rejects incomplete or reordered macOS architecture targets", () => {
@@ -167,6 +219,51 @@ describe("release manifest", () => {
 
     syncReleaseMetadata(root);
     expect(checkReleaseMetadata(root).pluginCategory).toBe("Developer Tools");
+  });
+
+  it("rejects runtime constants and migration catalog bytes that drift from the manifest", () => {
+    const root = fixtureRoot();
+    syncReleaseMetadata(root);
+    const modelPolicy = path.join(root, "src/modelPolicy.ts");
+    writeFileSync(
+      modelPolicy,
+      readFileSync(modelPolicy, "utf8").replace(
+        "MODEL_POLICY_SCHEMA_VERSION = 4",
+        "MODEL_POLICY_SCHEMA_VERSION = 5"
+      )
+    );
+    expect(() => checkReleaseMetadata(root)).toThrow(
+      /userSettingsSchema runtime constant drifted/
+    );
+
+    writeFileSync(
+      modelPolicy,
+      readFileSync(path.join(REPO_ROOT, "src/modelPolicy.ts"), "utf8")
+    );
+    const catalogFile = path.join(root, "state-migrations.json");
+    const catalog = readJson(catalogFile);
+    catalog.migrations[0].sha256 = "0".repeat(64);
+    writeJson(catalogFile, catalog);
+    expect(() => checkReleaseMetadata(root)).toThrow(
+      /state-migrations\.json does not match the migration implementations or fixtures/
+    );
+  });
+
+  it("refuses to rewrite an existing applied migration checksum during synchronization", () => {
+    const root = fixtureRoot();
+    syncReleaseMetadata(root);
+    const stateStore = path.join(root, "src/stateStore.ts");
+    const source = readFileSync(stateStore, "utf8");
+    const changed = source.replace(
+      "  private migrateV18ToV19(): void {",
+      "  private migrateV18ToV19(): void {\n    void \"immutable-test\";"
+    );
+    expect(changed).not.toBe(source);
+    writeFileSync(stateStore, changed);
+
+    expect(() => syncReleaseMetadata(root)).toThrow(
+      /Immutable state migration migrations entry bridge-state-18-to-19 changed or disappeared/
+    );
   });
 
   it("updates product metadata together and restricts candidates to rc.N", () => {
@@ -405,6 +502,32 @@ function fixtureRoot(): string {
     path.join(root, "app-server-schema.lock.json"),
     readJson(path.join(REPO_ROOT, "app-server-schema.lock.json"))
   );
+  for (const relative of [
+    "state-migrations.json",
+    "src/stateStore.ts",
+    "src/stateSchema.ts",
+    "src/questionStore.ts",
+    "src/threadConnections.ts",
+    "src/eventRetention.ts",
+    "src/workHistory.ts",
+    "src/automaticRecovery.ts",
+    "src/activity.ts",
+    "src/agent.ts",
+    "src/projectRegistry.ts",
+    "src/cancellation.ts",
+    "src/modelPolicy.ts",
+    "src/tools.ts",
+    "src/macosHelperServer.ts",
+    "src/companionServer.ts",
+    "src/remoteCompanionServer.ts",
+    "test/fixtures/state-v3-seeded.sql",
+    "test/fixtures/state-schema-v16.sql",
+    "test/fixtures/state-schema-v18.sql"
+  ]) {
+    const destination = path.join(root, relative);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(path.join(REPO_ROOT, relative), destination);
+  }
   writeJson(path.join(root, "package.json"), {
     name: "drifted-package",
     version: "9.9.9",

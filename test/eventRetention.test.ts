@@ -177,6 +177,21 @@ describe("bounded diagnostic retention",()=>{
     db.transaction(()=>{for(let value=0;value<9000;value++)insert.run(input.jobId,activity,scopeId,Date.now(),JSON.stringify({message:"x".repeat(8100),value}));})();
     store.recordJobTelemetryEvent(input.jobId,"app-command-completed",progress("new"));
     const report=store.maintainRetention();expect(report.bytes).toBeLessThanOrEqual(EVENT_RETENTION_LIMITS.bytes);expect(report.rows).toBeLessThanOrEqual(EVENT_RETENTION_LIMITS.rows);expect(report.freePages).toBeGreaterThan(0);
+    expect(report).toMatchObject({
+      expiredJobEventsRemoved: expect.any(Number),
+      expiredActivityEventsRemoved: expect.any(Number),
+      expiredResultHoldsRemoved: expect.any(Number),
+      perJobEventsRemoved: expect.any(Number),
+      budgetEventsRemoved: expect.any(Number),
+      historyRemoved: expect.any(Number),
+      recordsRemoved: expect.any(Number),
+      incidentsRemoved: expect.any(Number)
+    });
+    expect(JSON.parse(store.getMeta("state_retention_last_run")!)).toMatchObject({
+      reason:"configured-retention-policy",
+      historyRetentionDays:30,
+      ...report
+    });
     db.close();store.close();
   });
 });

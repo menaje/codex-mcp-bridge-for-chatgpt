@@ -149,6 +149,7 @@ Use remote management only on a private LAN or private VPN that you control. See
 - [ChatGPT integration](docs/chatgpt-setup.md) — advanced plugin contracts, refresh behavior, orchestration, and smoke checks
 - [Security model](docs/security.md) — trust boundaries, authentication, access policy, and remaining risks
 - [Database schema and lifecycle](docs/database-schema.md) — state ownership, every table, upgrades, retention, capacity, backups, and offline compaction
+- [State upgrade and recovery runbook](docs/state-upgrade-recovery.md) — release-stage profiles, migration preflight, verified restore, and post-service recovery
 - [Input contracts](docs/input-contracts.md) and [output contracts](docs/output-contracts.md) — public and app-private protocol details
 - [Release process](docs/releasing.md) and [release governance](docs/release-governance.md) — maintainer workflow and distribution gates
 - [UI release compatibility](docs/ui-release-compatibility.md) — published card baselines, development revisions and Activity retirement

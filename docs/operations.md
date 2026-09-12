@@ -22,6 +22,10 @@ macOS helper의 진단 로그는 메모리에만 저장한다. 기본 상한은 
 
 현행 schema 19에는 schema 17의 후속 작업 표시 기록·선택적 확인·자동 복구 사건, schema 18의 기존 보관 Agent 복원, 프로젝트·실행 문맥·Job·이벤트·요약 정규화가 포함된다. 표시 기록은 기본 30일이며 설정에서 7·30·90일·무기한을 선택한다. 결과 본문과 진단 이벤트의 보존 한도는 별도로 유지한다. 종료된 실패를 현재 처리 필요 항목에 섞지 않고, 최소 중복 실행 방지 근거는 표시 기록 만료 후에도 보존한다. 사건별 최대 3회의 자동 복구 한도는 재시작 후에도 유지하며, GPT의 복구 판단은 원래의 열린 foreground 호출 안에서만 반환한다. [작업 기록과 복구 계약](work-history.md)을 참고한다.
 
+stable·candidate·development 빌드는 기본 SQLite profile을 분리한다. 운영 DB를 이관하려면 모든 소유 프로세스를 중지하고 `CODEX_MCP_BRIDGE_STATE_PROFILE=stable` 또는 절대 DB 경로를 명시해야 한다. 이관 상태 파일의 살아 있는 최신 진행 기록이 있으면 macOS helper는 기본 60초 제한 대신 단계별 5분 유예를 적용하되 전체 시작 후 30분을 넘기지 않는다. 원본 백업과 식별·checksum·무결성 sidecar는 사용자가 정한 rollback 기간까지 자동 삭제하지 않는다.
+
+schema 이관에서 폐기한 잘못된 과거 실행 문맥, 시작 시 만료한 질문과 전송 journal, 설정에 따른 이벤트·이력·hold·복구 기록 정리는 각각 원인과 건수로 기록한다. 이관 뒤 HTTP listen 또는 stdio 연결이 한 번이라도 열리면 과거 snapshot 자동 복원을 거부한다. 그 뒤에는 새 Job·답변·취소·steering·중복 방지 기록을 가진 현재 DB를 보존한 forward repair 또는 명시적인 데이터 대조를 사용한다. 실제 명령과 판정 절차는 [DB 업그레이드·복구 runbook](state-upgrade-recovery.md)을 따른다.
+
 schema 18부터 브리지는 Agent를 기간 기준으로 보관하지 않으며 `codex_agent`는 이름 변경만 제공한다. 유휴 연결 해제, 실행 기록·결과 본문 정리, 프로젝트 보관·복원과 Codex 원본 대화 수명은 각각 별도 정책으로 유지한다. 정리 후 DB 파일 크기가 즉시 줄지 않아도 빈 페이지는 재사용되며, 파일 축소는 안전하게 중지한 뒤 별도 오프라인 작업으로 수행한다. 전체 schema 19 소유권·보존·백업·압축 절차는 [DB schema와 수명](database-schema.md), 연결 및 캐시 측정 범위는 [연결 및 DB 보존 정책](thread-lifecycle.md)에 정리했다.
 
 ## 브리지 알림
@@ -36,6 +40,7 @@ Codex 작업 완료·실패·질문·승인과 정상 복구는 브리지 알림
 
 - `npx tsx scripts/card-state-restart-audit.ts /absolute/state.sqlite report.json`: 읽기 전용 일관 백업에서 schema 19 이관과 두 번의 재시작을 수행하고 유지 대상·허용된 구 문맥 폐기·현재 카드 읽기를 의미 단위로 비교한다.
 - `npx tsx scripts/database-storage-audit.ts /absolute/state.sqlite report.json`: 원본은 읽기 전용으로 계측하고 임시 사본에서 쿼리 계획·지연·직렬화·쓰기 경로·DB/WAL/백업/빈 페이지와 오프라인 `VACUUM INTO` 복구 절차를 검증한다.
+- `scripts/state-release-audit.ts`: release CI가 실제 npm tarball과 두 DMG 내부 runtime에서 출처가 고정된 checkpoint를 사용해 지원 시작점 schema 3~18을 모두 직접 열고, 두 번의 재시작, commit/provenance 경계 중단·재개, 원본 복원, 공개 v0.3.0 실행, Node ABI·`better-sqlite3`·SQLite 버전을 확인한다. 보고서에는 사용자 원문이 없으며 process 강제 종료나 전원 차단 성공을 주장하지 않는다. 개발 checkout의 실행은 후보 산출물 세 건의 증거를 대신하지 않는다.
 - `npm run test:continuity`: 격리된 MCP/작업/실행 프로세스 계층의 연속성을 세 단계로 확인하고 실패 단계를 출력한다.
 - `npm run macos:remote:check`: 임시 HTTPS 서버와 실제 Swift 클라이언트 사이의 페어링, 상태 조회, 잘못된 인증 및 인증서 거부를 확인한다.
 - `npm run macos:check`: 운영 알림 정책, 권한 거부, 반복 알림 방지, 재시작, 상태·접근성 라벨, native 계약과 번역을 검증한다.

@@ -34,7 +34,8 @@ describe("config policy", () => {
     expect(config.modelCatalogCacheTtlMs).toBe(600000);
     expect(config.modelCatalogTimeoutMs).toBe(30000);
     expect(config.modelCatalogStateFile).toMatch(/\.codex-mcp-bridge\/models\.json$/);
-    expect(config.stateDatabaseFile).toMatch(/\.codex-mcp-bridge\/state\.sqlite$/);
+    expect(config.stateDatabaseFile).toMatch(/\.codex-mcp-bridge\/profiles\/development\/state\.sqlite$/);
+    expect(config.stateProfile).toBe("development");
     expect(config).not.toHaveProperty("settingsStateFile");
     expect(config).not.toHaveProperty("sessionStateFile");
     expect(config).not.toHaveProperty("jobStateFile");
@@ -107,6 +108,7 @@ describe("config policy", () => {
     expect(config.modelCatalogTimeoutMs).toBe(15000);
     expect(config.modelCatalogStateFile).toBe("/tmp/codex-mcp-bridge-test-models.json");
     expect(config.stateDatabaseFile).toBe("/tmp/codex-mcp-bridge-test-state.sqlite");
+    expect(config.stateProfile).toBe("explicit");
     expect(config.defaultAccessStrategy).toBe("read-only");
     expect(config).not.toHaveProperty("defaultSessionMode");
     expect(config).not.toHaveProperty("autoResumeTtlMs");
@@ -155,6 +157,33 @@ describe("config policy", () => {
         CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: "relative/state.sqlite"
       })
     ).toThrow(/absolute path/);
+  });
+
+  it("isolates development and candidate state unless stable or an explicit file is selected", () => {
+    const development = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1" });
+    expect(development.stateProfile).toBe("development");
+
+    const candidate = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_STATE_PROFILE: "candidate"
+    });
+    expect(candidate.stateProfile).toBe("candidate");
+    expect(candidate.stateDatabaseFile).toMatch(/profiles\/candidate\/state\.sqlite$/);
+
+    const stable = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_STATE_PROFILE: "stable"
+    });
+    expect(stable.stateProfile).toBe("stable");
+    expect(stable.stateDatabaseFile).toMatch(/\.codex-mcp-bridge\/state\.sqlite$/);
+    expect(stable.startupWarnings).toEqual([
+      expect.stringContaining("explicitly targets the stable state profile")
+    ]);
+
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_STATE_PROFILE: "preview"
+    })).toThrow(/STATE_PROFILE must be stable, candidate, or development/);
   });
 
   it.each(["mcp-server", "codex-sdk"])("migrates the retired %s setting to App Server with a notice", backend => {

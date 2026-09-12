@@ -840,6 +840,7 @@ export function createHttpServer(
   });
 
   const httpServer = createServer(app) as BridgeHttpServer;
+  httpServer.once("listening", () => stateStore.markServiceOpen("http"));
   Object.defineProperty(httpServer, "applicationService", {
     get: () => (companionMcpServer ||= newMcpServer()).applicationService
   });

@@ -139,6 +139,9 @@ export function createStdioBridgeRuntime(
     async start(): Promise<void> {
       if (started) throw new Error("Persistent stdio bridge is already started.");
       started = true;
+      // Record the conservative rollback boundary before the transport can
+      // consume already-buffered request bytes.
+      stateStore.markServiceOpen("stdio");
       await server.connect(transport);
     },
     close(): Promise<void> {

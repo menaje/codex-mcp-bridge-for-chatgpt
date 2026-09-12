@@ -118,7 +118,7 @@ jobs:
       - check
       - macos-check
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - id: metadata
@@ -181,6 +181,40 @@ jobs:
           done
           cat "$smoke_root/server.log" >&2
           exit 1
+      - name: Audit packaged DB migration, restore, and published v0.3 runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
+        run: |
+          audit_root="$(mktemp -d)"
+          cleanup_audit() { rm -rf "$audit_root"; }
+          trap cleanup_audit EXIT
+          mkdir -p "$audit_root/current" "$audit_root/previous" state-audit
+          tar -xzf "release-assets/$PACKAGE_FILE" -C "$audit_root/current"
+          gh release download v0.3.0 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "codex-mcp-bridge-for-chatgpt-0.3.0.tgz" \
+            --pattern "codex-mcp-bridge-for-chatgpt-0.3.0.tgz.sha256" \
+            --dir "$audit_root/previous"
+          node - "$audit_root/previous" <<'NODE'
+          const fs = require("node:fs"), crypto = require("node:crypto"), path = require("node:path");
+          const root = process.argv[2], name = "codex-mcp-bridge-for-chatgpt-0.3.0.tgz";
+          const expected = fs.readFileSync(path.join(root, `${name}.sha256`), "utf8").trim().split(/\s+/)[0];
+          const actual = crypto.createHash("sha256").update(fs.readFileSync(path.join(root, name))).digest("hex");
+          if (actual !== expected) throw new Error("Published v0.3.0 package checksum mismatch.");
+          NODE
+          tar -xzf "$audit_root/previous/codex-mcp-bridge-for-chatgpt-0.3.0.tgz" \
+            -C "$audit_root/previous"
+          npm install --prefix "$audit_root/current/package" --omit=dev --no-audit --no-fund
+          npm install --prefix "$audit_root/previous/package" --omit=dev --no-audit --no-fund
+          artifact_sha="$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "release-assets/$PACKAGE_FILE")"
+          npx tsx scripts/state-release-audit.ts \
+            --runtime-root "$audit_root/current/package" \
+            --artifact-kind npm \
+            --fixture-root "$PWD" \
+            --previous-runtime-root "$audit_root/previous/package" \
+            --artifact-sha256 "$artifact_sha" \
+            --report state-audit/npm.json
       - if: steps.metadata.outputs.stage == 'stable'
         name: Compare stable npm payload with the source RC
         env:
@@ -204,6 +238,12 @@ jobs:
           path: release-assets/*
           if-no-files-found: error
           retention-days: 7
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-state-compatibility-audit
+          path: state-audit/npm.json
+          if-no-files-found: error
+          retention-days: 90
 
   macos-release-package:
     name: Package unnotarized macOS app (${{ matrix.architecture }})
@@ -222,7 +262,7 @@ jobs:
             machine: x86_64
             runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - id: metadata
@@ -278,6 +318,51 @@ jobs:
           npm run macos:package -- \
             --architecture "$MACOS_TARGET_ARCHITECTURE" \
             --output "release-assets/$MACOS_FILE"
+      - name: Audit DMG DB runtime, migration, restore, and published v0.3 runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
+          MACOS_FILE: ${{ steps.macos-metadata.outputs.file }}
+        run: |
+          audit_root="$(mktemp -d)"
+          mount_root="$audit_root/mount"
+          mounted="false"
+          cleanup_audit() {
+            if [[ "$mounted" == "true" ]]; then
+              hdiutil detach "$mount_root" >/dev/null
+            fi
+            rm -rf "$audit_root"
+          }
+          trap cleanup_audit EXIT
+          mkdir -p "$mount_root" "$audit_root/previous" "state-audit"
+          gh release download v0.3.0 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "codex-mcp-bridge-for-chatgpt-0.3.0.tgz" \
+            --pattern "codex-mcp-bridge-for-chatgpt-0.3.0.tgz.sha256" \
+            --dir "$audit_root/previous"
+          node - "$audit_root/previous" <<'NODE'
+          const fs = require("node:fs"), crypto = require("node:crypto"), path = require("node:path");
+          const root = process.argv[2], name = "codex-mcp-bridge-for-chatgpt-0.3.0.tgz";
+          const expected = fs.readFileSync(path.join(root, `${name}.sha256`), "utf8").trim().split(/\s+/)[0];
+          const actual = crypto.createHash("sha256").update(fs.readFileSync(path.join(root, name))).digest("hex");
+          if (actual !== expected) throw new Error("Published v0.3.0 package checksum mismatch.");
+          NODE
+          tar -xzf "$audit_root/previous/codex-mcp-bridge-for-chatgpt-0.3.0.tgz" \
+            -C "$audit_root/previous"
+          npm install --prefix "$audit_root/previous/package" --omit=dev --no-audit --no-fund
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_root" "release-assets/$MACOS_FILE" >/dev/null
+          mounted="true"
+          app_count="$(find "$mount_root" -maxdepth 1 -type d -name '*.app' | wc -l | tr -d ' ')"
+          test "$app_count" = "1"
+          app_bundle="$(find "$mount_root" -maxdepth 1 -type d -name '*.app' -print -quit)"
+          artifact_sha="$(shasum -a 256 "release-assets/$MACOS_FILE" | awk '{print $1}')"
+          npx tsx scripts/state-release-audit.ts \
+            --runtime-root "$app_bundle/Contents/Resources/Runtime" \
+            --artifact-kind "macos-$MACOS_TARGET_ARCHITECTURE" \
+            --fixture-root "$PWD" \
+            --previous-runtime-root "$audit_root/previous/package" \
+            --artifact-sha256 "$artifact_sha" \
+            --report "state-audit/macos-$MACOS_TARGET_ARCHITECTURE.json"
       - if: steps.metadata.outputs.stage == 'stable'
         name: Compare stable macOS payload with the source RC
         env:
@@ -301,6 +386,12 @@ jobs:
           path: release-assets/${{ steps.macos-metadata.outputs.file }}
           if-no-files-found: error
           retention-days: 7
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-state-compatibility-audit-${{ matrix.architecture }}
+          path: state-audit/macos-${{ matrix.architecture }}.json
+          if-no-files-found: error
+          retention-days: 90
 
   release-pr-validation:
     name: Release PR validation

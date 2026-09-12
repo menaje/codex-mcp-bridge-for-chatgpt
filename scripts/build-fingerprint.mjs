@@ -7,6 +7,7 @@ export function computeSourceHash(repoRoot) {
   const files = [
     "release-manifest.json",
     "release-manifest.schema.json",
+    "state-migrations.json",
     "package.json",
     "package-lock.json",
     "tsconfig.json",

@@ -21,8 +21,42 @@ import type {
 import { createStdioBridgeRuntime } from "../src/stdioServer.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
+import { createSchema18Fixture } from "./helpers/stateSchemaFixtures.js";
 
 describe("persistent stdio bridge", () => {
+  it("records the rollback boundary after the migrated stdio transport connects", async () => {
+    const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-stdio-migrated-state-"));
+    const file = path.join(stateDirectory, "state.sqlite");
+    createSchema18Fixture(file);
+    const stateStore = new BridgeStateStore({ file });
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const runtime = createStdioBridgeRuntime(
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: file,
+        CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: path.join(stateDirectory, "models.json")
+      }),
+      new FakeUpstream(),
+      {
+        stateStore,
+        modelCatalog: new StaticModelCatalog(),
+        input,
+        output,
+        descriptorReconcileIntervalMs: 60_000
+      }
+    );
+    expect(stateStore.getMeta("state_service_opened_after_migration")).toBe("0");
+    try {
+      await runtime.start();
+      expect(stateStore.getMeta("state_service_opened_after_migration")).toBe("1");
+      expect(stateStore.getMeta("state_service_opened_transport")).toBe("stdio");
+    } finally {
+      await runtime.close();
+      stateStore.close();
+    }
+  });
+
   it("keeps the stable task descriptor across saved settings changes over framed stdio bytes", async () => {
     const stateStore = new BridgeStateStore({ file: ":memory:" });
     const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-stdio-state-"));

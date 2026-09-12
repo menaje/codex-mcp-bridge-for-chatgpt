@@ -1,0 +1,376 @@
+{
+  "reportVersion": 1,
+  "kind": "release-state-compatibility",
+  "generatedAt": "2026-09-12T00:34:58.941Z",
+  "artifact": {
+    "kind": "npm",
+    "sha256": "a024fcaa7fa4d01be336b35090e5dff695a762d4dca6af71405efedc8ecfb97f",
+    "productVersion": "0.3.0",
+    "releaseStage": "development",
+    "buildCommit": "68cd7171816c585e1c6d38899dc5ea9b839e9b09",
+    "buildId": "68cd7171816c:23cf0a787ea2",
+    "migrationCatalogSha256": "810399dee06f768ee70896c69998b3d22c659db0f4dc9beb8baabb62ecad2909"
+  },
+  "runtime": {
+    "platform": "darwin",
+    "osRelease": "25.6.0",
+    "architecture": "arm64",
+    "nodeVersion": "v24.11.1",
+    "nodeModuleAbi": "137",
+    "betterSqlite3Version": "13.0.3",
+    "sqliteVersion": "3.53.4",
+    "nativeModuleLoaded": true,
+    "nodeBundledInArtifact": false,
+    "nodeSelectionContract": "Node.js >=22 selected by the operator or macOS runtime discovery"
+  },
+  "compatibility": {
+    "currentSchema": 19,
+    "supportedSourceSchemas": [
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18
+    ],
+    "persistentContracts": {
+      "userSettingsSchema": 4,
+      "taskInputContract": 2,
+      "macosHelperProtocol": 2,
+      "localCompanionProtocol": 2,
+      "remoteCompanionProtocol": 1
+    },
+    "stateProfilePolicy": "release-stage-isolated-v1",
+    "rollbackPolicy": "verified-original-before-service-open-v1"
+  },
+  "supportedStartCoverage": [
+    {
+      "sourceSchema": 3,
+      "provenance": "fixture:v0.3.0",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 4,
+      "provenance": "derived:3:bridge-state-3-to-4",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 5,
+      "provenance": "derived:3:bridge-state-4-to-5",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 6,
+      "provenance": "derived:3:bridge-state-5-to-6",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 7,
+      "provenance": "derived:3:bridge-state-6-to-7",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 8,
+      "provenance": "derived:3:bridge-state-7-to-8",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 9,
+      "provenance": "derived:3:bridge-state-8-to-9",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 10,
+      "provenance": "derived:3:bridge-state-9-to-10",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 11,
+      "provenance": "derived:3:bridge-state-10-to-11",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 12,
+      "provenance": "derived:3:bridge-state-11-to-12",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 13,
+      "provenance": "derived:3:bridge-state-12-to-13",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 14,
+      "provenance": "derived:3:bridge-state-13-to-14",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 15,
+      "provenance": "derived:3:bridge-state-14-to-15",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 16,
+      "provenance": "fixture:17d7398c88fe83688165dcec2b27e85cdc9ce949",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 17,
+      "provenance": "derived:16:bridge-state-16-to-17",
+      "reachedSchema": 19
+    },
+    {
+      "sourceSchema": 18,
+      "provenance": "fixture:b1104aa4b2f72b929f49f89b6c1734cf6cb9d61d",
+      "reachedSchema": 19
+    }
+  ],
+  "interruptionRecovery": {
+    "sourceSchema": 18,
+    "committedSchemaBeforeProvenance": 19,
+    "pendingRecordObserved": true,
+    "resumedSchema": 19,
+    "provenanceFinalized": true
+  },
+  "cases": [
+    {
+      "sourceSchema": 3,
+      "sourceKind": "published-release",
+      "source": "v0.3.0",
+      "fixtureSha256": "d29804cc4ef04cfee783bbf347e96eecd2345043c54746e3c2e1c8f44f746063",
+      "migrationDurationMs": 598,
+      "checkpoints": [
+        {
+          "id": "bridge-state-3-to-4",
+          "targetSchema": 4
+        },
+        {
+          "id": "bridge-state-4-to-5",
+          "targetSchema": 5
+        },
+        {
+          "id": "bridge-state-5-to-6",
+          "targetSchema": 6
+        },
+        {
+          "id": "bridge-state-6-to-7",
+          "targetSchema": 7
+        },
+        {
+          "id": "bridge-state-7-to-8",
+          "targetSchema": 8
+        },
+        {
+          "id": "bridge-state-8-to-9",
+          "targetSchema": 9
+        },
+        {
+          "id": "bridge-state-9-to-10",
+          "targetSchema": 10
+        },
+        {
+          "id": "bridge-state-10-to-11",
+          "targetSchema": 11
+        },
+        {
+          "id": "bridge-state-11-to-12",
+          "targetSchema": 12
+        },
+        {
+          "id": "bridge-state-12-to-13",
+          "targetSchema": 13
+        },
+        {
+          "id": "bridge-state-13-to-14",
+          "targetSchema": 14
+        },
+        {
+          "id": "bridge-state-14-to-15",
+          "targetSchema": 15
+        },
+        {
+          "id": "bridge-state-15-to-17",
+          "targetSchema": 17
+        },
+        {
+          "id": "bridge-state-17-to-18",
+          "targetSchema": 18
+        },
+        {
+          "id": "bridge-state-18-to-19",
+          "targetSchema": 19
+        }
+      ],
+      "twoCurrentRestarts": true,
+      "settingsContract": {
+        "schemaVersion": 4,
+        "accessStrategy": "always-full",
+        "modelPolicyMode": "automatic",
+        "historyRetentionDays": 30,
+        "effectiveSandbox": "read-only",
+        "retiredPreferredSelectionRemoved": true,
+        "registeredProjectCount": 0
+      },
+      "sourceCounts": {
+        "sessions": 1,
+        "jobs": 1,
+        "questions": 0,
+        "questionDeliveries": 0,
+        "completionOutbox": 0,
+        "cancellationOperations": 0,
+        "cancellationIntents": 0,
+        "steeringDeliveries": 0,
+        "automaticRecovery": 0,
+        "automaticRecoveryIncidents": 0,
+        "resultHolds": 0
+      },
+      "migratedCounts": {
+        "sessions": 1,
+        "jobs": 1,
+        "questions": 0,
+        "questionDeliveries": 0,
+        "completionOutbox": 0,
+        "cancellationOperations": 0,
+        "cancellationIntents": 0,
+        "steeringDeliveries": 0,
+        "automaticRecovery": 0,
+        "automaticRecoveryIncidents": 0,
+        "resultHolds": 0
+      },
+      "migrationDisposition": {
+        "removedLegacySessions": 0,
+        "removedLegacyAgentThreads": 0
+      },
+      "workMeaning": {
+        "historicalJobReceiptsPreserved": true,
+        "executionContexts": {
+          "total": 1,
+          "appServer": 0,
+          "retiredBackend": 1
+        },
+        "removedSessionContextsDeclared": true,
+        "requestReplayPerformed": false
+      },
+      "backup": {
+        "bytes": 151552,
+        "sha256": "24cfa876a1ab3e16543cf16b521d8312fd24e1a6f53416bd35ede3959557715e",
+        "integrityCheck": "ok",
+        "foreignKeyViolationCount": 0,
+        "databaseIdentityMatched": true,
+        "migrationPathMatched": true,
+        "mode": "600"
+      },
+      "restore": {
+        "completed": true,
+        "sourceRuntimeProvenance": "operator-asserted",
+        "replacedDatabaseQuarantined": true,
+        "restoredSchema": 3,
+        "semanticCountsMatched": true,
+        "priorRuntime": "state-read-then-health-opened-and-cleanly-stopped-with-published-v0.3.0",
+        "serviceRestartVerified": true,
+        "recoveryReceiptServiceRestartVerified": false
+      }
+    },
+    {
+      "sourceSchema": 18,
+      "sourceKind": "deployed-development",
+      "source": "b1104aa4b2f72b929f49f89b6c1734cf6cb9d61d",
+      "fixtureSha256": "10fa6d0347380a84b57359d01796c273b2cc29e6e571a0a883526030842439fd",
+      "migrationDurationMs": 137,
+      "checkpoints": [
+        {
+          "id": "bridge-state-18-to-19",
+          "targetSchema": 19
+        }
+      ],
+      "twoCurrentRestarts": true,
+      "settingsContract": {
+        "schemaVersion": 4,
+        "accessStrategy": "adaptive",
+        "modelPolicyMode": "automatic",
+        "historyRetentionDays": 30,
+        "effectiveSandbox": "read-only",
+        "retiredPreferredSelectionRemoved": true,
+        "registeredProjectCount": 1
+      },
+      "sourceCounts": {
+        "sessions": 2,
+        "jobs": 3,
+        "questions": 1,
+        "questionDeliveries": 1,
+        "completionOutbox": 1,
+        "cancellationOperations": 1,
+        "cancellationIntents": 1,
+        "steeringDeliveries": 1,
+        "automaticRecovery": 1,
+        "automaticRecoveryIncidents": 1,
+        "resultHolds": 1
+      },
+      "migratedCounts": {
+        "sessions": 1,
+        "jobs": 3,
+        "questions": 1,
+        "questionDeliveries": 1,
+        "completionOutbox": 1,
+        "cancellationOperations": 1,
+        "cancellationIntents": 1,
+        "steeringDeliveries": 1,
+        "automaticRecovery": 1,
+        "automaticRecoveryIncidents": 1,
+        "resultHolds": 1
+      },
+      "migrationDisposition": {
+        "removedLegacySessions": 1,
+        "removedLegacyAgentThreads": 1
+      },
+      "workMeaning": {
+        "historicalJobReceiptsPreserved": true,
+        "executionContexts": {
+          "total": 1,
+          "appServer": 1,
+          "retiredBackend": 0
+        },
+        "removedSessionContextsDeclared": true,
+        "requestReplayPerformed": false
+      },
+      "backup": {
+        "bytes": 475136,
+        "sha256": "5ec2b4ca14ab1e430c0e8e41ec8b0d26c719fd418c46aca276d342271fc40c67",
+        "integrityCheck": "ok",
+        "foreignKeyViolationCount": 0,
+        "databaseIdentityMatched": true,
+        "migrationPathMatched": true,
+        "mode": "600"
+      },
+      "restore": {
+        "completed": true,
+        "sourceRuntimeProvenance": "recorded",
+        "replacedDatabaseQuarantined": true,
+        "restoredSchema": 18,
+        "semanticCountsMatched": true,
+        "priorRuntime": "not-applicable",
+        "serviceRestartVerified": false,
+        "recoveryReceiptServiceRestartVerified": false
+      }
+    }
+  ],
+  "boundaries": {
+    "migrationInterruptionTest": "artifact-deterministic-post-schema-commit-hook-and-resume",
+    "processTerminationTest": "not-claimed",
+    "powerLossTest": "not-claimed",
+    "userPayloadIncluded": false,
+    "migratedServiceOpenedBeforeRestore": false,
+    "priorRuntimeServiceOpenedAfterRestore": true,
+    "priorRuntimeExecution": "published-v0.3.0-package"
+  }
+}

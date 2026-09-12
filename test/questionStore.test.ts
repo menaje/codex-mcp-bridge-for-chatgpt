@@ -33,4 +33,68 @@ describe("durable question lifecycle", () => {
       expect(store.questions.delivery("scope-a", "request-a", "answer-digest-only")).toBe("uncertain");
     } finally { vi.restoreAllMocks(); store.close(); rmSync(root, { recursive: true, force: true }); }
   });
+
+  it("records startup expiry and dispatch recovery with separate causes and counts", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "question-maintenance-"));
+    const file = path.join(root, "state.sqlite");
+    const now = Date.parse("2026-09-12T00:00:00.000Z");
+    let store = new BridgeStateStore({ file });
+    store.close();
+    const database = new Database(file);
+    database.prepare(
+      "INSERT INTO user_questions(question_id,scope_id,request_id,response_ref,expires_at,payload) " +
+      "VALUES ('expired','scope','expired-request',NULL,?,'{}')"
+    ).run(now - 1);
+    const insertDelivery = database.prepare(
+      "INSERT INTO codex_question_deliveries(scope_id,request_id,question_ref,action_hash,status,created_at) " +
+      "VALUES ('scope',?,?,?,?,?)"
+    );
+    insertDelivery.run("dispatching-request", "dispatching-ref", "a".repeat(64), "dispatching", now);
+    insertDelivery.run(
+      "delivered-request",
+      "delivered-ref",
+      "b".repeat(64),
+      "delivered",
+      now - 8 * 24 * 60 * 60 * 1000
+    );
+    insertDelivery.run(
+      "uncertain-request",
+      "uncertain-ref",
+      "c".repeat(64),
+      "uncertain",
+      now - 8 * 24 * 60 * 60 * 1000
+    );
+    database.close();
+
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      store = new BridgeStateStore({ file });
+      expect(store.questions.startupMaintenance).toEqual({
+        dispatchesMarkedUncertain: 1,
+        expiredQuestionsRemoved: 1,
+        deliveredJournalsRemoved: 1
+      });
+      expect(JSON.parse(store.getMeta("state_startup_maintenance_last")!)).toMatchObject({
+        reason: "question-expiry-and-dispatch-recovery",
+        dispatchesMarkedUncertain: 1,
+        expiredQuestionsRemoved: 1,
+        deliveredJournalsRemoved: 1
+      });
+      const readOnly = new Database(file, { readonly: true, fileMustExist: true });
+      expect(readOnly.prepare(
+        "SELECT request_id,status FROM codex_question_deliveries ORDER BY request_id"
+      ).all()).toEqual([
+        { request_id: "dispatching-request", status: "uncertain" },
+        { request_id: "uncertain-request", status: "uncertain" }
+      ]);
+      expect((readOnly.prepare("SELECT COUNT(*) AS count FROM user_questions").get() as {
+        count: number;
+      }).count).toBe(0);
+      readOnly.close();
+    } finally {
+      vi.restoreAllMocks();
+      store.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

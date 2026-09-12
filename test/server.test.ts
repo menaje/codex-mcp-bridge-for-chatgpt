@@ -23,6 +23,7 @@ import { validateActivityViewPrivateMetadata } from "../src/tools.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 import { SdkToolDescriptorCoordinator } from "../src/modelPolicyTransport.js";
 import { UserSettingsStore } from "../src/userSettings.js";
+import { createSchema18Fixture } from "./helpers/stateSchemaFixtures.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const REQUEST_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -262,6 +263,27 @@ describe("http server", () => {
       name: PRODUCT_INFO.runtimeName,
       title: PRODUCT_INFO.displayName
     });
+  });
+
+  it("records the rollback boundary when a migrated HTTP runtime starts listening", async () => {
+    const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-http-migrated-state-"));
+    const file = path.join(stateDirectory, "state.sqlite");
+    createSchema18Fixture(file);
+    const stateStore = new BridgeStateStore({ file });
+    expect(stateStore.getMeta("state_service_opened_after_migration")).toBe("0");
+    try {
+      await start(
+        { CODEX_GPT_BRIDGE_NO_AUTH: "1" },
+        new FakeUpstream(),
+        stateDirectory,
+        { stateStore }
+      );
+      expect(stateStore.getMeta("state_service_opened_after_migration")).toBe("1");
+      expect(stateStore.getMeta("state_service_opened_transport")).toBe("http");
+    } finally {
+      await stopLastServer();
+      stateStore.close();
+    }
   });
 
   it("does not expose supplied operator diagnostics through health", async () => {

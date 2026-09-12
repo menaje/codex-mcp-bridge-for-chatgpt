@@ -12,6 +12,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
+import { createMigrationBackupMetadata } from "../src/stateBackup.js";
 import {
   V18_ACTIVITY_ID,
   V18_AGENT_ID,
@@ -373,13 +374,27 @@ describe("state schema 19 normalization", () => {
     const original = path.join(root, "original-v3.sqlite");
     const originalBackup = `${file}.pre-v3-to-v19.sqlite`;
     createSeededSchema3Fixture(original);
+    const databaseId = "77777777-7777-4777-8777-777777777777";
+    const originalDatabase = new Database(original);
+    originalDatabase.prepare("INSERT INTO bridge_meta(key,value) VALUES ('state_database_id',?)")
+      .run(databaseId);
+    originalDatabase.close();
     copyFileSync(original, originalBackup);
     chmodSync(originalBackup, 0o600);
 
     createSchema18Fixture(file, { malformedJobPayload: true });
     const partial = new Database(file);
+    partial.prepare("INSERT INTO bridge_meta(key,value) VALUES ('state_database_id',?)")
+      .run(databaseId);
     partial.prepare("INSERT INTO bridge_meta(key,value) VALUES ('schema_v19_upgrade_source','3')").run();
     partial.close();
+    createMigrationBackupMetadata({
+      databaseFile: file,
+      backupFile: originalBackup,
+      databaseId,
+      sourceSchema: 3,
+      targetSchema: 19
+    });
 
     expect(() => new BridgeStateStore({ file })).toThrow(/malformed JSON|Invalid job payload/);
     expect(readSchemaVersion(file)).toBe(18);
@@ -405,6 +420,8 @@ describe("state schema 19 normalization", () => {
     const file = path.join(root, "state.sqlite");
     createSchema18Fixture(file);
     const partial = new Database(file);
+    partial.prepare("INSERT INTO bridge_meta(key,value) VALUES ('state_database_id',?)")
+      .run("88888888-8888-4888-8888-888888888888");
     partial.prepare("INSERT INTO bridge_meta(key,value) VALUES ('schema_v19_upgrade_source','3')").run();
     partial.close();
 

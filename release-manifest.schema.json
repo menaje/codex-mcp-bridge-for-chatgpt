@@ -4,13 +4,13 @@
   "title": "Codex MCP Bridge for ChatGPT release manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["$schema", "manifestVersion", "product", "package", "toolchain", "repository", "plugin", "uiResources", "release"],
+  "required": ["$schema", "manifestVersion", "product", "package", "toolchain", "repository", "plugin", "uiResources", "stateCompatibility", "release"],
   "properties": {
     "$schema": {
       "const": "./release-manifest.schema.json"
     },
     "manifestVersion": {
-      "const": 4
+      "const": 5
     },
     "product": {
       "type": "object",
@@ -160,6 +160,112 @@
             { "contains": { "const": "dashboard" } },
             { "contains": { "const": "question" } }
           ]
+        }
+      }
+    },
+    "stateCompatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "currentSchema",
+        "supportedSourceSchemas",
+        "unsupportedSourceSchemas",
+        "retiredLegacyImports",
+        "migrationCatalog",
+        "migrationCatalogSha256",
+        "stateProfilePolicy",
+        "rollbackPolicy",
+        "persistentContracts",
+        "contractSources",
+        "recoveryContract"
+      ],
+      "properties": {
+        "currentSchema": { "const": 19 },
+        "supportedSourceSchemas": {
+          "type": "array",
+          "minItems": 16,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "prefixItems": [
+            { "const": 3 }, { "const": 4 }, { "const": 5 }, { "const": 6 },
+            { "const": 7 }, { "const": 8 }, { "const": 9 }, { "const": 10 },
+            { "const": 11 }, { "const": 12 }, { "const": 13 }, { "const": 14 },
+            { "const": 15 }, { "const": 16 }, { "const": 17 }, { "const": 18 }
+          ],
+          "items": false
+        },
+        "unsupportedSourceSchemas": {
+          "type": "array",
+          "prefixItems": [{ "const": 1 }, { "const": 2 }],
+          "minItems": 2,
+          "maxItems": 2,
+          "items": false
+        },
+        "retiredLegacyImports": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "settings-state-json" },
+            { "const": "session-state-json" },
+            { "const": "job-state-json" }
+          ],
+          "minItems": 3,
+          "maxItems": 3,
+          "items": false
+        },
+        "migrationCatalog": { "const": "state-migrations.json" },
+        "migrationCatalogSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "stateProfilePolicy": { "const": "release-stage-isolated-v1" },
+        "rollbackPolicy": { "const": "verified-original-before-service-open-v1" },
+        "persistentContracts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "userSettingsSchema",
+            "taskInputContract",
+            "macosHelperProtocol",
+            "localCompanionProtocol",
+            "remoteCompanionProtocol"
+          ],
+          "properties": {
+            "userSettingsSchema": { "const": 4 },
+            "taskInputContract": { "const": 2 },
+            "macosHelperProtocol": { "const": 2 },
+            "localCompanionProtocol": { "const": 2 },
+            "remoteCompanionProtocol": { "const": 1 }
+          }
+        },
+        "contractSources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "databaseSchema", "userSettings", "taskInput", "macosHelper",
+            "localCompanion", "remoteCompanion", "uiResources", "executionBackend"
+          ],
+          "properties": {
+            "databaseSchema": { "const": "src/stateSchema.ts#CURRENT_STATE_SCHEMA_VERSION" },
+            "userSettings": { "const": "src/modelPolicy.ts#MODEL_POLICY_SCHEMA_VERSION" },
+            "taskInput": { "const": "src/tools.ts#CODEX_TASK_INPUT_CONTRACT_VERSION" },
+            "macosHelper": { "const": "src/macosHelperServer.ts#MACOS_HELPER_PROTOCOL_VERSION" },
+            "localCompanion": { "const": "src/companionServer.ts#COMPANION_PROTOCOL_VERSION" },
+            "remoteCompanion": { "const": "src/remoteCompanionServer.ts#REMOTE_COMPANION_PROTOCOL_VERSION" },
+            "uiResources": { "const": "uiResources.minimumContractGeneration" },
+            "executionBackend": { "const": "toolchain.codexCli+app-server-schema.lock.json" }
+          }
+        },
+        "recoveryContract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "backupMetadataVersion", "restoreReceiptVersion", "sourceRuntimeMatch",
+            "settingsRestore", "automaticSnapshotRestoreUntil"
+          ],
+          "properties": {
+            "backupMetadataVersion": { "const": 1 },
+            "restoreReceiptVersion": { "const": 1 },
+            "sourceRuntimeMatch": { "const": "exact-product-version-and-build" },
+            "settingsRestore": { "const": "database-snapshot-and-source-runtime-configuration" },
+            "automaticSnapshotRestoreUntil": { "const": "service-open" }
+          }
         }
       }
     },

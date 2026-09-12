@@ -151,18 +151,31 @@ copy, not end-to-end service latency or evidence of a live replacement.
 ## Upgrade and legacy-data rules
 
 A fresh database creates schema 19 directly. A persistent supported older database
-gets one private, mode-0600 backup named
-`state.sqlite.pre-v<SOURCE>-to-v19.sqlite`. Retrying the same upgrade reuses that
-name instead of accumulating another copy. The original source version is recorded
-before the first intermediate checkpoint, so a later retry cannot create a second
-backup from a partially upgraded schema. Before that in-progress marker exists, a
-same-named file from an older database at the path is replaced with a fresh source
-backup; after the marker exists, the exact recovery file is required and never
-overwritten. A missing or wrong-version recovery copy fails closed. Each
-intermediate migration records its literal destination version; no step writes
-the current-version constant. The schema-19 rebuild and its
-foreign-key check run in one transaction. An interrupted or invalid conversion
-rolls that rebuild back and can be retried after the source problem is corrected.
+is inspected before a writable SQLite connection opens. The canonical-file lock,
+live-owner check, integrity and foreign-key checks, permissions, free-space
+calculation, verified backup, sequential conversion, and final verification all
+complete before the HTTP or stdio service opens. Path aliases share the same lock.
+Development and candidate packages use separate default state profiles; selecting
+the stable DB requires an explicit profile or absolute-file override.
+
+The upgrade gets one private, mode-0600 backup named
+`state.sqlite.pre-v<SOURCE>-to-v19.sqlite` and a bound metadata sidecar. The
+sidecar records the logical/physical database identity, source and target runtime
+facts, migration path/checksums, snapshot checksum, integrity/foreign-key results,
+and a digest of table row counts. Retrying the same upgrade reuses and fully
+revalidates that pair instead of accumulating another copy. Before the durable
+source marker exists, a same-named stale pair is replaced; afterward it is never
+overwritten. A missing, changed, wrong-schema, or other-database recovery point
+fails closed.
+
+Every intermediate migration records its literal destination version and an
+append-only applied-provenance record. A pending record is committed before each
+step and reconciled if the process stops after the schema transaction but before
+the provenance transaction. No step writes the current-version constant. The
+schema-19 rebuild and its foreign-key check run in one transaction. An interrupted
+or invalid conversion rolls that rebuild back and can be retried after the source
+problem is corrected. The full operational and restore procedure is in the
+[state upgrade and recovery runbook](state-upgrade-recovery.md).
 
 Schema-18 project values are accepted only when their UUID matches `projects`.
 A session or Agent-thread context with project metadata but no registered-project
@@ -176,9 +189,13 @@ relationship. Migration never creates a project from a slug, name, cwd, or old
 snapshot.
 
 The supported schema-3 fixture is taken from the published v0.3.0 implementation
-and passes every fixed checkpoint through schema 19. Schemas 1 and 2 are outside
-the supported release floor and are rejected before a backup or mutation. Removed
-JSON import markers/backends cannot reintroduce retired fields on later restarts.
+and passes every fixed checkpoint through schema 19. Exact deployed-development
+fixtures cover schemas 16 and 18; schemas 4 through 15 and 17 are generated only
+as named, committed checkpoints from those sources. `state-migrations.json` binds
+their provenance and hashes to the shipped implementation. Schemas 1 and 2 are
+outside the supported release floor and are rejected before a backup or mutation.
+Removed JSON import markers/backends cannot reintroduce retired fields on later
+restarts.
 
 ## Capacity, backups, and offline compaction
 
@@ -201,7 +218,12 @@ upgrade validation and the operator's chosen rollback window. Once that window
 ends and the upgraded database has survived normal restarts, remove older backups
 as a deliberate operator action. Backups contain the same private material as the
 source database and require the same access controls. The bridge does not silently
-delete them because release and rollback policy belong to the operator.
+delete them because release and rollback policy belong to the operator. Keep each
+backup with its `.migration-v<SOURCE>-to-v19.backup.json` sidecar. Supported
+snapshot restore is allowed only while the migrated DB records that neither HTTP
+nor stdio service-open occurred; after that boundary, preserve current state and
+use forward repair or explicit data reconciliation. See the
+[recovery runbook](state-upgrade-recovery.md).
 
 For disk compaction:
 
