@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-08",
+  "pullRequest": 71,
+  "sourceCommit": "9a1334f14902039ab9e38f3d83ebf4a67b676bb2",
+  "runtimeBuildId": "9a1334f14902:ee5c395db3f7",
+  "freshBundleSignatureVerified": true,
+  "productSrcAndSwiftUnchangedFromPreviouslyValidatedIntegration": true,
+  "repositoryTests": {"files": 63, "passed": 780, "failed": 0, "basis": "existing unchanged-source validation"},
+  "freshBundleMacosTests": {"executed": 101, "passed": 99, "skipped": 2, "failed": 0},
+  "host": "Authenticated ChatGPT through Codex in-app browser",
+  "currentToolDiscoveryObserved": true,
+  "simpleBackgroundExecution": {
+    "newJobs": 1,
+    "newActivities": 1,
+    "newAgents": 1,
+    "model": "gpt-6-astra",
+    "reasoningEffort": "low",
+    "status": "completed",
+    "exactRetainedResultMatched": true,
+    "gptExactJobTerminalWaitObserved": true,
+    "gptExactJobFinalResultMatched": true,
+    "newActivityOrSettingsCards": 0,
+    "savedPolicyChanged": false,
+    "hostReviewDenied": false
+  },
+  "chatgpt": {
+    "leftWorkConversationDuringExecution": true,
+    "unreadFinalResponseMarkerObserved": true,
+    "exactFinalResultAvailableOnReentry": true,
+    "retainedGlobalOverviewReopened": true,
+    "overviewRunningThenCompletedObserved": true,
+    "exactDetailReadAfterRestart": true,
+    "boundedEnrichmentWarningObserved": true,
+    "nativeBannerVerified": false,
+    "alreadyEndedGptResponseJobWakeVerified": false
+  },
+  "activeRestart": {
+    "requestedWhileTestJobRunning": true,
+    "mode": "drain",
+    "activeJobDrainedToZeroBeforeRestart": true,
+    "launcherPidChanged": true,
+    "sameJobCompletedNormally": true,
+    "resultRetainedAfterRestart": true,
+    "phase": "running",
+    "tunnelConnected": true,
+    "forceUsed": false
+  },
+  "preservation": {
+    "existingJobs": 477,
+    "existingActivities": 205,
+    "existingAgents": 236,
+    "existingProjectRows": 4,
+    "changedExistingRowsInComparedTables": 0,
+    "settingsAndProjectRegistryUnchanged": true,
+    "databaseReplaced": false,
+    "originalBundleRetainedForRollback": true
+  },
+  "developmentMergeReady": true,
+  "publicStableReleaseClaimed": false,
+  "remainingIssue69Evidence": [
+    "Independent native banner delivery.",
+    "Already-ended-response Job wake, distinct from the verified active-response path.",
+    "Actual original approval/input/stop/process control scenarios."
+  ],
+  "omissions": "No private conversation IDs, project selectors, Job identities, credentials, raw task prompt or expected answer are published."
+}

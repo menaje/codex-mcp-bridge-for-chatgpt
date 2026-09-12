@@ -1,15 +1,93 @@
-import { describe, expect, it } from "vitest";
-import { ACTIVITY_CARD_HTML } from "../src/activityCard.js";
-import { PRODUCT_INFO } from "../src/productInfo.js";
-import { SETTINGS_CARD_HTML } from "../src/settingsCard.js";
+import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { usesFastProcessing } from "../src/executionPresentation.js";
+import { ULTRA_POLICY_TRANSLATIONS } from "../src/ultraPolicyI18n.js";
 import {
+  ACTIVITY_CARD_HTML,
+  ACTIVITY_CARD_HTML_MAX_BYTES,
+  groupActivityIdleAgentsByActivity,
+  shouldShowHistoricalActivityTitle
+} from "../src/activityCard.js";
+import {
+  dashboardHistoryActivityHeading,
+  dashboardHistoryActivityIdentity,
+  dashboardExecutionsEqual,
+  dispatchDashboardExternalUrl,
+  DASHBOARD_CARD_CONTENT_METADATA,
+  DASHBOARD_CARD_HTML,
+  DASHBOARD_CARD_HTML_MAX_BYTES,
+  groupDashboardRowsByActivity,
+  shouldShowDashboardNextExecution
+} from "../src/dashboardCard.js";
+import { PRODUCT_INFO } from "../src/productInfo.js";
+import { htmlForUiResource } from "../src/uiResources.js";
+import {
+  SETTINGS_CARD_CONTENT_METADATA,
+  SETTINGS_CARD_HTML,
+  SETTINGS_CARD_HTML_MAX_BYTES,
+  uiBridgeErrorMessage
+} from "../src/settingsCard.js";
+import {
+  isUiLocalePreference,
+  localizeSettingsWarning,
+  missingReasoningEffortTranslations,
+  reasoningEffortPresentation,
+  resolveHostUiLocaleTag,
+  resolvePreferredUiLocale,
   resolveUiLocale,
   serializedUiTranslations,
   SUPPORTED_UI_LOCALES,
-  UI_TRANSLATIONS
+  UI_LOCALE_PREFERENCES,
+  UI_TRANSLATIONS,
+  uiTranslation
 } from "../src/uiI18n.js";
 
+const PROJECT_TRANSLATION_KEYS = [
+  "settings.projects",
+  "settings.projectsHint",
+  "settings.allowedRoots",
+  "settings.allowedRootsHint",
+  "settings.addProject",
+  "settings.addFirstProject",
+  "settings.noProjects",
+  "settings.projectLabel",
+  "settings.projectCwd",
+  "settings.projectAvailable",
+  "settings.projectUnavailable",
+  "settings.projectNew",
+  "settings.archiveProject",
+  "settings.restoreProject",
+  "settings.deleteProject",
+  "settings.cancelDeleteProject",
+  "settings.deleteProjectConfirm",
+  "settings.projectArchived",
+  "settings.projectArchivePending",
+  "settings.projectRestorePending",
+  "settings.projectDeletePending",
+  "settings.projectInvalidLabel",
+  "settings.projectInvalidCwd",
+  "settings.projectDuplicatePath",
+  "settings.projectUnavailableSave",
+  "settings.projectLimit",
+  "settings.projectError"
+] as const;
+
 describe("human-facing UI localization", () => {
+  it("uses the same Ultra scope and inactive-state copy in the card and native app for every locale", () => {
+    const native = JSON.parse(readFileSync("macos/Resources/Localization/Localizable.xcstrings", "utf8"));
+    for (const [locale, bundle] of Object.entries(ULTRA_POLICY_TRANSLATIONS)) {
+      for (const [key, value] of Object.entries(bundle)) {
+        expect(UI_TRANSLATIONS[locale as keyof typeof UI_TRANSLATIONS][key as keyof typeof bundle]).toBe(value);
+        const korean = ULTRA_POLICY_TRANSLATIONS.ko[key as keyof typeof bundle];
+        expect(native.strings[korean].localizations[locale].stringUnit.value).toBe(value);
+      }
+      expect(localizeSettingsWarning(
+        "Ultra is disabled and no saved model and reasoning choice can currently run.",
+        locale as keyof typeof UI_TRANSLATIONS
+      )).toBe(bundle["settings.ultraNoSelection"]);
+    }
+  });
+
   it("ships complete, shared bundles for every supported locale", () => {
     expect(SUPPORTED_UI_LOCALES).toEqual([
       "en",
@@ -32,10 +110,211 @@ describe("human-facing UI localization", () => {
     for (const locale of SUPPORTED_UI_LOCALES.filter((entry) => entry !== "en")) {
       expect(UI_TRANSLATIONS[locale]["common.loading"]).not.toBe(UI_TRANSLATIONS.en["common.loading"]);
       expect(UI_TRANSLATIONS[locale]["activity.forceStop"]).not.toBe(UI_TRANSLATIONS.en["activity.forceStop"]);
-      expect(UI_TRANSLATIONS[locale]["settings.unlimited"]).not.toBe(UI_TRANSLATIONS.en["settings.unlimited"]);
+      expect(UI_TRANSLATIONS[locale]["settings.language"]).not.toBe(UI_TRANSLATIONS.en["settings.language"]);
+      expect(UI_TRANSLATIONS[locale]["settings.cardVisibility"]).not.toBe(
+        UI_TRANSLATIONS.en["settings.cardVisibility"]
+      );
+      for (const key of [
+        "settings.codexAppThreads",
+        "settings.codexAppThreadsHint"
+      ] as const) {
+        expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
+      }
+      for (const key of [
+        "settings.cardVisibility.always",
+        "settings.cardVisibility.background",
+        "settings.cardVisibility.never",
+        "activity.superseded"
+      ] as const) {
+        expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
+      }
+      expect(UI_TRANSLATIONS[locale]["settings.conflict"]).not.toBe(
+        UI_TRANSLATIONS.en["settings.conflict"]
+      );
+      for (const key of PROJECT_TRANSLATION_KEYS) {
+        expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
+      }
+      for (const key of ["dashboard.scope.label", "dashboard.scope.conversation", "dashboard.scope.all",
+        "dashboard.scope.conversationNotice", "dashboard.scope.allNotice", "dashboard.scope.unavailable",
+        "dashboard.scope.runtimeNotice"] as const) {
+        expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
+      }
       expect(UI_TRANSLATIONS[locale]["job.interrupted"]).not.toBe(UI_TRANSLATIONS.en["job.interrupted"]);
       expect(UI_TRANSLATIONS[locale]["waiting.orchestrator"]).not.toBe(UI_TRANSLATIONS.en["waiting.orchestrator"]);
     }
+
+    const settingsText = SUPPORTED_UI_LOCALES.flatMap((locale) =>
+      Object.entries(UI_TRANSLATIONS[locale])
+        .filter(([key]) => key.startsWith("settings."))
+        .map(([, value]) => value)
+    ).join("\n");
+    expect(settingsText).not.toMatch(/\boperator\b|운영자|管理者|管理员|管理員|operador|opérateur|Betreiber/i);
+    expect(UI_TRANSLATIONS.ko["settings.reset"]).toBe("일반 설정 기본값 복원");
+    expect(UI_TRANSLATIONS.ko["settings.resetHint"]).toContain("프로젝트와 순서는 유지");
+    expect(UI_TRANSLATIONS.ko["settings.fullWarning"]).toBe(
+      "전체 접근은 이 macOS 사용자의 파일시스템·네트워크 권한으로 Codex를 실행합니다. 프로젝트 폴더는 작업 시작 위치를 정할 뿐 OS 격리가 아닙니다."
+    );
+    expect(UI_TRANSLATIONS.ko["activity.currentExecution"]).toBe("현재 실행");
+    expect(UI_TRANSLATIONS.ko["activity.latestExecution"]).toBe("최근 실행");
+    expect(UI_TRANSLATIONS.ko["activity.reasoningEffort"]).toBe("에포트");
+    expect(UI_TRANSLATIONS.ko["activity.workComplete"]).toBe("작업 완료");
+    expect(UI_TRANSLATIONS.ko["dashboard.title"]).toBe("Codex 현황");
+    expect(UI_TRANSLATIONS.ko["dashboard.scope.conversation"]).toBe("이 대화");
+    expect(UI_TRANSLATIONS.ko["dashboard.scope.all"]).toBe("전체 현황");
+    expect(UI_TRANSLATIONS.ko["dashboard.restoreFailed"]).toContain("새로고침");
+    expect(UI_TRANSLATIONS.ko["dashboard.status.completed"]).toBe("Codex turn 완료");
+    expect(UI_TRANSLATIONS.ko["dashboard.status.background-process-running"])
+      .toBe("백그라운드 프로세스 실행 중");
+    expect(UI_TRANSLATIONS.ko["dashboard.history.show"]).toBe("이력 {count}건 펼치기");
+    expect(UI_TRANSLATIONS.ko["dashboard.openConversation"]).toBe("대화 열기");
+    expect(UI_TRANSLATIONS.ko["dashboard.attention"]).toBe("주의 상태");
+    expect(UI_TRANSLATIONS.ko["dashboard.loadMore"]).toBe("더 보기");
+    expect(UI_TRANSLATIONS.en["dashboard.loadMore"]).toBe("Show more");
+    expect(UI_TRANSLATIONS.ko["dashboard.view.project"]).toBe("프로젝트별");
+    expect(UI_TRANSLATIONS.ko["dashboard.view.conversation"]).toBe("대화별");
+    expect(UI_TRANSLATIONS.ko["dashboard.view.status"]).toBe("상태별");
+    expect(UI_TRANSLATIONS.ko["dashboard.conversationCurrent"])
+      .toBe("활성 및 최근 GPT 대화");
+    expect(UI_TRANSLATIONS.ko["dashboard.idleConversations"]).toBe("유휴 GPT 대화");
+    expect(UI_TRANSLATIONS.ko["dashboard.idleProjects"]).toBe("유휴 프로젝트");
+    expect(UI_TRANSLATIONS.ko["dashboard.unknownProject"]).toBe("프로젝트 미확인");
+    expect(UI_TRANSLATIONS.ko["settings.deleteProject"]).toBe("삭제");
+    expect(UI_TRANSLATIONS.ko["settings.deleteProjectConfirm"])
+      .toContain("실제 폴더와 파일");
+    expect(UI_TRANSLATIONS.ko["settings.deleteProjectConfirm"])
+      .toContain("저장 버튼을 누르면");
+    expect(UI_TRANSLATIONS.ko["settings.projectDeletePending"])
+      .toBe("저장 버튼을 누르면 이 프로젝트 등록이 삭제됩니다.");
+    expect(UI_TRANSLATIONS.ko["dashboard.idleAgentDisclosure"])
+      .toBe("유휴 에이전트 {count}개 펼치기");
+    expect(UI_TRANSLATIONS.ko["dashboard.agentShownCount"]).toBe("현재 페이지 {count}개");
+    expect(UI_TRANSLATIONS.ko["dashboard.sectionCount"])
+      .toBe("대화 {conversations}개 · 에이전트 {agents}개");
+    expect(UI_TRANSLATIONS.ko["dashboard.time.duration"]).toBe("작업시간 {duration}");
+    expect(UI_TRANSLATIONS.ko["dashboard.time.terminal"]).toBe("{relative}");
+    expect(UI_TRANSLATIONS.ko["dashboard.scopeNotice"]).toContain("전체 ChatGPT 기록은 아닙니다");
+    expect(UI_TRANSLATIONS.ko["dashboard.runtimeOnly"]).toContain("GPT의 검증·완료 판단은 사용하지 않습니다");
+    for (const locale of SUPPORTED_UI_LOCALES) {
+      expect(UI_TRANSLATIONS[locale]["waiting.orchestrator"]).toBe(
+        UI_TRANSLATIONS[locale]["activity.workComplete"]
+      );
+    }
+    expect(UI_TRANSLATIONS.ko["settings.allowedScope.catalog"]).toBe(
+      "사용 가능한 모든 모델·에포트"
+    );
+    expect(UI_TRANSLATIONS.ko["settings.allowedScope.explicit"]).toBe(
+      "직접 선택한 모델·에포트만"
+    );
+    expect(UI_TRANSLATIONS.ko["settings.preferredModel"]).toBe("GPT 미지정 시 기본 모델");
+    expect(UI_TRANSLATIONS.ko["settings.preferredEffort"]).toBe("GPT 미지정 시 기본 추론 수준");
+    expect(UI_TRANSLATIONS.ko["settings.cardVisibility.always"]).toBe(
+      "모든 Codex 작업에 자동 표시"
+    );
+    expect(UI_TRANSLATIONS.ko["settings.cardVisibility.background"]).toBe(
+      "백그라운드 Codex 작업에만 자동 표시"
+    );
+    expect(UI_TRANSLATIONS.ko["settings.codexAppThreads"]).toBe(
+      "브리지 스레드를 Codex 앱에 표시"
+    );
+    expect(UI_TRANSLATIONS.ko["settings.codexAppThreadsHint"]).toContain(
+      "Codex 앱 목록에 나타나지 않으며"
+    );
+    expect(UI_TRANSLATIONS.ko["settings.developerModeRefreshRequired"]).toContain(
+      "정적 도구 계약도 변경"
+    );
+  });
+
+  it("supports automatic host language and fixed saved language preferences", () => {
+    expect(UI_LOCALE_PREFERENCES).toEqual([
+      "auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"
+    ]);
+    expect(isUiLocalePreference("auto")).toBe(true);
+    expect(isUiLocalePreference("ko")).toBe(true);
+    expect(isUiLocalePreference("it")).toBe(false);
+    expect(resolvePreferredUiLocale("auto", "ko-KR")).toBe("ko");
+    expect(resolvePreferredUiLocale("ja", "ko-KR")).toBe("ja");
+    for (const preference of UI_LOCALE_PREFERENCES.filter((entry) => entry !== "auto")) {
+      expect(resolvePreferredUiLocale(preference, "en-US")).toBe(preference);
+    }
+  });
+
+  it("localizes audited settings warnings without exposing raw English diagnostics", () => {
+    expect(localizeSettingsWarning(
+      "CODEX_MCP_BRIDGE_ROOTS is a legacy compatibility restriction.",
+      "ko"
+    )).toBe(UI_TRANSLATIONS.ko["settings.warning.legacyRoots"]);
+    expect(localizeSettingsWarning(
+      'PROJECT_UNAVAILABLE: Saved project "샘플" is unavailable and cannot admit new work.',
+      "ko"
+    )).toBe("저장된 프로젝트 ‘샘플’을(를) 사용할 수 없어 새 작업을 받을 수 없습니다.");
+    expect(localizeSettingsWarning("upstream socket detail", "ko", {
+      catalog: true,
+      stale: true
+    })).toBe(UI_TRANSLATIONS.ko["settings.warning.catalogStale"]);
+    expect(localizeSettingsWarning("unrecognized upstream prose", "ja"))
+      .toBe(UI_TRANSLATIONS.ja["settings.warning.generic"]);
+    expect(uiTranslation("de", "common.errorCode", { code: "MODEL_UNAVAILABLE" }))
+      .toContain("MODEL_UNAVAILABLE");
+  });
+
+  it("keeps audited UI text translated and preserves every template placeholder", () => {
+    const allowedSameAsEnglish = new Set([
+      "activity.defaultAgent",
+      "activity.threads",
+      "dashboard.page",
+      "dashboard.conversationCount",
+      "dashboard.time.terminal"
+    ]);
+    for (const locale of SUPPORTED_UI_LOCALES.filter((entry) => entry !== "en")) {
+      for (const key of Object.keys(UI_TRANSLATIONS.en) as Array<keyof typeof UI_TRANSLATIONS.en>) {
+        const audited = key.startsWith("settings.warning.") ||
+          key.startsWith("dashboard.") ||
+          key.startsWith("activity.prompt.") ||
+          [
+            "settings.modelPolicy",
+            "settings.modelPolicy.fixed",
+            "settings.modelPolicy.automatic",
+            "settings.allowDelegation",
+            "settings.serviceTier",
+            "settings.serviceTier.default",
+            "settings.fixedNotice",
+            "settings.preferredSelection",
+            "settings.selectionRequired",
+            "settings.explicitRequired",
+            "settings.developerModeRefreshRequired",
+            "activity.approveSession"
+          ].includes(key);
+        if (audited && !allowedSameAsEnglish.has(key)) {
+          expect(UI_TRANSLATIONS[locale][key], `${locale}:${key}`)
+            .not.toBe(UI_TRANSLATIONS.en[key]);
+        }
+        const placeholders = (value: string) =>
+          [...value.matchAll(/\{([A-Za-z][A-Za-z0-9]*)\}/g)]
+            .map((match) => match[1])
+            .sort();
+        expect(placeholders(UI_TRANSLATIONS[locale][key]), `${locale}:${key}`)
+          .toEqual(placeholders(UI_TRANSLATIONS.en[key]));
+      }
+    }
+  });
+
+  it("does not treat a synthesized effective locale as the automatic host locale", () => {
+    expect(resolveHostUiLocaleTag.toString()).not.toContain("__name");
+    expect(resolveHostUiLocaleTag(undefined, {
+      hostLocale: null,
+      "openai/locale": "en"
+    }, "ko-KR")).toBe("ko-KR");
+    expect(resolveHostUiLocaleTag(undefined, {
+      hostLocale: "ko-KR",
+      "openai/locale": "ko"
+    }, "en-US")).toBe("ko-KR");
+    expect(resolveHostUiLocaleTag("ja-JP", {
+      hostLocale: "ko-KR"
+    }, "en-US")).toBe("ja-JP");
+    expect(resolveHostUiLocaleTag(undefined, {
+      "openai/locale": "fr-FR"
+    }, "ko-KR")).toBe("fr-FR");
+    expect(resolveHostUiLocaleTag(undefined, {}, "")).toBe("en");
   });
 
   it("resolves BCP 47 language/script fallbacks without location inference", () => {
@@ -53,33 +332,809 @@ describe("human-facing UI localization", () => {
     expect(resolveUiLocale(null)).toBe("en");
   });
 
-  it("serializes bundles safely into both self-contained cards", () => {
+  it("uses canonical lowercase effort labels while localizing descriptions", () => {
+    expect(reasoningEffortPresentation(" HIGH ", "ko", "English upstream description")).toEqual({
+      effort: "high",
+      label: "high",
+      description: "복잡한 작업을 더 깊게 검토하지만 응답 시간이 늘어날 수 있습니다.",
+      descriptionSource: "localized"
+    });
+    expect(reasoningEffortPresentation("high", "en", "Upstream high description")).toMatchObject({
+      label: "high",
+      description: "Upstream high description",
+      descriptionSource: "upstream"
+    });
+    expect(reasoningEffortPresentation("breakthrough", "ko", "Unlocalized upstream prose")).toEqual({
+      effort: "breakthrough",
+      label: "breakthrough",
+      description: UI_TRANSLATIONS.ko["settings.effortFallbackDescription"],
+      descriptionSource: "fallback"
+    });
+    expect(missingReasoningEffortTranslations(["high", "breakthrough", "breakthrough", "novel"]))
+      .toEqual(["breakthrough", "novel"]);
+  });
+
+  it("serializes only each self-contained card's translation namespaces within byte budgets", () => {
     const serialized = serializedUiTranslations();
     expect(serialized).not.toContain("<");
     expect(JSON.parse(serialized)).toEqual(UI_TRANSLATIONS);
-    expect(SETTINGS_CARD_HTML).toContain(serialized);
-    expect(ACTIVITY_CARD_HTML).toContain(serialized);
+    expect(SETTINGS_CARD_HTML).toContain(
+      serializedUiTranslations(["common", "settings", "effort", "history", "problem.historyNotice", "problem.automaticHistoryNotice"])
+    );
+    const activityBundles = JSON.parse(ACTIVITY_CARD_HTML.match(/const BUNDLES=(.*);/)![1]);
+    const referencedActivityKeys = [...ACTIVITY_CARD_HTML.matchAll(/t\["([a-zA-Z0-9.-]+)"\]/g)].map(match => match[1]);
+    for (const bundle of Object.values(activityBundles) as Record<string, string>[]) {
+      for (const key of referencedActivityKeys) expect(bundle[key], key).toBeTruthy();
+      expect(bundle).not.toHaveProperty("settings.title");
+    }
+
+    const dashboardBundles = JSON.parse(DASHBOARD_CARD_HTML.match(/const BUNDLES=(.*);/)![1]);
+    const dashboardKeys = [...DASHBOARD_CARD_HTML.matchAll(/t\["([a-zA-Z0-9.-]+)"\]/g)].map(match => match[1]);
+    for (const bundle of Object.values(dashboardBundles) as Record<string, string>[]) {
+      for (const key of dashboardKeys) expect(bundle[key], key).toBeTruthy();
+      expect(bundle).not.toHaveProperty("settings.title");
+    }
+    expect(SETTINGS_CARD_HTML).not.toContain('"activity.title"');
+    expect(ACTIVITY_CARD_HTML).not.toContain('"settings.title"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('"settings.title"');
+    expect(Buffer.byteLength(SETTINGS_CARD_HTML, "utf8")).toBeLessThanOrEqual(
+      SETTINGS_CARD_HTML_MAX_BYTES
+    );
+    expect(Buffer.byteLength(ACTIVITY_CARD_HTML, "utf8")).toBeLessThanOrEqual(
+      ACTIVITY_CARD_HTML_MAX_BYTES
+    );
+    expect(Buffer.byteLength(DASHBOARD_CARD_HTML, "utf8")).toBeLessThanOrEqual(
+      DASHBOARD_CARD_HTML_MAX_BYTES
+    );
     expect(SETTINGS_CARD_HTML).toContain(PRODUCT_INFO.displayName);
-    expect(`${SETTINGS_CARD_HTML}${ACTIVITY_CARD_HTML}${serialized}`).not.toContain("MacBook Air");
+    expect(SETTINGS_CARD_HTML).toContain('document.title=t["settings.title"]');
+    expect(ACTIVITY_CARD_HTML).toContain('document.title=t["activity.title"]');
+    expect(DASHBOARD_CARD_HTML).toContain('document.title=t["dashboard.title"]');
+    expect(DASHBOARD_CARD_HTML).not.toContain('aria-label="Overview counts"');
+    expect(DASHBOARD_CARD_HTML).toContain('t["dashboard.countsLabel"]');
+    expect(ACTIVITY_CARD_HTML).toContain('localizedText("activity.prompt.handoff"');
+    expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.sessionManaged"');
+    expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.unlimited"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="revision"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-visibility"');
+    expect(SETTINGS_CARD_HTML).toContain('id="use-priority-service-tier" type="checkbox"');
+    expect(SETTINGS_CARD_HTML).toContain(
+      'id="show-bridge-threads-in-codex-app" type="checkbox"'
+    );
+    expect(SETTINGS_CARD_HTML).toContain(
+      "showBridgeThreadsInCodexApp:elements.codexAppThreads.checked"
+    );
+    expect(SETTINGS_CARD_HTML).toContain(
+      "elements.codexAppThreads.checked=settings.showBridgeThreadsInCodexApp===true"
+    );
+    expect(SETTINGS_CARD_HTML).toContain(
+      't["settings.codexAppThreadsHint"]'
+    );
+    expect(SETTINGS_CARD_HTML).not.toContain('id="policy-service-tier"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-view"');
+    expect(SETTINGS_CARD_HTML).not.toContain("activityCardView");
+    expect(ACTIVITY_CARD_HTML).not.toContain("let viewMode=");
+    expect(serialized).not.toContain("settings.cardView");
+    expect(SETTINGS_CARD_HTML).not.toContain('id="completion-handoff"');
+    expect(SETTINGS_CARD_HTML).toContain('id="projects-title"');
+    expect(SETTINGS_CARD_HTML).toContain('id="project-list"');
+    expect(SETTINGS_CARD_HTML).toContain('id="add-project" type="button"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="default-project"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="allowed-root-list"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="allowed-roots"');
+    expect(SETTINGS_CARD_HTML).toContain('data-i18n="settings.resetHint"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="default-cwd"');
+    expect(SETTINGS_CARD_HTML).not.toContain('className="project-id-input"');
+    expect(SETTINGS_CARD_HTML).not.toContain('projectField("settings.projectId"');
+    expect(serialized).not.toContain('settings.projectId');
+    expect(serialized).not.toContain('settings.defaultProject');
+    expect(serialized).not.toContain('settings.cwd');
+    expect(SETTINGS_CARD_HTML).toContain("SETTINGS_REVISION_CONFLICT");
+    expect(`${SETTINGS_CARD_HTML}${ACTIVITY_CARD_HTML}${DASHBOARD_CARD_HTML}${serialized}`)
+      .not.toContain("MacBook Air");
+  });
+
+  it("localizes the stale-card recovery page from the browser locale", () => {
+    const staleHtml = htmlForUiResource(
+      "settings",
+      "ui://codex-mcp-bridge/settings/not-retained.html",
+      SETTINGS_CARD_HTML
+    );
+    expect(staleHtml).toContain("플러그인 새로고침 필요");
+    expect(staleHtml).toContain('document.title=t["stale.title"]');
+    expect(staleHtml).toContain("navigator.language");
+    expect(staleHtml).not.toContain('<html lang="en">');
+    expect(staleHtml).not.toContain("<title>Plugin refresh required</title>");
   });
 
   it("supports host locale updates, accessible controls, and standard/fallback app messaging", () => {
-    for (const html of [SETTINGS_CARD_HTML, ACTIVITY_CARD_HTML]) {
+    for (const html of [SETTINGS_CARD_HTML, ACTIVITY_CARD_HTML, DASHBOARD_CARD_HTML]) {
       expect(html).toContain('dir="auto"');
-      expect(html).toContain('initialMetadata["openai/locale"]');
-      expect(html).toContain('initialMetadata["webplus/i18n"]');
+      expect(html).toContain('"openai/locale"');
+      expect(html).toContain('"webplus/i18n"');
       expect(html).toContain('window.openai.locale');
+      expect(html).toContain("resolveHostUiLocaleTag(");
       expect(html).toContain('openai:set_globals');
       expect(html).not.toContain("openai/userLocation");
       expect(html).not.toMatch(/geolocation|navigator\.geolocation/i);
     }
+    for (const html of [SETTINGS_CARD_HTML, ACTIVITY_CARD_HTML, DASHBOARD_CARD_HTML]) {
+      expect(html).toContain("initialMetadata,navigator.language)");
+    }
+    expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_read"');
+    expect(DASHBOARD_CARD_HTML).toContain('id="dashboard-content" hidden');
+    expect(DASHBOARD_CARD_HTML).toContain('data-i18n="common.loading"');
+    expect(DASHBOARD_CARD_HTML).toContain("function normalizeHostToolResult");
+    expect(DASHBOARD_CARD_HTML).toContain("mcp_tool_result");
+    expect(DASHBOARD_CARD_HTML).toContain("standardBridgeReady=");
+    expect(DASHBOARD_CARD_HTML).toContain("standardBridgeReady=beginStandardBridge()");
+    expect(DASHBOARD_CARD_HTML).toContain("function standardToolCall(name,args)");
+    expect(DASHBOARD_CARD_HTML).toContain("function callUiToolWithFallback");
+    expect(DASHBOARD_CARD_HTML).toContain("STANDARD_CALL_BUDGET_MS");
+    expect(DASHBOARD_CARD_HTML).toContain("compatibilityTimeoutMs:STANDARD_CALL_BUDGET_MS");
+    expect(DASHBOARD_CARD_HTML).toContain("if(compatibility)return callUiToolWithFallback");
+    expect(DASHBOARD_CARD_HTML).not.toContain('typeof window.openai.callTool==="function"?Promise.resolve(false)');
+    expect(DASHBOARD_CARD_HTML).not.toContain("__name");
+    expect(DASHBOARD_CARD_HTML).not.toContain('message.method==="ui/notifications/tool-result"');
+    expect(DASHBOARD_CARD_HTML).not.toContain("function consumeHostResult(");
+    expect(DASHBOARD_CARD_HTML).toContain("function render(next,localeReady=false,pageRequest=appendRequest)");
+    expect(DASHBOARD_CARD_HTML).toContain("function queueEnrichment(");
+    expect(DASHBOARD_CARD_HTML).toContain("function drainEnrichment(");
+    expect(DASHBOARD_CARD_HTML).toContain("enrich:inspect");
+    expect(DASHBOARD_CARD_HTML).toContain("enrich:false");
+    expect(DASHBOARD_CARD_HTML).toContain("async function reload(manual=false,enrichAfter=true)");
+    expect(DASHBOARD_CARD_HTML).not.toContain("projectOffset");
+    expect(DASHBOARD_CARD_HTML).not.toContain("conversationOffset");
+    expect(DASHBOARD_CARD_HTML).toContain("dashboard.refreshFailedRetained");
+    expect(SETTINGS_CARD_HTML).toContain('callTool("codex_ui_read"');
+    expect(SETTINGS_CARD_HTML).not.toContain('callTool("codex_settings",');
+    expect(SETTINGS_CARD_HTML).not.toContain('message.method==="ui/notifications/tool-result"');
+    expect(SETTINGS_CARD_HTML).toContain('id="settings-form" hidden');
+    expect(SETTINGS_CARD_HTML).toContain('id="settings-loading"');
+    expect(DASHBOARD_CARD_HTML).toContain("MCP_TOOL_CALL_DISPATCH_TIMEOUT");
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="view-project"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="view-conversation"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="view-status"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="project-view"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="conversation-view"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="status-view"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="status-idle-panel"');
+    expect(DASHBOARD_CARD_HTML).toContain('selectedStatus="all"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="status-idle-toggle"');
+    expect(DASHBOARD_CARD_HTML).toContain('aria-pressed="false"');
+    expect(DASHBOARD_CARD_HTML).toContain('id="terminal-more"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="idle-more"');
+    expect(DASHBOARD_CARD_HTML).toContain('data-status-filter="response-required"');
+    expect(DASHBOARD_CARD_HTML).toContain('data-status-filter="problems"');
+    expect(DASHBOARD_CARD_HTML).toContain('id="history-filter"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('id="status-all"');
+    expect(DASHBOARD_CARD_HTML).toContain('.count[aria-pressed="true"],#history-filter[aria-pressed="true"]');
+    expect(DASHBOARD_CARD_HTML).toContain('id="active-section" hidden');
+    expect(DASHBOARD_CARD_HTML).toContain('id="terminal-section" hidden');
+    expect(DASHBOARD_CARD_HTML).toContain('data-i18n="dashboard.loadMore"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.previous"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.next"');
+    expect(DASHBOARD_CARD_HTML).toContain("async function loadMore(bucket)");
+    expect(DASHBOARD_CARD_HTML).toContain("function mergeRows(current,incoming)");
+    expect(DASHBOARD_CARD_HTML).toContain("function reconcileDashboardPageCaches(");
+    expect(DASHBOARD_CARD_HTML).toContain("next.terminalPagination.offset > 0");
+    expect(DASHBOARD_CARD_HTML).toContain("next.idlePagination.offset > 0");
+    expect(DASHBOARD_CARD_HTML).not.toContain("dashboardViewMode");
+    expect(DASHBOARD_CARD_HTML).not.toContain("api.setWidgetState");
+    expect(DASHBOARD_CARD_HTML).not.toContain("render(unwrap(message.params)");
+    expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/resource-teardown"');
+    expect(DASHBOARD_CARD_HTML).toContain('window.addEventListener("pagehide"');
+    expect(DASHBOARD_CARD_HTML).toContain('rpcNotification("ui/notifications/size-changed"');
+    expect(DASHBOARD_CARD_HTML).toContain("notifyIntrinsicHeight");
+    expect(DASHBOARD_CARD_HTML).toContain("new ResizeObserver");
+    expect(DASHBOARD_CARD_HTML).toContain("new Intl.RelativeTimeFormat");
+    expect(DASHBOARD_CARD_HTML).toContain("expandedHistories");
+    expect(DASHBOARD_CARD_HTML).toContain('node("details","history")');
+    expect(DASHBOARD_CARD_HTML).toContain(
+      "function renderHistoryTurn(turn,key,heading)"
+    );
+    expect(DASHBOARD_CARD_HTML).toContain(
+      "dashboardHistoryActivityHeading(historicalTurn,previousTurn,enclosingActivity)"
+    );
+    expect(DASHBOARD_CARD_HTML).toContain(
+      'elapsed==null?t["dashboard.time.durationUnknown"]'
+    );
+    expect(DASHBOARD_CARD_HTML).not.toContain(
+      'updated=t["dashboard.time.updated"].replace'
+    );
+    expect(DASHBOARD_CARD_HTML).toContain('else if(row.bucket!=="active")');
+    expect(DASHBOARD_CARD_HTML).toContain(
+      "function renderActivityRows(parent,rows,recentActivity=false)"
+    );
+    expect(DASHBOARD_CARD_HTML).not.toContain("function renderAgentRows(parent,rows)");
+    expect(DASHBOARD_CARD_HTML).toContain('function appendRowContext(parent,row,mode="row")');
+    expect(DASHBOARD_CARD_HTML).toContain(
+      "groupDashboardRowsByActivity(rows)"
+    );
+    expect(DASHBOARD_CARD_HTML).toContain(
+      'function renderActivityGroup(parent,group,recentActivity=false){const representative=group.rows[0]'
+    );
+    expect(DASHBOARD_CARD_HTML).toContain("identity.appendChild(title)");
+    expect(DASHBOARD_CARD_HTML).not.toContain("aggregateDashboardActivityStatus");
+    expect(DASHBOARD_CARD_HTML).toContain("head.appendChild(title)");
+    expect(DASHBOARD_CARD_HTML).toContain(
+      'if(!suppressIdleStatus||row.status!=="idle")head.appendChild(state)'
+    );
+    expect(DASHBOARD_CARD_HTML).toContain(
+      "appendAgentBody(agent,row,true,recentActivity,group.activityTitle)"
+    );
+    expect(DASHBOARD_CARD_HTML).not.toContain("commonDashboardExecution");
+    expect(DASHBOARD_CARD_HTML).not.toContain("commonDashboardNextExecution");
+    expect(DASHBOARD_CARD_HTML).not.toContain("head.append(title,state)");
+    expect(DASHBOARD_CARD_HTML).not.toContain(
+      "shouldShowDashboardNextExecution(row.execution,turn&&turn.execution)"
+    );
+    expect(DASHBOARD_CARD_HTML).not.toContain("__name");
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "function summaryText(row,includeUpdatedAt=false)"
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'const parts=[activityLifecycleLabel(row)]'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "box.appendChild(activityLifecycleIcon(row))"
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain(
+      'node("span","sr-only",stateLabel(row.displayState))'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "renderActivityRow(row,showWorkspace,true)"
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain(
+      "shouldShowHistoricalActivityTitle(activityTitle,item.latestActivityId,visibleActivityIds)"
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "item.appendChild(renderInteraction(row,agent,control,interaction))"
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain(
+      "content.appendChild(renderInteraction(row,agent,control,interaction))"
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'entry.targetKind==="job"&&entry.agentName'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'rows.map((row)=>String(row&&row.activityId||"").trim())'
+    );
+    expect(DASHBOARD_CARD_HTML).not.toContain("function conversationGroups(rows)");
+    expect(DASHBOARD_CARD_HTML).not.toContain("function projectGroups(rows)");
+    expect(DASHBOARD_CARD_HTML).not.toContain("function renderConversationGroups");
+    expect(DASHBOARD_CARD_HTML).not.toContain("function renderProjectGroups");
+    expect(DASHBOARD_CARD_HTML).not.toContain('node("section","conversation-group")');
+    expect(DASHBOARD_CARD_HTML).toContain('node("a","conversation-link"');
+    expect(DASHBOARD_CARD_HTML).not.toContain(
+      'node("a","conversation-link codex-session-link"'
+    );
+    expect(DASHBOARD_CARD_HTML).toContain('link.rel="noopener noreferrer"');
+    expect(DASHBOARD_CARD_HTML).toContain("function dispatchDashboardExternalUrl(");
+    expect(DASHBOARD_CARD_HTML).toContain(
+      "dispatchDashboardExternalUrl(event,url,window.openai,openConversationFallback)"
+    );
+    expect(DASHBOARD_CARD_HTML).toContain("safeConversationUrl(row.conversationUrl)");
+    expect(DASHBOARD_CARD_HTML).not.toContain("safeCodexThreadUrl");
+    expect(DASHBOARD_CARD_HTML).not.toContain("row.codexThreadUrl");
+    expect(DASHBOARD_CARD_HTML).not.toContain("const values=[row.sessionAlias,row.projectName]");
+    expect(DASHBOARD_CARD_HTML).toContain("turn.durationMs");
+    expect(DASHBOARD_CARD_HTML).toContain('if(active)return duration');
+    expect(DASHBOARD_CARD_HTML).toContain("lastRenderedAt");
+    expect(DASHBOARD_CARD_HTML).not.toContain("lastRenderPriority");
+    expect(DASHBOARD_CARD_HTML).toContain(
+      'standardBridgeReady=beginStandardBridge();setLocale(localeTag,false);if(typeof ResizeObserver'
+    );
+    expect(DASHBOARD_CARD_HTML).toContain('window.addEventListener("pageshow"');
+    expect(DASHBOARD_CARD_HTML).not.toContain("invalidateDashboardView");
+    expect(DASHBOARD_CARD_HTML).not.toContain("if(requiresFresh){automaticRefreshDisabled=false;void reload()}");
+    expect(DASHBOARD_CARD_HTML).not.toContain("Date.now()-lastRefreshAt<=30000");
+    expect(DASHBOARD_CARD_HTML).toContain('document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&view){mounted=true;paint(view)}})');
+    expect(DASHBOARD_CARD_HTML).toContain('window.addEventListener("online",()=>{if(mounted&&!standardBridgeInitialized)void beginStandardBridge()})');
+    expect(DASHBOARD_CARD_HTML).toContain('statusFilter:"all"');
+    expect(DASHBOARD_CARD_HTML).toContain("dashboardRowMatchesStatus(row,selectedStatus)");
+    expect(DASHBOARD_CARD_HTML).toContain('includeHistory:selectedStatus==="history"');
+    expect(DASHBOARD_CARD_HTML).toContain('role="status" aria-live="polite"');
+    expect(DASHBOARD_CARD_HTML).not.toContain("setInterval(");
+    expect(DASHBOARD_CARD_HTML).not.toContain("localStorage");
+    expect(DASHBOARD_CARD_CONTENT_METADATA["openai/widgetCSP"].redirect_domains)
+      .toEqual(["https://chatgpt.com"]);
+    expect(DASHBOARD_CARD_CONTENT_METADATA.ui.prefersBorder).toBe(false);
+    expect(DASHBOARD_CARD_CONTENT_METADATA["openai/widgetPrefersBorder"]).toBe(false);
+    expect(SETTINGS_CARD_CONTENT_METADATA.ui.prefersBorder).toBe(false);
+    expect(SETTINGS_CARD_CONTENT_METADATA["openai/widgetPrefersBorder"]).toBe(false);
+    expect(DASHBOARD_CARD_HTML.indexOf('id="active-section"'))
+      .toBeLessThan(DASHBOARD_CARD_HTML.indexOf('id="terminal-section"'));
+    expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.idle"');
     expect(SETTINGS_CARD_HTML).toContain('role="status"');
+    expect(SETTINGS_CARD_HTML).toContain('id="ui-language"');
+    expect(SETTINGS_CARD_HTML).not.toContain(
+      'class="notice experimental-notice" data-i18n="settings.appServerExperimental"'
+    );
+    expect(SETTINGS_CARD_HTML).toContain("uiLocalePreference");
     expect(SETTINGS_CARD_HTML).toContain("Settings card unmounted");
+    expect(SETTINGS_CARD_HTML).toContain('rpcRequest("ui/initialize"');
+    expect(SETTINGS_CARD_HTML).toContain('rpcNotification("ui/notifications/initialized"');
+    expect(SETTINGS_CARD_HTML).toContain('message.method==="ui/notifications/host-context-changed"');
+    expect(SETTINGS_CARD_HTML).toContain("new Error(uiBridgeErrorMessage(message.error");
+    expect(SETTINGS_CARD_HTML).not.toContain("new Error(message.error.message");
+    expect(SETTINGS_CARD_HTML).toContain(
+      'id="policy-effort" required aria-describedby="effort-description effort-compatibility"'
+    );
+    expect(SETTINGS_CARD_HTML).toContain('id="effort-description" aria-live="polite"');
+    expect(SETTINGS_CARD_HTML).toContain('aria-describedby="ultra-hint ultra-policy-warning"');
+    expect(SETTINGS_CARD_HTML).toContain('id="allowed-models"');
+    expect(SETTINGS_CARD_HTML).toContain('id="effort-groups"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="preferred-model"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="preferred-effort"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="preferred-selection"');
+    expect(SETTINGS_CARD_HTML).not.toContain("currentPreferredSelection()");
+    expect(SETTINGS_CARD_HTML).not.toContain("fallbackSelection");
+    expect(SETTINGS_CARD_HTML).toContain('return{mode:"automatic",allowedSelections');
+    expect(SETTINGS_CARD_HTML).not.toContain('preferredModel.replaceChildren(option(""');
+    expect(SETTINGS_CARD_HTML).toContain("modelDisplayName(modelId)");
+    expect(SETTINGS_CARD_HTML).not.toContain('selection.model+"]"');
+    expect(SETTINGS_CARD_HTML).toContain("usePriorityServiceTier:elements.priority.checked");
+    expect(SETTINGS_CARD_HTML).toContain("projectOperations=buildProjectOperations(projectSettings.projects)");
+    expect(SETTINGS_CARD_HTML).not.toContain("defaultProjectId");
+    expect(SETTINGS_CARD_HTML).toContain('operation:{kind:"patch",settings}');
+    expect(SETTINGS_CARD_HTML).toContain("limits.projectAvailability");
+    expect(SETTINGS_CARD_HTML).not.toContain("allocateProjectId");
+    expect(SETTINGS_CARD_HTML).toContain("if(project.id)row.dataset.projectId=project.id");
+    expect(SETTINGS_CARD_HTML).toContain('row.querySelector(".project-label-input").focus()');
+    expect(SETTINGS_CARD_HTML).not.toContain("PROJECT_DUPLICATE_ID");
+    expect(SETTINGS_CARD_HTML).toContain("PROJECT_CWD_CONFLICT");
+    expect(SETTINGS_CARD_HTML).toContain('{kind:"archive",projectId:project.id}');
+    expect(SETTINGS_CARD_HTML).toContain('{kind:"restore",projectId:project.id');
+    expect(SETTINGS_CARD_HTML).toContain('{kind:"delete",projectId:project.id}');
+    expect(SETTINGS_CARD_HTML).not.toContain('confirm(t["settings.deleteProjectConfirm"])');
+    expect(SETTINGS_CARD_HTML).toContain('className="project-delete-confirm"');
+    expect(SETTINGS_CARD_HTML).toContain('className="project-pending-message"');
+    expect(SETTINGS_CARD_HTML).toContain('row.dataset.confirmDelete="true"');
+    expect(SETTINGS_CARD_HTML).toContain('classList.toggle("project-changes-pending",count>0)');
+    expect(SETTINGS_CARD_HTML).toContain('t["settings.removeProject"]');
+    expect(SETTINGS_CARD_HTML).toContain("normalizedPathKey");
+    expect(SETTINGS_CARD_HTML).not.toContain('document.createElement("details")');
+    expect(SETTINGS_CARD_HTML).toContain('<fieldset class="choice-group"><legend');
+    expect(SETTINGS_CARD_HTML).toContain('document.createElement("fieldset")');
+    expect(SETTINGS_CARD_HTML).toContain('document.createElement("legend")');
+    expect(SETTINGS_CARD_HTML).toContain('all.dataset.action="all-efforts"');
+    expect(SETTINGS_CARD_HTML).toContain("all.indeterminate=");
+    expect(SETTINGS_CARD_HTML).toContain('all.indeterminate?"mixed"');
+    expect(SETTINGS_CARD_HTML).toContain('id="selection-count" aria-live="polite"');
+    expect(SETTINGS_CARD_HTML).toContain('id="retry-models" type="button"');
+    expect(SETTINGS_CARD_HTML).toContain('id="catalog-status" role="status"');
+    expect(SETTINGS_CARD_HTML).toContain('id="catalog-status-label"');
+    expect(SETTINGS_CARD_HTML).not.toContain('catalog-status-source');
+    expect(SETTINGS_CARD_HTML).not.toContain('settings.catalogSource');
+    expect(SETTINGS_CARD_HTML).toContain('elements.catalogStatus.dataset.state=catalogState');
+    expect(UI_TRANSLATIONS.en["settings.catalogStatus.valid"]).toBe("Model catalog valid");
+    expect(UI_TRANSLATIONS.ko["settings.catalogStatus.valid"]).toBe("모델 카탈로그 정상");
+    expect(SETTINGS_CARD_HTML).not.toContain('id="refresh"');
+    expect(SETTINGS_CARD_HTML).toContain('aria-describedby="access-hint full-warning"');
+    expect(SETTINGS_CARD_HTML).toContain('elements.fullWarning.classList.toggle("show",value==="always-full")');
+    expect(SETTINGS_CARD_HTML.indexOf('id="full-warning"')).toBeLessThan(
+      SETTINGS_CARD_HTML.indexOf('id="model-policy-mode"')
+    );
+    expect(SETTINGS_CARD_HTML).toContain('elements.retryModels.hidden=!catalogProblem');
+    expect(SETTINGS_CARD_HTML).toContain(
+      "next.policyActivation.developerModeRefreshRequired"
+    );
+    expect(SETTINGS_CARD_HTML).toContain('t["settings.developerModeRefreshRequired"]');
+    expect(SETTINGS_CARD_HTML).not.toContain("setInterval(");
+    expect(ACTIVITY_CARD_HTML).toContain("function displayAgentName(value)");
+    expect(ACTIVITY_CARD_HTML).toContain('t["activity.defaultAgent"]:name');
+    for (const html of [DASHBOARD_CARD_HTML, ACTIVITY_CARD_HTML]) {
+      expect(html).toContain(
+        'effort=String(execution.reasoningEffort||"").trim().toLowerCase()'
+      );
+      expect(html).toContain('return model+" · "+effort');
+    }
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'text=prefix+(execution?executionText(execution):t["dashboard.execution.unavailable"])'
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain(
+      't["activity.reasoningEffort"]+" "+execution.reasoningEffort'
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain('prefix+label+" · "+executionText(execution)');
     expect(ACTIVITY_CARD_HTML).toContain('aria-live="polite"');
-    expect(ACTIVITY_CARD_HTML).toContain('document.createElement("datalist")');
+    expect(ACTIVITY_CARD_HTML).not.toContain('document.createElement("datalist")');
+    expect(ACTIVITY_CARD_HTML).not.toContain("<details");
+    expect(ACTIVITY_CARD_HTML).toContain("<body hidden>");
+    expect(ACTIVITY_CARD_HTML).toContain(".card{border:0;border-radius:0;background:transparent}");
+    expect(ACTIVITY_CARD_HTML).toContain("next.feed");
+    expect(ACTIVITY_CARD_HTML).toContain("renderActivityHistory(next.feed,showWorkspace)");
+    expect(ACTIVITY_CARD_HTML).toContain("renderHistorySummary(next.feed)");
+    expect(ACTIVITY_CARD_HTML.indexOf("renderActivityHistory(next.feed,showWorkspace)"))
+      .toBeLessThan(ACTIVITY_CARD_HTML.indexOf("renderHistorySummary(next.feed)"));
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "renderIdleActivityGroups(feed.idleAgents,showWorkspace,visibleActivityIds)"
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain('renderGroup("completed",next.feed.completed');
+    expect(ACTIVITY_CARD_HTML).not.toContain('renderGroup("ended",next.feed.ended');
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "groupActivityIdleAgentsByActivity(group.rows,visibleActivityIds)"
+    );
+    expect(ACTIVITY_CARD_HTML).toContain("Boolean(next.feed.showWorkspaceLabels)");
+    expect(ACTIVITY_CARD_HTML).toContain("summary.push(...workspaces)");
+    expect(ACTIVITY_CARD_HTML).toContain("appendActivityAgents(content,row,readOnly)");
+    expect(ACTIVITY_CARD_HTML).toContain('node("div","activity-agent-list")');
+    expect(ACTIVITY_CARD_HTML).toContain("appendExecutions(identity,[agent],false)");
+    expect(ACTIVITY_CARD_HTML).not.toContain("commonActivityAgentExecution");
+    expect(ACTIVITY_CARD_HTML).toContain('t["dashboard.execution.unavailable"]');
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "agentSummary=[agent.role,agentWorkTime(agent)]"
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain(
+      'agentSummary=[agent.role,codeLabel("agent","idle"),agentWorkTime(agent)]'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'if(value==="waiting-gpt"||value==="verification")return t["activity.workComplete"]'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      '["completed","waiting-gpt","verification"].includes(state))return"completed"'
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain(
+      'row.displayState==="waiting-gpt")parts.push(t["waiting.orchestrator"]'
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain('parts.push(t["activity.gptVerificationNeeded"])');
+    expect(ACTIVITY_CARD_HTML).toContain("execution.modelDisplayName||execution.model");
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "execution.reroutedModelDisplayName||execution.reroutedModel"
+    );
+    expect(ACTIVITY_CARD_HTML).not.toContain('t["activity.reasoningEffort"]');
+    expect(ACTIVITY_CARD_HTML).toContain(".execution-list{");
+    expect(ACTIVITY_CARD_HTML).toContain('aria-expanded');
+    expect(ACTIVITY_CARD_HTML).toContain("activity.currentActivities");
+    expect(ACTIVITY_CARD_HTML).toContain("activity.allActivities");
+    expect(ACTIVITY_CARD_HTML).toContain("activity.previousPage");
+    expect(ACTIVITY_CARD_HTML).toContain("activity.nextPage");
+    expect(ACTIVITY_CARD_HTML).toContain("function previousFailureText(row)");
+    expect(ACTIVITY_CARD_HTML).toContain('count>0&&row.displayState!=="failed"');
+    expect(UI_TRANSLATIONS.ko["activity.previousFailures"]).toBe("이전 실패 {count}건");
+    expect(UI_TRANSLATIONS.ko["activity.forceStop"]).toBe("에이전트 강제 종료…");
+    expect(UI_TRANSLATIONS.ko["activity.stopBackground"]).toBe("백그라운드 프로세스 종료…");
+    for (const locale of SUPPORTED_UI_LOCALES) {
+      expect(UI_TRANSLATIONS[locale]["activity.previousFailures"]).toContain("{count}");
+    }
+    expect(UI_TRANSLATIONS.ko["activity.pastRecords"]).toBe("지난 기록");
+    expect(UI_TRANSLATIONS.ko["activity.completedActivities"]).toBe("완료 작업");
+    expect(UI_TRANSLATIONS.ko["activity.history"]).toBe("최근 활동");
+    expect(ACTIVITY_CARD_HTML).not.toContain('next.viewMode==="activity-summary"');
+    expect(ACTIVITY_CARD_HTML).not.toContain("renderActivities(next)");
+    expect(ACTIVITY_CARD_HTML).not.toContain("renderAgents(next)");
+    expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_agent"');
+    expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_background_process_terminate"');
+    expect(ACTIVITY_CARD_HTML).toContain("expectedAgentVersion:control.agentVersion");
     expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/message"');
     expect(ACTIVITY_CARD_HTML).toContain("sendFollowUpMessage");
-    expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_status",{activityView:true');
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'async function reload(retry=true){const epoch=beginOperation(),card=cardProof(),args={card,limit:viewLimit,enrich:false}'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'afterVersion:snapshot.scopeVersion,waitMs:55000,enrich:false'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain('if(card.presentation.kind==="explicit"&&historyCursor)args.cursor=historyCursor');
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'readActivityView("codex_activity_rehydrate",rehydrateArgs(correlation,false)'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain("function callUiToolWithFallback");
+    expect(ACTIVITY_CARD_HTML).toContain("function withUiToolCallTimeout");
+    expect(ACTIVITY_CARD_HTML).toContain("STANDARD_CALL_BUDGET_MS");
+    expect(ACTIVITY_CARD_HTML).toContain("WATCH_CALL_TIMEOUT_MS");
+    expect(ACTIVITY_CARD_HTML).toContain("function setBusy(value)");
+    expect(ACTIVITY_CARD_HTML).toContain("operationEpoch");
+    expect(ACTIVITY_CARD_HTML).toContain("watchEpoch");
+    expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_interaction_respond"');
+    expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_activity_handoff",{action:"claim-batch"');
+    expect(ACTIVITY_CARD_HTML).toContain("For every listed Job ID");
+    expect(ACTIVITY_CARD_HTML).toContain("Activity and overview queries never contain Job answers");
+    expect(ACTIVITY_CARD_HTML).toContain("Do not start another codex_task merely to reconstruct");
+    expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_status",Object.assign({activityView:true');
+    expect(ACTIVITY_CARD_HTML).toContain("consumeToolOutput");
+    expect(ACTIVITY_CARD_HTML).toContain("codex/activityBootstrap@11");
+    expect(ACTIVITY_CARD_HTML).toContain("codex/activityView@11");
+    expect(ACTIVITY_CARD_HTML).toContain('bootstrap.kind!=="codex/activityBootstrap"');
+    expect(ACTIVITY_CARD_HTML).toContain('view.kind==="codex/activityView"');
+    expect(ACTIVITY_CARD_HTML).toContain("return{requestId:correlation.requestId,bridgeActivity:");
+    expect(ACTIVITY_CARD_HTML).toContain("normalizeHostToolResult(value)");
+    expect(ACTIVITY_CARD_HTML).toContain("hostToolResultMetadata(value)");
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "privateActivityOutput(metadata)||result&&result.structuredContent||parsedToolText(result)||result"
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "if(!window.openai||!applyHostGlobals(window.openai))showHydrationError"
+    );
+    expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/initialize"');
+    expect(ACTIVITY_CARD_HTML).toContain('rpcNotification("ui/notifications/initialized"');
+    expect(ACTIVITY_CARD_HTML).toContain('rpcNotification("ui/notifications/size-changed",{width,height})');
+    expect(ACTIVITY_CARD_HTML).toContain("widgetInstanceId=crypto.randomUUID()");
+    expect(ACTIVITY_CARD_HTML).toContain("Object.assign({},args,{widgetInstanceId})");
+    expect(ACTIVITY_CARD_HTML).toContain('dataset.collapsed=visible?"false":"true"');
+    expect(ACTIVITY_CARD_HTML).toContain('dataset.collapsed==="true")return 1');
+    expect(ACTIVITY_CARD_HTML).toContain('value.method==="ui/notifications/tool-input"');
+    expect(ACTIVITY_CARD_HTML).toContain("rememberToolInput");
+    expect(ACTIVITY_CARD_HTML).toContain("taskInputRequestId!==outputRequestId");
+    expect(ACTIVITY_CARD_HTML).toContain('next.kind==="task"');
+    expect(ACTIVITY_CARD_HTML).toContain('next.kind==="activity"');
+    expect(ACTIVITY_CARD_HTML).toContain('next.mode==="full-history"');
+    expect(ACTIVITY_CARD_HTML).toContain('const key="historical\\u0000"+next.jobId');
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'rehydrationCorrelation={kind:"historical",jobId:next.jobId,requestId:next.requestId}'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain("next.bridgeSession.requestId");
+    expect(ACTIVITY_CARD_HTML).toContain("next.bridgeActivity||next.activityTracking");
+    expect(ACTIVITY_CARD_HTML).toContain("presentation.shouldRenderActivityCard");
+    expect(ACTIVITY_CARD_HTML).toContain("AUTOMATIC_BOOTSTRAP_REASONS.has(presentation.renderReason)");
+    expect(ACTIVITY_CARD_HTML).toContain('"render-reserved","render-confirmed","active-lease"');
+    expect(ACTIVITY_CARD_HTML).toContain('"render-retry","render-latest"');
+    expect(ACTIVITY_CARD_HTML).toContain("activityPresentationId+\"\\u0000\"");
+    expect(ACTIVITY_CARD_HTML).toContain("if(taskBootstrapKey===key)return true");
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "void hydrateWithRetry(reload,key)"
+    );
+    expect(ACTIVITY_CARD_HTML).toContain('presentation.presentationKind!=="automatic"');
+    expect(ACTIVITY_CARD_HTML).toContain("activityPresentationId");
+    expect(ACTIVITY_CARD_HTML).toContain("reservationOwnerId");
+    expect(ACTIVITY_CARD_HTML).toContain("next.watcherPolicy.live===false");
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'next.watcherPolicy.stopReason==="presentation-duplicate"'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "snapshot=null;rehydrationCorrelation=null;historyCursor=null;lastRenderedAt=0;invalidateWatch();setBusy(false);setCardVisible(false);return false"
+    );
+    expect(ACTIVITY_CARD_HTML).toContain('presentation.kind==="historical"');
+    expect(ACTIVITY_CARD_HTML).toContain('presentation.kind==="restored-explicit"');
+    expect(ACTIVITY_CARD_HTML).toContain('readOnly=rehydratedView()');
+    expect(ACTIVITY_CARD_HTML).toContain('"activity.restoredSnapshot":"activity.historicalSnapshot"');
+    expect(ACTIVITY_CARD_HTML).toContain(
+      "const recovery=recoveryAction;if(recovery)"
+    );
+    expect(ACTIVITY_CARD_HTML).toContain(
+      'action=rehydratedView()?(mountedActivity?promoteRehydrated():reloadRehydrated()):reload()'
+    );
+    expect(ACTIVITY_CARD_HTML).toContain('t["activity.loadFailed"]');
+    expect(ACTIVITY_CARD_HTML).toContain("setCardVisible(true)");
+    expect(ACTIVITY_CARD_HTML).toContain('presentation:{kind:"explicit"}');
+    expect(ACTIVITY_CARD_HTML).toContain("snapshot.watcherPolicy.ownsCompletionHandoff===false");
+    expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_activity"');
     expect(ACTIVITY_CARD_HTML).toContain("Activity card unmounted");
+    expect(ACTIVITY_CARD_HTML).toContain("next.uiLocalePreference");
+    expect(UI_TRANSLATIONS.en["activity.historicalSnapshot"]).toContain("Historical snapshot");
+    expect(UI_TRANSLATIONS.ko["activity.restoredSnapshot"]).toContain("복구된 전체 Activity");
+    expect(UI_TRANSLATIONS.ko["activity.refreshFailedRetained"]).toContain("마지막으로 불러온 Activity");
+    expect(UI_TRANSLATIONS.ko["activity.openLive"]).toBe("실시간 Activity 열기");
+  });
+
+  it("deduplicates historical Activity titles by Activity identity, not title text", () => {
+    const visibleActivityIds = new Set(["activity-visible"]);
+    expect(shouldShowHistoricalActivityTitle(
+      "Repeated title",
+      "activity-visible",
+      visibleActivityIds
+    )).toBe(false);
+    expect(shouldShowHistoricalActivityTitle(
+      "Repeated title",
+      "different-activity",
+      visibleActivityIds
+    )).toBe(true);
+    expect(shouldShowHistoricalActivityTitle(
+      "Repeated title",
+      undefined,
+      visibleActivityIds
+    )).toBe(true);
+    expect(shouldShowHistoricalActivityTitle("", "different-activity", visibleActivityIds))
+      .toBe(false);
+  });
+
+  it("groups Dashboard rows by Activity identity while preserving nested Agent order", () => {
+    const rows = [
+      { activityKey: "activity-a", activityTitle: "Shared title", rowKey: "agent-a" },
+      { activityKey: "activity-a", activityTitle: "Shared title", rowKey: "agent-b" },
+      { activityKey: "activity-b", activityTitle: "Shared title", rowKey: "agent-c" }
+    ];
+
+    expect(groupDashboardRowsByActivity(rows)).toEqual([
+      {
+        activityKey: "activity-a",
+        activityTitle: "Shared title",
+        rows: [rows[0], rows[1]]
+      },
+      {
+        activityKey: "activity-b",
+        activityTitle: "Shared title",
+        rows: [rows[2]]
+      }
+    ]);
+  });
+
+  it("groups idle Activity-card Agents by their latest Activity and omits visible duplicates", () => {
+    const rows = [
+      { agentId: "agent-a", latestActivityId: "activity-a", latestActivityTitle: "Shared" },
+      { agentId: "agent-b", latestActivityId: "activity-a", latestActivityTitle: "Shared" },
+      { agentId: "agent-c", latestActivityId: "activity-visible", latestActivityTitle: "Visible" },
+      { agentId: "agent-d", latestActivityId: null, latestActivityTitle: null },
+      { agentId: "agent-e", latestActivityId: null, latestActivityTitle: null }
+    ];
+
+    expect(groupActivityIdleAgentsByActivity(
+      rows,
+      new Set(["activity-visible"])
+    )).toEqual([
+      {
+        activityKey: "activity:activity-a",
+        activityId: "activity-a",
+        activityTitle: "Shared",
+        rows: [rows[0], rows[1]]
+      },
+      {
+        activityKey: "no-recent-activity",
+        activityId: null,
+        activityTitle: null,
+        rows: [rows[3], rows[4]]
+      }
+    ]);
+  });
+
+  it("deduplicates Dashboard history by opaque Activity identity and visible heading", () => {
+    const enclosing = {
+      activityKey: "activity-a",
+      activityTitle: "Repeated title"
+    };
+    const sameActivity = { ...enclosing };
+    const sameTitleDifferentActivity = {
+      activityKey: "activity-b",
+      activityTitle: "Repeated title"
+    };
+    const distinctActivity = {
+      activityKey: "activity-c",
+      activityTitle: "Different title"
+    };
+    expect(dashboardHistoryActivityIdentity({
+      activityKey: "activity-a",
+      activityTitle: "Repeated title"
+    })).toBe("key:activity-a");
+    expect(dashboardHistoryActivityIdentity({
+      activityKey: "activity-b",
+      activityTitle: "Repeated title"
+    })).toBe("key:activity-b");
+    expect(dashboardHistoryActivityIdentity({ activityTitle: "Legacy title" }))
+      .toBe("legacy-title:Legacy title");
+    expect(dashboardHistoryActivityIdentity(null)).toBeNull();
+    expect(dashboardHistoryActivityHeading(sameActivity, enclosing, enclosing))
+      .toEqual({ kind: "none" });
+    expect(dashboardHistoryActivityHeading(
+      sameTitleDifferentActivity,
+      sameActivity,
+      enclosing
+    )).toEqual({ kind: "boundary" });
+    expect(dashboardHistoryActivityHeading(
+      distinctActivity,
+      sameTitleDifferentActivity,
+      enclosing
+    )).toEqual({ kind: "title", title: "Different title" });
+    expect(dashboardHistoryActivityHeading(
+      { activityKey: "activity-d" },
+      distinctActivity,
+      enclosing
+    )).toEqual({ kind: "boundary" });
+  });
+
+  it("uses the same localized Fast mode names in native settings and both cards", () => {
+    const native = JSON.parse(readFileSync(new URL("../macos/Resources/Localization/Localizable.xcstrings", import.meta.url), "utf8"));
+    const hint = "지원되는 모델을 더 빠르게 실행합니다. 모델과 추론 수준은 유지되며, 사용량이나 비용이 늘어날 수 있습니다.";
+    for (const [locale, bundle] of Object.entries(UI_TRANSLATIONS)) {
+      for (const [webKey, nativeKey] of [
+        ["settings.usePriority", "빠른 처리 (Fast)"],
+        ["settings.usePriorityHint", hint],
+        ["dashboard.execution.fast", "빠른 처리"]
+      ] as const) {
+        expect(bundle[webKey], locale).toBe(native.strings[nativeKey].localizations[locale].stringUnit.value);
+      }
+      expect(bundle["settings.usePriority"]).toContain("Fast");
+      expect(bundle["settings.automaticNotice"]).not.toContain("Priority");
+      expect(bundle["settings.warning.legacyModel"]).not.toContain("Priority");
+    }
+    for (const serviceTier of ["priority", "fast", " FAST ", "PRIORITY"]) {
+      expect(usesFastProcessing({ serviceTier })).toBe(true);
+    }
+    for (const serviceTier of [undefined, null, "", "default", "auto", "flex", "ultrafast", 1]) {
+      expect(usesFastProcessing({ serviceTier })).toBe(false);
+    }
+    expect(usesFastProcessing(undefined)).toBe(false);
+  });
+
+  it("keeps next-run comparisons compatible for retained cards", () => {
+    const latest = {
+      model: "gpt-5.6-sol",
+      modelDisplayName: "GPT-5.6 Sol",
+      reasoningEffort: "max",
+      isCurrent: false
+    };
+    const sameCurrent = {
+      model: "GPT-5.6-SOL",
+      modelDisplayName: "Renamed display label",
+      reasoningEffort: "MAX",
+      isCurrent: true
+    };
+    const changedCurrent = {
+      ...sameCurrent,
+      reasoningEffort: "high"
+    };
+
+    expect(dashboardExecutionsEqual(latest, sameCurrent)).toBe(true);
+    expect(shouldShowDashboardNextExecution({ ...sameCurrent, serviceTier: "priority" }, latest)).toBe(true);
+    expect(shouldShowDashboardNextExecution(sameCurrent, { ...latest, serviceTier: "fast" })).toBe(true);
+    expect(dashboardExecutionsEqual(
+      { ...latest, serviceTier: "priority" },
+      { ...sameCurrent, serviceTier: " FAST " }
+    )).toBe(true);
+    expect(shouldShowDashboardNextExecution(sameCurrent, latest)).toBe(false);
+    expect(shouldShowDashboardNextExecution(changedCurrent, latest)).toBe(true);
+    expect(shouldShowDashboardNextExecution(sameCurrent, undefined)).toBe(true);
+    expect(shouldShowDashboardNextExecution({ ...changedCurrent, isCurrent: false }, latest))
+      .toBe(false);
+    expect(shouldShowDashboardNextExecution(
+      { ...sameCurrent, reroutedModel: "gpt-5.6-terra" },
+      latest
+    )).toBe(true);
+    expect(UI_TRANSLATIONS.ko["dashboard.execution.next"])
+      .toBe("다음 실행 설정: {execution}");
+    expect(UI_TRANSLATIONS.ko["dashboard.execution.unavailable"])
+      .toBe("모델 · 추론 확인 불가");
+    expect(UI_TRANSLATIONS.ko["dashboard.history.activityBoundary"])
+      .toBe("이전 Activity");
+  });
+
+  it("dispatches Dashboard conversation links through the host and falls back on host failure", async () => {
+    const url = "https://chatgpt.com/c/41414141-4141-4141-8141-414141414141";
+    const preventDefault = vi.fn();
+    const fallback = vi.fn();
+    const openExternal = vi.fn().mockResolvedValue(undefined);
+
+    expect(dispatchDashboardExternalUrl(
+      { preventDefault },
+      url,
+      { openExternal },
+      fallback
+    )).toBe(true);
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(openExternal).toHaveBeenCalledWith({ href: url, redirectUrl: false });
+    expect(fallback).not.toHaveBeenCalled();
+
+    const rejectedFallback = vi.fn();
+    dispatchDashboardExternalUrl(
+      { preventDefault: vi.fn() },
+      url,
+      { openExternal: () => Promise.reject(new Error("host rejected deep link")) },
+      rejectedFallback
+    );
+    await vi.waitFor(() => expect(rejectedFallback).toHaveBeenCalledWith(url));
+
+    const nativeNavigation = { preventDefault: vi.fn() };
+    expect(dispatchDashboardExternalUrl(nativeNavigation, url, undefined, fallback)).toBe(false);
+    expect(nativeNavigation.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("preserves nested host and project errors instead of rendering object coercions", () => {
+    expect(uiBridgeErrorMessage({
+      code: -32603,
+      message: {
+        code: "PROJECT_CWD_NOT_ALLOWED",
+        message: "The selected folder is unavailable."
+      }
+    }, "fallback")).toBe(
+      "PROJECT_CWD_NOT_ALLOWED: The selected folder is unavailable."
+    );
+    expect(uiBridgeErrorMessage({
+      error: {
+        content: [{ type: "text", text: "PROJECT_CWD_CONFLICT: Duplicate project cwd." }]
+      }
+    }, "fallback")).toBe("PROJECT_CWD_CONFLICT: Duplicate project cwd.");
+    expect(uiBridgeErrorMessage(new Error("[object Object]"), "fallback")).toBe("fallback");
+
+    const circular: Record<string, unknown> = {};
+    circular.error = circular;
+    expect(uiBridgeErrorMessage(circular, "fallback")).toBe("fallback");
   });
 });

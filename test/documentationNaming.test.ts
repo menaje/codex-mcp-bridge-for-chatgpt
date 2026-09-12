@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -35,6 +35,51 @@ describe("documentation naming", () => {
   it("keeps the historical third-party name only in the upstream attribution", () => {
     expect(read("README.md")).not.toContain("DeepCogNeural/codex-gpt-bridge");
     expect(read("UPSTREAM.md")).toContain("DeepCogNeural/codex-gpt-bridge");
+  });
+
+  it("keeps the README compact and routes detailed setup by platform and role", () => {
+    const readme = read("README.md");
+    const setup = read("docs/setup.md");
+
+    expect(readme.split(/\r?\n/).length).toBeLessThanOrEqual(180);
+    expect(readme).toContain("[Detailed setup guide](docs/setup.md)");
+    expect(readme).toContain("## What it gives you");
+    expect(readme).toContain("## Quick start");
+
+    for (const image of [
+      "macos-menubar-usage-light-en.png",
+      "macos-dashboard-light-en.png",
+      "macos-app-roles-light-en.png",
+      "chatgpt-dashboard-light-en.png",
+      "chatgpt-settings-light-en.png",
+      "macos-pairing-invitation-light-en.png"
+    ]) {
+      expect(readme).toContain(`docs/images/${image}`);
+      expect(existsSync(path.join(ROOT, "docs/images", image))).toBe(true);
+    }
+
+    expect(setup).toContain("images/chatgpt-dashboard-light-en.png");
+    expect(existsSync(path.join(ROOT, "docs/images", "chatgpt-dashboard-light-en.png"))).toBe(true);
+
+    expect(setup).toContain("## macOS server mode");
+    expect(setup).toContain("## macOS client mode");
+    expect(setup).toContain("## Node.js server on Windows or Linux");
+    expect(setup).toContain("## Settings reference");
+  });
+
+  it("ships dotenv-only secure launcher credentials", () => {
+    const packageJson = JSON.parse(read("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const scripts = packageJson.scripts ?? {};
+
+    expect(Object.keys(scripts).some((name) => /keychain/i.test(name))).toBe(false);
+    expect(Object.values(scripts).some((command) => /keychain/i.test(command))).toBe(false);
+    expect(existsSync(path.join(ROOT, "scripts/start-secure-from-keychain.sh"))).toBe(false);
+
+    for (const file of ["README.md", "docs/security.md", "docs/releasing.md"]) {
+      expect(read(file), file).not.toMatch(/keychain/i);
+    }
   });
 });
 

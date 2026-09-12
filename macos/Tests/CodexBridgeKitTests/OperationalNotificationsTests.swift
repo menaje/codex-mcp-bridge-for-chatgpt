@@ -1,0 +1,266 @@
+import XCTest
+@testable import CodexBridgeKit
+@testable import CodexBridgeMenuBar
+
+@MainActor
+final class OperationalNotificationsTests: XCTestCase {
+    private let origin = Date(timeIntervalSince1970: 1_000)
+    private let scope = OperationalNotificationPolicy.scope("fixture-server")
+
+    func testSystemPermissionPreservesTheInitialAuthorizationPrompt() {
+        // A first install must request permission, not send the user to Settings
+        // as if they had already denied it. Both allowed system states deliver.
+        XCTAssertEqual(SystemOperationalNotificationDelivery.permission(for: .notDetermined), .notDetermined)
+        XCTAssertEqual(SystemOperationalNotificationDelivery.permission(for: .denied), .denied)
+        XCTAssertEqual(SystemOperationalNotificationDelivery.permission(for: .authorized), .authorized)
+        XCTAssertEqual(SystemOperationalNotificationDelivery.permission(for: .provisional), .authorized)
+    }
+
+    func testPermissionRefreshRecognizesAuthorizationWithoutPromptingAgain() async throws {
+        let suite = "bridge-permission-test-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let delivery = NotificationDeliveryFixture()
+        let model = AppModel(operationalNotifications: OperationalNotifications(defaults: defaults, delivery: delivery))
+        delivery.authorizationState = .notDetermined
+        await model.refreshNotificationPermission()
+        XCTAssertEqual(model.notificationPermission, .notDetermined)
+        delivery.authorized = true
+        delivery.authorizationState = .authorized
+        await model.requestNotificationAuthorization()
+        XCTAssertEqual(model.notificationPermission, .authorized)
+        XCTAssertEqual(delivery.authorizationRequests, 0)
+        delivery.authorizationState = .denied
+        await model.refreshNotificationPermission()
+        XCTAssertEqual(model.notificationPermission, .denied)
+        XCTAssertFalse(model.notificationAuthorizationInProgress)
+    }
+
+    func testGraceTransientRecoveryAndRestartDedupe() throws {
+        var policy = OperationalNotificationPolicy()
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin))
+        XCTAssertNil(policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(30)))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(50)))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(80)))
+        XCTAssertEqual(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(110)), .tunnel)
+        policy.markDelivered(scope: scope, problem: .tunnel)
+        policy = try JSONDecoder().decode(OperationalNotificationPolicy.self, from: JSONEncoder().encode(policy))
+        XCTAssertNil(policy.observe(.unknown, scope: scope, now: origin.addingTimeInterval(120)))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(180)))
+        XCTAssertNil(policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(190)))
+        XCTAssertNil(policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(210)))
+        XCTAssertNil(policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(230)))
+        XCTAssertNil(policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(250)))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(260)))
+        XCTAssertEqual(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(320)), .tunnel)
+    }
+
+    func testDeniedPermissionPreferencesDeliveryFailureAndPersistence() async throws {
+        let suite = "bridge-notifications-test-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let delivery = NotificationDeliveryFixture()
+        var controller = OperationalNotifications(defaults: defaults, delivery: delivery)
+        func refresh(_ time: Double, problem: OperationalProblem = .runtime) async {
+            await controller.refresh(observation: .problem(problem), scope: scope,
+                locale: Locale(identifier: "ko"), now: origin.addingTimeInterval(time))
+        }
+        XCTAssertTrue(controller.bridgeEnabled)
+        XCTAssertTrue(controller.securityEnabled)
+        await refresh(0)
+        await refresh(60)
+        XCTAssertTrue(delivery.sent.isEmpty)
+        XCTAssertEqual(controller.actionRequired, .runtime)
+        delivery.authorized = true
+        controller.bridgeEnabled = false
+        await refresh(70)
+        XCTAssertTrue(delivery.sent.isEmpty)
+        controller.bridgeEnabled = true
+        delivery.fail = true
+        await refresh(80)
+        XCTAssertTrue(delivery.sent.isEmpty)
+        delivery.fail = false
+        await refresh(90)
+        XCTAssertEqual(delivery.sent, [.runtime])
+        controller = OperationalNotifications(defaults: defaults, delivery: delivery)
+        await refresh(100)
+        XCTAssertEqual(delivery.sent, [.runtime])
+        controller.bridgeEnabled = false
+        await refresh(110, problem: .remoteSecurity)
+        await refresh(170, problem: .remoteSecurity)
+        XCTAssertEqual(delivery.sent, [.runtime, .remoteSecurity])
+        controller = OperationalNotifications(defaults: defaults, delivery: delivery)
+        XCTAssertFalse(controller.bridgeEnabled)
+        XCTAssertTrue(controller.securityEnabled)
+        XCTAssertEqual(delivery.identifiers.count, Set(delivery.identifiers).count)
+    }
+
+    func testRestartAndUnknownObservationCannotCountAsContinuousRecovery() throws {
+        var policy = OperationalNotificationPolicy()
+        _ = policy.observe(.problem(.tunnel), scope: scope, now: origin)
+        XCTAssertEqual(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(60)), .tunnel)
+        policy.markDelivered(scope: scope, problem: .tunnel)
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(70))
+
+        policy = try JSONDecoder().decode(OperationalNotificationPolicy.self, from: JSONEncoder().encode(policy))
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_000))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(1_010)))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(1_070)))
+
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_080))
+        _ = policy.observe(.unknown, scope: scope, now: origin.addingTimeInterval(1_090))
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_200))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(1_210)))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(1_270)))
+
+        // A fully observed stable recovery still permits a later, distinct outage notification.
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_300))
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_320))
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_340))
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_360))
+        XCTAssertNil(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(1_400)))
+        XCTAssertEqual(policy.observe(.problem(.tunnel), scope: scope, now: origin.addingTimeInterval(1_460)), .tunnel)
+    }
+
+    func testSuspendedPollingCannotCountAsContinuousRecovery() {
+        var policy = OperationalNotificationPolicy()
+        _ = policy.observe(.problem(.runtime), scope: scope, now: origin)
+        policy.markDelivered(scope: scope, problem: .runtime)
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(70))
+        // Simulate a suspended process without a chance to publish an explicit unknown observation.
+        _ = policy.observe(.healthy, scope: scope, now: origin.addingTimeInterval(1_000))
+        _ = policy.observe(.problem(.runtime), scope: scope, now: origin.addingTimeInterval(1_010))
+        XCTAssertNil(policy.observe(.problem(.runtime), scope: scope, now: origin.addingTimeInterval(1_070)))
+    }
+
+    func testReadinessBannerWaitsForGraceAndClearsAsSoonAsConnectionRecovers() async throws {
+        let suite = "bridge-startup-notifications-test-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let controller = OperationalNotifications(defaults: defaults, delivery: NotificationDeliveryFixture())
+        let model = AppModel(operationalNotifications: controller)
+        model.authStatus = try JSONDecoder().decode(CodexLoginStatus.self,
+            from: Data(#"{"installed":true,"authenticated":true,"summary":"ready"}"#.utf8))
+        func helper(phase: String, connected: Bool = false) throws -> HelperStatus {
+            let json = #"""
+            {"kind":"helper-status","generatedAt":"2026-09-06T00:00:00Z","phase":"\#(phase)","restartAttempt":0,
+            "configuration":{"path":"/private/config","exists":true,"valid":true,"hasApiKey":true,"hasTunnelId":true},
+            "bridge":{"socketPath":"/private/socket","connected":true},
+            "tunnel":{"phase":"\#(connected ? "connected" : "starting")","doctorPassed":true,"processRunning":true,"connected":\#(connected)}}
+            """#
+            return try JSONDecoder().decode(HelperStatus.self, from: Data(json.utf8))
+        }
+
+        for (index, problem) in [OperationalProblem.runtime, .tunnel].enumerated() {
+            let start = origin.addingTimeInterval(Double(index) * 100)
+            model.helperStatus = try helper(phase: problem == .runtime ? "starting" : "running")
+            await model.refreshOperationalNotifications(at: start)
+            XCTAssertEqual(model.operationalObservation, .problem(problem))
+            XCTAssertEqual(model.health, .checking)
+            XCTAssertNil(model.operationalProblem)
+
+            await model.refreshOperationalNotifications(at: start.addingTimeInterval(59))
+            XCTAssertTrue(model.isBridgeConnectionChecking)
+            XCTAssertNil(model.operationalProblem)
+
+            await model.refreshOperationalNotifications(at: start.addingTimeInterval(60))
+            XCTAssertFalse(model.isBridgeConnectionChecking)
+            XCTAssertFalse(model.isTunnelConnectionChecking)
+            XCTAssertEqual(model.health, .attention)
+            XCTAssertEqual(model.operationalProblem, problem)
+
+            // A previous alert must not win over a new observation while the
+            // notification refresh is still waiting in its debounce window.
+            model.helperStatus = nil
+            XCTAssertTrue(model.isBridgeConnectionChecking)
+            XCTAssertEqual(model.health, .checking)
+            XCTAssertNil(model.operationalProblem)
+            model.helperStatus = try helper(phase: "running", connected: true)
+            XCTAssertTrue(model.bridgeConnected)
+            XCTAssertEqual(model.operationalObservation, .healthy)
+            XCTAssertEqual(model.health, .healthy) // Dashboard loading does not change service health.
+            XCTAssertNil(model.operationalProblem)
+            await model.refreshOperationalNotifications(at: start.addingTimeInterval(61))
+        }
+    }
+
+    func testOperationalClassificationIgnoresTaskEventsAndManualOperations() throws {
+        let model = AppModel()
+        func helper(phase: String = "running", valid: Bool = true, bridge: Bool = true, tunnel: Bool = true) throws -> HelperStatus {
+            let json = #"""
+            {"kind":"helper-status","generatedAt":"2026-09-06T00:00:00Z","phase":"\#(phase)","restartAttempt":0,
+            "configuration":{"path":"/private/secret","exists":true,"valid":\#(valid),"hasApiKey":true,"hasTunnelId":true},
+            "bridge":{"socketPath":"/private/socket","connected":\#(bridge)},
+            "tunnel":{"phase":"connected","doctorPassed":true,"processRunning":true,"connected":\#(tunnel)}}
+            """#
+            return try JSONDecoder().decode(HelperStatus.self, from: Data(json.utf8))
+        }
+        func auth(installed: Bool = true, authenticated: Bool = true) throws -> CodexLoginStatus {
+            try JSONDecoder().decode(CodexLoginStatus.self, from: JSONSerialization.data(withJSONObject:
+                ["installed": installed, "authenticated": authenticated, "summary": "private-fixture"]))
+        }
+        XCTAssertEqual(model.operationalObservation, .unknown)
+        model.helperStatus = try helper()
+        model.authStatus = try auth()
+        XCTAssertEqual(model.operationalObservation, .healthy)
+        // Codex job failures and input-required events only update the dashboard. They cannot enter this policy.
+        for taskState in ["completed", "failed", "cancelled", "needs-attention", "input-required", "approval-required"] {
+            model.dashboardErrorMessage = taskState
+            XCTAssertEqual(model.operationalObservation, .healthy)
+        }
+        model.helperStatus = try helper(tunnel: false)
+        XCTAssertEqual(model.operationalObservation, .problem(.tunnel))
+        model.helperStatus = try helper(bridge: false)
+        XCTAssertEqual(model.operationalObservation, .problem(.runtime))
+        model.helperStatus = try helper(valid: false)
+        XCTAssertEqual(model.operationalObservation, .problem(.configuration))
+        model.helperStatus = try helper()
+        model.authStatus = try auth(installed: false)
+        XCTAssertEqual(model.operationalObservation, .problem(.installation))
+        model.authStatus = try auth(authenticated: false)
+        XCTAssertEqual(model.operationalObservation, .problem(.authentication))
+        model.isBusy = true
+        XCTAssertEqual(model.operationalObservation, .unknown)
+        model.isBusy = false
+        model.helperStatus = try helper(phase: "stopped", bridge: false, tunnel: false)
+        XCTAssertEqual(model.operationalObservation, .healthy)
+    }
+
+    func testPrivateErrorsBecomeFixedCopyAndSafeSettingsDestinations() throws {
+        let secret = "sk-secret /Users/private/project prompt-code"
+        XCTAssertEqual(OperationalProblem.remoteError(RemoteCompanionError.invalidResponse(secret)), .remoteConnection)
+        XCTAssertEqual(OperationalProblem.remoteError(RemoteCompanionError.unauthorized), .remoteSecurity)
+        XCTAssertEqual(OperationalProblem.remoteError(RemoteCompanionError.certificateMismatch), .remoteSecurity)
+        XCTAssertEqual(OperationalProblem.remoteError(RemoteCompanionError.incompatibleProtocol), .compatibility)
+        for problem in OperationalProblem.allCases {
+            let content = SystemOperationalNotificationDelivery.content(problem: problem, scope: scope, locale: Locale(identifier: "ko"))
+            XCTAssertEqual(content.body, problem.messageKey)
+            XCTAssertFalse(content.body.contains(secret))
+            XCTAssertEqual(Set(content.userInfo.keys.compactMap { $0 as? String }), ["problem", "scope"])
+            XCTAssertEqual(content.interruptionLevel, .active)
+            XCTAssertTrue(["codex", "connection"].contains(problem.settingsTab))
+            XCTAssertFalse(OperationalNotificationPolicy.key(scope: scope, problem: problem).contains("fixture-server"))
+        }
+        XCTAssertEqual(Set([MenuBarHealth.healthy, .checking, .attention, .unavailable].map {
+            $0.accessibilityLabel(locale: Locale(identifier: "ko"))
+        }).count, 4)
+    }
+}
+
+@MainActor
+private final class NotificationDeliveryFixture: OperationalNotificationDelivering {
+    var authorized = false
+    var authorizationState: OperationalNotificationPermission?
+    var authorizationRequests = 0
+    func permission() async -> OperationalNotificationPermission { authorizationState ?? (authorized ? .authorized : .denied) }
+    var fail = false
+    var sent: [OperationalProblem] = []
+    var identifiers: [String] = []
+    func isAuthorized() async -> Bool { authorized }
+    func requestAuthorization() async -> Bool { authorizationRequests += 1; return authorized }
+    func deliver(identifier: String, problem: OperationalProblem, scope: String, locale: Locale) async throws {
+        if fail { throw CocoaError(.fileWriteUnknown) }
+        sent.append(problem)
+        identifiers.append(identifier)
+    }
+}

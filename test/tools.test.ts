@@ -1,28 +1,74 @@
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { Progress } from "@modelcontextprotocol/sdk/types.js";
-import { describe, expect, it } from "vitest";
-import { loadConfig } from "../src/config.js";
-import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
+import {
+  ToolListChangedNotificationSchema,
+  type Progress
+} from "@modelcontextprotocol/sdk/types.js";
+import { describe, expect, it, vi } from "vitest";
+import { HARD_MAX_CONCURRENT_JOBS, loadConfig } from "../src/config.js";
+import {
+  modelCatalogAdmissionFingerprint,
+  modelCatalogFingerprint,
+  type CodexModelCatalogProvider,
+  type CodexModelCatalogSnapshot
+} from "../src/modelCatalog.js";
 import { createBridgeMcpServer } from "../src/server.js";
+import { projectNameKey } from "../src/projectRegistry.js";
 import { SCOPE_ID_PATTERN, SessionRegistry } from "../src/sessionRegistry.js";
-import { SETTINGS_CARD_URI } from "../src/settingsCard.js";
-import { CodexJobRegistry } from "../src/tools.js";
-import type {
-  CodexProgress,
-  CodexUpstream,
-  ToolResult,
-  UpstreamWorkerAssignment
+import { BridgeStateStore } from "../src/stateStore.js";
+import {
+  ACTIVITY_BOOTSTRAP_METADATA_KEY,
+  ACTIVITY_CARD_CONTRACT_GENERATION,
+  ACTIVITY_CARD_URI,
+  ACTIVITY_VIEW_METADATA_KEY
+} from "../src/activityCard.js";
+import {
+  SETTINGS_CARD_CONTRACT_GENERATION,
+  SETTINGS_CARD_URI
+} from "../src/settingsCard.js";
+import {
+  DASHBOARD_CARD_CONTRACT_GENERATION,
+  DASHBOARD_CARD_URI,
+  DASHBOARD_VIEW_METADATA_KEY
+} from "../src/dashboardCard.js";
+import {
+  CodexJobRegistry,
+  ACTIVITY_VIEW_PRIVATE_MAX_BYTES,
+  CODEX_TASK_INPUT_CONTRACT_VERSION,
+  CODEX_TASK_DESCRIPTOR_MAX_JSON_BYTES,
+  DASHBOARD_VIEW_PRIVATE_MAX_BYTES,
+  MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES,
+  validateActivityViewPrivateMetadata,
+  validateDashboardViewPrivateMetadata
+} from "../src/tools.js";
+import { TOOL_STRUCTURED_BYTE_CAPS } from "../src/toolResultContracts.js";
+import { uiResourceRevisions } from "../src/uiResources.js";
+import {
+  MAX_CODEX_INTERACTION_QUESTIONS,
+  type CodexBackgroundTerminal,
+  type CodexInteractionDecision,
+  type CodexProgress,
+  type CodexThreadResumeProbe,
+  type CodexThreadForkRequest,
+  type CodexUpstream,
+  type CodexWeeklyUsage,
+  type ToolResult,
+  type UpstreamWorkerAssignment
 } from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
+import { CodexService } from "../src/codexService.js";
+import { projectCodexAccount } from "../src/codexAccount.js";
+import { replaceStoredSettingsPayloadForTest } from "./helpers/sqliteSettings.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const SCOPE_B = "22222222-2222-4222-8222-222222222222";
 const UPPERCASE_SCOPE = "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF";
 let requestSequence = 0;
+let dashboardWidgetSequence = 0;
 
 class FakeUpstream implements CodexUpstream {
   public calls: Array<{ name: string; args: Record<string, unknown> }> = [];
@@ -42,9 +88,73 @@ class FakeUpstream implements CodexUpstream {
   async close(): Promise<void> {}
 }
 
+class WeeklyUsageUpstream extends FakeUpstream {
+  public usageReads = 0;
+
+  async readAccountRateLimits(): Promise<CodexWeeklyUsage> {
+    this.usageReads += 1;
+    return {
+      limitId: "codex",
+      usedPercent: 35.5,
+      remainingPercent: 64.5,
+      windowDurationMins: 10_080,
+      resetsAt: 1_900_604_800,
+      observedAt: 1_900_000_000_000
+    };
+  }
+}
+
+class SelectiveLoadedTerminalUpstream extends WeeklyUsageUpstream {
+  public backgroundThreadId?: string;
+  public hangLiveness = false;
+  public loadedTerminalReads: string[] = [];
+  public probeCalls: string[] = [];
+
+  async probeThread(threadId: string): Promise<CodexThreadResumeProbe> {
+    this.probeCalls.push(threadId);
+    if (this.hangLiveness) return new Promise(() => undefined);
+    return { state: "resumable", runtimeStatus: "notLoaded", threadId };
+  }
+
+  async listLoadedBackgroundTerminals(
+    threadId: string
+  ): Promise<CodexBackgroundTerminal[] | null> {
+    this.loadedTerminalReads.push(threadId);
+    if (threadId !== this.backgroundThreadId) return null;
+    return [{
+      processId: "off-page-background-process",
+      itemId: "off-page-background-item",
+      command: "private off-page command",
+      cwd: "/private/off-page",
+      osPid: 12_345
+    }];
+  }
+}
+
+class HangingAfterFirstWeeklyUsageUpstream extends WeeklyUsageUpstream {
+  public hangUsage = false;
+
+  override async readAccountRateLimits(): Promise<CodexWeeklyUsage> {
+    if (this.hangUsage) {
+      this.usageReads += 1;
+      return new Promise(() => undefined);
+    }
+    return super.readAccountRateLimits();
+  }
+}
+
+class FailingInventoryUpstream extends FakeUpstream {
+  public inventoryCalls = 0;
+
+  override async listTools(): Promise<unknown> {
+    this.inventoryCalls += 1;
+    throw new Error("fixture upstream inventory unavailable");
+  }
+}
+
 class DeferredUpstream extends FakeUpstream {
   public aborts = 0;
-  private pending: Array<{
+  protected pending: Array<{
     resolve: (result: ToolResult) => void;
     reject: (error: Error) => void;
     onProgress?: (progress: CodexProgress) => void;
@@ -58,7 +168,7 @@ class DeferredUpstream extends FakeUpstream {
   ): Promise<ToolResult> {
     this.calls.push({ name, args });
     onAssigned?.({
-      backendKind: "mcp-server",
+      backendKind: "app-server",
       workerId: "fake-0",
       workerGeneration: 1,
       workerPid: 999_001,
@@ -102,6 +212,37 @@ class DeferredUpstream extends FakeUpstream {
   }
 }
 
+class CodexSessionDeferredUpstream extends DeferredUpstream {
+  constructor(
+    readonly threadId: string,
+    readonly sessionId: string
+  ) {
+    super();
+  }
+
+  override async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    this.calls.push({ name, args });
+    onAssigned?.({
+      backendKind: "app-server",
+      workerId: "app-session-link-0",
+      workerGeneration: 1,
+      workerPid: 999_101,
+      processGroupId: 999_101,
+      upstreamRequestId: "app-session-link-turn-1",
+      threadId: this.threadId,
+      sessionId: this.sessionId
+    });
+    return new Promise<ToolResult>((resolve, reject) => {
+      this.pending.push({ resolve, reject, onProgress });
+    });
+  }
+}
+
 class MultiTurnAppUpstream extends FakeUpstream {
   public forceCalls: UpstreamWorkerAssignment[] = [];
   private nextTurn = 1;
@@ -140,6 +281,231 @@ class MultiTurnAppUpstream extends FakeUpstream {
   }
 }
 
+class CrashThenResumeBridgeUpstream extends FakeUpstream {
+  private crashed = false;
+
+  capabilities() {
+    return {
+      selectionScope: "turn" as const,
+      supportsModelOverrideOnContinue: true,
+      supportsEffortOverrideOnContinue: true,
+      supportsServiceTierOverrideOnContinue: true,
+      supportsFork: true
+    };
+  }
+
+  canResumeThread(threadId: string): boolean {
+    return threadId === "bridge-crash-thread";
+  }
+
+  override async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    _onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    this.calls.push({ name, args });
+    const threadId = name === "codex-reply"
+      ? String(args.threadId)
+      : "bridge-crash-thread";
+    onAssigned?.({
+      backendKind: "app-server",
+      workerId: this.crashed ? "app-replacement-0" : "app-crashed-0",
+      workerGeneration: this.crashed ? 2 : 1,
+      upstreamRequestId: this.crashed ? "bridge-resume-turn" : "bridge-crash-turn",
+      threadId
+    });
+    if (!this.crashed) {
+      this.crashed = true;
+      throw new Error("App Server worker crashed after turn admission.");
+    }
+    return {
+      content: [{ type: "text", text: "resumed after worker crash" }],
+      structuredContent: {
+        threadId,
+        turnId: "bridge-resume-turn",
+        turnStatus: "completed",
+        backendKind: "app-server",
+        sessionId: "bridge-crash-session"
+      }
+    };
+  }
+}
+
+class ForkLifecycleUpstream extends FakeUpstream {
+  public archivedThreads: string[] = [];
+  public restoredThreads: string[] = [];
+
+  capabilities() {
+    return {
+      selectionScope: "turn",
+      supportsModelOverrideOnContinue: true,
+      supportsEffortOverrideOnContinue: true,
+      supportsServiceTierOverrideOnContinue: true,
+      supportsFork: true
+    };
+  }
+
+  async forkThread(input: CodexThreadForkRequest): Promise<ToolResult> {
+    this.calls.push({ name: "codex-fork", args: { ...input } });
+    return {
+      ...fakeCodexResult("thread-forked"),
+      structuredContent: {
+        threadId: "thread-forked",
+        content: "done",
+        backendKind: "app-server",
+        sessionId: "session-tree-1",
+        forkedFromThreadId: input.threadId
+      }
+    };
+  }
+
+  async archiveThread(threadId: string): Promise<void> {
+    this.archivedThreads.push(threadId);
+  }
+
+  async restoreThread(threadId: string): Promise<void> {
+    this.restoredThreads.push(threadId);
+  }
+}
+
+class ManagedDeferredUpstream extends DeferredUpstream {
+  public archivedThreads: string[] = [];
+  public restoredThreads: string[] = [];
+
+  async archiveThread(threadId: string): Promise<void> {
+    this.archivedThreads.push(threadId);
+  }
+
+  async restoreThread(threadId: string): Promise<void> {
+    this.restoredThreads.push(threadId);
+  }
+}
+
+class InteractionUpstream extends DeferredUpstream {
+  public interactionResponses: Array<{
+    interactionId: string;
+    response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> };
+  }> = [];
+  public steeringRequests: Array<{ threadId: string; prompt: string }> = [];
+  public steeringAvailable = true;
+
+  override async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
+    this.calls.push({ name, args });
+    onAssigned?.({
+      backendKind: "app-server",
+      workerId: "app-interaction-0",
+      workerGeneration: 1,
+      workerPid: 999_002,
+      processGroupId: 999_002,
+      upstreamRequestId: "app-interaction-turn-1",
+      threadId: "thread-1"
+    });
+    return new Promise<ToolResult>((resolve, reject) => {
+      this.pending.push({ resolve, reject, onProgress });
+    });
+  }
+
+  async respondToInteraction(
+    interactionId: string,
+    response: { decision?: CodexInteractionDecision; answers?: Record<string, string[]> }
+  ): Promise<void> {
+    this.interactionResponses.push({ interactionId, response });
+  }
+
+  canSteerThread(threadId: string): boolean {
+    return this.steeringAvailable && threadId === "thread-1";
+  }
+
+  async steerThread(threadId: string, prompt: string): Promise<{ turnId: string }> {
+    this.steeringRequests.push({ threadId, prompt });
+    return { turnId: "turn-1" };
+  }
+}
+
+class BackgroundTerminalUpstream extends FakeUpstream {
+  public terminationCalls: Array<{ threadId: string; processId: string }> = [];
+  public beforeNextList?: () => void;
+  private readonly terminals = new Map<string, CodexBackgroundTerminal[]>();
+
+  override async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const result = await super.callTool(name, args);
+    const threadId = (result.structuredContent as { threadId: string }).threadId;
+    this.terminals.set(threadId, [
+      {
+        processId: "background-process-1",
+        itemId: "background-item-1",
+        command: "private background command",
+        cwd: "/private/background/path",
+        osPid: 12345
+      },
+      {
+        processId: "legacy-background-process-2",
+        itemId: "legacy-background-item-2",
+        command: "private legacy background command",
+        cwd: "/private/legacy/background/path",
+        osPid: 12346
+      }
+    ]);
+    return result;
+  }
+
+  async listBackgroundTerminals(threadId: string): Promise<CodexBackgroundTerminal[]> {
+    const terminals = [...(this.terminals.get(threadId) || [])];
+    const beforeListReturns = this.beforeNextList;
+    this.beforeNextList = undefined;
+    beforeListReturns?.();
+    await Promise.resolve();
+    return terminals;
+  }
+
+  async listLoadedBackgroundTerminals(threadId: string): Promise<CodexBackgroundTerminal[]> {
+    return this.listBackgroundTerminals(threadId);
+  }
+
+  async terminateBackgroundTerminal(
+    threadId: string,
+    processId: string
+  ): Promise<{ terminated: boolean }> {
+    this.terminationCalls.push({ threadId, processId });
+    const terminals = this.terminals.get(threadId) || [];
+    const remaining = terminals.filter((terminal) => terminal.processId !== processId);
+    this.terminals.set(threadId, remaining);
+    return { terminated: remaining.length !== terminals.length };
+  }
+}
+
+class ShutdownImpactUpstream extends FakeUpstream {
+  public loadedTerminalReads: string[] = [];
+  public resumedTerminalReads: string[] = [];
+  public loadedState: "unloaded" | "running" | "error" = "unloaded";
+
+  async listBackgroundTerminals(threadId: string): Promise<CodexBackgroundTerminal[]> {
+    this.resumedTerminalReads.push(threadId);
+    throw new Error("shutdown inspection must not resume an unloaded thread");
+  }
+
+  async listLoadedBackgroundTerminals(
+    threadId: string
+  ): Promise<CodexBackgroundTerminal[] | null> {
+    this.loadedTerminalReads.push(threadId);
+    if (this.loadedState === "error") throw new Error("loaded thread inspection failed");
+    if (this.loadedState === "unloaded") return null;
+    return [{
+      processId: "shutdown-background-process",
+      itemId: "shutdown-background-item",
+      command: "private shutdown fixture command",
+      cwd: "/private/shutdown-fixture",
+      osPid: 12_347
+    }];
+  }
+}
+
 class LargeResultUpstream extends FakeUpstream {
   override async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     this.calls.push({ name, args });
@@ -160,86 +526,792 @@ class RestartAwareUpstream extends FakeUpstream {
   }
 }
 
+class ProbeAwareUpstream extends FakeUpstream {
+  public probeCalls: string[] = [];
+  public hangProbe = false;
+  public finishProbeTimeout?: () => void;
+  public probe: CodexThreadResumeProbe = {
+    state: "resumable",
+    runtimeStatus: "idle",
+    threadId: "thread-1"
+  };
+
+  async probeThread(threadId: string): Promise<CodexThreadResumeProbe> {
+    this.probeCalls.push(threadId);
+    if (this.hangProbe) return new Promise((_, reject) => {
+      this.finishProbeTimeout = () => reject(new Error("fixture RPC deadline"));
+    });
+    return { ...this.probe, threadId } as CodexThreadResumeProbe;
+  }
+}
+
+class DeferredProbeUpstream extends FakeUpstream {
+  public probeCalls: string[] = [];
+  private pendingProbe?: {
+    threadId: string;
+    resolve: (probe: CodexThreadResumeProbe) => void;
+  };
+
+  get hasPendingProbe(): boolean {
+    return this.pendingProbe !== undefined;
+  }
+
+  async probeThread(threadId: string): Promise<CodexThreadResumeProbe> {
+    this.probeCalls.push(threadId);
+    return new Promise<CodexThreadResumeProbe>((resolve) => {
+      this.pendingProbe = { threadId, resolve };
+    });
+  }
+
+  resolveProbe(probe: Omit<CodexThreadResumeProbe, "threadId">): void {
+    const pending = this.pendingProbe;
+    if (!pending) throw new Error("No pending thread probe.");
+    this.pendingProbe = undefined;
+    pending.resolve({ ...probe, threadId: pending.threadId } as CodexThreadResumeProbe);
+  }
+}
+
+class DeferredProbeWithLoadedTerminalUpstream extends DeferredProbeUpstream {
+  public loadedTerminalReads = 0;
+
+  async listLoadedBackgroundTerminals(): Promise<CodexBackgroundTerminal[]> {
+    this.loadedTerminalReads += 1;
+    return [];
+  }
+}
+
+class RunningProbeUpstream extends InteractionUpstream {
+  public probe: CodexThreadResumeProbe = {
+    state: "busy",
+    runtimeStatus: "active",
+    threadId: "thread-1",
+    retryable: true
+  };
+
+  async probeThread(threadId: string): Promise<CodexThreadResumeProbe> {
+    return { ...this.probe, threadId } as CodexThreadResumeProbe;
+  }
+
+  async listBackgroundTerminals(): Promise<CodexBackgroundTerminal[]> {
+    return [];
+  }
+}
+
+class HangingCardEnrichmentUpstream extends FakeUpstream {
+  public probeCalls: string[] = [];
+  public usageReads = 0;
+
+  async probeThread(threadId: string): Promise<CodexThreadResumeProbe> {
+    this.probeCalls.push(threadId);
+    return new Promise(() => undefined);
+  }
+
+  async listLoadedBackgroundTerminals(): Promise<CodexBackgroundTerminal[] | null> {
+    return new Promise(() => undefined);
+  }
+
+  async readAccountRateLimits(): Promise<CodexWeeklyUsage | null> {
+    this.usageReads += 1;
+    return new Promise(() => undefined);
+  }
+}
+
 class FakeModelCatalog implements CodexModelCatalogProvider {
   public calls: Array<{ refresh?: boolean }> = [];
 
-  async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
-    this.calls.push(options);
+  protected snapshot(cached: boolean): CodexModelCatalogSnapshot {
+    const models = [
+      model("gpt-5.6-sol", "max", ["low", "medium", "high", "xhigh", "max", "ultra"], true, "GPT-5.6 Sol"),
+      model("gpt-5.6-terra", "medium", ["low", "medium", "high", "xhigh", "max", "ultra"], false, "GPT-5.6 Terra"),
+      model("gpt-5.5", "medium", ["low", "medium", "high", "xhigh"], false, "GPT-5.5")
+    ];
     return {
       source: "codex-cli",
       fetchedAt: "2026-08-21T00:00:00.000Z",
-      cached: this.calls.length > 1,
+      validatedAt: "2026-08-21T00:00:00.000Z",
+      fingerprint: "f".repeat(64),
+      cached,
       stale: false,
+      validation: "valid",
+      models
+    };
+  }
+
+  async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
+    this.calls.push(options);
+    return this.snapshot(this.calls.length > 1);
+  }
+
+  getCachedCatalog(): CodexModelCatalogSnapshot {
+    return this.snapshot(true);
+  }
+}
+
+class MutatingModelCatalog extends FakeModelCatalog {
+  public beforeRefresh?: () => void;
+
+  override async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
+    if (options.refresh === true && this.beforeRefresh) {
+      const mutate = this.beforeRefresh;
+      this.beforeRefresh = undefined;
+      mutate();
+    }
+    return super.getCatalog(options);
+  }
+}
+
+class AdmissionMutatingModelCatalog extends FakeModelCatalog {
+  public beforeGet?: () => void;
+
+  override async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
+    if (this.beforeGet) {
+      const mutate = this.beforeGet;
+      this.beforeGet = undefined;
+      mutate();
+    }
+    return super.getCatalog(options);
+  }
+}
+
+class DeferredAdmissionModelCatalog extends FakeModelCatalog {
+  readonly entered: Promise<void>;
+  private releaseEntered!: () => void;
+  private readonly gate: Promise<void>;
+  private releaseGate!: () => void;
+
+  constructor() {
+    super();
+    this.entered = new Promise((resolve) => { this.releaseEntered = resolve; });
+    this.gate = new Promise((resolve) => { this.releaseGate = resolve; });
+  }
+
+  override async getCatalog(
+    options: { refresh?: boolean } = {}
+  ): Promise<CodexModelCatalogSnapshot> {
+    this.releaseEntered();
+    await this.gate;
+    return super.getCatalog(options);
+  }
+
+  release(): void {
+    this.releaseGate();
+  }
+}
+
+class DriftingModelCatalog extends FakeModelCatalog {
+  override async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
+    this.calls.push(options);
+    const current = this.snapshot(false);
+    return {
+      ...current,
+      fingerprint: "d".repeat(64),
+      models: current.models.filter((entry) => entry.id !== "gpt-5.6-terra")
+    };
+  }
+}
+
+class TieredModelCatalog extends FakeModelCatalog {
+  protected override snapshot(cached: boolean): CodexModelCatalogSnapshot {
+    const snapshot = super.snapshot(cached);
+    return {
+      ...snapshot,
+      fingerprint: "e".repeat(64),
+      models: snapshot.models.map((entry) => entry.id === "gpt-5.6-sol"
+        ? {
+            ...entry,
+            serviceTiers: [{ id: "priority", name: "Priority" }]
+          }
+        : entry)
+    };
+  }
+}
+
+class FullModelCatalog extends FakeModelCatalog {
+  protected override snapshot(cached: boolean): CodexModelCatalogSnapshot {
+    const snapshot = super.snapshot(cached);
+    return {
+      ...snapshot,
       models: [
-        model("gpt-5.6-sol", "max", ["low", "medium", "high", "xhigh", "max", "ultra"]),
-        model("gpt-5.6-terra", "medium", ["low", "medium", "high", "xhigh", "max", "ultra"]),
-        model("gpt-5.5", "medium", ["low", "medium", "high", "xhigh"])
+        snapshot.models[0],
+        snapshot.models[1],
+        model("gpt-5.6-luna", "medium", ["low", "medium", "high", "xhigh", "max"], false, "GPT-5.6 Luna"),
+        snapshot.models[2],
+        model("gpt-5.4", "medium", ["low", "medium", "high", "xhigh"], false, "GPT-5.4"),
+        model("gpt-5.4-mini", "medium", ["low", "medium", "high", "xhigh"], false, "GPT-5.4 Mini"),
+        model("gpt-5.3-codex-spark", "medium", ["low", "medium", "high", "xhigh"], false, "GPT-5.3 Codex Spark")
       ]
     };
   }
 }
 
-describe("bridge tools", () => {
-  it("publishes the consolidated Activity, settings, and Codex tools", async () => {
-    const root = temporaryRoot();
-    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+class DescriptionRefreshingModelCatalog extends FakeModelCatalog {
+  private refreshed = false;
 
-    const tools = await client.listTools();
-    expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
-      "codex_activity",
-      "codex_activity_handoff",
-      "codex_activity_update",
-      "codex_cancel",
-      "codex_models",
-      "codex_settings",
-      "codex_status",
-      "codex_task",
-      "codex_update_settings"
-    ]);
-    const byName = new Map(tools.tools.map((tool) => [tool.name, tool]));
-    expect(byName.get("codex_status")?.annotations).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true
-    });
-    expect(byName.get("codex_status")?.inputSchema).toMatchObject({
-      properties: {
-        waitFor: { enum: ["change", "terminal"] },
-        waitMs: { maximum: 60000 }
+  protected override snapshot(cached: boolean): CodexModelCatalogSnapshot {
+    const snapshot = super.snapshot(cached);
+    const models = snapshot.models.map((entry) => entry.id === "gpt-5.6-sol" && this.refreshed
+      ? {
+          ...entry,
+          description: "Updated Sol guidance from the refreshed backend catalog.",
+          supportedReasoningEfforts: entry.supportedReasoningEfforts.map((effort) =>
+            effort.effort === "max"
+              ? { ...effort, description: "Updated maximum-effort guidance." }
+              : effort
+          )
+        }
+      : entry);
+    return { ...snapshot, fingerprint: modelCatalogFingerprint(models), models };
+  }
+
+  override async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
+    this.calls.push(options);
+    if (options.refresh === true) this.refreshed = true;
+    return this.snapshot(this.calls.length > 1);
+  }
+}
+
+class TaskRefreshingModelCatalog extends FakeModelCatalog {
+  private refreshed = false;
+  private readonly listeners = new Set<(event: {
+    backendKind: "app-server";
+    previousFingerprint?: string;
+    snapshot: CodexModelCatalogSnapshot;
+  }) => void>();
+
+  protected override snapshot(cached: boolean): CodexModelCatalogSnapshot {
+    const snapshot = super.snapshot(cached);
+    const models = snapshot.models.map((entry) => entry.id === "gpt-5.6-sol" && this.refreshed
+      ? { ...entry, description: "Catalog changed while resolving codex_task." }
+      : entry);
+    return { ...snapshot, fingerprint: modelCatalogFingerprint(models), models };
+  }
+
+  override async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
+    this.calls.push(options);
+    if (!this.refreshed) {
+      const previousFingerprint = this.snapshot(true).fingerprint;
+      this.refreshed = true;
+      const snapshot = this.snapshot(false);
+      for (const listener of this.listeners) {
+        listener({ backendKind: "app-server", previousFingerprint, snapshot });
+      }
+      return snapshot;
+    }
+    return this.snapshot(true);
+  }
+
+  subscribe(listener: (event: {
+    backendKind: "app-server";
+    previousFingerprint?: string;
+    snapshot: CodexModelCatalogSnapshot;
+  }) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+}
+
+class UnavailableModelCatalog implements CodexModelCatalogProvider {
+  async getCatalog(): Promise<CodexModelCatalogSnapshot> {
+    throw new Error("catalog transport unavailable");
+  }
+}
+
+class StaleModelCatalog extends FakeModelCatalog {
+  override async getCatalog(options: { refresh?: boolean } = {}): Promise<CodexModelCatalogSnapshot> {
+    this.calls.push(options);
+    return {
+      ...this.snapshot(true),
+      stale: true,
+      validation: "temporarily-unverified-with-last-known-good"
+    };
+  }
+}
+
+describe("bridge tools", () => {
+  it("keeps drain open for a new task waiting in asynchronous admission", async () => {
+    const root = temporaryRoot();
+    const catalog = new DeferredAdmissionModelCatalog();
+    const upstream = new DeferredUpstream();
+    const bridge = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      catalog
+    );
+
+    try {
+      const task = runTask(bridge.client, { prompt: "wait in model-policy admission" });
+      await catalog.entered;
+      expect(await bridge.applicationService.runtimeSnapshot()).toEqual({
+        acceptingNewJobs: true,
+        activeJobs: 0,
+        pendingAdmissions: 1,
+        pendingInteractions: 0,
+        memoryOnlyThreads: 0,
+        backgroundProcessState: "unknown",
+        backgroundProcesses: 0,
+        backgroundProcessAgents: 0,
+        backgroundProcessUnknownAgents: 0
+      });
+      expect(await bridge.applicationService.beginDrain()).toEqual({
+        acceptingNewJobs: false,
+        activeJobs: 0,
+        pendingAdmissions: 1,
+        pendingInteractions: 0,
+        memoryOnlyThreads: 0,
+        backgroundProcessState: "unknown",
+        backgroundProcesses: 0,
+        backgroundProcessAgents: 0,
+        backgroundProcessUnknownAgents: 0
+      });
+
+      catalog.release();
+      await vi.waitFor(async () => {
+        expect(await bridge.applicationService.runtimeSnapshot()).toEqual({
+          acceptingNewJobs: false,
+          activeJobs: 1,
+          pendingAdmissions: 0,
+          pendingInteractions: 0,
+          memoryOnlyThreads: 0,
+          backgroundProcessState: "unknown",
+          backgroundProcesses: 0,
+          backgroundProcessAgents: 0,
+          backgroundProcessUnknownAgents: 0
+        });
+      });
+      upstream.resolveNext();
+      await task;
+      expect(await bridge.applicationService.runtimeSnapshot()).toEqual({
+        acceptingNewJobs: false,
+        activeJobs: 0,
+        pendingAdmissions: 0,
+          pendingInteractions: 0,
+          memoryOnlyThreads: 0,
+        backgroundProcessState: "unknown",
+        backgroundProcesses: 0,
+        backgroundProcessAgents: 0,
+        backgroundProcessUnknownAgents: 0
+      });
+      await bridge.applicationService.cancelDrain();
+    } finally {
+      catalog.release();
+      await bridge.close();
+    }
+  });
+
+  it("checks only loaded App Server threads when deciding whether shutdown is safe", async () => {
+    const root = temporaryRoot();
+    const upstream = new ShutdownImpactUpstream();
+    const bridge = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+
+    try {
+      const completed = parseToolJson(await runTask(bridge.client, {
+        prompt: "complete an App Server task before shutdown"
+      }));
+      const threadId = completed.threadId as string;
+      expect(threadId).toBe("thread-1");
+
+      await expect(bridge.applicationService.runtimeSnapshot({
+        inspectBackgroundProcesses: true
+      })).resolves.toMatchObject({
+        backgroundProcessState: "confirmed",
+        backgroundProcesses: 0,
+        backgroundProcessAgents: 0,
+        backgroundProcessUnknownAgents: 0
+      });
+      expect(upstream.loadedTerminalReads).toEqual([threadId]);
+      expect(upstream.resumedTerminalReads).toEqual([]);
+
+      upstream.loadedState = "running";
+      await expect(bridge.applicationService.runtimeSnapshot({
+        inspectBackgroundProcesses: true
+      })).resolves.toMatchObject({
+        backgroundProcessState: "confirmed",
+        backgroundProcesses: 1,
+        backgroundProcessAgents: 1,
+        backgroundProcessUnknownAgents: 0
+      });
+
+      upstream.loadedState = "error";
+      await expect(bridge.applicationService.runtimeSnapshot({
+        inspectBackgroundProcesses: true
+      })).resolves.toMatchObject({
+        backgroundProcessState: "unknown",
+        backgroundProcesses: 0,
+        backgroundProcessAgents: 0,
+        backgroundProcessUnknownAgents: 1
+      });
+      expect(upstream.resumedTerminalReads).toEqual([]);
+    } finally {
+      await bridge.close();
+    }
+  });
+
+
+
+  it("publishes twelve model tools, seven current app contracts and retained app-only compatibility", async () => {
+    const root = temporaryRoot();
+    const catalog = new FakeModelCatalog();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream(), undefined, catalog);
+    try {
+      const { tools } = await client.listTools();
+      const legacyAppNames = ["codex_activity", "codex_activity_snapshot", "codex_activity_rehydrate", "codex_activity_handoff", "codex_job_steer", "codex_activity_job_cancel", "codex_background_process_terminate", "codex_dashboard_snapshot", "codex_settings_snapshot", "codex_question_card", "codex_question_submit", "codex_question_notify"];
+      const appNames = [...legacyAppNames, "codex_interaction_respond", "codex_question_action", "codex_ui_read", "codex_ui_stop", "codex_ui_history", "codex_ui_problem", "codex_update_settings"];
+      const modelNames = ["codex_activity_update", "codex_agent", "codex_answer", "codex_ask_user", "codex_cancel", "codex_dashboard", "codex_models", "codex_settings", "codex_status", "codex_steer", "codex_task", "codex_user_answer"];
+      expect(tools.map(tool => tool.name).sort()).toEqual([...appNames, ...modelNames].sort());
+      expect(catalog.calls).toHaveLength(0);
+      const currentTools = tools.filter(tool => !legacyAppNames.includes(tool.name));
+      expect(currentTools).toHaveLength(19);
+      // The seventh app-only contract includes bounded problem rows and the
+      // complete history-free status index used by both overview clients.
+      expect(Buffer.byteLength(JSON.stringify(currentTools))).toBeLessThan(170_000);
+      expect(tools.filter(tool => tool._meta?.["codex/registrationTier"] === "compatibility")
+        .map(tool => tool.name).sort()).toEqual(legacyAppNames.sort());
+      for (const tool of tools) {
+        const isApp = appNames.includes(tool.name);
+        const metadata = tool._meta as Record<string, any> | undefined;
+        expect(metadata?.ui?.visibility?.every((value: string) => value === "app") || false, tool.name).toBe(isApp);
+        if (isApp) {
+          expect(metadata?.ui?.visibility, tool.name).toEqual(["app"]);
+          expect(metadata?.["openai/visibility"]).toBe("private");
+        }
+        expect(tool.inputSchema.type, tool.name).toBe("object");
+        expect(tool.outputSchema?.type, tool.name).toBe("object");
+        const branches = (tool.inputSchema as any).anyOf || [tool.inputSchema];
+        for (const branch of branches) expect(branch.additionalProperties, tool.name).toBe(false);
+      }
+      const named = (name: string) => tools.find(tool => tool.name === name)!;
+      expect(named("codex_task")._meta?.ui).toBeUndefined();
+      // Saved Activity cards require their original descriptor after ChatGPT
+      // refreshes metadata. Retaining the URI on another tool is insufficient.
+      expect(tools.filter(tool => tool._meta?.["openai/outputTemplate"] === ACTIVITY_CARD_URI)
+        .map(tool => tool.name)).toEqual(["codex_activity"]);
+      expect(named("codex_activity")._meta?.ui).toEqual({ resourceUri: ACTIVITY_CARD_URI, visibility: ["app"] });
+      const retainedTemplate = await client.readResource({ uri: ACTIVITY_CARD_URI });
+      expect(retainedTemplate.contents[0]?.mimeType).toBe("text/html;profile=mcp-app");
+      expect((retainedTemplate.contents[0] as { text: string }).text).toMatch(/<!doctype html>/i);
+      expect(named("codex_ask_user")._meta?.["openai/outputTemplate"]).toMatch(/question/);
+      expect(named("codex_cancel").inputSchema.properties?.target).toBeDefined();
+      expect(named("codex_status").inputSchema.properties).not.toHaveProperty("scopeId");
+      expect(JSON.stringify(named("codex_status").inputSchema)).toContain('"input"');
+      expect(named("codex_ui_read").annotations?.readOnlyHint).toBe(true);
+      expect(named("codex_ui_stop").annotations?.destructiveHint).toBe(true);
+      expect(named("codex_question_action").annotations?.destructiveHint).toBe(false);
+      expect(named("codex_interaction_respond").annotations?.destructiveHint).toBe(true);
+      expect(JSON.stringify(named("codex_agent").inputSchema)).toContain('"const":"rename"');
+      expect(JSON.stringify(named("codex_agent").inputSchema)).not.toMatch(/archive|restore/);
+      expect(JSON.stringify(named("codex_ui_history").inputSchema)).toContain('"const":"acknowledge"');
+      expect(JSON.stringify(named("codex_ui_history").inputSchema)).not.toMatch(/archive|restore/);
+      for (const arguments_ of [{ view: "settings", unexpected: true }, { view: "anything" }, { view: "dashboard", questionId: SCOPE_A }]) {
+        const rejected = await client.callTool({ name: "codex_ui_read", arguments: arguments_ });
+        expect(rejected.isError).toBe(true);
+      }
+      const old = await client.callTool({ name: "codex_settings_snapshot", arguments: {} });
+      expect(old.isError).not.toBe(true);
+      expect(privateSettingsView(old).settings.settingsRevision).toBe(0);
+      expect((await client.listTools()).tools.map(tool => tool.name)).not.toContain("codex_input");
+      expect((await client.listTools()).tools.map(tool => tool.name)).not.toContain("codex_activity_cancel");
+    } finally { await close(); }
+  });
+
+  it("rejects unknown root inputs and oversized interaction answer maps", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(configFor(root, { CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS: "1" }), new FakeUpstream());
+    const card = {
+      activityId: SCOPE_A,
+      generation: ACTIVITY_CARD_CONTRACT_GENERATION,
+      presentation: { kind: "explicit" }
+    };
+    const unknownRootCalls = [
+      { name: "codex_models", arguments: { unexpectedTypo: true } },
+      { name: "codex_settings", arguments: { unexpectedTypo: true } },
+      {
+        name: "codex_agent_recovery_detach",
+        arguments: {
+          requestId: "10101010-1010-4010-8010-101010101010",
+          agentId: "11111111-1010-4010-8010-101010101010",
+          activityId: "12121212-1010-4010-8010-101010101010",
+          expectedAgentVersion: 1,
+          unexpectedTypo: true
+        }
+      },
+      {
+        name: "codex_background_process_terminate",
+        arguments: {
+          requestId: "13131313-1010-4010-8010-101010101010",
+          agentId: "14141414-1010-4010-8010-101010101010",
+          expectedAgentVersion: 1,
+          processId: "background-process",
+          card,
+          unexpectedTypo: true
+        }
+      }
+    ];
+    for (const request of unknownRootCalls) {
+      const result = await client.callTool(request);
+      expect(result.isError, request.name).toBe(true);
+      expect(JSON.stringify(result), request.name).toContain("unexpectedTypo");
+    }
+
+    const oversizedAnswers = Object.fromEntries(
+      Array.from(
+        { length: MAX_CODEX_INTERACTION_QUESTIONS + 1 },
+        (_, index) => [`question-${index + 1}`, ["answer"]]
+      )
+    );
+    const oversized = await client.callTool({
+      name: "codex_interaction_respond",
+      arguments: {
+        requestId: "15151515-1010-4010-8010-101010101010",
+        jobId: "job-input-bound",
+        expectedJobVersion: 1,
+        interactionId: "interaction-input-bound",
+        response: { answers: oversizedAnswers },
+        card
       }
     });
-    expect(byName.get("codex_task")?.annotations).toMatchObject({
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false
-    });
-    expect(byName.get("codex_task")?.inputSchema).toMatchObject({
-      required: expect.arrayContaining(["requestId", "prompt"])
-    });
-    expect((byName.get("codex_task")?.inputSchema as { required?: string[] }).required)
-      .not.toContain("scopeId");
-    expect(byName.get("codex_task")?.inputSchema.properties).not.toHaveProperty("taskKey");
-    expect(byName.get("codex_task")?.inputSchema.properties).toMatchObject({
-      activityKind: { enum: ["discussion", "investigation", "review", "implementation", "other"] },
-      executionMode: { enum: ["auto", "foreground", "background"] },
-      handoffPolicy: { enum: ["none", "notify", "verify"] },
-      completionTrigger: { enum: ["manual", "sealed-jobs-terminal"] }
-    });
-    expect(byName.get("codex_activity_update")?.annotations).toMatchObject({
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: false,
-      openWorldHint: false
-    });
-    expect(byName.get("codex_settings")?._meta).toMatchObject({
-      ui: { resourceUri: SETTINGS_CARD_URI, visibility: ["model", "app"] },
-      "openai/outputTemplate": SETTINGS_CARD_URI
-    });
-    expect(byName.get("codex_update_settings")?._meta).toMatchObject({
-      ui: { visibility: ["app"] },
-      "openai/visibility": "private"
-    });
+    expect(oversized.isError).toBe(true);
+    expect(JSON.stringify(oversized)).toContain(
+      `At most ${MAX_CODEX_INTERACTION_QUESTIONS} interaction questions`
+    );
+    await close();
+  });
 
+  it("rejects expired runtime fields and malformed retired presentation inputs at parsing", async () => {
+    const root = temporaryRoot();
+    const { rawCallTool, jobs, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const missing = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "24242424-0000-4000-8000-000000000001",
+        prompt: "stale descriptor call",
+        activityTitle: "Stale descriptor",
+        activityKind: "investigation",
+        agentName: "Stale Descriptor Agent",
+        agentRole: "investigation",
+        contextMode: "fresh"
+      }
+    });
+    expect(missing.isError).toBe(true);
+    expect(JSON.stringify(missing)).toContain("Unrecognized keys");
+    expect(JSON.stringify(missing)).toContain("activityTitle");
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+
+    const invalid = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "24242424-0000-4000-8000-000000000002",
+        activityPresentationId: "not-a-uuid",
+        prompt: "invalid presentation UUID"
+      }
+    });
+    expect(invalid.isError).toBe(true);
+    expect(JSON.stringify(invalid)).toContain("activityPresentationId");
+    expect(JSON.stringify(invalid)).toContain("Expected a UUID-formatted");
+
+    const presentationFreeTask = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "24242424-0000-4000-8000-000000000003",
+        prompt: "current execution-only contract without presentation correlation",
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: { mode: "new" },
+        agent: { mode: "new" }
+      }
+    });
+    expect(presentationFreeTask.isError).not.toBe(true);
+    expect((presentationFreeTask as { structuredContent?: Record<string, unknown> }).structuredContent)
+      .toMatchObject({ kind: "task", state: "running" });
+    expect((presentationFreeTask as { _meta?: Record<string, unknown> })._meta)
+      .toBeUndefined();
+
+    for (const retired of [
+      {
+        name: "codex_status",
+        arguments: { scopeId: SCOPE_A, jobId: "retired-job" },
+        field: "jobId"
+      },
+      {
+        name: "codex_activity",
+        arguments: { scopeId: SCOPE_A, forceNewCard: true },
+        field: "forceNewCard"
+      },
+      {
+        name: "codex_activity_handoff",
+        arguments: {
+          scopeId: SCOPE_A,
+          action: "claim",
+          outboxId: 1,
+          presentationKind: "automatic",
+          activityPresentationId: SCOPE_B
+        },
+        field: "outboxId"
+      },
+      {
+        name: "codex_agent",
+        arguments: { requestId: SCOPE_B, agentId: SCOPE_A, action: "archive" },
+        field: "action"
+      },
+      {
+        name: "codex_activity_update",
+        arguments: { activityId: SCOPE_A, action: "seal" },
+        field: "action"
+      },
+      {
+        name: "codex_update_settings",
+        arguments: { expectedRevision: 0, reset: true },
+        field: "reset"
+      }
+    ]) {
+      const result = await rawCallTool({ name: retired.name, arguments: retired.arguments });
+      expect(result.isError, retired.name).toBe(true);
+      expect(JSON.stringify(result), retired.name).toContain(retired.field);
+    }
+    await close();
+  });
+
+  it("applies neutral creation defaults and preserves explicit nested routing across follow-ups", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "1",
+        CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "1"
+      }),
+      upstream
+    );
+
+    const defaulted = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "10101010-1010-4010-8010-101010101010",
+        activityPresentationId: "10101010-1010-4010-8010-101010101010",
+        prompt: "review the design",
+        project: { name: "Test Project", registryRevision: 1 },
+        executionMode: "foreground"
+      }
+    });
+    const defaultActivityId = taskActivityId(defaulted);
+    const defaultAgentId = parseToolJson(defaulted).agentId as string;
+    expect(jobs.getActivity(defaultActivityId)).toMatchObject({
+      title: "Codex activity",
+      kind: "other",
+      executionMode: "foreground",
+      handoffPolicy: "none",
+      completionTrigger: "manual"
+    });
+    expect(jobs.getAgent(defaultAgentId)).toMatchObject({
+      agentName: "Codex Agent 10101010-1010-4010-8010-101010101010"
+    });
+    expect(jobs.listActivityAgentAssignments(defaultActivityId, defaultAgentId)).toEqual([
+      expect.objectContaining({ role: "primary", contextMode: "fresh" })
+    ]);
+
+    const named = await runTask(client, {
+      prompt: "review the design",
+      activity: {
+        mode: "new",
+        title: "Design review",
+        policy: { kind: "review", handoff: "verify", completion: "manual" }
+      },
+      agent: { mode: "new", name: "민아" }
+    });
+    const agentId = parseToolJson(named).agentId as string;
+    expect(jobs.getAgent(agentId)).toMatchObject({ agentName: "민아" });
+    expect(jobs.getActivity(taskActivityId(named))).toMatchObject({
+      title: "Design review",
+      kind: "review",
+      handoffPolicy: "verify",
+      completionTrigger: "manual"
+    });
+    expect(jobs.listActivityAgentAssignments(undefined, agentId)).toEqual([
+      expect.objectContaining({ role: "primary" })
+    ]);
+
+    await runTask(client, {
+      prompt: "continue the review",
+      activity: { mode: "existing", id: taskActivityId(named) },
+      agent: { mode: "existing", id: agentId }
+    });
+    expect(jobs.getAgent(agentId)).toMatchObject({ agentName: "민아" });
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(2);
+
+    const defaultedSecondAgent = await runTask(client, {
+      prompt: "independent review",
+      activity: { mode: "existing", id: taskActivityId(named) },
+      agent: { mode: "new" }
+    });
+    const secondAgentId = parseToolJson(defaultedSecondAgent).agentId as string;
+    expect(jobs.getAgent(secondAgentId)?.agentName)
+      .toMatch(/^Codex Agent [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(3);
+    await close();
+  });
+
+  it("rejects mixed task routing contracts and ignores retired host card correlation", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const mixed = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "40404040-4040-4040-8040-404040404040",
+        activityPresentationId: "40404040-4040-4040-8040-404040404040",
+        prompt: "mixed routing must fail",
+        activity: { mode: "new" },
+        activityTitle: "Legacy title"
+      }
+    });
+    expect(mixed.isError).toBe(true);
+    expect(JSON.stringify(mixed)).toContain("Unrecognized key");
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
+
+    const invalidNewAgentContext = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "41414141-4141-4141-8141-414141414141",
+        activityPresentationId: "41414141-4141-4141-8141-414141414141",
+        prompt: "new Agent cannot fork",
+        activity: { mode: "new" },
+        agent: { mode: "new", context: "fork" }
+      }
+    });
+    expect(invalidNewAgentContext.isError).toBe(true);
+    expect(upstream.calls).toEqual([]);
+
+    const hostPresentationId = "42424242-4242-4242-8242-424242424242";
+    const hostCorrelated = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "43434343-4343-4343-8343-434343434343",
+        prompt: "use host presentation correlation",
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: { mode: "new" },
+        agent: { mode: "new" },
+        executionMode: "foreground"
+      },
+      _meta: { "codex/activityPresentationId": hostPresentationId }
+    });
+    const hostCorrelatedTask = (hostCorrelated as {
+      structuredContent?: Record<string, unknown>;
+      _meta?: Record<string, unknown>;
+    });
+    expect(hostCorrelatedTask.structuredContent).toMatchObject({ kind: "task", state: "completed" });
+    expect(hostCorrelatedTask._meta).toBeUndefined();
+    expect(jobs.get(String(hostCorrelatedTask.structuredContent?.jobId))?.activityPresentationId)
+      .toBeUndefined();
     await close();
   });
 
@@ -257,14 +1329,65 @@ describe("bridge tools", () => {
     expect(contents.text).toContain("Codex Bridge 설정");
     expect(contents.text).toContain("window.openai.callTool");
     expect(contents.text).toContain("codex_update_settings");
+    expect(contents.text).toContain('callTool("codex_ui_read"');
+    expect(contents.text).not.toContain('callTool("codex_settings",');
+    expect(contents.text).not.toContain('message.method==="ui/notifications/tool-result"');
+    expect(contents.text).toContain('id="settings-form" hidden');
+    expect(contents.text).toContain('id="settings-loading"');
     expect(contents.text).not.toContain("localStorage");
-    expect(contents.text).toContain('id="resume-hours" type="number" min="0.0167" step="any" required');
+    expect(contents.text).toContain('id="ui-language"');
+    expect(contents.text).toContain('ko:"한국어"');
+    expect(contents.text).not.toContain('id="resume-hours"');
     expect(contents.text).not.toContain('id="timeout-minutes"');
     expect(contents.text).toContain('id="concurrency" type="number" min="1" step="1" required');
     expect(contents.text).toContain("const REQUEST_TIMEOUT_MS = 90000;");
+    expect(contents.text).toContain('rpcRequest("ui/initialize"');
+    expect(contents.text).toContain('rpcNotification("ui/notifications/initialized"');
+    expect(contents.text).toContain("ui/notifications/host-context-changed");
+    expect(contents.text).toContain("uiBridgeErrorMessage(message.error");
+    expect(contents.text).not.toContain("new Error(message.error.message");
     expect(contents.text).toContain("result&&result.isError");
+    expect(contents.text).toContain("function parsedToolText(result)");
+    expect(contents.text).toContain("if(text&&!parsed)throw new Error(text)");
     expect(contents.text).toContain("!elements.form.reportValidity()");
-    expect(contents.text).toContain("Number.isSafeInteger(result)");
+    expect(contents.text).toContain("Number.isSafeInteger(value)");
+    expect(contents.text).toContain("if(modelPolicyDirty)settings.modelPolicy=buildModelPolicy()");
+    expect(contents.text).not.toContain("settings.legacyPreferredModel");
+    expect(contents.text).not.toContain('id="preferred-model"');
+    expect(contents.text).not.toContain('id="preferred-effort"');
+    expect(contents.text).toContain('id="allowed-models"');
+    expect(contents.text).toContain('id="effort-groups"');
+    expect(contents.text).toContain('id="use-priority-service-tier" type="checkbox"');
+    expect(contents.text).toContain('id="project-list"');
+    expect(contents.text).toContain('id="add-project" type="button"');
+    expect(contents.text).not.toContain('id="default-project"');
+    expect(contents.text).not.toContain('id="allowed-roots"');
+    expect(contents.text).not.toContain('id="allowed-root-list"');
+    expect(contents.text).toContain('data-i18n="settings.resetHint"');
+    expect(contents.text).toContain('t["settings.addFirstProject"]');
+    expect(contents.text).not.toContain('id="default-cwd"');
+    expect(contents.text).not.toContain('className="project-id-input"');
+    expect(contents.text).not.toContain('projectField("settings.projectId"');
+    expect(contents.text).not.toContain("allocateProjectId");
+    expect(contents.text).toContain('operations.push({kind:"add",project:{name:project.name,cwd:project.cwd}})');
+    expect(contents.text).toContain('operations.push({kind:"delete",projectId:project.id})');
+    expect(contents.text).not.toContain('confirm(t["settings.deleteProjectConfirm"])');
+    expect(contents.text).toContain('className="project-delete-confirm"');
+    expect(contents.text).toContain('className="project-pending-message"');
+    expect(contents.text).toContain('row.dataset.confirmDelete="true"');
+    expect(contents.text).toContain('classList.toggle("project-changes-pending",count>0)');
+    expect(contents.text).toContain('t["settings.removeProject"]');
+    expect(contents.text).toContain("projectOperations=buildProjectOperations(projectSettings.projects)");
+    expect(contents.text).not.toContain("defaultProjectId");
+    expect(contents.text).toContain('operation:{kind:"patch",settings}');
+    expect(contents.text).toContain('operation:{kind:"reset"}');
+    expect(contents.text).toContain("expectedSettingsRevision:view.settings.settingsRevision");
+    expect(contents.text).toContain("expectedRegistryRevision:view.settings.registryRevision");
+    expect(contents.text).not.toContain('id="policy-service-tier"');
+    expect(contents.text).toContain('all.dataset.action="all-efforts"');
+    expect(contents.text).toContain('id="retry-models"');
+    expect(contents.text).not.toContain('id="refresh"');
+    expect(contents.text).toContain('aria-describedby="access-hint full-warning"');
     expect(contents.text).not.toContain("view.settings.defaultReasoningEffort = null");
     expect(contents._meta).toMatchObject({
       ui: {
@@ -272,9 +1395,3521 @@ describe("bridge tools", () => {
         domain: "https://web-sandbox.oaiusercontent.com"
       },
       "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
-      "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
+      "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+      "codex/uiContractGeneration": SETTINGS_CARD_CONTRACT_GENERATION
     });
 
+    await close();
+  });
+
+  it("serves every retained Settings, Activity, and Dashboard UI revision through MCP", async () => {
+    const root = temporaryRoot();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream()
+    );
+    const listed = await client.listResources();
+    const listedUris = new Set(listed.resources.map((resource) => resource.uri));
+    const listedTools = new Set((await client.listTools()).tools.map((tool) => tool.name));
+
+    for (const [name, currentUri] of [
+      ["settings", SETTINGS_CARD_URI],
+      ["activity", ACTIVITY_CARD_URI],
+      ["dashboard", DASHBOARD_CARD_URI]
+    ] as const) {
+      const revisions = uiResourceRevisions(name);
+      expect(revisions.length).toBeGreaterThanOrEqual(1);
+      expect(new Set(revisions.map((revision) => revision.uri)).size).toBe(revisions.length);
+      expect(revisions.every((revision) =>
+        revision.uri.startsWith(`ui://codex-mcp-bridge/${name}/`) ||
+        revision.uri === `ui://codex-mcp-bridge/${name}-v${name === "settings" ? "6" : "1"}.html`
+      )).toBe(true);
+      expect(revisions.length).toBeGreaterThan(1);
+      expect(revisions[0].uri).toBe(currentUri);
+      for (const revision of revisions) {
+        const publishedBaseline = revision.releaseProvenance?.inventories.includes("published-baseline") || false;
+        for (const tool of revision.releaseProvenance?.requiredTools || []) {
+          expect(listedTools, `${revision.uri} requires ${tool}`).toContain(tool);
+        }
+        expect(listedUris).toContain(revision.uri);
+        const resource = await client.readResource({ uri: revision.uri });
+        expect(resource.contents[0]).toMatchObject({
+          uri: revision.uri,
+          mimeType: "text/html;profile=mcp-app"
+        });
+        const html = (resource.contents[0] as { text?: string }).text || "";
+        expect(html).toContain("<!doctype html>");
+        expect(html).not.toContain("Plugin refresh required");
+        if (name === "settings") {
+          if (publishedBaseline) {
+            expect(revision.uri).toBe("ui://codex-mcp-bridge/settings-v6.html");
+            expect(html).toContain('callTool("codex_update_settings"');
+          } else {
+            expect(html).not.toContain('id="default-project"');
+            expect(html).not.toContain("defaultProjectId");
+          }
+          if (revision.uri === currentUri) {
+            expect(html).toContain('callTool("codex_ui_read"');
+            expect(html).not.toContain('callTool("codex_settings",');
+            expect(html).not.toContain('message.method==="ui/notifications/tool-result"');
+          }
+        }
+        if (name === "activity") {
+          if (publishedBaseline) {
+            expect(revision.uri).toBe("ui://codex-mcp-bridge/activity-v1.html");
+            expect(html).toContain('callTool("codex_status"');
+            expect(html).toContain('callTool("codex_activity_update"');
+            expect(html).toContain('callTool("codex_cancel"');
+          } else {
+            expect(html).toContain('callTool("codex_activity_snapshot"');
+            expect(html).toContain("afterVersion");
+            expect(html).toContain("waitMs");
+            expect(html).toContain("consumeToolOutput");
+            expect(html).not.toContain('callTool("codex_status",Object.assign({activityView:true');
+          }
+          if (revision.uri === currentUri) {
+            expect(html).toContain('id="weekly-usage"');
+            expect(html).toContain('data-i18n="usage.weeklyRemaining"');
+            expect(html).toContain("renderWeeklyUsage(next.weeklyUsage)");
+            expect(html).toContain("function appendCancellations(parent,row)");
+            expect(html).toContain('node("details","cancellation")');
+            expect(html).toContain('readActivityView("codex_activity_rehydrate"');
+            expect(html).toContain('correlation.kind==="historical"?{jobId:correlation.jobId,requestId:correlation.requestId,limit:viewLimit}');
+            expect(html).toContain('{mode:"full-history",limit:viewLimit');
+            expect(html).toContain('mountedPresentation.kind==="historical"');
+            expect(html).toContain('mountedPresentation.kind==="restored-explicit"');
+            expect(html).toContain('callTool("codex_background_process_terminate"');
+            expect(html).toContain('callTool("codex_activity_job_cancel"');
+            expect(html).not.toContain('callTool("codex_cancel"');
+            expect(html).not.toContain('callTool("codex_agent"');
+            expect(html).toContain('callTool("codex_interaction_respond"');
+          }
+        } else if (name === "dashboard") {
+          expect(html).toMatch(/callTool\("codex_(dashboard_snapshot|ui_read)"/);
+          expect(html).toContain('window.addEventListener("pageshow"');
+          if (revision.uri === currentUri) {
+            expect(html).toContain('id="weekly-usage"');
+            expect(html).toContain('data-i18n="usage.weeklyRemaining"');
+            expect(html).toContain("renderWeeklyUsage(next.weeklyUsage)");
+            expect(html).toContain("function appendCancellation(parent,cancellation,key)");
+            expect(html).toContain('node("details","cancellation")');
+            expect(html).toContain("function executionText(execution)");
+            expect(html).toContain(
+              "function appendExecution(parent,execution,required=false,templateKey=null)"
+            );
+            expect(html).toContain(
+              "function renderActivityRows(parent,rows,recentActivity=false)"
+            );
+            expect(html).toContain('node("details","history")');
+            expect(html).toContain("new Intl.RelativeTimeFormat");
+            expect(html).toContain("function normalizeHostToolResult");
+            expect(html).toContain("function hostToolResultMetadata");
+            expect(html).toContain("function callUiToolWithFallback");
+            expect(html).toContain("function standardToolCall(name,args)");
+            expect(html).toContain("standardBridgeReady=beginStandardBridge()");
+            expect(html).toContain("compatibilityTimeoutMs:TOOL_CALL_TIMEOUT_MS");
+            expect(html).toContain("mcp_tool_result");
+            expect(html).toContain('id="dashboard-content" hidden');
+            expect(html).toContain('data-i18n="common.loading"');
+            expect(html).toContain("function createWidgetInstanceId");
+            expect(html).not.toContain("function consumeHostResult(");
+            expect(html).not.toContain('message.method==="ui/notifications/tool-result"');
+            expect(html).not.toContain('id="view-project"');
+            expect(html).not.toContain('id="view-conversation"');
+            expect(html).not.toContain('id="view-status"');
+            expect(html).not.toContain('id="status-idle-toggle"');
+            expect(html).toContain('aria-pressed="false"');
+            expect(html).toContain('data-status-filter="response-required"');
+            expect(html).toContain('data-status-filter="problems"');
+            expect(html).toContain('id="terminal-more"');
+            expect(html).not.toContain('id="idle-more"');
+            expect(html).toContain('data-i18n="dashboard.loadMore"');
+            expect(html).toContain("async function loadMore(bucket)");
+            expect(html).toContain("function mergeRows(current,incoming)");
+            expect(html).toContain("function syncStatusFilter()");
+            expect(html).not.toContain("dashboardViewMode");
+            expect(html).not.toContain("api.setWidgetState");
+            expect(html).toContain("function dispatchDashboardExternalUrl(");
+            expect(html).toContain(
+              "dispatchDashboardExternalUrl(event,url,window.openai,openConversationFallback)"
+            );
+            expect(html).not.toContain("safeCodexThreadUrl");
+            expect(html).not.toContain("row.codexThreadUrl");
+            expect(html).not.toContain("codex-session-link");
+            expect((resource.contents[0] as { _meta?: Record<string, unknown> })._meta)
+              .toMatchObject({
+                "openai/widgetCSP": {
+                  redirect_domains: ["https://chatgpt.com"]
+                }
+              });
+          }
+          expect(html).not.toContain('callTool("codex_cancel"');
+          expect(html).not.toContain('callTool("codex_steer"');
+          expect(html).not.toContain('callTool("codex_activity_handoff"');
+          if (revision.uri === currentUri) {
+            expect(html).not.toContain('callTool("codex_ui_stop"');
+            expect(html).not.toContain("dashboard.control.manage");
+          }
+          expect(html).not.toContain("localStorage");
+        } else if (name === "settings" && revision.uri === currentUri) {
+          expect(html).toContain('operation:{kind:"patch",settings}');
+          expect(html).toContain('operation:{kind:"reset"}');
+          expect(html).not.toContain("projects:projectSettings.projects");
+          expect(html).not.toContain("reset:true");
+        }
+        const resourceMetadata = (resource.contents[0] as { _meta?: Record<string, unknown> })._meta || {};
+        if (revision.contractGeneration === undefined) {
+          expect(resourceMetadata).not.toHaveProperty("codex/uiContractGeneration");
+        } else {
+          expect(resourceMetadata).toMatchObject({
+            "codex/uiContractGeneration": revision.contractGeneration
+          });
+        }
+      }
+    }
+
+    const task = parseToolJson(await runTask(client, {
+      prompt: "exercise every retained Activity snapshot client"
+    }));
+    const explicit = parseToolJson(await rawCallTool({
+      name: "codex_activity",
+      arguments: { scopeId: SCOPE_A, activityId: task.activityId }
+    }));
+    const card = {
+      activityId: task.activityId,
+      generation: explicit.mountedActivity.cardGeneration,
+      presentation: { kind: "explicit" as const }
+    };
+    for (const [index, revision] of uiResourceRevisions("activity").entries()) {
+      const widgetInstanceId = `retained-activity-${index}`;
+      const initial = await rawCallTool({
+        name: "codex_activity_snapshot",
+        arguments: { scopeId: SCOPE_A, card, limit: 30 },
+        _meta: { "openai/widgetSessionId": widgetInstanceId }
+      });
+      const initialView = parseToolJson(initial);
+      expect(initialView).toMatchObject({
+        mountedActivity: { activityId: task.activityId },
+        mountedPresentation: { kind: "explicit" }
+      });
+      expect(validateActivityViewPrivateMetadata(
+        (initial as { _meta?: Record<string, unknown> })._meta?.[ACTIVITY_VIEW_METADATA_KEY]
+      )).toMatchObject({ source: "codex_activity_snapshot" });
+      const refreshed = parseToolJson(await rawCallTool({
+        name: "codex_activity_snapshot",
+        arguments: {
+          scopeId: SCOPE_A,
+          card,
+          limit: 30,
+          afterVersion: initialView.scopeVersion,
+          waitMs: 1
+        },
+        _meta: { "openai/widgetSessionId": widgetInstanceId }
+      }));
+      expect(refreshed.wait).toMatchObject({ timedOut: true, changed: false });
+      expect(revision.uri).toMatch(/^ui:\/\/codex-mcp-bridge\/(?:activity\/|activity-v1\.html$)/);
+      jobs.releaseActivityCardLease(
+        SCOPE_A,
+        card.activityId,
+        card.generation,
+        widgetInstanceId,
+        card.presentation
+      );
+    }
+
+    await close();
+  });
+
+  it("hydrates account-wide weekly Codex usage only into Dashboard and Activity cards", async () => {
+    const root = temporaryRoot();
+    const upstream = new WeeklyUsageUpstream();
+    const { rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+
+    const dashboardResult = await rawCallTool({
+      name: "codex_dashboard",
+      arguments: { scopeId: SCOPE_A }
+    });
+    const dashboardPublic = (dashboardResult as { structuredContent?: Record<string, unknown> })
+      .structuredContent!;
+    expect(dashboardPublic).not.toHaveProperty("weeklyUsage");
+    expect((dashboardResult as { _meta?: Record<string, unknown> })._meta)
+      .not.toHaveProperty(DASHBOARD_VIEW_METADATA_KEY);
+    expect(upstream.usageReads).toBe(0);
+
+    const { view: dashboardView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A,
+      enrich: true
+    });
+    expect(dashboardView.weeklyUsage).toEqual({
+      source: "codex-account-rate-limits",
+      limitId: "codex",
+      usedPercent: 35.5,
+      remainingPercent: 64.5,
+      windowDurationMins: 10_080,
+      resetsAt: new Date(1_900_604_800_000).toISOString(),
+      observedAt: new Date(1_900_000_000_000).toISOString()
+    });
+
+    const activityResult = await rawCallTool({
+      name: "codex_activity",
+      arguments: { scopeId: SCOPE_A, mode: "full-history" }
+    });
+    const activityPublic = (activityResult as { structuredContent?: Record<string, unknown> })
+      .structuredContent!;
+    const activityPrivate = validateActivityViewPrivateMetadata(
+      (activityResult as { _meta?: Record<string, unknown> })
+        ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
+    );
+    expect(activityPublic).not.toHaveProperty("weeklyUsage");
+    expect(activityPrivate.view.weeklyUsage).toEqual(dashboardView.weeklyUsage);
+    expect(activityPrivate.view.enrichment.state).toBe("structural");
+    expect(upstream.usageReads).toBe(1);
+
+    await close();
+  });
+
+  it("retains the last successful weekly usage through structural refresh and timeout", async () => {
+    const root = temporaryRoot();
+    const upstream = new HangingAfterFirstWeeklyUsageUpstream();
+    const { rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    const first = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A,
+      enrich: true
+    });
+    expect(first.view.weeklyUsage).toMatchObject({ remainingPercent: 64.5 });
+    expect(upstream.usageReads).toBe(1);
+
+    const realNow = Date.now();
+    const future = vi.spyOn(Date, "now").mockReturnValue(realNow + 61_000);
+    try {
+      upstream.hangUsage = true;
+      const structural = await freshDashboardSnapshot(rawCallTool, {
+        scopeId: SCOPE_A,
+        enrich: false
+      });
+      expect(structural.view).toMatchObject({
+        enrichment: { state: "structural", runtimeRequests: 0 },
+        weeklyUsage: first.view.weeklyUsage
+      });
+      expect(upstream.usageReads).toBe(1);
+
+      const timedOut = await freshDashboardSnapshot(rawCallTool, {
+        scopeId: SCOPE_A,
+        enrich: true
+      });
+      expect(timedOut.view).toMatchObject({
+        enrichment: { state: "enriched", usageTimedOut: true },
+        weeklyUsage: first.view.weeklyUsage
+      });
+      expect(upstream.usageReads).toBe(2);
+    } finally {
+      future.mockRestore();
+    }
+
+    await close();
+  }, 5_000);
+
+  it("publishes late usage once, shares refreshes, and rejects a result from a replaced account", async () => {
+    for (const replaceAccount of [false, true]) {
+      const root = temporaryRoot();
+      const upstream = new WeeklyUsageUpstream();
+      let revision = "account-a";
+      Object.assign(upstream, { accountRevision: () => revision });
+      const usage = await upstream.readAccountRateLimits();
+      let resolve!: (value: CodexWeeklyUsage) => void;
+      const read = vi.spyOn(upstream, "readAccountRateLimits").mockImplementation(() => new Promise(done => { resolve = done; }));
+      const { applicationService, close } = await connectTestClient(configFor(root), upstream);
+      const notice = vi.fn();
+      const unsubscribe = applicationService.subscribeChanges!(notice);
+      try {
+        const first = await applicationService.dashboardSnapshot({ inspectRuntime: true });
+        expect(first.enrichment).toMatchObject({ usageTimedOut: true, pendingReads: 1, usageUnavailable: false });
+        const repeated = applicationService.dashboardSnapshot({ inspectRuntime: true });
+        await new Promise<void>(done => setImmediate(done));
+        expect(read).toHaveBeenCalledTimes(1);
+        if (replaceAccount) revision = "account-b";
+        resolve(usage);
+        await repeated;
+        const structural = await applicationService.dashboardSnapshot();
+        if (replaceAccount) {
+          expect(structural.weeklyUsage).toBeNull();
+          expect(notice).not.toHaveBeenCalledWith("enrichment");
+        } else {
+          expect(structural.weeklyUsage).toMatchObject({ remainingPercent: 64.5 });
+          expect(notice.mock.calls.filter(([topic]) => topic === "enrichment")).toHaveLength(1);
+          expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment)
+            .toMatchObject({ usageTimedOut: false, pendingReads: 0 });
+          expect(read).toHaveBeenCalledTimes(1);
+        }
+      } finally { unsubscribe(); await close(); }
+    }
+  });
+
+  it("keeps a usage failure visible after the retry cooldown until an actual recovery", async () => {
+    const upstream = new WeeklyUsageUpstream();
+    const usage = await upstream.readAccountRateLimits();
+    const read = vi.spyOn(upstream, "readAccountRateLimits").mockRejectedValue(new Error("usage unavailable"));
+    const { applicationService, close } = await connectTestClient(configFor(temporaryRoot()), upstream);
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment.usageUnavailable).toBe(true);
+      clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 6_000);
+      expect((await applicationService.dashboardSnapshot()).enrichment.usageUnavailable).toBe(true);
+      expect(read).toHaveBeenCalledTimes(1);
+      read.mockResolvedValue(usage);
+      expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment.usageUnavailable).toBe(false);
+      expect((await applicationService.dashboardSnapshot()).enrichment.usageUnavailable).toBe(false);
+      expect(read).toHaveBeenCalledTimes(2);
+    } finally { clock?.mockRestore(); await close(); }
+  });
+
+  it("reports pending account reads and their late success or failure in cached snapshots", async () => {
+    for (const outcome of ["success", "failure", "replaced"]) {
+      const fails = outcome === "failure", replaced = outcome === "replaced";
+      const root = temporaryRoot();
+      const config = configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" });
+      const service = new CodexService({ HOME: root, PATH: "", CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+      config.codexService = service;
+      let revision = "account-a";
+      vi.spyOn(service, "cacheRevision").mockImplementation(() => revision);
+      const value = projectCodexAccount({ account: { type: "chatgpt", planType: "plus" } }, {}, Date.now() - 10_000);
+      let settle!: () => void;
+      const read = vi.spyOn(service, "readCliAccount").mockImplementation(() => new Promise((resolve, reject) => {
+        settle = () => fails ? reject(new Error("account transport deadline")) : resolve(value);
+      }));
+      const { applicationService, close } = await connectTestClient(config, new FakeUpstream());
+      const notice = vi.fn();
+      const unsubscribe = applicationService.subscribeChanges!(notice);
+      try {
+        const enriched = applicationService.dashboardSnapshot({ inspectRuntime: true });
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+        const pending = await applicationService.dashboardSnapshot();
+        expect(pending.enrichment).toMatchObject({ state: "structural", pendingReads: 1, usageUnavailable: false });
+        if (replaced) revision = "account-b";
+        settle();
+        expect((await enriched).enrichment.usageUnavailable).toBe(fails);
+        const complete = await applicationService.dashboardSnapshot();
+        expect(complete.enrichment).toMatchObject({ state: "structural", pendingReads: 0, usageUnavailable: fails });
+        expect(complete.codexAccount).toEqual(fails || replaced ? null : value);
+        if (!fails && !replaced) expect(complete.enrichment.oldestObservationAt).toBe(new Date(value.observedAt).toISOString());
+        expect(notice.mock.calls.filter(([topic]) => topic === "enrichment")).toHaveLength(replaced ? 0 : 1);
+        expect(read).toHaveBeenCalledTimes(1);
+        if (fails) {
+          const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16_000);
+          try {
+            expect((await applicationService.dashboardSnapshot()).enrichment.usageUnavailable).toBe(true);
+            expect(read).toHaveBeenCalledTimes(1);
+            read.mockResolvedValue(value);
+            expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment.usageUnavailable).toBe(false);
+            expect((await applicationService.dashboardSnapshot()).enrichment.usageUnavailable).toBe(false);
+            expect(read).toHaveBeenCalledTimes(2);
+          } finally { clock.mockRestore(); }
+        }
+      } finally { unsubscribe(); await close(); }
+    }
+  });
+
+  it("reaches previously unobserved threads on the next refresh after slow probes settle", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    const pending: Array<() => void> = [];
+    const probe = vi.spyOn(upstream, "probeThread").mockImplementation(threadId => new Promise(resolve => {
+      pending.push(() => resolve({ state: "resumable", runtimeStatus: "notLoaded", threadId }));
+    }));
+    const { applicationService, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      for (let index = 0; index < 10; index++) {
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: `Slow ${index}` });
+        jobs.linkAgentThread({ agentId: agent.agentId, threadId: `slow-${index}`, backendKind: "app-server",
+          cwd: root, sandbox: "read-only", contextMode: "fresh" });
+      }
+      expect((await applicationService.dashboardSnapshot({ inspectRuntime: true })).enrichment.pendingReads).toBe(8);
+      expect(probe).toHaveBeenCalledTimes(8);
+      const firstThreads = new Set(probe.mock.calls.map(([threadId]) => threadId));
+      for (const resolve of pending.splice(0)) resolve();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+      const next = applicationService.dashboardSnapshot({ inspectRuntime: true });
+      await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(16));
+      expect(probe.mock.calls.slice(8, 10).every(([threadId]) => !firstThreads.has(threadId))).toBe(true);
+      probe.mockImplementation(async threadId => ({ state: "resumable", runtimeStatus: "notLoaded", threadId }));
+      for (const resolve of pending.splice(0)) resolve();
+      await next;
+      expect(new Set(probe.mock.calls.map(([threadId]) => threadId)).size).toBe(10);
+    } finally { clock?.mockRestore(); await close(); }
+  });
+
+  it("does not renew liveness freshness when only background processes were refreshed", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    const { applicationService, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      for (let index = 0; index < 10; index++) {
+        const activity = jobs.createActivity({ scopeId: SCOPE_A, title: `Coverage activity ${index}` });
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: `Coverage ${index}` });
+        jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
+        jobs.linkAgentThread({ agentId: agent.agentId, threadId: `coverage-${index}`, backendKind: "app-server",
+          cwd: root, sandbox: "read-only", contextMode: "fresh" });
+        const job = jobs.start({
+          activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh", operation: "start",
+          cwd: root, sandbox: "read-only", scopeId: SCOPE_A, requestId: `coverage-request-${index}`,
+          requestHash: `coverage-hash-${index}`, requestHashVersion: 7, exclusiveKeys: [],
+          sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" },
+          executionMode: "foreground", backendKind: "app-server"
+        }, async () => fakeCodexResult(`coverage-${index}`));
+        await job.promise;
+      }
+      await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: true });
+      expect(upstream.probeCalls).toHaveLength(10);
+      clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 5_100);
+      await applicationService.dashboardSnapshot({ limit: 5, inspectRuntime: true });
+      expect(upstream.probeCalls).toHaveLength(15);
+      expect(upstream.loadedTerminalReads).toHaveLength(5);
+      await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: true });
+      expect(upstream.probeCalls).toHaveLength(20);
+    } finally { clock?.mockRestore(); await close(); }
+  });
+
+  it("serves health from memory without pruning jobs or probing Codex", async () => {
+    const upstream = new HangingCardEnrichmentUpstream();
+    const { applicationService, jobs, close } = await connectTestClient(configFor(temporaryRoot()), upstream);
+    const count = vi.spyOn(jobs, "runningCount").mockImplementation(() => { throw new Error("pruning unavailable"); });
+    const list = vi.spyOn(jobs, "list").mockImplementation(() => { throw new Error("pruning unavailable"); });
+    try {
+      expect(applicationService.runtimeHealth!()).toMatchObject({ acceptingNewJobs: true, activeJobs: 0, pendingAdmissions: 0 });
+      expect(count).not.toHaveBeenCalled();
+      expect(list).not.toHaveBeenCalled();
+      expect(upstream.probeCalls).toHaveLength(0);
+      await expect(applicationService.runtimeSnapshot()).rejects.toThrow("pruning unavailable");
+    } finally { count.mockRestore(); list.mockRestore(); await close(); }
+  });
+
+  it("bounds retention checks while refreshing many protected jobs and their runtime observations", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    const { applicationService, jobs, close } = await connectTestClient(configFor(root, {
+      CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server", CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "8",
+      CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "4"
+    }), upstream);
+    const store = jobs.admissionStateStore;
+    const count = 24;
+    try {
+      for (let index = 0; index < count; index++) {
+        const activity = jobs.createActivity({ scopeId: SCOPE_A, title: `Protected activity ${index}` });
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: `Protected ${index}` });
+        jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
+        jobs.linkAgentThread({ agentId: agent.agentId, threadId: `protected-${index}`, backendKind: "app-server",
+          cwd: root, sandbox: "read-only", contextMode: "fresh" });
+        const job = jobs.start({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh",
+          operation: "start", cwd: root, sandbox: "read-only", scopeId: SCOPE_A,
+          requestId: `protected-request-${index}`, requestHash: `protected-hash-${index}`, requestHashVersion: 7,
+          exclusiveKeys: [], sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" },
+          executionMode: "foreground", backendKind: "app-server"
+        }, async () => fakeCodexResult(`protected-${index}`));
+        store.holdResult(job.jobId, "Refresh regression", Date.now() + 86_400_000);
+        await job.promise;
+      }
+      const checks = vi.spyOn(store, "retentionProtection");
+      try {
+        const enriched = await applicationService.dashboardSnapshot({ inspectRuntime: true, statusFilter: "running",
+          problems: { review: "pending", kind: "all", offset: 0, view: "actionable" } });
+        expect(enriched.counts.retainedJobs).toBe(count);
+        // A few projection passes are fine; a full retention sweep for every
+        // Agent and every probe completion blocks the companion health socket.
+        expect(checks.mock.calls.length).toBeLessThanOrEqual(count * 12);
+        checks.mockClear();
+        const structural = await applicationService.dashboardSnapshot({ statusFilter: "all",
+          problems: { review: "pending", kind: "all", offset: 0, view: "actionable" } });
+        expect(structural.counts.retainedJobs).toBe(count);
+        expect(checks.mock.calls.length).toBeLessThanOrEqual(count * 4);
+        checks.mockClear();
+        await jobs.sweepAutomaticRecovery();
+        expect(checks.mock.calls.length).toBeLessThanOrEqual(count * 2);
+        expect(applicationService.runtimeHealth!().activeJobs).toBe(0);
+        expect(jobs.size).toBe(count);
+      } finally { checks.mockRestore(); }
+    } finally { await close(); }
+  });
+
+  it("keeps large Dashboard, Activity, and Settings first paint structural and bounds enrichment", async () => {
+    const root = temporaryRoot();
+    const upstream = new HangingCardEnrichmentUpstream();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server",
+      CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "500", CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS: "1"
+    });
+    const { rawCallTool, jobs, applicationService, close } = await connectTestClient(
+      config,
+      upstream
+    );
+    const activities = [];
+    for (let agentIndex = 0; agentIndex < 200; agentIndex += 1) {
+      const activity = jobs.createActivity({
+        scopeId: SCOPE_A,
+        title: `Performance activity ${agentIndex + 1}`
+      });
+      activities.push(activity);
+      const agent = jobs.createAgent({
+        scopeId: SCOPE_A,
+        agentName: `Performance Agent ${agentIndex + 1}`
+      });
+      jobs.assignAgent({
+        activityId: activity.activityId,
+        agentId: agent.agentId,
+        contextMode: "fresh"
+      });
+      jobs.linkAgentThread({
+        agentId: agent.agentId,
+        threadId: `performance-thread-${agentIndex + 1}`,
+        backendKind: "app-server",
+        cwd: root,
+        sandbox: "read-only",
+        contextMode: "fresh"
+      });
+      for (let turnIndex = 0; turnIndex < 2; turnIndex += 1) {
+        const job = jobs.start({
+          activityId: activity.activityId,
+          agentId: agent.agentId,
+          contextMode: "fresh",
+          operation: "start",
+          cwd: root,
+          sandbox: "read-only",
+          scopeId: SCOPE_A,
+          requestId: `performance-request-${agentIndex}-${turnIndex}`,
+          requestHash: `performance-hash-${agentIndex}-${turnIndex}`,
+          requestHashVersion: 7,
+          exclusiveKeys: [],
+          sessionDecision: {
+            requestedMode: "new",
+            action: "start",
+            reason: "explicit-new"
+          },
+          executionMode: "foreground",
+          backendKind: "app-server"
+        }, async () => fakeCodexResult(`performance-thread-${agentIndex + 1}`));
+        await job.promise;
+      }
+    }
+
+    const dashboardStartedAt = performance.now();
+    const dashboard = await applicationService.dashboardSnapshot({
+      limit: 20,
+      inspectRuntime: false
+    });
+    expect(performance.now() - dashboardStartedAt).toBeLessThan(500);
+    expect(dashboard.enrichment).toMatchObject({
+      state: "structural",
+      runtimeRequests: 0,
+      timeouts: 0
+    });
+    expect(dashboard.counts).toMatchObject({ retainedJobs: 400 });
+    expect(Buffer.byteLength(JSON.stringify(dashboard), "utf8"))
+      .toBeLessThanOrEqual(DASHBOARD_VIEW_PRIVATE_MAX_BYTES);
+    expect(upstream.probeCalls).toEqual([]);
+    expect(upstream.usageReads).toBe(0);
+
+    const activityStartedAt = performance.now();
+    const activity = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityId: activities[0]!.activityId,
+        mode: "full-history"
+      }
+    });
+    expect(performance.now() - activityStartedAt).toBeLessThan(500);
+    const structuralActivity = privateActivityView(activity);
+    expect(structuralActivity).toMatchObject({
+      enrichment: { state: "structural", runtimeRequests: 0 },
+      agentPagination: { total: 200 }
+    });
+    expect(Buffer.byteLength(JSON.stringify(structuralActivity), "utf8"))
+      .toBeLessThanOrEqual(ACTIVITY_VIEW_PRIVATE_MAX_BYTES);
+
+    const activityProbeBaseline = upstream.probeCalls.length;
+    const activityEnrichmentStartedAt = performance.now();
+    const enrichedActivityResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: structuralActivity.mountedActivity.activityId,
+          generation: structuralActivity.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        },
+        limit: 30,
+        enrich: true
+      },
+      _meta: { "openai/widgetSessionId": "48484848-4848-4484-8484-484848484848" }
+    });
+    expect(performance.now() - activityEnrichmentStartedAt).toBeLessThan(2_000);
+    const enrichedActivity = privateActivityView(enrichedActivityResult);
+    expect(enrichedActivity.enrichment).toMatchObject({
+      state: "enriched",
+      usageTimedOut: true
+    });
+    expect(enrichedActivity.enrichment.timeouts).toBeGreaterThan(0);
+    expect(upstream.probeCalls.length - activityProbeBaseline).toBeLessThanOrEqual(30);
+
+    const settingsStartedAt = performance.now();
+    const settings = await applicationService.settingsSnapshot();
+    expect(performance.now() - settingsStartedAt).toBeLessThan(500);
+    expect(Buffer.byteLength(JSON.stringify(settings), "utf8"))
+      .toBeLessThanOrEqual(TOOL_STRUCTURED_BYTE_CAPS.app_only_hydration);
+
+    const dashboardProbeBaseline = upstream.probeCalls.length;
+    const enrichmentStartedAt = performance.now();
+    const enriched = await applicationService.dashboardSnapshot({
+      limit: 20,
+      inspectRuntime: true
+    });
+    expect(performance.now() - enrichmentStartedAt).toBeLessThan(2_000);
+    const visibleAgentCount = enriched.activeRows.length +
+      enriched.terminalRows.length + enriched.idleRows.length;
+    const dashboardProbeCount = upstream.probeCalls.length - dashboardProbeBaseline;
+    expect(dashboardProbeCount).toBeLessThanOrEqual(visibleAgentCount);
+    expect(dashboardProbeCount).toBeLessThan(200);
+    expect(enriched.enrichment).toMatchObject({
+      state: "enriched",
+      usageTimedOut: true
+    });
+    expect(enriched.enrichment.timeouts).toBeGreaterThan(0);
+    expect(enriched.counts.runtimeUnknownAgents).toBeGreaterThan(0);
+
+    const diagnostics = parseToolJson(await rawCallTool({
+      name: "codex_diagnostics",
+      arguments: {}
+    }));
+    expect(diagnostics.performance).toMatchObject({
+      stages: expect.arrayContaining([
+        expect.objectContaining({
+          name: "dashboard.structural.db-projection",
+          count: expect.any(Number),
+          p50Ms: expect.any(Number),
+          p95Ms: expect.any(Number)
+        }),
+        expect.objectContaining({
+          name: "dashboard.enriched.total",
+          timeouts: expect.any(Number)
+        }),
+        expect.objectContaining({ name: "activity.structural.db-projection" }),
+        expect.objectContaining({ name: "activity.enriched.total" }),
+        expect.objectContaining({ name: "settings.structural.db-projection" })
+      ]),
+      html: {
+        dashboardBytes: expect.any(Number),
+        dashboardBudgetBytes: expect.any(Number),
+        activityBytes: expect.any(Number),
+        activityBudgetBytes: expect.any(Number),
+        settingsBytes: expect.any(Number),
+        settingsBudgetBytes: expect.any(Number)
+      }
+    });
+    expect(diagnostics.performance.html.dashboardBytes)
+      .toBeLessThanOrEqual(diagnostics.performance.html.dashboardBudgetBytes);
+    expect(diagnostics.performance.html.activityBytes)
+      .toBeLessThanOrEqual(diagnostics.performance.html.activityBudgetBytes);
+    expect(diagnostics.performance.html.settingsBytes)
+      .toBeLessThanOrEqual(diagnostics.performance.html.settingsBudgetBytes);
+
+    await close();
+  }, 15_000);
+
+  it("keeps off-page runtime evidence in Activity ordering and subsequent structural paints", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    const { rawCallTool, jobs, applicationService, close } = await connectTestClient(
+      configFor(root, {
+        CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server",
+        CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS: "200"
+      }),
+      upstream
+    );
+    const activities: Array<{ activityId: string }> = [];
+    const agents: Array<{ agentId: string; agentName: string; threadId: string }> = [];
+    for (let index = 0; index < 40; index += 1) {
+      const activity = jobs.createActivity({
+        scopeId: SCOPE_A,
+        title: `Ordering activity ${index + 1}`
+      });
+      const agent = jobs.createAgent({
+        scopeId: SCOPE_A,
+        agentName: `Ordering Agent ${index + 1}`
+      });
+      const threadId = `ordering-thread-${index + 1}`;
+      activities.push(activity);
+      agents.push({ agentId: agent.agentId, agentName: agent.agentName, threadId });
+      jobs.assignAgent({
+        activityId: activity.activityId,
+        agentId: agent.agentId,
+        contextMode: "fresh"
+      });
+      jobs.linkAgentThread({
+        agentId: agent.agentId,
+        threadId,
+        backendKind: "app-server",
+        cwd: root,
+        sandbox: "read-only",
+        contextMode: "fresh"
+      });
+      const job = jobs.start({
+        activityId: activity.activityId,
+        agentId: agent.agentId,
+        contextMode: "fresh",
+        operation: "start",
+        cwd: root,
+        sandbox: "read-only",
+        scopeId: SCOPE_A,
+        requestId: `ordering-request-${index}`,
+        requestHash: `ordering-hash-${index}`,
+        requestHashVersion: 7,
+        exclusiveKeys: [],
+        sessionDecision: {
+          requestedMode: "new",
+          action: "start",
+          reason: "explicit-new"
+        },
+        executionMode: "foreground",
+        backendKind: "app-server"
+      }, async () => fakeCodexResult(threadId));
+      await job.promise;
+    }
+
+    const initialResult = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityId: activities[0]!.activityId,
+        mode: "full-history"
+      }
+    });
+    const initial = privateActivityView(initialResult);
+    const visibleAgentIds = new Set(
+      (initial.agents as Array<{ agentId: string }>).map((agent) => agent.agentId)
+    );
+    const initialDashboard = await applicationService.dashboardSnapshot({
+      limit: 20,
+      inspectRuntime: false
+    });
+    const visibleDashboardAgentNames = new Set([
+      ...initialDashboard.activeRows,
+      ...initialDashboard.terminalRows,
+      ...initialDashboard.idleRows
+    ].map((row) => row.agentName));
+    const offPageAgent = agents.find((agent) =>
+      !visibleAgentIds.has(agent.agentId) &&
+      !visibleDashboardAgentNames.has(agent.agentName)
+    );
+    expect(offPageAgent).toBeDefined();
+    upstream.backgroundThreadId = offPageAgent!.threadId;
+    upstream.hangLiveness = true;
+
+    const enrichedDashboard = await applicationService.dashboardSnapshot({
+      limit: 20,
+      inspectRuntime: true
+    });
+    expect(enrichedDashboard.enrichment.timeouts).toBeGreaterThan(0);
+    expect(enrichedDashboard.activeRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentName: offPageAgent!.agentName,
+        status: "background-process-running",
+        backgroundProcessCount: 1
+      })
+    ]));
+
+    const enrichedResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: initial.mountedActivity.activityId,
+          generation: initial.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        },
+        limit: 30,
+        enrich: true
+      },
+      _meta: { "openai/widgetSessionId": "49494949-4949-4949-8949-494949494949" }
+    });
+    const enrichedActivity = privateActivityView(enrichedResult);
+    expect(enrichedActivity.agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentId: offPageAgent!.agentId,
+        backgroundProcessState: "running",
+        backgroundProcessCount: 1
+      })
+    ]));
+    expect(new Set(upstream.loadedTerminalReads).size).toBeGreaterThan(30);
+
+    const structuralDashboard = await applicationService.dashboardSnapshot({
+      limit: 20,
+      inspectRuntime: false
+    });
+    expect(structuralDashboard.enrichment).toMatchObject({
+      state: "structural",
+      runtimeRequests: 0
+    });
+    expect(structuralDashboard.weeklyUsage).toEqual(enrichedDashboard.weeklyUsage);
+    expect(structuralDashboard.counts.backgroundProcesses).toBe(1);
+    expect(structuralDashboard.activeRows.map((row) => row.rowKey))
+      .toEqual(enrichedDashboard.activeRows.map((row) => row.rowKey));
+
+    const structuralActivity = privateActivityView(await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityId: activities[0]!.activityId,
+        mode: "full-history"
+      }
+    }));
+    expect(structuralActivity.enrichment.state).toBe("structural");
+    expect(structuralActivity.weeklyUsage).toEqual(enrichedActivity.weeklyUsage);
+    expect(structuralActivity.agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentId: offPageAgent!.agentId,
+        backgroundProcessState: "running"
+      })
+    ]));
+
+    await close();
+  }, 15_000);
+
+  it("reads contextual model metadata once per projection and refreshes it on the next read", async () => {
+    const root = temporaryRoot();
+    const catalog = new FakeModelCatalog();
+    const { client, applicationService, close } = await connectTestClient(configFor(root), new FakeUpstream(), undefined, catalog);
+    try {
+      for (let index = 0; index < 24; index++) await runTask(client, { prompt: `Projection fixture ${index}` });
+      const original = catalog.getCachedCatalog.bind(catalog);
+      let displayName = "First current catalog";
+      const reads = vi.spyOn(catalog, "getCachedCatalog").mockImplementation(() => ({
+        ...original(), models: original().models.map(model => ({ ...model, displayName }))
+      }));
+      const first = await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: false });
+      expect(JSON.stringify(first)).toContain(displayName);
+      expect(reads).toHaveBeenCalledTimes(1);
+      displayName = "Changed current catalog";
+      const second = await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: false });
+      expect(JSON.stringify(second)).toContain(displayName);
+      expect(JSON.stringify(second)).not.toContain("First current catalog");
+      expect(reads).toHaveBeenCalledTimes(2);
+      expect(second.counts).toEqual(first.counts);
+    } finally { await close(); }
+  }, 15_000);
+
+  it("counts Activity-only conversations consistently in both status-card scopes", async () => {
+    const { rawCallTool, jobs, applicationService, close } = await connectTestClient(
+      configFor(temporaryRoot()), new FakeUpstream()
+    );
+    try {
+      jobs.createActivity({ scopeId: SCOPE_A, title: "A goal before execution" });
+      const scoped = await freshDashboardSnapshot(rawCallTool, { scope: "auto", scopeId: SCOPE_A });
+      const all = await freshDashboardSnapshot(rawCallTool, { scope: "all", scopeId: SCOPE_A });
+      for (const { view } of [scoped, all]) {
+        expect(view.counts).toMatchObject({ trackedConversations: 1, retainedJobs: 0, active: 0 });
+        expect([...view.activeRows, ...view.terminalRows, ...view.idleRows]).toEqual([]);
+      }
+      jobs.createActivity({ scopeId: SCOPE_A, title: "Another goal in the same conversation" });
+      jobs.createActivity({ scopeId: SCOPE_B, title: "Another conversation's goal" });
+      expect((await freshDashboardSnapshot(rawCallTool, { scope: "conversation", scopeId: SCOPE_A })).view.counts.trackedConversations).toBe(1);
+      expect((await freshDashboardSnapshot(rawCallTool, { scope: "all", scopeId: SCOPE_A })).view.counts.trackedConversations).toBe(2);
+      expect((await applicationService.dashboardSnapshot()).counts.trackedConversations).toBe(2);
+    } finally { await close(); }
+  });
+
+  it("selects status-card defaults from retained work and preserves legacy all-conversation reads", async () => {
+    const { client, rawCallTool, jobs, applicationService, close } = await connectTestClient(
+      configFor(temporaryRoot()), new FakeUpstream()
+    );
+    try {
+      await runTask(client, { scopeId: SCOPE_B, prompt: "Other conversation", activityTitle: "Other completed work" });
+      const opened = await rawCallTool({ name: "codex_dashboard", arguments: {} });
+      expect(opened.isError).not.toBe(true);
+      expect(opened.structuredContent).toMatchObject({ kind: "dashboard", readOnly: true });
+      expect(opened._meta).not.toHaveProperty(DASHBOARD_VIEW_METADATA_KEY);
+      const empty = await freshDashboardSnapshot(rawCallTool, { scope: "auto", scopeId: SCOPE_A });
+      expect(empty.view).toMatchObject({
+        scope: "bridge-wide", filter: { mode: "all", conversationAvailable: true, conversationHasWork: false },
+        counts: { completed: 1 }
+      });
+      const unidentified = await freshDashboardSnapshot(rawCallTool, { scope: "auto" });
+      expect(unidentified.view.filter).toEqual({ mode: "all", conversationAvailable: false, conversationHasWork: false });
+
+      jobs.createActivity({ scopeId: SCOPE_A, title: "A goal before its first execution" });
+      const goalOnly = await freshDashboardSnapshot(rawCallTool, { scope: "auto", scopeId: SCOPE_A });
+      expect(goalOnly.view).toMatchObject({
+        scope: "conversation", filter: { mode: "conversation", conversationAvailable: true, conversationHasWork: true },
+        counts: { retainedJobs: 0, trackedConversations: 1 }
+      });
+      await runTask(client, { prompt: "Completed here", activityTitle: "This conversation completed work" });
+      const completedOnly = await freshDashboardSnapshot(rawCallTool, { scope: "auto", scopeId: SCOPE_A });
+      expect(completedOnly.view).toMatchObject({ scope: "conversation", counts: { active: 0, completed: 1 } });
+      expect(completedOnly.view.terminalRows.map((row: any) => row.activityTitle)).toEqual(["This conversation completed work"]);
+      const all = await freshDashboardSnapshot(rawCallTool, { scope: "all", scopeId: SCOPE_A });
+      const legacy = await freshDashboardSnapshot(rawCallTool, { scopeId: SCOPE_A });
+      const native = await applicationService.dashboardSnapshot();
+      for (const view of [all.view, legacy.view, native]) {
+        expect(view).toMatchObject({ scope: "bridge-wide", counts: { completed: 2, trackedConversations: 2 } });
+      }
+      expect(legacy.view).not.toHaveProperty("filter");
+      expect(native).not.toHaveProperty("filter");
+
+      const unavailable = await rawCallTool({ name: "codex_ui_read", arguments: {
+        view: "dashboard", scope: "conversation", widgetInstanceId: randomUUID(), enrich: false
+      } });
+      expect(unavailable.isError).toBe(true);
+      expect(JSON.stringify(unavailable)).toContain("DASHBOARD_CONVERSATION_UNAVAILABLE");
+      const malformed = await rawCallTool({ name: "codex_ui_read", arguments: {
+        view: "dashboard", scope: "auto", scopeId: SCOPE_A, widgetInstanceId: randomUUID(), enrich: false
+      }, _meta: { "openai/session": "" } });
+      expect(malformed.isError).toBe(true);
+      expect(JSON.stringify(malformed)).toContain("non-empty bounded string");
+      const malformedOpener = await rawCallTool({ name: "codex_dashboard", arguments: {},
+        _meta: { "openai/session": "" }
+      });
+      expect(malformedOpener.isError).toBe(true);
+      expect(JSON.stringify(malformedOpener)).toContain("non-empty bounded string");
+    } finally { await close(); }
+  });
+
+  it("filters status-card counts, projects, history and pages before pagination", async () => {
+    const root = temporaryRoot();
+    const { rawCallTool, jobs, settings, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    try {
+      const secondRoot = path.join(root, "second-project");
+      mkdirSync(secondRoot);
+      settings.updateWithProjectOperations({}, [{ kind: "add", project: { name: "Second project", cwd: secondRoot } }],
+        undefined, settings.current.registryRevision);
+      const secondProject = settings.current.projects.find(project => project.name === "Second project")!;
+      for (const scopeId of [SCOPE_A, SCOPE_B]) {
+        const project = scopeId === SCOPE_A ? settings.current.projects[0]! : secondProject;
+        for (let index = 0; index < 7; index++) {
+          // Seed completed jobs so this read-model test measures scope and pagination.
+          const activity = jobs.createActivity({ scopeId, projectId: project.id, projectName: project.name,
+            projectCwd: project.cwd, title: `${scopeId === SCOPE_A ? "Here" : "Elsewhere"} ${index}` });
+          const agent = jobs.createAgent({ scopeId, agentName: `Page Agent ${index}` });
+          const threadId = `page-${scopeId}-${index}`;
+          jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
+          jobs.linkAgentThread({ agentId: agent.agentId, threadId, projectId: project.id, projectName: project.name,
+            backendKind: "mcp", cwd: project.cwd, sandbox: "read-only", contextMode: "fresh" });
+          const job = jobs.start({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh",
+            scopeId, projectId: project.id, projectName: project.name, operation: "start", cwd: project.cwd,
+            sandbox: "read-only", requestId: nextRequestId(), requestHash: `page-${scopeId}-${index}`,
+            requestHashVersion: 7, exclusiveKeys: [], executionMode: "foreground", backendKind: "mcp",
+            sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" }
+          }, async () => fakeCodexResult(threadId));
+          await job.promise;
+        }
+      }
+      const first = await freshDashboardSnapshot(rawCallTool, { scope: "auto", scopeId: SCOPE_A, limit: 5 });
+      expect(first.view.counts).toMatchObject({ trackedProjects: 1, trackedConversations: 1, retainedJobs: 7, completed: 7 });
+      expect(first.view.pagination.terminal).toMatchObject({ total: 7, returned: 5, hasNext: true });
+      const next = await freshDashboardSnapshot(rawCallTool, { scope: "conversation", scopeId: SCOPE_A, limit: 5, terminalOffset: 5 });
+      expect(next.view.pagination.terminal).toMatchObject({ offset: 5, total: 7, returned: 2, hasNext: false });
+      const names = [...first.view.terminalRows, ...next.view.terminalRows].map(row => row.activityTitle);
+      expect(new Set(names).size).toBe(7);
+      expect(names.every(name => name.startsWith("Here"))).toBe(true);
+      expect(JSON.stringify(first.view)).not.toContain("Elsewhere");
+      expect(JSON.stringify(next.view)).not.toContain("Second project");
+      const all = await freshDashboardSnapshot(rawCallTool, { scope: "all", scopeId: SCOPE_A, limit: 5 });
+      expect(all.view.counts).toMatchObject({ trackedProjects: 2, trackedConversations: 2, retainedJobs: 14, completed: 14 });
+      expect(all.view.pagination.terminal.total).toBe(14);
+      for (const privateValue of [SCOPE_A, SCOPE_B, root]) expect(JSON.stringify(first.view)).not.toContain(privateValue);
+    } finally { await close(); }
+  });
+
+  it("uses opening host metadata for status-card filtering without expanding ordinary model scope", async () => {
+    const { client, rawCallTool, close } = await connectTestClient(configFor(temporaryRoot()), new FakeUpstream());
+    const metadata = { "openai/session": "status-card-host-conversation" };
+    try {
+      const elsewhere = parseToolJson(await runTask(client, { scopeId: SCOPE_B, prompt: "Other work", activityTitle: "Outside host scope" }));
+      await client.callTool({ name: "codex_task", arguments: {
+        scopeId: SCOPE_B, prompt: "Here", activityTitle: "Host-owned work", executionMode: "foreground"
+      }, _meta: metadata });
+      const scoped = await freshDashboardSnapshot(rawCallTool, { scope: "auto", scopeId: SCOPE_B, metadata });
+      expect(scoped.view.filter.mode).toBe("conversation");
+      expect(scoped.view.terminalRows.map((row: any) => row.activityTitle)).toEqual(["Host-owned work"]);
+      const all = await freshDashboardSnapshot(rawCallTool, { scope: "all", scopeId: SCOPE_B, metadata });
+      expect(all.view.counts.completed).toBe(2);
+      const outside = await rawCallTool({ name: "codex_status", arguments: { query: { kind: "job", id: elsewhere.jobId } }, _meta: metadata });
+      expect(outside.isError).toBe(true);
+    } finally { await close(); }
+  });
+
+  it("limits status-card runtime enrichment and background counts to the selected conversation", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    vi.spyOn(upstream, "probeThread").mockImplementation(async threadId => {
+      upstream.probeCalls.push(threadId);
+      return { state: "resumable", runtimeStatus: "idle", threadId };
+    });
+    const { rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    try {
+      const threads = ["scoped-runtime-here", "scoped-runtime-elsewhere"];
+      for (const [index, scopeId] of [SCOPE_A, SCOPE_B].entries()) {
+        const threadId = threads[index]!;
+        const activity = jobs.createActivity({ scopeId, title: `Runtime ${index}` });
+        const agent = jobs.createAgent({ scopeId, agentName: `Runtime Agent ${index}` });
+        jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
+        jobs.linkAgentThread({ agentId: agent.agentId, threadId, backendKind: "app-server", cwd: root,
+          sandbox: "read-only", contextMode: "fresh" });
+        const job = jobs.start({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh",
+          scopeId, operation: "start", cwd: root, sandbox: "read-only", requestId: nextRequestId(),
+          requestHash: `scoped-runtime-${index}`, requestHashVersion: 7, exclusiveKeys: [],
+          sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" },
+          executionMode: "foreground", backendKind: "app-server"
+        }, async () => fakeCodexResult(threadId));
+        await job.promise;
+      }
+      const [hereThread, elsewhereThread] = threads as [string, string];
+      upstream.backgroundThreadId = elsewhereThread;
+      const scoped = await freshDashboardSnapshot(rawCallTool, { scope: "conversation", scopeId: SCOPE_A, enrich: true });
+      expect(scoped.view.counts.backgroundProcesses).toBe(0);
+      expect(upstream.loadedTerminalReads).toContain(hereThread);
+      expect(upstream.loadedTerminalReads).not.toContain(elsewhereThread);
+      expect(upstream.probeCalls).not.toContain(elsewhereThread);
+      const all = await freshDashboardSnapshot(rawCallTool, { scope: "all", scopeId: SCOPE_A, enrich: true });
+      expect(all.view.counts.backgroundProcesses).toBe(1);
+      expect(upstream.loadedTerminalReads).toContain(elsewhereThread);
+      const scopedAgain = await freshDashboardSnapshot(rawCallTool, { scope: "conversation", scopeId: SCOPE_A });
+      expect(scopedAgain.view.counts.backgroundProcesses).toBe(0);
+      expect(scopedAgain.view.activeRows).toEqual([]);
+    } finally { await close(); }
+  });
+
+  it("shows every bridge-tracked conversation through a read-only Codex-runtime-only Dashboard", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, settings, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+
+    const completed = parseToolJson(await runTask(client, {
+      prompt: "private completed payload must not enter the dashboard",
+      activityTitle: "Scope A completed turn",
+      handoffPolicy: "verify",
+      executionMode: "background",
+      selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+    }));
+    upstream.resolveNext(fakeCodexResult("scope-a-private-thread"));
+    await waitForJobStatus(client, completed.jobId, "completed");
+
+    const project = settings.current.projects[0]!;
+    const running = parseToolJson(await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_B,
+        requestId: "44444444-4444-4444-8444-444444444444",
+        activityPresentationId: "55555555-5555-4555-8555-555555555555",
+        prompt: "private running payload must not enter the dashboard",
+        project: { name: project.name, registryRevision: settings.current.registryRevision },
+        activity: { mode: "new", title: "Scope B running turn" },
+        agent: { mode: "new", name: "Scope B Agent" },
+        executionMode: "background",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      }
+    }));
+
+    upstream.progressNext({
+      progress: 1,
+      message: "model rerouted",
+      event: {
+        eventId: "reroute:dashboard-running",
+        type: "model",
+        phase: "updated",
+        createdAt: Date.now(),
+        summary: "Model rerouted.",
+        details: {
+          kind: "rerouted",
+          fromModel: "gpt-5.6-sol",
+          toModel: "gpt-5.6-terra",
+          reason: "fixture-policy"
+        }
+      }
+    });
+
+    const opened = await rawCallTool({
+      name: "codex_dashboard",
+      arguments: { scopeId: SCOPE_A }
+    });
+    expect((opened as { structuredContent?: unknown }).structuredContent).toMatchObject({
+      kind: "dashboard",
+      scope: "bridge-wide",
+      readOnly: true,
+      statusSource: "codex-runtime-only",
+      summary: expect.stringContaining("card loads current retained work")
+    });
+    expect((opened as { _meta?: Record<string, unknown> })._meta)
+      .not.toHaveProperty(DASHBOARD_VIEW_METADATA_KEY);
+    const { view } = await freshDashboardSnapshot(rawCallTool, { scopeId: SCOPE_A });
+    expect(view).toMatchObject({
+      kind: "dashboard",
+      scope: "bridge-wide",
+      statusSource: "codex-runtime-only",
+      coverage: "bridge-known-retained",
+      counts: {
+        trackedProjects: 1,
+        trackedConversations: 2,
+        retainedJobs: 2,
+        active: 1,
+        running: 1,
+        completed: 1
+      }
+    });
+    expect(view.activeRows).toEqual([
+      expect.objectContaining({
+        activityTitle: "Scope B running turn",
+        agentName: "Scope B Agent",
+        projectName: project.name,
+        status: "running",
+        execution: {
+          model: "gpt-5.6-sol",
+          modelDisplayName: "GPT-5.6 Sol",
+          reasoningEffort: "max",
+          reroutedModel: "gpt-5.6-terra",
+          reroutedModelDisplayName: "GPT-5.6 Terra",
+          isCurrent: true
+        }
+      })
+    ]);
+    expect(view.terminalRows).toEqual([
+      expect.objectContaining({
+        activityTitle: "Scope A completed turn",
+        agentName: "Codex Agent",
+        projectName: project.name,
+        status: "completed",
+        execution: {
+          model: "gpt-5.6-terra",
+          modelDisplayName: "GPT-5.6 Terra",
+          reasoningEffort: "high",
+          isCurrent: false
+        }
+      })
+    ]);
+    expect(view).not.toHaveProperty("projects");
+    expect(view).not.toHaveProperty("conversations");
+    expect(view.pagination).not.toHaveProperty("projects");
+    expect(view.pagination).not.toHaveProperty("conversations");
+    expect([...view.activeRows, ...view.terminalRows].every((row) =>
+      /^[0-9a-f]{32}$/.test(row.rowKey) &&
+      /^[0-9a-f]{32}$/.test(row.activityKey) &&
+      /^[0-9a-f]{32}$/.test(row.projectKey)
+    )).toBe(true);
+    expect(JSON.stringify((opened as { structuredContent?: unknown }).structuredContent))
+      .not.toContain("gpt-5.6");
+    const aliases = new Set(
+      [...view.activeRows, ...view.terminalRows].map((row) => row.sessionAlias)
+    );
+    expect(aliases.size).toBe(2);
+    expect([...aliases].every((alias) => /^Session [0-9A-F]{8}$/.test(alias))).toBe(true);
+
+    const serialized = JSON.stringify(view);
+    for (const privateValue of [
+      SCOPE_A,
+      SCOPE_B,
+      completed.jobId,
+      running.jobId,
+      root,
+      "scope-a-private-thread",
+      "private completed payload",
+      "private running payload"
+    ]) {
+      expect(serialized).not.toContain(privateValue);
+    }
+    for (const excludedState of [
+      '"lifecycle"',
+      '"waitingOn"',
+      '"verification"',
+      '"handoff"',
+      '"scopeId"',
+      '"threadId"',
+      '"jobId"',
+      '"activityId"',
+      '"agentId"',
+      '"projectId"'
+    ]) {
+      expect(serialized).not.toContain(excludedState);
+    }
+
+    jobs.startActivityVerification(completed.activityId);
+    const { view: afterView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_B
+    });
+    expect(afterView.terminalRows.find((row) =>
+      row.activityTitle === "Scope A completed turn"
+    )?.status).toBe("completed");
+
+    const unmounted = await rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: { limit: 20 }
+    });
+    expect(unmounted.isError).toBe(true);
+    expect(JSON.stringify(unmounted)).toContain("MOUNTED_WIDGET_REQUIRED");
+
+    const refreshed = await rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: {
+        widgetInstanceId: "33333333-3333-4333-8333-333333333333",
+        limit: 20
+      }
+    });
+    const refreshedView = (refreshed as { structuredContent?: any }).structuredContent;
+    expect(refreshedView).toMatchObject({
+      kind: "dashboard",
+      statusSource: "codex-runtime-only",
+      counts: { trackedConversations: 2 }
+    });
+    expect(validateDashboardViewPrivateMetadata(
+      (refreshed as { _meta?: Record<string, unknown> })._meta?.[DASHBOARD_VIEW_METADATA_KEY]
+    ).view).toEqual(refreshedView);
+    expect(refreshedView).not.toHaveProperty("controls");
+    expect(refreshedView).not.toHaveProperty("leases");
+    expect(refreshedView).not.toHaveProperty("pendingHandoffs");
+    expect(refreshedView).not.toHaveProperty("nextActions");
+
+    const malformedHostScope = await rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: {
+        widgetInstanceId: "33333333-3333-4333-8333-333333333333",
+        limit: 20
+      },
+      _meta: { "openai/session": "" }
+    });
+    expect(malformedHostScope.isError).toBe(true);
+    expect(JSON.stringify(malformedHostScope)).toContain("non-empty bounded string");
+
+    upstream.resolveNext(fakeCodexResult("scope-b-private-thread"));
+    await vi.waitFor(() => expect(jobs.get(running.jobId)?.status).toBe("completed"));
+    const { view: afterCompletionView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(afterCompletionView.terminalRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentName: "Scope B Agent",
+        status: "completed",
+        execution: expect.objectContaining({
+          model: "gpt-5.6-sol",
+          reasoningEffort: "max",
+          isCurrent: true
+        }),
+        latestTurn: expect.objectContaining({
+          execution: expect.objectContaining({
+            model: "gpt-5.6-sol",
+            reasoningEffort: "max",
+            reroutedModel: "gpt-5.6-terra",
+            isCurrent: false
+          })
+        })
+      })
+    ]));
+    expect(afterCompletionView.idleRows).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ agentName: "Scope B Agent" })
+    ]));
+    await close();
+  });
+
+  it("reviews failed history and rejects archive requests from retained clients without changing the Agent", async () => {
+    const root=temporaryRoot(), {jobs,applicationService,rawCallTool,close}=await connectTestClient(configFor(root),new FakeUpstream());
+    let now=Date.now();const clock=vi.spyOn(Date,"now").mockImplementation(()=>now);
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Review failed run"});
+      async function fail() {
+        const activity=jobs.createActivity({scopeId:SCOPE_A,title:"Failed run"});
+        const job=jobs.start({activityId:activity.activityId,agentId:agent.agentId,operation:"start",cwd:root,sandbox:"read-only",scopeId:SCOPE_A,
+          requestId:nextRequestId(),requestHash:nextRequestId(),requestHashVersion:7,exclusiveKeys:[],
+          sessionDecision:{requestedMode:"new",action:"start",reason:"explicit-new"}},async()=>{throw new Error("historic failure");});
+        await job.promise;return job;
+      }
+      const job=await fail();
+      const snapshot=()=>applicationService.dashboardSnapshot({statusFilter:"all"});
+      const first=await snapshot(),row=first.terminalRows[0]!;
+      expect(first.activeRows).toEqual([]);expect(first.counts.problems).toBe(1);
+      expect(row.historyControls).toEqual({canAcknowledge:true,revision:expect.stringMatching(/^[a-f0-9]{64}$/)});
+      const args={rowKey:row.rowKey,expectedRevision:row.historyControls!.revision,widgetInstanceId:"dddddddd-dddd-4ddd-8ddd-000000001599",scopeId:SCOPE_A};
+      const read=await rawCallTool({name:"codex_ui_read",arguments:{view:"history",...args}});
+      expect(read.isError,JSON.stringify(read)).not.toBe(true);
+      const token=(read._meta as any)["codex/historyControl@1"].token;
+      const request={...args,token,action:"acknowledge",requestId:nextRequestId()};
+      const wrongWidget=await rawCallTool({name:"codex_ui_history",arguments:{...request,widgetInstanceId:"dddddddd-dddd-4ddd-8ddd-000000001600"}});
+      expect(wrongWidget.isError).toBe(true);
+      const wrongHost=await rawCallTool({name:"codex_ui_history",arguments:{...request,scopeId:SCOPE_B}});
+      expect(wrongHost.isError).toBe(true);
+      const acknowledged=await rawCallTool({name:"codex_ui_history",arguments:request});
+      expect(acknowledged.isError,JSON.stringify(acknowledged)).not.toBe(true);
+      expect((await snapshot()).counts.problems).toBe(0);expect(job.status).toBe("failed");
+      expect((await rawCallTool({name:"codex_ui_history",arguments:request})).isError).not.toBe(true);
+      now+=1000;await fail();
+      expect((await snapshot()).counts.problems).toBe(1);
+      const newer=(await snapshot()).terminalRows[0]!;
+      await expect(applicationService.historyAction!({rowKey:newer.rowKey,expectedRevision:newer.historyControls!.revision,action:"archive",requestId:nextRequestId()})).rejects.toThrow(/AGENT_ARCHIVE_REMOVED/);
+      const legacyRead=await rawCallTool({name:"codex_ui_read",arguments:{view:"history",rowKey:newer.rowKey,expectedRevision:newer.historyControls!.revision,widgetInstanceId:args.widgetInstanceId,scopeId:SCOPE_A}});
+      const legacyToken=(legacyRead._meta as any)["codex/historyControl@1"].token;
+      const legacyArchive=await rawCallTool({name:"codex_ui_history",arguments:{rowKey:newer.rowKey,expectedRevision:newer.historyControls!.revision,action:"archive",requestId:nextRequestId(),widgetInstanceId:args.widgetInstanceId,scopeId:SCOPE_A,token:legacyToken}});
+      expect(legacyArchive.isError).toBe(true);
+      expect(JSON.stringify(legacyArchive)).toContain("AGENT_ARCHIVE_REMOVED");
+      expect(jobs.getAgent(agent.agentId)?.lifecycle).toBe("idle");
+      expect((await snapshot()).counts.problems).toBe(1);
+      now+=8*86400_000;
+      const old=await snapshot();expect(old.activeRows).toEqual([]);expect(old.counts.problems).toBe(0);
+      const retained=old.terminalRows[0]!;
+      expect(retained.status).toBe("failed");expect(retained.historyControls).toBeUndefined();
+      expect(jobs.getAgent(agent.agentId)?.lifecycle).toBe("idle");
+    } finally {clock.mockRestore();await close();}
+  });
+
+  it("reviews each retained failure across later success, pagination, scope, undo and stale selections", async () => {
+    const root=temporaryRoot(), {jobs,applicationService,rawCallTool,close}=await connectTestClient(configFor(root),new FakeUpstream());
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Repeated executions"});
+      const outside=jobs.createAgent({scopeId:SCOPE_B,agentName:"Another conversation"});
+      const base=Date.now()-9*86400_000;
+      for(let n=0;n<112;n++){
+        const record={jobId:`review-${n}`,requestId:`review-request-${n}`,scopeId:n===111?SCOPE_B:SCOPE_A,
+          agentId:n===111?outside.agentId:agent.agentId,status:n===110?"completed":"failed",createdAt:base+n*100,updatedAt:base+n*100+1};
+        jobs.admissionStateStore.upsertJob(record);jobs.admissionStateStore.deleteJob(record.jobId);
+      }
+      const query={review:"pending" as const,kind:"failed" as const,offset:0};
+      const first=await applicationService.dashboardSnapshot({statusFilter:"all",scopeId:SCOPE_A,limit:50,problems:query});
+      expect(first.activeRows).toEqual([]);expect(first.terminalRows[0]?.status).toBe("completed");
+      expect(first.problems).toMatchObject({pendingCount:110,reviewableCount:110,page:{total:110,returned:50,hasNext:true}});
+      expect(first.historyPolicy?.reviewUntilRetention).toBe(true);
+      const pages=[first.problems!];
+      for(const offset of [50,100]){
+        const page=await applicationService.dashboardSnapshot({statusFilter:"problems",scopeId:SCOPE_A,limit:50,problems:{...query,offset}});
+        expect(page.activeRows).toEqual([]);expect(page.terminalRows).toEqual([]);expect(page.problems?.revision).toBe(first.problems!.revision);pages.push(page.problems!);
+      }
+      const targets=pages.flatMap(page=>page.rows.map(row=>({problemKey:row.problemKey,expectedRevision:row.revision})));
+      expect(new Set(targets.map(target=>target.problemKey)).size).toBe(110);
+      const widgetInstanceId="dddddddd-dddd-4ddd-8ddd-000000001699";
+      const operation={action:"acknowledge" as const,targets:targets.slice(0,100)};
+      const proof=await rawCallTool({name:"codex_ui_read",arguments:{view:"problem-control",operation,scope:"conversation",scopeId:SCOPE_A,widgetInstanceId}});
+      expect(proof.isError,JSON.stringify(proof)).not.toBe(true);
+      const token=(proof._meta as any)["codex/problemControl@1"].token;
+      const request={...operation,token,scopeId:SCOPE_A,widgetInstanceId,requestId:nextRequestId()};
+      for(const override of [{widgetInstanceId:nextRequestId()},{scopeId:SCOPE_B},{action:"unacknowledge"},{targets:targets.slice(1,2)}]){
+        const rejected=await rawCallTool({name:"codex_ui_problem",arguments:{...request,...override}});
+        expect(rejected.isError).toBe(true);
+      }
+      const acknowledged=await rawCallTool({name:"codex_ui_problem",arguments:request});
+      expect(acknowledged.isError,JSON.stringify(acknowledged)).not.toBe(true);
+      expect(acknowledged.structuredContent).toMatchObject({ok:true,changed:100});
+      expect((await rawCallTool({name:"codex_ui_problem",arguments:request})).structuredContent).toMatchObject({changed:100});
+      await expect(applicationService.problemAction!({...operation,targets:targets.slice(100),requestId:nextRequestId()},SCOPE_A)).resolves.toEqual({ok:true,changed:10});
+      const reviewed=await applicationService.dashboardSnapshot({statusFilter:"problems",scopeId:SCOPE_A,limit:50,problems:{...query,review:"acknowledged"}});
+      expect(reviewed.counts.problems).toBe(0);expect(reviewed.problems).toMatchObject({pendingCount:0,acknowledgedCount:110});
+      expect(reviewed.problems!.rows.every(row=>row.row.status==="failed"&&row.canUnacknowledge)).toBe(true);
+      const row=reviewed.problems!.rows[0]!;
+      await applicationService.problemAction!({action:"unacknowledge",targets:[{problemKey:row.problemKey,expectedRevision:row.revision}],requestId:nextRequestId()},SCOPE_A);
+      expect((await applicationService.dashboardSnapshot({statusFilter:"all",scopeId:SCOPE_A,problems:query})).counts.problems).toBe(1);
+      await expect(applicationService.problemAction!({...operation,targets:[targets[0]!],requestId:nextRequestId()},SCOPE_A)).rejects.toThrow(/TARGET_CHANGED/);
+      expect((await applicationService.dashboardSnapshot({statusFilter:"all",scopeId:SCOPE_B,problems:query})).counts.problems).toBe(1);
+      expect(jobs.admissionStateStore.listDashboardRetainedJobs().filter(job=>job.status==="failed")).toHaveLength(111);
+    } finally {await close();}
+  });
+
+  it("keeps uninspected Agents out of problems and rechecks unknown status without reviewing active work", async()=>{
+    const root=temporaryRoot(),upstream=new SelectiveLoadedTerminalUpstream();
+    const {jobs,applicationService,close}=await connectTestClient(configFor(root,{CODEX_MCP_BRIDGE_DEFAULT_BACKEND:"app-server"}),upstream);
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Runtime inspection"});
+      jobs.linkAgentThread({agentId:agent.agentId,threadId:"unknown-runtime",backendKind:"app-server",cwd:root,sandbox:"read-only",contextMode:"fresh"});
+      const options={statusFilter:"all" as const,problems:{review:"pending" as const,kind:"all" as const,offset:0}};
+      const initial=await applicationService.dashboardSnapshot(options);
+      expect(initial.counts.runtimeProbeSkippedAgents).toBe(1);expect(initial.problems?.pendingCount).toBe(0);
+      const inspect=vi.spyOn(upstream,"listLoadedBackgroundTerminals").mockRejectedValue(new Error("inspection unavailable"));
+      const probe=vi.spyOn(upstream,"probeThread").mockImplementation(async threadId=>({state:"unknown",reason:"unavailable",threadId,retryable:true}));
+      const unknown=await applicationService.dashboardSnapshot({...options,inspectRuntime:true});
+      expect(unknown.problems?.pendingCount).toBe(1);
+      const row=unknown.problems!.rows[0]!;expect(row).toMatchObject({kind:"unknown",canAcknowledge:false,canRecheck:true});
+      const target={problemKey:row.problemKey,expectedRevision:row.revision};
+      await expect(applicationService.problemAction!({action:"acknowledge",targets:[target],requestId:nextRequestId()})).rejects.toThrow(/TARGET_CHANGED/);
+      await applicationService.problemAction!({action:"recheck",targets:[target],requestId:nextRequestId()});
+      expect((await applicationService.dashboardSnapshot(options)).problems?.pendingCount).toBe(1);
+      inspect.mockResolvedValue(null);
+      probe.mockImplementation(async threadId=>({state:"resumable",runtimeStatus:"notLoaded",threadId}));
+      await applicationService.problemAction!({action:"recheck",targets:[target],requestId:nextRequestId()});
+      expect((await applicationService.dashboardSnapshot(options)).problems?.pendingCount).toBe(0);
+      expect(jobs.getAgent(agent.agentId)?.lifecycle).toBe("idle");expect(upstream.calls).toEqual([]);
+    } finally {await close();}
+  });
+
+  it("resolves an orphan only after fresh non-loading checks confirm no running or background work", async()=>{
+    const root=temporaryRoot(),upstream=new SelectiveLoadedTerminalUpstream();
+    const {jobs,applicationService,close}=await connectTestClient(configFor(root,{CODEX_MCP_BRIDGE_DEFAULT_BACKEND:"app-server"}),upstream);
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Disconnected runtime"});
+      jobs.linkAgentThread({agentId:agent.agentId,threadId:"missing-runtime",backendKind:"app-server",cwd:root,sandbox:"read-only",contextMode:"fresh"});
+      jobs.setAgentExecutionState(agent.agentId,"orphaned",{orphanedReason:"Missing runtime"});
+      vi.spyOn(upstream,"probeThread").mockImplementation(async threadId=>({state:"orphaned",reason:"missing",threadId,retryable:false}));
+      const options={statusFilter:"all" as const,problems:{review:"pending" as const,kind:"all" as const,offset:0}};
+      const first=await applicationService.dashboardSnapshot(options),row=first.problems!.rows[0]!;
+      expect(first.activeRows).toEqual([]);expect(row.kind).toBe("orphaned");
+      const action={action:"recheck" as const,targets:[{problemKey:row.problemKey,expectedRevision:row.revision}]};
+      upstream.backgroundThreadId="missing-runtime";
+      await applicationService.problemAction!({...action,requestId:nextRequestId()});
+      expect((await applicationService.dashboardSnapshot(options)).problems?.pendingCount).toBe(1);
+      upstream.backgroundThreadId=undefined;
+      await applicationService.problemAction!({...action,requestId:nextRequestId()});
+      const next=await applicationService.dashboardSnapshot(options);
+      expect(next.problems?.pendingCount).toBe(0);expect(next.problems?.acknowledgedCount).toBe(1);
+      expect(jobs.getAgent(agent.agentId)?.lifecycle).toBe("orphaned");expect(upstream.calls).toEqual([]);
+      jobs.setAgentExecutionState(agent.agentId,"orphaned",{orphanedReason:"Connection lost again"});
+      expect((await applicationService.dashboardSnapshot(options)).problems?.pendingCount).toBe(1);
+      await expect(applicationService.problemAction!({...action,requestId:nextRequestId()})).rejects.toThrow(/TARGET_CHANGED/);
+    } finally {await close();}
+  });
+
+  it("retries failed termination only for the exact visible shared-worker impact and records provenance",async()=>{
+    const root=temporaryRoot(),upstream=new DeferredUpstream();
+    const {client,jobs,applicationService,close}=await connectTestClient(configFor(root),upstream);
+    try {
+      const first=parseToolJson(await client.callTool({name:"codex_task",arguments:{prompt:"First connected execution",sessionMode:"new"}}));
+      const second=parseToolJson(await client.callTool({name:"codex_task",arguments:{prompt:"Second connected execution",sessionMode:"new"}}));
+      const fail=vi.spyOn(upstream,"forceTerminateWorker").mockRejectedValueOnce(new Error("worker still alive"));
+      const job=jobs.get(first.jobId)!;
+      const {intent}=jobs.beginCancellationOperation({scopeId:job.scopeId,requestId:nextRequestId(),actionHash:"d".repeat(64),source:"operator",toolName:"test",actionName:"cancel-job",target:{kind:"job",jobId:job.jobId,activityId:job.activityId,agentId:job.agentId},expectedVersion:job.version,reasonCode:"test-stop"});
+      await jobs.cancel(job.jobId,intent,{acknowledgeAffectedJobIds:[first.jobId,second.jobId]});
+      expect(jobs.get(job.jobId)?.status).toBe("termination-failed");
+      const view=await applicationService.dashboardSnapshot({statusFilter:"problems",problems:{review:"pending",kind:"termination-failed",offset:0}});
+      const problem=view.problems!.rows.find(row=>row.canRetryStop)!;
+      expect(problem.stopImpact?.affectedJobIds.sort()).toEqual([first.jobId,second.jobId].sort());
+      const action={action:"retry-stop" as const,targets:[{problemKey:problem.problemKey,expectedRevision:problem.revision}],requestId:nextRequestId()};
+      await expect(applicationService.problemAction!({...action,acknowledgeAffectedJobIds:[first.jobId]})).rejects.toThrow(/STOP_IMPACT_CHANGED/);
+      expect(fail).toHaveBeenCalledTimes(1);
+      const request={...action,acknowledgeAffectedJobIds:problem.stopImpact!.affectedJobIds};
+      await applicationService.problemAction!(request);await applicationService.problemAction!(request);
+      expect(fail).toHaveBeenCalledTimes(2);expect(upstream.aborts).toBe(1);
+      expect(jobs.listCancellationIntents({requestId:request.requestId})).toEqual(expect.arrayContaining([expect.objectContaining({source:"operator",reasonCode:"problem-termination-retry"})]));
+      expect(jobs.get(first.jobId)?.status).toBe("cancelled");expect(jobs.get(second.jobId)?.status).toBe("interrupted");
+    }finally{await close();}
+  });
+
+  it("keeps missing historical Codex threads out of current work even after a legacy probe",async()=>{
+    const root=temporaryRoot(),upstream=new SelectiveLoadedTerminalUpstream();
+    const probe=vi.spyOn(upstream,"probeThread").mockImplementation(async threadId=>({state:"orphaned",reason:"missing",threadId,retryable:false}));
+    const {client,applicationService,close}=await connectTestClient(configFor(root,{CODEX_MCP_BRIDGE_DEFAULT_BACKEND:"app-server"}),upstream);
+    try {
+      await runTask(client,{prompt:"Finished historical work"});
+      const modern=await applicationService.dashboardSnapshot({statusFilter:"all",inspectRuntime:true});
+      expect(modern.activeRows).toEqual([]);expect(modern.terminalRows).toHaveLength(1);expect(probe).not.toHaveBeenCalled();
+      expect((await applicationService.dashboardSnapshot({inspectRuntime:true})).activeRows[0].status).toBe("orphaned");
+      const refreshed=await applicationService.dashboardSnapshot({statusFilter:"all"});
+      expect(refreshed.activeRows).toEqual([]);expect(refreshed.counts.problems).toBe(0);
+      expect(refreshed.terminalRows[0].status).toBe("completed");
+    }finally{await close();}
+  });
+
+  it("inspects every Agent beyond the 200-candidate batch and retains coverage on structural refresh", async()=>{
+    const root=temporaryRoot(),upstream=new SelectiveLoadedTerminalUpstream();
+    const {jobs,applicationService,close}=await connectTestClient(configFor(root,{CODEX_MCP_BRIDGE_DEFAULT_BACKEND:"app-server"}),upstream);
+    try {
+      for(let n=0;n<284;n++){
+        const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:`Old Agent ${n}`});
+        jobs.linkAgentThread({agentId:agent.agentId,threadId:`old-thread-${n}`,backendKind:"app-server",cwd:root,sandbox:"read-only",contextMode:"fresh"});
+      }
+      expect((await applicationService.dashboardSnapshot({statusFilter:"all"})).counts.runtimeProbeSkippedAgents).toBe(284);
+      const first=await applicationService.dashboardSnapshot({statusFilter:"all",inspectRuntime:true});
+      expect(first.counts.runtimeProbeSkippedAgents).toBe(84);
+      const second=await applicationService.dashboardSnapshot({statusFilter:"all",inspectRuntime:true});
+      expect(new Set(upstream.loadedTerminalReads).size).toBe(284);
+      expect(second.counts.runtimeProbeSkippedAgents).toBe(0);
+      expect((await applicationService.dashboardSnapshot({statusFilter:"all"})).counts.runtimeProbeSkippedAgents).toBe(0);
+      expect(upstream.calls).toEqual([]);
+    }finally{await close();}
+  });
+
+  it("unifies archived dashboard history without listing empty idle Agents or changing legacy pages", async () => {
+    const root = temporaryRoot();
+    const { client, jobs, rawCallTool, applicationService, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      for (let index = 0; index < 7; index++) {
+        now += 100;
+        const result = parseToolJson(await client.callTool({ name: "codex_task", arguments: {
+          scopeId: index === 6 ? SCOPE_B : SCOPE_A,
+          prompt: "Record a completed run", agentName: `History Agent ${index}`,
+          contextMode: "fresh", executionMode: "foreground"
+        } }));
+        expect(jobs.get(result.jobId)?.status).toBe("completed");
+      }
+      jobs.createAgent({ scopeId: SCOPE_A, agentName: "No execution history" });
+      now += 7 * 60 * 60 * 1000;
+      const legacy = await applicationService.dashboardSnapshot({ inspectRuntime: false });
+      expect(legacy.terminalRows).toHaveLength(0);
+      expect(legacy.idleRows).toHaveLength(8);
+      const first = await applicationService.dashboardSnapshot({ statusFilter: "all", scopeId: SCOPE_A, limit: 5 });
+      expect(first.counts).toMatchObject({ running: 0, responseRequired: 0, problems: 0 });
+      expect(first.idleRows).toEqual([]);
+      expect(first.pagination.idle.total).toBe(0);
+      expect(first.pagination.terminal).toMatchObject({ total: 6, returned: 5, hasNext: true });
+      expect(first.terminalRows.every(row => row.status === "completed" && row.latestTurn?.status === "completed")).toBe(true);
+      expect(JSON.stringify(first)).not.toContain("No execution history");
+      const second = await applicationService.dashboardSnapshot({ statusFilter: "all", scopeId: SCOPE_A, limit: 5, terminalOffset: 5 });
+      expect(second.terminalRows).toHaveLength(1);
+      expect(new Set([...first.terminalRows, ...second.terminalRows].map(row => row.rowKey)).size).toBe(6);
+      const card = await rawCallTool({ name: "codex_ui_read", arguments: {
+        view: "dashboard", statusFilter: "all", scope: "conversation", scopeId: SCOPE_A,
+        widgetInstanceId: "dddddddd-dddd-4ddd-8ddd-000000007800", limit: 5, enrich: false
+      } });
+      expect(card.isError, JSON.stringify(card)).not.toBe(true);
+      expect((card.structuredContent as any).counts).toEqual(first.counts);
+      expect((card.structuredContent as any).terminalRows).toEqual(first.terminalRows);
+    } finally { clock.mockRestore(); await close(); }
+  });
+
+  it("binds native handoff to the displayed Agent and current thread and requires release evidence", async () => {
+    const root=temporaryRoot();
+    const {jobs,applicationService,close}=await connectTestClient(configFor(root),new FakeUpstream());
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Handoff target"});
+      const source="11111111-1111-4111-8111-111111111111",fork="22222222-2222-4222-8222-222222222222";
+      const link={agentId:agent.agentId,backendKind:"app-server",cwd:root,sandbox:"read-only",contextMode:"fresh" as const};
+      jobs.linkAgentThread({...link,threadId:source});
+      jobs.setAgentExecutionState(agent.agentId,"orphaned",{orphanedReason:"Test runtime unavailable"});
+      const row=(await applicationService.dashboardSnapshot({inspectRuntime:false})).activeRows[0]!;
+      const connections=jobs.admissionStateStore.threadConnections;
+      connections.register({threadId:source,agentId:agent.agentId,scopeId:SCOPE_A,persistence:"persistent"});
+      const target={rowKey:row.rowKey,codexThreadUrl:`codex://threads/${source}`};
+      await expect(applicationService.threadHandoff!({...target,rowKey:"f".repeat(32),action:"request"})).rejects.toThrow(/TARGET_CHANGED/);
+      await expect(applicationService.threadHandoff!({...target,action:"request"})).resolves.toMatchObject({requested:true,canOpen:false});
+      connections.update(source,{phase:"unsubscribed"});
+      await expect(applicationService.threadHandoff!({...target,action:"status"})).resolves.toMatchObject({canOpen:false});
+      connections.update(source,{phase:"released",evidence:"worker-exited"});
+      await expect(applicationService.threadHandoff!({...target,action:"status"})).resolves.toMatchObject({canOpen:true});
+      jobs.linkAgentThread({...link,threadId:fork,contextMode:"fork",forkedFromThreadId:source});
+      await expect(applicationService.threadHandoff!({...target,action:"request"})).rejects.toThrow(/TARGET_CHANGED/);
+      await expect(applicationService.threadHandoff!({...target,action:"cancel"})).resolves.toMatchObject({requested:false,canOpen:false});
+    } finally {await close();}
+  });
+
+  it("deduplicates response-needed Agents and filters the full dashboard scope before pagination", async () => {
+    const root = temporaryRoot();
+    const { jobs, applicationService, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const completions: Array<() => void> = [];
+    const progress: Array<(value: CodexProgress) => void> = [];
+    try {
+      for (const name of ["Both requests", "Running"]) {
+        const activity = jobs.createActivity({ scopeId: SCOPE_A, title: name });
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: name });
+        jobs.start({ activityId: activity.activityId, agentId: agent.agentId, operation: "start",
+          cwd: root, sandbox: "read-only", scopeId: SCOPE_A, requestId: nextRequestId(), requestHash: name,
+          requestHashVersion: 7, exclusiveKeys: [], sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" }
+        }, (onProgress, onAssigned) => {
+          onAssigned({ backendKind: "app-server", workerId: "summary-worker", workerGeneration: 1 });
+          progress.push(onProgress);
+          return new Promise(resolve => completions.push(() => resolve(fakeCodexResult(name))));
+        });
+        await Promise.resolve();
+      }
+      for (const kind of ["command-approval", "user-input"] as const) {
+        progress[0]!({ progress: 1, event: {
+          eventId: kind, type: kind === "user-input" ? "input-required" : "approval-required",
+          phase: "waiting", createdAt: Date.now(), summary: kind,
+          details: { interaction: { interactionId: kind, kind, threadId: "thread", turnId: "turn", itemId: kind,
+            summary: kind, availableDecisions: ["accept", "decline"],
+            ...(kind === "user-input" ? { questions: [{ id: "choice", header: "Choice", question: "Which?", isSecret: false }] } : {})
+          } }
+        } });
+      }
+      for (let index = 0; index < 7; index++) {
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: `Problem ${index}` });
+        jobs.setAgentExecutionState(agent.agentId, "orphaned", { orphanedReason: "Missing runtime" });
+      }
+      const outside = jobs.createAgent({ scopeId: SCOPE_B, agentName: "Other conversation problem" });
+      jobs.setAgentExecutionState(outside.agentId, "orphaned", { orphanedReason: "Missing runtime" });
+      const options = { scopeId: SCOPE_A, limit: 5, inspectRuntime: false };
+      const all = await applicationService.dashboardSnapshot({ ...options, statusFilter: "all" });
+      expect(all.counts).toMatchObject({ running: 1, responseRequired: 1, problems: 7 });
+      expect(all.activeRows[0].status).toBe("input-required");
+      const answers = await applicationService.dashboardSnapshot({ ...options, statusFilter: "response-required" });
+      expect(answers.counts).toEqual(all.counts);
+      expect(answers.activeRows.map(row => row.agentName)).toEqual(["Both requests"]);
+      const problems = await applicationService.dashboardSnapshot({ ...options, statusFilter: "problems" });
+      expect(problems.activeRows).toHaveLength(7);
+      expect(problems.activeRows.every(row => row.status === "orphaned")).toBe(true);
+      const running = await applicationService.dashboardSnapshot({ ...options, statusFilter: "running" });
+      expect(running.activeRows.map(row => row.agentName)).toEqual(["Running"]);
+    } finally { for (const finish of completions) finish(); await Promise.resolve(); await close(); }
+  });
+
+  it("returns a complete lightweight status index while deferring paged history", async () => {
+    const root = temporaryRoot();
+    const { jobs, applicationService, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream()
+    );
+    try {
+      for (let index = 0; index < 125; index += 1) {
+        const agent = jobs.createAgent({
+          scopeId: SCOPE_A,
+          agentName: `Deferred history Agent ${index}`
+        });
+        jobs.setAgentExecutionState(agent.agentId, "orphaned", {
+          orphanedReason: "Status index coverage"
+        });
+      }
+      const summary = await applicationService.dashboardSnapshot({
+        scopeId: SCOPE_A,
+        statusFilter: "all",
+        includeHistory: false,
+        limit: 5,
+        inspectRuntime: false
+      });
+      expect(summary.historyIncluded).toBe(false);
+      expect(summary.activeRows).toEqual([]);
+      expect(summary.terminalRows).toEqual([]);
+      expect(summary.statusRowsComplete).toBe(true);
+      expect(summary.statusRows).toHaveLength(125);
+      expect(summary.statusRows?.every((row) =>
+        row.status === "orphaned" && row.history?.length === 0
+      )).toBe(true);
+      expect(Buffer.byteLength(JSON.stringify(summary), "utf8"))
+        .toBeLessThanOrEqual(DASHBOARD_VIEW_PRIVATE_MAX_BYTES);
+      expect(summary.counts.problems).toBe(125);
+
+      const history = await applicationService.dashboardSnapshot({
+        scopeId: SCOPE_A,
+        statusFilter: "all",
+        includeHistory: true,
+        limit: 5,
+        inspectRuntime: false
+      });
+      expect(history.historyIncluded).toBe(true);
+      expect(history.activeRows.length).toBeGreaterThan(0);
+    } finally {
+      await close();
+    }
+  });
+
+  it("keeps a failed Agent visible as a problem when background processes remain", async () => {
+    const root = temporaryRoot();
+    const upstream = new SelectiveLoadedTerminalUpstream();
+    upstream.backgroundThreadId = "failed-background-thread";
+    vi.spyOn(upstream, "probeThread").mockImplementation(async threadId => ({
+      state: "resumable", runtimeStatus: "idle", threadId
+    }));
+    const { jobs, applicationService, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    try {
+      const activity = jobs.createActivity({ scopeId: SCOPE_A, title: "Failed with background work" });
+      const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Failed background Agent" });
+      jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
+      jobs.linkAgentThread({ agentId: agent.agentId, threadId: upstream.backgroundThreadId,
+        backendKind: "app-server", cwd: root, sandbox: "read-only", contextMode: "fresh" });
+      const job = jobs.start({ activityId: activity.activityId, agentId: agent.agentId,
+        operation: "start", cwd: root, sandbox: "read-only", scopeId: SCOPE_A,
+        requestId: nextRequestId(), requestHash: "failed-background", requestHashVersion: 7,
+        exclusiveKeys: [], backendKind: "app-server",
+        sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" }
+      }, async () => { throw new Error("Failure after starting a background process"); });
+      await job.promise;
+      expect(job.status).toBe("failed");
+      const modern = await applicationService.dashboardSnapshot({ statusFilter: "all", inspectRuntime: true });
+      expect(modern.counts).toMatchObject({ running: 0, responseRequired: 0, problems: 1, backgroundProcesses: 1 });
+      expect(modern.activeRows).toEqual([expect.objectContaining({ status: "failed", backgroundProcessCount: 1 })]);
+      const row=modern.activeRows[0];
+      expect(row.historyControls).toEqual({canAcknowledge:true,revision:expect.stringMatching(/^[a-f0-9]{64}$/)});
+      await expect(applicationService.historyAction!({rowKey:row.rowKey,expectedRevision:row.historyControls!.revision,action:"archive",requestId:nextRequestId()})).rejects.toThrow(/AGENT_ARCHIVE_REMOVED/);
+
+      for (const statusFilter of ["problems", "background"] as const) {
+        const filtered = await applicationService.dashboardSnapshot({ statusFilter });
+        expect(filtered.activeRows.map(row => row.rowKey)).toEqual(modern.activeRows.map(row => row.rowKey));
+      }
+      const legacy = await applicationService.dashboardSnapshot({ inspectRuntime: false });
+      expect(legacy.activeRows[0].status).toBe("background-process-running");
+    } finally { await close(); }
+  });
+
+  it.each([false, true])("keeps active Dashboard start order through progress and usage updates (tied starts: %s)", async (tiedStarts) => {
+    const root = temporaryRoot();
+    const { jobs, rawCallTool, applicationService, close } = await connectTestClient(
+      configFor(root), new FakeUpstream()
+    );
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const progress = new Map<string, (value: CodexProgress) => void>();
+    const completions: Array<() => void> = [];
+    const runningJobs: Array<ReturnType<CodexJobRegistry["start"]>> = [];
+    try {
+      const shared = jobs.createActivity({ scopeId: SCOPE_A, title: "Shared work" });
+      const separate = jobs.createActivity({ scopeId: SCOPE_A, title: "Separate work" });
+      const names = ["First Agent", "Second Agent", "Third Agent"];
+      for (const [index, agentName] of names.entries()) {
+        if (index !== 1 || !tiedStarts) now += 100;
+        const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName });
+        runningJobs.push(jobs.start({
+          activityId: index < 2 ? shared.activityId : separate.activityId,
+          agentId: agent.agentId,
+          operation: "start",
+          cwd: root,
+          sandbox: "read-only",
+          scopeId: SCOPE_A,
+          requestId: nextRequestId(),
+          requestHash: `dashboard-start-order-${index}`,
+          requestHashVersion: 7,
+          exclusiveKeys: [],
+          sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" }
+        }, (onProgress, onAssigned) => {
+          onAssigned({ backendKind: "app-server", workerId: `order-${index}`, workerGeneration: 1 });
+          progress.set(agentName, onProgress);
+          return new Promise(resolve => {
+            completions.push(() => resolve(fakeCodexResult(`order-thread-${index}`)));
+          });
+        }));
+        await Promise.resolve();
+      }
+      const initial = await applicationService.dashboardSnapshot({ inspectRuntime: false });
+      const expectedNames = initial.activeRows.map(row => row.agentName);
+      if (tiedStarts) {
+        expect(expectedNames.slice(0, 2)).toEqual(expect.arrayContaining(names.slice(0, 2)));
+        expect(expectedNames[2]).toBe(names[2]);
+      } else {
+        expect(expectedNames).toEqual(names);
+      }
+      const expectedKeys = initial.activeRows.map(row => row.rowKey);
+      for (const [index, agentName] of [names[1]!, names[0]!, names[2]!, names[1]!].entries()) {
+        now += 100;
+        progress.get(agentName)!({
+          progress: index + 1,
+          message: "Still running",
+          ...(index % 2 === 1 ? { event: {
+            eventId: `dashboard-order-usage-${index}`,
+            type: "usage" as const,
+            phase: "updated" as const,
+            createdAt: now,
+            summary: "Codex token usage updated.",
+            details: { total: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 5, totalTokens: 15 } }
+          } } : {})
+        });
+        for (const enrich of [false, true]) {
+          const [{ view: card }, native] = await Promise.all([
+            freshDashboardSnapshot(rawCallTool, { enrich }),
+            applicationService.dashboardSnapshot({ inspectRuntime: enrich })
+          ]);
+          for (const view of [card, native]) {
+            const rows = view.activeRows as typeof initial.activeRows;
+            expect(rows.map(row => row.rowKey)).toEqual(expectedKeys);
+            expect(rows.every(row => row.status === "running")).toBe(true);
+            expect(rows.find(row => row.agentName === agentName)?.updatedAt)
+              .toBe(new Date(now).toISOString());
+          }
+        }
+      }
+      now += 100;
+      progress.get(names[2]!)!({
+        progress: 5,
+        event: {
+          eventId: "dashboard-order-approval",
+          type: "approval-required",
+          phase: "waiting",
+          createdAt: now,
+          summary: "Approval required",
+          details: { interaction: {
+            interactionId: "dashboard-order-interaction",
+            kind: "command-approval",
+            threadId: "order-thread-2",
+            turnId: "order-turn-2",
+            itemId: "order-item-2",
+            summary: "Approval required",
+            availableDecisions: ["accept", "decline"]
+          } }
+        }
+      });
+      const attention = await applicationService.dashboardSnapshot({ inspectRuntime: false });
+      expect(attention.activeRows.map(row => row.agentName))
+        .toEqual([names[2], ...expectedNames.slice(0, 2)]);
+      expect(attention.activeRows[0]?.status).toBe("approval-required");
+    } finally {
+      for (const complete of completions) complete();
+      await Promise.all(runningJobs.map(job => job.promise));
+      clock.mockRestore();
+      await close();
+    }
+  });
+
+  it("keeps active Dashboard recovery rows in creation order when no turn start is retained", async () => {
+    const { jobs, applicationService, close } = await connectTestClient(
+      configFor(temporaryRoot()), new FakeUpstream()
+    );
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const first = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Earlier recovery" });
+      jobs.setAgentExecutionState(first.agentId, "orphaned", { orphanedReason: "Missing runtime" });
+      now += 100;
+      const second = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Later recovery" });
+      jobs.setAgentExecutionState(second.agentId, "orphaned", { orphanedReason: "Missing runtime" });
+      const initial = await applicationService.dashboardSnapshot({ inspectRuntime: false });
+      expect(initial.activeRows.map(row => row.agentName))
+        .toEqual([first.agentName, second.agentName]);
+
+      now += 100;
+      jobs.setAgentExecutionState(first.agentId, "orphaned", { orphanedReason: "Runtime still unavailable" });
+      const updated = await applicationService.dashboardSnapshot({ inspectRuntime: false });
+      expect(updated.activeRows.map(row => row.rowKey))
+        .toEqual(initial.activeRows.map(row => row.rowKey));
+      expect(updated.activeRows[0]).toMatchObject({
+        createdAt: new Date(first.createdAt).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+        latestTurn: null
+      });
+    } finally {
+      clock.mockRestore();
+      await close();
+    }
+  });
+
+  it("keeps Dashboard token usage on running and completed rows", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, applicationService, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+
+    try {
+      const running = parseToolJson(await runTask(client, {
+        prompt: "Dashboard token usage regression",
+        executionMode: "background"
+      }));
+      const { view: initial } = await freshDashboardSnapshot(rawCallTool);
+      expect(initial.activeRows).toHaveLength(1);
+      expect(initial.activeRows[0]).not.toHaveProperty("tokenUsage");
+
+      const usage = {
+        inputTokens: 1_000,
+        cachedInputTokens: 200,
+        outputTokens: 100,
+        totalTokens: 1_100
+      };
+      const zeroUsage = {
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0
+      };
+      let usageSequence = 0;
+      const reportUsage = (total: Record<string, unknown>) => {
+        upstream.progressNext({
+          progress: ++usageSequence,
+          event: {
+            eventId: `usage:dashboard:${usageSequence}`,
+            type: "usage",
+            phase: "updated",
+            createdAt: Date.now(),
+            summary: "Codex token usage updated.",
+            details: { total, last: zeroUsage, jobUsage: {basis:"cumulative-difference",tokens:total} }
+          }
+        });
+      };
+
+      reportUsage({ inputTokens: 100 });
+      const { view: incomplete } = await freshDashboardSnapshot(rawCallTool);
+      expect(incomplete.activeRows[0]).not.toHaveProperty("tokenUsage");
+
+      reportUsage(zeroUsage);
+      const { view: zero } = await freshDashboardSnapshot(rawCallTool);
+      expect(zero.activeRows[0].tokenUsage).toEqual(zeroUsage);
+
+      reportUsage({ ...usage, privateDetail: "must not enter the dashboard" });
+      for (const bucket of ["activeRows", "terminalRows"] as const) {
+        if (bucket === "terminalRows") {
+          upstream.resolveNext(fakeCodexResult("dashboard-usage-thread"));
+          await waitForJobStatus(client, running.jobId, "completed");
+        }
+
+        const opened = await rawCallTool({
+          name: "codex_dashboard",
+          arguments: { scopeId: SCOPE_A }
+        });
+        expect(opened.isError).not.toBe(true);
+        expect(opened.structuredContent).toMatchObject({
+          kind: "dashboard",
+          readOnly: true
+        });
+        expect(JSON.stringify(opened.structuredContent)).not.toContain("tokenUsage");
+
+        for (const enrich of [false, true]) {
+          const { view } = await freshDashboardSnapshot(rawCallTool, { enrich });
+          expect(view[bucket]).toHaveLength(1);
+          expect(view[bucket][0].tokenUsage).toEqual(usage);
+          expect(view[bucket][0].latestTurn.tokenUsage).toEqual(usage);
+          expect(JSON.stringify(view)).not.toContain("privateDetail");
+        }
+
+        const nativeView = await applicationService.dashboardSnapshot({
+          inspectRuntime: false,
+          legacyGrouping: { projectOffset: 0, conversationOffset: 0 }
+        });
+        expect(nativeView[bucket][0]).toMatchObject({ tokenUsage: usage });
+        expect(nativeView.conversations?.[0]?.rows[0])
+          .toMatchObject({ tokenUsage: usage });
+        expect(nativeView.projects?.[0]?.conversations[0]?.rows[0])
+          .toMatchObject({ tokenUsage: usage });
+      }
+      expect(upstream.calls).toHaveLength(1);
+    } finally {
+      await close();
+    }
+  });
+
+  it("links an active App Server Agent to its validated local Codex thread", async () => {
+    const root = temporaryRoot();
+    const threadId = "41414141-4141-4141-8141-414141414141";
+    const sessionId = "42424242-4242-4242-8242-424242424242";
+    const upstream = new CodexSessionDeferredUpstream(threadId, sessionId);
+    const { client, rawCallTool, jobs, sessions, settings, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    settings.update(
+      { showBridgeThreadsInCodexApp: true },
+      settings.current.revision
+    );
+    const task = parseToolJson(await runTask(client, {
+      prompt: "keep the Codex deep-link fixture active",
+      executionMode: "background"
+    }));
+    await vi.waitFor(() => {
+      expect(jobs.get(task.jobId)?.threadId).toBe(threadId);
+      expect(sessions.get(threadId)?.sessionId).toBe(sessionId);
+      expect(sessions.get(threadId)?.visibleInCodexApp).toBe(true);
+    });
+
+    const opened = await rawCallTool({
+      name: "codex_dashboard",
+      arguments: { scopeId: SCOPE_A }
+    });
+    const { view: activeView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(activeView.activeRows).toEqual([
+      expect.objectContaining({
+        status: "running",
+        codexThreadUrl: `codex://threads/${threadId}`
+      })
+    ]);
+    expect(JSON.stringify((opened as { structuredContent?: unknown }).structuredContent))
+      .not.toContain(threadId);
+
+    upstream.resolveNext({
+      content: [{ type: "text", text: "done" }],
+      structuredContent: {
+        threadId,
+        sessionId,
+        backendKind: "app-server",
+        content: "done"
+      }
+    });
+    await vi.waitFor(() => expect(jobs.get(task.jobId)?.status).toBe("completed"));
+    const { view: completedView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(completedView.terminalRows).toEqual([
+      expect.objectContaining({ codexThreadUrl: `codex://threads/${threadId}` })
+    ]);
+    await close();
+  });
+
+  it("omits a Codex deep link for an App Server Agent created as hidden", async () => {
+    const root = temporaryRoot();
+    const threadId = "43434343-4343-4343-8343-434343434343";
+    const sessionId = "44444444-4444-4444-8444-444444444444";
+    const upstream = new CodexSessionDeferredUpstream(threadId, sessionId);
+    const { client, rawCallTool, jobs, sessions, settings, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    settings.update({showBridgeThreadsInCodexApp:false},settings.current.revision);
+    const task = parseToolJson(await runTask(client, {
+      prompt: "keep the hidden Codex thread fixture active",
+      executionMode: "background"
+    }));
+    await vi.waitFor(() => {
+      expect(jobs.get(task.jobId)?.threadId).toBe(threadId);
+      expect(sessions.get(threadId)?.visibleInCodexApp).toBe(false);
+    });
+
+    const { view: activeView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(activeView.activeRows).toEqual([
+      expect.not.objectContaining({ codexThreadUrl: expect.any(String) })
+    ]);
+
+    settings.update(
+      { showBridgeThreadsInCodexApp: true },
+      settings.current.revision
+    );
+    const { view: reopenedView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(reopenedView.activeRows).toEqual([
+      expect.not.objectContaining({ codexThreadUrl: expect.any(String) })
+    ]);
+
+    const hiddenSession = sessions.get(threadId);
+    expect(hiddenSession).toBeDefined();
+    const legacySession = { ...hiddenSession! };
+    delete legacySession.visibleInCodexApp;
+    sessions.restoreInMemory(threadId, legacySession);
+    const { view: missingVisibilityProvenanceView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(missingVisibilityProvenanceView.activeRows).toEqual([
+      expect.not.objectContaining({ codexThreadUrl: expect.any(String) })
+    ]);
+    sessions.restoreInMemory(threadId, hiddenSession);
+
+    upstream.resolveNext({
+      content: [{ type: "text", text: "done" }],
+      structuredContent: { threadId, sessionId, backendKind: "app-server", content: "done" }
+    });
+    await vi.waitFor(() => expect(jobs.get(task.jobId)?.status).toBe("completed"));
+    await close();
+  });
+
+  it("keeps GPT conversation and project context while grouping Agent rows by Activity", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { rawCallTool, jobs, settings, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const conversationId = "12121212-1212-4212-8212-121212121212";
+    const metadata = { "openai/session": conversationId };
+    settings.update({showBridgeThreadsInCodexApp:false},settings.current.revision);
+    const project = settings.current.projects[0]!;
+    const start = async (
+      requestId: string,
+      presentationId: string,
+      name: string,
+      activityId?: string
+    ) =>
+      parseToolJson(await rawCallTool({
+        name: "codex_task",
+        arguments: {
+          requestId,
+          activityPresentationId: presentationId,
+          prompt: `keep ${name} active for conversation grouping`,
+          project: { name: project.name, registryRevision: settings.current.registryRevision },
+          activity: activityId
+            ? { mode: "existing", id: activityId }
+            : { mode: "new", title: `${name} activity` },
+          agent: { mode: "new", name },
+          executionMode: "background"
+        },
+        _meta: metadata
+      }));
+    const first = await start(
+      "13131313-1313-4313-8313-131313131313",
+      "14141414-1414-4414-8414-141414141414",
+      "Conversation Agent One"
+    );
+    const second = await start(
+      "15151515-1515-4515-8515-151515151515",
+      "16161616-1616-4616-8616-161616161616",
+      "Conversation Agent Two",
+      first.activityId
+    );
+    const additional = [
+      await start(
+        "17171717-1717-4717-8717-171717171717",
+        "18181818-1818-4818-8818-181818181818",
+        "Conversation Agent Three"
+      ),
+      await start(
+        "19191919-1919-4919-8919-191919191919",
+        "20202020-2020-4020-8020-202020202020",
+        "Conversation Agent Four"
+      ),
+      await start(
+        "21212121-2121-4121-8121-212121212121",
+        "22222222-2222-4222-8222-222222222222",
+        "Conversation Agent Five"
+      ),
+      await start(
+        "23232323-2323-4323-8323-232323232323",
+        "24242424-2424-4424-8424-242424242424",
+        "Conversation Agent Six"
+      )
+    ];
+    const tasks = [first, second, ...additional];
+
+    const opened = await rawCallTool({
+      name: "codex_dashboard",
+      arguments: {},
+      _meta: metadata
+    });
+    const { view } = await freshDashboardSnapshot(rawCallTool, {
+      metadata
+    });
+    expect(view.activeRows).toHaveLength(6);
+    expect(new Set(view.activeRows.map((row) => row.sessionAlias)).size).toBe(1);
+    expect(view.activeRows.map((row) => row.agentName)).toEqual(expect.arrayContaining([
+      "Conversation Agent One",
+      "Conversation Agent Two"
+    ]));
+    const sharedActivityRows = view.activeRows.filter((row) =>
+      row.agentName === "Conversation Agent One" || row.agentName === "Conversation Agent Two"
+    );
+    expect(sharedActivityRows).toHaveLength(2);
+    expect(new Set(sharedActivityRows.map((row) => row.activityKey)).size).toBe(1);
+    expect(new Set(view.activeRows.map((row) => row.activityKey)).size).toBe(5);
+    expect(view.activeRows.every((row) =>
+      row.conversationUrl === `https://chatgpt.com/c/${conversationId}`
+    )).toBe(true);
+    expect(view.pagination.active).toMatchObject({
+      total: 6,
+      returned: 6,
+      conversationTotal: 1,
+      returnedConversations: 1
+    });
+    expect(view.activeRows.every((row) =>
+      row.projectName === project.name && row.bucket === "active"
+    )).toBe(true);
+    expect(view).not.toHaveProperty("projects");
+    expect(view).not.toHaveProperty("conversations");
+
+    const snapshotResult = await rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: {
+        widgetInstanceId: "25252525-2525-4525-8525-252525252525",
+        limit: 5
+      },
+      _meta: metadata
+    });
+    const snapshot = (snapshotResult as { structuredContent?: any }).structuredContent;
+    expect(snapshot.activeRows).toHaveLength(6);
+    expect(snapshot).not.toHaveProperty("projects");
+    expect(snapshot).not.toHaveProperty("conversations");
+    const legacySnapshotResult = await rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: {
+        widgetInstanceId: "25252525-2525-4525-8525-252525252525",
+        limit: 5,
+        projectOffset: 0,
+        conversationOffset: 0
+      },
+      _meta: metadata
+    });
+    const legacySnapshot = (legacySnapshotResult as { structuredContent?: any }).structuredContent;
+    expect(legacySnapshot.projects).toHaveLength(1);
+    expect(legacySnapshot.conversations).toHaveLength(1);
+    expect(legacySnapshot.pagination.projects.returnedAgents).toBe(5);
+    expect(legacySnapshot.pagination.conversations.returnedAgents).toBe(5);
+    expect(JSON.stringify((opened as { structuredContent?: unknown }).structuredContent))
+      .not.toContain(conversationId);
+
+    for (const [index] of tasks.entries()) {
+      upstream.resolveNext(fakeCodexResult(`conversation-agent-${index + 1}`));
+    }
+    for (const task of tasks) {
+      await vi.waitFor(() => expect(jobs.get(task.jobId)?.status).toBe("completed"));
+    }
+    let terminalOffset = 0;
+    let foundCompleteSharedActivity = false;
+    for (let pageIndex = 0; pageIndex < 3; pageIndex += 1) {
+      const terminalPageResult = await rawCallTool({
+        name: "codex_dashboard_snapshot",
+        arguments: {
+          widgetInstanceId: "25252525-2525-4525-8525-252525252526",
+          limit: 5,
+          terminalOffset
+        },
+        _meta: metadata
+      });
+      const terminalPage = (terminalPageResult as { structuredContent?: any }).structuredContent;
+      const sharedRows = terminalPage.terminalRows.filter((row: { activityKey: string }) =>
+        row.activityKey === sharedActivityRows[0].activityKey
+      );
+      if (sharedRows.length > 0) {
+        expect(sharedRows).toHaveLength(2);
+        foundCompleteSharedActivity = true;
+      }
+      if (!terminalPage.pagination.terminal.hasNext) break;
+      terminalOffset = terminalPage.pagination.terminal.offset +
+        terminalPage.pagination.terminal.returned;
+    }
+    expect(foundCompleteSharedActivity).toBe(true);
+    await close();
+  });
+
+  it("keeps an idle Activity group intact when it is larger than the requested page", async () => {
+    const root = temporaryRoot();
+    const { jobs, applicationService, close } = await connectTestClient(
+      configFor(root),
+      new DeferredUpstream()
+    );
+    for (let index = 0; index < 3; index += 1) {
+      jobs.createAgent({
+        scopeId: SCOPE_A,
+        agentName: `Idle grouped Agent ${index + 1}`
+      });
+    }
+
+    const view = await applicationService.dashboardSnapshot({
+      limit: 2,
+      inspectRuntime: false
+    });
+    expect(view.idleRows).toHaveLength(3);
+    expect(new Set(view.idleRows.map((row) => row.activityKey)).size).toBe(1);
+    expect(view.pagination.idle).toMatchObject({
+      limit: 2,
+      returned: 3,
+      total: 3,
+      hasNext: false
+    });
+
+    await close();
+  });
+
+  it("shows project identity on rows sharing one GPT conversation", async () => {
+    const root = temporaryRoot();
+    const secondRoot = path.join(root, "second-project");
+    mkdirSync(secondRoot);
+    const upstream = new DeferredUpstream();
+    const { rawCallTool, jobs, settings, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const firstProject = settings.current.projects[0]!;
+    const added = await rawCallTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: settings.current.registryRevision,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { name: "Second Project", cwd: secondRoot } }
+            ]
+          }
+        }
+      }
+    });
+    expect(added.isError).not.toBe(true);
+    const secondProject = settings.current.projects.find(
+      (project) => project.name === "Second Project"
+    )!;
+    const conversationId = "27272727-2727-4727-8727-272727272727";
+    const metadata = { "openai/session": conversationId };
+    const start = async (
+      projectName: string,
+      requestId: string,
+      presentationId: string,
+      agentName: string
+    ) => parseToolJson(await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        requestId,
+        activityPresentationId: presentationId,
+        prompt: `track ${agentName} in the project-first dashboard`,
+        project: {
+          name: projectName,
+          registryRevision: settings.current.registryRevision
+        },
+        activity: { mode: "new", title: `${agentName} activity` },
+        agent: { mode: "new", name: agentName },
+        executionMode: "background"
+      },
+      _meta: metadata
+    }));
+    const completed = await start(
+      firstProject.name,
+      "28282828-2828-4828-8828-282828282828",
+      "29292929-2929-4929-8929-292929292929",
+      "First Project Agent"
+    );
+    const running = await start(
+      secondProject.name,
+      "30303030-3030-4030-8030-303030303030",
+      "31313131-3131-4131-8131-313131313131",
+      "Second Project Agent"
+    );
+    upstream.resolveNext(fakeCodexResult("first-project-thread"));
+    await vi.waitFor(() => expect(jobs.get(completed.jobId)?.status).toBe("completed"));
+
+    const { view } = await freshDashboardSnapshot(rawCallTool, { metadata });
+    expect(view.counts).toMatchObject({ trackedProjects: 2, trackedConversations: 1 });
+    expect(view.activeRows).toEqual([
+      expect.objectContaining({
+        agentName: "Second Project Agent",
+        projectName: "Second Project",
+        status: "running",
+        conversationUrl: `https://chatgpt.com/c/${conversationId}`
+      })
+    ]);
+    expect(view.terminalRows).toEqual([
+      expect.objectContaining({
+        agentName: "First Project Agent",
+        projectName: firstProject.name,
+        status: "completed",
+        conversationUrl: `https://chatgpt.com/c/${conversationId}`
+      })
+    ]);
+    expect(new Set([...view.activeRows, ...view.terminalRows].map(
+      (row) => row.conversationKey
+    )).size).toBe(1);
+    expect(new Set([...view.activeRows, ...view.terminalRows].map(
+      (row) => row.projectKey
+    )).size).toBe(2);
+    expect(view).not.toHaveProperty("projects");
+    expect(view).not.toHaveProperty("conversations");
+
+    upstream.resolveNext(fakeCodexResult("second-project-thread"));
+    await vi.waitFor(() => expect(jobs.get(running.jobId)?.status).toBe("completed"));
+    await close();
+  });
+
+  it("counts only active registered projects while retaining archived and deleted project rows", async () => {
+    const root = temporaryRoot();
+    const unusedRoot = path.join(root, "unused-project");
+    mkdirSync(unusedRoot);
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, settings, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const retainedProject = settings.current.projects[0]!;
+    const task = parseToolJson(await runTask(client, {
+      prompt: "retain this project row after registry archive and delete",
+      activityTitle: "Retained project history",
+      agentName: "Retained Project Agent",
+      executionMode: "background"
+    }));
+    upstream.resolveNext(fakeCodexResult("retained-project-thread"));
+    await vi.waitFor(() => expect(jobs.get(task.jobId)?.status).toBe("completed"));
+
+    const added = await rawCallTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: settings.current.registryRevision,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { name: "Unused Active Project", cwd: unusedRoot } }
+            ]
+          }
+        }
+      }
+    });
+    expect(added.isError).not.toBe(true);
+    const beforeArchive = await freshDashboardSnapshot(rawCallTool, { scopeId: SCOPE_A });
+    expect(beforeArchive.view.counts.trackedProjects).toBe(2);
+    expect(beforeArchive.view.terminalRows).toEqual([
+      expect.objectContaining({
+        agentName: "Retained Project Agent",
+        projectName: retainedProject.name,
+        status: "completed"
+      })
+    ]);
+
+    const archived = await rawCallTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: settings.current.registryRevision,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "archive", projectId: retainedProject.id }]
+          }
+        }
+      }
+    });
+    expect(archived.isError).not.toBe(true);
+    const afterArchive = await freshDashboardSnapshot(rawCallTool, { scopeId: SCOPE_A });
+    expect(afterArchive.view.counts.trackedProjects).toBe(1);
+    expect(afterArchive.view.terminalRows).toEqual([
+      expect.objectContaining({
+        agentName: "Retained Project Agent",
+        projectName: retainedProject.name
+      })
+    ]);
+
+    const deleted = await rawCallTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: settings.current.registryRevision,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "delete", projectId: retainedProject.id }]
+          }
+        }
+      }
+    });
+    expect(deleted.isError).not.toBe(true);
+    const afterDelete = await freshDashboardSnapshot(rawCallTool, { scopeId: SCOPE_A });
+    expect(afterDelete.view.counts.trackedProjects).toBe(1);
+    expect(afterDelete.view.terminalRows).toEqual([
+      expect.objectContaining({
+        agentName: "Retained Project Agent",
+        projectName: retainedProject.name
+      })
+    ]);
+    expect(jobs.get(task.jobId)).toMatchObject({
+      projectId: retainedProject.id,
+      projectName: retainedProject.name
+    });
+
+    await close();
+  });
+
+  it("defers Dashboard runtime probes until mount and reports not-loaded, unknown, and orphaned evidence", async () => {
+    const root = temporaryRoot();
+    const upstream = new ProbeAwareUpstream();
+    const { client, rawCallTool, applicationService, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    const task = parseToolJson(await runTask(client, {
+      prompt: "create one App Server thread for Dashboard probing"
+    }));
+    expect(task.status).toBe("completed");
+
+    // Exercise the legacy display cache independently while maintenance is
+    // paused for drain. Automatic rechecks have their own integration coverage.
+    await applicationService.beginDrain();
+
+    upstream.probe = {
+      state: "resumable",
+      runtimeStatus: "notLoaded",
+      threadId: "thread-1"
+    };
+    const opened = await rawCallTool({
+      name: "codex_dashboard",
+      arguments: { scopeId: SCOPE_A }
+    });
+    expect(upstream.probeCalls).toEqual([]);
+    expect((opened as { structuredContent?: any }).structuredContent?.summary)
+      .toContain("card loads current retained work");
+    expect((opened as { _meta?: Record<string, unknown> })._meta)
+      .not.toHaveProperty(DASHBOARD_VIEW_METADATA_KEY);
+
+    const snapshotArguments = {
+      scopeId: SCOPE_A,
+      widgetInstanceId: "34343434-3434-4434-8434-343434343434",
+      limit: 20,
+      enrich: true
+    };
+    const notLoaded = await rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: snapshotArguments
+    });
+    expect(upstream.probeCalls).toEqual(["thread-1"]);
+    expect((notLoaded as { structuredContent?: any }).structuredContent?.counts).toMatchObject({
+      backgroundProcesses: 0,
+      runtimeUnknownAgents: 0,
+      runtimeProbeSkippedAgents: 0
+    });
+
+    const afterCache = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 5_100);
+    upstream.probe = {
+      state: "unknown",
+      reason: "transient",
+      threadId: "thread-1",
+      retryable: true
+    };
+    const unknown = await rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: snapshotArguments
+    });
+    expect((unknown as { structuredContent?: any }).structuredContent?.counts)
+      .toMatchObject({ runtimeUnknownAgents: 0, runtimeProbeSkippedAgents: 0 });
+    expect((unknown as { structuredContent?: any }).structuredContent?.enrichment)
+      .toMatchObject({ runtimeUnavailable: 1 });
+
+    upstream.hangProbe = true;
+    const timeoutStartedAt = Date.now();
+    const timedOut = await rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: snapshotArguments
+    });
+    expect(Date.now() - timeoutStartedAt).toBeLessThan(3_000);
+    expect((timedOut as { structuredContent?: any }).structuredContent?.counts)
+      .toMatchObject({ runtimeUnknownAgents: 0, runtimeProbeSkippedAgents: 1 });
+    upstream.hangProbe = false;
+    upstream.finishProbeTimeout?.();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    // The final transport failure briefly retains the last display value;
+    // a later reconciliation can start a new probe.
+    const afterFailure = afterCache.mockReturnValue(Date.now() + 5_100);
+
+    upstream.probe = {
+      state: "orphaned",
+      reason: "missing",
+      threadId: "thread-1",
+      retryable: false
+    };
+    const orphaned = await rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: snapshotArguments
+    });
+    const orphanedView = (orphaned as { structuredContent?: any }).structuredContent;
+    afterFailure.mockRestore();
+    expect(orphanedView.counts).toMatchObject({ needsAttention: 1, orphanedAgents: 1 });
+    expect(orphanedView.activeRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "orphaned" })
+    ]));
+
+    const future = vi.spyOn(Date, "now")
+      .mockReturnValue(Date.now() + 7 * 60 * 60 * 1_000);
+    try {
+      upstream.probe = {
+        state: "resumable",
+        runtimeStatus: "notLoaded",
+        threadId: "thread-1"
+      };
+      upstream.probeCalls.length = 0;
+      const afterJobExpiry = await rawCallTool({
+        name: "codex_dashboard_snapshot",
+        arguments: snapshotArguments
+      });
+      expect(upstream.probeCalls).toEqual(["thread-1"]);
+      const expiredView = (afterJobExpiry as { structuredContent?: any }).structuredContent;
+      expect(expiredView.counts)
+        .toMatchObject({ retainedJobs: 1, runtimeProbeSkippedAgents: 0 });
+      expect(expiredView.idleRows).toEqual([
+        expect.objectContaining({
+          status: "idle",
+          execution: expect.objectContaining({ isCurrent: true }),
+          latestTurn: expect.objectContaining({ status: "completed" })
+        })
+      ]);
+    } finally {
+      future.mockRestore();
+    }
+
+    await close();
+  });
+
+  it("finishes a slow runtime observation, caches it, and invalidates the display without duplicating the probe", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredProbeWithLoadedTerminalUpstream();
+    const { client, rawCallTool, applicationService, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    const notice = vi.fn();
+    const unsubscribe = applicationService.subscribeChanges!(notice);
+    await runTask(client, {
+      prompt: "create one App Server thread for a bounded enrichment timeout"
+    });
+
+    const snapshotPromise = rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        widgetInstanceId: "48484848-0000-4000-8000-000000000001",
+        limit: 20,
+        enrich: true
+      }
+    });
+    await vi.waitFor(() => expect(upstream.hasPendingProbe).toBe(true));
+    const timedOut = parseToolJson(await snapshotPromise);
+    expect(timedOut.enrichment).toMatchObject({
+      state: "enriched",
+      runtimeRequests: 1,
+      timeouts: 1
+    });
+    expect(upstream.loadedTerminalReads).toBe(0);
+
+    const repeated = applicationService.dashboardSnapshot({ inspectRuntime: true });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(upstream.probeCalls).toHaveLength(1);
+
+    upstream.resolveProbe({ state: "resumable", runtimeStatus: "idle" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(upstream.loadedTerminalReads).toBe(1);
+    await repeated;
+    expect(notice).toHaveBeenCalledWith("enrichment");
+    const recovered = await applicationService.dashboardSnapshot({ inspectRuntime: true });
+    expect(recovered.enrichment).toMatchObject({ timeouts: 0, pendingReads: 0, runtimeRequests: 0 });
+    expect(upstream.probeCalls).toHaveLength(1);
+    unsubscribe();
+
+    await close();
+  });
+
+  it("discards a late runtime result after a newer Agent version has been requested", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredProbeWithLoadedTerminalUpstream();
+    const resolutions: Array<(value: CodexThreadResumeProbe) => void> = [];
+    const probe = vi.spyOn(upstream, "probeThread").mockImplementation(() => new Promise(resolve => resolutions.push(resolve)));
+    const { client, jobs, applicationService, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    const notice = vi.fn();
+    const unsubscribe = applicationService.subscribeChanges!(notice);
+    try {
+      await runTask(client, { prompt: "create a thread for versioned observations" });
+      await applicationService.dashboardSnapshot({ inspectRuntime: true });
+      const agent = jobs.listAllAgents()[0]!;
+      jobs.renameAgent(agent.agentId, "New version");
+      const current = applicationService.dashboardSnapshot({ inspectRuntime: true });
+      await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2));
+      resolutions[0]!({ state: "resumable", runtimeStatus: "idle", threadId: "thread-1" });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(upstream.loadedTerminalReads).toBe(0);
+      expect(notice).not.toHaveBeenCalledWith("enrichment");
+      resolutions[1]!({ state: "resumable", runtimeStatus: "notLoaded", threadId: "thread-1" });
+      await current;
+      const cached = await applicationService.dashboardSnapshot({ inspectRuntime: true });
+      expect(cached.enrichment).toMatchObject({ pendingReads: 0, runtimeRequests: 0, cacheHits: 1 });
+      expect(probe).toHaveBeenCalledTimes(2);
+    } finally { unsubscribe(); await close(); }
+  });
+
+  it("marks a retained running Job as liveness-unknown when App Server reports an idle thread", async () => {
+    const root = temporaryRoot();
+    const upstream = new RunningProbeUpstream();
+    const { client, rawCallTool, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    const running = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "keep one App Server Job running for a liveness check",
+        agentName: "Runtime mismatch Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+
+    upstream.probe = {
+      state: "resumable",
+      runtimeStatus: "idle",
+      threadId: "thread-1"
+    };
+    const mismatch = await rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        widgetInstanceId: "35353535-3535-4535-8535-353535353535",
+        limit: 20,
+        enrich: true
+      }
+    });
+    const mismatchView = (mismatch as { structuredContent?: any }).structuredContent;
+    expect(mismatchView.counts).toMatchObject({ running: 0, needsAttention: 1 });
+    expect(mismatchView.activeRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentName: "Runtime mismatch Agent",
+        status: "liveness-unknown"
+      })
+    ]));
+
+    upstream.probe = {
+      state: "busy",
+      runtimeStatus: "active",
+      threadId: "thread-1",
+      retryable: true
+    };
+    const confirmed = await rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        widgetInstanceId: "35353535-3535-4535-8535-353535353535",
+        limit: 20,
+        enrich: true
+      }
+    });
+    const confirmedView = (confirmed as { structuredContent?: any }).structuredContent;
+    expect(confirmedView.counts).toMatchObject({ running: 1, needsAttention: 0 });
+    expect(confirmedView.activeRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "running" })
+    ]));
+
+    upstream.resolveNext(fakeCodexResult("thread-1"));
+    await waitForJobStatus(client, running.jobId, "completed");
+    await close();
+  });
+
+  it("counts only the latest retained outcome per Agent as needing attention", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, applicationService, close } = await connectTestClient(configFor(root), upstream);
+
+    const failed = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "fail the first dashboard attempt",
+        activity: { mode: "new", title: "Dashboard retry outcome" },
+        agent: { mode: "new", name: "Dashboard retry Agent" },
+        executionMode: "background",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+      }
+    }));
+    upstream.rejectNext(new Error("first dashboard attempt failed"));
+    await waitForJobStatus(client, failed.jobId, "failed");
+
+    const failedOverview = await rawCallTool({
+      name: "codex_dashboard",
+      arguments: { scopeId: SCOPE_A }
+    });
+    expect((await freshDashboardSnapshot(rawCallTool, { scopeId: SCOPE_A })).view.counts.needsAttention).toBe(1);
+    expect((await applicationService.dashboardSnapshot({ statusFilter: "all" })).counts.problems).toBe(1);
+
+    const retry = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "succeed on the retry",
+        activity: { mode: "existing", id: failed.activityId },
+        agent: { mode: "existing", id: failed.agentId, context: "fresh" },
+        executionMode: "background",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      }
+    }));
+    const runningOverview = await rawCallTool({
+      name: "codex_dashboard",
+      arguments: { scopeId: SCOPE_A }
+    });
+    expect((runningOverview as { structuredContent?: any }).structuredContent?.summary)
+      .toContain("card loads current retained work");
+    const { view: runningView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(runningView.activeRows).toEqual([
+      expect.objectContaining({
+        agentName: "Dashboard retry Agent",
+        latestTurn: expect.objectContaining({ status: "running" }),
+        historyCount: 1,
+        history: [expect.objectContaining({
+          status: "failed",
+          execution: expect.objectContaining({
+            model: "gpt-5.6-terra",
+            reasoningEffort: "high",
+            isCurrent: false
+          })
+        })]
+      })
+    ]);
+    expect(runningView.counts.retainedJobs).toBe(2);
+    expect(runningView.terminalRows).toEqual([]);
+
+    upstream.resolveNext(fakeCodexResult("dashboard-retry-thread"));
+    await waitForJobStatus(client, retry.jobId, "completed");
+    const observedAt = Date.now();
+    const modern = await applicationService.dashboardSnapshot({ statusFilter: "all" });
+    expect(modern.counts.problems).toBe(0);
+    expect(modern.terminalRows[0].history?.[0].status).toBe("failed");
+    const failedJob = jobs.get(failed.jobId)!;
+    failedJob.createdAt = observedAt - 30 * 60_000;
+    failedJob.updatedAt = observedAt - 25 * 60_000;
+    const retryJob = jobs.get(retry.jobId)!;
+    retryJob.createdAt = observedAt - 10 * 60_000;
+    retryJob.updatedAt = observedAt - 2 * 60_000;
+    const { view: completedView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(completedView.counts).toMatchObject({
+      retainedJobs: 2,
+      failed: 1,
+      completed: 1,
+      needsAttention: 0
+    });
+    expect(completedView.terminalRows).toEqual([
+      expect.objectContaining({
+        agentName: "Dashboard retry Agent",
+        status: "completed",
+        elapsedMs: 8 * 60_000,
+        latestTurn: expect.objectContaining({
+          status: "completed",
+          startedAt: new Date(observedAt - 10 * 60_000).toISOString(),
+          endedAt: new Date(observedAt - 2 * 60_000).toISOString(),
+          durationMs: 8 * 60_000
+        }),
+        historyCount: 1,
+        history: [expect.objectContaining({
+          status: "failed",
+          startedAt: new Date(observedAt - 30 * 60_000).toISOString(),
+          endedAt: new Date(observedAt - 25 * 60_000).toISOString(),
+          durationMs: 5 * 60_000
+        })]
+      })
+    ]);
+    expect(completedView.idleRows).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ agentName: "Dashboard retry Agent" })
+    ]));
+    expect(JSON.stringify(completedView)).not.toContain(failed.agentId);
+
+    // A delayed update to an older failure must not make it newer than the retry,
+    // even when retention moves the retry to an archived summary first.
+    failedJob.updatedAt = observedAt;
+    const clock = vi.spyOn(Date, "now");
+    try {
+      for (const minutes of [359, 361]) {
+        clock.mockReturnValue(observedAt + minutes * 60_000);
+        const retained = await applicationService.dashboardSnapshot({ statusFilter: "all" });
+        expect(retained.counts.problems).toBe(0);
+        expect(retained.terminalRows[0].latestTurn?.status).toBe("completed");
+        expect(retained.terminalRows[0].history?.[0].status).toBe("failed");
+      }
+    } finally { clock.mockRestore(); }
+
+    await close();
+  });
+
+  it("projects private Activity metadata only from the dedicated presentation tool", async () => {
+    const root = temporaryRoot();
+    const { client, rawCallTool, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream()
+    );
+
+    const taskResult = await runTask(client, { prompt: "run without mounting an Activity card" });
+    const taskStructured = parseToolJson(taskResult);
+    const publicTask = (taskResult as { structuredContent?: Record<string, unknown> }).structuredContent!;
+    const taskMeta = (taskResult as { _meta?: Record<string, unknown> })._meta || {};
+    expect(taskMeta).not.toHaveProperty(ACTIVITY_BOOTSTRAP_METADATA_KEY);
+    expect(Object.keys(publicTask)).not.toEqual(expect.arrayContaining([
+      "bridgeSession",
+      "bridgeActivity",
+      "activityTracking",
+      "activityPresentationId"
+    ]));
+
+    const presentationId = "31313131-3131-4131-8131-313131313131";
+    const compactResult = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "compact-monitor",
+        presentationId,
+        activityId: taskStructured.activityId
+      }
+    });
+    const compactView = validateActivityViewPrivateMetadata(
+      (compactResult as { _meta?: Record<string, unknown> })
+        ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
+    );
+    expect(compactView).toMatchObject({
+      source: "codex_activity",
+      correlation: {
+        presentation: {
+          kind: "automatic",
+          activityPresentationId: presentationId,
+          reservationOwnerId: presentationId
+        }
+      },
+      view: {
+        feed: { mode: "compact" },
+        watcherPolicy: { ownsCompletionHandoff: true }
+      }
+    });
+
+    const activityResult = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "full-history",
+        activityId: taskStructured.activityId
+      }
+    });
+    const publicActivity = (activityResult as { structuredContent?: Record<string, unknown> })
+      .structuredContent!;
+    const activityStructured = parseToolJson(activityResult);
+    const activityMeta = (activityResult as { _meta?: Record<string, unknown> })._meta || {};
+    const privateView = validateActivityViewPrivateMetadata(
+      activityMeta[ACTIVITY_VIEW_METADATA_KEY]
+    );
+    expect(privateView).toMatchObject({
+      kind: "codex/activityView",
+      version: 11,
+      purpose: "presentation-hydration-only",
+      source: "codex_activity",
+      correlation: {
+        scopeVersion: activityStructured.scopeVersion,
+        activity: {
+          activityId: taskStructured.activityId,
+          cardGeneration: activityStructured.mountedActivity.cardGeneration
+        },
+        presentation: { kind: "explicit" }
+      }
+    });
+    expect(privateView.view).toEqual(activityStructured);
+    expect(publicActivity).toMatchObject({
+      kind: "activity",
+      mode: "full-history",
+      scopeVersion: privateView.view.scopeVersion,
+      activityId: taskStructured.activityId,
+      counts: expect.any(Object)
+    });
+    expect(Object.keys(publicActivity)).not.toContain("feed");
+
+    const snapshotResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: taskStructured.activityId,
+          generation: activityStructured.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        }
+      },
+      _meta: { "openai/widgetSessionId": "generation-11-private-view" }
+    });
+    const snapshotMeta = (snapshotResult as { _meta?: Record<string, unknown> })._meta || {};
+    expect(validateActivityViewPrivateMetadata(snapshotMeta[ACTIVITY_VIEW_METADATA_KEY]))
+      .toMatchObject({ source: "codex_activity_snapshot" });
+    expect(parseToolJson(snapshotResult)).toEqual(
+      (snapshotMeta[ACTIVITY_VIEW_METADATA_KEY] as { view: Record<string, unknown> }).view
+    );
+
+    await close();
+  });
+
+  it("retains private Activity scope routing when the host omits metadata on app reads", async () => {
+    const root = temporaryRoot();
+    const { client, rawCallTool, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    try {
+      const task = parseToolJson(await runTask(client, { prompt: "inspect Activity routing" }));
+      const opened = await rawCallTool({
+        name: "codex_activity",
+        arguments: { scopeId: SCOPE_A, mode: "full-history", activityId: task.activityId }
+      });
+      const view = privateActivityView(opened);
+      const scopeId = (opened as { _meta?: Record<string, unknown> })._meta?.["codex/activityScopeId"];
+      expect(scopeId).toBe(SCOPE_A);
+      expect(view).not.toHaveProperty("scopeId");
+      expect((opened as { structuredContent?: Record<string, unknown> }).structuredContent)
+        .not.toHaveProperty("scopeId");
+      const args = {
+        scopeId,
+        widgetInstanceId: "42424242-4242-4242-8242-424242424242",
+        card: {
+          activityId: task.activityId,
+          generation: view.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        }
+      };
+      for (const enrich of [false, true]) {
+        const result = await rawCallTool({ name: "codex_activity_snapshot", arguments: { ...args, enrich } });
+        expect(result.isError, JSON.stringify(result)).not.toBe(true);
+        expect((result as { _meta?: Record<string, unknown> })._meta?.["codex/activityScopeId"]).toBe(SCOPE_A);
+        expect(privateActivityView(result)).toMatchObject({
+          enrichment: { state: enrich ? "enriched" : "structural" }
+        });
+        expect((result as { structuredContent?: Record<string, unknown> }).structuredContent)
+          .not.toHaveProperty("scopeId");
+      }
+      const restored = await rawCallTool({
+        name: "codex_activity_rehydrate",
+        arguments: { scopeId, widgetInstanceId: args.widgetInstanceId, mode: "full-history", activityId: task.activityId, enrich: true }
+      });
+      expect(restored.isError, JSON.stringify(restored)).not.toBe(true);
+      expect((restored as { _meta?: Record<string, unknown> })._meta?.["codex/activityScopeId"]).toBe(SCOPE_A);
+      expect(privateActivityView(restored)).toMatchObject({ watcherPolicy: { live: false } });
+      const conflictingHost = await rawCallTool({
+        name: "codex_activity_snapshot",
+        arguments: args,
+        _meta: { "openai/session": "other-chatgpt-conversation" }
+      });
+      expect(conflictingHost.isError).toBe(true);
+      expect(JSON.stringify(conflictingHost)).toContain("no longer valid in this scope");
+      const { scopeId: _scope, ...noRouting } = args;
+      const missing = await rawCallTool({ name: "codex_activity_snapshot", arguments: noRouting });
+      expect(missing.isError).toBe(true);
+      expect(JSON.stringify(missing)).toContain("requires ChatGPT conversation metadata");
+    } finally {
+      await close();
+    }
+  });
+
+  it("rehydrates a cold task shell as a one-shot read-only historical Activity", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const activityPresentationId = "37373737-3737-4737-8737-373737373737";
+    const taskResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "retain this Activity for a cold historical remount",
+        executionMode: "background",
+        activityPresentationId
+      }
+    });
+    const task = parseToolJson(taskResult);
+    const publicTask = (taskResult as { structuredContent?: Record<string, unknown> })
+      .structuredContent!;
+    expect(publicTask).toMatchObject({
+      kind: "task",
+      jobId: task.jobId,
+      requestId: task.requestId,
+      activityId: task.activityId
+    });
+    expect(publicTask).not.toHaveProperty("bridgeActivity");
+
+    const presentationState = jobs as unknown as {
+      activeWatchers: number;
+      watcherLeases: Set<string>;
+      activityCardLeases: Map<string, number>;
+      activityCardReservations: Map<string, unknown>;
+      latestAutomaticPresentationByScope: Map<string, unknown>;
+    };
+    const before = {
+      jobs: jobs.sizeForScope(SCOPE_A),
+      activeWatchers: presentationState.activeWatchers,
+      watcherLeases: presentationState.watcherLeases.size,
+      cardLeases: presentationState.activityCardLeases.size,
+      reservations: presentationState.activityCardReservations.size,
+      latestAutomatic: presentationState.latestAutomaticPresentationByScope.size
+    };
+    const rehydrateRequest = {
+      name: "codex_activity_rehydrate",
+      arguments: {
+        scopeId: SCOPE_A,
+        jobId: task.jobId,
+        requestId: task.requestId,
+        limit: 30
+      },
+      _meta: { "openai/widgetSessionId": "historical-widget" }
+    } as const;
+    const historicalResult = await rawCallTool(rehydrateRequest);
+    expect(historicalResult.isError).not.toBe(true);
+    const historical = parseToolJson(historicalResult);
+    expect(historical).toMatchObject({
+      mountedActivity: {
+        activityId: task.activityId,
+        cardGeneration: expect.any(Number)
+      },
+      mountedPresentation: {
+        kind: "historical",
+        jobId: task.jobId,
+        requestId: task.requestId
+      },
+      watcherPolicy: {
+        presentationKind: "historical",
+        mode: "one-shot",
+        live: false,
+        stopped: false,
+        ownsCompletionHandoff: false
+      },
+      pendingHandoffs: []
+    });
+    expect((historicalResult as { _meta?: Record<string, any> })._meta)
+      .toMatchObject({ interactionControls: { agents: [] } });
+    expect(validateActivityViewPrivateMetadata(
+      (historicalResult as { _meta?: Record<string, any> })
+        ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
+    )).toMatchObject({
+      source: "codex_activity_rehydrate",
+      correlation: {
+        activity: { activityId: task.activityId },
+        presentation: {
+          kind: "historical",
+          jobId: task.jobId,
+          requestId: task.requestId
+        }
+      }
+    });
+
+    const repeated = parseToolJson(await rawCallTool(rehydrateRequest));
+    expect(repeated).toMatchObject({
+      scopeVersion: historical.scopeVersion,
+      mountedPresentation: historical.mountedPresentation,
+      watcherPolicy: { mode: "one-shot", live: false }
+    });
+    const enrichedHistorical = parseToolJson(await rawCallTool({
+      ...rehydrateRequest,
+      arguments: { ...rehydrateRequest.arguments, enrich: true }
+    }));
+    expect(enrichedHistorical).toMatchObject({
+      enrichment: { state: "enriched" },
+      mountedPresentation: historical.mountedPresentation,
+      watcherPolicy: {
+        mode: "one-shot",
+        live: false,
+        ownsCompletionHandoff: false
+      },
+      pendingHandoffs: []
+    });
+    expect({
+      jobs: jobs.sizeForScope(SCOPE_A),
+      activeWatchers: presentationState.activeWatchers,
+      watcherLeases: presentationState.watcherLeases.size,
+      cardLeases: presentationState.activityCardLeases.size,
+      reservations: presentationState.activityCardReservations.size,
+      latestAutomatic: presentationState.latestAutomaticPresentationByScope.size
+    }).toEqual(before);
+
+    const noLeaseMutation = await rawCallTool({
+      name: "codex_activity_job_cancel",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "37373737-3737-4737-8737-373737373738",
+        jobId: task.jobId,
+        expectedJobVersion: task.jobVersion,
+        acknowledgeAffectedJobIds: [task.jobId],
+        card: {
+          activityId: task.activityId,
+          generation: historical.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        }
+      },
+      _meta: { "openai/widgetSessionId": "historical-widget" }
+    });
+    expect(noLeaseMutation.isError).toBe(true);
+    expect(JSON.stringify(noLeaseMutation)).toContain("CARD_LEASE_REQUIRED");
+
+    for (const unavailable of [
+      {
+        scopeId: SCOPE_B,
+        jobId: task.jobId,
+        requestId: task.requestId
+      },
+      {
+        scopeId: SCOPE_A,
+        jobId: task.jobId,
+        requestId: "37373737-3737-4737-8737-373737373739"
+      },
+      {
+        scopeId: SCOPE_A,
+        jobId: "37373737-3737-4737-8737-373737373740",
+        requestId: task.requestId
+      }
+    ]) {
+      const rejected = await rawCallTool({
+        name: "codex_activity_rehydrate",
+        arguments: unavailable,
+        _meta: { "openai/widgetSessionId": "historical-invalid-widget" }
+      });
+      expect(rejected.isError).toBe(true);
+      expect(JSON.stringify(rejected)).toContain("ACTIVITY_REHYDRATE_UNAVAILABLE");
+    }
+    const unmounted = await rawCallTool({
+      name: "codex_activity_rehydrate",
+      arguments: {
+        scopeId: SCOPE_A,
+        jobId: task.jobId,
+        requestId: task.requestId
+      }
+    });
+    expect(unmounted.isError).toBe(true);
+    expect(JSON.stringify(unmounted)).toContain("CARD_REHYDRATE_WIDGET_REQUIRED");
+
+    const promoted = parseToolJson(await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: task.activityId,
+          generation: historical.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        }
+      },
+      _meta: { "openai/widgetSessionId": "historical-widget" }
+    }));
+    expect(promoted).toMatchObject({
+      mountedPresentation: { kind: "explicit" },
+      watcherPolicy: { live: true, ownsCompletionHandoff: false }
+    });
+    expect(() => jobs.requireActivityCardLease(
+      SCOPE_A,
+      task.activityId,
+      historical.mountedActivity.cardGeneration,
+      "historical-widget",
+      { kind: "explicit" }
+    )).not.toThrow();
+    jobs.releaseActivityCardLease(
+      SCOPE_A,
+      task.activityId,
+      historical.mountedActivity.cardGeneration,
+      "historical-widget",
+      { kind: "explicit" }
+    );
+
+    upstream.resolveNext(fakeCodexResult("historical-thread"));
+    await waitForJobStatus(client, task.jobId, "completed");
+    await close();
+  });
+
+  it("opens an empty full-history card with a refreshable non-owning presentation", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
+    try {
+      const opened = await rawCallTool({
+        name: "codex_activity",
+        arguments: { scopeId: SCOPE_A, mode: "full-history" }
+      });
+      expect(opened.isError).not.toBe(true);
+      expect(privateActivityView(opened)).toMatchObject({
+        mountedActivity: null,
+        mountedPresentation: { kind: "restored-explicit", mode: "full-history" },
+        feed: { mode: "full", activityTotal: 0 },
+        watcherPolicy: { mode: "one-shot", live: false, ownsCompletionHandoff: false }
+      });
+      const envelope = validateActivityViewPrivateMetadata(
+        (opened as { _meta: Record<string, unknown> })._meta[ACTIVITY_VIEW_METADATA_KEY]
+      );
+      expect(() => validateActivityViewPrivateMetadata({
+        ...envelope, source: "codex_activity_snapshot"
+      })).toThrow();
+      expect(() => validateActivityViewPrivateMetadata({
+        ...envelope,
+        view: { ...envelope.view, watcherPolicy: { ...envelope.view.watcherPolicy, live: true } }
+      })).toThrow();
+      expect(() => validateActivityViewPrivateMetadata({
+        ...envelope,
+        view: { ...envelope.view, feed: { ...envelope.view.feed, activityTotal: 1 } }
+      })).toThrow();
+      const refresh = () => rawCallTool({
+        name: "codex_activity_rehydrate",
+        arguments: { scopeId: SCOPE_A, mode: "full-history", widgetInstanceId: "55555555-5555-4555-8555-555555555555" }
+      });
+      expect(parseToolJson(await refresh())).toMatchObject({
+        mountedActivity: null,
+        feed: { activityTotal: 0 },
+        watcherPolicy: { live: false, ownsCompletionHandoff: false }
+      });
+      expect(jobs.sizeForScope(SCOPE_A)).toBe(0);
+      expect(upstream.calls).toHaveLength(0);
+
+      const task = parseToolJson(await client.callTool({
+        name: "codex_task",
+        arguments: { prompt: "first work after opening the empty history card" }
+      }));
+      const refreshed = parseToolJson(await refresh());
+      expect(refreshed).toMatchObject({
+        mountedActivity: { activityId: task.activityId },
+        mountedPresentation: { kind: "restored-explicit", mode: "full-history" },
+        feed: { activityTotal: 1 },
+        watcherPolicy: { mode: "one-shot", live: false, ownsCompletionHandoff: false }
+      });
+      expect(jobs.sizeForScope(SCOPE_A)).toBe(1);
+      expect(upstream.calls).toHaveLength(1);
+    } finally {
+      await close();
+    }
+  });
+
+  it("rehydrates a cold full-history Activity result as a one-shot full view", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const taskResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "retain this Activity for a cold full-history remount",
+        executionMode: "background"
+      }
+    });
+    const task = parseToolJson(taskResult);
+    const activityResult = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "full-history",
+        activityId: task.activityId
+      }
+    });
+    const publicActivity = (activityResult as {
+      structuredContent?: Record<string, any>;
+    }).structuredContent!;
+    expect(publicActivity).toMatchObject({
+      kind: "activity",
+      mode: "full-history",
+      activityId: task.activityId,
+      activityVersion: expect.any(Number),
+      scopeVersion: expect.any(Number),
+      counts: expect.any(Object)
+    });
+
+    const presentationState = jobs as unknown as {
+      activeWatchers: number;
+      watcherLeases: Set<string>;
+      activityCardLeases: Map<string, number>;
+      activityCardReservations: Map<string, unknown>;
+      latestAutomaticPresentationByScope: Map<string, unknown>;
+    };
+    const before = {
+      jobs: jobs.sizeForScope(SCOPE_A),
+      activeWatchers: presentationState.activeWatchers,
+      watcherLeases: presentationState.watcherLeases.size,
+      cardLeases: presentationState.activityCardLeases.size,
+      reservations: presentationState.activityCardReservations.size,
+      latestAutomatic: presentationState.latestAutomaticPresentationByScope.size
+    };
+    const rehydrateRequest = {
+      name: "codex_activity_rehydrate",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "full-history",
+        activityId: publicActivity.activityId,
+        activityVersion: publicActivity.activityVersion,
+        limit: 30
+      },
+      _meta: { "openai/widgetSessionId": "restored-full-history-widget" }
+    } as const;
+    const restoredResult = await rawCallTool(rehydrateRequest);
+    expect(restoredResult.isError).not.toBe(true);
+    const restored = parseToolJson(restoredResult);
+    expect(restored).toMatchObject({
+      feed: { mode: "full" },
+      mountedActivity: {
+        activityId: task.activityId,
+        cardGeneration: expect.any(Number)
+      },
+      mountedPresentation: {
+        kind: "restored-explicit",
+        mode: "full-history",
+        activityId: task.activityId,
+        activityVersion: publicActivity.activityVersion
+      },
+      watcherPolicy: {
+        presentationKind: "restored-explicit",
+        mode: "one-shot",
+        live: false,
+        stopped: false,
+        ownsCompletionHandoff: false
+      },
+      pendingHandoffs: []
+    });
+    expect((restoredResult as { _meta?: Record<string, any> })._meta)
+      .toMatchObject({ interactionControls: { agents: [] } });
+    expect(validateActivityViewPrivateMetadata(
+      (restoredResult as { _meta?: Record<string, any> })
+        ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
+    )).toMatchObject({
+      source: "codex_activity_rehydrate",
+      correlation: {
+        activity: { activityId: task.activityId },
+        presentation: {
+          kind: "restored-explicit",
+          mode: "full-history",
+          activityId: task.activityId,
+          activityVersion: publicActivity.activityVersion
+        }
+      }
+    });
+    expect({
+      jobs: jobs.sizeForScope(SCOPE_A),
+      activeWatchers: presentationState.activeWatchers,
+      watcherLeases: presentationState.watcherLeases.size,
+      cardLeases: presentationState.activityCardLeases.size,
+      reservations: presentationState.activityCardReservations.size,
+      latestAutomatic: presentationState.latestAutomaticPresentationByScope.size
+    }).toEqual(before);
+
+    const invalidScope = await rawCallTool({
+      ...rehydrateRequest,
+      arguments: { ...rehydrateRequest.arguments, scopeId: SCOPE_B }
+    });
+    expect(invalidScope.isError).toBe(true);
+    expect(JSON.stringify(invalidScope)).toContain("ACTIVITY_REHYDRATE_UNAVAILABLE");
+    const invalidVersion = await rawCallTool({
+      ...rehydrateRequest,
+      arguments: {
+        ...rehydrateRequest.arguments,
+        activityVersion: publicActivity.activityVersion + 1
+      }
+    });
+    expect(invalidVersion.isError).toBe(true);
+    expect(JSON.stringify(invalidVersion)).toContain("ACTIVITY_REHYDRATE_VERSION_INVALID");
+
+    const promoted = parseToolJson(await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: task.activityId,
+          generation: restored.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        }
+      },
+      _meta: { "openai/widgetSessionId": "restored-full-history-widget" }
+    }));
+    expect(promoted).toMatchObject({
+      feed: { mode: "full" },
+      mountedPresentation: { kind: "explicit" },
+      watcherPolicy: { live: true, ownsCompletionHandoff: false }
+    });
+    jobs.releaseActivityCardLease(
+      SCOPE_A,
+      task.activityId,
+      restored.mountedActivity.cardGeneration,
+      "restored-full-history-widget",
+      { kind: "explicit" }
+    );
+
+    upstream.resolveNext(fakeCodexResult("restored-full-history-thread"));
+    await waitForJobStatus(client, task.jobId, "completed");
+    await close();
+  });
+
+  it("elects only one historical shell for sibling tasks in an assistant response", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    const activityPresentationId = "37373737-3737-4737-8737-373737373741";
+    const first = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "first historical sibling",
+        executionMode: "background",
+        activityPresentationId
+      }
+    }));
+    const second = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "second historical sibling",
+        executionMode: "background",
+        activityPresentationId
+      }
+    }));
+    const results = await Promise.all([first, second].map((task, index) => rawCallTool({
+      name: "codex_activity_rehydrate",
+      arguments: {
+        scopeId: SCOPE_A,
+        jobId: task.jobId,
+        requestId: task.requestId
+      },
+      _meta: { "openai/widgetSessionId": `historical-sibling-${index}` }
+    })));
+    expect(results.filter((result) => result.isError !== true)).toHaveLength(1);
+    const duplicate = results.find((result) => result.isError === true);
+    expect(JSON.stringify(duplicate)).toContain("ACTIVITY_REHYDRATE_DUPLICATE");
+    const elected = results.find((result) => result.isError !== true)!;
+    expect(parseToolJson(elected)).toMatchObject({
+      mountedPresentation: {
+        kind: "historical",
+        jobId: expect.stringMatching(SCOPE_ID_PATTERN)
+      },
+      watcherPolicy: {
+        mode: "one-shot",
+        live: false,
+        ownsCompletionHandoff: false
+      }
+    });
+
+    upstream.resolveNext(fakeCodexResult("historical-sibling-thread-1"));
+    upstream.resolveNext(fakeCodexResult("historical-sibling-thread-2"));
+    await Promise.all([
+      waitForJobStatus(client, first.jobId, "completed"),
+      waitForJobStatus(client, second.jobId, "completed")
+    ]);
     await close();
   });
 
@@ -284,64 +4919,790 @@ describe("bridge tools", () => {
       CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
       CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "workspace-write"
     });
-    const { client, close } = await connectTestClient(config, new FakeUpstream());
+    const { client, rawCallTool, close } = await connectTestClient(config, new FakeUpstream());
     const tool = (await client.listTools()).tools.find((entry) => entry.name === "codex_task");
 
     expect(tool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     await close();
   });
 
-  it("reports bridge policy, durable session policy, and default cwd", async () => {
+  it("keeps conservative task annotations stable across saved access changes", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
+      CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1"
+    });
+    const { client, close } = await connectTestClient(config, new FakeUpstream());
+    const taskAnnotations = async () =>
+      (await client.listTools()).tools.find((entry) => entry.name === "codex_task")?.annotations;
+    const taskDescriptor = async () =>
+      (await client.listTools()).tools.find((entry) => entry.name === "codex_task");
+
+    const before = await taskDescriptor();
+    expect(await taskAnnotations()).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true
+    });
+    const settingsMutation = (await client.listTools()).tools.find(
+      (entry) => entry.name === "codex_update_settings"
+    ) as any;
+    expect(settingsMutation.inputSchema.properties.operation.oneOf[1]
+      .properties.settings.properties.accessStrategy.enum)
+      .toEqual(["read-only", "adaptive", "always-full"]);
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        operation: { kind: "patch", settings: { accessStrategy: "read-only" } }
+      }
+    });
+    expect(await taskAnnotations()).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true
+    });
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        operation: { kind: "patch", settings: { accessStrategy: "always-full" } }
+      }
+    });
+    expect(await taskAnnotations()).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true
+    });
+    expect(await taskDescriptor()).toEqual(before);
+    await close();
+  });
+
+  it("validates and persists named projects through the app-only Settings mutation", async () => {
+    const root = temporaryRoot();
+    const web = path.join(root, "web");
+    const api = path.join(root, "api");
+    const movedApi = path.join(root, "moved-api");
+    mkdirSync(web);
+    mkdirSync(api);
+    mkdirSync(movedApi);
+    const upstream = new FakeUpstream();
+    const { client, rawCallTool, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      undefined,
+      undefined,
+      false
+    );
+
+    const initialResult = await client.callTool({
+      name: "codex_settings",
+      arguments: {}
+    });
+    expect((initialResult as { _meta?: Record<string, unknown> })._meta)
+      .not.toHaveProperty("codex/settingsView");
+    const initial = privateSettingsView(await client.callTool({
+      name: "codex_settings_snapshot",
+      arguments: {}
+    }));
+    expect(JSON.stringify((initialResult as { structuredContent?: unknown }).structuredContent))
+      .not.toContain(realpathSync(root));
+    expect(initial.settings).toMatchObject({
+      settingsRevision: 0,
+      registryRevision: 0,
+      projects: []
+    });
+    expect(initial.capabilities.projectAvailability).toEqual([]);
+
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { name: "웹 앱", cwd: web } },
+              { kind: "add", project: { name: "API 서비스", cwd: api } }
+            ]
+          }
+        }
+      }
+    });
+    expect(saved.isError, JSON.stringify(saved)).not.toBe(true);
+    const view = privateSettingsView(saved);
+    expect(view.settings).toMatchObject({
+      settingsRevision: 0,
+      registryRevision: 1,
+      projects: [
+        { name: "웹 앱", cwd: realpathSync(web) },
+        { name: "API 서비스", cwd: realpathSync(api) }
+      ]
+    });
+    const [webProject, apiProject] = view.settings.projects as Array<Record<string, any>>;
+    expect(webProject.id).toMatch(SCOPE_ID_PATTERN);
+    expect(apiProject.id).toMatch(SCOPE_ID_PATTERN);
+    const compatibilitySaved = JSON.stringify(saved.content);
+    expect(compatibilitySaved).not.toContain(webProject.id);
+    expect(compatibilitySaved).not.toContain(apiProject.id);
+    expect(compatibilitySaved).not.toContain(realpathSync(web));
+    expect(compatibilitySaved).not.toContain(realpathSync(api));
+    const privateStructuredSaved = JSON.stringify(
+      (saved as { structuredContent?: unknown }).structuredContent
+    );
+    expect(privateStructuredSaved).toContain(webProject.id);
+    expect(privateStructuredSaved).toContain(apiProject.id);
+    expect(privateStructuredSaved).toContain(realpathSync(web));
+    expect(privateStructuredSaved).toContain(realpathSync(api));
+    expect(view.capabilities.projectAvailability).toEqual([
+      { projectId: webProject.id, name: "웹 앱", available: true, archived: false },
+      { projectId: apiProject.id, name: "API 서비스", available: true, archived: false }
+    ]);
+
+    const duplicateName = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 1,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { name: "  웹   앱  ", cwd: movedApi } }
+            ]
+          }
+        }
+      }
+    });
+    expect(duplicateName.isError).toBe(true);
+    expect(JSON.stringify(duplicateName)).toContain("PROJECT_NAME_CONFLICT");
+
+    const duplicatePath = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 1,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { name: "Other", cwd: web } }
+            ]
+          }
+        }
+      }
+    });
+    expect(duplicatePath.isError).toBe(true);
+    expect(JSON.stringify(duplicatePath)).toContain("PROJECT_CWD_CONFLICT");
+    expect(privateSettingsView(await client.callTool({
+      name: "codex_settings_snapshot",
+      arguments: {}
+    }))
+      .settings.registryRevision).toBe(1);
+
+    const retiredDefault = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedSettingsRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: { defaultProjectId: "missing" }
+        }
+      }
+    });
+    expect(retiredDefault.isError).toBe(true);
+    expect(JSON.stringify(retiredDefault)).toContain("Unrecognized key");
+
+    const edited = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 1,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "rename", projectId: webProject.id, name: "Web Application" },
+              { kind: "relocate", projectId: apiProject.id, cwd: movedApi }
+            ]
+          }
+        }
+      }
+    });
+    expect(privateSettingsView(edited).settings)
+      .toMatchObject({
+        settingsRevision: 0,
+        registryRevision: 2,
+        projects: [
+          { id: webProject.id, name: "Web Application", cwd: realpathSync(web) },
+          { id: apiProject.id, name: "API 서비스", cwd: realpathSync(movedApi) }
+        ]
+      });
+
+    const archived = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 2,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "archive", projectId: webProject.id }]
+          }
+        }
+      }
+    });
+    expect(privateSettingsView(archived).settings).toMatchObject({
+      registryRevision: 3,
+      projects: expect.arrayContaining([
+        expect.objectContaining({ id: webProject.id, name: "Web Application", archivedAt: expect.any(Number) })
+      ])
+    });
+    const archivedDescriptor = (await client.listTools()).tools.find(
+      (tool) => tool.name === "codex_task"
+    );
+    expect(JSON.stringify(archivedDescriptor?.inputSchema)).not.toContain('"const":"Web Application"');
+    const archivedAdmission = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "51515151-5151-4151-8151-515151515151",
+        activityPresentationId: "52525252-5252-4252-8252-525252525252",
+        prompt: "an archived project cannot admit fresh work",
+        project: { name: "Web Application", registryRevision: 3 },
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Archived Project Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(archivedAdmission.isError).toBe(true);
+    expect(JSON.stringify(archivedAdmission)).toContain("PROJECT_NOT_FOUND");
+    expect(upstream.calls).toEqual([]);
+
+    const restored = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 3,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "restore", projectId: webProject.id }]
+          }
+        }
+      }
+    });
+    expect(privateSettingsView(restored).settings).toMatchObject({
+      registryRevision: 4,
+      projects: expect.arrayContaining([
+        expect.objectContaining({ id: webProject.id, name: "Web Application", cwd: realpathSync(web) })
+      ])
+    });
+
+    const activeDelete = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 4,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "delete", projectId: webProject.id }]
+          }
+        }
+      }
+    });
+    expect(activeDelete.isError).toBe(true);
+    expect(JSON.stringify(activeDelete)).toContain("PROJECT_DELETE_REQUIRES_ARCHIVE");
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 4,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "archive", projectId: webProject.id }]
+          }
+        }
+      }
+    });
+    const deleted = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 5,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [{ kind: "delete", projectId: webProject.id }]
+          }
+        }
+      }
+    });
+    const deletedView = privateSettingsView(deleted);
+    expect(deletedView.settings).toMatchObject({
+      registryRevision: 6,
+      projects: [expect.objectContaining({ id: apiProject.id })]
+    });
+    expect(deletedView.capabilities.projectAvailability).toEqual([
+      expect.objectContaining({ projectId: apiProject.id })
+    ]);
+    expect(existsSync(web)).toBe(true);
+    await close();
+  });
+
+  it("refuses to register a project that would contain the app-managed runtime dotenv", async () => {
+    const root = temporaryRoot();
+    const privateDirectory = path.join(root, ".private-runtime");
+    mkdirSync(privateDirectory);
+    const previous = process.env.CODEX_MCP_BRIDGE_ENV_FILE;
+    process.env.CODEX_MCP_BRIDGE_ENV_FILE = path.join(privateDirectory, ".env");
+    const connection = await connectTestClient(
+      configFor(root),
+      new FakeUpstream(),
+      undefined,
+      new FakeModelCatalog(),
+      undefined,
+      undefined,
+      false
+    );
+    try {
+      const result = await connection.client.callTool({
+        name: "codex_update_settings",
+        arguments: {
+          expectedRegistryRevision: 0,
+          operation: {
+            kind: "patch",
+            settings: {
+              projectOperations: [{ kind: "add", project: { name: "Unsafe", cwd: root } }]
+            }
+          }
+        }
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("RUNTIME_ENV_PROJECT_CONFLICT");
+      expect(connection.settings.current.registryRevision).toBe(0);
+    } finally {
+      await connection.close();
+      if (previous === undefined) delete process.env.CODEX_MCP_BRIDGE_ENV_FILE;
+      else process.env.CODEX_MCP_BRIDGE_ENV_FILE = previous;
+    }
+  });
+
+  it("uses the registry's Unicode code-point bound for project mutations and task selectors", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const connection = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      undefined,
+      undefined,
+      false
+    );
+    const addedName = "😀".repeat(61);
+    const renamedName = "🧠".repeat(61);
+    const restoredName = "🚀".repeat(61);
+    try {
+      const added = await connection.client.callTool({
+        name: "codex_update_settings",
+        arguments: {
+          expectedRegistryRevision: 0,
+          operation: {
+            kind: "patch",
+            settings: {
+              projectOperations: [{ kind: "add", project: { name: addedName, cwd: root } }]
+            }
+          }
+        }
+      });
+      expect(added.isError).not.toBe(true);
+      const project = connection.settings.current.projects[0]!;
+      const task = (await connection.client.listTools()).tools.find(
+        (entry) => entry.name === "codex_task"
+      )!;
+      expect(JSON.stringify(task.inputSchema)).not.toContain(addedName);
+      const discovered = await connection.client.callTool({
+        name: "codex_task",
+        arguments: {
+          prompt: "resolve the astral Unicode project selector without running",
+          projectLookup: { name: addedName }
+        }
+      });
+      expect(discovered).toMatchObject({
+        isError: true,
+        structuredContent: {
+          error: { code: "PROJECT_SELECTION_REQUIRED", retryable: true },
+          nextActions: [expect.stringContaining(addedName)]
+        }
+      });
+      expect(upstream.calls).toHaveLength(0);
+      const executed = await runTask(connection.client, {
+        prompt: "accept the runtime-resolved astral Unicode selector",
+        executionMode: "foreground"
+      });
+      expect((executed as { isError?: boolean }).isError).not.toBe(true);
+      expect(parseToolJson(executed).projectName).toBe(addedName);
+
+      const renamed = await connection.client.callTool({
+        name: "codex_update_settings",
+        arguments: {
+          expectedRegistryRevision: 1,
+          operation: {
+            kind: "patch",
+            settings: {
+              projectOperations: [{ kind: "rename", projectId: project.id, name: renamedName }]
+            }
+          }
+        }
+      });
+      expect(renamed.isError).not.toBe(true);
+      await connection.client.callTool({
+        name: "codex_update_settings",
+        arguments: {
+          expectedRegistryRevision: 2,
+          operation: {
+            kind: "patch",
+            settings: { projectOperations: [{ kind: "archive", projectId: project.id }] }
+          }
+        }
+      });
+      const restored = await connection.client.callTool({
+        name: "codex_update_settings",
+        arguments: {
+          expectedRegistryRevision: 3,
+          operation: {
+            kind: "patch",
+            settings: {
+              projectOperations: [{
+                kind: "restore",
+                projectId: project.id,
+                name: restoredName
+              }]
+            }
+          }
+        }
+      });
+      expect(restored.isError).not.toBe(true);
+      expect(connection.settings.current.projects[0]?.name).toBe(restoredName);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("onboards arbitrary PC folders from Settings and preserves them when general defaults are restored", async () => {
+    const first = temporaryRoot();
+    const second = temporaryRoot();
+    const config = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1" });
+    const { client, close } = await connectTestClient(config, new FakeUpstream());
+
+    const opened = parseToolJson(await client.callTool({
+      name: "codex_ui_read", arguments: { view: "settings" }
+    }));
+    expect(opened.settings).toMatchObject({
+      settingsRevision: 0,
+      registryRevision: 0
+    });
+    expect(opened.settings.projects).toEqual([]);
+    expect(opened.capabilities.projectAvailability).toEqual([]);
+
+    const firstSave = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { name: "First", cwd: first } }
+            ]
+          }
+        }
+      }
+    });
+    expect(privateSettingsView(firstSave).settings)
+      .toMatchObject({ registryRevision: 1, projects: [{ name: "First", cwd: realpathSync(first) }] });
+
+    const secondSave = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedSettingsRevision: 0,
+        expectedRegistryRevision: 1,
+        operation: {
+          kind: "patch",
+          settings: {
+            uiLocalePreference: "ko",
+            projectOperations: [
+              { kind: "add", project: { name: "Second", cwd: second } }
+            ]
+          }
+        }
+      }
+    });
+    const beforeReset = privateSettingsView(secondSave).settings;
+    const restored = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedSettingsRevision: 1,
+        operation: { kind: "reset" }
+      }
+    });
+    expect(privateSettingsView(restored).settings)
+      .toMatchObject({
+        settingsRevision: 2,
+        registryRevision: 2,
+        uiLocalePreference: "auto",
+        modelPolicy: {
+          mode: "automatic",
+          allowedSelections: { kind: "catalog-visible" }
+        },
+        projects: beforeReset.projects
+      });
+
+    const task = await runTask(client, { prompt: "work here", projectId: "first" });
+    expect(parseToolJson(task).projectName).toBe("First");
+    await close();
+  });
+
+  it("exposes recovery availability without leaking validation reasons into capabilities", async () => {
+    const first = temporaryRoot();
+    const second = temporaryRoot();
+    const databaseFile = path.join(temporaryRoot(), "state.sqlite");
+    const broadConfig = configFor(first, {
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
+    });
+    const originalState = new BridgeStateStore({ file: databaseFile });
+    const original = new UserSettingsStore(broadConfig, { stateStore: originalState });
+    addTestProjects(original, [
+      { name: "Active", cwd: first },
+      { name: "Recovery", cwd: second }
+    ]);
+    originalState.close();
+    const narrowConfig = configFor(first);
+    const recoveredState = new BridgeStateStore({ file: databaseFile });
+    const recovered = new UserSettingsStore(narrowConfig, { stateStore: recoveredState });
+    const { client, jobs, close } = await connectTestClient(
+      narrowConfig,
+      new FakeUpstream(),
+      undefined,
+      new FakeModelCatalog(),
+      recovered
+    );
+
+    const view = (await client.callTool({
+      name: "codex_ui_read", arguments: { view: "settings" }
+    }) as { structuredContent?: Record<string, any> }).structuredContent!;
+    expect(view.capabilities.projectAvailability).toMatchObject([
+      { name: "Active", available: true, archived: false },
+      { name: "Recovery", available: false, archived: false }
+    ]);
+    expect(JSON.stringify(view.capabilities.projectAvailability)).not.toContain(second);
+    expect(JSON.stringify(view.capabilities.projectAvailability)).not.toContain("unavailableReason");
+    expect(view.capabilities.projectAvailability).toContainEqual(expect.objectContaining({
+      name: "Recovery",
+      available: false,
+      archived: false
+    }));
+    expect(privateSettingsView(await client.callTool({
+      name: "codex_settings_snapshot",
+      arguments: {}
+    })).settings.projects).toContainEqual({
+      id: expect.stringMatching(SCOPE_ID_PATTERN),
+      projectRef: expect.stringMatching(/^prj_[A-Za-z0-9_-]{22}$/),
+      projectRevision: 1,
+      name: "Recovery",
+      nameKey: "recovery",
+      cwd: realpathSync(second),
+      sortOrder: 1,
+      createdAt: expect.any(Number),
+      updatedAt: expect.any(Number)
+    });
+    await close();
+    recoveredState.close();
+  });
+
+  it("keeps the path-free task descriptor stable when a project disappears and recovers", async () => {
+    const root = temporaryRoot();
+    const project = path.join(root, "alpha-workspace");
+    const displaced = path.join(root, "alpha-workspace.unavailable");
+    mkdirSync(project);
+    const config = configFor(root);
+    const settings = new UserSettingsStore(config);
+    addTestProjects(settings, [{ name: "Alpha Workspace", cwd: project }]);
+    const upstream = new FakeUpstream();
+    const { client, rawCallTool, close } = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings
+    );
+    let listChanged = 0;
+    client.setNotificationHandler(ToolListChangedNotificationSchema, () => { listChanged += 1; });
+    const taskDescriptor = async () =>
+      (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+
+    const initial = (await client.callTool({
+      name: "codex_ui_read", arguments: { view: "settings" }
+    }) as { structuredContent?: Record<string, any> }).structuredContent!;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const baselineNotifications = listChanged;
+    expect(initial.capabilities.projectAvailability).toMatchObject([
+      { name: "Alpha Workspace", available: true, archived: false }
+    ]);
+    const initialDescriptor = await taskDescriptor();
+    expect(JSON.stringify(initialDescriptor.inputSchema.properties?.project))
+      .not.toContain('"Alpha Workspace"');
+    expect(JSON.stringify(initialDescriptor)).not.toContain(realpathSync(project));
+
+    renameSync(project, displaced);
+    const unavailable = (await client.callTool({
+      name: "codex_ui_read", arguments: { view: "settings" }
+    }) as { structuredContent?: Record<string, any> }).structuredContent!;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(unavailable.capabilities.projectAvailability).toMatchObject([
+      { name: "Alpha Workspace", available: false, archived: false }
+    ]);
+    expect(listChanged).toBe(baselineNotifications);
+    const unavailableDescriptor = await taskDescriptor();
+    const unavailableSchema = unavailableDescriptor.inputSchema as Record<string, any>;
+    expect(unavailableDescriptor).toEqual(initialDescriptor);
+    expect(unavailableSchema.properties?.project).toMatchObject({
+      type: "object",
+      required: ["name", "projectRef", "projectRevision"],
+      additionalProperties: false
+    });
+    expect(unavailableSchema).not.toHaveProperty("allOf");
+    expect(unavailableDescriptor._meta).toBeUndefined();
+    expect(unavailableDescriptor.description).not.toContain("codex_status query");
+    expect(JSON.stringify(unavailableDescriptor)).not.toContain(project);
+    expect(JSON.stringify(unavailableDescriptor)).not.toContain(displaced);
+    const unavailableStatus = parseToolJson(
+      await client.callTool({ name: "codex_status", arguments: {} })
+    );
+    expect(unavailableStatus).not.toHaveProperty("projects");
+    expect(JSON.stringify(unavailableStatus)).not.toContain(project);
+    expect(JSON.stringify(unavailableStatus)).not.toContain(displaced);
+    const staleExplicitSelection = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "71717171-7171-4171-8171-717171717171",
+        activityPresentationId: "72727272-7272-4272-8272-727272727272",
+        prompt: "do not run through a stale unavailable project descriptor",
+        project: { name: "Alpha Workspace", registryRevision: 1 },
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Stale Descriptor Agent" },
+        executionMode: "foreground"
+      }
+    });
+    const staleSerialized = JSON.stringify(staleExplicitSelection);
+    expect(staleExplicitSelection.isError).toBe(true);
+    expect(staleSerialized).toContain("PROJECT_UNAVAILABLE");
+    expect(staleSerialized).not.toContain(project);
+    expect(staleSerialized).not.toContain(displaced);
+    expect(upstream.calls).toEqual([]);
+
+    renameSync(displaced, project);
+    const recovered = (await client.callTool({
+      name: "codex_ui_read", arguments: { view: "settings" }
+    }) as { structuredContent?: Record<string, any> }).structuredContent!;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(recovered.capabilities.projectAvailability).toMatchObject([
+      { name: "Alpha Workspace", available: true, archived: false }
+    ]);
+    expect(listChanged).toBe(baselineNotifications);
+    const recoveredDescriptor = await taskDescriptor();
+    expect(recoveredDescriptor).toEqual(initialDescriptor);
+    expect(JSON.stringify(recoveredDescriptor)).not.toContain(realpathSync(project));
+    await close();
+  });
+
+  it("reports bridge policy and path-free project/session policy", async () => {
     const root = temporaryRoot();
     const config = configFor(root, {
       CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
-      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max",
-      CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS: "120000"
+      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
     });
     const { client, close } = await connectTestClient(config, new FakeUpstream());
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
     expect(status).toMatchObject({
-      defaultCwd: realpathSync(root),
-      defaultModel: "gpt-5.6-sol",
-      defaultReasoningEffort: "max",
-      codexExecutionDeadline: "none",
-      upstreamPoolSize: 4,
-      maxRetainedJobs: 100,
-      maxJobResultBytes: 1048576,
-      maxConcurrentJobs: 30,
-      stateStorage: { backend: "memory", persistencePath: null, transactional: false },
-      concurrencyPolicy: {
-        sameWorkingDirectory: {
-          readOnly: "allowed",
-          workspaceWrite: "allowed",
-          dangerFullAccess: "allowed"
-        },
-        sameThread: "serialized",
-        mutationCoordination: "caller-managed"
-      },
-      sessionPolicy: {
-        persistent: false,
-        autoResumeTtlMs: 120000,
-        selection: "scope-compatible-only-when-unambiguous"
-      }
+      kind: "overview",
+      scopeCounts: { sessions: 0, jobs: 0, runningJobs: 0, activities: 0, agents: 0 },
+      sessions: [],
+      jobs: [],
+      activities: [],
+      agents: [],
+      warnings: expect.any(Array)
     });
+    for (const diagnosticField of [
+      "appServerPolicy",
+      "modelCatalogStatus",
+      "upstreamPoolSize",
+      "maxRetainedJobs",
+      "maxJobResultBytes",
+      "stateStorage",
+      "concurrencyPolicy",
+      "sessionPolicy"
+    ]) expect(status).not.toHaveProperty(diagnosticField);
+    expect(JSON.stringify(status)).not.toContain(realpathSync(root));
     expect(status.sessions).toEqual([]);
 
     await close();
   });
 
-  it("reports null default cwd when multiple roots are configured", async () => {
+  it("reports an empty project registry when multiple roots have no registered projects", async () => {
     const first = temporaryRoot();
     const second = temporaryRoot();
     const config = loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
     });
-    const { client, close } = await connectTestClient(config, new FakeUpstream());
+    const { client, close } = await connectTestClient(
+      config,
+      new FakeUpstream(),
+      undefined,
+      new FakeModelCatalog(),
+      undefined,
+      undefined,
+      false
+    );
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
-    expect(status.defaultCwd).toBeNull();
+    expect(status).not.toHaveProperty("projects");
+    expect(status).not.toHaveProperty("defaultProjectId");
+    expect(status).not.toHaveProperty("allowedRootCount");
+    await close();
+  });
+
+  it("keeps routine status independent from upstream inventory diagnostics", async () => {
+    const root = temporaryRoot();
+    const upstream = new FailingInventoryUpstream();
+    const { client, close } = await connectTestClient(configFor(root, { CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS: "1" }), upstream);
+
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(status).toMatchObject({ kind: "overview", scopeCounts: { jobs: 0 } });
+    expect(upstream.inventoryCalls).toBe(0);
+
+    const diagnostics = parseToolJson(
+      await client.callTool({ name: "codex_diagnostics", arguments: {} })
+    );
+    expect(diagnostics).toMatchObject({
+      kind: "diagnostics",
+      upstream: {
+        tools: null,
+        error: expect.stringContaining("fixture upstream inventory unavailable")
+      },
+      descriptorDiscovery: {
+        epoch: expect.any(Number),
+        fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+        activeBindings: 1,
+        notificationEligibleBindings: 1,
+        notificationAttempts: expect.any(Number),
+        clientRelistObservations: expect.any(Number),
+        currentEpochRelistedSessions: 0,
+        adoptionState: "unknown"
+      }
+    });
+    expect(upstream.inventoryCalls).toBe(1);
     await close();
   });
 
@@ -353,13 +5714,1030 @@ describe("bridge tools", () => {
     const result = parseToolJson(
       await client.callTool({ name: "codex_models", arguments: { refresh: true } })
     );
+    expect(result).toMatchObject({
+      source: "codex-cli",
+      stale: false,
+      warning: null
+    });
+    expect(result).not.toHaveProperty("policy");
+    expect(result).not.toHaveProperty("priority");
+    expect(result).not.toHaveProperty("fingerprint");
+    expect(result.models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol"))
+      .toMatchObject({
+      name: "GPT-5.6 Sol",
+      efforts: expect.arrayContaining([
+        expect.objectContaining({ id: "high" }),
+        expect.objectContaining({ id: "max" })
+      ])
+    });
+    expect(result.models.every((entry: Record<string, unknown>) =>
+      !("defaultEffort" in entry) && !("isDefault" in entry)
+    )).toBe(true);
     expect(result.models.map((entry: { id: string }) => entry.id)).toEqual([
+      "gpt-5.5",
       "gpt-5.6-sol",
-      "gpt-5.6-terra",
-      "gpt-5.5"
+      "gpt-5.6-terra"
     ]);
-    expect(catalog.calls).toEqual([{ refresh: true }]);
+    expect(catalog.calls).toEqual([{ refresh: true, backendKind: "app-server" }]);
 
+    const task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    const selection = task.inputSchema.properties?.selection as {
+      description?: string;
+      properties?: Record<string, unknown>;
+      additionalProperties?: boolean;
+    };
+    expect(selection.description).toContain("codex_models");
+    expect(selection.description).toContain("Required at runtime");
+    expect(selection).toMatchObject({
+      type: "object",
+      required: ["model", "reasoningEffort"],
+      additionalProperties: false,
+      properties: {
+        model: { type: "string" },
+        reasoningEffort: { type: "string" }
+      }
+    });
+    expect(JSON.stringify(selection)).not.toMatch(/gpt-5\.6-sol|frontier agentic coding/);
+
+    await close();
+  });
+
+  it("rejects missing automatic new-work selection before any execution side effect", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, bareCallTool, jobs, sessions, settings, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const project = settings.current.projects[0]!;
+    const callWithoutSelection = (requestId: string) => bareCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId,
+        taskContractVersion: CODEX_TASK_INPUT_CONTRACT_VERSION,
+        executionEnvelopeRef: settings.taskExecutionEnvelopeRef(),
+        prompt: "must not be admitted",
+        project: {
+          name: project.name,
+          projectRef: project.projectRef,
+          projectRevision: project.projectRevision
+        },
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "No Selection Agent" },
+        executionMode: "foreground"
+      }
+    });
+    const assertNoSideEffects = (result: any) => {
+      expect(result).toMatchObject({
+        isError: true,
+        structuredContent: {
+          error: {
+            code: "MODEL_SELECTION_REQUIRED",
+            message: "Automatic policy requires an exact model and reasoning effort."
+          },
+          nextActions: expect.arrayContaining(['codex_models({"contractVersion":"2","refresh":true})'])
+        }
+      });
+      expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+      expect(jobs.listAgents(SCOPE_A)).toEqual([]);
+      expect(jobs.listForScope(SCOPE_A)).toEqual([]);
+      expect(sessions.listForScope(SCOPE_A)).toEqual([]);
+      expect(upstream.calls).toEqual([]);
+    };
+
+    assertNoSideEffects(await callWithoutSelection("47474747-4747-4747-8747-474747474747"));
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "automatic",
+          allowedSelections: {
+            kind: "explicit",
+            selections: [{ model: "gpt-5.6-sol", reasoningEffort: "max" }]
+          },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(saved.isError).not.toBe(true);
+    assertNoSideEffects(await callWithoutSelection("48484848-4848-4848-8848-484848484848"));
+    await close();
+  });
+
+  it.each([false, true])("saves retained Ultra choices with OFF and Fast enabled (Ultra only: %s)", async (ultraOnly) => {
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(configFor(temporaryRoot()), upstream, undefined, new TieredModelCatalog());
+    try {
+      const ultra = { model: "gpt-5.6-sol", reasoningEffort: "ultra" };
+      const ordinary = { model: "gpt-5.6-sol", reasoningEffort: "max" };
+      const selections = ultraOnly ? [ultra] : [ordinary, ultra];
+      const policy = {
+        mode: "automatic", allowedSelections: { kind: "explicit", selections },
+        constraints: { allowDelegation: true }
+      };
+      const save = (revision: number, allowDelegation: boolean) => client.callTool({
+        name: "codex_update_settings",
+        arguments: { expectedSettingsRevision: revision, operation: { kind: "patch", settings: {
+          modelPolicy: { ...policy, constraints: { allowDelegation } }, usePriorityServiceTier: true
+        } } }
+      });
+      expect((await save(0, true)).isError).not.toBe(true);
+      const off = await save(1, false);
+      expect(off.isError).not.toBe(true);
+      expect(parseToolJson(off).settings.modelPolicy.allowedSelections.selections).toEqual(selections);
+      const result = parseToolJson(await client.callTool({ name: "codex_models", arguments: { contractVersion: "2" } }));
+      expect(result.selectionMode).toBe("automatic");
+      expect(result.models.flatMap((model: any) => model.efforts.map((effort: any) => effort.id)))
+        .toEqual(ultraOnly ? [] : ["max"]);
+      if (ultraOnly) expect(result.warning).toContain("retained but inactive");
+      else {
+        const catalog = await new TieredModelCatalog().getCatalog();
+        expect(result.models[0].description).toBe(catalog.models[0].description);
+        expect(result.models[0].efforts[0].description)
+          .toBe(catalog.models[0].supportedReasoningEfforts.find((entry) => entry.effort === "max")?.description);
+      }
+      const denied = await runTask(client, {
+        prompt: "must not run an inactive Ultra choice", contextMode: "fresh", selection: ultra
+      }) as { isError?: boolean };
+      expect(denied.isError).toBe(true);
+      expect(upstream.calls).toHaveLength(0);
+      expect((await save(2, true)).isError).not.toBe(true);
+      const restored = parseToolJson(await client.callTool({ name: "codex_models", arguments: {} }));
+      expect(restored.models[0].efforts.map((effort: any) => effort.id)).toContain("ultra");
+    } finally { await close(); }
+  });
+
+  it.each(["continue", "fork"] as const)("rechecks disabled Ultra before an inherited %s and restores it only after re-enabling", async (contextMode) => {
+    const upstream = new ForkLifecycleUpstream();
+    const { client, settings, close } = await connectTestClient(
+      configFor(temporaryRoot(), { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }), upstream
+    );
+    const ultra = { model: "gpt-5.6-sol", reasoningEffort: "ultra" };
+    const ordinary = { ...ultra, reasoningEffort: "max" };
+    const save = (allowDelegation: boolean) => client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedSettingsRevision: settings.current.revision, operation: { kind: "patch", settings: {
+        modelPolicy: { mode: "automatic", allowedSelections: { kind: "explicit", selections: [ordinary, ultra] },
+          constraints: { allowDelegation } }
+      } } }
+    });
+    try {
+      expect((await save(true)).isError).not.toBe(true);
+      const started = await runTask(client, { prompt: "seed an Ultra thread", agentName: "Ultra Agent", contextMode: "fresh", selection: ultra });
+      expect((started as { isError?: boolean }).isError).not.toBe(true);
+      const { activityId, agentId } = parseToolJson(started);
+      expect(upstream.calls).toHaveLength(1);
+      expect((await save(false)).isError).not.toBe(true);
+
+      const denied = await runTask(client, { prompt: "inherit the saved thread choice", activityId, agentId, contextMode });
+      expect((denied as { isError?: boolean }).isError).toBe(true);
+      expect(JSON.stringify(denied)).toContain("Ultra reasoning is disabled");
+      expect(upstream.calls).toHaveLength(1);
+
+      expect((await save(true)).isError).not.toBe(true);
+      const restored = await runTask(client, { prompt: "resume after re-enabling Ultra", activityId, agentId, contextMode });
+      expect((restored as { isError?: boolean }).isError).not.toBe(true);
+      expect(upstream.calls).toHaveLength(2);
+      expect(upstream.calls[1].name).toBe(contextMode === "fork" ? "codex-fork" : "codex-reply");
+    } finally { await close(); }
+  });
+
+  it("publishes exactly the 17 currently allowed Sol, Terra, and Luna pairs", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream(),
+      undefined,
+      new FullModelCatalog()
+    );
+    const effortsByModel = {
+      "gpt-5.6-sol": ["low", "medium", "high", "xhigh", "max", "ultra"],
+      "gpt-5.6-terra": ["low", "medium", "high", "xhigh", "max", "ultra"],
+      "gpt-5.6-luna": ["low", "medium", "high", "xhigh", "max"]
+    } as const;
+    const allowedSelections = Object.entries(effortsByModel).flatMap(
+      ([model, efforts]) => efforts.map((reasoningEffort) => ({ model, reasoningEffort }))
+    );
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedSettingsRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            modelPolicy: {
+              mode: "automatic",
+              allowedSelections: { kind: "explicit", selections: allowedSelections },
+              constraints: { allowDelegation: true }
+            }
+          }
+        }
+      }
+    });
+
+    const task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    const selection = task.inputSchema.properties?.selection;
+    expect(JSON.stringify(selection)).not.toMatch(
+      /gpt-5\.6-sol|gpt-5\.6-terra|gpt-5\.6-luna/
+    );
+
+    const listed = parseToolJson(await client.callTool({ name: "codex_models", arguments: {} }));
+    expect(listed).not.toHaveProperty("policy");
+    const listedCounts = Object.fromEntries(
+      listed.models.map((entry: { id: string; efforts: Array<{ id: string }> }) => [entry.id, entry.efforts.length])
+    );
+    expect(listedCounts).toEqual({
+      "gpt-5.6-luna": 5,
+      "gpt-5.6-sol": 6,
+      "gpt-5.6-terra": 6
+    });
+    expect(Object.values(listedCounts as Record<string, number>)
+      .reduce((sum, count) => sum + count, 0)).toBe(17);
+    await close();
+  });
+
+  it("overrides only automatic model descriptions through shared settings and restores refreshed catalog guidance", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root);
+    const store = new UserSettingsStore(config);
+    const catalog = new DescriptionRefreshingModelCatalog();
+    const { client, close } = await connectTestClient(config, new FakeUpstream(), undefined, catalog, store);
+    try {
+      const list = async (args = {}) => parseToolJson(await client.callTool({ name: "codex_models", arguments: args }));
+      const before = await list();
+      const descriptor = (await client.listTools()).tools.find((entry) => entry.name === "codex_task");
+      const custom = "Use for a scoped change.\n<script>plain text only</script>";
+      const patched = parseToolJson(await client.callTool({ name: "codex_update_settings", arguments: {
+        expectedSettingsRevision: store.current.settingsRevision,
+        operation: { kind: "patch", settings: { modelDescriptionOverrides: { "gpt-5.6-sol": custom, "missing-model": "Retain this description." } } }
+      } }));
+      expect(patched.settings.modelDescriptionOverrides["gpt-5.6-sol"]).toBe(custom);
+      expect(patched.catalog.models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol").description).not.toBe(custom);
+      expect(patched.policyActivation.developerModeRefreshRequired).toBe(false);
+      const selected = (await list()).models;
+      expect(selected).toEqual(before.models.map((entry: { id: string }) => entry.id === "gpt-5.6-sol"
+        ? { ...entry, description: custom, descriptionSource: "user" } : entry));
+      expect(selected.some((entry: { id: string }) => entry.id === "missing-model")).toBe(false);
+      const refreshed = await list({ contractVersion: "2", refresh: true });
+      expect(refreshed.models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol")).toMatchObject({ description: custom, descriptionSource: "user" });
+      const settings = parseToolJson(await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } }));
+      expect(settings.catalog.models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol").description).toBe("Updated Sol guidance from the refreshed backend catalog.");
+      expect((await client.listTools()).tools.find((entry) => entry.name === "codex_task")).toEqual(descriptor);
+      const automatic = store.current.modelPolicy;
+      store.update({ modelPolicy: { mode: "fixed", selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }, constraints: { allowDelegation: true } } }, store.current.settingsRevision);
+      const fixed = (await list()).models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol");
+      expect(fixed.description).toBe("Updated Sol guidance from the refreshed backend catalog.");
+      expect(fixed).not.toHaveProperty("descriptionSource");
+      store.update({ modelPolicy: automatic }, store.current.settingsRevision);
+      expect((await list()).models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol").description).toBe(custom);
+      await client.callTool({ name: "codex_update_settings", arguments: {
+        expectedSettingsRevision: store.current.settingsRevision,
+        operation: { kind: "patch", settings: { modelDescriptionOverrides: { "gpt-5.6-sol": " \n", "missing-model": "Retain this description." } } }
+      } });
+      const restored = (await list()).models.find((entry: { id: string }) => entry.id === "gpt-5.6-sol");
+      expect(restored.description).toBe(fixed.description);
+      expect(restored).not.toHaveProperty("descriptionSource");
+      expect(store.current.modelDescriptionOverrides).toEqual({ "missing-model": "Retain this description." });
+    } finally { await close(); }
+  });
+
+  it("keeps the task descriptor stable when only catalog guidance changes", async () => {
+    const root = temporaryRoot();
+    const catalog = new DescriptionRefreshingModelCatalog();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream(),
+      undefined,
+      catalog
+    );
+    let listChanged = 0;
+    client.setNotificationHandler(ToolListChangedNotificationSchema, () => { listChanged += 1; });
+
+    const before = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    expect(JSON.stringify(before.inputSchema)).not.toContain("Latest frontier agentic coding model");
+
+    await client.callTool({ name: "codex_models", arguments: { refresh: true } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const after = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    expect(listChanged).toBe(0);
+    expect(after).toEqual(before);
+    await close();
+  });
+
+  it("uses catalog changes discovered through task resolution without changing the descriptor", async () => {
+    const root = temporaryRoot();
+    const catalog = new TaskRefreshingModelCatalog();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      catalog
+    );
+    let listChanged = 0;
+    client.setNotificationHandler(ToolListChangedNotificationSchema, () => { listChanged += 1; });
+    const before = (await client.listTools()).tools.find(
+      (entry) => entry.name === "codex_task"
+    )!;
+    expect(JSON.stringify(before.inputSchema)).not.toContain(
+      "Catalog changed while resolving codex_task"
+    );
+
+    const admitted = await runTask(client, {
+      prompt: "refresh catalog through task admission",
+      agentName: "Catalog Refresh Agent",
+      contextMode: "fresh"
+    });
+    expect(admitted.isError).not.toBe(true);
+    expect(upstream.calls).toHaveLength(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const after = (await client.listTools()).tools.find(
+      (entry) => entry.name === "codex_task"
+    )!;
+    expect(after).toEqual(before);
+    expect(listChanged).toBe(0);
+    await close();
+  });
+
+  it("removes a legacy model-only preference without exposing its value", async () => {
+    const root = temporaryRoot();
+    const databaseFile = path.join(temporaryRoot(), "state.sqlite");
+    const config = configFor(root);
+    const initialState = new BridgeStateStore({ file: databaseFile });
+    const initial = new UserSettingsStore(config, { stateStore: initialState });
+    initial.update({ uiLocalePreference: "ko" }, 0);
+    const persisted = initialState.getSettingsRecord()!.payload as Record<string, unknown>;
+    persisted.legacyPreferredModel = "gpt-private-legacy-default";
+    persisted.modelPolicy = {
+      mode: "automatic",
+      allowedSelections: { kind: "catalog-visible" },
+      constraints: { allowDelegation: true }
+    };
+    initialState.close();
+    replaceStoredSettingsPayloadForTest(databaseFile, persisted);
+    const restoredState = new BridgeStateStore({ file: databaseFile });
+    const settings = new UserSettingsStore(config, { stateStore: restoredState });
+    const { client, close } = await connectTestClient(
+      config,
+      new FakeUpstream(),
+      undefined,
+      new FakeModelCatalog(),
+      settings
+    );
+
+    const result = await client.callTool({ name: "codex_settings", arguments: {} });
+    const publicView = (result as { structuredContent?: Record<string, any> }).structuredContent!;
+    expect((result as { _meta?: Record<string, unknown> })._meta)
+      .not.toHaveProperty("codex/settingsView");
+    const privateView = privateSettingsView(await client.callTool({
+      name: "codex_settings_snapshot",
+      arguments: {}
+    }));
+    expect(JSON.stringify(publicView)).not.toContain("gpt-private-legacy-default");
+    expect(settings.loadWarnings).toContain(
+      "A retired automatic model default was removed. GPT must now choose an exact model and reasoning effort for new work."
+    );
+    expect(privateView.warnings.join(" ")).not.toContain("gpt-private-legacy-default");
+    expect(privateView.settings).not.toHaveProperty("legacyPreferredModel");
+    expect(privateView.settings.modelPolicy).not.toHaveProperty("fallbackSelection");
+    expect(privateView.warnings.join(" ")).not.toContain("Legacy model-only preference");
+    expect(privateView.warnings.join(" ")).toContain(
+      "폐기된 자동 모델 기본값을 제거했습니다"
+    );
+    expect(privateView.warnings.join(" ")).not.toContain("백엔드 라우팅");
+    await close();
+    restoredState.close();
+  });
+
+  it("keeps the full-catalog task descriptor generic and bounded", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream(),
+      undefined,
+      new FullModelCatalog()
+    );
+    const task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    const selection = task.inputSchema.properties?.selection;
+    expect(selection).toMatchObject({
+      type: "object",
+      required: ["model", "reasoningEffort"],
+      additionalProperties: false
+    });
+    expect(JSON.stringify(selection)).not.toMatch(/gpt-5\.|task fit|ranking|recommendation/i);
+    const contractBytes = Buffer.byteLength(JSON.stringify(task.inputSchema), "utf8") +
+      Buffer.byteLength(JSON.stringify(task.outputSchema), "utf8");
+    expect(contractBytes).toBeLessThanOrEqual(9_500);
+    await close();
+  });
+
+  it("bounds the worst-case 100-project and full-model task descriptor", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root);
+    const settings = new UserSettingsStore(config);
+    const projects = Array.from({ length: 100 }, (_, index) => {
+      const cwd = path.join(root, `project-${String(index).padStart(3, "0")}`);
+      mkdirSync(cwd);
+      return {
+        name: `${"🧭".repeat(117)}${String(index).padStart(3, "0")}`,
+        cwd
+      };
+    });
+    settings.updateWithProjectOperations(
+      {},
+      projects.map((project) => ({ kind: "add" as const, project })),
+      undefined,
+      settings.current.registryRevision
+    );
+    const { client, close } = await connectTestClient(
+      config,
+      new FakeUpstream(),
+      undefined,
+      new FullModelCatalog(),
+      settings
+    );
+    const task = (await client.listTools()).tools.find(
+      (entry) => entry.name === "codex_task"
+    )!;
+    const contractBytes = Buffer.byteLength(JSON.stringify(task.inputSchema), "utf8") +
+      Buffer.byteLength(JSON.stringify(task.outputSchema), "utf8");
+    const completeDescriptorBytes = Buffer.byteLength(JSON.stringify(task), "utf8");
+    if (process.env.CODEX_ISSUE43_AUDIT === "1") {
+      console.log("ISSUE43_DESCRIPTOR_METRICS", JSON.stringify({
+        projectCount: 100,
+        modelCount: 7,
+        contractBytes,
+        completeDescriptorBytes,
+        descriptorLimitBytes: CODEX_TASK_DESCRIPTOR_MAX_JSON_BYTES
+      }));
+    }
+    expect(contractBytes).toBeLessThanOrEqual(CODEX_TASK_DESCRIPTOR_MAX_JSON_BYTES);
+    expect(completeDescriptorBytes).toBeGreaterThan(contractBytes);
+    expect(completeDescriptorBytes).toBeLessThanOrEqual(CODEX_TASK_DESCRIPTOR_MAX_JSON_BYTES);
+    expect(task.inputSchema.properties?.project).toMatchObject({
+      type: "object",
+      required: ["name", "projectRef", "projectRevision"],
+      additionalProperties: false
+    });
+    expect(JSON.stringify(task)).not.toContain(projects[0]?.name);
+    expect(JSON.stringify(task)).not.toContain(realpathSync(root));
+    await close();
+  });
+
+  it("opens Settings without reading data and hydrates once through the common read", async () => {
+    const root = temporaryRoot();
+    const catalog = new FakeModelCatalog();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream(),
+      undefined,
+      catalog
+    );
+
+    await client.callTool({ name: "codex_settings", arguments: {} });
+    await client.callTool({ name: "codex_settings", arguments: { refreshModels: true } });
+    expect(catalog.calls).toEqual([]);
+    await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } });
+    expect(catalog.calls).toEqual([{ refresh: false, backendKind: "app-server" }]);
+    await client.callTool({ name: "codex_ui_read", arguments: { view: "settings", refreshModels: true } });
+    expect(catalog.calls).toEqual([
+      { refresh: false, backendKind: "app-server" },
+      { refresh: true, backendKind: "app-server" }
+    ]);
+    await close();
+  });
+
+  it("does not expose a fallback/default in automatic policy contracts", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const allowedSelections = [
+      { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      { model: "gpt-5.6-terra", reasoningEffort: "high" }
+    ];
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "automatic",
+          allowedSelections: { kind: "explicit", selections: allowedSelections },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    const firstSchema = (await client.listTools()).tools
+      .find((entry) => entry.name === "codex_task")!.inputSchema;
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        modelPolicy: {
+          mode: "automatic",
+          allowedSelections: { kind: "catalog-visible" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    const secondSchema = (await client.listTools()).tools
+      .find((entry) => entry.name === "codex_task")!.inputSchema;
+
+    // Contract v2 never encodes mutable policy values or a fallback/default.
+    expect(secondSchema).toEqual(firstSchema);
+    expect(firstSchema.properties).not.toHaveProperty("executionPolicyRef");
+    expect(JSON.stringify(secondSchema)).not.toContain("fallbackSelection");
+
+    const publicModels = parseToolJson(
+      await client.callTool({ name: "codex_models", arguments: {} })
+    );
+    const publicSettings = parseToolJson(
+      await client.callTool({ name: "codex_settings", arguments: {} })
+    );
+    expect(publicModels).not.toHaveProperty("policy");
+    expect(publicSettings).toEqual({ kind: "settings", opened: true });
+    expect(publicModels.models.every((model: Record<string, unknown>) =>
+      !("defaultEffort" in model) && !("isDefault" in model)
+    )).toBe(true);
+    await close();
+  });
+
+  it("keeps one stable selection schema while enforcing current model policy", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, settings, close } = await connectTestClient(configFor(root), upstream);
+    let listChanged = 0;
+    client.setNotificationHandler(ToolListChangedNotificationSchema, () => { listChanged += 1; });
+
+    let task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    const stableDescriptor = structuredClone(task);
+    const staleExecutionPolicyRef = settings.executionPolicyRef(
+      settings.current,
+      modelCatalogAdmissionFingerprint(new FakeModelCatalog().getCachedCatalog().models)
+    );
+    expect(task.inputSchema).toMatchObject({ additionalProperties: false });
+    expect(task.inputSchema.properties).not.toHaveProperty("model");
+    expect(task.inputSchema.properties).not.toHaveProperty("reasoningEffort");
+    expect(task.inputSchema.properties?.selection).toMatchObject({
+      type: "object",
+      required: ["model", "reasoningEffort"],
+      additionalProperties: false
+    });
+
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(privateSettingsView(saved)).toMatchObject({
+      policyActivation: {
+          policyRevision: 1,
+          executionPolicyActive: true,
+          descriptorProjectionUpdated: false,
+          developerModeRefreshRequired: false
+      }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(listChanged).toBe(0);
+
+    task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    expect(task).toEqual(stableDescriptor);
+    expect(task.inputSchema.properties).toHaveProperty("selection");
+    expect(task.inputSchema.properties).not.toHaveProperty("modelPolicyRevision");
+    expect(task.inputSchema).toMatchObject({ additionalProperties: false });
+
+    const staleOverride = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "stale override",
+        executionPolicyRef: staleExecutionPolicyRef,
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+      }
+    });
+    expect(staleOverride.isError).toBe(true);
+    expect(staleOverride).toMatchObject({
+      structuredContent: {
+        error: {
+          code: "EXECUTION_POLICY_CHANGED",
+          retryable: true
+        },
+        nextActions: expect.arrayContaining([expect.stringContaining("pre-v2 descriptor")])
+      }
+    });
+    expect(upstream.calls).toHaveLength(0);
+
+    const forbiddenOverride = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "current fixed override",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+      }
+    });
+    expect(forbiddenOverride).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "MODEL_SELECTION_FORBIDDEN" },
+        nextActions: [expect.stringContaining("Omit selection")]
+      }
+    });
+    const staleLegacyOverride = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "stale legacy override",
+        model: "gpt-5.6-terra",
+        reasoningEffort: "high"
+      }
+    });
+    expect(staleLegacyOverride.isError).toBe(true);
+    expect(JSON.stringify(staleLegacyOverride)).toContain("Unrecognized keys");
+    expect(upstream.calls).toHaveLength(0);
+
+    const fixed = await runTask(client, { prompt: "fixed execution", sessionMode: "new" });
+    expect((fixed as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        actualModel: "gpt-5.6-sol",
+        actualReasoningEffort: "max",
+        rerouted: false
+      });
+    expect(upstream.calls[0]).toMatchObject({
+      args: { model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
+    });
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        modelPolicy: {
+          mode: "automatic",
+          allowedSelections: {
+            kind: "explicit",
+            selections: [{ model: "gpt-5.6-terra", reasoningEffort: "high" }]
+          },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    expect(task).toEqual(stableDescriptor);
+
+    const retiredRevision = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "retired policy revision",
+        modelPolicyRevision: 1,
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      }
+    });
+    expect(retiredRevision.isError).toBe(true);
+    expect(JSON.stringify(retiredRevision)).toContain("Unrecognized key");
+    expect(JSON.stringify(retiredRevision)).toContain("modelPolicyRevision");
+    await close();
+  });
+
+  it("keeps Fast mode on its original runs while previewing changed next-run settings", async () => {
+    const upstream = new DeferredUpstream();
+    const { client, applicationService, close } = await connectTestClient(
+      configFor(temporaryRoot()), upstream, undefined, new TieredModelCatalog()
+    );
+    const dashboard = () => applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: false });
+    const activityExecutions = async () => {
+      const view = privateActivityView(await client.callTool({ name: "codex_activity", arguments: {} }));
+      return view.feed.active.flatMap((activity: any) => activity.agents.map((agent: any) => ({
+        title: activity.title, execution: agent.execution
+      })));
+    };
+    try {
+      const standard = parseToolJson(await runTask(client, {
+        prompt: "standard run", activityTitle: "Standard display", sessionMode: "new",
+        executionMode: "background", selection: { model: "gpt-5.6-sol", reasoningEffort: "high" }
+      }));
+      const enabled = await client.callTool({
+        name: "codex_update_settings",
+        arguments: { expectedRevision: 0, usePriorityServiceTier: true }
+      });
+      expect(enabled.isError).not.toBe(true);
+      expect((await dashboard()).activeRows[0].latestTurn?.execution).not.toHaveProperty("serviceTier");
+      expect((await activityExecutions()).find((row: any) => row.title === "Standard display").execution)
+        .not.toHaveProperty("serviceTier");
+      upstream.resolveNext(fakeCodexResult("standard-display-thread"));
+      await waitForJobStatus(client, standard.jobId, "completed");
+      const standardRow = (await dashboard()).terminalRows.find(row => row.activityTitle === "Standard display")!;
+      expect(standardRow.latestTurn?.execution).not.toHaveProperty("serviceTier");
+      expect(standardRow.execution).toMatchObject({ serviceTier: "priority", isCurrent: true });
+
+      const fast = parseToolJson(await runTask(client, {
+        prompt: "fast run", activityTitle: "Fast display", sessionMode: "new",
+        executionMode: "background", selection: { model: "gpt-5.6-sol", reasoningEffort: "high" }
+      }));
+      expect((await dashboard()).activeRows[0].latestTurn?.execution)
+        .toMatchObject({ serviceTier: "priority", isCurrent: true });
+      expect((await activityExecutions()).find((row: any) => row.title === "Fast display").execution)
+        .toMatchObject({ serviceTier: "priority" });
+      const disabled = await client.callTool({
+        name: "codex_update_settings",
+        arguments: { expectedRevision: 1, usePriorityServiceTier: false }
+      });
+      expect(disabled.isError).not.toBe(true);
+      expect((await dashboard()).activeRows[0].latestTurn?.execution)
+        .toMatchObject({ serviceTier: "priority" });
+      upstream.resolveNext(fakeCodexResult("fast-display-thread"));
+      await waitForJobStatus(client, fast.jobId, "completed");
+      const final = await dashboard();
+      const completedFast = final.terminalRows.find(row => row.activityTitle === "Fast display")!;
+      expect(completedFast.latestTurn?.execution).toMatchObject({ serviceTier: "priority", isCurrent: false });
+      expect(completedFast.execution).toMatchObject({ isCurrent: true });
+      expect(completedFast.execution).not.toHaveProperty("serviceTier");
+      expect(final.terminalRows.find(row => row.activityTitle === "Standard display")?.latestTurn?.execution)
+        .not.toHaveProperty("serviceTier");
+      expect((await activityExecutions()).find((row: any) => row.title === "Fast display").execution)
+        .toMatchObject({ serviceTier: "priority", isCurrent: false });
+    } finally {
+      await close();
+    }
+  });
+
+  it("keeps Priority private from GPT and injects it only into Codex calls", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      new TieredModelCatalog()
+    );
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        usePriorityServiceTier: true,
+        modelPolicy: {
+          mode: "automatic",
+          allowedSelections: {
+            kind: "explicit",
+            selections: [
+              { model: "gpt-5.6-sol", reasoningEffort: "high" },
+              { model: "gpt-5.6-sol", reasoningEffort: "max" }
+            ]
+          },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    const task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    const selectionSchema = task.inputSchema.properties?.selection;
+    expect(JSON.stringify(selectionSchema)).not.toContain("serviceTier");
+    expect(selectionSchema).toMatchObject({
+      type: "object",
+      required: ["model", "reasoningEffort"],
+      additionalProperties: false
+    });
+    expect(JSON.stringify(selectionSchema)).not.toContain("gpt-5.6-sol");
+
+    await runTask(client, {
+      prompt: "priority high",
+      sessionMode: "new",
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "high" }
+    });
+    await runTask(client, {
+      prompt: "priority max",
+      sessionMode: "new",
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+    });
+    expect(upstream.calls).toHaveLength(2);
+    expect(upstream.calls.map((call) => call.args)).toEqual([
+      expect.objectContaining({
+        model: "gpt-5.6-sol",
+        config: { model_reasoning_effort: "high" }, serviceTier: "priority"
+      }),
+      expect.objectContaining({
+        model: "gpt-5.6-sol",
+        config: { model_reasoning_effort: "max" }, serviceTier: "priority"
+      })
+    ]);
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 1, usePriorityServiceTier: false }
+    });
+    await runTask(client, {
+      prompt: "standard high",
+      sessionMode: "new",
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "high" }
+    });
+    expect(upstream.calls[2].args).toMatchObject({
+      model: "gpt-5.6-sol",
+      config: { model_reasoning_effort: "high" }
+    });
+    expect((upstream.calls[2].args.config as Record<string, unknown>))
+      .not.toHaveProperty("service_tier");
+
+    const unsupportedPriority = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 2,
+        usePriorityServiceTier: true,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(unsupportedPriority.isError).toBe(true);
+    expect(JSON.stringify(unsupportedPriority)).toContain("MODEL_UNAVAILABLE");
+    expect(JSON.stringify(unsupportedPriority)).toContain("Priority");
+    const settings = await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } });
+    expect(parseToolJson(settings)).toMatchObject({
+      settings: { settingsRevision: 2, usePriorityServiceTier: false }
+    });
+    await close();
+  });
+
+  it("validates a generic stable selection against catalog drift at runtime", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      new DriftingModelCatalog()
+    );
+    const task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    expect(JSON.stringify(task.inputSchema)).not.toContain("gpt-5.6-terra");
+
+    const result = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "catalog drift",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+      }
+    });
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "MODEL_UNAVAILABLE"
+        },
+        nextActions: expect.any(Array)
+      }
+    });
+    expect(upstream.calls).toHaveLength(0);
+    await close();
+  });
+
+  it("accepts an automatic policy when catalog drift leaves a non-empty intersection", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      new DriftingModelCatalog()
+    );
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "automatic",
+          allowedSelections: {
+            kind: "explicit",
+            selections: [
+              { model: "gpt-5.6-sol", reasoningEffort: "max" },
+              { model: "gpt-5.6-terra", reasoningEffort: "medium" }
+            ]
+          },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(saved.isError).not.toBe(true);
+    expect(parseToolJson(saved)).toMatchObject({
+      settings: {
+        settingsRevision: 1,
+        modelPolicy: { mode: "automatic" }
+      }
+    });
+
+    const task = await runTask(client, { prompt: "use surviving selection", sessionMode: "new" });
+    expect((task as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        actualModel: "gpt-5.6-sol",
+        actualReasoningEffort: "max",
+        rerouted: false
+      });
+    await close();
+  });
+
+  it("warns and uses a transient compatible fallback when a fixed selection disappears", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root);
+    const settings = new UserSettingsStore(config);
+    settings.update({
+      modelPolicy: {
+        mode: "fixed",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+        constraints: { allowDelegation: true }
+      }
+    }, 0);
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new DriftingModelCatalog(),
+      settings
+    );
+    const opened = await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } });
+    expect((opened as { structuredContent?: Record<string, any> }).structuredContent?.warnings)
+      .toEqual(expect.arrayContaining([expect.stringContaining("MODEL_UNAVAILABLE")]));
+    const task = await runTask(client, {
+      prompt: "fixed selection removed without descriptor refresh",
+      agentName: "Fallback Agent",
+      contextMode: "fresh"
+    });
+    expect((task as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
+      actualModel: "gpt-5.6-sol",
+      actualReasoningEffort: "max",
+      rerouted: false,
+      warnings: [expect.stringContaining("unsupported by the current catalog")]
+    });
+    expect(upstream.calls).toEqual([
+      expect.objectContaining({
+        name: "codex",
+        args: expect.objectContaining({ model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } })
+      })
+    ]);
+    await close();
+  });
+
+  it("returns structured unavailable errors and preserves policy when catalog loading fails", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      new UnavailableModelCatalog()
+    );
+    const unavailableDescriptor = (await client.listTools()).tools.find(
+      (tool) => tool.name === "codex_task"
+    )!;
+    const unavailableSchema = unavailableDescriptor.inputSchema as Record<string, any>;
+    expect(unavailableSchema.properties?.selection).toMatchObject({
+      type: "object",
+      required: ["model", "reasoningEffort"],
+      additionalProperties: false
+    });
+    expect(unavailableSchema).not.toHaveProperty("allOf");
+    const task = await runTask(client, { prompt: "catalog required", sessionMode: "new" });
+    expect(task).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "MODEL_UNAVAILABLE" }
+      }
+    });
+    const staleSelection = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "catalog required for a stale exact choice",
+        sessionMode: "new",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      }
+    });
+    expect(staleSelection).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "MODEL_UNAVAILABLE" }
+      }
+    });
+    const update = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(update.isError).toBe(true);
+    expect(JSON.stringify(update)).toContain("MODEL_UNAVAILABLE");
+    expect(JSON.stringify(update)).toContain("policy revision 1");
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(status).toMatchObject({ kind: "overview", scopeCounts: { jobs: 0 } });
+    expect(upstream.calls).toHaveLength(0);
     await close();
   });
 
@@ -383,23 +6761,27 @@ describe("bridge tools", () => {
     );
 
     const opened = await client.callTool({ name: "codex_settings", arguments: {} });
-    expect((opened as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
-      settings: {
-        revision: 0,
-        accessStrategy: "adaptive",
-        defaultModel: "gpt-5.6-sol",
-        defaultReasoningEffort: "max",
-        defaultCwd: realpathSync(root),
-        defaultSessionMode: "auto",
-        maxConcurrentJobs: 30,
-        completionDeliveryMode: "card-only"
-      },
+    expect(parseToolJson(opened)).toEqual({ kind: "settings", opened: true });
+    const openedSnapshot = await client.callTool({
+      name: "codex_settings_snapshot",
+      arguments: {}
+    });
+    expect(privateSettingsView(openedSnapshot)).toMatchObject({
       capabilities: {
         availableAccessStrategies: ["read-only", "adaptive", "always-full"],
-        allowedRoots: [realpathSync(root)],
-        maxConcurrentJobs: 30,
+        availableUiLocalePreferences: ["auto", "en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"],
+        availableActivityCardVisibilities: ["always", "background-only", "never"],
+        availableCompletionHandoffs: ["off", "auto-handoff"],
+        maxConcurrentJobs: 100,
         allowDangerFullAccess: true
       }
+    });
+    expect(JSON.stringify((opened as { structuredContent?: unknown }).structuredContent))
+      .not.toContain(realpathSync(root));
+    expect(privateSettingsView(openedSnapshot).settings).toMatchObject({
+      settingsRevision: 0,
+      registryRevision: 1,
+      projects: [{ name: "Test Project", cwd: realpathSync(root) }]
     });
 
     const saved = await client.callTool({
@@ -407,29 +6789,62 @@ describe("bridge tools", () => {
       arguments: {
         expectedRevision: 0,
         accessStrategy: "always-full",
-        defaultModel: "gpt-5.6-terra",
-        defaultReasoningEffort: "high",
-        defaultCwd: root,
-        defaultSessionMode: "new",
-        autoResumeTtlMs: 3600000,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          constraints: { allowDelegation: true }
+        },
+        uiLocalePreference: "ko",
         maxConcurrentJobs: 12,
-        completionDeliveryMode: "auto-handoff"
+        activityCardVisibility: "background-only",
+        completionHandoff: "auto-handoff"
       }
     });
-    expect((saved as { structuredContent?: Record<string, any> }).structuredContent?.settings).toMatchObject({
-      revision: 1,
-      accessStrategy: "always-full",
-      defaultModel: "gpt-5.6-terra",
-      defaultReasoningEffort: "high",
-      defaultSessionMode: "new",
-      autoResumeTtlMs: 3600000,
-      maxConcurrentJobs: 12,
-      completionDeliveryMode: "auto-handoff"
+    expect((saved as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
+      settings: {
+        settingsRevision: 1,
+        accessStrategy: "always-full",
+        modelPolicy: {
+          mode: "fixed",
+          selection: {
+            model: "gpt-5.6-terra",
+            reasoningEffort: "high"
+          }
+        },
+        maxConcurrentJobs: 12,
+        activityCardVisibility: "background-only",
+        completionHandoff: "auto-handoff"
+      }
+    });
+    expect(privateSettingsView(saved).settings).toMatchObject({
+      uiLocalePreference: "ko",
+      activityCardVisibility: "background-only",
+      completionHandoff: "auto-handoff"
     });
 
-    await client.callTool({
-      name: "codex_task",
-      arguments: { prompt: "use saved defaults", sandbox: "read-only" }
+    const localizedSettings = await client.callTool({
+      name: "codex_settings",
+      arguments: {},
+      _meta: { "openai/locale": "en-US" }
+    });
+    expect((localizedSettings as { _meta?: Record<string, any> })._meta).toMatchObject({
+      "openai/locale": "ko",
+      hostLocale: "en-US"
+    });
+    const localizedActivity = await client.callTool({
+      name: "codex_activity",
+      arguments: { scopeId: SCOPE_A },
+      _meta: { "openai/locale": "en-US" }
+    });
+    expect((localizedActivity as { _meta?: Record<string, any> })._meta).toMatchObject({
+      "openai/locale": "ko",
+      hostLocale: "en-US"
+    });
+
+    await runTask(client, {
+      prompt: "use saved defaults",
+      agentName: "Saved Defaults",
+      contextMode: "fresh"
     });
     expect(upstream.calls[0]).toMatchObject({
       name: "codex",
@@ -443,52 +6858,444 @@ describe("bridge tools", () => {
     });
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
-    expect(status).toMatchObject({
-      accessStrategy: "always-full",
-      defaultSandbox: "danger-full-access",
-      defaultSessionMode: "new",
-      codexExecutionDeadline: "none",
-      maxConcurrentJobs: 12,
-      settingsPolicy: { revision: 1, scope: "shared-bridge-instance" }
-    });
+    expect(status).toMatchObject({ kind: "overview", scopeCounts: { runningJobs: 0 } });
+    expect(status).not.toHaveProperty("fastReturnMs");
     await close();
   });
 
-  it("rejects stale settings cards and unsupported saved model/effort pairs", async () => {
+  it("rejects stale settings cards and unavailable saved exact selections", async () => {
     const root = temporaryRoot();
     const config = configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" });
-    const { client, close } = await connectTestClient(config, new FakeUpstream());
+    const catalog = new FakeModelCatalog();
+    const { client, close } = await connectTestClient(
+      config,
+      new FakeUpstream(),
+      undefined,
+      catalog
+    );
+
+    const descriptor = (await client.listTools()).tools.find(
+      (entry) => entry.name === "codex_update_settings"
+    )!;
+    expect(descriptor.inputSchema.properties).toHaveProperty("expectedSettingsRevision");
+    expect(descriptor.inputSchema.properties).toHaveProperty("expectedRegistryRevision");
+    expect(descriptor.inputSchema.properties).not.toHaveProperty("expectedRevision");
+    const missingRevision = await client.callTool({
+      name: "codex_update_settings",
+      arguments: { uiLocalePreference: "ko" }
+    });
+    expect(missingRevision.isError).toBe(true);
 
     await client.callTool({
       name: "codex_update_settings",
-      arguments: { expectedRevision: 0, defaultSessionMode: "new" }
+      arguments: {
+        expectedRevision: 0,
+        operation: { kind: "patch", settings: { uiLocalePreference: "ko" } }
+      }
     });
+    const refreshesBeforeStaleSave = catalog.calls.filter((call) => call.refresh === true).length;
     const stale = await client.callTool({
       name: "codex_update_settings",
-      arguments: { expectedRevision: 0, accessStrategy: "always-full" }
+      arguments: {
+        expectedRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            modelPolicy: {
+              mode: "fixed",
+              selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+              constraints: { allowDelegation: true }
+            }
+          }
+        }
+      }
     });
     expect(stale.isError).toBe(true);
-    expect(JSON.stringify(stale)).toContain("Settings changed");
+    expect(JSON.stringify(stale)).toContain("SETTINGS_REVISION_CONFLICT");
+    expect(JSON.stringify(stale)).not.toContain("expected revision");
+    expect(JSON.stringify(stale)).not.toContain("current revision");
+    expect(catalog.calls.filter((call) => call.refresh === true)).toHaveLength(
+      refreshesBeforeStaleSave
+    );
 
     const unsupported = await client.callTool({
       name: "codex_update_settings",
       arguments: {
         expectedRevision: 1,
-        defaultModel: "gpt-5.5",
-        defaultReasoningEffort: "max"
+        operation: {
+          kind: "patch",
+          settings: {
+            modelPolicy: {
+              mode: "fixed",
+              selection: { model: "gpt-5.5", reasoningEffort: "max" },
+              constraints: { allowDelegation: true }
+            }
+          }
+        }
       }
     });
     expect(unsupported.isError).toBe(true);
-    expect(JSON.stringify(unsupported)).toContain("does not support reasoning effort");
+    expect(JSON.stringify(unsupported)).toContain("MODEL_UNAVAILABLE");
     await close();
   });
 
-  it("exposes only policy-permitted sandbox values", async () => {
+  it("distinguishes reset from patch and rejects mixed or empty Settings operations", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            uiLocalePreference: "ko",
+            showBridgeThreadsInCodexApp: true,
+            activityCard: { visibility: "background-only", completionHandoff: "auto-handoff" }
+          }
+        }
+      }
+    });
+    expect(privateSettingsView(saved).settings)
+      .toMatchObject({
+        settingsRevision: 1,
+        uiLocalePreference: "ko",
+        showBridgeThreadsInCodexApp: true,
+        activityCardVisibility: "background-only",
+        completionHandoff: "auto-handoff"
+      });
+
+    const emptyPatch = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        operation: { kind: "patch", settings: {} }
+      }
+    });
+    expect(emptyPatch.isError).toBe(true);
+    expect(JSON.stringify(emptyPatch)).toContain("SETTINGS_PATCH_EMPTY");
+
+    const mixed = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        operation: { kind: "reset" },
+        uiLocalePreference: "en"
+      }
+    });
+    expect(mixed.isError).toBe(true);
+    expect(JSON.stringify(mixed)).toContain("Unrecognized key");
+
+    const reset = await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 1, operation: { kind: "reset" } }
+    });
+    expect(privateSettingsView(reset).settings)
+      .toMatchObject({
+        settingsRevision: 2,
+        uiLocalePreference: "auto",
+        showBridgeThreadsInCodexApp: true,
+        activityCardVisibility: "always",
+        completionHandoff: "off"
+      });
+    await close();
+  });
+
+  it("rechecks the Settings revision immediately before commit after catalog validation", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root);
+    const settings = new UserSettingsStore(config);
+    const catalog = new MutatingModelCatalog();
+    catalog.beforeRefresh = () => settings.update({ uiLocalePreference: "ko" }, 0);
+    const { client, close } = await connectTestClient(
+      config,
+      new FakeUpstream(),
+      undefined,
+      catalog,
+      settings
+    );
+
+    const raced = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            modelPolicy: {
+              mode: "fixed",
+              selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+              constraints: { allowDelegation: true }
+            }
+          }
+        }
+      }
+    });
+    expect(raced.isError).toBe(true);
+    expect(JSON.stringify(raced)).toContain("SETTINGS_REVISION_CONFLICT");
+    expect(settings.current).toMatchObject({
+      revision: 1,
+      uiLocalePreference: "ko",
+      modelPolicy: { mode: "automatic" }
+    });
+    await close();
+  });
+
+  it("rejects an expired Activity layout sent by a stale Settings card", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        activityCardView: "activity-summary",
+        uiLocalePreference: "ko"
+      }
+    });
+    expect(saved.isError).toBe(true);
+    expect(JSON.stringify(saved)).toContain("Unrecognized key");
+
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(status).not.toHaveProperty("activityCardView");
+    await close();
+  });
+
+  it("saves unrelated preferences without reactivating an unchanged model policy", async () => {
+    const root = temporaryRoot();
+    const catalog = new StaleModelCatalog();
+    const { client, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream(),
+      undefined,
+      catalog
+    );
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        uiLocalePreference: "ko"
+      }
+    });
+    expect(saved.isError).not.toBe(true);
+    expect(privateSettingsView(saved).settings)
+      .toMatchObject({ settingsRevision: 1, uiLocalePreference: "ko" });
+    expect(catalog.calls.some((call) => call.refresh === true)).toBe(false);
+
+    const changed = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 1,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(changed.isError).toBe(true);
+    expect(JSON.stringify(changed)).toContain("fresh backend model catalog");
+    await close();
+  });
+
+  it("keeps Activity card visibility independent from foreground/background execution", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root);
+    const { client, rawCallTool, close } = await connectTestClient(config, new FakeUpstream());
+    const stableTaskDescriptor = structuredClone(
+      (await client.listTools()).tools.find((tool) => tool.name === "codex_task")
+    );
+
+    const alwaysForeground = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "discuss with a visible card",
+        sessionMode: "new",
+        activityKind: "discussion",
+        executionMode: "foreground"
+      }
+    });
+    expect(parseToolJson(alwaysForeground)).toMatchObject({
+      executionMode: "foreground"
+    });
+    expect((alwaysForeground as { _meta?: Record<string, unknown> })._meta).toBeUndefined();
+    const alwaysActivityId = parseToolJson(alwaysForeground).activityId as string;
+    const alwaysCard = await presentCompactActivity(
+      client,
+      alwaysActivityId,
+      "23232323-2323-4323-8323-232323232323"
+    );
+    expect(privateActivityView(alwaysCard)).toMatchObject({
+      mountedPresentation: { kind: "automatic" },
+      watcherPolicy: { ownsCompletionHandoff: true },
+      feed: { mode: "compact" }
+    });
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 0, activityCardVisibility: "background-only" }
+    });
+    const backgroundOnlyTools = await client.listTools();
+    const backgroundOnlyTaskDescriptor = backgroundOnlyTools.tools.find(
+      (tool) => tool.name === "codex_task"
+    );
+    expect(backgroundOnlyTaskDescriptor?._meta).toBeUndefined();
+    expect(backgroundOnlyTaskDescriptor).toEqual(stableTaskDescriptor);
+    const groupedPresentation = "24242424-0000-4000-8000-000000000010";
+    const backgroundOnlyForeground = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "foreground without automatic card",
+        sessionMode: "new",
+        executionMode: "foreground"
+      }
+    });
+    const backgroundOnlyForegroundTask = parseToolJson(backgroundOnlyForeground);
+    expect(backgroundOnlyForegroundTask.nextActions.join(" ")).not.toContain(
+      "Keep this GPT response active"
+    );
+    expect((backgroundOnlyForeground as { _meta?: Record<string, unknown> })._meta)
+      .toBeUndefined();
+    const foregroundPresentation = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "compact-monitor",
+        presentationId: groupedPresentation,
+        activityId: backgroundOnlyForegroundTask.activityId
+      }
+    });
+    expect(foregroundPresentation.isError).toBe(true);
+    expect(JSON.stringify(foregroundPresentation)).toContain("ACTIVITY_CARD_VISIBILITY_DISABLED");
+
+    const backgroundOnlyBackgroundResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "background with automatic card",
+        sessionMode: "new"
+      }
+    });
+    const backgroundOnlyBackground = parseToolJson(backgroundOnlyBackgroundResult);
+    expect(backgroundOnlyBackground).toMatchObject({
+      status: "running",
+      executionMode: "background"
+    });
+    expect(backgroundOnlyBackground.nextActions.join(" ")).toContain(
+      "Keep this GPT response active"
+    );
+    expect((backgroundOnlyBackgroundResult as { _meta?: Record<string, unknown> })._meta)
+      .toBeUndefined();
+    const backgroundPresentation = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "compact-monitor",
+        presentationId: groupedPresentation,
+        activityId: backgroundOnlyBackground.activityId
+      }
+    });
+    expect(backgroundPresentation.isError).not.toBe(true);
+    expect(privateActivityView(backgroundPresentation)).toMatchObject({
+      mountedPresentation: {
+        kind: "automatic",
+        activityPresentationId: groupedPresentation
+      },
+      watcherPolicy: { live: true, ownsCompletionHandoff: true },
+      feed: { mode: "compact" }
+    });
+    const secondBackgroundResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "same response second background call",
+        sessionMode: "new"
+      }
+    });
+    expect((secondBackgroundResult as { _meta?: Record<string, unknown> })._meta).toBeUndefined();
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 1, activityCardVisibility: "never", completionHandoff: "off" }
+    });
+    const neverTools = await client.listTools();
+    expect(neverTools.tools.find((tool) => tool.name === "codex_task")?._meta)
+      .toBeUndefined();
+    const neverTaskDescriptor = neverTools.tools.find((tool) => tool.name === "codex_task");
+    expect(neverTaskDescriptor).toEqual(stableTaskDescriptor);
+    expect((neverTaskDescriptor?.inputSchema as { required?: string[] }).required)
+      .not.toContain("activityPresentationId");
+    const neverBackgroundResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "background without automatic card",
+        sessionMode: "new"
+      }
+    });
+    expect(parseToolJson(neverBackgroundResult)).toMatchObject({
+      state: "running",
+      executionMode: "background"
+    });
+    const neverBackground = parseToolJson(neverBackgroundResult);
+    expect((neverBackgroundResult as { _meta?: Record<string, unknown> })._meta)
+      .toBeUndefined();
+    const neverPresentation = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "compact-monitor",
+        presentationId: "25252525-2525-4525-8525-252525252525",
+        activityId: neverBackground.activityId
+      }
+    });
+    expect(neverPresentation.isError).toBe(true);
+    expect(JSON.stringify(neverPresentation)).toContain("ACTIVITY_CARD_VISIBILITY_DISABLED");
+    const neverWithoutPresentationResult = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "24242424-0000-4000-8000-000000000012",
+        prompt: "never accepts a stale descriptor without presentation",
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: {
+          mode: "new",
+          title: "Never visibility current contract",
+          policy: { kind: "other" }
+        },
+        agent: { mode: "new", name: "Never Visibility Agent" }
+      }
+    });
+    expect(parseToolJson(neverWithoutPresentationResult).state).toBe("running");
+    expect((neverWithoutPresentationResult as { _meta?: Record<string, unknown> })._meta || {})
+      .not.toHaveProperty(ACTIVITY_BOOTSTRAP_METADATA_KEY);
+    const explicitCard = await client.callTool({
+      name: "codex_activity",
+      arguments: { scopeId: SCOPE_A }
+    });
+    expect(parseToolJson(explicitCard))
+      .toMatchObject({ activityCardVisibility: "never", activities: expect.any(Array) });
+
+    const impossible = await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 2, completionHandoff: "auto-handoff" }
+    });
+    expect(impossible.isError).toBe(true);
+    expect(JSON.stringify(impossible)).toContain("requires the Activity card");
+    const restored = await client.callTool({
+      name: "codex_update_settings",
+      arguments: { expectedRevision: 2, activityCardVisibility: "always" }
+    });
+    expect(restored.isError).not.toBe(true);
+    expect((await client.listTools()).tools.find((tool) => tool.name === "codex_task")?._meta)
+      .toBeUndefined();
+    await close();
+  });
+
+  it("does not expose permission inputs for any operator profile", async () => {
     const root = temporaryRoot();
     const readClient = await connectTestClient(configFor(root), new FakeUpstream());
     let schema = (await readClient.client.listTools()).tools.find((entry) => entry.name === "codex_task")
       ?.inputSchema as { properties?: { sandbox?: { enum?: string[] } } };
-    expect(schema.properties?.sandbox?.enum).toEqual(["read-only"]);
+    expect(schema.properties).not.toHaveProperty("sandbox");
     await readClient.close();
 
     const writeClient = await connectTestClient(
@@ -497,7 +7304,7 @@ describe("bridge tools", () => {
     );
     schema = (await writeClient.client.listTools()).tools.find((entry) => entry.name === "codex_task")
       ?.inputSchema as { properties?: { sandbox?: { enum?: string[] } } };
-    expect(schema.properties?.sandbox?.enum).toEqual(["read-only", "workspace-write"]);
+    expect(schema.properties).not.toHaveProperty("sandbox");
     await writeClient.close();
 
     const fullClient = await connectTestClient(
@@ -509,15 +7316,341 @@ describe("bridge tools", () => {
     );
     schema = (await fullClient.client.listTools()).tools.find((entry) => entry.name === "codex_task")
       ?.inputSchema as { properties?: { sandbox?: { enum?: string[] } } };
-    expect(schema.properties?.sandbox?.enum).toEqual([
-      "read-only",
-      "workspace-write",
-      "danger-full-access"
-    ]);
+    expect(schema.properties).not.toHaveProperty("sandbox");
     await fullClient.close();
   });
 
-  it("starts a sanitized read-only session by default", async () => {
+  it("applies saved fixed access modes and refuses retired permission inputs", async () => {
+    const root = temporaryRoot();
+    const readConfig = configFor(root);
+    const readSettings = new UserSettingsStore(readConfig);
+    readSettings.update({ accessStrategy: "read-only" }, readSettings.current.revision);
+    const readUpstream = new FakeUpstream();
+    const readClient = await connectTestClient(
+      readConfig,
+      readUpstream,
+      undefined,
+      new FakeModelCatalog(),
+      readSettings
+    );
+    let task = (await readClient.client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    expect(task.inputSchema.properties).not.toHaveProperty("sandbox");
+    expect(task.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: false
+    });
+    const explicitRead = await runTask(readClient.client, {
+      prompt: "fixed read", agentName: "Read Agent", contextMode: "fresh"
+    });
+    expect(explicitRead.isError).not.toBe(true);
+    expect(readUpstream.calls[0]?.args.sandbox).toBe("read-only");
+    await readClient.close();
+
+    const fullConfig = configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" });
+    const fullSettings = new UserSettingsStore(fullConfig);
+    fullSettings.update({ accessStrategy: "always-full" }, fullSettings.current.revision);
+    const fullUpstream = new FakeUpstream();
+    const fullClient = await connectTestClient(
+      fullConfig,
+      fullUpstream,
+      undefined,
+      new FakeModelCatalog(),
+      fullSettings
+    );
+    task = (await fullClient.client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    expect(task.inputSchema.properties).not.toHaveProperty("sandbox");
+    expect(task.inputSchema.properties).not.toHaveProperty("cwd");
+    expect(task.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true
+    });
+    const conflictingRead = await runTask(fullClient.client, {
+      prompt: "must be read-only", agentName: "Read intent", contextMode: "fresh", sandbox: "read-only"
+    });
+    expect(conflictingRead.isError).toBe(true);
+    expect(JSON.stringify(conflictingRead)).toContain("TASK_PERMISSION_INPUT_RETIRED");
+    expect(fullUpstream.calls).toHaveLength(0);
+    await runTask(fullClient.client, {
+      prompt: "fixed full",
+      agentName: "Full Agent",
+      contextMode: "fresh"
+    });
+    expect(fullUpstream.calls[0]?.args.sandbox).toBe("danger-full-access");
+    await fullClient.close();
+  });
+
+  it("rejects a stale read-only descriptor before an always-full call can admit side effects", async () => {
+    const root = temporaryRoot();
+    writeFileSync(path.join(root, ".env"), "SECRET=must-not-be-scanned-by-stale-call\n");
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1"
+    });
+    const upstream = new FakeUpstream();
+    const { client, rawCallTool, jobs, settings, close } = await connectTestClient(config, upstream);
+    const staleRef = settings.executionPolicyRef(
+      settings.current,
+      modelCatalogAdmissionFingerprint(new FakeModelCatalog().getCachedCatalog().models)
+    );
+    const target = settings.current.projects[0]!;
+    const project = {
+      name: target.name,
+      projectRef: target.projectRef,
+      projectRevision: target.projectRevision
+    };
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        accessStrategy: "always-full"
+      }
+    });
+    const rejected = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "28282828-2828-4828-8828-282828282828",
+        prompt: "must not reinterpret stale omission as full access",
+        executionPolicyRef: staleRef,
+        project,
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Stale Policy Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(rejected).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "EXECUTION_POLICY_CHANGED", retryable: true }
+      }
+    });
+    expect(JSON.stringify(rejected)).not.toContain("sensitive");
+    expect(upstream.calls).toEqual([]);
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
+    expect(jobs.listForScope(SCOPE_A)).toEqual([]);
+    await close();
+  });
+
+  it("invalidates the stable envelope when the operator disables sensitive-file preflight", async () => {
+    const root = temporaryRoot();
+    writeFileSync(path.join(root, ".env"), "SECRET=operator-policy-race\n");
+
+    const guarded = await connectTestClient(configFor(root), new FakeUpstream());
+    const guardedTask = (await guarded.client.listTools()).tools.find(
+      (entry) => entry.name === "codex_task"
+    )!;
+    const staleEnvelopeRef = (
+      guardedTask.inputSchema.properties?.executionEnvelopeRef as { const: string }
+    ).const;
+    await guarded.close();
+
+    const upstream = new FakeUpstream();
+    const unguarded = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN: "1" }),
+      upstream
+    );
+    const currentTask = (await unguarded.client.listTools()).tools.find(
+      (entry) => entry.name === "codex_task"
+    )!;
+    const currentEnvelopeRef = (
+      currentTask.inputSchema.properties?.executionEnvelopeRef as { const: string }
+    ).const;
+    expect(currentEnvelopeRef).not.toBe(staleEnvelopeRef);
+    const target = unguarded.settings.current.projects[0]!;
+    const project = {
+      name: target.name,
+      projectRef: target.projectRef,
+      projectRevision: target.projectRevision
+    };
+
+    const rejected = await unguarded.bareCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "29292929-2929-4929-8929-292929292929",
+        prompt: "the old preflight policy must not cross the restart boundary",
+        taskContractVersion: CODEX_TASK_INPUT_CONTRACT_VERSION,
+        executionEnvelopeRef: staleEnvelopeRef,
+        project,
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Preflight Policy Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(rejected).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "EXECUTION_ENVELOPE_CHANGED", retryable: true }
+      }
+    });
+    expect(upstream.calls).toEqual([]);
+    expect(unguarded.jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+    expect(unguarded.jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
+    expect(unguarded.jobs.listForScope(SCOPE_A)).toEqual([]);
+    await unguarded.close();
+  });
+
+  it("rejects a missing execution policy reference before project availability probing", async () => {
+    const root = temporaryRoot();
+    const displaced = `${root}-offline`;
+    const upstream = new FakeUpstream();
+    const connection = await connectTestClient(configFor(root), upstream);
+    try {
+      const target = connection.settings.current.projects[0]!;
+      const project = {
+        name: target.name,
+        projectRef: target.projectRef,
+        projectRevision: target.projectRevision
+      };
+      renameSync(root, displaced);
+
+      const rejected = await connection.bareCallTool({
+        name: "codex_task",
+        arguments: {
+          scopeId: SCOPE_A,
+          requestId: "30303030-3030-4030-8030-303030303030",
+          prompt: "a pre-reference call must not probe the project folder",
+          project,
+          activity: { mode: "new" },
+          agent: { mode: "new", name: "Missing Policy Ref Agent" },
+          executionMode: "foreground"
+        }
+      });
+      expect(rejected).toMatchObject({
+        isError: true,
+        structuredContent: {
+          error: { code: "EXECUTION_POLICY_CHANGED", retryable: true }
+        }
+      });
+      expect(JSON.stringify(rejected)).not.toContain("PROJECT_UNAVAILABLE");
+      expect(upstream.calls).toEqual([]);
+      expect(connection.jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+      expect(connection.jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
+      expect(connection.jobs.listForScope(SCOPE_A)).toEqual([]);
+    } finally {
+      if (existsSync(displaced) && !existsSync(root)) renameSync(displaced, root);
+      await connection.close();
+    }
+  });
+
+  it("keeps the complete task descriptor stable across presentation-only settings changes", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, settings, close } = await connectTestClient(configFor(root), upstream);
+    const before = (await client.listTools()).tools.find(
+      (entry) => entry.name === "codex_task"
+    )!;
+    const beforePolicyRef = settings.executionPolicyRef();
+    settings.update({
+      uiLocalePreference: "ko",
+      activityCardVisibility: "never"
+    }, settings.current.revision);
+    await client.callTool({ name: "codex_models", arguments: {} });
+    const after = (await client.listTools()).tools.find(
+      (entry) => entry.name === "codex_task"
+    )!;
+    expect(after).toEqual(before);
+    expect(settings.executionPolicyRef()).toBe(beforePolicyRef);
+    expect(after.description).not.toContain("visibility policy is 'never'");
+
+    settings.update({ maxConcurrentJobs: 2 }, settings.current.revision);
+    expect(settings.executionPolicyRef()).not.toBe(beforePolicyRef);
+    expect((await client.listTools()).tools.find(
+      (entry) => entry.name === "codex_task"
+    )).toEqual(before);
+
+    const executed = await runTask(client, {
+      prompt: "presentation-only change keeps execution admission valid"
+    });
+    expect(executed.isError).not.toBe(true);
+    expect(upstream.calls).toHaveLength(1);
+    await close();
+  });
+
+  it("keys execution policy refs per installation and canonicalizes selection sets", () => {
+    const root = temporaryRoot();
+    const config = configFor(root);
+    const sharedState = new BridgeStateStore({ file: ":memory:" });
+    const otherState = new BridgeStateStore({ file: ":memory:" });
+    try {
+      const first = new UserSettingsStore(config, { stateStore: sharedState });
+      const restarted = new UserSettingsStore(config, { stateStore: sharedState });
+      const otherInstall = new UserSettingsStore(config, { stateStore: otherState });
+      expect(restarted.executionPolicyRef()).toBe(first.executionPolicyRef());
+      expect(otherInstall.executionPolicyRef()).not.toBe(first.executionPolicyRef());
+      expect(first.executionPolicyRef(first.current, "a".repeat(64)))
+        .not.toBe(first.executionPolicyRef(first.current, "b".repeat(64)));
+
+      const choices = [
+        { model: "gpt-5.6-sol", reasoningEffort: "max" },
+        { model: "gpt-5.6-terra", reasoningEffort: "high" }
+      ];
+      const policyBase = {
+        mode: "automatic" as const,
+        constraints: { allowDelegation: false }
+      };
+      const forward = {
+        ...first.current,
+        modelPolicy: {
+          ...policyBase,
+          allowedSelections: { kind: "explicit" as const, selections: choices }
+        }
+      };
+      const reversed = {
+        ...forward,
+        modelPolicy: {
+          ...policyBase,
+          allowedSelections: { kind: "explicit" as const, selections: [...choices].reverse() }
+        }
+      };
+      expect(first.executionPolicyRef(reversed)).toBe(first.executionPolicyRef(forward));
+    } finally {
+      sharedState.close();
+      otherState.close();
+    }
+  });
+
+  it("projects and enforces the immutable exact operator model ceiling", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING:
+        '[{"model":"gpt-5.6-sol","reasoningEffort":"max"}]'
+    });
+    const { client, close } = await connectTestClient(config, new FakeUpstream());
+    const task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task")!;
+    expect(task.inputSchema.properties?.selection).toMatchObject({
+      type: "object",
+      required: ["model", "reasoningEffort"],
+      additionalProperties: false
+    });
+    expect(JSON.stringify(task.inputSchema.properties?.selection)).not.toContain("gpt-5.6-sol");
+    const settings = await client.callTool({ name: "codex_settings_snapshot", arguments: {} });
+    expect(privateSettingsView(settings))
+      .toMatchObject({
+        capabilities: {
+          operatorModelCeiling: [{ model: "gpt-5.6-sol", reasoningEffort: "max" }]
+        }
+      });
+    const widened = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(widened.isError).toBe(true);
+    expect(JSON.stringify(widened)).toContain("MODEL_POLICY_CHANGED");
+    await close();
+  });
+
+  it("starts a sanitized persistent read-only session by default", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(configFor(root), upstream);
@@ -533,7 +7666,12 @@ describe("bridge tools", () => {
           prompt: "inspect",
           cwd: realpathSync(root),
           sandbox: "read-only",
-          "approval-policy": "on-request"
+          ephemeral: false,
+          "approval-policy": "on-request",
+          "approvals-reviewer": "user",
+          "app-tool-approval-mode": "auto",
+          model: "gpt-5.6-sol",
+          config: { model_reasoning_effort: "max" }
         }
       }
     ]);
@@ -541,33 +7679,66 @@ describe("bridge tools", () => {
     await close();
   });
 
+  it("maps the Codex-app visibility preference only to new App Server threads", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" });
+    const upstream = new FakeUpstream();
+    const settings = new UserSettingsStore(config);
+    settings.update({ showBridgeThreadsInCodexApp: false }, settings.current.revision);
+    const { client, close } = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings
+    );
+
+    await runTask(client, { prompt: "hidden App Server thread", sessionMode: "new" });
+    expect(upstream.calls[0]).toMatchObject({
+      name: "codex",
+      args: { ephemeral: true }
+    });
+
+    settings.update({ showBridgeThreadsInCodexApp: true }, settings.current.revision);
+    // This preference is app-private. A normal Settings-card save publishes
+    // immediately; this fixture mutates the store directly, so use the normal
+    // catalog/reconcile path to project the new complete descriptor.
+    await client.callTool({ name: "codex_models", arguments: {} });
+    await runTask(client, { prompt: "visible App Server thread", sessionMode: "new" });
+    expect(upstream.calls[1]).toMatchObject({
+      name: "codex",
+      args: { ephemeral: false }
+    });
+    await close();
+
+
+  });
+
   it("creates and reuses one explicit Activity across parallel background Codex jobs", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
 
-    const first = parseToolJson(await client.callTool({
+    const firstResult = await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "parallel part one",
-        sessionMode: "new",
+        agentName: "Investigator One",
+        contextMode: "fresh",
         activityTitle: "Parallel investigation",
         activityKind: "investigation",
         executionMode: "background",
         handoffPolicy: "none",
         completionTrigger: "manual"
       }
-    }));
+    });
+    const first = parseToolJson(firstResult);
     expect(first).toMatchObject({
       status: "running",
-      async: true,
-      executionMode: "background",
-      activityTracking: {
-        statusTool: "codex_status",
-        plannedRenderTool: "codex_activity",
-        renderToolAvailable: true
-      }
+      terminal: false,
+      executionMode: "background"
     });
+    expect((firstResult as { _meta?: Record<string, unknown> })._meta).toBeUndefined();
     expect(first.activityId).toMatch(SCOPE_ID_PATTERN);
     expect(jobs.getActivity(first.activityId)).toMatchObject({
       title: "Parallel investigation",
@@ -584,7 +7755,8 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: {
         prompt: "parallel part two",
-        sessionMode: "new",
+        agentName: "Investigator Two",
+        contextMode: "fresh",
         activityId: first.activityId,
         executionMode: "background"
       }
@@ -592,18 +7764,34 @@ describe("bridge tools", () => {
     expect(second.activityId).toBe(first.activityId);
     expect(second.jobId).not.toBe(first.jobId);
     expect(jobs.getActivity(first.activityId)).toMatchObject({ counts: { total: 2, running: 2 } });
+    const compactPresentation = await presentCompactActivity(
+      client,
+      first.activityId,
+      "53535353-5353-4353-8353-535353535353"
+    );
+    expect(privateActivityView(compactPresentation)).toMatchObject({
+      mountedPresentation: { kind: "automatic" },
+      feed: {
+        mode: "compact",
+        active: [expect.objectContaining({
+          activityId: first.activityId,
+          agents: expect.arrayContaining([
+            expect.objectContaining({ agentName: "Investigator One" }),
+            expect.objectContaining({ agentName: "Investigator Two" })
+          ])
+        })]
+      }
+    });
 
     const policyInjection = await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "must not mutate policy",
-        sessionMode: "new",
-        activityId: first.activityId,
-        handoffPolicy: "notify"
+        activity: { mode: "existing", id: first.activityId, policy: { handoff: "notify" } }
       }
     });
     expect(policyInjection.isError).toBe(true);
-    expect(JSON.stringify(policyInjection)).toContain("cannot be used with activityId");
+    expect(JSON.stringify(policyInjection)).toContain("Unrecognized key");
     expect(upstream.calls).toHaveLength(2);
 
     upstream.resolveNext(fakeCodexResult("thread-1"));
@@ -622,28 +7810,1743 @@ describe("bridge tools", () => {
       arguments: {
         activityId: first.activityId,
         expectedVersion: 1,
-        action: "set-policy",
-        handoffPolicy: "notify"
+        operation: { kind: "set-policy", policy: { handoff: "notify" } }
       }
     });
     expect(stalePolicy.isError).toBe(true);
     expect(JSON.stringify(stalePolicy)).toContain("Activity version changed");
     expect(jobs.getActivity(first.activityId)).toMatchObject({ handoffPolicy: "none" });
 
+    const missingVersion = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: first.activityId,
+        operation: { kind: "set-policy", policy: { handoff: "notify" } }
+      }
+    });
+    expect(missingVersion.isError).toBe(true);
+    expect(JSON.stringify(missingVersion)).toContain("expectedVersion");
+    const mixedContract = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: first.activityId,
+        expectedVersion: jobs.getActivity(first.activityId)?.version,
+        operation: { kind: "set-policy", policy: { handoff: "notify" } },
+        handoffPolicy: "verify"
+      }
+    });
+    expect(mixedContract.isError).toBe(true);
+    expect(JSON.stringify(mixedContract)).toContain("Unrecognized key");
+    const emptyPolicy = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: first.activityId,
+        expectedVersion: jobs.getActivity(first.activityId)?.version,
+        operation: { kind: "set-policy", policy: {} }
+      }
+    });
+    expect(emptyPolicy.isError).toBe(true);
+    expect(JSON.stringify(emptyPolicy)).toContain("requires at least one Activity policy field");
+    const updatedPolicy = parseToolJson(await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: first.activityId,
+        expectedVersion: jobs.getActivity(first.activityId)?.version,
+        operation: { kind: "set-policy", policy: { handoff: "notify" } }
+      }
+    }));
+    expect(updatedPolicy).toMatchObject({
+      target: { type: "activity", id: first.activityId, state: "open", version: expect.any(Number) },
+      policySource: "explicit-tool-input",
+      codexOutputCanMutatePolicy: false
+    });
+    expect(jobs.getActivity(first.activityId)).toMatchObject({ handoffPolicy: "notify" });
+
     const completed = parseToolJson(await client.callTool({
       name: "codex_activity_update",
       arguments: {
         activityId: first.activityId,
-        action: "complete",
-        reason: "The orchestrator accepted both investigation results"
+        expectedVersion: updatedPolicy.target.version,
+        operation: {
+          kind: "complete",
+          reason: "The orchestrator accepted both investigation results"
+        }
       }
     }));
     expect(completed).toMatchObject({
       action: "complete",
-      activity: { lifecycle: "completed", waitingOn: "none", completionVersion: 1 },
+      target: { type: "activity", id: first.activityId, state: "completed" },
       policySource: "explicit-tool-input",
       codexOutputCanMutatePolicy: false
     });
+    expect(jobs.getActivity(first.activityId)).toMatchObject({
+      lifecycle: "completed",
+      waitingOn: "none",
+      completionVersion: 1
+    });
+    await close();
+  });
+
+  it("reuses one Agent across linked Activities and maps continue, fork, and fresh context exactly", async () => {
+    const root = temporaryRoot();
+    const upstream = new ForkLifecycleUpstream();
+    const { client, jobs, settings, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    const project = settings.current.projects[0];
+
+    const first = await runTask(client, {
+      prompt: "establish context",
+      agentName: "Long-lived Agent",
+      contextMode: "fresh",
+      activityTitle: "Original Activity"
+    });
+    const firstStructured = parseToolJson(first);
+    const sourceActivityId = firstStructured.activityId;
+    const agentId = firstStructured.agentId;
+    expect(firstStructured.threadId).toBe("thread-1");
+    expect(firstStructured.projectName).toBe("Test Project");
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "thread-1" });
+    expect(jobs.listActivityAgentAssignments(sourceActivityId, agentId)).toEqual([
+      expect.objectContaining({ contextMode: "fresh", releasedAt: expect.any(Number) })
+    ]);
+
+    await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: sourceActivityId,
+        expectedVersion: jobs.getActivity(sourceActivityId)?.version,
+        operation: { kind: "complete", reason: "Original goal accepted" }
+      }
+    });
+    const linked = await runTask(client, {
+      prompt: "continue into a separately verifiable goal",
+      continuationOfActivityId: sourceActivityId,
+      activityTitle: "Linked Activity",
+      agentId,
+      contextMode: "continue"
+    });
+    const linkedStructured = parseToolJson(linked);
+    const linkedActivityId = linkedStructured.activityId;
+    expect(linkedActivityId).not.toBe(sourceActivityId);
+    expect(linkedStructured.threadId).toBe("thread-1");
+    expect(jobs.getActivity(sourceActivityId)).toMatchObject({ lifecycle: "completed" });
+    expect(jobs.getActivity(linkedActivityId)).toMatchObject({
+      lifecycle: "open",
+      continuationOfActivityId: sourceActivityId,
+      projectId: project.id,
+      projectName: "Test Project",
+      cardGeneration: 1
+    });
+    expect(upstream.calls[1]).toMatchObject({
+      name: "codex-reply",
+      args: { threadId: "thread-1", prompt: "continue into a separately verifiable goal" }
+    });
+
+    const forkRequestId = "35353535-3535-4535-8535-353535353535";
+    const forkArguments = {
+      requestId: forkRequestId,
+      prompt: "independently verify the approach",
+      activityId: linkedActivityId,
+      agentId,
+      contextMode: "fork"
+    };
+    const forked = await runTask(client, forkArguments);
+    const forkedStructured = parseToolJson(forked);
+    expect(forkedStructured.threadId).toBe("thread-forked");
+    expect(forkedStructured.projectName).toBe("Test Project");
+    expect(upstream.calls[2]).toMatchObject({
+      name: "codex-fork",
+      args: { threadId: "thread-1", prompt: "independently verify the approach" }
+    });
+    const forkRetry = await runTask(client, {
+      ...forkArguments,
+      activityPresentationId: "36363636-3636-4636-8636-363636363636"
+    });
+    expect(parseToolJson(forkRetry)).toMatchObject({
+      threadId: "thread-forked",
+      activityId: linkedActivityId,
+      jobId: forkedStructured.jobId
+    });
+    expect(upstream.calls).toHaveLength(3);
+
+    const fresh = await runTask(client, {
+      prompt: "start unrelated context with the same logical Agent",
+      activityTitle: "Fresh Activity",
+      agentId,
+      contextMode: "fresh"
+    });
+    expect((fresh as { structuredContent?: Record<string, any> }).structuredContent?.threadId)
+      .toBe("thread-2");
+    expect(upstream.calls[3]?.name).toBe("codex");
+    const history = jobs.listAgentThreads(agentId);
+    expect(history).toHaveLength(3);
+    expect(history.find((thread) => thread.threadId === "thread-1")).toMatchObject({
+      isCurrent: false,
+      contextMode: "fresh",
+      projectId: project.id,
+      projectName: "Test Project"
+    });
+    expect(history.find((thread) => thread.threadId === "thread-forked")).toMatchObject({
+      isCurrent: false,
+      contextMode: "fork",
+      sessionId: "session-tree-1",
+      projectId: project.id,
+      projectName: "Test Project",
+      forkedFromThreadId: "thread-1"
+    });
+    expect(history.find((thread) => thread.threadId === "thread-2")).toMatchObject({
+      isCurrent: true,
+      contextMode: "fresh",
+      projectId: project.id,
+      projectName: "Test Project"
+    });
+    expect(jobs.getAgent(agentId)).toMatchObject({
+      agentId,
+      agentName: "Long-lived Agent",
+      lifecycle: "idle",
+      currentThreadId: "thread-2"
+    });
+    await close();
+  });
+
+  it.each(["mcp-server", "codex-sdk"] as const)("preserves %s history and requires an explicit summary-only handoff to App Server", async retiredKind => {
+    const root = realpathSync(temporaryRoot());
+    const config = configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" });
+    const upstream = new FakeUpstream();
+    const stateStore = new BridgeStateStore({ file: ":memory:" });
+    const settings = new UserSettingsStore(config, { stateStore });
+    settings.updateWithProjectOperations(
+      {},
+      [{ kind: "add", project: { name: "Pinned Project", cwd: root } }],
+      undefined,
+      0
+    );
+    const project = settings.current.projects[0];
+    const sessions = new SessionRegistry({ allowedRoots: [root], stateStore });
+    const jobs = new CodexJobRegistry({ allowedRoots: [root], stateStore });
+    const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Pinned MCP Agent" });
+    jobs.linkAgentThread({
+      agentId: agent.agentId,
+      threadId: "mcp-thread",
+      projectId: project.id,
+      projectName: project.name,
+      backendKind: retiredKind,
+      cwd: root,
+      sandbox: "read-only",
+      contextMode: "fresh"
+    });
+    sessions.record({
+      threadId: "mcp-thread",
+      scopeId: SCOPE_A,
+      backendKind: retiredKind,
+      cwd: root,
+      projectId: project.id,
+      projectName: project.name,
+      sandbox: "read-only",
+      selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      policyRevision: 0,
+      updatedAt: 1,
+      createdAt: 1,
+      lastUsedAt: 1
+    });
+    const { client, close } = await connectTestClient(
+      config,
+      upstream,
+      sessions,
+      new FakeModelCatalog(),
+      settings,
+      jobs
+    );
+
+    const settingsResult = await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } });
+    const settingsWarnings = (settingsResult as {
+      structuredContent?: { warnings?: string[] };
+    }).structuredContent?.warnings || [];
+    expect(settingsWarnings).toEqual(expect.arrayContaining([
+      expect.stringContaining("CODEX_MCP_BRIDGE_ROOTS")
+    ]));
+    expect(settingsWarnings.join("\n")).not.toMatch(/Backend routing:|handoffSummary/);
+
+    const continued = await runTask(client, {
+      prompt: "continue on the pinned backend",
+      activityTitle: "Pinned continuation",
+      agent: { mode: "existing", id: agent.agentId, context: "continue" }
+    });
+    expect(continued.isError).toBe(true);
+    expect(JSON.stringify(continued)).toContain("CODEX_BACKEND_RETIRED");
+    expect(upstream.calls).toHaveLength(0);
+
+    const missing = await runTask(client, {
+      prompt: "move to the configured backend",
+      activityTitle: "Backend handoff",
+      agent: { mode: "existing", id: agent.agentId, context: "fresh" }
+    });
+    expect(missing).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "BACKEND_HANDOFF_SUMMARY_REQUIRED",
+          contextContinuity: "not-migrated"
+        }
+      }
+    });
+    expect(upstream.calls).toHaveLength(0);
+
+    const summary = "Completed repository audit; continue with the two remaining implementation gaps.";
+    const handoffRequestId = "82828282-8282-4282-8282-828282828282";
+    const handoffArgs = {
+      requestId: handoffRequestId,
+      activityPresentationId: handoffRequestId,
+      prompt: "implement the remaining gaps",
+      activityTitle: "Backend handoff",
+      agent: {
+        mode: "existing",
+        id: agent.agentId,
+        context: "fresh",
+        handoffSummary: summary
+      }
+    };
+    const handedOff = await runTask(client, handoffArgs);
+    const handedOffStructured = parseToolJson(handedOff);
+    expect(handedOffStructured).toMatchObject({ threadId: "thread-1" });
+    expect(jobs.get(handedOffStructured.jobId)?.sessionDecision).toMatchObject({
+      handoff: {
+        sourceBackend: retiredKind,
+        targetBackend: "app-server",
+        sourceThreadId: "mcp-thread",
+        continuity: "explicit-summary-only",
+        summarySha256: expect.stringMatching(/^[0-9a-f]{64}$/)
+      }
+    });
+    expect(upstream.calls[0]).toMatchObject({ name: "codex" });
+    expect(String(upstream.calls[0]?.args.prompt)).toContain("No transcript, hidden context");
+    expect(String(upstream.calls[0]?.args.prompt)).toContain(summary);
+    expect(JSON.stringify(handedOff)).not.toContain(summary);
+    const exactRetry = await runTask(client, handoffArgs);
+    expect(exactRetry).toMatchObject({ structuredContent: { threadId: "thread-1" } });
+    const changedSummary = await runTask(client, {
+      ...handoffArgs,
+      agent: { ...handoffArgs.agent, handoffSummary: `${summary} changed` }
+    });
+    expect(changedSummary.isError).toBe(true);
+    expect(JSON.stringify(changedSummary)).toContain("already used for a different Codex task");
+    expect(upstream.calls).toHaveLength(1);
+    expect(jobs.listAgentThreads(agent.agentId)).toEqual([
+      expect.objectContaining({
+        threadId: "mcp-thread",
+        backendKind: retiredKind,
+        isCurrent: false
+      }),
+      expect.objectContaining({
+        threadId: "thread-1",
+        backendKind: "app-server",
+        contextMode: "fresh",
+        isCurrent: true
+      })
+    ]);
+    await close();
+    stateStore.close();
+  });
+
+  it("renames Agents and rejects retired archive or restore mutations without changing history", async () => {
+    const root = temporaryRoot();
+    const upstream = new ManagedDeferredUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_ENABLE_RECOVERY_TOOLS: "1" }),
+      upstream
+    );
+    const started = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "long-running turn",
+        agentName: "Managed Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    const agentId = started.agentId;
+    const retiredWhileBusy = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "10101010-1010-4010-8010-101010101010",
+        agentId,
+        operation: { kind: "archive" }
+      }
+    });
+    expect(retiredWhileBusy.isError).toBe(true);
+    expect(JSON.stringify(retiredWhileBusy)).toContain("AGENT_ARCHIVE_REMOVED");
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "active", currentJobId: started.jobId });
+
+    const activeDetach = await client.callTool({
+      name: "codex_agent_recovery_detach",
+      arguments: {
+        requestId: "11111111-2020-4020-8020-202020202020",
+        agentId,
+        activityId: started.activityId,
+        expectedAgentVersion: jobs.getAgent(agentId)?.version
+      }
+    });
+    expect(activeDetach.isError).toBe(true);
+    expect(JSON.stringify(activeDetach)).toContain("AGENT_BUSY");
+    expect(jobs.listActivityAgentAssignments(started.activityId, agentId)[0]?.releasedAt)
+      .toBeUndefined();
+
+    upstream.resolveNext(fakeCodexResult("managed-thread"));
+    await waitForJobStatus(client, started.jobId, "completed");
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "managed-thread" });
+    expect(jobs.listActivityAgentAssignments(started.activityId, agentId)[0]?.releasedAt)
+      .toEqual(expect.any(Number));
+    const retiredRestore = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "10101010-1010-4010-8010-101010101011",
+        agentId,
+        operation: { kind: "restore" }
+      }
+    });
+    expect(retiredRestore.isError).toBe(true);
+    expect(JSON.stringify(retiredRestore)).toContain("AGENT_ARCHIVE_REMOVED");
+    expect(jobs.getAgent(agentId)?.lifecycle).toBe("idle");
+
+    const detachedActivity = jobs.createActivity({ scopeId: SCOPE_A, title: "Detached assignment" });
+    jobs.assignAgent({ activityId: detachedActivity.activityId, agentId, contextMode: "continue" });
+    const detachVersion = jobs.getAgent(agentId)?.version as number;
+    const detached = parseToolJson(await client.callTool({
+      name: "codex_agent_recovery_detach",
+      arguments: {
+        requestId: "20202020-2020-4020-8020-202020202020",
+        agentId,
+        activityId: detachedActivity.activityId,
+        expectedAgentVersion: detachVersion
+      }
+    }));
+    expect(detached).toMatchObject({
+      ok: true,
+      action: "recovery-detach",
+      alreadyReleased: false,
+      historyPreserved: true,
+      agent: { version: detachVersion + 1 }
+    });
+    expect(jobs.listActivityAgentAssignments(detachedActivity.activityId, agentId)[0]?.releasedAt)
+      .toEqual(expect.any(Number));
+    const detachReplay = parseToolJson(await client.callTool({
+      name: "codex_agent_recovery_detach",
+      arguments: {
+        requestId: "20202020-2020-4020-8020-202020202020",
+        agentId,
+        activityId: detachedActivity.activityId,
+        expectedAgentVersion: detachVersion
+      }
+    }));
+    expect(detachReplay).toEqual(detached);
+
+    const renameArguments = {
+      requestId: "30303030-3030-4030-8030-303030303030",
+      agentId,
+      operation: { kind: "rename", name: "Renamed Agent" }
+    } as const;
+    const renamed = parseToolJson(await client.callTool({ name: "codex_agent", arguments: renameArguments }));
+    const renameReplay = parseToolJson(await client.callTool({ name: "codex_agent", arguments: renameArguments }));
+    expect(renameReplay).toEqual(renamed);
+    expect(renamed).toMatchObject({
+      ok: true,
+      action: "rename",
+      target: { type: "agent", id: agentId }
+    });
+    expect(jobs.getAgent(agentId)).toMatchObject({ agentName: "Renamed Agent" });
+    expect(jobs.listAgentThreads(agentId)).toHaveLength(1);
+    const changedRetry = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        ...renameArguments,
+        operation: { kind: "rename", name: "Different Name" }
+      }
+    });
+    expect(changedRetry.isError).toBe(true);
+    expect(JSON.stringify(changedRetry)).toContain("already used for a different Agent mutation");
+    const mixedContract = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "31313131-3131-4131-8131-313131313131",
+        agentId,
+        operation: { kind: "rename", name: "Nested Name" },
+        agentName: "Legacy Name"
+      }
+    });
+    expect(mixedContract.isError).toBe(true);
+    expect(JSON.stringify(mixedContract)).toContain("Unrecognized key");
+
+    jobs.setAgentExecutionState(agentId, "orphaned", {
+      orphanedReason: "Transient session metadata was unavailable before recovery."
+    });
+
+    const archived = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "40404040-4040-4040-8040-404040404040",
+        agentId,
+        operation: { kind: "archive" }
+      }
+    });
+    expect(archived.isError).toBe(true);
+    expect(JSON.stringify(archived)).toContain("AGENT_ARCHIVE_REMOVED");
+    expect(upstream.archivedThreads).toEqual([]);
+    const card = await client.callTool({ name: "codex_activity", arguments: {} });
+    const cardView = parseToolJson(card);
+    expect(cardView.agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ agentId, lifecycle: "orphaned" })
+    ]));
+    expect(cardView).not.toHaveProperty("archivedAgents");
+
+    const restored = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "50505050-5050-4050-8050-505050505050",
+        agentId,
+        operation: { kind: "restore" }
+      }
+    });
+    expect(restored.isError).toBe(true);
+    expect(JSON.stringify(restored)).toContain("AGENT_ARCHIVE_REMOVED");
+    expect(jobs.getAgent(agentId)).toMatchObject({
+      agentName: "Renamed Agent",
+      lifecycle: "orphaned"
+    });
+    expect(upstream.restoredThreads).toEqual([]);
+    expect(jobs.listAgentThreads(agentId)).toHaveLength(1);
+    await close();
+  });
+
+  it("keeps recovery detach disabled without explicit operator capability", async () => {
+    const root = temporaryRoot();
+    const { client, jobs, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const activity = jobs.createActivity({ scopeId: SCOPE_A, title: "Disabled recovery" });
+    const agent = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Disabled Recovery Agent" });
+    jobs.assignAgent({ activityId: activity.activityId, agentId: agent.agentId, contextMode: "fresh" });
+
+    const denied = await client.callTool({
+      name: "codex_agent_recovery_detach",
+      arguments: {
+        requestId: "29292929-2929-4929-8929-292929292929",
+        agentId: agent.agentId,
+        activityId: activity.activityId,
+        expectedAgentVersion: agent.version
+      }
+    });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied)).toContain("not found");
+    expect(jobs.listActivityAgentAssignments(activity.activityId, agent.agentId)[0]?.releasedAt)
+      .toBeUndefined();
+    await close();
+  });
+
+  it("rejects retired Agent archive and restore requests while preserving a forked thread graph", async () => {
+    const root = temporaryRoot();
+    const upstream = new ManagedDeferredUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const sourceAgent = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Source Agent" });
+    jobs.linkAgentThread({
+      agentId: sourceAgent.agentId,
+      threadId: "source-thread",
+      backendKind: "app-server",
+      cwd: root,
+      sandbox: "read-only",
+      contextMode: "fresh"
+    });
+    const forkAgent = jobs.createAgent({ scopeId: SCOPE_A, agentName: "Fork Agent" });
+    jobs.linkAgentThread({
+      agentId: forkAgent.agentId,
+      threadId: "fork-thread",
+      backendKind: "app-server",
+      cwd: root,
+      sandbox: "read-only",
+      contextMode: "fork",
+      forkedFromThreadId: "source-thread"
+    });
+
+    const archived = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "61616161-6161-4161-8161-616161616161",
+        agentId: sourceAgent.agentId,
+        operation: { kind: "archive" }
+      }
+    });
+    expect(archived.isError).toBe(true);
+    expect(JSON.stringify(archived)).toContain("AGENT_ARCHIVE_REMOVED");
+    expect(jobs.getAgent(sourceAgent.agentId)).toMatchObject({ lifecycle: "idle" });
+    expect(jobs.listAgentThreads(sourceAgent.agentId)).toHaveLength(1);
+    expect(upstream.archivedThreads).toEqual([]);
+    expect(jobs.getAgent(forkAgent.agentId)).toMatchObject({
+      lifecycle: "idle",
+      currentThreadId: "fork-thread"
+    });
+    expect(jobs.listAgentThreads(forkAgent.agentId)).toEqual([
+      expect.objectContaining({
+        threadId: "fork-thread",
+        forkedFromThreadId: "source-thread",
+        isCurrent: true
+      })
+    ]);
+
+    const restored = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "62626262-6262-4262-8262-626262626262",
+        agentId: sourceAgent.agentId,
+        operation: { kind: "restore" }
+      }
+    });
+    expect(restored.isError).toBe(true);
+    expect(JSON.stringify(restored)).toContain("AGENT_ARCHIVE_REMOVED");
+    expect(upstream.restoredThreads).toEqual([]);
+    expect(jobs.getAgent(sourceAgent.agentId)).toMatchObject({
+      lifecycle: "idle",
+      currentThreadId: "source-thread"
+    });
+    expect(jobs.listAgentThreads(sourceAgent.agentId)).toEqual([
+      expect.objectContaining({ threadId: "source-thread", isCurrent: true })
+    ]);
+    await close();
+  });
+
+  it("does not expose Dashboard management controls for running work", async () => {
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, applicationService, close } = await connectTestClient(configFor(temporaryRoot()), upstream);
+    try {
+      const started = parseToolJson(await runTask(client, { prompt: "Global stop fixture", executionMode: "background" }));
+      expect((await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: false })).activeRows[0].controlKind)
+        .toBeNull();
+      const rowKey = createHash("sha256").update("codex-dashboard/row-key/v1").update("\0").update("agent:" + started.agentId).digest("hex").slice(0, 32);
+      const widgetInstanceId = randomUUID();
+      const result = await rawCallTool({ name: "codex_ui_read", arguments: { view: "control", scopeId: SCOPE_B, rowKey, widgetInstanceId } });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("no review request");
+      expect(upstream.aborts).toBe(0);
+      expect(jobs.get(started.jobId)?.status).toBe("running");
+    } finally { while (upstream.pendingCount) upstream.resolveNext(); await close(); }
+  });
+
+  it("does not expose Dashboard management controls for idle background processes", async () => {
+    const upstream = new BackgroundTerminalUpstream();
+    const config = configFor(temporaryRoot());
+    const connection = await connectTestClient(config, upstream);
+    const { client, rawCallTool, jobs, applicationService, close } = connection;
+    try {
+      const completed = parseToolJson(await runTask(client, { prompt: "Idle process fixture", executionMode: "foreground" }));
+      const dashboard = await applicationService.dashboardSnapshot({ limit: 20, inspectRuntime: true });
+      const row = dashboard.activeRows.find((candidate) => candidate.agentName === "Codex Agent") || dashboard.activeRows[0]!;
+      expect(row.backgroundProcessCount).toBe(2);
+      expect(row.controlKind).toBeNull();
+      const widgetInstanceId = randomUUID();
+      const detail = await rawCallTool({ name: "codex_ui_read", arguments: { view: "control", scopeId: SCOPE_B, rowKey: row.rowKey, widgetInstanceId } });
+      expect(detail.isError).toBe(true);
+      expect(JSON.stringify(detail)).toContain("no review request");
+      expect(upstream.terminationCalls).toHaveLength(0);
+      expect(jobs.get(completed.jobId)?.status).toBe("completed");
+    } finally { await close(); }
+  });
+
+  it("separates terminal Agent state from remaining App Server background processes and stops them exactly", async () => {
+    const root = temporaryRoot();
+    const upstream = new BackgroundTerminalUpstream();
+    const { client, rawCallTool, jobs, applicationService, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    const completedResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "leave one background process",
+        agentName: "Process Agent",
+        contextMode: "fresh",
+        executionMode: "foreground"
+      }
+    });
+    const completed = parseToolJson(completedResult);
+    const agentId = completed.agentId as string;
+    const activityId = completed.activityId as string;
+    expect(agentId).toEqual(expect.any(String));
+    expect((completedResult as { _meta?: unknown })._meta).toBeUndefined();
+    const automaticStructural = await presentCompactActivity(
+      client,
+      activityId,
+      "71717171-7171-4171-8171-717171717170"
+    );
+    const automaticView = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: automaticCardProof(automaticStructural),
+        limit: 30,
+        enrich: true
+      },
+      _meta: { "openai/widgetSessionId": "71717171-7171-4171-8171-717171717172" }
+    });
+    expect(automaticView.isError, JSON.stringify(automaticView)).not.toBe(true);
+    expect(privateActivityView(automaticView).feed).toMatchObject({
+        mode: "compact",
+        active: [expect.objectContaining({
+          activityId,
+          displayState: "running",
+          agents: [expect.objectContaining({ backgroundProcessCount: 2 })]
+        })]
+      });
+
+    const widgetSessionId = "71717171-7171-4171-8171-717171717171";
+    const structuralCard = await client.callTool({
+      name: "codex_activity",
+      arguments: { activityId },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    const structuralView = parseToolJson(structuralCard);
+    const card = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: structuralView.mountedActivity.activityId,
+          generation: structuralView.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        },
+        limit: 30,
+        enrich: true
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    const view = parseToolJson(card);
+    expect(view.agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentId,
+        lifecycle: "idle",
+        backgroundProcessState: "running",
+        backgroundProcessCount: 2
+      })
+    ]));
+    expect((card as { _meta?: Record<string, any> })._meta?.interactionControls.agents)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          agentId,
+          backgroundProcesses: [
+            { processId: "background-process-1" },
+            { processId: "legacy-background-process-2" }
+          ]
+        })
+      ]));
+    expect(JSON.stringify(card)).not.toContain("private background command");
+    expect(JSON.stringify(card)).not.toContain("/private/background/path");
+
+    const dashboard = await rawCallTool({
+      name: "codex_dashboard_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        widgetInstanceId: "73737373-7373-4373-8373-737373737373",
+        limit: 20,
+        enrich: true
+      }
+    });
+    expect(dashboard.isError, JSON.stringify(dashboard)).not.toBe(true);
+    const dashboardView = (dashboard as { structuredContent?: any }).structuredContent;
+    expect(dashboardView.counts).toMatchObject({
+      backgroundProcesses: 2,
+      backgroundProcessAgents: 1,
+      runtimeUnknownAgents: 0,
+      runtimeProbeSkippedAgents: 0
+    });
+    await expect(applicationService.runtimeSnapshot({
+      inspectBackgroundProcesses: true
+    })).resolves.toMatchObject({
+      backgroundProcessState: "confirmed",
+      backgroundProcesses: 2,
+      backgroundProcessAgents: 1,
+      backgroundProcessUnknownAgents: 0
+    });
+    expect(dashboardView.activeRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentName: "Process Agent",
+        status: "background-process-running",
+        backgroundProcessCount: 2,
+        controlKind: null
+      })
+    ]));
+    expect(JSON.stringify(dashboard)).not.toContain("background-process-1");
+    expect(JSON.stringify(dashboard)).not.toContain("private background command");
+    expect(JSON.stringify(dashboard)).not.toContain("/private/background/path");
+
+    const processControl = (card as { _meta?: Record<string, any> })._meta
+      ?.interactionControls?.agents?.find((entry: Record<string, unknown>) => entry.agentId === agentId);
+    const mountedActivity = view.mountedActivity;
+    const mountedPresentation = view.mountedPresentation;
+    expect(processControl).toMatchObject({ agentId, agentVersion: expect.any(Number) });
+    expect(mountedActivity).toMatchObject({ activityId, cardGeneration: expect.any(Number) });
+    expect(mountedPresentation).toEqual({ kind: "explicit" });
+
+    const archiveConflict = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "70707070-7070-4070-8070-707070707070",
+        agentId,
+        operation: { kind: "archive" }
+      }
+    });
+    expect(archiveConflict.isError).toBe(true);
+    expect(JSON.stringify(archiveConflict)).toContain("AGENT_ARCHIVE_REMOVED");
+
+    const terminateArguments = {
+      requestId: "80808080-8080-4080-8080-808080808080",
+      agentId,
+      expectedAgentVersion: processControl.agentVersion,
+      processId: "background-process-1",
+      card: {
+        activityId: mountedActivity.activityId,
+        generation: mountedActivity.cardGeneration,
+        presentation: mountedPresentation
+      }
+    };
+    const withoutLease = await client.callTool({
+      name: "codex_background_process_terminate",
+      arguments: {
+        ...terminateArguments,
+        requestId: "81818181-8181-4181-8181-818181818181"
+      }
+    });
+    expect(withoutLease.isError).toBe(true);
+    expect(JSON.stringify(withoutLease)).toContain("CARD_LEASE_REQUIRED");
+
+    await client.callTool({
+      name: "codex_activity_snapshot",
+      arguments: { card: terminateArguments.card, widgetInstanceId: widgetSessionId }
+    });
+
+    const staleAgent = await client.callTool({
+      name: "codex_background_process_terminate",
+      arguments: {
+        ...terminateArguments,
+        requestId: "82828282-8282-4282-8282-828282828282",
+        expectedAgentVersion: processControl.agentVersion + 1
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect(staleAgent.isError).toBe(true);
+    expect(JSON.stringify(staleAgent)).toContain("AGENT_VERSION_CHANGED");
+
+    const activeAgent = jobs.setAgentExecutionState(agentId, "active", {
+      currentJobId: "racing-codex-turn"
+    });
+    const activeCard = await client.callTool({
+      name: "codex_activity_snapshot",
+      arguments: { card: terminateArguments.card, enrich: true },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    const activeProcessControl = (activeCard as { _meta?: Record<string, any> })._meta
+      ?.interactionControls?.agents?.find((entry: Record<string, unknown>) => entry.agentId === agentId);
+    expect(activeProcessControl).not.toHaveProperty("backgroundProcesses");
+    expect((activeCard as { structuredContent?: Record<string, any> }).structuredContent?.feed)
+      .toMatchObject({
+        active: [expect.objectContaining({
+          activityId,
+          agents: [expect.objectContaining({ backgroundProcessCount: 2 })]
+        })]
+      });
+    const whileActive = await client.callTool({
+      name: "codex_background_process_terminate",
+      arguments: {
+        ...terminateArguments,
+        requestId: "83838383-8383-4383-8383-838383838383",
+        expectedAgentVersion: activeAgent.version
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect(whileActive.isError).toBe(true);
+    expect(JSON.stringify(whileActive)).toContain("AGENT_BUSY");
+    const idleAgent = jobs.setAgentExecutionState(agentId, "idle");
+    upstream.beforeNextList = () => {
+      jobs.setAgentExecutionState(agentId, "active", { currentJobId: "raced-codex-turn" });
+    };
+    const racedTurn = await client.callTool({
+      name: "codex_background_process_terminate",
+      arguments: {
+        ...terminateArguments,
+        requestId: "85858585-8585-4585-8585-858585858585",
+        expectedAgentVersion: idleAgent.version
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect(racedTurn.isError).toBe(true);
+    expect(JSON.stringify(racedTurn)).toContain("AGENT_VERSION_CHANGED");
+    expect(upstream.terminationCalls).toEqual([]);
+    const finalIdleAgent = jobs.setAgentExecutionState(agentId, "idle");
+    terminateArguments.expectedAgentVersion = finalIdleAgent.version;
+
+    const terminated = parseToolJson(await client.callTool({
+      name: "codex_background_process_terminate",
+      arguments: terminateArguments,
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    }));
+    const replay = parseToolJson(await client.callTool({
+      name: "codex_background_process_terminate",
+      arguments: terminateArguments,
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    }));
+    expect(terminated).toMatchObject({ ok: true, terminated: true, historyPreserved: true });
+    expect(replay).toEqual(terminated);
+    expect(upstream.terminationCalls).toEqual([
+      { threadId: "thread-1", processId: "background-process-1" }
+    ]);
+
+    const retiredTermination = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "84848484-8484-4484-8484-848484848484",
+        agentId,
+        action: "terminate-background-process",
+        processId: "legacy-background-process-2"
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect(retiredTermination.isError).toBe(true);
+    expect(JSON.stringify(retiredTermination)).toContain("Unrecognized key");
+    expect(upstream.terminationCalls).toEqual([
+      { threadId: "thread-1", processId: "background-process-1" }
+    ]);
+
+    const secondTermination = parseToolJson(await client.callTool({
+      name: "codex_background_process_terminate",
+      arguments: {
+        ...terminateArguments,
+        requestId: "86868686-8686-4686-8686-868686868686",
+        processId: "legacy-background-process-2"
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    }));
+    expect(secondTermination).toMatchObject({ ok: true, terminated: true });
+    expect(upstream.terminationCalls).toEqual([
+      { threadId: "thread-1", processId: "background-process-1" },
+      { threadId: "thread-1", processId: "legacy-background-process-2" }
+    ]);
+
+    const after = await client.callTool({ name: "codex_activity", arguments: {} });
+    expect(privateActivityView(after).agents)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          agentId,
+          backgroundProcessState: "none",
+          backgroundProcessCount: 0
+        })
+      ]));
+    await close();
+  });
+
+  it("lets the model steer only an exact active App Server Job with durable replay", async () => {
+    const root = temporaryRoot();
+    const upstream = new InteractionUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    const started = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "hold while sibling verification completes",
+        agentName: "Public Steering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    const pending = {
+      interactionId: "steering-pending-input",
+      kind: "user-input" as const,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "input-1",
+      summary: "Input still pending",
+      questions: [{
+        id: "choice",
+        header: "Choice",
+        question: "Which option?",
+        isSecret: false
+      }]
+    };
+    upstream.progressNext({
+      progress: 1,
+      message: pending.summary,
+      event: {
+        eventId: "steering-pending-event",
+        type: "input-required",
+        phase: "waiting",
+        createdAt: Date.now(),
+        summary: pending.summary,
+        details: { interaction: pending }
+      }
+    });
+    const expectedJobVersion = jobs.get(started.jobId)?.version as number;
+    const prompt =
+      "Verified sibling result: parser v2 is required. Stop adding the legacy fallback, but keep this Job running.";
+    const steeringRequest = {
+      requestId: "90909090-9090-4090-8090-909090909090",
+      jobId: started.jobId,
+      expectedJobVersion,
+      prompt
+    };
+    const executionBoundaryBefore = structuredClone({
+      activityId: jobs.get(started.jobId)?.activityId,
+      agentId: jobs.get(started.jobId)?.agentId,
+      projectId: jobs.get(started.jobId)?.projectId,
+      cwd: jobs.get(started.jobId)?.cwd,
+      backendKind: jobs.get(started.jobId)?.backendKind,
+      sandbox: jobs.get(started.jobId)?.sandbox,
+      selectionKey: jobs.get(started.jobId)?.selectionKey,
+      executionDecision: jobs.get(started.jobId)?.executionDecision
+    });
+
+    const injectedAuthority = await client.callTool({
+      name: "codex_steer",
+      arguments: {
+        ...steeringRequest,
+        requestId: "90909090-9090-4090-8090-909090909091",
+        threadId: "caller-selected-thread",
+        activityId: started.activityId,
+        sandbox: "danger-full-access"
+      }
+    });
+    expect(injectedAuthority.isError).toBe(true);
+    expect(JSON.stringify(injectedAuthority)).toContain("Unrecognized key");
+    expect(upstream.steeringRequests).toEqual([]);
+    expect(jobs.listSteeringDeliveries(SCOPE_A)).toEqual([]);
+
+    const [firstCall, concurrentReplayCall] = await Promise.all([
+      client.callTool({
+        name: "codex_steer",
+        arguments: steeringRequest
+      }),
+      client.callTool({
+        name: "codex_steer",
+        arguments: steeringRequest
+      })
+    ]);
+    const first = parseToolJson(firstCall);
+    const concurrentReplay = parseToolJson(concurrentReplayCall);
+    const replay = parseToolJson(await client.callTool({
+      name: "codex_steer",
+      arguments: steeringRequest
+    }));
+    expect(firstCall.isError).not.toBe(true);
+    expect(first).toMatchObject({
+      kind: "mutation",
+      ok: true,
+      action: "steer",
+      code: null,
+      job: {
+        jobId: started.jobId,
+        activityId: started.activityId,
+        agentId: started.agentId,
+        status: "running"
+      },
+      promptPersistedByBridge: false,
+      steeringScope: "active-codex-turn-only",
+      delivery: { status: "delivered" }
+    });
+    expect(concurrentReplay).toEqual(first);
+    expect(replay).toEqual(first);
+    expect(upstream.steeringRequests).toEqual([{ threadId: "thread-1", prompt }]);
+    expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([pending]);
+    expect(jobs.listCancellationIntents({ jobId: started.jobId })).toEqual([]);
+    expect({
+      activityId: jobs.get(started.jobId)?.activityId,
+      agentId: jobs.get(started.jobId)?.agentId,
+      projectId: jobs.get(started.jobId)?.projectId,
+      cwd: jobs.get(started.jobId)?.cwd,
+      backendKind: jobs.get(started.jobId)?.backendKind,
+      sandbox: jobs.get(started.jobId)?.sandbox,
+      selectionKey: jobs.get(started.jobId)?.selectionKey,
+      executionDecision: jobs.get(started.jobId)?.executionDecision
+    }).toEqual(executionBoundaryBefore);
+    const delivery = jobs.listSteeringDeliveries(SCOPE_A)[0]!;
+    expect(delivery).toMatchObject({
+      requestId: steeringRequest.requestId,
+      jobId: started.jobId,
+      expectedJobVersion,
+      promptSha256: createHash("sha256").update(prompt).digest("hex"),
+      status: "delivered",
+      result: first
+    });
+    expect(JSON.stringify(delivery)).not.toContain(prompt);
+
+    const conflictCall = await client.callTool({
+      name: "codex_steer",
+      arguments: { ...steeringRequest, prompt: "different payload" }
+    });
+    expect(conflictCall.isError).toBe(true);
+    expect(parseToolJson(conflictCall)).toMatchObject({
+      ok: false,
+      code: "STEERING_REQUEST_CONFLICT",
+      delivery: { status: "not-delivered" }
+    });
+    expect(upstream.steeringRequests).toHaveLength(1);
+
+    const staleCall = await client.callTool({
+      name: "codex_steer",
+      arguments: {
+        requestId: "91919191-9191-4191-8191-919191919190",
+        jobId: started.jobId,
+        expectedJobVersion,
+        prompt: "This stale guidance must not dispatch."
+      }
+    });
+    expect(staleCall.isError).toBe(true);
+    expect(parseToolJson(staleCall)).toMatchObject({
+      code: "STALE_JOB_VERSION",
+      delivery: { status: "not-delivered" }
+    });
+
+    const scopeMismatch = await rawCallTool({
+      name: "codex_steer",
+      arguments: {
+        scopeId: SCOPE_B,
+        requestId: "92929292-9292-4292-8292-929292929290",
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        prompt: "Cross-scope guidance must fail."
+      }
+    });
+    expect(scopeMismatch.isError).toBe(true);
+    expect(parseToolJson(scopeMismatch)).toMatchObject({
+      code: "JOB_SCOPE_MISMATCH",
+      job: null,
+      delivery: { status: "not-delivered" }
+    });
+
+    upstream.steeringAvailable = false;
+    const inactiveTurn = await client.callTool({
+      name: "codex_steer",
+      arguments: {
+        requestId: "93939393-9393-4393-8393-939393939390",
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        prompt: "No active upstream turn means no queue."
+      }
+    });
+    expect(inactiveTurn.isError).toBe(true);
+    expect(parseToolJson(inactiveTurn)).toMatchObject({
+      code: "JOB_NOT_ACTIVE",
+      delivery: { status: "not-delivered" }
+    });
+    upstream.steeringAvailable = true;
+
+    const cancelled = parseToolJson(await client.callTool({
+      name: "codex_cancel",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "94949494-9494-4494-8494-949494949489",
+        jobId: started.jobId,
+        expectedVersion: jobs.get(started.jobId)?.version,
+        reason: "The user stopped the active App Server job"
+      }
+    }));
+    expect(cancelled).toMatchObject({
+      ok: true,
+      action: "cancel-job",
+      target: { type: "job", id: started.jobId, state: "cancelled" }
+    });
+    const terminalRace = await client.callTool({
+      name: "codex_steer",
+      arguments: {
+        requestId: "94949494-9494-4494-8494-949494949490",
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        prompt: "A terminal Job must not receive future queued work."
+      }
+    });
+    expect(terminalRace.isError).toBe(true);
+    expect(parseToolJson(terminalRace)).toMatchObject({
+      code: "JOB_NOT_ACTIVE",
+      job: { status: "cancelled" },
+      delivery: { status: "not-delivered" }
+    });
+    expect(upstream.steeringRequests).toHaveLength(1);
+    await close();
+  });
+
+  it("redacts exact steering input echoed by Codex from Bridge-owned state and output", async () => {
+    const root = temporaryRoot();
+    const databaseFile = path.join(
+      mkdtempSync(path.join(tmpdir(), "steering-echo-")),
+      "state.sqlite"
+    );
+    const stateStore = new BridgeStateStore({ file: databaseFile });
+    const config = configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" });
+    const upstream = new InteractionUpstream();
+    const settings = new UserSettingsStore(config, { stateStore });
+    const jobs = new CodexJobRegistry({
+      maxConcurrentJobs: config.maxConcurrentJobs,
+      ttlMs: config.jobTtlMs,
+      maxJobs: config.maxRetainedJobs,
+      maxResultBytes: config.maxJobResultBytes,
+      staleAfterMs: config.jobStaleAfterMs,
+      allowedRoots: config.allowedRoots,
+      stateStore
+    });
+    const connected = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings,
+      jobs
+    );
+    const prompt = "RAW_STEERING_ECHO_7f4c1d9a must never enter Bridge SQLite or output";
+    const started = parseToolJson(await connected.client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "wait for an adversarial steering echo probe",
+        agentName: "Steering Echo Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    const expectedJobVersion = jobs.get(started.jobId)?.version as number;
+    const steered = parseToolJson(await connected.client.callTool({
+      name: "codex_steer",
+      arguments: {
+        requestId: "97979797-9797-4797-8797-979797979790",
+        jobId: started.jobId,
+        expectedJobVersion,
+        prompt
+      }
+    }));
+    expect(steered).toMatchObject({
+      ok: true,
+      delivery: { status: "delivered" },
+      promptPersistedByBridge: false
+    });
+
+    upstream.progressNext({
+      progress: 2,
+      message: `progress echoed ${prompt}`,
+      event: {
+        eventId: "steering-echo-event",
+        type: "agent-message",
+        phase: "updated",
+        createdAt: Date.now(),
+        summary: `event echoed ${prompt}`,
+        details: { echo: prompt, nested: [prompt], [prompt]: "echo-key" }
+      }
+    });
+    upstream.resolveNext({
+      content: [{ type: "text", text: `final answer echoed ${prompt}` }],
+      structuredContent: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        turnStatus: "completed",
+        echo: prompt,
+        [prompt]: "echo-key"
+      }
+    });
+    await waitForJobStatus(connected.client, started.jobId, "completed");
+
+    const persistedJob = jobs.get(started.jobId);
+    expect(JSON.stringify(persistedJob)).not.toContain(prompt);
+    expect(JSON.stringify(persistedJob)).toContain("[steering input omitted]");
+    expect(JSON.stringify(jobs.listSteeringDeliveries(SCOPE_A))).not.toContain(prompt);
+    const exactStatus = await connected.client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "job", id: started.jobId } }
+    });
+    expect(JSON.stringify(exactStatus)).not.toContain(prompt);
+    expect(JSON.stringify(exactStatus)).toContain("[steering input omitted]");
+
+    await connected.close();
+    stateStore.close();
+    expect(readFileSync(databaseFile).includes(Buffer.from(prompt))).toBe(false);
+  });
+
+  it("derives scope for the public four-field steering call from host metadata", async () => {
+    const root = temporaryRoot();
+    const upstream = new InteractionUpstream();
+    const { rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    const metadata = {
+      "openai/organization": "steering-org",
+      "openai/subject": "steering-user",
+      "openai/session": "steering-session"
+    };
+    const started = parseToolJson(await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        requestId: "98989898-9898-4898-8898-989898989890",
+        prompt: "host-derived steering target",
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: { mode: "new", title: "Host-derived steering" },
+        agent: { mode: "new", name: "Host Scope Steering Agent" },
+        executionMode: "background"
+      },
+      _meta: {
+        ...metadata,
+        "codex/activityPresentationId": "98989898-9898-4898-8898-989898989890"
+      }
+    }));
+    await Promise.resolve();
+    const expectedJobVersion = jobs.get(started.jobId)?.version as number;
+    const steeringArguments = {
+      requestId: "99999999-9999-4999-8999-999999999990",
+      jobId: started.jobId,
+      expectedJobVersion,
+      prompt: "Apply the host-scoped correction."
+    };
+    expect(Object.keys(steeringArguments).sort()).toEqual([
+      "expectedJobVersion",
+      "jobId",
+      "prompt",
+      "requestId"
+    ]);
+    const delivered = parseToolJson(await rawCallTool({
+      name: "codex_steer",
+      arguments: steeringArguments,
+      _meta: metadata
+    }));
+    expect(delivered).toMatchObject({
+      ok: true,
+      job: { jobId: started.jobId },
+      delivery: { status: "delivered" }
+    });
+
+    const denied = await rawCallTool({
+      name: "codex_steer",
+      arguments: {
+        ...steeringArguments,
+        requestId: "a0a0a0a0-a0a0-40a0-80a0-a0a0a0a0a0a0",
+        expectedJobVersion: jobs.get(started.jobId)?.version
+      },
+      _meta: { ...metadata, "openai/session": "other-steering-session" }
+    });
+    expect(denied.isError).toBe(true);
+    expect(parseToolJson(denied)).toMatchObject({
+      code: "JOB_SCOPE_MISMATCH",
+      delivery: { status: "not-delivered" }
+    });
+    expect(upstream.steeringRequests).toEqual([
+      { threadId: "thread-1", prompt: steeringArguments.prompt }
+    ]);
+
+    upstream.resolveNext(fakeCodexResult("thread-1"));
+    for (let attempt = 0; attempt < 30 && jobs.get(started.jobId)?.status !== "completed"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(jobs.get(started.jobId)?.status).toBe("completed");
+    await close();
+  });
+
+  it("rejects steering when the execution transport does not provide it", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const started = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "active work without steering support",
+        agentName: "Unsteerable Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    const result = await client.callTool({
+      name: "codex_steer",
+      arguments: {
+        requestId: "95959595-9595-4595-8595-959595959590",
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        prompt: "This transport cannot steer an in-flight turn."
+      }
+    });
+    expect(result.isError).toBe(true);
+    expect(parseToolJson(result)).toMatchObject({
+      code: "STEERING_UNSUPPORTED",
+      job: { status: "running" },
+      delivery: { status: "not-delivered" }
+    });
+    expect(jobs.listSteeringDeliveries(SCOPE_A)).toEqual([
+      expect.objectContaining({ status: "not-delivered" })
+    ]);
+    upstream.resolveNext(fakeCodexResult("thread-1"));
+    await waitForJobStatus(client, started.jobId, "completed");
+    await close();
+  });
+
+  it("returns delivery-uncertain after a persisted dispatch boundary without resending", async () => {
+    const root = temporaryRoot();
+    const databaseFile = path.join(mkdtempSync(path.join(tmpdir(), "steering-crash-")), "state.sqlite");
+    const prompt = "crash-boundary steering prompt must remain private";
+    const promptSha256 = createHash("sha256").update(prompt).digest("hex");
+    const requestId = "96969696-9696-4696-8696-969696969690";
+    const jobId = "crashed-steering-job";
+    const expectedJobVersion = 3;
+    const actionHash = createHash("sha256")
+      .update(JSON.stringify({ action: "steer", jobId, expectedJobVersion, promptHash: promptSha256 }))
+      .digest("hex");
+    const firstStore = new BridgeStateStore({ file: databaseFile });
+    firstStore.beginSteeringDelivery({
+      scopeId: SCOPE_A,
+      requestId,
+      actionHash,
+      jobId,
+      expectedJobVersion,
+      promptSha256
+    });
+    firstStore.markSteeringDeliveryDispatching(SCOPE_A, requestId, actionHash);
+    firstStore.close();
+
+    const stateStore = new BridgeStateStore({ file: databaseFile });
+    const config = configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" });
+    const upstream = new InteractionUpstream();
+    const settings = new UserSettingsStore(config, { stateStore });
+    const jobs = new CodexJobRegistry({
+      maxConcurrentJobs: config.maxConcurrentJobs,
+      ttlMs: config.jobTtlMs,
+      maxJobs: config.maxRetainedJobs,
+      maxResultBytes: config.maxJobResultBytes,
+      staleAfterMs: config.jobStaleAfterMs,
+      allowedRoots: config.allowedRoots,
+      stateStore
+    });
+    const connected = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings,
+      jobs
+    );
+    const arguments_ = { requestId, jobId, expectedJobVersion, prompt };
+    const first = await connected.client.callTool({ name: "codex_steer", arguments: arguments_ });
+    const replay = await connected.client.callTool({ name: "codex_steer", arguments: arguments_ });
+    expect(first.isError).toBe(true);
+    expect(parseToolJson(first)).toMatchObject({
+      ok: false,
+      code: "DELIVERY_UNCERTAIN",
+      job: null,
+      delivery: { status: "uncertain" },
+      promptPersistedByBridge: false
+    });
+    expect(parseToolJson(replay)).toEqual(parseToolJson(first));
+    expect(upstream.steeringRequests).toEqual([]);
+    expect(stateStore.getSteeringDelivery(SCOPE_A, requestId)).toMatchObject({
+      actionHash,
+      promptSha256,
+      status: "uncertain",
+      result: parseToolJson(first)
+    });
+    expect(JSON.stringify(stateStore.getSteeringDelivery(SCOPE_A, requestId))).not.toContain(prompt);
+    await connected.close();
+    stateStore.close();
+    expect(readFileSync(databaseFile).includes(Buffer.from(prompt))).toBe(false);
+  });
+
+  it("projects only allowed interaction decisions and clears server-resolved requests from Activity state", async () => {
+    const root = temporaryRoot();
+    const upstream = new InteractionUpstream();
+    const { client, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream
+    );
+    const startedResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "wait for interactions",
+        agentName: "Interaction Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    });
+    const started = parseToolJson(startedResult);
+    const activityPresentation = await presentCompactActivity(
+      client,
+      started.activityId,
+      "90909090-9090-4090-8090-909090909091"
+    );
+    const widgetSessionId = "widget-interaction";
+    const card = automaticCardProof(activityPresentation);
+    await client.callTool({
+      name: "codex_activity_snapshot",
+      arguments: { card },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+
+    const steeringRequest = {
+      requestId: "91919191-9191-4191-8191-919191919191",
+      jobId: started.jobId,
+      expectedJobVersion: jobs.get(started.jobId)?.version,
+      prompt: "Focus on the exact pending interaction.",
+      card
+    };
+    const steered = parseToolJson(await client.callTool({
+      name: "codex_job_steer",
+      arguments: steeringRequest,
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    }));
+    const steeringReplay = parseToolJson(await client.callTool({
+      name: "codex_job_steer",
+      arguments: steeringRequest,
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    }));
+    expect(steered).toMatchObject({ ok: true, action: "steer", promptPersistedByBridge: false });
+    expect(steeringReplay).toEqual(steered);
+    expect(upstream.steeringRequests).toEqual([
+      { threadId: "thread-1", prompt: "Focus on the exact pending interaction." }
+    ]);
+
+    const approval = {
+      interactionId: "interaction-approval-1",
+      kind: "command-approval" as const,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-1",
+      summary: "Command approval required",
+      reason: "Network access",
+      cwdLabel: path.basename(root),
+      availableDecisions: ["acceptForSession", "decline", "cancel"] as CodexInteractionDecision[],
+      networkContext: { host: "example.test", protocol: "https" as const },
+      proposedAmendments: {
+        networkPolicy: [{ host: "example.test", action: "allow" as const }]
+      }
+    };
+    upstream.progressNext({
+      progress: 1,
+      message: approval.summary,
+      event: {
+        eventId: "approval-waiting",
+        type: "approval-required",
+        phase: "waiting",
+        createdAt: Date.now(),
+        summary: approval.summary,
+        details: { interaction: approval }
+      }
+    });
+    expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([approval]);
+    const approvalSnapshot = await client.callTool({
+      name: "codex_activity_snapshot",
+      arguments: { card },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect((approvalSnapshot as { structuredContent?: Record<string, any> }).structuredContent?.feed)
+      .toMatchObject({
+        mode: "compact",
+        active: [expect.objectContaining({
+          activityId: started.activityId,
+          displayState: "approval-required"
+        })]
+      });
+
+    const movedLegacyControl = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: started.activityId,
+        action: "respond-interaction",
+        jobId: started.jobId,
+        interactionId: approval.interactionId,
+        interactionDecision: "accept"
+      }
+    });
+    expect(movedLegacyControl.isError).toBe(true);
+    expect(JSON.stringify(movedLegacyControl)).toContain("Unrecognized keys");
+
+    const unavailableDecision = await client.callTool({
+      name: "codex_interaction_respond",
+      arguments: {
+        requestId: "92929292-9292-4292-8292-929292929292",
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        interactionId: approval.interactionId,
+        response: { decision: "accept" },
+        card
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect(unavailableDecision.isError).toBe(true);
+    expect(JSON.stringify(unavailableDecision)).toContain("decision is not available");
+    expect(upstream.interactionResponses).toEqual([]);
+
+    const responseRequest = {
+      requestId: "93939393-9393-4393-8393-939393939393",
+      jobId: started.jobId,
+      expectedJobVersion: jobs.get(started.jobId)?.version,
+      interactionId: approval.interactionId,
+      response: { decision: "acceptForSession" as const },
+      card
+    };
+    const [respondedResult, concurrentResult] = await Promise.all([
+      client.callTool({
+        name: "codex_interaction_respond",
+        arguments: responseRequest,
+        _meta: { "openai/widgetSessionId": widgetSessionId }
+      }),
+      client.callTool({
+        name: "codex_interaction_respond",
+        arguments: {
+          ...responseRequest,
+          requestId: "93939393-9393-4393-8393-939393939394"
+        },
+        _meta: { "openai/widgetSessionId": widgetSessionId }
+      })
+    ]);
+    const responded = parseToolJson(respondedResult);
+    const concurrentResponse = parseToolJson(concurrentResult);
+    const responseReplay = parseToolJson(await client.callTool({
+      name: "codex_interaction_respond",
+      arguments: responseRequest,
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    }));
+    const stableInteractionResponse = {
+      ok: true,
+      action: "respond-interaction",
+      activityId: started.activityId,
+      promptOrAnswersPersisted: false
+    };
+    expect(responded).toMatchObject(stableInteractionResponse);
+    expect(concurrentResponse).toMatchObject(stableInteractionResponse);
+    expect(responseReplay).toMatchObject(stableInteractionResponse);
+    expect(upstream.interactionResponses).toEqual([
+      { interactionId: approval.interactionId, response: { decision: "acceptForSession" } }
+    ]);
+    expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([]);
+
+    const reusedRequestId = await client.callTool({
+      name: "codex_interaction_respond",
+      arguments: {
+        ...responseRequest,
+        response: { decision: "decline" }
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect(reusedRequestId.isError).toBe(true);
+    expect(JSON.stringify(reusedRequestId)).toContain("requestId was already used");
+
+    const withoutMountedCard = await client.callTool({
+      name: "codex_interaction_respond",
+      arguments: {
+        requestId: "94949494-9494-4494-8494-949494949494",
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        interactionId: approval.interactionId,
+        response: { decision: "decline" },
+        card
+      }
+    });
+    expect(withoutMountedCard.isError).toBe(true);
+    expect(JSON.stringify(withoutMountedCard)).toContain("CARD_LEASE_REQUIRED");
+
+    const input = {
+      interactionId: "interaction-input-2",
+      kind: "user-input" as const,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-2",
+      summary: "Codex requires user input",
+      autoResolutionMs: 100,
+      expiresAt: Date.now() + 100,
+      questions: [{
+        id: "choice",
+        header: "Choice",
+        question: "Choose",
+        isSecret: false
+      }]
+    };
+    upstream.progressNext({
+      progress: 3,
+      message: input.summary,
+      event: {
+        eventId: "input-waiting",
+        type: "input-required",
+        phase: "waiting",
+        createdAt: Date.now(),
+        summary: input.summary,
+        details: { interaction: input }
+      }
+    });
+    expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([input]);
+    const inputSnapshot = await client.callTool({
+      name: "codex_activity_snapshot",
+      arguments: { card },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect((inputSnapshot as { structuredContent?: Record<string, any> }).structuredContent?.feed)
+      .toMatchObject({
+        mode: "compact",
+        active: [expect.objectContaining({
+          activityId: started.activityId,
+          displayState: "input-required"
+        })]
+      });
+    upstream.progressNext({
+      progress: 4,
+      message: "input resolved",
+      event: {
+        eventId: "input-resolved",
+        type: "input-required",
+        phase: "completed",
+        createdAt: Date.now(),
+        summary: "input resolved",
+        details: {
+          resolvedInteractionId: input.interactionId,
+          resolution: "server-resolved"
+        }
+      }
+    });
+    expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([]);
+
+    const secretInput = {
+      interactionId: "interaction-input-secret-3",
+      kind: "user-input" as const,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-3",
+      summary: "Codex requires a transient secret",
+      questions: [{
+        id: "password",
+        header: "Secret",
+        question: "Enter the transient value",
+        isSecret: true
+      }]
+    };
+    upstream.progressNext({
+      progress: 5,
+      message: secretInput.summary,
+      event: {
+        eventId: "secret-input-waiting",
+        type: "input-required",
+        phase: "waiting",
+        createdAt: Date.now(),
+        summary: secretInput.summary,
+        details: { interaction: secretInput }
+      }
+    });
+    const secretRequestId = "95959595-9595-4595-8595-959595959595";
+    const secretValue = "transient-secret-value";
+    const secretResponse = await client.callTool({
+      name: "codex_interaction_respond",
+      arguments: {
+        requestId: secretRequestId,
+        jobId: started.jobId,
+        expectedJobVersion: jobs.get(started.jobId)?.version,
+        interactionId: secretInput.interactionId,
+        response: { answers: { password: [secretValue] } },
+        card
+      },
+      _meta: { "openai/widgetSessionId": widgetSessionId }
+    });
+    expect(JSON.stringify(secretResponse)).not.toContain(secretValue);
+    expect(JSON.stringify(jobs.getAgentMutation(SCOPE_A, secretRequestId))).not.toContain(secretValue);
+    expect(jobs.get(started.jobId)?.pendingInteractions).toEqual([]);
+    expect(upstream.interactionResponses.at(-1)).toEqual({
+      interactionId: secretInput.interactionId,
+      response: { answers: { password: [secretValue] } }
+    });
+
+    upstream.resolveNext(fakeCodexResult("thread-1"));
+    await waitForJobStatus(client, started.jobId, "completed");
     await close();
   });
 
@@ -666,28 +9569,119 @@ describe("bridge tools", () => {
       settled = true;
       return result;
     });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await expect.poll(() => upstream.calls.length).toBe(1);
     expect(settled).toBe(false);
     expect(upstream.calls).toHaveLength(1);
 
     upstream.resolveNext(fakeCodexResult("discussion-thread"));
     const result = await pending;
-    expect((result as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
+    const structured = parseToolJson(result);
+    expect(structured).toMatchObject({
       threadId: "discussion-thread",
-      bridgeActivity: {
-        activityId: expect.stringMatching(SCOPE_ID_PATTERN),
-        jobId: expect.stringMatching(SCOPE_ID_PATTERN),
-        executionMode: "foreground"
-      }
+      activityId: expect.stringMatching(SCOPE_ID_PATTERN),
+      jobId: expect.stringMatching(SCOPE_ID_PATTERN),
+      executionMode: "foreground"
     });
-    const activityId = (result as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.activityId;
+    const activityId = structured.activityId;
     expect(jobs.getActivity(activityId)).toMatchObject({
       kind: "discussion",
       lifecycle: "open",
       waitingOn: "orchestrator",
       counts: { completed: 1 }
     });
+    await close();
+  });
+
+  it("projects retained foreground and exact-Job answers into ChatGPT-visible structured output", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+    const reportSections = [
+      [
+        "ISSUE38_E2E_SENTINEL",
+        "",
+        "## Files",
+        "- src/tools.ts"
+      ].join("\n"),
+      [
+        "## Tests",
+        "- output contract passed",
+        "",
+        "## Remaining",
+        "- none"
+      ].join("\n")
+    ];
+    const report = reportSections.join("\n\n");
+    const pending = client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "return a structured smoke report",
+        sessionMode: "new",
+        executionMode: "foreground"
+      }
+    });
+    await expect.poll(() => upstream.calls.length).toBe(1);
+    upstream.resolveNext({
+      structuredContent: { threadId: "issue-38-thread" },
+      content: reportSections.map((text) => ({ type: "text" as const, text }))
+    });
+
+    const foreground = await pending as { structuredContent?: Record<string, any> };
+    expect(foreground.structuredContent).toMatchObject({
+      state: "completed",
+      resultAvailability: "delivered",
+      resultOmitted: false,
+      answer: report
+    });
+    const chatGptForegroundMessage = JSON.stringify(foreground.structuredContent);
+    expect(chatGptForegroundMessage).toContain("ISSUE38_E2E_SENTINEL");
+    expect(chatGptForegroundMessage).toContain("## Remaining");
+
+    const jobId = foreground.structuredContent?.jobId as string;
+    const activityId = foreground.structuredContent?.activityId as string;
+    const exact = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "job", id: jobId } }
+    }) as { structuredContent?: Record<string, any> };
+    expect(exact.structuredContent?.items[0]).toMatchObject({
+      id: jobId,
+      result: { availability: "delivered", omitted: false },
+      answer: report
+    });
+    expect(JSON.stringify(exact.structuredContent)).toContain("ISSUE38_E2E_SENTINEL");
+
+    const activity = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "activity", id: activityId } }
+    }));
+    const summaryJob = activity.items.find((item: Record<string, any>) => item.id === jobId);
+    expect(summaryJob).not.toHaveProperty("answer");
+    expect(summaryJob.nextActions).toEqual([
+      expect.stringContaining(`id:\"${jobId}\"`)
+    ]);
+
+    const escapedReport = '"\\\n'.repeat(12_000);
+    const largePending = client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "return a large escaped report",
+        sessionMode: "new",
+        executionMode: "foreground"
+      }
+    });
+    await expect.poll(() => upstream.calls.length).toBe(2);
+    upstream.resolveNext({
+      structuredContent: { threadId: "issue-38-large-thread" },
+      content: [{ type: "text", text: escapedReport }]
+    });
+    const large = await largePending as { structuredContent?: Record<string, any> };
+    const boundedAnswer = large.structuredContent?.answer as string;
+    expect(Buffer.byteLength(JSON.stringify(boundedAnswer), "utf8") - 2)
+      .toBeLessThanOrEqual(MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES);
+    expect(boundedAnswer).toContain("truncated by output contract");
+    expect(large.structuredContent?.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining("model-authoritative primary answer was truncated")
+    ]));
     await close();
   });
 
@@ -707,57 +9701,156 @@ describe("bridge tools", () => {
         completionTrigger: "sealed-jobs-terminal"
       }
     });
-    const activityId = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.activityId;
-    const jobId = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeActivity?.jobId;
+    const startedStructured = parseToolJson(started);
+    const activityId = startedStructured.activityId;
+    const jobId = startedStructured.jobId;
     expect(jobs.getActivity(activityId)).toMatchObject({ lifecycle: "open", verification: "not-required" });
+    const initialVersion = jobs.getActivity(activityId)?.version as number;
 
     const crossScope = await rawCallTool({
       name: "codex_activity_update",
-      arguments: { scopeId: SCOPE_B, activityId, action: "seal" }
+      arguments: {
+        scopeId: SCOPE_B,
+        activityId,
+        expectedVersion: initialVersion,
+        operation: { kind: "seal" }
+      }
     });
     expect(crossScope.isError).toBe(true);
     expect(JSON.stringify(crossScope)).toContain("another conversation scope");
 
     const sealed = parseToolJson(await client.callTool({
       name: "codex_activity_update",
-      arguments: { activityId, action: "seal" }
+      arguments: {
+        activityId,
+        expectedVersion: initialVersion,
+        operation: { kind: "seal" }
+      }
     }));
-    expect(sealed.activity).toMatchObject({
+    expect(sealed.target).toMatchObject({
+      type: "activity",
+      id: activityId,
+      state: "sealed"
+    });
+    expect(jobs.getActivity(activityId)).toMatchObject({
       lifecycle: "sealed",
       waitingOn: "verification",
       verification: "pending",
       completionVersion: 1
     });
+    const pendingVerificationView = await client.callTool({
+      name: "codex_activity",
+      arguments: { activityId }
+    });
+    expect(parseToolJson(pendingVerificationView).feed).toMatchObject({
+        activeCount: 1,
+        active: [expect.objectContaining({ activityId, displayState: "verification" })],
+        completed: { agentCount: 0, activityCount: 0 }
+      });
     const illegalComplete = await client.callTool({
       name: "codex_activity_update",
-      arguments: { activityId, action: "complete" }
+      arguments: {
+        activityId,
+        expectedVersion: sealed.target.version,
+        operation: { kind: "complete" }
+      }
     });
     expect(illegalComplete.isError).toBe(true);
     expect(JSON.stringify(illegalComplete)).toContain("Finish Activity verification");
 
+    const missingFailureReason = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId,
+        expectedVersion: sealed.target.version,
+        operation: { kind: "verification-failed" }
+      }
+    });
+    expect(missingFailureReason.isError).toBe(true);
+    const missingEvidence = await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId,
+        expectedVersion: sealed.target.version,
+        operation: { kind: "verification-passed" }
+      }
+    });
+    expect(missingEvidence.isError).toBe(true);
+    const failed = parseToolJson(await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId,
+        expectedVersion: sealed.target.version,
+        operation: {
+          kind: "verification-failed",
+          reason: "The first independent review found a gap"
+        }
+      }
+    }));
+    expect(failed.target).toMatchObject({ type: "activity", id: activityId, state: "open" });
+    expect(jobs.getActivity(activityId)).toMatchObject({ lifecycle: "open", verification: "failed" });
+
     const verifying = parseToolJson(await client.callTool({
       name: "codex_activity_update",
-      arguments: { activityId, action: "start-verification" }
+      arguments: {
+        activityId,
+        expectedVersion: failed.target.version,
+        operation: { kind: "start-verification" }
+      }
     }));
-    expect(verifying.activity).toMatchObject({ verification: "verifying" });
+    expect(jobs.getActivity(activityId)).toMatchObject({ verification: "verifying" });
     const passed = parseToolJson(await client.callTool({
       name: "codex_activity_update",
       arguments: {
         activityId,
-        action: "verification-passed",
-        evidence: {
-          summary: "Reviewed the diff and ran the test suite",
-          jobIds: [jobId],
-          tests: ["npm test: exit 0"]
+        expectedVersion: verifying.target.version,
+        operation: {
+          kind: "verification-passed",
+          evidence: {
+            summary: "Reviewed the diff and ran the test suite",
+            jobIds: [jobId],
+            tests: ["npm test: exit 0"]
+          }
         }
       }
     }));
-    expect(passed.activity).toMatchObject({
+    expect(passed.target).toMatchObject({ type: "activity", id: activityId, state: "completed" });
+    expect(jobs.getActivity(activityId)).toMatchObject({
       lifecycle: "completed",
       verification: "verified",
       waitingOn: "none"
+    });
+    const verifiedView = await client.callTool({
+      name: "codex_activity",
+      arguments: { activityId }
+    });
+    expect(parseToolJson(verifiedView).feed).toMatchObject({
+        activeCount: 0,
+        completed: {
+          agentCount: 1,
+          activityCount: 1,
+          rows: [expect.objectContaining({ latestActivityId: activityId, verification: "verified" })]
+        }
+      });
+    const abandonedTask = await runTask(client, {
+      prompt: "create disposable work",
+      activityTitle: "Disposable Activity",
+      agentName: "Disposable Agent",
+      contextMode: "fresh"
+    });
+    const abandonedActivityId = taskActivityId(abandonedTask);
+    const abandoned = parseToolJson(await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId: abandonedActivityId,
+        expectedVersion: jobs.getActivity(abandonedActivityId)?.version,
+        operation: { kind: "abandon", reason: "No longer needed" }
+      }
+    }));
+    expect(abandoned.target).toMatchObject({
+      type: "activity",
+      id: abandonedActivityId,
+      state: "abandoned"
     });
     await close();
   });
@@ -765,7 +9858,7 @@ describe("bridge tools", () => {
   it("cancels every running child job before cancelling its Activity", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
     const running = parseToolJson(await client.callTool({
       name: "codex_task",
       arguments: {
@@ -776,26 +9869,200 @@ describe("bridge tools", () => {
       }
     }));
 
-    const cancelled = parseToolJson(await client.callTool({
+    const legacyCancel = await client.callTool({
       name: "codex_activity_update",
       arguments: {
         activityId: running.activityId,
         action: "cancel",
         reason: "The user stopped this Activity"
       }
+    });
+    expect(legacyCancel.isError).toBe(true);
+    expect(JSON.stringify(legacyCancel)).toContain("Unrecognized keys");
+    expect(upstream.aborts).toBe(0);
+
+    const activityVersion = jobs.getActivity(running.activityId)?.version as number;
+    const missingReason = await client.callTool({
+      name: "codex_cancel",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "61616161-6161-4161-8161-616161616161",
+        target: { kind: "activity", id: running.activityId },
+        expectedVersion: activityVersion
+      }
+    });
+    expect(missingReason.isError).toBe(true);
+    expect(JSON.stringify(missingReason)).toContain("reason");
+    expect(upstream.aborts).toBe(0);
+    const stale = await client.callTool({
+      name: "codex_cancel",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "62626262-6262-4262-8262-626262626262",
+        target: { kind: "activity", id: running.activityId },
+        expectedVersion: activityVersion + 1,
+        reason: "The user stopped this Activity"
+      }
+    });
+    expect(stale.isError).toBe(true);
+    expect(JSON.stringify(stale)).toContain("Activity version changed");
+    expect(upstream.aborts).toBe(0);
+    const crossScope = await rawCallTool({
+      name: "codex_cancel",
+      arguments: {
+        scopeId: SCOPE_B,
+        requestId: "63636363-6363-4363-8363-636363636362",
+        target: { kind: "activity", id: running.activityId },
+        expectedVersion: activityVersion,
+        reason: "The user stopped this Activity"
+      }
+    });
+    expect(crossScope.isError).toBe(true);
+    expect(JSON.stringify(crossScope)).toContain("another conversation scope");
+
+    const cancellationArguments = {
+      scopeId: SCOPE_A,
+      requestId: "63636363-6363-4363-8363-636363636363",
+      target: { kind: "activity", id: running.activityId },
+      expectedVersion: activityVersion,
+      reason: "The user stopped this Activity"
+    } as const;
+    const cancelled = parseToolJson(await client.callTool({
+      name: "codex_cancel",
+      arguments: cancellationArguments
     }));
+    const cancellationReplay = parseToolJson(await client.callTool({
+      name: "codex_cancel",
+      arguments: cancellationArguments
+    }));
+    expect(cancellationReplay).toEqual(cancelled);
     expect(cancelled).toMatchObject({
       action: "cancel",
-      activity: {
-        lifecycle: "cancelled",
-        waitingOn: "none",
-        counts: { running: 0, cancelled: 1, terminal: 1 }
-      },
-      cancelledJobIds: [running.jobId]
+      target: { type: "activity", id: running.activityId, state: "cancelled" },
+      affectedJobIds: [running.jobId],
+      policySource: "explicit-tool-input",
+      codexOutputCanMutatePolicy: false
     });
-    expect(cancelled.warning).toContain("not rolled back");
+    expect(cancelled.warnings).toEqual([expect.stringContaining("not rolled back")]);
     expect(upstream.aborts).toBe(1);
-    expect(jobs.get(running.jobId)).toMatchObject({ status: "cancelled" });
+    expect(jobs.get(running.jobId)).toMatchObject({
+      status: "cancelled",
+      terminalOrigin: "explicit-cancellation",
+      cancellationIntentId: expect.any(String)
+    });
+    expect(jobs.getActivity(running.activityId)).toMatchObject({
+      lifecycle: "cancelled",
+      waitingOn: "none"
+    });
+    expect(jobs.getCancellationOperation(SCOPE_A, cancellationArguments.requestId))
+      .toMatchObject({
+        source: "model-tool",
+        reason: cancellationArguments.reason,
+        status: "completed"
+      });
+    const cascadeIntents = jobs.listCancellationIntents({
+      requestId: cancellationArguments.requestId
+    });
+    expect(cascadeIntents).toHaveLength(2);
+    const parentIntent = cascadeIntents.find((intent) => intent.targetKind === "activity")!;
+    const childIntent = cascadeIntents.find((intent) => intent.targetJobId === running.jobId)!;
+    expect(parentIntent).toMatchObject({
+      source: "model-tool",
+      actionName: "cancel-activity",
+      status: "succeeded"
+    });
+    expect(childIntent).toMatchObject({
+      source: "activity-cascade",
+      actionName: "cancel-child-job",
+      parentIntentId: parentIntent.intentId,
+      cascadeId: parentIntent.intentId,
+      status: "succeeded"
+    });
+    const cascadeEvents = [
+      ...jobs.listActivityEvents(running.activityId),
+      ...jobs.listJobEvents(running.jobId)
+    ]
+      .sort((left, right) => left.scopeVersion - right.scopeVersion)
+      .filter((event) => [
+        "cancellation-intent-recorded",
+        "activity-terminating",
+        "job-terminating",
+        "job-cancelled",
+        "activity-cancelled"
+      ].includes(event.eventType));
+    const parentRecorded = cascadeEvents.findIndex((event) =>
+      event.eventType === "cancellation-intent-recorded" &&
+      (event.payload as Record<string, unknown>).cancellationIntentId === parentIntent.intentId
+    );
+    const activityTerminating = cascadeEvents.findIndex((event) =>
+      event.eventType === "activity-terminating"
+    );
+    const childRecorded = cascadeEvents.findIndex((event) =>
+      event.eventType === "cancellation-intent-recorded" &&
+      (event.payload as Record<string, unknown>).cancellationIntentId === childIntent.intentId
+    );
+    const childCancelled = cascadeEvents.findIndex((event) => event.eventType === "job-cancelled");
+    const activityCancelled = cascadeEvents.findIndex((event) => event.eventType === "activity-cancelled");
+    expect(parentRecorded).toBeGreaterThanOrEqual(0);
+    expect(activityTerminating).toBeGreaterThan(parentRecorded);
+    expect(childRecorded).toBeGreaterThan(activityTerminating);
+    expect(childCancelled).toBeGreaterThan(childRecorded);
+    expect(activityCancelled).toBeGreaterThan(childCancelled);
+    expect(cascadeEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "cancellation-intent-recorded",
+        payload: expect.objectContaining({ reason: cancellationArguments.reason })
+      })
+    ]));
+
+    const activityCardResult = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "full-history",
+        activityId: running.activityId
+      }
+    });
+    const activityCardView = validateActivityViewPrivateMetadata(
+      (activityCardResult as { _meta?: Record<string, unknown> })
+        ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
+    ).view;
+    expect(activityCardView.feed).toMatchObject({
+      history: {
+        rows: [expect.objectContaining({
+          activityId: running.activityId,
+          cancellations: [{
+            targetKind: "activity",
+            status: "succeeded",
+            reason: cancellationArguments.reason,
+            requestedAt: expect.any(String)
+          }]
+        })]
+      }
+    });
+
+    const { view: dashboardView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(dashboardView.terminalRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        latestTurn: expect.objectContaining({
+          status: "cancelled",
+          cancellation: {
+            targetKind: "activity",
+            status: "succeeded",
+            reason: cancellationArguments.reason,
+            requestedAt: expect.any(String)
+          }
+        })
+      })
+    ]));
+    const changedRetry = await client.callTool({
+      name: "codex_cancel",
+      arguments: { ...cancellationArguments, reason: "Different cancellation semantics" }
+    });
+    expect(changedRetry.isError).toBe(true);
+    expect(JSON.stringify(changedRetry)).toContain("different cancellation payload");
 
     const attach = await client.callTool({
       name: "codex_task",
@@ -825,7 +10092,8 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: {
         prompt: "first app turn",
-        sessionMode: "new",
+        agentName: "App Agent One",
+        contextMode: "fresh",
         executionMode: "background",
         activityTitle: "Parallel App turns"
       }
@@ -834,7 +10102,8 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: {
         prompt: "second app turn",
-        sessionMode: "new",
+        agentName: "App Agent Two",
+        contextMode: "fresh",
         executionMode: "background",
         activityId: first.activityId
       }
@@ -845,15 +10114,24 @@ describe("bridge tools", () => {
       arguments: { threadId: "app-thread-1" }
     }));
     expect(turnDetail).toMatchObject({
-      session: null,
-      turns: [expect.objectContaining({ jobId: first.jobId, turnId: "app-turn-1", status: "running" })]
+      kind: "thread",
+      items: expect.arrayContaining([
+        expect.objectContaining({ type: "thread", id: "app-thread-1" }),
+        expect.objectContaining({ type: "job", id: first.jobId, state: "running" })
+      ])
+    });
+    expect(jobs.get(first.jobId)).toMatchObject({
+      backendKind: "app-server",
+      upstreamRequestId: "app-turn-1"
     });
 
     const stopped = parseToolJson(await client.callTool({
-      name: "codex_activity_update",
+      name: "codex_activity_cancel",
       arguments: {
+        requestId: "64646464-6464-4464-8464-646464646464",
         activityId: first.activityId,
-        action: "cancel",
+        expectedVersion: jobs.getActivity(first.activityId)?.version,
+        reason: "The user stopped every turn in this Activity",
         acknowledgeAffectedJobIds: affected
       }
     }));
@@ -865,63 +10143,64 @@ describe("bridge tools", () => {
     expect(jobs.get(first.jobId)).toMatchObject({ status: "cancelled" });
     expect(jobs.get(second.jobId)).toMatchObject({ status: "cancelled" });
     expect(stopped).toMatchObject({
-      activity: { lifecycle: "cancelled", counts: { cancelled: 2, running: 0 } },
-      cancelledJobIds: expect.arrayContaining(affected),
-      collateralJobIds: []
+      target: { type: "activity", id: first.activityId, state: "cancelled" },
+      affectedJobIds: expect.arrayContaining(affected)
     });
     await close();
   });
 
-  it("permits an explicit workspace-write session only in an enabled profile", async () => {
+  it("applies an enabled bridge default of workspace-write without a caller override", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1" }),
+      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1", CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "workspace-write" }),
       upstream
     );
 
     await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "implement", sessionMode: "new", sandbox: "workspace-write" }
+      arguments: { prompt: "implement", sessionMode: "new" }
     });
     expect(upstream.calls[0]).toMatchObject({ name: "codex", args: { sandbox: "workspace-write" } });
 
     await close();
   });
 
-  it("permits danger-full-access while retaining read-only as the omitted default", async () => {
+  it("applies changed bridge access settings without changing task inputs", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const { client, close } = await connectTestClient(
+    const { client, settings, close } = await connectTestClient(
       configFor(root, {
         CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
-        CODEX_MCP_BRIDGE_APPROVAL_POLICY: "never"
+        CODEX_MCP_BRIDGE_APPROVAL_POLICY: "never",
+        CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY: "always-full"
       }),
       upstream
     );
 
     await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "full task", sessionMode: "new", sandbox: "danger-full-access" }
+      arguments: { prompt: "full task", sessionMode: "new" }
     });
     expect(upstream.calls[0]).toMatchObject({
       name: "codex",
       args: { sandbox: "danger-full-access", "approval-policy": "never" }
     });
 
+    settings.update({ accessStrategy: "read-only" }, settings.current.revision);
     await client.callTool({ name: "codex_task", arguments: { prompt: "inspect", sessionMode: "new" } });
     expect(upstream.calls[1]).toMatchObject({ args: { sandbox: "read-only" } });
     await close();
   });
 
-  it("uses and validates configured or per-call model settings for new sessions", async () => {
+  it("uses and validates configured or per-call exact selections for new sessions", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const config = configFor(root, {
       CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
       CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
     });
-    const { client, close } = await connectTestClient(config, upstream);
+    const { client, jobs, close } = await connectTestClient(config, upstream);
 
     await client.callTool({
       name: "codex_task",
@@ -932,8 +10211,7 @@ describe("bridge tools", () => {
       arguments: {
         prompt: "override",
         sessionMode: "new",
-        model: "gpt-5.6-terra",
-        reasoningEffort: "medium"
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "medium" }
       }
     });
     expect(upstream.calls[0]).toMatchObject({
@@ -945,27 +10223,344 @@ describe("bridge tools", () => {
 
     const rejected = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "invalid", sessionMode: "new", model: "gpt-5.5", reasoningEffort: "max" }
+      arguments: {
+        prompt: "invalid",
+        sessionMode: "new",
+        selection: { model: "gpt-5.5", reasoningEffort: "max" }
+      }
     });
-    expect(rejected.isError).toBe(true);
-    expect(JSON.stringify(rejected)).toContain("does not support reasoning effort");
+    expect(rejected).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "MODEL_UNAVAILABLE" }
+      }
+    });
     expect(upstream.calls).toHaveLength(2);
 
     await close();
   });
 
-  it("auto mode continues the only compatible session in the scope", async () => {
+  it("keeps a running job on its admission-time policy decision", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
+      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
+    });
+    const { client, jobs, close } = await connectTestClient(config, upstream);
+
+    const running = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "hold admission decision", sessionMode: "new" }
+    }));
+    expect(running).toMatchObject({
+      actualModel: "gpt-5.6-sol",
+      actualReasoningEffort: "max",
+      rerouted: false
+    });
+
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    expect(upstream.calls[0]).toMatchObject({
+      args: { model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
+    });
+    upstream.resolveNext(fakeCodexResult("admission-thread"));
+    await waitForJobStatus(client, running.jobId, "completed");
+    expect(jobs.get(running.jobId)?.executionDecision).toMatchObject({
+      effectiveSelection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+      source: "caller"
+    });
+    await close();
+  });
+
+  it("records requested, effective, accepted, and rerouted execution metadata without prompt text", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const running = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "PRIVATE_AUDIT_PROMPT_MUST_NOT_PERSIST",
+        sessionMode: "new",
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+      }
+    }));
+    upstream.progressNext({
+      progress: 1,
+      message: "turn started",
+      event: {
+        eventId: "turn:audit-turn",
+        type: "turn",
+        phase: "started",
+        createdAt: 100,
+        summary: "Codex turn started.",
+        details: {
+          evidence: "turn/start-accepted",
+          selection: {
+            model: "gpt-5.6-terra",
+            reasoningEffort: "high",
+            serviceTier: null
+          }
+        }
+      }
+    });
+    upstream.progressNext({
+      progress: 2,
+      message: "model rerouted",
+      event: {
+        eventId: "reroute:audit-turn",
+        type: "model",
+        phase: "updated",
+        createdAt: 110,
+        summary: "Model rerouted.",
+        details: {
+          kind: "rerouted",
+          fromModel: "gpt-5.6-terra",
+          toModel: "gpt-5.6-sol",
+          reason: "fixture-policy"
+        }
+      }
+    });
+    const status = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: { jobId: running.jobId }
+    }));
+    expect(status).toMatchObject({ kind: "job", status: "running" });
+    expect(jobs.get(running.jobId)?.executionDecision).toMatchObject({
+      requestedSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+      effectiveSelection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
+    });
+    expect(jobs.get(running.jobId)?.publicEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "model",
+        details: expect.objectContaining({
+          kind: "rerouted",
+          fromModel: "gpt-5.6-terra",
+          toModel: "gpt-5.6-sol",
+          reason: "fixture-policy"
+        })
+      })
+    ]));
+    expect(JSON.stringify(status)).not.toContain("PRIVATE_AUDIT_PROMPT");
+    upstream.resolveNext(fakeCodexResult("audit-thread"));
+    await waitForJobStatus(client, running.jobId, "completed");
+    await close();
+  });
+
+  it("retains structured context-window recovery metadata across background status and exact replay", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const sessions = new SessionRegistry();
+    const { client, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      sessions
+    );
+    const requestId = "81818181-8181-4181-8181-818181818181";
+    const args = {
+      requestId,
+      activityPresentationId: requestId,
+      prompt: "exhaust context",
+      agent: { mode: "new", name: "Context Recovery" }
+    };
+    const running = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: args
+    }));
+    upstream.resolveNext({
+      isError: true,
+      content: [{ type: "text", text: "Context window exceeded." }],
+      structuredContent: {
+        threadId: "context-thread",
+        turnId: "context-turn",
+        turnStatus: "failed",
+        backendKind: "app-server",
+        error: {
+          code: "CONTEXT_WINDOW_EXCEEDED",
+          message: "Context window exceeded.",
+          retryable: true,
+          upstreamKind: "contextWindowExceeded",
+          nextActions: ["Start fresh with an explicit handoff summary."]
+        }
+      }
+    });
+    const failed = await waitForJobStatus(client, running.jobId, "failed");
+    expect(failed).toMatchObject({
+      status: "failed",
+      threadId: "context-thread",
+      error: {
+        code: "CONTEXT_WINDOW_EXCEEDED",
+        retryable: true
+      }
+    });
+    expect(sessions.get("context-thread")).toMatchObject({
+      threadId: "context-thread",
+      backendKind: "app-server"
+    });
+    expect(jobs.listAgents(SCOPE_A)[0]).toMatchObject({
+      currentThreadId: "context-thread",
+      lifecycle: "idle"
+    });
+    const replay = await client.callTool({ name: "codex_task", arguments: args });
+    expect(replay).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "CONTEXT_WINDOW_EXCEEDED", retryable: true },
+        actualModel: expect.any(String)
+      }
+    });
+    expect(upstream.calls).toHaveLength(1);
+    await close();
+  });
+
+  it("keeps an admitted App Server thread resumable through a worker crash and replacement", async () => {
+    const root = temporaryRoot();
+    const upstream = new CrashThenResumeBridgeUpstream();
+    const sessions = new SessionRegistry();
+    const { client, jobs, close } = await connectTestClient(
+      configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+      upstream,
+      sessions
+    );
+    const first = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "admit then crash",
+        activity: { mode: "new", title: "Worker crash recovery" },
+        agent: { mode: "new", name: "Crash Recovery" },
+        executionMode: "background"
+      }
+    }));
+    const failed = await waitForJobStatus(client, first.jobId, "failed");
+    expect(failed).toMatchObject({
+      threadId: "bridge-crash-thread",
+      error: { message: expect.stringContaining("worker crashed") }
+    });
+    expect(sessions.get("bridge-crash-thread")).toMatchObject({
+      threadId: "bridge-crash-thread",
+      backendKind: "app-server"
+    });
+    expect(jobs.getAgent(first.agentId)).toMatchObject({
+      currentThreadId: "bridge-crash-thread",
+      lifecycle: "idle"
+    });
+
+    const resumed = await runTask(client, {
+      prompt: "resume on replacement worker",
+      activity: { mode: "existing", id: first.activityId },
+      agent: { mode: "existing", id: first.agentId, context: "continue" }
+    });
+    expect(parseToolJson(resumed)).toMatchObject({
+      threadId: "bridge-crash-thread",
+      agentId: first.agentId
+    });
+    expect(sessions.get("bridge-crash-thread")).toMatchObject({
+      sessionId: "bridge-crash-session"
+    });
+    expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex-reply"]);
+    await close();
+  });
+
+
+
+  it("applies an App Server policy change on the same thread and updates execution state", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const sessions = new SessionRegistry();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server",
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
+      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
+    });
+    const { client, close } = await connectTestClient(config, upstream, sessions);
+
+    const started = await runTask(client, { prompt: "start app thread", sessionMode: "new" });
+    const agentId = parseToolJson(started).agentId;
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "fixed",
+          selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+    const continued = await runTask(client, {
+      prompt: "continue with changed selection",
+      agentId,
+      contextMode: "continue"
+    });
+
+    expect(upstream.calls[1]).toMatchObject({
+      name: "codex-reply",
+      args: {
+        threadId: "thread-1",
+        model: "gpt-5.6-terra",
+        config: { model_reasoning_effort: "high" },
+        _bridgeBackendKind: "app-server"
+      }
+    });
+    expect((continued as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        threadId: "thread-1",
+        actualModel: "gpt-5.6-terra",
+        actualReasoningEffort: "high",
+        rerouted: false
+      });
+    expect((started as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        actualModel: "gpt-5.6-sol",
+        actualReasoningEffort: "max"
+      });
+    expect(sessions.get("thread-1")).toMatchObject({
+      threadId: "thread-1",
+      backendKind: "app-server",
+      selection: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+      policyRevision: 1
+    });
+    await close();
+  });
+
+  it("auto mode continues the only compatible session attached to an Activity", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+
+    const first = await runTask(client, { prompt: "first" });
+    const activityId = taskActivityId(first);
+    await runTask(client, { prompt: "follow up", activityId });
+
+    expect(upstream.calls[1]).toEqual({
+      name: "codex-reply",
+      args: { threadId: "thread-1", prompt: "follow up", cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request", "approvals-reviewer": "user", "app-tool-approval-mode": "auto", _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
+    });
+    expect(jobs.get(parseToolJson(first).jobId)?.sessionDecision).toMatchObject({
+      action: "start",
+      reason: "activity-new"
+    });
+    await close();
+  });
+
+  it("starts a new thread for a new Activity even when the scope has a compatible thread", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(configFor(root), upstream);
 
-    await runTask(client, { prompt: "first", sessionMode: "new" });
-    await runTask(client, { prompt: "follow up" });
+    await runTask(client, { prompt: "first Activity" });
+    await runTask(client, { prompt: "separate Activity" });
 
-    expect(upstream.calls[1]).toEqual({
-      name: "codex-reply",
-      args: { threadId: "thread-1", prompt: "follow up", _bridgeBackendKind: "mcp-server" }
-    });
+    expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex"]);
     await close();
   });
 
@@ -974,9 +10569,13 @@ describe("bridge tools", () => {
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(configFor(root), upstream);
 
-    await runTask(client, { prompt: "scope A", sessionMode: "new", scopeId: SCOPE_A });
+    const scopeA = await runTask(client, { prompt: "scope A", scopeId: SCOPE_A });
     await runTask(client, { prompt: "scope B", scopeId: SCOPE_B });
-    await runTask(client, { prompt: "scope A follow-up", scopeId: SCOPE_A });
+    await runTask(client, {
+      prompt: "scope A follow-up",
+      scopeId: SCOPE_A,
+      activityId: taskActivityId(scopeA)
+    });
 
     expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex", "codex-reply"]);
     expect(upstream.calls[2]).toMatchObject({
@@ -988,7 +10587,7 @@ describe("bridge tools", () => {
   it("derives and isolates ChatGPT scopes from host metadata without a model-provided scopeId", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const { rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    const { rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
     const metadataA = {
       "openai/organization": "anonymous-org",
       "openai/subject": "anonymous-user",
@@ -1001,12 +10600,15 @@ describe("bridge tools", () => {
       arguments: {
         requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         prompt: "start derived scope",
-        sessionMode: "new"
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: { mode: "new", title: "Derived scope task", policy: { kind: "investigation" } },
+        agent: { mode: "new", name: "Derived Scope Agent" },
+        executionMode: "foreground"
       },
-      _meta: metadataA
+      _meta: { ...metadataA, "codex/activityPresentationId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }
     });
-    const derivedScope = (started as { structuredContent?: Record<string, any> })
-      .structuredContent?.bridgeSession?.scopeId;
+    const startedStructured = parseToolJson(started);
+    const derivedScope = jobs.get(startedStructured.jobId)?.scopeId;
     expect(derivedScope).toMatch(SCOPE_ID_PATTERN);
     expect(derivedScope).not.toBe(SCOPE_A);
 
@@ -1016,30 +10618,66 @@ describe("bridge tools", () => {
         scopeId: SCOPE_B,
         requestId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         prompt: "start derived scope",
-        sessionMode: "new"
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: { mode: "new", title: "Derived scope task", policy: { kind: "investigation" } },
+        agent: { mode: "new", name: "Derived Scope Agent" },
+        executionMode: "foreground"
+      },
+      _meta: { ...metadataA, "codex/activityPresentationId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }
+    });
+    const retriedStructured = parseToolJson(retriedWithIgnoredInput);
+    expect(retriedStructured).toMatchObject({
+      threadId: startedStructured.threadId,
+      activityId: startedStructured.activityId,
+      jobId: startedStructured.jobId,
+      agentId: startedStructured.agentId,
+      replay: true
+    });
+    expect((retriedWithIgnoredInput as { _meta?: unknown })._meta).toBeUndefined();
+    const compactPresentation = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        mode: "compact-monitor",
+        presentationId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        activityId: startedStructured.activityId
       },
       _meta: metadataA
     });
-    expect((retriedWithIgnoredInput as { structuredContent?: Record<string, any> }).structuredContent)
-      .toEqual((started as { structuredContent?: Record<string, any> }).structuredContent);
+    expect(privateActivityView(compactPresentation)).toMatchObject({
+      mountedActivity: {
+        activityId: startedStructured.activityId,
+        cardGeneration: 1
+      },
+      mountedPresentation: {
+        kind: "automatic",
+        activityPresentationId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      },
+      watcherPolicy: { live: true, ownsCompletionHandoff: true }
+    });
     expect(upstream.calls).toHaveLength(1);
 
     const continued = await rawCallTool({
       name: "codex_task",
       arguments: {
         requestId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
-        prompt: "continue derived scope"
-      },
-      _meta: metadataA
-    });
-    expect((continued as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({
-        bridgeSession: {
-          scopeId: derivedScope,
-          action: "continue",
-          threadId: "thread-1"
+        prompt: "continue derived scope",
+        executionMode: "foreground",
+        activity: {
+          mode: "existing",
+          id: startedStructured.activityId
         }
-      });
+      },
+      _meta: { ...metadataA, "codex/activityPresentationId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" }
+    });
+    const continuedStructured = parseToolJson(continued);
+    expect(continuedStructured).toMatchObject({
+      activityId: startedStructured.activityId,
+      threadId: "thread-1"
+    });
+    expect(jobs.get(continuedStructured.jobId)?.sessionDecision).toMatchObject({
+      action: "continue",
+      threadId: "thread-1"
+    });
 
     const statusA = parseToolJson(
       await rawCallTool({ name: "codex_status", arguments: {}, _meta: metadataA })
@@ -1060,20 +10698,10 @@ describe("bridge tools", () => {
       _meta: metadataA
     });
 
-    expect(statusA.scopeView).toEqual({
-      mode: "scoped",
-      scopeId: derivedScope,
-      source: "host-metadata",
-      keyVersion: 1,
-      explicitInputIgnored: false
-    });
+    expect(statusA.scope).toEqual({ mode: "scoped", source: "host-metadata" });
     expect(statusA.scopeCounts).toMatchObject({ sessions: 1, jobs: 2 });
     expect(statusB.scopeCounts).toMatchObject({ sessions: 0, jobs: 0 });
-    expect(explicitIgnored.scopeView).toMatchObject({
-      scopeId: derivedScope,
-      source: "host-metadata",
-      explicitInputIgnored: true
-    });
+    expect(explicitIgnored.scope).toEqual({ mode: "scoped", source: "host-metadata" });
     expect(deniedAudit.isError).toBe(true);
     expect(JSON.stringify(deniedAudit)).toContain("cannot request the bridge-wide audit view");
     expect(JSON.stringify(statusA)).not.toContain("chat-session-a");
@@ -1085,12 +10713,13 @@ describe("bridge tools", () => {
   it("requires an explicit compatibility scope only when host metadata is absent", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const { rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    const { rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
 
     const missing = await rawCallTool({
       name: "codex_task",
       arguments: {
         requestId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        activityPresentationId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
         prompt: "missing scope"
       }
     });
@@ -1102,20 +10731,22 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_A,
         requestId: "abababab-abab-4aba-8aba-abababababab",
+        activityPresentationId: "abababab-abab-4aba-8aba-abababababab",
         prompt: "compatibility scope",
-        sessionMode: "new"
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: { mode: "new", title: "Compatibility scope task" },
+        agent: { mode: "new", name: "Compatibility Agent" }
       }
     });
-    expect((compatible as { structuredContent?: Record<string, any> }).structuredContent)
-      .toMatchObject({ bridgeSession: { scopeId: SCOPE_A } });
+    expect(jobs.get(parseToolJson(compatible).jobId)?.scopeId).toBe(SCOPE_A);
     await close();
   });
 
   it("uses the same host-derived scope for job cancellation", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { rawCallTool, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+    const { rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
       upstream
     );
     const metadata = { "openai/session": "cancel-session" };
@@ -1125,15 +10756,24 @@ describe("bridge tools", () => {
         arguments: {
           requestId: "acacacac-acac-4aca-8aca-acacacacacac",
           prompt: "cancel derived job",
-          sessionMode: "new"
+          project: { name: "Test Project", registryRevision: 1 },
+          activity: { mode: "new", title: "Cancelable derived task", policy: { kind: "implementation" } },
+          agent: { mode: "new", name: "Cancellation Agent" }
         },
-        _meta: metadata
+        _meta: { ...metadata, "codex/activityPresentationId": "acacacac-acac-4aca-8aca-acacacacacac" }
       })
     );
+    await Promise.resolve();
+    const currentVersion = jobs.get(started.jobId)?.version as number;
 
     const denied = await rawCallTool({
       name: "codex_cancel",
-      arguments: { jobId: started.jobId },
+      arguments: {
+        requestId: "adadadad-adad-4ada-8ada-adadadadadad",
+        jobId: started.jobId,
+        expectedVersion: currentVersion,
+        reason: "The user stopped this job"
+      },
       _meta: { "openai/session": "another-cancel-session" }
     });
     expect(denied.isError).toBe(true);
@@ -1142,18 +10782,23 @@ describe("bridge tools", () => {
     const cancelled = parseToolJson(
       await rawCallTool({
         name: "codex_cancel",
-        arguments: { jobId: started.jobId },
+        arguments: {
+          requestId: "aeaeaeae-aeae-4aea-8aea-aeaeaeaeaeae",
+          jobId: started.jobId,
+          expectedVersion: currentVersion,
+          reason: "The user stopped this job"
+        },
         _meta: metadata
       })
     );
-    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.job.status).toBe("cancelled");
     await close();
   });
 
   it("normalizes UUID casing before routing sessions", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const { client, close } = await connectTestClient(configFor(root), upstream);
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
 
     const started = await client.callTool({
       name: "codex_task",
@@ -1163,44 +10808,56 @@ describe("bridge tools", () => {
         sessionMode: "new"
       }
     });
-    expect((started as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
-      bridgeSession: { scopeId: UPPERCASE_SCOPE.toLowerCase() }
-    });
+    expect(jobs.get(parseToolJson(started).jobId)?.scopeId).toBe(UPPERCASE_SCOPE.toLowerCase());
     const status = parseToolJson(
       await client.callTool({
         name: "codex_status",
         arguments: { scopeId: UPPERCASE_SCOPE.toLowerCase() }
       })
     );
-    expect(status.sessions).toHaveLength(1);
+    expect(status.counts.sessions).toBe(1);
     await close();
   });
 
-  it("requires an exact thread after parallel work creates multiple compatible sessions", async () => {
+  it("requires an exact Agent after parallel work creates multiple Activity assignments", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(configFor(root), upstream);
 
-    await runTask(client, { prompt: "plan", sessionMode: "new" });
-    await runTask(client, { prompt: "build", sessionMode: "new" });
+    const plan = await runTask(client, {
+      prompt: "plan",
+      agentName: "Planner",
+      contextMode: "fresh"
+    });
+    const activityId = taskActivityId(plan);
+    const planAgentId = parseToolJson(plan).agentId;
+    const build = await runTask(client, {
+      prompt: "build",
+      agentName: "Builder",
+      contextMode: "fresh",
+      activityId
+    });
+    const buildAgentId = parseToolJson(build).agentId;
     const ambiguous = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "which thread?" }
+      arguments: { prompt: "which thread?", activityId }
     });
     expect(ambiguous.isError).toBe(true);
-    expect(JSON.stringify(ambiguous)).toContain("Multiple compatible Codex threads");
-    expect(JSON.stringify(ambiguous)).toContain("thread-1");
-    expect(JSON.stringify(ambiguous)).toContain("thread-2");
+    expect(JSON.stringify(ambiguous)).toContain("AGENT_ID_REQUIRED");
+    expect(JSON.stringify(ambiguous)).not.toContain("thread-1");
+    expect(JSON.stringify(ambiguous)).not.toContain("thread-2");
 
     await runTask(client, {
       prompt: "refine plan",
-      sessionMode: "continue",
-      threadId: "thread-1"
+      agentId: planAgentId,
+      contextMode: "continue",
+      activityId
     });
     await runTask(client, {
       prompt: "continue build",
-      sessionMode: "continue",
-      threadId: "thread-2"
+      agentId: buildAgentId,
+      contextMode: "continue",
+      activityId
     });
 
     expect(upstream.calls.slice(2)).toEqual([
@@ -1209,7 +10866,9 @@ describe("bridge tools", () => {
         args: {
           threadId: "thread-1",
           prompt: "refine plan",
-          _bridgeBackendKind: "mcp-server"
+          cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request",
+          "approvals-reviewer": "user", "app-tool-approval-mode": "auto",
+          _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" }
         }
       },
       {
@@ -1217,7 +10876,9 @@ describe("bridge tools", () => {
         args: {
           threadId: "thread-2",
           prompt: "continue build",
-          _bridgeBackendKind: "mcp-server"
+          cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request",
+          "approvals-reviewer": "user", "app-tool-approval-mode": "auto",
+          _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" }
         }
       }
     ]);
@@ -1227,8 +10888,8 @@ describe("bridge tools", () => {
   it("deduplicates request retries and rejects request-id reuse with changed arguments", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
       upstream
     );
     const requestId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -1236,20 +10897,35 @@ describe("bridge tools", () => {
       scopeId: SCOPE_A,
       requestId,
       prompt: "one logical task",
-      sessionMode: "new",
-      activityTitle: "Deduplicated Activity",
-      activityKind: "investigation" as const,
-      executionMode: "auto" as const
+      activity: {
+        mode: "new" as const,
+        title: "Deduplicated Activity",
+        policy: { kind: "investigation" as const }
+      },
+      agent: { mode: "new" as const, name: "Deduplicated Agent" },
+      executionMode: "background" as const
     };
 
-    const first = parseToolJson(
-      await client.callTool({ name: "codex_task", arguments: arguments_ })
-    );
-    const retry = parseToolJson(
-      await client.callTool({ name: "codex_task", arguments: arguments_ })
-    );
+    const firstResult = await client.callTool({ name: "codex_task", arguments: arguments_ });
+    const retryResult = await client.callTool({ name: "codex_task", arguments: arguments_ });
+    const first = parseToolJson(firstResult);
+    const retry = parseToolJson(retryResult);
     expect(retry.jobId).toBe(first.jobId);
     expect(retry.activityId).toBe(first.activityId);
+    expect((firstResult as { _meta?: unknown })._meta).toBeUndefined();
+    expect((retryResult as { _meta?: unknown })._meta).toBeUndefined();
+    const compactPresentation = await presentCompactActivity(
+      client,
+      first.activityId,
+      requestId
+    );
+    expect(privateActivityView(compactPresentation)).toMatchObject({
+      mountedActivity: { activityId: first.activityId, cardGeneration: 1 },
+      mountedPresentation: {
+        kind: "automatic",
+        activityPresentationId: requestId
+      }
+    });
     expect(upstream.calls).toHaveLength(1);
 
     const changed = await client.callTool({
@@ -1260,59 +10936,266 @@ describe("bridge tools", () => {
     expect(JSON.stringify(changed)).toContain("already used for a different Codex task");
     const changedActivity = await client.callTool({
       name: "codex_task",
-      arguments: { ...arguments_, activityTitle: "Different Activity" }
+      arguments: {
+        ...arguments_,
+        activity: { ...arguments_.activity, title: "Different Activity" }
+      }
     });
     expect(changedActivity.isError).toBe(true);
     expect(JSON.stringify(changedActivity)).toContain("already used for a different Codex task");
+    const changedPresentation = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        ...arguments_,
+        activityPresentationId: "24242424-0000-4000-8000-000000000099"
+      }
+    }));
+    expect(changedPresentation.jobId).toBe(first.jobId);
+    expect(changedPresentation.activityId).toBe(first.activityId);
+    const omittedPresentation = await client.callTool({
+      name: "codex_task",
+      arguments: { ...arguments_ }
+    });
+    expect(parseToolJson(omittedPresentation)).toMatchObject({
+      activityId: first.activityId,
+      jobId: first.jobId,
+      replay: true
+    });
+    expect((omittedPresentation as { _meta?: unknown })._meta).toBeUndefined();
 
     upstream.resolveNext(fakeCodexResult("deduped-thread"));
     await waitForJobStatus(client, first.jobId, "completed");
     const completedRetry = await client.callTool({ name: "codex_task", arguments: arguments_ });
-    expect(
-      (completedRetry as { structuredContent?: Record<string, any> }).structuredContent
-    ).toMatchObject({
+    expect(parseToolJson(completedRetry)).toMatchObject({
       threadId: "deduped-thread",
-      bridgeSession: { scopeId: SCOPE_A, requestId },
-      bridgeActivity: { activityId: first.activityId, jobId: first.jobId, executionMode: "auto" }
+      requestId,
+      activityId: first.activityId,
+      jobId: first.jobId,
+      executionMode: "background",
+      replay: true
     });
+    expect((completedRetry as { _meta?: unknown })._meta).toBeUndefined();
     expect(upstream.calls).toHaveLength(1);
     await close();
   });
 
-  it("keeps an omitted-session-mode retry stable after the saved default changes", async () => {
+  it("registers concurrent exact v4 retries before duplicating Agent creation", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const arguments_ = {
+      requestId: "37373737-3737-4737-8737-373737373737",
+      prompt: "one concurrent logical task",
+      activity: {
+        mode: "new" as const,
+        title: "Concurrent retry",
+        policy: { kind: "implementation" as const }
+      },
+      agent: { mode: "new" as const, name: "Concurrent Retry Agent" },
+      executionMode: "background" as const
+    };
+
+    const [first, second] = await Promise.all([
+      client.callTool({ name: "codex_task", arguments: arguments_ }),
+      client.callTool({ name: "codex_task", arguments: arguments_ })
+    ]);
+    const firstJob = parseToolJson(first);
+    const secondJob = parseToolJson(second);
+    expect(secondJob.jobId).toBe(firstJob.jobId);
+    expect(secondJob.activityId).toBe(firstJob.activityId);
+    expect(upstream.calls).toHaveLength(1);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(1);
+
+    upstream.resolveNext(fakeCodexResult("concurrent-retry-thread"));
+    await waitForJobStatus(client, firstJob.jobId, "completed");
+    await close();
+  });
+
+  it("rolls back nested Activity policy and Agent creation when job admission fails", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "1"
+    });
+    const { client, jobs, close } = await connectTestClient(config, upstream);
+    const admitted = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "occupy the only admission slot",
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Occupying Agent" }
+      }
+    }));
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(1);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(1);
+
+    const rejected = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "must roll back before admission",
+        activity: {
+          mode: "new",
+          title: "Rolled-back Activity",
+          policy: {
+            kind: "implementation",
+            handoff: "verify",
+            completion: "sealed-jobs-terminal"
+          }
+        },
+        agent: { mode: "new", name: "Rolled-back Agent" }
+      }
+    });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toContain("Too many Codex jobs are running");
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(1);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(1);
+    expect(jobs.listActivities(SCOPE_A, 100, 0))
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ title: "Rolled-back Activity" })]));
+    expect(jobs.listAgents(SCOPE_A, 100, 0))
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ agentName: "Rolled-back Agent" })]));
+
+    upstream.resolveNext(fakeCodexResult("occupying-thread"));
+    await waitForJobStatus(client, admitted.jobId, "completed");
+    await close();
+  });
+
+  it("normalizes v4 defaults and exact model selection across semantic retries", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const arguments_ = {
+      scopeId: SCOPE_A,
+      requestId: "34343434-3434-4434-8434-343434343434",
+      activityPresentationId: "34343434-3434-4434-8434-343434343434",
+      prompt: "normalize admitted defaults",
+      project: { name: "Test Project", registryRevision: 1 },
+      activity: { mode: "new" as const, title: "Normalized defaults" },
+      agent: { mode: "new" as const }
+    };
+
+    const first = await rawCallTool({ name: "codex_task", arguments: arguments_ });
+    const admitted = jobs.listForScope(SCOPE_A)[0];
+    expect(admitted).toMatchObject({
+      requestHashVersion: 6,
+      executionMode: "background",
+      executionDecision: {
+        effectiveSelection: expect.objectContaining({
+          model: expect.any(String),
+          reasoningEffort: expect.any(String)
+        })
+      }
+    });
+    const effectiveSelection = admitted!.executionDecision!.effectiveSelection;
+    const retry = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        ...arguments_,
+        activity: {
+          mode: "new",
+          title: "Normalized defaults",
+          policy: { kind: "other", handoff: "none", completion: "manual" }
+        },
+        agent: { mode: "new", name: "Codex Agent 34343434-3434-4434-8434-343434343434" },
+        executionMode: "background",
+        selection: {
+          model: effectiveSelection.model,
+          reasoningEffort: effectiveSelection.reasoningEffort
+        }
+      }
+    });
+    expect(parseToolJson(retry)).toMatchObject({
+      activityId: parseToolJson(first).activityId,
+      jobId: admitted!.jobId,
+      replay: true
+    });
+    expect(upstream.calls).toHaveLength(1);
+
+    const differentSelection = effectiveSelection.model === "gpt-5.6-terra"
+      ? { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      : { model: "gpt-5.6-terra", reasoningEffort: "high" };
+    const changedSelection = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        ...arguments_,
+        selection: differentSelection
+      }
+    });
+    expect(changedSelection.isError).toBe(true);
+    expect(JSON.stringify(changedSelection)).toContain(
+      "requestId was already used for a different Codex task"
+    );
+    expect(upstream.calls).toHaveLength(1);
+    await close();
+  });
+
+  it("keeps an exact-selection retry stable after a fixed-policy change", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const config = configFor(root);
     const settings = new UserSettingsStore(config);
+    const catalog = new FakeModelCatalog();
     const { rawCallTool, close } = await connectTestClient(
       config,
       upstream,
       undefined,
-      new FakeModelCatalog(),
+      catalog,
       settings
     );
     const arguments_ = {
       scopeId: SCOPE_A,
       requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-      prompt: "same raw request with an omitted mode"
+      executionPolicyRef: settings.executionPolicyRef(
+        settings.current,
+        modelCatalogAdmissionFingerprint(catalog.getCachedCatalog().models)
+      ),
+      activityPresentationId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      prompt: "same raw request with an omitted mode",
+      project: { name: "Test Project", registryRevision: 1 },
+      activity: {
+        mode: "new" as const,
+        title: "Stable exact-selection retry",
+        policy: { kind: "investigation" as const }
+      },
+      agent: { mode: "new" as const, name: "Stable Retry Agent" },
+      selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
     };
 
     const first = await rawCallTool({ name: "codex_task", arguments: arguments_ });
-    settings.update({ defaultSessionMode: "new" }, 0);
+    settings.update({
+      modelPolicy: {
+        mode: "fixed",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+        constraints: { allowDelegation: true }
+      }
+    }, 0);
     const retry = await rawCallTool({ name: "codex_task", arguments: arguments_ });
 
-    expect((retry as { structuredContent?: Record<string, any> }).structuredContent).toEqual(
-      (first as { structuredContent?: Record<string, any> }).structuredContent
-    );
+    const firstStructured = parseToolJson(first);
+    const retryStructured = parseToolJson(retry);
+    expect(retryStructured).toMatchObject({
+      activityId: firstStructured.activityId,
+      jobId: firstStructured.jobId,
+      executionMode: "background",
+      requestId: arguments_.requestId,
+      replay: true
+    });
     expect(upstream.calls).toHaveLength(1);
     await close();
   });
 
-  it("requires explicit adoption before moving a thread across scopes", async () => {
+  it("retires low-level thread adoption and preserves scope-local Agent ownership", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const { client, close } = await connectTestClient(configFor(root), upstream);
-    await runTask(client, { prompt: "start", sessionMode: "new", scopeId: SCOPE_A });
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    await runTask(client, {
+      prompt: "start",
+      scopeId: SCOPE_A,
+      agentName: "Owned Agent",
+      contextMode: "fresh"
+    });
 
     const denied = await client.callTool({
       name: "codex_task",
@@ -1324,9 +11207,10 @@ describe("bridge tools", () => {
       }
     });
     expect(denied.isError).toBe(true);
-    expect(JSON.stringify(denied)).toContain("another conversation scope");
+    expect(JSON.stringify(denied)).toContain("threadId");
+    expect(JSON.stringify(denied)).toContain("Unrecognized key");
 
-    await client.callTool({
+    const adoption = await client.callTool({
       name: "codex_task",
       arguments: {
         scopeId: SCOPE_B,
@@ -1336,23 +11220,25 @@ describe("bridge tools", () => {
         adoptThread: true
       }
     });
+    expect(adoption.isError).toBe(true);
+    expect(JSON.stringify(adoption)).toContain("Unrecognized keys");
     const statusA = parseToolJson(
       await client.callTool({ name: "codex_status", arguments: { scopeId: SCOPE_A } })
     );
     const statusB = parseToolJson(
       await client.callTool({ name: "codex_status", arguments: { scopeId: SCOPE_B } })
     );
-    expect(statusA.sessions).toEqual([]);
-    expect(statusB.sessions).toEqual([
-      expect.objectContaining({ threadId: "thread-1", scopeId: SCOPE_B })
-    ]);
+    expect(statusA.counts).toMatchObject({ sessions: 1, jobs: 1 });
+    expect(statusB.counts).toMatchObject({ sessions: 0, jobs: 0 });
+    expect(jobs.listForScope(SCOPE_A)).toHaveLength(1);
+    expect(jobs.listForScope(SCOPE_B)).toHaveLength(0);
     await close();
   });
 
   it("filters status details by scope and exposes all scopes only on explicit audit", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
-    const { client, rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
     await runTask(client, { prompt: "A", sessionMode: "new", scopeId: SCOPE_A });
     await runTask(client, { prompt: "B", sessionMode: "new", scopeId: SCOPE_B });
 
@@ -1369,22 +11255,18 @@ describe("bridge tools", () => {
       await rawCallTool({ name: "codex_status", arguments: { includeAllScopes: true } })
     );
 
-    expect(statusA.sessions.map((session: { threadId: string }) => session.threadId)).toEqual([
-      "thread-1"
-    ]);
-    expect(statusB.sessions.map((session: { threadId: string }) => session.threadId)).toEqual([
-      "thread-2"
-    ]);
+    expect(statusA.counts).toMatchObject({ sessions: 1, jobs: 1 });
+    expect(statusB.counts).toMatchObject({ sessions: 1, jobs: 1 });
     expect(policyOnly).toMatchObject({
-      scopeView: {
-        mode: "policy-only",
-        hostMetadataOrCompatibilityScopeRequiredForDetails: true
-      },
-      sessions: [],
-      jobs: []
+      scope: { mode: "policy-only" },
+      counts: { sessions: 0, jobs: 0 },
+      items: []
     });
-    expect(audit.sessions).toHaveLength(2);
-    expect(audit.jobs).toHaveLength(2);
+    expect(audit).toMatchObject({
+      scope: { mode: "all" },
+      counts: { sessions: 2, jobs: 2 }
+    });
+    expect(audit.items.filter((entry: { type: string }) => entry.type === "job")).toHaveLength(2);
     await close();
   });
 
@@ -1417,43 +11299,108 @@ describe("bridge tools", () => {
     await runTask(client, { prompt: "job three", sessionMode: "new", scopeId: SCOPE_A });
     await runTask(client, { prompt: "other job", sessionMode: "new", scopeId: SCOPE_B });
 
-    const firstPage = parseToolJson(
+    const firstSessions = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: { scopeId: SCOPE_A, query: { kind: "page", collection: "sessions", limit: 10 } }
+    }));
+    const secondSessions = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: {
+        scopeId: SCOPE_A,
+        query: {
+          kind: "page",
+          collection: "sessions",
+          limit: 10,
+          cursor: firstSessions.pagination.nextCursor
+        }
+      }
+    }));
+    const firstJobs = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: { scopeId: SCOPE_A, query: { kind: "page", collection: "jobs", limit: 2 } }
+    }));
+    const secondJobs = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: {
+        scopeId: SCOPE_A,
+        query: {
+          kind: "page",
+          collection: "jobs",
+          limit: 2,
+          cursor: firstJobs.pagination.nextCursor
+        }
+      }
+    }));
+
+    expect(firstSessions.scopeCounts).toEqual({
+      sessions: 14,
+      activities: 3,
+      agents: 3,
+      orphanedAgents: 0,
+      jobs: 3,
+      runningJobs: 0
+    });
+    expect(firstSessions.items).toHaveLength(10);
+    expect(firstSessions.page).toMatchObject({
+      offset: 0, returned: 10, total: 14, hasMore: true,
+      nextCursor: expect.any(String)
+    });
+    expect(secondSessions.items).toHaveLength(4);
+    expect(secondSessions.page).toMatchObject({
+      offset: 10, returned: 4, total: 14, hasMore: false
+    });
+    expect(secondSessions.page).not.toHaveProperty("nextCursor");
+    expect(firstJobs.items).toHaveLength(2);
+    expect(firstJobs.page).toMatchObject({
+      offset: 0, returned: 2, total: 3, hasMore: true,
+      nextCursor: expect.any(String)
+    });
+    expect(secondJobs.items).toHaveLength(1);
+    expect(secondJobs.page).toMatchObject({
+      offset: 2, returned: 1, total: 3, hasMore: false
+    });
+    expect(secondJobs.page).not.toHaveProperty("nextCursor");
+    const compactJobs = parseToolJson(
       await client.callTool({
         name: "codex_status",
-        arguments: { scopeId: SCOPE_A, sessionLimit: 10, jobLimit: 2 }
+        arguments: { query: { kind: "page", collection: "jobs", limit: 2 } }
       })
     );
-    expect(firstPage.pagination.sessions.nextCursor).toEqual(expect.any(String));
-    expect(firstPage.pagination.jobs.nextCursor).toEqual(expect.any(String));
-    const secondPage = parseToolJson(
+    expect(compactJobs).toMatchObject({
+      kind: "page",
+      scope: { mode: "scoped" },
+      counts: { jobs: 3 },
+      page: { collection: "jobs", offset: 0, returned: 2, total: 3, hasMore: true },
+      items: [
+        expect.objectContaining({ type: "job" }),
+        expect.objectContaining({ type: "job" })
+      ]
+    });
+    expect(compactJobs.items.every((entry: Record<string, unknown>) => !("scopeId" in entry)))
+      .toBe(true);
+    const compactNext = parseToolJson(
       await client.callTool({
         name: "codex_status",
         arguments: {
-          scopeId: SCOPE_A,
-          sessionLimit: 10,
-          sessionCursor: firstPage.pagination.sessions.nextCursor,
-          jobLimit: 2,
-          jobCursor: firstPage.pagination.jobs.nextCursor
+          query: {
+            kind: "page",
+            collection: "jobs",
+            limit: 2,
+            cursor: compactJobs.pagination.nextCursor
+          }
         }
       })
     );
-
-    expect(firstPage.scopeCounts).toEqual({ sessions: 14, activities: 3, jobs: 3, runningJobs: 0 });
-    expect(firstPage.sessions).toHaveLength(10);
-    expect(firstPage.jobs).toHaveLength(2);
-    expect(firstPage.pagination).toMatchObject({
-      sessions: { offset: 0, returned: 10, total: 14, hasMore: true, nextOffset: 10 },
-      jobs: { offset: 0, returned: 2, total: 3, hasMore: true, nextOffset: 2 }
-    });
-    expect(secondPage.sessions).toHaveLength(4);
-    expect(secondPage.jobs).toHaveLength(1);
-    expect(secondPage.pagination).toMatchObject({
-      sessions: { offset: 10, returned: 4, total: 14, hasMore: false, nextOffset: null },
-      jobs: { offset: 2, returned: 1, total: 3, hasMore: false, nextOffset: null }
+    expect(compactNext).toMatchObject({
+      page: { offset: 2, returned: 1, total: 3, hasMore: false },
+      items: [expect.objectContaining({ type: "job" })]
     });
     const malformed = await client.callTool({
       name: "codex_status",
-      arguments: { scopeId: SCOPE_A, sessionCursor: "not-a-valid-cursor" }
+      arguments: {
+        scopeId: SCOPE_A,
+        query: { kind: "page", collection: "sessions", cursor: "not-a-valid-cursor" }
+      }
     });
     expect(malformed.isError).toBe(true);
     expect(JSON.stringify(malformed)).toContain("Invalid or mismatched sessions pagination cursor");
@@ -1468,24 +11415,22 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: { prompt: "first intent", sessionMode: "new", activityTitle: "First Activity" }
     });
-    const first = (firstResult as { structuredContent?: Record<string, any> }).structuredContent
-      ?.bridgeActivity;
+    const first = parseToolJson(firstResult);
+    const agentId = first.agentId;
     const secondResult = await client.callTool({
       name: "codex_task",
       arguments: {
         prompt: "reuse the thread for a separate intent",
-        sessionMode: "continue",
-        threadId: "thread-1",
-        activityTitle: "Second Activity"
+        activity: { mode: "new", title: "Second Activity" },
+        agent: { mode: "existing", id: agentId, context: "continue" }
       }
     });
-    const second = (secondResult as { structuredContent?: Record<string, any> }).structuredContent
-      ?.bridgeActivity;
+    const second = parseToolJson(secondResult);
     expect(first.activityId).not.toBe(second.activityId);
 
     const detail = parseToolJson(await client.callTool({
       name: "codex_status",
-      arguments: { threadId: "thread-1" }
+      arguments: { query: { kind: "thread", id: "thread-1" } }
     }));
     expect(detail.activities.map((activity: { activityId: string }) => activity.activityId).sort()).toEqual(
       [first.activityId, second.activityId].sort()
@@ -1493,25 +11438,42 @@ describe("bridge tools", () => {
     expect(detail.jobs).toHaveLength(2);
     const firstJobDetail = parseToolJson(await client.callTool({
       name: "codex_status",
-      arguments: { jobId: first.jobId }
+      arguments: { query: { kind: "job", id: first.jobId } }
     }));
     expect(firstJobDetail).toMatchObject({
       jobId: first.jobId,
-      threadId: "thread-1",
-      session: { threadId: "thread-1" }
+      threadId: "thread-1"
     });
-    expect(detail.turns).toEqual([
-      expect.objectContaining({ jobId: first.jobId, turnId: null, status: "completed" }),
-      expect.objectContaining({ jobId: second.jobId, turnId: null, status: "completed" })
-    ]);
+    const firstActivityDetail = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "activity", id: first.activityId } }
+    }));
+    expect(firstActivityDetail).toMatchObject({ kind: "activity" });
+    expect(firstActivityDetail.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "activity", id: first.activityId }),
+      expect.objectContaining({ type: "job", id: first.jobId })
+    ]));
+    const mixedContract = await client.callTool({
+      name: "codex_status",
+      arguments: {
+        query: { kind: "job", id: first.jobId },
+        jobId: first.jobId
+      }
+    });
+    expect(mixedContract.isError).toBe(true);
+    expect(JSON.stringify(mixedContract)).toContain("Unrecognized key");
+    expect(detail.jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ jobId: first.jobId, status: "completed" }),
+      expect.objectContaining({ jobId: second.jobId, status: "completed" })
+    ]));
     await close();
   });
 
-  it("uses codex_status as the card data/watch API and keeps private paths relative", async () => {
+  it("uses the app-private Activity snapshot as the lightweight card watch API", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+    const { client, jobs, close } = await connectTestClient(
+      configFor(root),
       upstream
     );
     const started = parseToolJson(await client.callTool({
@@ -1528,55 +11490,588 @@ describe("bridge tools", () => {
       arguments: { scopeId: SCOPE_A },
       _meta: { "openai/locale": "ko-KR", "openai/widgetSessionId": "widget-render" }
     });
-    const initial = (rendered as { structuredContent?: Record<string, any> }).structuredContent!;
+    const initial = privateActivityView(rendered);
     expect(initial.activities).toEqual([
       expect.objectContaining({ activityId: started.activityId, lifecycle: "open" })
     ]);
-    expect((rendered as { _meta?: Record<string, any> })._meta).toMatchObject({
-      "openai/locale": "ko-KR"
+    expect(initial.feed.active[0].agents[0].execution).toEqual({
+      model: "gpt-5.6-sol",
+      modelDisplayName: "GPT-5.6 Sol",
+      reasoningEffort: "max",
+      isCurrent: true
     });
-    const privateJson = JSON.stringify((rendered as { _meta?: Record<string, any> })._meta?.activityDetails);
-    expect(privateJson).not.toContain(root);
-    expect(privateJson).toContain(path.basename(root));
+    expect((rendered as { _meta?: Record<string, any> })._meta).toMatchObject({
+      "openai/locale": "ko",
+      hostLocale: "ko-KR"
+    });
+    expect((rendered as { _meta?: Record<string, any> })._meta).not.toHaveProperty("activityDetails");
+    const cardPayload = JSON.stringify(rendered);
+    expect(cardPayload).not.toContain(root);
+    expect(cardPayload).not.toContain(path.basename(root));
+    expect(cardPayload).not.toContain('"cwd"');
+    expect(cardPayload).not.toContain('"backendKind"');
+    expect(cardPayload).not.toContain('"threadId"');
+    const card = {
+      activityId: initial.mountedActivity.activityId,
+      generation: initial.mountedActivity.cardGeneration,
+      presentation: { kind: "explicit" as const }
+    };
 
     const watchPromise = client.callTool({
-      name: "codex_status",
+      name: "codex_activity_snapshot",
       arguments: {
-        scopeId: SCOPE_A,
-        activityView: true,
+        card,
         afterVersion: initial.scopeVersion,
-        waitFor: "change",
         waitMs: 1_000
       },
-      _meta: { "openai/widgetSessionId": "widget-watch" }
+      _meta: { "openai/widgetSessionId": "widget-render" }
     });
     await Promise.resolve();
     upstream.progressNext({
       progress: 1,
       total: 2,
-      message: "public progress",
+      message: "model rerouted",
       event: {
         eventId: "public-progress-1",
-        type: "turn",
+        type: "model",
         phase: "updated",
         createdAt: Date.now(),
-        summary: "Public progress"
+        summary: "Model rerouted.",
+        details: {
+          kind: "rerouted",
+          fromModel: "gpt-5.6-sol",
+          toModel: "gpt-5.6-terra",
+          reason: "test"
+        }
       }
     } as Progress);
     const watched = await watchPromise;
     const next = (watched as { structuredContent?: Record<string, any> }).structuredContent!;
     expect(next.scopeVersion).toBeGreaterThan(initial.scopeVersion);
     expect(next.wait).toMatchObject({ changed: true, timedOut: false });
-    expect(next.activities[0].jobs[0]).toMatchObject({ status: "running", progressObserved: true });
+    expect(next.agents[0]).toMatchObject({ displayState: "running", activityId: started.activityId });
+    expect(next.feed.active[0].agents[0].execution).toEqual({
+      model: "gpt-5.6-sol",
+      modelDisplayName: "GPT-5.6 Sol",
+      reasoningEffort: "max",
+      reroutedModel: "gpt-5.6-terra",
+      reroutedModelDisplayName: "GPT-5.6 Terra",
+      isCurrent: true
+    });
+    expect(next.activities[0]).not.toHaveProperty("jobs");
 
     upstream.resolveNext(fakeCodexResult("watched-thread"));
     await waitForJobStatus(client, started.jobId, "completed");
+    const completed = await client.callTool({ name: "codex_activity", arguments: {} });
+    expect(privateActivityView(completed).feed.active[0].agents[0].execution).toEqual({
+      model: "gpt-5.6-sol",
+      modelDisplayName: "GPT-5.6 Sol",
+      reasoningEffort: "max",
+      reroutedModel: "gpt-5.6-terra",
+      reroutedModelDisplayName: "GPT-5.6 Terra",
+      isCurrent: false
+    });
+    await close();
+  });
+
+  it("treats an aborted Activity-card watch as lease cleanup and lets its job complete", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const startedResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "finish after the Activity-card watcher detaches",
+        executionMode: "background"
+      }
+    });
+    const started = parseToolJson(startedResult);
+    await expect.poll(() => upstream.calls.length).toBe(1);
+    const running = jobs.get(started.jobId)!;
+    expect(running).toMatchObject({ status: "running" });
+
+    const widgetInstanceId = "widget-watch-abort";
+    const activityPresentation = await presentCompactActivity(
+      client,
+      started.activityId,
+      "72727272-7272-4272-8272-727272727273"
+    );
+    const card = automaticCardProof(activityPresentation);
+    const mounted = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: { scopeId: SCOPE_A, card },
+      _meta: { "openai/widgetSessionId": widgetInstanceId }
+    });
+    const scopeVersion = (mounted as { structuredContent?: Record<string, any> })
+      .structuredContent?.scopeVersion as number;
+    const watchState = jobs as unknown as {
+      activeWatchers: number;
+      watcherLeases: Set<string>;
+      activityCardLeases: Map<string, number>;
+    };
+    const controller = new AbortController();
+    const watch = rawCallTool(
+      {
+        name: "codex_activity_snapshot",
+        arguments: {
+          scopeId: SCOPE_A,
+          card,
+          afterVersion: scopeVersion,
+          waitMs: 60_000
+        },
+        _meta: { "openai/widgetSessionId": widgetInstanceId }
+      },
+      undefined,
+      { signal: controller.signal }
+    );
+    await expect.poll(() => watchState.activeWatchers).toBe(1);
+    expect(watchState.watcherLeases.size).toBe(1);
+    expect(watchState.activityCardLeases.size).toBe(1);
+
+    controller.abort();
+    await expect(watch).rejects.toThrow(/cancel|abort/i);
+    await expect.poll(() => watchState.activeWatchers).toBe(0);
+    expect(watchState.watcherLeases.size).toBe(0);
+    expect(watchState.activityCardLeases.size).toBe(0);
+    expect(() => jobs.requireActivityCardLease(
+      SCOPE_A,
+      card.activityId,
+      card.generation,
+      widgetInstanceId,
+      card.presentation
+    )).toThrow(/CARD_LEASE_REQUIRED/);
+    await expect.poll(() =>
+      jobs.listTransportObservations("activity-watch-aborted").length
+    ).toBeGreaterThan(0);
+    expect(jobs.listTransportObservations("activity-watch-aborted")).toEqual([
+      expect.objectContaining({
+        kind: "activity-watch-aborted",
+        scopeId: SCOPE_A,
+        activityId: started.activityId,
+        toolName: "codex_activity_snapshot",
+        reasonCode: "host-aborted-activity-watch"
+      })
+    ]);
+    expect(jobs.get(started.jobId)).toMatchObject({
+      status: "running",
+      version: running.version
+    });
+    expect(jobs.get(started.jobId)?.cancelRequestedAt).toBeUndefined();
+    expect(jobs.get(started.jobId)?.cancellationIntentId).toBeUndefined();
+    expect(jobs.listCancellationIntents({ jobId: started.jobId })).toHaveLength(0);
+    const eventTypes = jobs.listJobEvents(started.jobId).map((event) => event.eventType);
+    expect(eventTypes).not.toContain("cancellation-intent-recorded");
+    expect(eventTypes).not.toContain("job-terminating");
+    expect(eventTypes).not.toContain("job-cancelled");
+    expect(upstream.aborts).toBe(0);
+
+    upstream.resolveNext(fakeCodexResult("watch-abort-thread"));
+    await waitForJobStatus(client, started.jobId, "completed");
+    expect(jobs.get(started.jobId)).toMatchObject({
+      status: "completed",
+      terminalOrigin: "normal-completion"
+    });
+    expect(jobs.get(started.jobId)?.cancellationIntentId).toBeUndefined();
+    expect(jobs.listCancellationIntents({ jobId: started.jobId })).toHaveLength(0);
+    expect(upstream.aborts).toBe(0);
+    await close();
+  });
+
+  it("keeps each Agent's own outcome in an older shared Activity", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const first = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "complete the first role",
+        activity: { mode: "new", title: "Mixed outcome Activity" },
+        agent: { mode: "new", name: "Completed Participant" },
+        executionMode: "background"
+      }
+    }));
+    const second = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "fail the second role",
+        activity: { mode: "existing", id: first.activityId },
+        agent: { mode: "new", name: "Failed Participant" },
+        executionMode: "background"
+      }
+    }));
+
+    upstream.resolveNext(fakeCodexResult("completed-participant-thread"));
+    upstream.rejectNext(new Error("participant failed"));
+    await Promise.all([
+      waitForJobStatus(client, first.jobId, "completed"),
+      waitForJobStatus(client, second.jobId, "failed")
+    ]);
+
+    const later = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "move the completed Agent to later work",
+        activity: { mode: "new", title: "Later Activity" },
+        agent: { mode: "existing", id: first.agentId, context: "fresh" },
+        executionMode: "background"
+      }
+    }));
+    const oldActivityCard = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "full-history",
+        activityId: first.activityId
+      }
+    });
+    const feed = privateActivityView(oldActivityCard).feed as {
+      active: Array<Record<string, any>>;
+      history: { rows: Array<Record<string, any>> };
+    };
+    const oldActivity = [...feed.active, ...feed.history.rows]
+      .find((row) => row.activityId === first.activityId);
+    expect(oldActivity?.agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agentName: "Completed Participant",
+        displayState: "completed"
+      }),
+      expect.objectContaining({
+        agentName: "Failed Participant",
+        displayState: "failed"
+      })
+    ]));
+
+    upstream.resolveNext(fakeCodexResult("later-participant-thread"));
+    await waitForJobStatus(client, later.jobId, "completed");
+    expect(jobs.get(first.jobId)?.status).toBe("completed");
+    await close();
+  });
+
+  it("renders one compact card for parallel task calls and keeps explicit cards distinct", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const activityPresentationId = "24242424-2424-4424-8424-242424242424";
+    const firstResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "first Agent",
+        agentName: "Card Agent One",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    });
+    const first = parseToolJson(firstResult);
+    expect((firstResult as { _meta?: unknown })._meta).toBeUndefined();
+    const automaticPresentation = await presentCompactActivity(
+      client,
+      first.activityId,
+      activityPresentationId
+    );
+    const automaticCard = automaticCardProof(automaticPresentation);
+    const mounted = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: automaticCard
+      },
+      _meta: { "openai/widgetSessionId": "mounted-card" }
+    });
+    expect((mounted as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
+      mountedActivity: { activityId: first.activityId, cardGeneration: 1 },
+      mountedPresentation: {
+        kind: "automatic",
+        activityPresentationId,
+        reservationOwnerId: activityPresentationId
+      },
+      watcherPolicy: { live: true, ownsCompletionHandoff: true }
+    });
+    const retainedGenerationSnapshot = await rawCallTool({
+      name: "codex_status",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityView: true,
+        mountedActivityId: first.activityId,
+        cardGeneration: 1,
+        presentationKind: "automatic",
+        activityPresentationId
+      },
+      _meta: { "openai/widgetSessionId": "retained-generation-card" }
+    });
+    expect(retainedGenerationSnapshot.isError).toBe(true);
+    expect(JSON.stringify(retainedGenerationSnapshot)).toContain("Unrecognized keys");
+
+    const parallelResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "parallel Agent",
+        activityId: first.activityId,
+        agentName: "Card Agent Two",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    });
+    const parallel = parseToolJson(parallelResult);
+    expect((parallelResult as { _meta?: unknown })._meta).toBeUndefined();
+
+    const differentActivityResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "different Activity in the same assistant response",
+        agentName: "Card Agent Three",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    });
+    const differentActivity = parseToolJson(differentActivityResult);
+    expect(differentActivity.activityId).not.toBe(first.activityId);
+    expect((differentActivityResult as { _meta?: unknown })._meta).toBeUndefined();
+    const parallelSnapshot = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: { scopeId: SCOPE_A, card: automaticCard },
+      _meta: { "openai/widgetSessionId": "mounted-card" }
+    });
+    expect((parallelSnapshot as { structuredContent?: Record<string, any> })
+      .structuredContent?.feed.active).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          activityId: first.activityId,
+          agents: expect.arrayContaining([
+            expect.objectContaining({ agentName: "Card Agent One" }),
+            expect.objectContaining({ agentName: "Card Agent Two" })
+          ])
+        }),
+        expect.objectContaining({
+          activityId: differentActivity.activityId,
+          agents: [expect.objectContaining({ agentName: "Card Agent Three" })]
+        })
+      ]));
+
+    const explicit = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityId: first.activityId
+      },
+      _meta: { "openai/widgetSessionId": "explicit-card" }
+    });
+    expect(privateActivityView(explicit).presentation)
+      .toMatchObject({
+        shouldRenderActivityCard: true,
+        renderReason: "explicit",
+        presentationKind: "explicit"
+      });
+    expect(privateActivityView(explicit).watcherPolicy)
+      .toMatchObject({ live: true, ownsCompletionHandoff: false, maxExplicitPerScope: 3 });
+
+    upstream.resolveNext(fakeCodexResult("card-thread-1"));
+    upstream.resolveNext(fakeCodexResult("card-thread-2"));
+    upstream.resolveNext(fakeCodexResult("card-thread-3"));
+    await Promise.all([
+      waitForJobStatus(client, first.jobId, "completed"),
+      waitForJobStatus(client, parallel.jobId, "completed"),
+      waitForJobStatus(client, differentActivity.jobId, "completed")
+    ]);
+    const nextPresentationId = "24242424-2424-4424-8424-242424242425";
+    const nextResponseResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "same Activity in the next assistant response",
+        activityId: first.activityId,
+        agentId: first.agentId,
+        contextMode: "continue",
+        executionMode: "background"
+      }
+    });
+    const nextResponse = parseToolJson(nextResponseResult);
+    expect((nextResponseResult as { _meta?: unknown })._meta).toBeUndefined();
+    const nextPresentation = await presentCompactActivity(
+      client,
+      nextResponse.activityId,
+      nextPresentationId
+    );
+    const nextCard = automaticCardProof(nextPresentation);
+    await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: nextCard
+      },
+      _meta: { "openai/widgetSessionId": "next-presentation-card" }
+    });
+    const stoppedOldPresentation = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: automaticCard,
+        afterVersion: (mounted as { structuredContent?: Record<string, any> }).structuredContent
+          ?.scopeVersion,
+        waitMs: 1_000
+      },
+      _meta: { "openai/widgetSessionId": "mounted-card" }
+    });
+    expect((stoppedOldPresentation as { structuredContent?: Record<string, any> }).structuredContent)
+      .toMatchObject({
+        watcherPolicy: {
+          live: false,
+          stopped: true,
+          stopReason: "presentation-superseded",
+          ownsCompletionHandoff: false
+        },
+        wait: {
+          stopped: true,
+          timedOut: false,
+          stopReason: "presentation-superseded"
+        }
+      });
+    expect(jobs.get(nextResponse.jobId)).toMatchObject({ status: "running" });
+    expect(jobs.get(nextResponse.jobId)).not.toHaveProperty("cancellationIntentId");
+    expect(jobs.listCancellationIntents({ jobId: nextResponse.jobId })).toHaveLength(0);
+    expect(jobs.listTransportObservations("presentation-superseded")).not.toHaveLength(0);
+    upstream.resolveNext(fakeCodexResult("card-thread-1"));
+    await waitForJobStatus(client, nextResponse.jobId, "completed");
+    await close();
+  });
+
+  it("requires a live private card proof and audits the dedicated card presentation", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const callerPresentationId = "82828282-8282-4282-8282-828282828282";
+    const supersedingPresentationId = "83838383-8383-4383-8383-838383838383";
+    const widgetInstanceId = "84848484-8484-4484-8484-848484848484";
+    const cancellationRequestId = "85858585-8585-4585-8585-858585858585";
+    const startedResult = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "cancel from the exact mounted card",
+        sessionMode: "new",
+        executionMode: "background"
+      }
+    });
+    const started = parseToolJson(startedResult);
+    expect((startedResult as { _meta?: unknown })._meta).toBeUndefined();
+    await Promise.resolve();
+    const compactPresentation = await presentCompactActivity(
+      client,
+      started.activityId,
+      callerPresentationId
+    );
+    const card = automaticCardProof(compactPresentation);
+    const mounted = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: { scopeId: SCOPE_A, card },
+      _meta: { "openai/widgetSessionId": widgetInstanceId }
+    });
+    expect(mounted.isError).not.toBe(true);
+    const expectedJobVersion = jobs.get(started.jobId)?.version as number;
+    const cancellationArguments = {
+      scopeId: SCOPE_A,
+      requestId: cancellationRequestId,
+      jobId: started.jobId,
+      expectedJobVersion,
+      card,
+      acknowledgeAffectedJobIds: [started.jobId]
+    };
+    const cancelled = parseToolJson(await rawCallTool({
+      name: "codex_activity_job_cancel",
+      arguments: cancellationArguments,
+      _meta: { "openai/widgetSessionId": widgetInstanceId }
+    }));
+    expect(cancelled).toMatchObject({
+      kind: "mutation",
+      action: "cancel-card-job",
+      job: {
+        status: "cancelled",
+        terminalOrigin: "explicit-cancellation",
+        cancellation: {
+          logicalRequestId: cancellationRequestId,
+          source: "widget-control",
+          tool: "codex_activity_job_cancel",
+          callerPresentation: {
+            kind: "automatic",
+            activityPresentationId: callerPresentationId
+          },
+          target: {
+            jobId: started.jobId,
+            presentationId: callerPresentationId
+          },
+          widgetProof: { present: true, cardGeneration: card.generation }
+        }
+      }
+    });
+    const replay = parseToolJson(await rawCallTool({
+      name: "codex_activity_job_cancel",
+      arguments: cancellationArguments,
+      _meta: { "openai/widgetSessionId": widgetInstanceId }
+    }));
+    expect(replay).toEqual(cancelled);
+    expect(upstream.aborts).toBe(1);
+    const [intent] = jobs.listCancellationIntents({ requestId: cancellationRequestId });
+    expect(intent).toMatchObject({
+      source: "widget-control",
+      callerPresentation: {
+        kind: "automatic",
+        activityPresentationId: callerPresentationId
+      },
+      targetPresentationId: callerPresentationId,
+      widgetInstancePresent: true,
+      cardGeneration: card.generation
+    });
+    expect(intent.widgetInstanceDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(intent.widgetInstanceDigest).not.toBe(widgetInstanceId);
+
+    const supersedingPresentation = await presentCompactActivity(
+      client,
+      started.activityId,
+      supersedingPresentationId
+    );
+    await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: { scopeId: SCOPE_A, card: automaticCardProof(supersedingPresentation) },
+      _meta: { "openai/widgetSessionId": "superseding-widget" }
+    });
+    const stale = await rawCallTool({
+      name: "codex_activity_job_cancel",
+      arguments: {
+        ...cancellationArguments,
+        requestId: "86868686-8686-4686-8686-868686868686",
+        expectedJobVersion: jobs.get(started.jobId)?.version
+      },
+      _meta: { "openai/widgetSessionId": widgetInstanceId }
+    });
+    expect(stale.isError).toBe(true);
+    expect(JSON.stringify(stale)).toContain("CARD_VERSION_UNSUPPORTED");
+    expect(jobs.listCancellationIntents({
+      requestId: "86868686-8686-4686-8686-868686868686"
+    })).toHaveLength(0);
+    expect(upstream.aborts).toBe(1);
     await close();
   });
 
   it("leases one Activity completion batch to only one mounted card", async () => {
     const root = temporaryRoot();
-    const { client, rawCallTool, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const config = configFor(root);
+    const settings = new UserSettingsStore(config);
+    settings.update({ completionHandoff: "auto-handoff" }, settings.current.revision);
+    class CompletedAppUpstream extends FakeUpstream {
+      async listLoadedBackgroundTerminals(): Promise<CodexBackgroundTerminal[]> { return []; }
+    }
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      config,
+      new CompletedAppUpstream(),
+      undefined,
+      new FakeModelCatalog(),
+      settings
+    );
     const createNotifyActivity = async (prompt: string, title: string) => {
       const result = await client.callTool({
         name: "codex_task",
@@ -1588,40 +12083,109 @@ describe("bridge tools", () => {
           completionTrigger: "sealed-jobs-terminal"
         }
       });
-      const activity = (result as { structuredContent?: Record<string, any> }).structuredContent
-        ?.bridgeActivity;
+      const task = parseToolJson(result);
+      expect((result as { _meta?: unknown })._meta).toBeUndefined();
       await client.callTool({
         name: "codex_activity_update",
-        arguments: { activityId: activity.activityId, action: "seal" }
+        arguments: {
+          activityId: task.activityId,
+          expectedVersion: jobs.getActivity(task.activityId)?.version,
+          operation: { kind: "seal" }
+        }
       });
-      return activity;
+      return task;
     };
     const started = await createNotifyActivity(
       "notification payload must not be copied",
       "Notify once"
     );
     const secondActivity = await createNotifyActivity("second private payload", "Notify twice");
-    const view = await client.callTool({
+    const explicitView = await client.callTool({
       name: "codex_activity",
       arguments: { scopeId: SCOPE_A }
+    });
+    expect(privateActivityView(explicitView)).toMatchObject({
+        pendingHandoffs: [],
+        watcherPolicy: { presentationKind: "explicit", ownsCompletionHandoff: false }
+      });
+    const compactPresentation = await presentCompactActivity(
+      client,
+      secondActivity.activityId,
+      "61616161-6161-4161-8161-616161616161"
+    );
+    const card = automaticCardProof(compactPresentation);
+    const view = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card
+      },
+      _meta: { "openai/widgetSessionId": "widget-one" }
     });
     const pending = (view as { structuredContent?: Record<string, any> }).structuredContent?.pendingHandoffs;
     expect(pending).toEqual(expect.arrayContaining([
       expect.objectContaining({ activityId: started.activityId, channel: "notify" }),
       expect.objectContaining({ activityId: secondActivity.activityId, channel: "notify" })
     ]));
+    expect((view as { structuredContent?: Record<string, any> }).structuredContent?.feed)
+      .toMatchObject({
+        mode: "compact",
+        historySummary: { completedActivities: 0 },
+        history: { rows: [] },
+        active: expect.arrayContaining([
+          expect.objectContaining({
+            activityId: started.activityId,
+            displayState: "waiting-gpt",
+            pendingHandoff: true
+          }),
+          expect.objectContaining({
+            activityId: secondActivity.activityId,
+            displayState: "waiting-gpt",
+            pendingHandoff: true
+          })
+        ])
+      });
     const outboxIds = pending.map((event: Record<string, any>) => event.outboxId);
+    const peerSnapshot = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: { scopeId: SCOPE_A, card },
+      _meta: { "openai/widgetSessionId": "widget-two" }
+    });
+    expect(peerSnapshot.isError).not.toBe(true);
+    expect((peerSnapshot as { structuredContent?: Record<string, any> })
+      .structuredContent?.watcherPolicy).toMatchObject({
+        presentationKind: "automatic",
+        live: false,
+        stopped: true,
+        stopReason: "presentation-duplicate",
+        ownsCompletionHandoff: false
+      });
+    const retainedPresentationArgs = {
+      presentationKind: "automatic" as const,
+      activityPresentationId: card.presentation.activityPresentationId
+    };
+    await rawCallTool({
+      name: "codex_status",
+      arguments: {
+        scopeId: SCOPE_A,
+        activityView: true,
+        mountedActivityId: secondActivity.activityId,
+        cardGeneration: card.generation,
+        ...retainedPresentationArgs
+      },
+      _meta: { "openai/widgetSessionId": "widget-retained" }
+    });
 
     const first = parseToolJson(await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds },
+      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, card },
       _meta: { "openai/widgetSessionId": "widget-one" }
     }));
-    const second = parseToolJson(await rawCallTool({
+    const second = await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds },
+      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, card },
       _meta: { "openai/widgetSessionId": "widget-two" }
-    }));
+    });
     expect(first).toMatchObject({
       claimed: true,
       origin: "activity-handoff",
@@ -1632,7 +12196,20 @@ describe("bridge tools", () => {
         expect.objectContaining({ outboxId: outboxIds[1] })
       ])
     });
-    expect(second).toMatchObject({ claimed: false, handoffDepth: 0, events: [] });
+    expect(second.isError).toBe(true);
+    expect(JSON.stringify(second)).toContain("CARD_LEASE_REQUIRED");
+    const retainedGenerationClaim = await rawCallTool({
+      name: "codex_activity_handoff",
+      arguments: {
+        scopeId: SCOPE_A,
+        action: "claim-batch",
+        outboxIds,
+        ...retainedPresentationArgs
+      },
+      _meta: { "openai/widgetSessionId": "widget-retained" }
+    });
+    expect(retainedGenerationClaim.isError).toBe(true);
+    expect(JSON.stringify(retainedGenerationClaim)).toContain("card");
     expect(JSON.stringify(first)).not.toContain("notification payload must not be copied");
 
     const failedBatch = await rawCallTool({
@@ -1640,33 +12217,41 @@ describe("bridge tools", () => {
       arguments: {
         scopeId: SCOPE_A,
         action: "delivered-batch",
-        outboxIds: [outboxIds[0], 999_999_999]
+        outboxIds: [outboxIds[0], 999_999_999],
+        card
       },
       _meta: { "openai/widgetSessionId": "widget-one" }
     });
     expect(failedBatch.isError).toBe(true);
     await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "release-batch", outboxIds },
+      arguments: { scopeId: SCOPE_A, action: "release-batch", outboxIds, card },
       _meta: { "openai/widgetSessionId": "widget-one" }
     });
     const reclaimed = parseToolJson(await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds },
-      _meta: { "openai/widgetSessionId": "widget-two" }
+      arguments: { scopeId: SCOPE_A, action: "claim-batch", outboxIds, card },
+      _meta: { "openai/widgetSessionId": "widget-one" }
     }));
     expect(reclaimed.events).toHaveLength(2);
     await rawCallTool({
       name: "codex_activity_handoff",
-      arguments: { scopeId: SCOPE_A, action: "delivered-batch", outboxIds },
-      _meta: { "openai/widgetSessionId": "widget-two" }
+      arguments: { scopeId: SCOPE_A, action: "delivered-batch", outboxIds, card },
+      _meta: { "openai/widgetSessionId": "widget-one" }
     });
-    const after = await client.callTool({ name: "codex_activity", arguments: { scopeId: SCOPE_A } });
+    const after = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card
+      },
+      _meta: { "openai/widgetSessionId": "widget-one" }
+    });
     expect((after as { structuredContent?: Record<string, any> }).structuredContent?.pendingHandoffs).toEqual([]);
     await close();
   });
 
-  it("auto mode starts new when cwd, sandbox, or model is incompatible", async () => {
+  it("pins new Agent contexts to explicit projects with bridge-owned sandbox and exact model selections", async () => {
     const first = temporaryRoot();
     const second = temporaryRoot();
     const upstream = new FakeUpstream();
@@ -1674,16 +12259,1612 @@ describe("bridge tools", () => {
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`,
       CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
-      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol"
+      CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "workspace-write",
+      CODEX_MCP_BRIDGE_DEFAULT_MODEL: "gpt-5.6-sol",
+      CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT: "max"
     });
-    const { client, close } = await connectTestClient(config, upstream);
+    const settings = new UserSettingsStore(config);
+    const { client, jobs, close } = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings,
+      undefined,
+      false
+    );
 
-    await runTask(client, { prompt: "first", sessionMode: "new", cwd: first });
-    await runTask(client, { prompt: "other cwd", cwd: second });
-    await runTask(client, { prompt: "write", cwd: first, sandbox: "workspace-write" });
-    await runTask(client, { prompt: "other model", cwd: first, model: "gpt-5.6-terra" });
+    addTestProjects(settings, [
+      { name: "First", cwd: first },
+      { name: "Second", cwd: second }
+    ]);
+    const firstResult = await runTask(client, {
+      prompt: "first",
+      projectId: "first",
+      agentName: "First Root",
+      contextMode: "fresh"
+    });
+    const secondResult = await runTask(client, {
+      prompt: "other cwd",
+      projectId: "second",
+      agentName: "Second Root",
+      contextMode: "fresh"
+    });
+    await runTask(client, {
+      prompt: "write",
+      projectId: "second",
+      agentName: "Writer",
+      contextMode: "fresh"
+    });
+    await runTask(client, {
+      prompt: "other model",
+      projectId: "second",
+      agentName: "Other Model",
+      contextMode: "fresh",
+      selection: { model: "gpt-5.6-terra", reasoningEffort: "medium" }
+    });
 
     expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex", "codex", "codex"]);
+    expect(upstream.calls.map((call) => call.args.cwd)).toEqual([
+      realpathSync(first),
+      realpathSync(second),
+      realpathSync(second),
+      realpathSync(second)
+    ]);
+    expect(upstream.calls[2]?.args.sandbox).toBe("workspace-write");
+    const card = await client.callTool({ name: "codex_activity", arguments: {} });
+    const cardView = privateActivityView(card);
+    expect(new Set(cardView.feed.active.flatMap(
+      (activity: { workspaceLabels: string[] }) => activity.workspaceLabels
+    ))).toEqual(new Set(["First", "Second"]));
+    const otherModel = cardView.feed.active.find((activity: { agents: Array<{ agentName: string }> }) =>
+      activity.agents.some((agent) => agent.agentName === "Other Model")
+    );
+    expect(otherModel.agents.find((agent: { agentName: string }) =>
+      agent.agentName === "Other Model"
+    )?.execution).toEqual({
+      model: "gpt-5.6-terra",
+      modelDisplayName: "GPT-5.6 Terra",
+      reasoningEffort: "medium",
+      isCurrent: false
+    });
+    expect(JSON.stringify(card)).not.toContain(realpathSync(first));
+    expect(JSON.stringify(card)).not.toContain(realpathSync(second));
+
+    for (const result of [firstResult, secondResult]) {
+      const activityId = parseToolJson(result).activityId;
+      await client.callTool({
+        name: "codex_activity_update",
+        arguments: {
+          activityId,
+          expectedVersion: jobs.getActivity(activityId)?.version,
+          operation: { kind: "complete", reason: "accepted for history rendering" }
+        }
+      });
+    }
+    const historyCard = await client.callTool({ name: "codex_activity", arguments: {} });
+    const historyView = privateActivityView(historyCard);
+    expect(historyView.feed.showWorkspaceLabels).toBe(true);
+    expect(new Set(historyView.feed.completed.rows.flatMap(
+      (row: { workspaceLabels: string[] }) => row.workspaceLabels
+    ))).toEqual(new Set(["First", "Second"]));
+    expect(historyView.feed.completed.rows.find(
+      (row: { agentName: string }) => row.agentName === "First Root"
+    )?.execution).toEqual({
+      model: "gpt-5.6-sol",
+      modelDisplayName: "GPT-5.6 Sol",
+      reasoningEffort: "max",
+      isCurrent: false
+    });
+    await close();
+  });
+
+  it("requires a project for sole-project new/fresh work and inherits it only on continue", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { rawCallTool, close } = await connectTestClient(configFor(root), upstream);
+
+    const omitted = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "63636363-6363-4363-8363-636363636363",
+        activityPresentationId: "64646464-6464-4464-8464-646464646464",
+        prompt: "do not choose the sole project implicitly",
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Explicit Project Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(omitted.isError).toBe(true);
+    expect(JSON.stringify(omitted)).toContain("PROJECT_REQUIRED");
+    expect(upstream.calls).toEqual([]);
+
+    const started = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "65656565-6565-4565-8565-656565656565",
+        activityPresentationId: "66666666-6666-4666-8666-666666666666",
+        prompt: "use the sole project explicitly",
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Explicit Project Agent" },
+        executionMode: "foreground"
+      }
+    });
+    const startedView = parseToolJson(started);
+    const activityId = startedView.activityId as string;
+    const agentId = startedView.agentId as string;
+    expect(startedView.projectName).toBe("Test Project");
+
+    const continued = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "67676767-6767-4767-8767-676767676767",
+        activityPresentationId: "68686868-6868-4868-8868-686868686868",
+        prompt: "inherit the pinned project",
+        activity: { mode: "existing", id: activityId },
+        agent: { mode: "existing", id: agentId, context: "continue" },
+        executionMode: "foreground"
+      }
+    });
+    expect(parseToolJson(continued).projectName).toBe("Test Project");
+
+    const freshOmitted = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "69696969-6969-4969-8969-696969696969",
+        activityPresentationId: "70707070-7070-4070-8070-707070707070",
+        prompt: "fresh still requires an exact project",
+        activity: { mode: "existing", id: activityId },
+        agent: { mode: "existing", id: agentId, context: "fresh" },
+        executionMode: "foreground"
+      }
+    });
+    expect(freshOmitted.isError).toBe(true);
+    expect(JSON.stringify(freshOmitted)).toContain("PROJECT_REQUIRED");
+    expect(upstream.calls).toHaveLength(2);
+    await close();
+  });
+
+  it("keeps an unaffected project selector byte-identical across unrelated registry changes", async () => {
+    const root = temporaryRoot();
+    const second = path.join(root, "second");
+    mkdirSync(second);
+    const upstream = new FakeUpstream();
+    const { client, rawCallTool, settings, close } = await connectTestClient(
+      configFor(root),
+      upstream
+    );
+    const beforeTask = (await client.listTools()).tools.find(
+      (entry) => entry.name === "codex_task"
+    )!;
+    const stableDescriptor = structuredClone(beforeTask);
+    const beforeProject = settings.current.projects[0]!;
+    const beforeSelector = {
+      name: beforeProject.name,
+      projectRef: beforeProject.projectRef,
+      projectRevision: beforeProject.projectRevision
+    };
+
+    settings.updateWithProjectOperations(
+      {},
+      [{ kind: "add", project: { name: "Second Project", cwd: second } }],
+      undefined,
+      settings.current.registryRevision
+    );
+
+    const admitted = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        requestId: "18181818-1818-4818-8818-181818181818",
+        prompt: "use unaffected project selector",
+        project: beforeSelector,
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Stable Selector Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(admitted.isError).not.toBe(true);
+    expect(upstream.calls[0]?.args.cwd).toBe(realpathSync(root));
+
+    await client.callTool({ name: "codex_models", arguments: {} });
+    const afterTask = (await client.listTools()).tools.find(
+      (entry) => entry.name === "codex_task"
+    )!;
+    expect(afterTask).toEqual(stableDescriptor);
+    expect(JSON.stringify(afterTask)).not.toContain("Second Project");
+    await close();
+  });
+
+  it("fails closed at runtime for a stale legacy registry descriptor without admitting side effects", async () => {
+    const root = temporaryRoot();
+    const second = path.join(root, "second");
+    mkdirSync(second);
+    const upstream = new FakeUpstream();
+    const { rawCallTool, jobs, settings, close } = await connectTestClient(configFor(root), upstream);
+
+    const staleSelection = { name: "Test Project", registryRevision: 1 };
+    settings.updateWithProjectOperations(
+      {},
+      [{ kind: "add", project: { name: "Second Project", cwd: second } }],
+      undefined,
+      1
+    );
+    const rejected = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "91919191-9191-4191-8191-919191919191",
+        activityPresentationId: "92929292-9292-4292-8292-929292929292",
+        prompt: "a missed tools/list_changed notification must not admit work",
+        project: staleSelection,
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Stale Mapping Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toContain("PROJECT_REGISTRY_CHANGED");
+    expect(upstream.calls).toEqual([]);
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
+    expect(jobs.listForScope(SCOPE_A)).toEqual([]);
+
+    // The generation token prevents stale mappings. At the same current
+    // generation, another exact valid name is a semantically valid selection;
+    // the bridge cannot infer whether the model intended a different project.
+    const validOther = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "93939393-9393-4393-8393-939393939393",
+        activityPresentationId: "94949494-9494-4494-8494-949494949494",
+        prompt: "select another exact current project",
+        project: { name: "Second Project", registryRevision: 2 },
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Current Mapping Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(validOther.isError).not.toBe(true);
+    expect(upstream.calls[0]?.args.cwd).toBe(realpathSync(second));
+    await close();
+  });
+
+  it("rechecks registry identity inside the Activity-Agent-Job admission transaction", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const catalog = new AdmissionMutatingModelCatalog();
+    const { client, rawCallTool, jobs, settings, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      catalog
+    );
+    const project = settings.current.projects[0];
+    const projectSelection = {
+      name: project.name,
+      projectRef: project.projectRef,
+      projectRevision: project.projectRevision
+    };
+    catalog.beforeGet = () => settings.updateWithProjectOperations(
+      {},
+      [{ kind: "rename", projectId: project.id, name: "Renamed During Admission" }],
+      undefined,
+      1
+    );
+
+    const raced = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        requestId: "95959595-9595-4595-8595-959595959595",
+        activityPresentationId: "96969696-9696-4696-8696-969696969696",
+        prompt: "race the registry immediately before admission",
+        project: projectSelection,
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "TOCTOU Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(raced.isError).toBe(true);
+    expect(JSON.stringify(raced)).toContain("PROJECT_REGISTRY_CHANGED");
+    expect(settings.current).toMatchObject({ registryRevision: 2 });
+    expect(upstream.calls).toEqual([]);
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toEqual([]);
+    expect(jobs.listForScope(SCOPE_A)).toEqual([]);
+    await close();
+  });
+
+  it("rechecks a new Activity selection atomically while continuing a pinned Agent", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const catalog = new AdmissionMutatingModelCatalog();
+    const { rawCallTool, jobs, settings, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      catalog
+    );
+    const seeded = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "97979797-9797-4797-8797-979797979797",
+        activityPresentationId: "98989898-9898-4898-8898-989898989898",
+        prompt: "seed the pinned Agent",
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Pinned Admission Agent" },
+        executionMode: "foreground"
+      }
+    });
+    const agentId = parseToolJson(seeded).agentId as string;
+    const project = settings.current.projects[0]!;
+    catalog.beforeGet = () => settings.updateWithProjectOperations(
+      {},
+      [{ kind: "rename", projectId: project.id, name: "Renamed During Continue" }],
+      undefined,
+      1
+    );
+
+    const raced = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "99999999-9999-4999-8999-999999999999",
+        activityPresentationId: "90909090-9090-4090-8090-909090909090",
+        prompt: "create a new Activity on the pinned Agent",
+        project: { name: "Test Project", registryRevision: 1 },
+        activity: { mode: "new", title: "Raced continuation" },
+        agent: { mode: "existing", id: agentId, context: "continue" },
+        executionMode: "foreground"
+      }
+    });
+    expect(raced.isError).toBe(true);
+    expect(JSON.stringify(raced)).toContain("PROJECT_REGISTRY_CHANGED");
+    expect(upstream.calls).toHaveLength(1);
+    expect(jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(1);
+    expect(jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(1);
+    expect(jobs.listForScope(SCOPE_A)).toHaveLength(1);
+    await close();
+  });
+
+  it("projects exact project names and pins routing across Activities, Agents, and archival", async () => {
+    const first = temporaryRoot();
+    const second = temporaryRoot();
+    const firstCwd = realpathSync(first);
+    const secondCwd = realpathSync(second);
+    const upstream = new FakeUpstream();
+    const sessions = new SessionRegistry();
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
+    });
+    const settings = new UserSettingsStore(config);
+    addTestProjects(settings, [
+      { name: "알파 저장소", cwd: first },
+      { name: "Beta Workspace", cwd: second }
+    ]);
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      config,
+      upstream,
+      sessions,
+      new FakeModelCatalog(),
+      settings,
+      undefined,
+      false
+    );
+
+    const taskDescriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task");
+    const descriptorJson = JSON.stringify(taskDescriptor?.inputSchema);
+    expect(descriptorJson).not.toContain("알파 저장소");
+    expect(descriptorJson).not.toContain("Beta Workspace");
+    expect(taskDescriptor?.inputSchema.properties?.project).toMatchObject({
+      type: "object",
+      required: ["name", "projectRef", "projectRevision"],
+      additionalProperties: false
+    });
+    expect(descriptorJson).not.toContain(firstCwd);
+    expect(descriptorJson).not.toContain(secondCwd);
+
+    const alphaProject = settings.current.projects.find((project) => project.name === "알파 저장소")!;
+    const betaProject = settings.current.projects.find((project) => project.name === "Beta Workspace")!;
+    const alphaSelector = {
+      name: alphaProject.name,
+      projectRef: alphaProject.projectRef,
+      projectRevision: alphaProject.projectRevision
+    };
+    const betaSelector = {
+      name: betaProject.name,
+      projectRef: betaProject.projectRef,
+      projectRevision: betaProject.projectRevision
+    };
+
+    const missing = await rawCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "61616161-6161-4161-8161-616161616161",
+        activityPresentationId: "62626262-6262-4262-8262-626262626262",
+        prompt: "missing project",
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Missing Project" },
+        executionMode: "foreground"
+      }
+    });
+    expect(missing.isError).toBe(true);
+    expect(JSON.stringify(missing)).toContain("PROJECT_REQUIRED");
+
+    const alpha = await runTask(client, {
+      prompt: "work in alpha",
+      project: alphaSelector,
+      agentName: "Alpha Agent",
+      contextMode: "fresh"
+    });
+    const alphaStructured = parseToolJson(alpha);
+    const alphaActivityId = alphaStructured.activityId as string;
+    const alphaAgentId = alphaStructured.agentId as string;
+    expect(alphaStructured.projectName).toBe("알파 저장소");
+    expect(jobs.getActivity(alphaActivityId)).toMatchObject({
+      projectId: alphaProject.id,
+      projectName: "알파 저장소"
+    });
+    expect(sessions.get("thread-1")).toMatchObject({
+      projectId: alphaProject.id,
+      projectName: "알파 저장소",
+      cwd: firstCwd
+    });
+
+    const inherited = await runTask(client, {
+      prompt: "add another alpha Agent",
+      project: alphaSelector,
+      activityId: alphaActivityId,
+      agentName: "Second Alpha Agent",
+      contextMode: "fresh"
+    });
+    expect(parseToolJson(inherited).projectName).toBe("알파 저장소");
+    expect(upstream.calls[1]?.args.cwd).toBe(firstCwd);
+
+    const conflict = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "must not switch repositories",
+        activityId: alphaActivityId,
+        agentId: alphaAgentId,
+        contextMode: "continue",
+        project: betaSelector
+      }
+    });
+    expect(conflict.isError).toBe(true);
+    expect(JSON.stringify(conflict)).toContain("PROJECT_CONTEXT_CONFLICT");
+
+    const linkedBeta = await runTask(client, {
+      prompt: "continue the goal with fresh beta context",
+      project: betaSelector,
+      continuationOfActivityId: alphaActivityId,
+      agentName: "Linked Beta Agent",
+      contextMode: "fresh"
+    });
+    expect(parseToolJson(linkedBeta).projectName).toBe("Beta Workspace");
+    expect(upstream.calls[2]?.args.cwd).toBe(secondCwd);
+    const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
+    expect(status).not.toHaveProperty("projects");
+    const settingsView = parseToolJson(
+      await client.callTool({ name: "codex_ui_read", arguments: { view: "settings" } })
+    );
+    expect(settingsView.capabilities.projectAvailability).toMatchObject([
+      { name: "알파 저장소", available: true, archived: false },
+      { name: "Beta Workspace", available: true, archived: false }
+    ]);
+    expect(JSON.stringify(status)).not.toContain(firstCwd);
+    expect(JSON.stringify(status)).not.toContain(secondCwd);
+    const activityCard = await client.callTool({ name: "codex_activity", arguments: {} });
+    expect(new Set(
+      (privateActivityView(activityCard).feed.active || [])
+        .flatMap((row: { workspaceLabels: string[] }) => row.workspaceLabels)
+    )).toEqual(new Set(["알파 저장소", "Beta Workspace"]));
+    expect(JSON.stringify(activityCard)).not.toContain(firstCwd);
+    expect(JSON.stringify(activityCard)).not.toContain(secondCwd);
+
+    settings.updateWithProjectOperations(
+      {},
+      [{ kind: "archive", projectId: alphaProject.id }],
+      undefined,
+      settings.current.registryRevision
+    );
+    const continued = await runTask(client, {
+      prompt: "continue the admitted alpha thread",
+      activityId: alphaActivityId,
+      agentId: alphaAgentId,
+      contextMode: "continue"
+    });
+    expect(parseToolJson(continued).projectName).toBe("알파 저장소");
+    expect(upstream.calls[3]).toMatchObject({
+      name: "codex-reply",
+      args: { threadId: "thread-1" }
+    });
+    const removedFresh = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "fresh context cannot reuse a removed project",
+        activityId: alphaActivityId,
+        agentId: alphaAgentId,
+        contextMode: "fresh",
+        project: alphaSelector
+      }
+    });
+    expect(removedFresh.isError).toBe(true);
+    expect(JSON.stringify(removedFresh)).toContain("PROJECT_REGISTRY_CHANGED");
+    expect(JSON.stringify(removedFresh)).toContain("codex_status");
+    expect(JSON.stringify(removedFresh)).not.toContain("Refresh the tool descriptor");
+    expect(upstream.calls).toHaveLength(4);
+    const removed = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "new work cannot use a removed project",
+        project: alphaSelector,
+        agentName: "Removed Project Agent",
+        contextMode: "fresh"
+      }
+    });
+    expect(removed.isError).toBe(true);
+    expect(JSON.stringify(removed)).toContain("PROJECT_REGISTRY_CHANGED");
+    await close();
+  });
+
+  it.each(["continue", "fork"] as const)(
+    "redacts an unavailable pinned project path during %s and recovers after restoration",
+    async (contextMode) => {
+      const root = temporaryRoot();
+      const movedRoot = `${root}-moved`;
+      const upstream = new ForkLifecycleUpstream();
+      const { client, jobs, close } = await connectTestClient(
+        configFor(root, { CODEX_MCP_BRIDGE_DEFAULT_BACKEND: "app-server" }),
+        upstream
+      );
+      const started = await runTask(client, {
+        prompt: "seed pinned project",
+        agentName: `Unavailable ${contextMode} Agent`,
+        contextMode: "fresh"
+      });
+      const agentId = parseToolJson(started).agentId as string;
+
+      renameSync(root, movedRoot);
+      try {
+        const result = await client.callTool({
+          name: "codex_task",
+          arguments: { prompt: "reuse unavailable project", agentId, contextMode }
+        });
+        const serialized = JSON.stringify(result);
+        expect(result.isError).toBe(true);
+        expect(serialized).toContain("PROJECT_UNAVAILABLE");
+        expect(serialized).not.toContain(root);
+        expect(serialized).not.toContain(movedRoot);
+        expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle" });
+        expect(upstream.calls).toHaveLength(1);
+      } finally {
+        if (existsSync(movedRoot)) renameSync(movedRoot, root);
+      }
+
+      try {
+        const recovered = await runTask(client, {
+          prompt: "reuse restored project",
+          agentId,
+          contextMode
+        });
+        expect((recovered as { isError?: boolean }).isError).not.toBe(true);
+        expect(upstream.calls.map((call) => call.name)).toEqual([
+          "codex",
+          contextMode === "continue" ? "codex-reply" : "codex-fork"
+        ]);
+      } finally {
+        await close();
+      }
+    }
+  );
+
+  it("keeps an explicit project stable across idempotent retries", async () => {
+    const first = temporaryRoot();
+    const second = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
+    });
+    const settings = new UserSettingsStore(config);
+    addTestProjects(settings, [
+      { name: "Alpha", cwd: first },
+      { name: "Beta", cwd: second }
+    ]);
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings
+    );
+    const alphaProject = settings.current.projects.find((project) => project.name === "Alpha")!;
+    const requestId = "31313131-3131-4131-8131-313131313131";
+    const args = {
+      scopeId: SCOPE_A,
+      requestId,
+      activityPresentationId: "32323232-3232-4232-8232-323232323232",
+      prompt: "idempotent project turn",
+      project: { name: "Alpha", registryRevision: 1 },
+      activity: { mode: "new" as const },
+      agent: { mode: "new" as const, name: "Retry Agent" },
+      executionMode: "foreground"
+    };
+
+    const firstResult = await rawCallTool({ name: "codex_task", arguments: args });
+    settings.updateWithProjectOperations(
+      {},
+      [{ kind: "rename", projectId: alphaProject.id, name: "Alpha Renamed" }],
+      undefined,
+      1
+    );
+    const replay = await rawCallTool({ name: "codex_task", arguments: args });
+    expect(parseToolJson(replay)).toMatchObject({
+      threadId: parseToolJson(firstResult).threadId,
+      activityId: parseToolJson(firstResult).activityId,
+      jobId: parseToolJson(firstResult).jobId,
+      projectName: "Alpha Renamed",
+      replay: true
+    });
+    expect(JSON.stringify(replay)).not.toContain(alphaProject.id);
+    expect(JSON.stringify(replay)).not.toContain(realpathSync(first));
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]?.args.cwd).toBe(realpathSync(first));
+    expect(jobs.listForScope(SCOPE_A)[0]).toMatchObject({
+      projectId: alphaProject.id,
+      projectName: "Alpha Renamed",
+      requestHashVersion: 6
+    });
+
+    const changed = await rawCallTool({
+      name: "codex_task",
+      arguments: { ...args, project: { name: "Beta", registryRevision: 2 } }
+    });
+    expect(changed.isError).toBe(true);
+    expect(JSON.stringify(changed)).toContain("requestId was already used for a different Codex task");
+    expect(upstream.calls).toHaveLength(1);
+    await close();
+  });
+
+  it("replays an exact persisted v5 legacy project request after the v6 selector migration", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root);
+    const upstream = new FakeUpstream();
+    const stateStore = new BridgeStateStore({ file: ":memory:" });
+    const settings = new UserSettingsStore(config, { stateStore });
+    settings.updateWithProjectOperations(
+      {},
+      [{ kind: "add", project: { name: "Legacy Project", cwd: root } }],
+      undefined,
+      0
+    );
+    const project = settings.current.projects[0]!;
+    const firstJobs = new CodexJobRegistry({
+      allowedRoots: config.allowedRoots,
+      stateStore
+    });
+    const firstConnection = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      settings,
+      firstJobs,
+      false
+    );
+    const requestId = "33333333-3333-4333-8333-333333333333";
+    const args = {
+      scopeId: SCOPE_A,
+      requestId,
+      prompt: "replay the pre-migration request",
+      project: { name: "Legacy Project", registryRevision: 1 },
+      activity: { mode: "new" as const, title: "Legacy v5 Activity" },
+      agent: { mode: "new" as const, name: "Legacy v5 Agent" },
+      executionMode: "foreground" as const
+    };
+
+    const admitted = await firstConnection.rawCallTool({
+      name: "codex_task",
+      arguments: args
+    });
+    const admittedTask = parseToolJson(admitted);
+    const admittedJob = firstJobs.get(admittedTask.jobId)!;
+    expect(admittedJob).toMatchObject({
+      projectId: project.id,
+      projectRequest: args.project,
+      requestHashVersion: 6,
+      status: "completed"
+    });
+    await firstConnection.close();
+
+    const legacyRequestHash = legacyV5TaskRequestHashFixture({
+      scopeId: SCOPE_A,
+      prompt: args.prompt,
+      projectName: args.project.name,
+      registryRevision: args.project.registryRevision,
+      projectId: project.id,
+      cwd: admittedJob.cwd,
+      sandbox: admittedJob.sandbox,
+      backendKind: admittedJob.executionDecision!.backendKind,
+      executionMode: args.executionMode,
+      selection: admittedJob.executionDecision!.effectiveSelection,
+      activityTitle: args.activity.title,
+      agentName: args.agent.name
+    });
+    const { promise: _promise, ...persistedJob } = admittedJob;
+    stateStore.replaceJobs([{
+      ...persistedJob,
+      requestHash: legacyRequestHash,
+      requestHashVersion: 5
+    }]);
+    settings.updateWithProjectOperations(
+      {},
+      [{ kind: "rename", projectId: project.id, name: "Migrated Project" }],
+      undefined,
+      settings.current.registryRevision
+    );
+
+    const migratedSettings = new UserSettingsStore(config, { stateStore });
+    const migratedPersistedJobs = stateStore.listJobs();
+    expect(migratedPersistedJobs).toHaveLength(1);
+    const migratedJobs = new CodexJobRegistry({
+      allowedRoots: config.allowedRoots,
+      stateStore
+    });
+    expect(migratedJobs.listForScope(SCOPE_A)[0]).toMatchObject({
+      requestId,
+      requestHash: legacyRequestHash,
+      requestHashVersion: 5,
+      projectRequest: args.project
+    });
+    const migratedConnection = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      migratedSettings,
+      migratedJobs,
+      false
+    );
+    const migratedTaskDescriptor = (await migratedConnection.client.listTools()).tools.find(
+      (tool) => tool.name === "codex_task"
+    )!;
+    expect(JSON.stringify(migratedTaskDescriptor.inputSchema)).toContain("projectRef");
+
+    const replay = await migratedConnection.bareCallTool({
+      name: "codex_task",
+      arguments: args
+    });
+    expect((replay as { isError?: boolean }).isError).not.toBe(true);
+    expect(parseToolJson(replay)).toMatchObject({
+      jobId: admittedTask.jobId,
+      activityId: admittedTask.activityId,
+      agentId: admittedTask.agentId,
+      threadId: admittedTask.threadId,
+      projectName: "Migrated Project",
+      replay: true
+    });
+    expect(migratedJobs.listForScope(SCOPE_A)).toHaveLength(1);
+    expect(migratedJobs.activityCount(SCOPE_A)).toBe(1);
+    expect(migratedJobs.agentCount(SCOPE_A)).toBe(1);
+    expect(upstream.calls).toHaveLength(1);
+
+    await migratedConnection.close();
+    stateStore.close();
+  });
+
+  it("keeps an existing Agent thread pinned after the registered projects change", async () => {
+    const first = temporaryRoot();
+    const second = temporaryRoot();
+    const relocated = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const sessions = new SessionRegistry();
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_ROOTS: `${first},${second},${relocated}`
+    });
+    const settings = new UserSettingsStore(config);
+    const { client, jobs, close } = await connectTestClient(
+      config,
+      upstream,
+      sessions,
+      new FakeModelCatalog(),
+      settings,
+      undefined,
+      false
+    );
+
+    addTestProjects(settings, [
+      { name: "First", cwd: first },
+      { name: "Second", cwd: second }
+    ]);
+    const started = await runTask(client, {
+      prompt: "start in the first folder",
+      projectId: "first",
+      agentName: "Pinned Cwd Agent",
+      contextMode: "fresh"
+    });
+    const startedStructured = parseToolJson(started);
+    const activityId = startedStructured.activityId as string;
+    const agentId = startedStructured.agentId as string;
+    const firstProject = settings.current.projects.find((project) => project.name === "First")!;
+    settings.updateWithProjectOperations(
+      {},
+      [{ kind: "relocate", projectId: firstProject.id, cwd: relocated }],
+      undefined,
+      settings.current.registryRevision
+    );
+    await runTask(client, {
+      prompt: "continue after the project registry changes",
+      activityId,
+      agentId,
+      contextMode: "continue"
+    });
+
+    const linked = await runTask(client, {
+      prompt: "continue in a new Activity without moving the pinned thread",
+      project: { name: "First", registryRevision: settings.current.registryRevision },
+      activityTitle: "Pinned follow-up Activity",
+      agentId,
+      contextMode: "continue"
+    });
+    const linkedActivityId = parseToolJson(linked).activityId as string;
+
+    expect(sessions.get("thread-1")?.cwd).toBe(realpathSync(first));
+    expect(jobs.listForAgent(agentId).map((job) => job.cwd)).toEqual([
+      realpathSync(first),
+      realpathSync(first),
+      realpathSync(first)
+    ]);
+    expect(jobs.getActivityProjectAdmission(linkedActivityId)).toMatchObject({
+      projectId: firstProject.id,
+      projectName: "First",
+      projectCwd: realpathSync(first)
+    });
+    expect(settings.current.projects.find((project) => project.id === firstProject.id))
+      .toMatchObject({ name: "First", cwd: realpathSync(relocated) });
+    await runTask(client, {
+      prompt: "start fresh at the relocated current folder",
+      projectId: "first",
+      agentId,
+      contextMode: "fresh"
+    });
+    expect(jobs.listForAgent(agentId).map((job) => job.cwd)).toEqual([
+      realpathSync(first),
+      realpathSync(first),
+      realpathSync(first),
+      realpathSync(relocated)
+    ]);
+    expect(upstream.calls.map((call) => call.name)).toEqual([
+      "codex",
+      "codex-reply",
+      "codex-reply",
+      "codex"
+    ]);
+    await close();
+  });
+
+  it("keeps automatic Activity cards compact and preserves terminal Activity history across Agent reuse", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root);
+    const settings = new UserSettingsStore(config);
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      config,
+      new FakeUpstream(),
+      undefined,
+      new FakeModelCatalog(),
+      settings
+    );
+    const started = await runTask(client, {
+      prompt: "render a summary",
+      agentName: "Summary Agent",
+      activityTitle: "Render summary",
+      contextMode: "fresh"
+    });
+    const startedTask = parseToolJson(started);
+    const activityId = startedTask.activityId as string;
+
+    const summaryResult = await client.callTool({
+      name: "codex_activity",
+      arguments: { activityId }
+    });
+    const summary = privateActivityView(summaryResult);
+    expect(summary).toMatchObject({
+      feed: {
+        mode: "full",
+        activeCount: 1,
+        active: [expect.objectContaining({
+          activityId,
+          title: "Render summary",
+          displayState: "waiting-gpt",
+          agents: [expect.objectContaining({
+            agentName: "Summary Agent",
+            durationMs: expect.any(Number),
+            updatedAt: expect.any(String),
+            endedAt: expect.any(String)
+          })]
+        })],
+        historySummary: { completedActivities: 0, endedActivities: 0 },
+        history: { rows: [] },
+        completed: { agentCount: 0, activityCount: 0 }
+      }
+    });
+    expect(summary).not.toHaveProperty("viewMode");
+
+    await client.callTool({
+      name: "codex_activity_update",
+      arguments: {
+        activityId,
+        expectedVersion: jobs.getActivity(activityId)?.version,
+        operation: { kind: "complete" }
+      }
+    });
+    const agentsResult = await client.callTool({
+      name: "codex_activity",
+      arguments: { activityId }
+    });
+    const agents = privateActivityView(agentsResult);
+    expect(agents).not.toHaveProperty("viewMode");
+    expect(agents.feed).toMatchObject({
+      mode: "full",
+      activeCount: 0,
+      historySummary: { completedActivities: 1, endedActivities: 0 },
+      history: {
+        rows: [expect.objectContaining({ activityId, displayState: "completed" })]
+      },
+      completed: {
+        agentCount: 1,
+        activityCount: 1,
+        rows: [expect.objectContaining({
+          agentName: "Summary Agent",
+          latestActivityId: activityId,
+          latestActivityTitle: "Render summary",
+          activityCount: 1
+        })]
+      },
+      idleAgents: {
+        rows: [expect.objectContaining({
+          agentName: "Summary Agent",
+          latestActivityId: activityId,
+          latestActivityTitle: "Render summary",
+          durationMs: expect.any(Number),
+          endedAt: expect.any(String)
+        })]
+      }
+    });
+
+    const completedAutomaticResult = await presentCompactActivity(
+      client,
+      activityId,
+      "30303030-3030-4030-8030-303030303030"
+    );
+    expect(privateActivityView(completedAutomaticResult).feed).toMatchObject({
+        mode: "compact",
+        active: [],
+        historySummary: { completedActivities: 1, endedActivities: 0, idleAgents: 1 },
+        history: {
+          rows: [expect.objectContaining({ activityId, displayState: "completed" })],
+          pagination: { limit: 3, returned: 1, hasMore: false }
+        },
+        idleAgents: {
+          agentCount: 1,
+          rows: [],
+          pagination: { limit: 3, returned: 0, hasMore: false }
+        }
+      });
+
+    const agentId = startedTask.agentId as string;
+    const resumed = await runTask(client, {
+      prompt: "start the next scoped activity",
+      agentId,
+      contextMode: "continue",
+      activityTitle: "Next activity"
+    });
+    const resumedActivityId = parseToolJson(resumed).activityId as string;
+    const resumedResult = await client.callTool({ name: "codex_activity", arguments: {} });
+    const resumedFeed = privateActivityView(resumedResult).feed;
+    expect(resumedFeed).toMatchObject({
+      mode: "full",
+      activeCount: 1,
+      active: [expect.objectContaining({
+        activityId: resumedActivityId,
+        agents: [expect.objectContaining({ agentName: "Summary Agent" })]
+      })],
+      historySummary: { completedActivities: 1, endedActivities: 0 },
+      history: {
+        rows: [expect.objectContaining({ activityId, displayState: "completed" })]
+      },
+      completed: { agentCount: 0, activityCount: 1, rows: [] }
+    });
+
+    const ended = jobs.createActivity({ scopeId: SCOPE_A, title: "Ended history" });
+    jobs.cancelActivity(ended.activityId, "No longer needed");
+    jobs.createAgent({ scopeId: SCOPE_A, agentName: "Unused idle Agent" });
+    const automatic = await presentCompactActivity(
+      client,
+      resumedActivityId,
+      "31313131-3131-4131-8131-313131313131"
+    );
+    const automaticCard = automaticCardProof(automatic);
+    const compact = privateActivityView(automatic);
+    expect(compact.feed).toMatchObject({
+      mode: "compact",
+      activeCount: 1,
+      active: [expect.objectContaining({ activityId: resumedActivityId })],
+      historySummary: { completedActivities: 1, endedActivities: 1, idleAgents: 1 },
+      history: {
+        rows: expect.arrayContaining([
+          expect.objectContaining({ activityId, displayState: "completed" }),
+          expect.objectContaining({ activityId: ended.activityId, displayState: "ended" })
+        ])
+      },
+      idleAgents: {
+        rows: [expect.objectContaining({ agentName: "Unused idle Agent" })]
+      },
+      completed: { rows: [] },
+      idle: { rows: [] },
+      ended: { rows: [] }
+    });
+    expect(compact.agents).toEqual([]);
+    expect(compact).not.toHaveProperty("archivedAgents");
+    expect(compact.activities).toEqual([]);
+    expect(compact.unassignedJobs).toEqual([]);
+
+    const endedWithAgent = jobs.createActivity({
+      scopeId: SCOPE_A,
+      title: "Ended history with idle Agent"
+    });
+    const endedIdleAgent = jobs.createAgent({
+      scopeId: SCOPE_A,
+      agentName: "Ended idle Agent"
+    });
+    jobs.assignAgent({
+      activityId: endedWithAgent.activityId,
+      agentId: endedIdleAgent.agentId,
+      contextMode: "fresh"
+    });
+    jobs.releaseAgentAssignment(endedWithAgent.activityId, endedIdleAgent.agentId);
+    jobs.cancelActivity(endedWithAgent.activityId, "Terminal idle Agent regression");
+    const endedAutomatic = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: automaticCard
+      },
+      _meta: { "openai/widgetSessionId": "compact-history-summary" }
+    });
+    expect((endedAutomatic as { structuredContent?: Record<string, any> })
+      .structuredContent?.feed.historySummary).toEqual({
+        completedActivities: 1,
+        endedActivities: 2,
+        idleAgents: 2
+      });
+    const boundedFeed = (endedAutomatic as { structuredContent?: Record<string, any> })
+      .structuredContent?.feed;
+    expect(boundedFeed.history).toMatchObject({
+      rows: expect.arrayContaining([
+        expect.objectContaining({ activityId, displayState: "completed" }),
+        expect.objectContaining({ activityId: ended.activityId, displayState: "ended" }),
+        expect.objectContaining({ activityId: endedWithAgent.activityId, displayState: "ended" })
+      ]),
+      pagination: { limit: 3, returned: 3, hasMore: false }
+    });
+    expect(boundedFeed.idleAgents).toMatchObject({
+      agentCount: 2,
+      rows: [expect.objectContaining({ agentName: "Unused idle Agent" })],
+      pagination: { limit: 3, returned: 1, hasMore: false }
+    });
+    expect(JSON.stringify(boundedFeed.idleAgents.rows)).not.toContain("Ended idle Agent");
+
+    for (const title of ["Extra ended history 1", "Extra ended history 2"]) {
+      const extra = jobs.createActivity({ scopeId: SCOPE_A, title });
+      jobs.cancelActivity(extra.activityId, "Compact history limit regression");
+    }
+    const cappedAutomatic = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: { scopeId: SCOPE_A, card: automaticCard },
+      _meta: { "openai/widgetSessionId": "compact-history-summary" }
+    });
+    const cappedFeed = (cappedAutomatic as { structuredContent?: Record<string, any> })
+      .structuredContent?.feed;
+    expect(cappedFeed.history.rows).toHaveLength(3);
+    expect(cappedFeed.history.pagination).toMatchObject({
+      limit: 3,
+      returned: 3,
+      hasMore: true
+    });
+    const focusedCompact = privateActivityView(await presentCompactActivity(
+      client,
+      activityId,
+      "32323232-3232-4232-8232-323232323232"
+    ));
+    expect(focusedCompact.feed.history.rows).toHaveLength(3);
+    expect(focusedCompact.feed.history.rows[0]).toMatchObject({
+      activityId,
+      displayState: "completed"
+    });
+    await close();
+  });
+
+  it("paginates the explicit full Activity history within scope and keeps an exact selected Activity visible", async () => {
+    const root = temporaryRoot();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream()
+    );
+    const scopedActivities = Array.from({ length: 35 }, (_, index) => jobs.createActivity({
+      scopeId: SCOPE_A,
+      title: `Scoped history ${index + 1}`
+    }));
+    const scopedAgents = Array.from({ length: 35 }, (_, index) => jobs.createAgent({
+      scopeId: SCOPE_A,
+      agentName: `Scoped idle Agent ${index + 1}`
+    }));
+    jobs.createActivity({ scopeId: SCOPE_B, title: "Other conversation history" });
+    jobs.createAgent({ scopeId: SCOPE_B, agentName: "Other conversation Agent" });
+    const oldest = scopedActivities[0]!;
+
+    const opened = await client.callTool({
+      name: "codex_activity",
+      arguments: { activityId: oldest.activityId }
+    });
+    expect((opened as { structuredContent?: Record<string, any> }).structuredContent).toMatchObject({
+      kind: "activity",
+      activityId: oldest.activityId,
+      activityVersion: oldest.version,
+      counts: { activities: 35, agents: 35 }
+    });
+    const selectedPage = privateActivityView(opened);
+    expect(selectedPage.feed).toMatchObject({
+      mode: "full",
+      activityTotal: 35,
+      history: {
+        pagination: {
+          offset: 30,
+          returned: 5,
+          total: 35,
+          hasPrevious: true,
+          hasMore: false
+        }
+      },
+      idleAgents: {
+        agentCount: 35,
+        pagination: { offset: 30, returned: 5, total: 35 }
+      }
+    });
+    expect(selectedPage.feed.history.rows).toEqual(
+      expect.arrayContaining([expect.objectContaining({ activityId: oldest.activityId })])
+    );
+    expect(JSON.stringify(selectedPage)).not.toContain("Other conversation history");
+    expect(JSON.stringify(selectedPage)).not.toContain("Other conversation Agent");
+
+    const openedPublic = (opened as { structuredContent?: Record<string, any> })
+      .structuredContent!;
+    const restoredFirstPage = parseToolJson(await rawCallTool({
+      name: "codex_activity_rehydrate",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "full-history",
+        activityId: oldest.activityId,
+        activityVersion: openedPublic.activityVersion,
+        limit: 30,
+        cursor: selectedPage.feed.history.pagination.previousCursor
+      },
+      _meta: { "openai/widgetSessionId": "restored-history-pagination" }
+    }));
+    expect(restoredFirstPage).toMatchObject({
+      feed: {
+        mode: "full",
+        history: {
+          pagination: {
+            offset: 0,
+            returned: 30,
+            total: 35,
+            hasPrevious: false,
+            hasMore: true
+          }
+        }
+      },
+      mountedPresentation: { kind: "restored-explicit", mode: "full-history" },
+      watcherPolicy: { mode: "one-shot", live: false, ownsCompletionHandoff: false }
+    });
+
+    const card = {
+      activityId: selectedPage.mountedActivity.activityId,
+      generation: selectedPage.mountedActivity.cardGeneration,
+      presentation: { kind: "explicit" as const }
+    };
+    const firstPageResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card,
+        limit: 30,
+        cursor: selectedPage.feed.history.pagination.previousCursor
+      },
+      _meta: { "openai/widgetSessionId": "explicit-history-pagination" }
+    });
+    const firstPage = (firstPageResult as { structuredContent?: Record<string, any> })
+      .structuredContent!;
+    expect(firstPage.feed.history.pagination).toMatchObject({
+      offset: 0,
+      returned: 30,
+      total: 35,
+      hasPrevious: false,
+      hasMore: true
+    });
+    expect(firstPage.feed.history.rows).toHaveLength(30);
+    expect(firstPage.feed.idleAgents).toMatchObject({
+      agentCount: 35,
+      pagination: { offset: 0, returned: 30, total: 35, hasMore: true }
+    });
+    expect(firstPage.feed.idleAgents.rows).toHaveLength(30);
+
+    const nextPageResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card,
+        limit: 30,
+        cursor: firstPage.feed.history.pagination.nextCursor
+      },
+      _meta: { "openai/widgetSessionId": "explicit-history-pagination" }
+    });
+    const nextPage = (nextPageResult as { structuredContent?: Record<string, any> })
+      .structuredContent!;
+    expect(nextPage.feed.history.pagination).toMatchObject({
+      offset: 30,
+      returned: 5,
+      total: 35,
+      hasPrevious: true,
+      hasMore: false
+    });
+    expect(nextPage.feed.idleAgents).toMatchObject({
+      agentCount: 35,
+      pagination: { offset: 30, returned: 5, total: 35, hasMore: false }
+    });
+    expect(nextPage.feed.idleAgents.rows).toHaveLength(5);
+
+    jobs.createActivity({ scopeId: SCOPE_A, title: "New ordering boundary" });
+    const resetResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card,
+        limit: 30,
+        cursor: nextPage.feed.history.pagination.currentCursor
+      },
+      _meta: { "openai/widgetSessionId": "explicit-history-pagination" }
+    });
+    const resetPage = (resetResult as { structuredContent?: Record<string, any> })
+      .structuredContent!;
+    expect(resetPage.feed.history.pagination).toMatchObject({
+      offset: 0,
+      returned: 30,
+      total: 36,
+      reset: true
+    });
+    expect(resetPage.feed.history.pagination.currentCursor)
+      .not.toBe(nextPage.feed.history.pagination.currentCursor);
+    expect(scopedAgents).toHaveLength(35);
+    await close();
+  });
+
+  it("opens an unselected explicit Activity view at the priority-first page", async () => {
+    const root = temporaryRoot();
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
+      new FakeUpstream()
+    );
+    for (let index = 0; index < 30; index += 1) {
+      const activity = jobs.createActivity({
+        scopeId: SCOPE_A,
+        title: `Waiting Activity ${index + 1}`
+      });
+      const agent = jobs.createAgent({
+        scopeId: SCOPE_A,
+        agentName: `Waiting Agent ${index + 1}`
+      });
+      jobs.assignAgent({
+        activityId: activity.activityId,
+        agentId: agent.agentId,
+        contextMode: "fresh"
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const newestIdle = jobs.createActivity({
+      scopeId: SCOPE_A,
+      title: "Newest idle history"
+    });
+
+    const opened = privateActivityView(await client.callTool({
+      name: "codex_activity",
+      arguments: {}
+    }));
+    expect(opened.mountedActivity.activityId).toBe(newestIdle.activityId);
+    expect(opened.feed.history.pagination).toMatchObject({
+      offset: 0,
+      returned: 30,
+      hasPrevious: false,
+      hasMore: true
+    });
+    expect(opened.feed.active).toHaveLength(30);
+    expect(opened.feed.active.every((row: Record<string, unknown>) =>
+      row.displayState === "waiting-gpt"
+    )).toBe(true);
+
+    const refreshedResult = await rawCallTool({
+      name: "codex_activity_snapshot",
+      arguments: {
+        scopeId: SCOPE_A,
+        card: {
+          activityId: opened.mountedActivity.activityId,
+          generation: opened.mountedActivity.cardGeneration,
+          presentation: { kind: "explicit" }
+        },
+        limit: 30,
+        cursor: opened.feed.history.pagination.currentCursor
+      },
+      _meta: { "openai/widgetSessionId": "priority-first-explicit-view" }
+    });
+    const refreshed = (refreshedResult as { structuredContent?: Record<string, any> })
+      .structuredContent!;
+    expect(refreshed.feed.history.pagination).toMatchObject({
+      offset: 0,
+      returned: 30,
+      hasPrevious: false,
+      hasMore: true
+    });
+    expect(refreshed.feed.active).toHaveLength(30);
+    await close();
+  });
+
+  it("orders Activity rows by user block, recovery, result review, and running state", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+
+    const failed = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "fail for ordering",
+        agentName: "Failed ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    upstream.rejectNext(new Error("ordering failure"));
+    await waitForJobStatus(client, failed.jobId, "failed");
+
+    const verification = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "verify for ordering",
+        agentName: "Verification ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background",
+        handoffPolicy: "verify",
+        completionTrigger: "sealed-jobs-terminal"
+      }
+    }));
+    upstream.resolveNext(fakeCodexResult("verification-ordering-thread"));
+    await waitForJobStatus(client, verification.jobId, "completed");
+    jobs.sealActivity(verification.activityId);
+
+    const waiting = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "wait for GPT ordering",
+        agentName: "Waiting ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    upstream.resolveNext(fakeCodexResult("waiting-ordering-thread"));
+    await waitForJobStatus(client, waiting.jobId, "completed");
+
+    const approval = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "request approval for ordering",
+        agentName: "Approval ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    const approvalInteraction = {
+      interactionId: "ordering-approval",
+      kind: "command-approval" as const,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "ordering-item",
+      summary: "Approval blocks the user",
+      availableDecisions: ["accept", "decline"] as CodexInteractionDecision[]
+    };
+    upstream.progressNext({
+      progress: 1,
+      message: approvalInteraction.summary,
+      event: {
+        eventId: "ordering-approval-event",
+        type: "approval-required",
+        phase: "waiting",
+        createdAt: Date.now(),
+        summary: approvalInteraction.summary,
+        details: { interaction: approvalInteraction }
+      }
+    });
+
+    const running = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "keep running for ordering",
+        agentName: "Running ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const newerRunning = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "keep a newer row running for stable ordering",
+        agentName: "Newer running ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const terminating = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "show terminating within the progress group",
+        agentName: "Terminating ordering Agent",
+        contextMode: "fresh",
+        executionMode: "background"
+      }
+    }));
+    const terminatingJob = jobs.get(terminating.jobId);
+    if (!terminatingJob) throw new Error("Expected terminating ordering Job.");
+    terminatingJob.status = "terminating";
+
+    const card = privateActivityView(await client.callTool({ name: "codex_activity", arguments: {} }));
+    expect(card.feed.active.map((row: { activityId: string; displayState: string }) => ({
+      activityId: row.activityId,
+      displayState: row.displayState
+    }))).toEqual([
+      { activityId: approval.activityId, displayState: "approval-required" },
+      { activityId: failed.activityId, displayState: "failed" },
+      { activityId: waiting.activityId, displayState: "waiting-gpt" },
+      { activityId: verification.activityId, displayState: "verification" },
+      { activityId: terminating.activityId, displayState: "terminating" },
+      { activityId: newerRunning.activityId, displayState: "running" },
+      { activityId: running.activityId, displayState: "running" }
+    ]);
+
+    terminatingJob.status = "running";
+    upstream.resolveNext(fakeCodexResult("approval-ordering-thread"));
+    upstream.resolveNext(fakeCodexResult("running-ordering-thread"));
+    upstream.resolveNext(fakeCodexResult("newer-running-ordering-thread"));
+    upstream.resolveNext(fakeCodexResult("terminating-ordering-thread"));
+    await Promise.all([
+      waitForJobStatus(client, approval.jobId, "completed"),
+      waitForJobStatus(client, running.jobId, "completed"),
+      waitForJobStatus(client, newerRunning.jobId, "completed"),
+      waitForJobStatus(client, terminating.jobId, "completed")
+    ]);
+    await close();
+  });
+
+  it("shows current retry progress separately from previous Activity failures", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+
+    const failed = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "record one failed attempt",
+        activity: { mode: "new", title: "Retry with failure history" },
+        agent: { mode: "new", name: "Retry history Agent" },
+        executionMode: "background"
+      }
+    }));
+    upstream.rejectNext(new Error("first attempt failed"));
+    await waitForJobStatus(client, failed.jobId, "failed");
+
+    const retry = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: {
+        prompt: "keep the retry running",
+        activity: { mode: "existing", id: failed.activityId },
+        agent: { mode: "existing", id: failed.agentId, context: "fresh" },
+        executionMode: "background"
+      }
+    }));
+    const card = privateActivityView(await client.callTool({
+      name: "codex_activity",
+      arguments: { activityId: failed.activityId }
+    }));
+    const row = card.feed.active.find(
+      (entry: { activityId: string }) => entry.activityId === failed.activityId
+    );
+    expect(row).toMatchObject({
+      activityId: failed.activityId,
+      displayState: "running",
+      canRetry: false,
+      counts: {
+        total: 2,
+        running: 1,
+        completed: 0,
+        failed: 1,
+        interrupted: 0,
+        cancelled: 0,
+        terminal: 1
+      }
+    });
+
+    upstream.resolveNext(fakeCodexResult("retry-history-thread"));
+    await waitForJobStatus(client, retry.jobId, "completed");
+    await close();
+  });
+
+  it("uses Activity identity as the stable tiebreaker within one state group", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredUpstream();
+    const { client, close } = await connectTestClient(configFor(root), upstream);
+    const [first, second] = await (async () => {
+      const frozenNow = Date.now();
+      const now = vi.spyOn(Date, "now").mockReturnValue(frozenNow);
+      try {
+        const firstResult = parseToolJson(await client.callTool({
+          name: "codex_task",
+          arguments: {
+            prompt: "first stable tie",
+            agentName: "Stable tie Agent One",
+            contextMode: "fresh",
+            executionMode: "background"
+          }
+        }));
+        const secondResult = parseToolJson(await client.callTool({
+          name: "codex_task",
+          arguments: {
+            prompt: "second stable tie",
+            agentName: "Stable tie Agent Two",
+            contextMode: "fresh",
+            executionMode: "background"
+          }
+        }));
+        return [firstResult, secondResult] as const;
+      } finally {
+        now.mockRestore();
+      }
+    })();
+
+    const card = privateActivityView(await client.callTool({
+      name: "codex_activity",
+      arguments: {}
+    }));
+    const tiedIds = card.feed.active
+      .map((row: { activityId: string }) => row.activityId)
+      .filter((activityId: string) => [first.activityId, second.activityId].includes(activityId));
+    expect(tiedIds).toEqual([first.activityId, second.activityId].sort());
+
+    upstream.resolveNext(fakeCodexResult("stable-tie-thread-one"));
+    upstream.resolveNext(fakeCodexResult("stable-tie-thread-two"));
+    await Promise.all([
+      waitForJobStatus(client, first.jobId, "completed"),
+      waitForJobStatus(client, second.jobId, "completed")
+    ]);
     await close();
   });
 
@@ -1703,21 +13884,53 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(configFor(root), upstream);
-    await runTask(client, { prompt: "first", sessionMode: "new" });
+    const first = await runTask(client, {
+      prompt: "first",
+      agent: { mode: "new", name: "Tracked Agent" }
+    });
+    const agentId = parseToolJson(first).agentId as string;
 
-    await runTask(client, {
+    await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        modelPolicy: {
+          mode: "automatic",
+          allowedSelections: {
+            kind: "explicit",
+            selections: [
+              { model: "gpt-5.6-sol", reasoningEffort: "max" },
+              { model: "gpt-5.6-terra", reasoningEffort: "high" }
+            ]
+          },
+          constraints: { allowDelegation: true }
+        }
+      }
+    });
+
+    const continued = await runTask(client, {
       prompt: "continue",
-      sessionMode: "continue",
-      threadId: "thread-1"
+      agent: { mode: "existing", id: agentId, context: "continue" }
+    });
+    expect(parseToolJson(continued)).toMatchObject({
+      actualModel: "gpt-5.6-sol",
+      actualReasoningEffort: "max"
     });
     expect(upstream.calls[1]).toEqual({
       name: "codex-reply",
-      args: { threadId: "thread-1", prompt: "continue", _bridgeBackendKind: "mcp-server" }
+      args: { threadId: "thread-1", prompt: "continue", cwd: realpathSync(root), sandbox: "read-only", "approval-policy": "on-request", "approvals-reviewer": "user", "app-tool-approval-mode": "auto", _bridgeBackendKind: "app-server", model: "gpt-5.6-sol", config: { model_reasoning_effort: "max" } }
     });
 
     const unknown = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "continue", sessionMode: "continue", threadId: "missing" }
+      arguments: {
+        prompt: "continue",
+        agent: {
+          mode: "existing",
+          id: "99999999-9999-4999-8999-999999999999",
+          context: "continue"
+        }
+      }
     });
     expect(unknown.isError).toBe(true);
 
@@ -1725,75 +13938,76 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: {
         prompt: "switch",
-        sessionMode: "continue",
-        threadId: "thread-1",
-        model: "gpt-5.6-terra"
+        agent: { mode: "existing", id: agentId, context: "continue" },
+        selection: { model: "gpt-5.6-terra", reasoningEffort: "high" }
       }
     });
-    expect(modelChange.isError).toBe(true);
-    expect(JSON.stringify(modelChange)).toContain("cannot change");
+    expect(modelChange.isError).not.toBe(true);
+    expect(upstream.calls.at(-1)).toMatchObject({ name: "codex-reply", args: {
+      threadId: "thread-1", model: "gpt-5.6-terra", config: { model_reasoning_effort: "high" }
+    } });
 
     await close();
   });
 
-  it("requires an explicit write sandbox when continuing a write thread", async () => {
+  it("reuses the pinned write sandbox and rejects a retired caller override", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1" }),
+      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1", CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "workspace-write" }),
       upstream
     );
-    await runTask(client, {
+    const started = await runTask(client, {
       prompt: "write",
-      sessionMode: "new",
-      sandbox: "workspace-write"
+      agentName: "Writer",
+      contextMode: "fresh"
     });
-
-    const denied = await client.callTool({
-      name: "codex_task",
-      arguments: { prompt: "more", sessionMode: "continue", threadId: "thread-1" }
-    });
-    expect(denied.isError).toBe(true);
-    expect(JSON.stringify(denied)).toContain("requires sandbox='workspace-write'");
+    const agentId = parseToolJson(started).agentId;
 
     await runTask(client, {
       prompt: "more",
-      sessionMode: "continue",
-      threadId: "thread-1",
-      sandbox: "workspace-write"
+      agentId,
+      contextMode: "continue"
     });
     expect(upstream.calls[1]?.name).toBe("codex-reply");
+
+    const denied = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "conflicting read", agentId, contextMode: "continue", sandbox: "read-only" }
+    });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied)).toContain("TASK_PERMISSION_INPUT_RETIRED");
 
     await close();
   });
 
-  it("requires an explicit danger sandbox when continuing a full-access thread", async () => {
+  it("reuses the pinned full-access sandbox and rejects a retired caller override", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" }),
+      configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1", CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "danger-full-access" }),
       upstream
     );
-    await runTask(client, {
+    const started = await runTask(client, {
       prompt: "full task",
-      sessionMode: "new",
-      sandbox: "danger-full-access"
+      agentName: "Full Agent",
+      contextMode: "fresh"
     });
-
-    const denied = await client.callTool({
-      name: "codex_task",
-      arguments: { prompt: "more", sessionMode: "continue", threadId: "thread-1" }
-    });
-    expect(denied.isError).toBe(true);
-    expect(JSON.stringify(denied)).toContain("requires sandbox='danger-full-access'");
+    const agentId = parseToolJson(started).agentId;
 
     await runTask(client, {
       prompt: "more",
-      sessionMode: "continue",
-      threadId: "thread-1",
-      sandbox: "danger-full-access"
+      agentId,
+      contextMode: "continue"
     });
     expect(upstream.calls[1]?.name).toBe("codex-reply");
+
+    const denied = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "conflicting read", agentId, contextMode: "continue", sandbox: "read-only" }
+    });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied)).toContain("TASK_PERMISSION_INPUT_RETIRED");
 
     await close();
   });
@@ -1804,45 +14018,55 @@ describe("bridge tools", () => {
     await runTask(client, { prompt: "first", sessionMode: "new" });
 
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
-    expect(status.sessions).toHaveLength(1);
-    expect(status.sessions[0]).toMatchObject({
-      threadId: "thread-1",
-      cwd: realpathSync(root),
-      sandbox: "read-only",
-      autoResumeEligible: true
-    });
+    expect(status.counts.sessions).toBe(1);
+    expect(status.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "job", threadId: "thread-1" })
+    ]));
+    expect(JSON.stringify(status)).not.toContain(realpathSync(root));
 
     await close();
   });
 
-  it("fast-returns a slow task and retrieves completion through codex_status", async () => {
+  it("returns a background task immediately and retrieves completion through codex_status", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      configFor(root),
       upstream
     );
 
     const started = parseToolJson(
-      await client.callTool({
+      await Promise.race([
+        client.callTool({
         name: "codex_task",
         arguments: { prompt: "slow", sessionMode: "new" }
-      })
+        }),
+        new Promise<never>((_resolve, reject) =>
+          setTimeout(() => reject(new Error("Background codex_task did not return immediately.")), 500)
+        )
+      ])
     );
-    expect(started).toMatchObject({ status: "running", operation: "start" });
+    expect(started).toMatchObject({
+      status: "running",
+      executionMode: "background"
+    });
+    expect(started.activityId).toMatch(SCOPE_ID_PATTERN);
+    expect(started).not.toHaveProperty("nextAction");
     upstream.resolveNext();
 
     const completed = await waitForJobStatus(client, started.jobId, "completed");
-    expect(completed.operation).toBe("start");
-    expect(JSON.stringify(completed.result)).toContain("thread-1");
+    expect(completed).toMatchObject({
+      threadId: "thread-1",
+      result: { availability: "delivered", omitted: false }
+    });
     await close();
   });
 
   it("long-polls one existing status call until the job becomes terminal", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+    const { client, jobs, close } = await connectTestClient(
+      configFor(root),
       upstream
     );
     const started = parseToolJson(
@@ -1851,7 +14075,9 @@ describe("bridge tools", () => {
 
     const waiting = client.callTool({
       name: "codex_status",
-      arguments: { jobId: started.jobId, waitFor: "terminal", waitMs: 1000 }
+      arguments: {
+        query: { kind: "job", id: started.jobId, waitFor: "terminal", waitMs: 1000 }
+      }
     });
     setTimeout(() => upstream.resolveNext(), 10);
     const completed = parseToolJson(await waiting);
@@ -1868,7 +14094,7 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      configFor(root),
       upstream
     );
     const started = parseToolJson(
@@ -1888,9 +14114,7 @@ describe("bridge tools", () => {
     expect(changed).toMatchObject({
       status: "running",
       terminal: false,
-      version: 3,
-      progressObserved: true,
-      lastProgress: { progress: 3, total: 10, message: "editing files" },
+      versions: { job: 3 },
       wait: { waitFor: "change", timedOut: false, changed: true }
     });
     upstream.resolveNext();
@@ -1903,7 +14127,6 @@ describe("bridge tools", () => {
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_JOB_STALE_AFTER_MS: "1"
       }),
       upstream
@@ -1920,9 +14143,11 @@ describe("bridge tools", () => {
 
     expect(status).toMatchObject({
       status: "running",
-      health: "no-progress-observed",
       wait: { waitFor: "terminal", timedOut: true, changed: false }
     });
+    expect(status.warnings).toEqual([
+      expect.stringContaining("No progress event has been observed")
+    ]);
     upstream.resolveNext();
     await waitForJobStatus(client, started.jobId, "completed");
     await close();
@@ -1931,38 +14156,132 @@ describe("bridge tools", () => {
   it("cancels only a job owned by the supplied scope and forwards an abort signal", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+    const { client, rawCallTool, jobs, close } = await connectTestClient(
+      configFor(root),
       upstream
     );
     const started = parseToolJson(
       await client.callTool({ name: "codex_task", arguments: { prompt: "cancel me", sessionMode: "new" } })
     );
+    await Promise.resolve();
+    const currentVersion = jobs.get(started.jobId)?.version as number;
+
+    const missingReason = await client.callTool({
+      name: "codex_cancel",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "70707070-7070-4070-8070-707070707070",
+        jobId: started.jobId,
+        expectedVersion: currentVersion
+      }
+    });
+    expect(missingReason.isError).toBe(true);
+    expect(JSON.stringify(missingReason)).toContain("reason");
+    expect(upstream.aborts).toBe(0);
 
     const denied = await client.callTool({
       name: "codex_cancel",
-      arguments: { scopeId: SCOPE_B, jobId: started.jobId }
+      arguments: {
+        scopeId: SCOPE_B,
+        requestId: "71717171-7171-4171-8171-717171717171",
+        jobId: started.jobId,
+        expectedVersion: currentVersion,
+        reason: "The user stopped this job"
+      }
     });
     expect(denied.isError).toBe(true);
     expect(upstream.aborts).toBe(0);
 
-    const cancelled = parseToolJson(
-      await client.callTool({
-        name: "codex_cancel",
-        arguments: { scopeId: SCOPE_A, jobId: started.jobId }
-      })
-    );
-    expect(cancelled).toMatchObject({ status: "cancelled", terminal: true });
-    expect(cancelled.error).toContain("Partial filesystem changes may remain");
+    const cancellationArguments = {
+      scopeId: SCOPE_A,
+      requestId: "72727272-7272-4272-8272-727272727272",
+      jobId: started.jobId,
+      expectedVersion: currentVersion,
+      reason: "The user stopped this job"
+    };
+    const [cancelledResult, concurrentReplayResult] = await Promise.all([
+      client.callTool({ name: "codex_cancel", arguments: cancellationArguments }),
+      client.callTool({ name: "codex_cancel", arguments: cancellationArguments })
+    ]);
+    const cancelled = parseToolJson(cancelledResult);
+    expect(parseToolJson(concurrentReplayResult)).toEqual(cancelled);
+    expect(cancelled).toMatchObject({
+      kind: "mutation",
+      action: "cancel-job",
+      target: { type: "job", id: started.jobId, state: "cancelled" }
+    });
+    expect(jobs.get(started.jobId)).toMatchObject({
+      status: "cancelled",
+      terminalOrigin: "explicit-cancellation",
+      error: expect.stringContaining("Partial filesystem changes may remain")
+    });
     expect(upstream.aborts).toBe(1);
 
-    const repeated = parseToolJson(
+    const durableReplay = parseToolJson(
       await client.callTool({
         name: "codex_cancel",
-        arguments: { scopeId: SCOPE_A, jobId: started.jobId }
+        arguments: cancellationArguments
       })
     );
-    expect(repeated.status).toBe("cancelled");
+    expect(durableReplay).toEqual(cancelled);
+    expect(upstream.aborts).toBe(1);
+    expect(jobs.listCancellationIntents({ requestId: cancellationArguments.requestId }))
+      .toHaveLength(1);
+    expect(jobs.getCancellationOperation(SCOPE_A, cancellationArguments.requestId))
+      .toMatchObject({
+        status: "completed",
+        source: "model-tool",
+        reason: cancellationArguments.reason,
+        result: { status: "cancelled", jobId: started.jobId }
+      });
+    const activityCardResult = await rawCallTool({
+      name: "codex_activity",
+      arguments: {
+        scopeId: SCOPE_A,
+        mode: "full-history",
+        activityId: started.activityId
+      }
+    });
+    const activityCardView = validateActivityViewPrivateMetadata(
+      (activityCardResult as { _meta?: Record<string, unknown> })
+        ._meta?.[ACTIVITY_VIEW_METADATA_KEY]
+    ).view;
+    const activityFeed = activityCardView.feed as {
+      active: Array<Record<string, unknown>>;
+      history: { rows: Array<Record<string, unknown>> };
+    };
+    expect([...activityFeed.active, ...activityFeed.history.rows]).toEqual(
+      expect.arrayContaining([expect.objectContaining({
+        activityId: started.activityId,
+        cancellations: [{
+          targetKind: "job",
+          agentName: expect.any(String),
+          status: "succeeded",
+          reason: cancellationArguments.reason,
+          requestedAt: expect.any(String)
+        }]
+      })])
+    );
+    const { view: dashboardView } = await freshDashboardSnapshot(rawCallTool, {
+      scopeId: SCOPE_A
+    });
+    expect(dashboardView.terminalRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        latestTurn: expect.objectContaining({
+          cancellation: expect.objectContaining({
+            targetKind: "job",
+            status: "succeeded",
+            reason: cancellationArguments.reason
+          })
+        })
+      })
+    ]));
+    const conflictingReplay = await client.callTool({
+      name: "codex_cancel",
+      arguments: { ...cancellationArguments, expectedVersion: currentVersion + 1 }
+    });
+    expect(conflictingReplay.isError).toBe(true);
+    expect(JSON.stringify(conflictingReplay)).toContain("CANCELLATION_REQUEST_CONFLICT");
     expect(upstream.aborts).toBe(1);
     await close();
   });
@@ -1972,7 +14291,6 @@ describe("bridge tools", () => {
     const upstream = new DeferredUpstream();
     const { client, jobs, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2",
         CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "2"
       }),
@@ -1991,7 +14309,13 @@ describe("bridge tools", () => {
 
     const stale = await client.callTool({
       name: "codex_cancel",
-      arguments: { scopeId: SCOPE_A, jobId: first.jobId, expectedVersion: current.version - 1 }
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "73737373-7373-4373-8373-737373737373",
+        jobId: first.jobId,
+        expectedVersion: current.version - 1,
+        reason: "The user stopped the target job"
+      }
     });
     expect(stale.isError).toBe(true);
     expect(JSON.stringify(stale)).toContain("version changed");
@@ -1999,7 +14323,13 @@ describe("bridge tools", () => {
 
     const unconfirmed = await client.callTool({
       name: "codex_cancel",
-      arguments: { scopeId: SCOPE_A, jobId: first.jobId, expectedVersion: current.version }
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "74747474-7474-4474-8474-747474747474",
+        jobId: first.jobId,
+        expectedVersion: current.version,
+        reason: "The user stopped the target job"
+      }
     });
     expect(unconfirmed.isError).toBe(true);
     expect(JSON.stringify(unconfirmed)).toContain("acknowledgeAffectedJobIds");
@@ -2010,19 +14340,71 @@ describe("bridge tools", () => {
       name: "codex_cancel",
       arguments: {
         scopeId: SCOPE_A,
+        requestId: "75757575-7575-4575-8575-757575757575",
         jobId: first.jobId,
         expectedVersion: current.version,
+        reason: "The user stopped the target job",
         acknowledgeAffectedJobIds: affected
       }
     }));
-    expect(stopped).toMatchObject({ status: "cancelled", processLiveness: "worker-lost" });
+    expect(stopped).toMatchObject({
+      action: "cancel-job",
+      target: { type: "job", id: first.jobId, state: "cancelled" }
+    });
     expect(jobs.get(first.jobId)).toMatchObject({ status: "cancelled", trackingState: "worker-lost" });
     expect(jobs.get(second.jobId)).toMatchObject({
       status: "interrupted",
+      terminalOrigin: "assignment-containment",
+      cancellationIntentId: expect.any(String),
       trackingState: "worker-lost",
       error: expect.stringContaining(`force-stopped job ${first.jobId}`)
     });
+    const [containmentIntent] = jobs.listCancellationIntents({ jobId: second.jobId });
+    expect(containmentIntent).toMatchObject({
+      source: "assignment-containment",
+      actionName: "interrupt-shared-worker",
+      status: "succeeded"
+    });
     expect(upstream.aborts).toBe(1);
+    await close();
+  });
+
+  it("accepts cancellation acknowledgement sets above the former 30-job boundary", async () => {
+    const root = temporaryRoot();
+    const { client, close } = await connectTestClient(configFor(root), new FakeUpstream());
+    const acknowledged = Array.from({ length: 31 }, (_, index) => `affected-job-${index + 1}`);
+
+    const jobCancellation = await client.callTool({
+      name: "codex_cancel",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "76767676-7676-4676-8676-767676767676",
+        jobId: "missing-job",
+        expectedVersion: 1,
+        reason: "The user stopped the missing job",
+        acknowledgeAffectedJobIds: acknowledged
+      }
+    });
+    expect(jobCancellation.isError).toBe(true);
+    expect(JSON.stringify(jobCancellation)).toContain("Unknown Codex job id");
+
+    const activityCancellation = await client.callTool({
+      name: "codex_activity_cancel",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "65656565-6565-4565-8565-656565656565",
+        activityId: SCOPE_B,
+        expectedVersion: 1,
+        reason: "The user stopped the missing Activity",
+        acknowledgeAffectedJobIds: acknowledged
+      }
+    });
+    expect(activityCancellation.isError).toBe(true);
+    expect(JSON.stringify(activityCancellation)).toContain("Unknown Activity id");
+
+    expect(() => new CodexJobRegistry({
+      maxConcurrentJobs: HARD_MAX_CONCURRENT_JOBS + 1
+    })).toThrow(new RegExp(`between 1 and ${HARD_MAX_CONCURRENT_JOBS}`));
     await close();
   });
 
@@ -2032,14 +14414,15 @@ describe("bridge tools", () => {
 
     const missingJob = await client.callTool({
       name: "codex_status",
-      arguments: { waitFor: "terminal", waitMs: 10 }
+      arguments: { query: { kind: "job", waitFor: "terminal", waitMs: 10 } }
     });
     const missingMode = await client.callTool({
       name: "codex_status",
-      arguments: { jobId: "missing", waitMs: 10 }
+      arguments: { query: { kind: "job", id: "missing", waitMs: 10 } }
     });
 
-    expect(JSON.stringify(missingJob)).toContain("require a jobId");
+    expect(missingJob.isError).toBe(true);
+    expect(JSON.stringify(missingJob)).toContain("id");
     expect(JSON.stringify(missingMode)).toContain("waitMs requires waitFor");
     await close();
   });
@@ -2048,7 +14431,7 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
+      configFor(root),
       upstream
     );
     const started = parseToolJson(
@@ -2057,7 +14440,7 @@ describe("bridge tools", () => {
     upstream.rejectNext(new Error("boom"));
 
     const failed = await waitForJobStatus(client, started.jobId, "failed");
-    expect(failed.error).toContain("boom");
+    expect(failed.error.message).toContain("boom");
     await close();
   });
 
@@ -2071,64 +14454,409 @@ describe("bridge tools", () => {
     const result = parseToolJson(
       await client.callTool({
         name: "codex_task",
-        arguments: { prompt: "large", sessionMode: "new" }
+        arguments: { prompt: "large", sessionMode: "new", executionMode: "foreground" }
       })
     );
     expect(result).toMatchObject({
       status: "completed",
+      delivery: "omitted",
+      resultAvailability: "omitted",
       resultOmitted: true,
-      maxRetainedBytes: 200,
+      answer: null,
       threadId: "large-thread"
     });
 
+    const exact = parseToolJson(await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "job", id: result.jobId } }
+    }));
+    expect(exact.items[0]).toMatchObject({
+      result: { availability: "omitted", omitted: true }
+    });
+    expect(exact.items[0]).not.toHaveProperty("answer");
+
     const status = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
-    expect(status.sessions[0]).toMatchObject({ threadId: "large-thread" });
+    expect(status.counts.sessions).toBe(1);
     expect(status.jobs[0]).toMatchObject({ status: "completed", resultOmitted: true });
     await close();
   });
 
-  it("does not auto-resume a persisted thread from an unavailable worker generation", async () => {
+  it("marks an Agent orphaned when its backend thread is unavailable and requires explicit fresh recovery", async () => {
     const root = temporaryRoot();
-    const sessions = new SessionRegistry();
-    const now = Date.now();
-    sessions.record({
-      threadId: "stale-thread",
-      scopeId: SCOPE_A,
-      cwd: realpathSync(root),
-      sandbox: "read-only",
-      createdAt: now,
-      lastUsedAt: now
+    const unavailable = new Set<string>();
+    const upstream = new RestartAwareUpstream(unavailable);
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const started = await runTask(client, {
+      prompt: "seed Agent",
+      agentName: "Recovery Agent",
+      contextMode: "fresh"
     });
-    const upstream = new RestartAwareUpstream(new Set(["stale-thread"]));
-    const { client, close } = await connectTestClient(configFor(root), upstream, sessions);
-
-    const before = parseToolJson(await client.callTool({ name: "codex_status", arguments: {} }));
-    expect(before.sessions[0]).toMatchObject({
-      threadId: "stale-thread",
-      autoResumeEligible: false,
-      resumeAvailability: "unavailable-after-worker-restart"
-    });
+    const agentId = parseToolJson(started).agentId;
+    unavailable.add("thread-1");
 
     const explicit = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "continue stale", sessionMode: "continue", threadId: "stale-thread" }
+      arguments: { prompt: "continue stale", agentId, contextMode: "continue" }
     });
     expect(explicit.isError).toBe(true);
-    expect(JSON.stringify(explicit)).toContain("earlier MCP worker generation");
-    expect(upstream.calls).toHaveLength(0);
+    expect(JSON.stringify(explicit)).toContain("AGENT_ORPHANED");
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "orphaned" });
+    expect(upstream.calls).toHaveLength(1);
 
     const restarted = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "start after restart" }
+      arguments: { prompt: "start after restart", agentId, contextMode: "fresh", executionMode: "foreground" }
     });
     expect(restarted.isError).not.toBe(true);
-    expect((restarted as { structuredContent?: Record<string, any> }).structuredContent?.bridgeSession)
-      .toMatchObject({ action: "start", reason: "no-compatible-session", threadId: "thread-1" });
-    expect(upstream.calls.map((call) => call.name)).toEqual(["codex"]);
+    const restartedStructured = parseToolJson(restarted);
+    expect(restartedStructured.threadId).toBe("thread-2");
+    expect(jobs.get(restartedStructured.jobId)?.sessionDecision).toMatchObject({
+      action: "start",
+      reason: "activity-new",
+      threadId: "thread-2"
+    });
+    expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex"]);
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "thread-2" });
     await close();
   });
 
-  it("requires cwd for multiple roots and rejects paths outside allowed roots", async () => {
+  it("keeps busy and transient resume probes retryable while orphaning definitive thread failure", async () => {
+    const root = temporaryRoot();
+    const upstream = new ProbeAwareUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(root), upstream);
+    const started = await runTask(client, {
+      prompt: "seed probe Agent",
+      agentName: "Probe Agent",
+      contextMode: "fresh"
+    });
+    const agentId = parseToolJson(started).agentId;
+
+    upstream.probe = {
+      state: "busy",
+      runtimeStatus: "active",
+      threadId: "thread-1",
+      retryable: true
+    };
+    const busy = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "busy retry", agentId, contextMode: "continue" }
+    });
+    expect(busy).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "AGENT_THREAD_BUSY", retryable: true }
+      }
+    });
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle" });
+
+    upstream.probe = {
+      state: "unknown",
+      reason: "transient",
+      threadId: "thread-1",
+      retryable: true
+    };
+    const unavailable = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "probe retry", agentId, contextMode: "continue" }
+    });
+    expect(unavailable).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "THREAD_PROBE_UNAVAILABLE", retryable: true }
+      }
+    });
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle" });
+
+    upstream.probe = {
+      state: "orphaned",
+      reason: "system-error",
+      threadId: "thread-1",
+      retryable: false
+    };
+    const corrupt = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "corrupt thread", agentId, contextMode: "continue" }
+    });
+    expect(corrupt).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "AGENT_ORPHANED",
+          retryable: false
+        }
+      }
+    });
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "orphaned" });
+    expect(upstream.calls).toHaveLength(1);
+    const orphanedStatus = parseToolJson(
+      await client.callTool({ name: "codex_status", arguments: {} })
+    );
+    expect(orphanedStatus.scopeCounts).toMatchObject({ agents: 1, orphanedAgents: 1 });
+
+    const retiredArchive = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "73737373-7373-4373-8373-737373737373",
+        agentId,
+        operation: { kind: "archive" }
+      }
+    });
+    expect(retiredArchive.isError).toBe(true);
+    expect(JSON.stringify(retiredArchive)).toContain("AGENT_ARCHIVE_REMOVED");
+    expect(jobs.getAgent(agentId)?.lifecycle).toBe("orphaned");
+    upstream.probe = {
+      state: "resumable",
+      runtimeStatus: "notLoaded",
+      threadId: "thread-1"
+    };
+    const restored = await client.callTool({
+      name: "codex_agent",
+      arguments: {
+        requestId: "74747474-7474-4474-8474-747474747474",
+        agentId,
+        operation: { kind: "restore" }
+      }
+    });
+    expect(restored.isError).toBe(true);
+    expect(JSON.stringify(restored)).toContain("AGENT_ARCHIVE_REMOVED");
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "orphaned", currentThreadId: "thread-1" });
+    const fresh = await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "start fresh after orphaning", agentId, contextMode: "fresh", executionMode: "foreground" }
+    });
+    expect(fresh.isError).not.toBe(true);
+    expect(jobs.getAgent(agentId)).toMatchObject({ lifecycle: "idle", currentThreadId: "thread-2" });
+    await close();
+  });
+
+  it("rechecks execution policy after a deferred thread probe before orphaning an Agent", async () => {
+    const root = temporaryRoot();
+    const config = configFor(root);
+    const upstream = new DeferredProbeUpstream();
+    const connection = await connectTestClient(config, upstream);
+    const seeded = await runTask(connection.client, {
+      prompt: "seed the deferred policy probe",
+      agentName: "Deferred Policy Agent",
+      contextMode: "fresh"
+    });
+    const seededTask = parseToolJson(seeded);
+    const selectedProject = connection.settings.current.projects[0]!;
+    const project = {
+      name: selectedProject.name,
+      projectRef: selectedProject.projectRef,
+      projectRevision: selectedProject.projectRevision
+    };
+
+    const pending = connection.client.callTool({
+      name: "codex_task",
+      arguments: {
+        requestId: "31313131-3131-4131-8131-313131313131",
+        prompt: "do not orphan after the descriptor policy changes",
+        project,
+        activity: { mode: "new", title: "Deferred policy race" },
+        agent: { mode: "existing", id: seededTask.agentId, context: "continue" },
+        executionMode: "foreground"
+      }
+    });
+    await vi.waitFor(() => expect(upstream.hasPendingProbe).toBe(true));
+    connection.settings.update(
+      { showBridgeThreadsInCodexApp: !connection.settings.current.showBridgeThreadsInCodexApp },
+      connection.settings.current.revision
+    );
+    upstream.resolveProbe({
+      state: "orphaned",
+      reason: "missing",
+      runtimeStatus: "notLoaded",
+      retryable: false
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "EXECUTION_POLICY_CHANGED", retryable: true }
+      }
+    });
+    expect(connection.jobs.getAgent(seededTask.agentId)).toMatchObject({ lifecycle: "idle" });
+    expect(connection.jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(1);
+    expect(connection.jobs.listForScope(SCOPE_A)).toHaveLength(1);
+    expect(upstream.calls).toHaveLength(1);
+    await connection.close();
+  });
+
+  it("rechecks an explicit project after a deferred probe before rewriting session lineage", async () => {
+    const root = temporaryRoot();
+    const upstream = new DeferredProbeUpstream();
+    const connection = await connectTestClient(configFor(root), upstream);
+    const seeded = await runTask(connection.client, {
+      prompt: "seed the deferred project probe",
+      agentName: "Deferred Project Agent",
+      contextMode: "fresh"
+    });
+    const seededTask = parseToolJson(seeded);
+    const beforeSession = connection.sessions.get(seededTask.threadId)!;
+    const selectedProject = connection.settings.current.projects[0]!;
+    const project = {
+      name: selectedProject.name,
+      projectRef: selectedProject.projectRef,
+      projectRevision: selectedProject.projectRevision
+    };
+
+    const pending = connection.client.callTool({
+      name: "codex_task",
+      arguments: {
+        requestId: "32323232-3232-4232-8232-323232323232",
+        prompt: "do not rewrite lineage after the selected project changes",
+        project,
+        activity: { mode: "new", title: "Deferred project race" },
+        agent: { mode: "existing", id: seededTask.agentId, context: "continue" },
+        executionMode: "foreground"
+      }
+    });
+    await vi.waitFor(() => expect(upstream.hasPendingProbe).toBe(true));
+    const selected = connection.settings.current.projects[0]!;
+    connection.settings.updateWithProjectOperations(
+      {},
+      [{ kind: "rename", projectId: selected.id, name: "Renamed During Probe" }],
+      undefined,
+      connection.settings.current.registryRevision
+    );
+    upstream.resolveProbe({
+      state: "resumable",
+      runtimeStatus: "idle",
+      sessionId: "lineage-that-must-not-be-recorded"
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: { code: "PROJECT_REGISTRY_CHANGED", retryable: true },
+        nextActions: [
+          expect.stringContaining("new requestId")
+        ]
+      }
+    });
+    expect(connection.sessions.get(seededTask.threadId)).toEqual({
+      ...beforeSession,
+      projectName: "Renamed During Probe"
+    });
+    expect(connection.jobs.getAgent(seededTask.agentId)).toMatchObject({ lifecycle: "idle" });
+    expect(connection.jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(1);
+    expect(connection.jobs.listForScope(SCOPE_A)).toHaveLength(1);
+    expect(upstream.calls).toHaveLength(1);
+    await connection.close();
+  });
+
+  it("uses a projectless codex_task setup probe before first-run Settings onboarding", async () => {
+    const root = temporaryRoot();
+    const upstream = new FakeUpstream();
+    const { client, bareCallTool, jobs, sessions, settings, close } = await connectTestClient(
+      configFor(root),
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      undefined,
+      undefined,
+      false
+    );
+
+    const initialTools = await client.listTools();
+    const initialTask = initialTools.tools.find((tool) => tool.name === "codex_task");
+    const initialSchema = initialTask?.inputSchema as Record<string, any>;
+    expect(initialSchema.properties.project).toMatchObject({
+      type: "object",
+      required: ["name", "projectRef", "projectRevision"],
+      additionalProperties: false
+    });
+    expect(initialSchema.properties).not.toHaveProperty("projectLookup");
+    expect(initialSchema.properties).not.toHaveProperty("sandbox");
+    expect(initialSchema).not.toHaveProperty("allOf");
+    expect(JSON.stringify(initialSchema)).not.toContain('"not":{}');
+    expect(initialTask?._meta).toBeUndefined();
+    expect(initialTask?.description).not.toContain("PROJECT_SETUP_REQUIRED");
+    const settingsTool = initialTools.tools.find((tool) => tool.name === "codex_settings");
+    expect(settingsTool?.description).toBe("Open an interactive card for configuring this ChatGPT-to-Codex bridge.");
+
+    const setupProbe = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        requestId: "75757575-7575-4575-8575-757575757575",
+        activityPresentationId: "76767676-7676-4676-8676-767676767676",
+        prompt: "start the requested first-run Codex work",
+        activity: { mode: "new", title: "First-run setup probe" },
+        agent: { mode: "new", name: "First-run Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(setupProbe).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "PROJECT_SETUP_REQUIRED"
+        },
+        nextActions: [expect.stringContaining("codex_settings({})")]
+      }
+    });
+    const setupContent = (setupProbe as { structuredContent?: Record<string, unknown> })
+      .structuredContent;
+    expect(setupContent).not.toHaveProperty("bridgeActivity");
+    expect(setupContent).not.toHaveProperty("bridgeSession");
+    expect(upstream.calls).toEqual([]);
+    expect(jobs.listActivities(SCOPE_A)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A)).toEqual([]);
+    expect(jobs.listForScope(SCOPE_A)).toEqual([]);
+    expect(sessions.listForScope(SCOPE_A)).toEqual([]);
+
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRegistryRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { name: "First Project", cwd: root } }
+            ]
+          }
+        }
+      }
+    });
+    expect(saved.isError).not.toBe(true);
+
+    const registeredTask = (await client.listTools()).tools.find(
+      (tool) => tool.name === "codex_task"
+    );
+    const registeredSchema = registeredTask?.inputSchema as Record<string, any>;
+    expect(registeredSchema).not.toHaveProperty("allOf");
+    expect(registeredTask).toEqual(initialTask);
+    expect(JSON.stringify(registeredSchema)).not.toContain("First Project");
+    expect(registeredTask?._meta).toBeUndefined();
+
+    const missingProject = await bareCallTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: SCOPE_A,
+        requestId: "77777777-7777-4777-8777-777777777777",
+        taskContractVersion: CODEX_TASK_INPUT_CONTRACT_VERSION,
+        executionEnvelopeRef: settings.taskExecutionEnvelopeRef(),
+        activityPresentationId: "78787878-7878-4878-8878-787878787878",
+        prompt: "new work must now select the exact registered project",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+        activity: { mode: "new" },
+        agent: { mode: "new", name: "Missing Project Agent" },
+        executionMode: "foreground"
+      }
+    });
+    expect(missingProject.isError).toBe(true);
+    expect(JSON.stringify(missingProject)).toContain("PROJECT_REQUIRED");
+    expect(upstream.calls).toEqual([]);
+    expect(jobs.listActivities(SCOPE_A)).toEqual([]);
+    expect(jobs.listAgents(SCOPE_A)).toEqual([]);
+    expect(jobs.listForScope(SCOPE_A)).toEqual([]);
+    expect(sessions.listForScope(SCOPE_A)).toEqual([]);
+    await close();
+  });
+
+  it("requires a registered project for multiple roots and retires every per-call cwd override", async () => {
     const first = temporaryRoot();
     const second = temporaryRoot();
     const outside = temporaryRoot();
@@ -2136,18 +14864,75 @@ describe("bridge tools", () => {
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_ROOTS: `${first},${second}`
     });
-    const { client, close } = await connectTestClient(config, new FakeUpstream());
+    const upstream = new FakeUpstream();
+    const { client, jobs, close } = await connectTestClient(
+      config,
+      upstream,
+      undefined,
+      new FakeModelCatalog(),
+      undefined,
+      undefined,
+      false
+    );
 
     const missing = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "inspect", sessionMode: "new" }
+      arguments: { prompt: "inspect", agentName: "Missing Cwd", contextMode: "fresh" }
     });
-    expect(JSON.stringify(missing)).toContain("cwd is required");
+    expect(missing).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: "PROJECT_SETUP_REQUIRED"
+        },
+        nextActions: [expect.stringContaining("codex_settings({})")]
+      }
+    });
+    expect(jobs.listAgents(SCOPE_A)).toEqual([]);
     const denied = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "inspect", sessionMode: "new", cwd: outside }
+      arguments: { prompt: "inspect", agentName: "Retired Cwd", contextMode: "fresh", cwd: outside }
     });
-    expect(JSON.stringify(denied)).toContain("outside allowed roots");
+    expect(JSON.stringify(denied)).toContain("Unrecognized key");
+    expect(JSON.stringify(denied)).toContain("cwd");
+    const invalidSave = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { name: "Outside", cwd: outside } }
+            ]
+          }
+        }
+      }
+    });
+    expect(invalidSave.isError).toBe(true);
+    expect(JSON.stringify(invalidSave)).toContain("PROJECT_CWD_NOT_ALLOWED");
+    const saved = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedRevision: 0,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              { kind: "add", project: { name: "Primary", cwd: first } }
+            ]
+          }
+        }
+      }
+    });
+    expect(saved.isError).not.toBe(true);
+    await runTask(client, {
+      prompt: "inspect saved",
+      projectId: "primary",
+      agentName: "Saved Cwd",
+      contextMode: "fresh"
+    });
+    expect(upstream.calls[0]?.args.cwd).toBe(realpathSync(first));
     await close();
   });
 
@@ -2155,12 +14940,19 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(configFor(root), upstream);
-    await runTask(client, { prompt: "first", sessionMode: "new" });
+    const first = await runTask(client, {
+      prompt: "first",
+      agent: { mode: "new", name: "Sensitive-file Agent" }
+    });
+    const agentId = parseToolJson(first).agentId as string;
     writeFileSync(path.join(root, ".env"), "TOKEN=secret\n");
 
     const continued = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "continue", sessionMode: "continue", threadId: "thread-1" }
+      arguments: {
+        prompt: "continue",
+        agent: { mode: "existing", id: agentId, context: "continue" }
+      }
     });
     expect(continued.isError).toBe(true);
     expect(upstream.calls).toHaveLength(1);
@@ -2195,7 +14987,7 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("does not expose or apply a Codex execution timeout", async () => {
+  it("does not expose and strictly rejects the retired Codex execution timeout", async () => {
     const root = temporaryRoot();
     const upstream = new FakeUpstream();
     const { client, close } = await connectTestClient(configFor(root), upstream);
@@ -2204,9 +14996,9 @@ describe("bridge tools", () => {
       name: "codex_task",
       arguments: { prompt: "inspect", timeoutMs: 10800001 }
     });
-    expect(result.isError).not.toBe(true);
-    expect(upstream.calls).toHaveLength(1);
-    expect(upstream.calls[0]?.args).not.toHaveProperty("timeoutMs");
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain("timeoutMs");
+    expect(upstream.calls).toHaveLength(0);
     await close();
   });
 
@@ -2215,7 +15007,6 @@ describe("bridge tools", () => {
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "1"
       }),
       upstream
@@ -2239,12 +15030,11 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const config = configFor(root, {
-      CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
       CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2",
       CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "2"
     });
     const settings = new UserSettingsStore(config);
-    settings.update({ maxConcurrentJobs: 1 });
+    settings.update({ maxConcurrentJobs: 1 }, settings.current.revision);
     const { client, close } = await connectTestClient(
       config,
       upstream,
@@ -2271,7 +15061,7 @@ describe("bridge tools", () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "1" }),
+      configFor(root),
       upstream
     );
 
@@ -2313,7 +15103,6 @@ describe("bridge tools", () => {
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
       upstream
@@ -2350,7 +15139,7 @@ describe("bridge tools", () => {
     const { client, close } = await connectTestClient(
       configFor(root, {
         CODEX_MCP_BRIDGE_ALLOW_WRITE: "1",
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
+        CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "workspace-write",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
       upstream
@@ -2361,8 +15150,7 @@ describe("bridge tools", () => {
         name: "codex_task",
         arguments: {
           prompt: "first write",
-          sessionMode: "new",
-          sandbox: "workspace-write"
+          sessionMode: "new"
         }
       })
     );
@@ -2371,8 +15159,7 @@ describe("bridge tools", () => {
         name: "codex_task",
         arguments: {
           prompt: "second write",
-          sessionMode: "new",
-          sandbox: "workspace-write"
+          sessionMode: "new"
         }
       })
     );
@@ -2395,7 +15182,7 @@ describe("bridge tools", () => {
     const { client, close } = await connectTestClient(
       configFor(root, {
         CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
+        CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "danger-full-access",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
       upstream
@@ -2406,8 +15193,7 @@ describe("bridge tools", () => {
         name: "codex_task",
         arguments: {
           prompt: "first full",
-          sessionMode: "new",
-          sandbox: "danger-full-access"
+          sessionMode: "new"
         }
       })
     );
@@ -2416,8 +15202,7 @@ describe("bridge tools", () => {
         name: "codex_task",
         arguments: {
           prompt: "second full",
-          sessionMode: "new",
-          sandbox: "danger-full-access"
+          sessionMode: "new"
         }
       })
     );
@@ -2434,47 +15219,63 @@ describe("bridge tools", () => {
     await close();
   });
 
-  it("can add a parallel thread dynamically when the existing scope thread is busy", async () => {
+  it("can add a parallel Agent while one Agent in the Activity is busy", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const sessions = new SessionRegistry();
-    const now = Date.now();
-    sessions.record({
-      threadId: "thread-1",
-      scopeId: SCOPE_A,
-      cwd: realpathSync(root),
-      sandbox: "read-only",
-      createdAt: now,
-      lastUsedAt: now
-    });
-    const { client, close } = await connectTestClient(
+    const { client, jobs, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
-      upstream,
-      sessions
+      upstream
     );
 
+    const seeded = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: { prompt: "seed Activity" } })
+    );
+    upstream.resolveNext(fakeCodexResult("thread-1"));
+    await waitForJobStatus(client, seeded.jobId, "completed");
+    const seededAgentId = seeded.agentId;
+
     const first = parseToolJson(
-      await client.callTool({ name: "codex_task", arguments: { prompt: "continue recent" } })
+      await client.callTool({
+        name: "codex_task",
+        arguments: {
+          prompt: "continue Activity",
+          activityId: seeded.activityId,
+          agentId: seededAgentId,
+          contextMode: "continue"
+        }
+      })
     );
     const second = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "same thread automatically" }
+        arguments: {
+          prompt: "same Agent automatically",
+          activityId: seeded.activityId,
+          agentId: seededAgentId,
+          contextMode: "continue"
+        }
     });
     expect(second.isError).toBe(true);
-    expect(JSON.stringify(second)).toContain("conversation scope is busy");
+    expect(JSON.stringify(second)).toContain("AGENT_BUSY");
 
     const parallel = parseToolJson(
       await client.callTool({
         name: "codex_task",
-        arguments: { prompt: "parallel work", sessionMode: "new" }
+        arguments: {
+          prompt: "parallel work",
+          agentName: "Parallel Agent",
+          contextMode: "fresh",
+          activityId: seeded.activityId
+        }
       })
     );
 
-    expect(upstream.calls.map((call) => call.name)).toEqual(["codex-reply", "codex"]);
-    expect(parallel.session).toMatchObject({ action: "start", reason: "explicit-new" });
+    expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex-reply", "codex"]);
+    expect(jobs.get(parallel.jobId)?.sessionDecision).toMatchObject({
+      action: "start",
+      reason: "activity-no-compatible"
+    });
     upstream.resolveNext(fakeCodexResult("thread-1"));
     upstream.resolveNext(fakeCodexResult("thread-2"));
     await Promise.all([
@@ -2489,7 +15290,6 @@ describe("bridge tools", () => {
     const upstream = new DeferredUpstream();
     const { client, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
       upstream
@@ -2500,98 +15300,98 @@ describe("bridge tools", () => {
     );
     const second = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "second implicit auto" }
+      arguments: {
+        prompt: "second implicit auto",
+        projectId: "default",
+        activityId: first.activityId,
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+      }
     });
 
     expect(first.status).toBe("running");
     expect(second.isError).toBe(true);
-    expect(JSON.stringify(second)).toContain("session is still starting or running");
+    expect(JSON.stringify(second)).toContain("AGENT_BUSY");
     expect(upstream.calls).toHaveLength(1);
     upstream.resolveNext(fakeCodexResult("auto-thread"));
     await waitForJobStatus(client, first.jobId, "completed");
     await close();
   });
 
-  it("does not bypass an active compatible selection when its tracked session expires", async () => {
+  it("continues an Activity thread without an age limit and does not bypass it while busy", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
     const sessions = new SessionRegistry();
-    const old = Date.now() - 120_000;
-    sessions.record({
-      threadId: "expiring-thread",
-      scopeId: SCOPE_A,
-      cwd: realpathSync(root),
-      sandbox: "read-only",
-      createdAt: old,
-      lastUsedAt: old
-    });
     const { client, close } = await connectTestClient(
       configFor(root, {
-        CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS: "60000",
-        CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5",
         CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS: "2"
       }),
       upstream,
       sessions
     );
 
+    const seeded = parseToolJson(
+      await client.callTool({ name: "codex_task", arguments: { prompt: "seed old Activity thread" } })
+    );
+    upstream.resolveNext(fakeCodexResult("expiring-thread"));
+    await waitForJobStatus(client, seeded.jobId, "completed");
+    const old = Date.now() - 365 * 24 * 60 * 60 * 1000;
+    sessions.record({
+      ...(sessions.get("expiring-thread") as NonNullable<ReturnType<SessionRegistry["get"]>>),
+      lastUsedAt: old
+    });
+
     const continuing = parseToolJson(
       await client.callTool({
         name: "codex_task",
         arguments: {
-          prompt: "explicitly continue the old thread",
-          sessionMode: "continue",
-          threadId: "expiring-thread"
+          prompt: "implicitly continue the old Activity thread",
+          activityId: seeded.activityId
         }
       })
     );
     const auto = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "auto must not create a duplicate" }
+      arguments: { prompt: "auto must not create a duplicate", activityId: seeded.activityId }
     });
 
     expect(continuing.status).toBe("running");
     expect(auto.isError).toBe(true);
-    expect(JSON.stringify(auto)).toContain("session is still starting or running");
-    expect(upstream.calls.map((call) => call.name)).toEqual(["codex-reply"]);
+    expect(JSON.stringify(auto)).toContain("AGENT_BUSY");
+    expect(upstream.calls.map((call) => call.name)).toEqual(["codex", "codex-reply"]);
     upstream.resolveNext(fakeCodexResult("expiring-thread"));
     await waitForJobStatus(client, continuing.jobId, "completed");
     await close();
   });
 
-  it("serializes concurrent turns on the same Codex thread", async () => {
+  it("serializes concurrent turns on the same bridge Agent", async () => {
     const root = temporaryRoot();
     const upstream = new DeferredUpstream();
-    const sessions = new SessionRegistry();
-    const now = Date.now();
-    sessions.record({
-      threadId: "thread-1",
-      scopeId: SCOPE_A,
-      cwd: realpathSync(root),
-      sandbox: "read-only",
-      createdAt: now,
-      lastUsedAt: now
-    });
     const { client, close } = await connectTestClient(
-      configFor(root, { CODEX_MCP_BRIDGE_FAST_RETURN_MS: "5" }),
-      upstream,
-      sessions
+      configFor(root),
+      upstream
     );
+
+    const seeded = parseToolJson(await client.callTool({
+      name: "codex_task",
+      arguments: { prompt: "seed", agentName: "Serial Agent", contextMode: "fresh" }
+    }));
+    upstream.resolveNext(fakeCodexResult("thread-1"));
+    await waitForJobStatus(client, seeded.jobId, "completed");
 
     const first = parseToolJson(
       await client.callTool({
         name: "codex_task",
-        arguments: { prompt: "first", sessionMode: "continue", threadId: "thread-1" }
+        arguments: { prompt: "first", agentId: seeded.agentId, contextMode: "continue" }
       })
     );
     const second = await client.callTool({
       name: "codex_task",
-      arguments: { prompt: "second", sessionMode: "continue", threadId: "thread-1" }
+      arguments: { prompt: "second", agentId: seeded.agentId, contextMode: "continue" }
     });
 
     expect(second.isError).toBe(true);
-    expect(JSON.stringify(second)).toContain("already running for this Codex thread");
-    expect(upstream.calls).toHaveLength(1);
+    expect(JSON.stringify(second)).toContain("AGENT_BUSY");
+    expect(upstream.calls).toHaveLength(2);
     upstream.resolveNext(fakeCodexResult("thread-1"));
     await waitForJobStatus(client, first.jobId, "completed");
     await close();
@@ -2600,6 +15400,80 @@ describe("bridge tools", () => {
 
 function temporaryRoot(): string {
   return mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+}
+
+function legacyV5TaskRequestHashFixture(input: {
+  scopeId: string;
+  prompt: string;
+  projectName: string;
+  registryRevision: number;
+  projectId: string;
+  cwd: string;
+  sandbox: string;
+  backendKind: string;
+  executionMode: string;
+  selection: { model: string; reasoningEffort: string; serviceTier?: string };
+  activityTitle: string;
+  agentName: string;
+}): string {
+  return createHash("sha256")
+    .update(canonicalFixtureJson({
+      version: 5,
+      scopeId: input.scopeId,
+      prompt: input.prompt,
+      backendHandoff: null,
+      projectRequest: {
+        name: input.projectName,
+        registryRevision: input.registryRevision
+      },
+      admittedProject: { projectId: input.projectId, cwd: input.cwd },
+      routing: {
+        activity: { mode: "new", continuationOfActivityId: null },
+        agent: { mode: "new", contextMode: "fresh", sourceThreadId: null }
+      },
+      execution: {
+        operation: "start",
+        backendKind: input.backendKind,
+        cwd: input.cwd,
+        sandbox: input.sandbox,
+        executionMode: input.executionMode,
+        modelSelection: {
+          model: input.selection.model,
+          reasoningEffort: input.selection.reasoningEffort,
+          serviceTier: input.selection.serviceTier || null
+        }
+      },
+      creation: {
+        activity: {
+          title: input.activityTitle,
+          kind: "other",
+          executionMode: input.executionMode,
+          handoffPolicy: "none",
+          completionTrigger: "manual"
+        },
+        agent: { name: input.agentName },
+        assignmentRole: "primary"
+      }
+    }))
+    .digest("hex");
+}
+
+function canonicalFixtureJson(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalFixtureJson(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalFixtureJson(entry)}`)
+      .join(",")}}`;
+  }
+  throw new Error(`Unsupported fixture JSON value: ${typeof value}.`);
 }
 
 function configFor(root: string, extra: NodeJS.ProcessEnv = {}) {
@@ -2615,29 +15489,94 @@ async function connectTestClient(
   upstream: CodexUpstream,
   sessions?: SessionRegistry,
   modelCatalog: CodexModelCatalogProvider = new FakeModelCatalog(),
-  userSettings: UserSettingsStore = new UserSettingsStore(config),
-  jobs?: CodexJobRegistry
+  userSettings?: UserSettingsStore,
+  jobs?: CodexJobRegistry,
+  bootstrapProject = true
 ) {
+  const ownedState = !userSettings && !jobs
+    ? new BridgeStateStore({ file: ":memory:" })
+    : undefined;
+  const sharedState = userSettings?.admissionStateStore ||
+    jobs?.admissionStateStore ||
+    ownedState;
+  const settingsStore = userSettings || new UserSettingsStore(config, {
+    stateStore: sharedState
+  });
+  if (bootstrapProject && settingsStore.current.projects.length === 0) {
+    const cwd = config.allowedRoots[0];
+    if (cwd) {
+      settingsStore.updateWithProjectOperations(
+        {},
+        [{ kind: "add", project: { name: "Test Project", cwd } }],
+        undefined,
+        0
+      );
+    }
+  }
   const jobRegistry = jobs || new CodexJobRegistry({
     maxConcurrentJobs: config.maxConcurrentJobs,
     ttlMs: config.jobTtlMs,
     maxJobs: config.maxRetainedJobs,
     maxResultBytes: config.maxJobResultBytes,
     staleAfterMs: config.jobStaleAfterMs,
-    allowedRoots: config.allowedRoots
+    allowedRoots: config.allowedRoots,
+    stateStore: sharedState
+  });
+  const sessionRegistry = sessions || new SessionRegistry({
+    allowedRoots: config.allowedRoots,
+    stateStore: sharedState
   });
   const server = createBridgeMcpServer(
     config,
     upstream,
-    sessions,
+    sessionRegistry,
     jobRegistry,
     modelCatalog,
-    userSettings
+    settingsStore
   );
   const client = new Client({ name: "test-client", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-  const rawCallTool = client.callTool.bind(client);
+  const currentExecutionPolicyRef = () => settingsStore.executionPolicyRef(
+    settingsStore.current,
+    (() => {
+      const catalog = modelCatalog.getCachedCatalog?.({ backendKind: config.defaultBackend });
+      return catalog ? modelCatalogAdmissionFingerprint(catalog.models) : null;
+    })()
+  );
+  const baseCallTool = client.callTool.bind(client);
+  const bareCallTool = (...args: Parameters<typeof baseCallTool>) => baseCallTool(...args);
+  const rawCallTool = (
+    request: Parameters<typeof baseCallTool>[0],
+    ...rest: Parameters<typeof baseCallTool> extends [unknown, ...infer Tail] ? Tail : never
+  ) => {
+    if (request.name !== "codex_task") return bareCallTool(request, ...rest);
+    const arguments_ = { ...(request.arguments || {}) } as Record<string, any>;
+    const activity = arguments_.activity as Record<string, unknown> | undefined;
+    const agent = arguments_.agent as Record<string, unknown> | undefined;
+    const admitsFreshWork =
+      activity?.mode !== "existing" ||
+      agent?.mode === "new" ||
+      (agent?.mode === "existing" && agent.context === "fresh");
+    if (
+      admitsFreshWork &&
+      settingsStore.current.modelPolicy.mode === "automatic" &&
+      !Object.prototype.hasOwnProperty.call(arguments_, "selection") &&
+      !Object.prototype.hasOwnProperty.call(arguments_, "projectLookup")
+    ) {
+      const policy = settingsStore.current.modelPolicy;
+      arguments_.selection = policy.allowedSelections.kind === "explicit"
+        ? policy.allowedSelections.selections[0]
+        : { model: "gpt-5.6-sol", reasoningEffort: "max" };
+    }
+    return bareCallTool({
+      ...request,
+      arguments: {
+        executionPolicyRef: currentExecutionPolicyRef(),
+        ...arguments_
+      }
+    }, ...rest);
+  };
   Object.defineProperty(client, "callTool", {
     value: (
       request: {
@@ -2649,44 +15588,493 @@ async function connectTestClient(
     ) => {
       const arguments_ = request.arguments || {};
       if (request.name === "codex_task") {
+        const currentArguments = currentTaskTestArguments(arguments_);
+        const explicitLegacyContract =
+          Object.prototype.hasOwnProperty.call(currentArguments, "executionPolicyRef") &&
+          !Object.prototype.hasOwnProperty.call(currentArguments, "taskContractVersion");
+        if (!explicitLegacyContract) {
+          currentArguments.taskContractVersion ??= CODEX_TASK_INPUT_CONTRACT_VERSION;
+          currentArguments.executionEnvelopeRef ??= settingsStore.taskExecutionEnvelopeRef();
+        }
+        const activity = currentArguments.activity as Record<string, unknown> | undefined;
+        const agent = currentArguments.agent as Record<string, unknown> | undefined;
+        const admitsFreshWork =
+          activity?.mode !== "existing" ||
+          agent?.mode === "new" ||
+          (agent?.mode === "existing" && agent.context === "fresh");
+        const legacyProjectId = typeof currentArguments.projectId === "string"
+          ? currentArguments.projectId
+          : undefined;
+        delete currentArguments.projectId;
+        if (
+          admitsFreshWork &&
+          !Object.prototype.hasOwnProperty.call(currentArguments, "project") &&
+          !Object.prototype.hasOwnProperty.call(currentArguments, "projectLookup")
+        ) {
+          const target = selectTestProject(settingsStore, legacyProjectId);
+          if (target) {
+            currentArguments.project = {
+              name: target.name,
+              projectRef: target.projectRef,
+              projectRevision: target.projectRevision
+            };
+          }
+        } else if (legacyProjectId && !Object.prototype.hasOwnProperty.call(currentArguments, "project")) {
+          const target = selectTestProject(settingsStore, legacyProjectId);
+          currentArguments.project = {
+            name: target?.name || legacyProjectId,
+            ...(target
+              ? {
+                  projectRef: target.projectRef,
+                  projectRevision: target.projectRevision
+                }
+              : {
+                  projectRef: "prj_AAAAAAAAAAAAAAAAAAAAAA",
+                  projectRevision: 1
+                })
+          };
+        }
+        if (
+          admitsFreshWork &&
+          settingsStore.current.modelPolicy.mode === "automatic" &&
+          !Object.prototype.hasOwnProperty.call(currentArguments, "selection") &&
+          !Object.prototype.hasOwnProperty.call(currentArguments, "projectLookup")
+        ) {
+          const policy = settingsStore.current.modelPolicy;
+          currentArguments.selection = policy.allowedSelections.kind === "explicit"
+            ? policy.allowedSelections.selections[0]
+            : { model: "gpt-5.6-sol", reasoningEffort: "max" };
+        }
+        const requestId = typeof currentArguments.requestId === "string"
+          ? currentArguments.requestId
+          : nextRequestId();
         return rawCallTool(
           {
             ...request,
             arguments: {
               scopeId: SCOPE_A,
-              requestId: nextRequestId(),
-              ...arguments_
+              requestId,
+              ...currentArguments
             }
           },
           ...(rest as [])
         );
       }
+      const currentArguments = currentToolTestArguments(
+        request.name,
+        arguments_,
+        settingsStore
+      );
       if (
-        (request.name === "codex_status" || request.name === "codex_activity_update") &&
-        !arguments_.scopeId &&
-        !arguments_.includeAllScopes
+        (
+          request.name === "codex_status" ||
+          request.name === "codex_dashboard" ||
+          request.name === "codex_dashboard_snapshot" ||
+          request.name === "codex_activity" ||
+          request.name === "codex_activity_rehydrate" ||
+          request.name === "codex_activity_snapshot" ||
+          request.name === "codex_activity_handoff" ||
+          request.name === "codex_activity_job_cancel" ||
+          request.name === "codex_activity_cancel" ||
+          request.name === "codex_activity_update" ||
+          request.name === "codex_agent" ||
+          request.name === "codex_agent_recovery_detach" ||
+          request.name === "codex_background_process_terminate" ||
+          request.name === "codex_interaction_respond" ||
+          request.name === "codex_job_steer" ||
+          request.name === "codex_steer"
+        ) &&
+        !currentArguments.scopeId &&
+        !currentArguments.includeAllScopes
       ) {
         return rawCallTool(
-          { ...request, arguments: { scopeId: SCOPE_A, ...arguments_ } },
+          { ...request, arguments: { scopeId: SCOPE_A, ...currentArguments } },
           ...(rest as [])
         );
       }
-      return rawCallTool(request, ...(rest as []));
+      return rawCallTool({ ...request, arguments: currentArguments }, ...(rest as []));
     }
   });
   return {
     client,
+    applicationService: server.applicationService,
     rawCallTool,
+    bareCallTool,
     jobs: jobRegistry,
+    sessions: sessionRegistry,
+    settings: settingsStore,
     close: async () => {
       await client.close();
       await server.close();
+      if (!jobs) await jobRegistry.closeThreadConnections();
+      ownedState?.close();
     }
   };
 }
 
+function selectTestProject(
+  settings: UserSettingsStore,
+  legacyProjectId?: string
+) {
+  const active = settings.current.projects.filter((project) => project.archivedAt === undefined);
+  if (!legacyProjectId || legacyProjectId === "default") return active[0];
+  let requestedKey: string | undefined;
+  try {
+    requestedKey = projectNameKey(legacyProjectId);
+  } catch {
+    // Invalid legacy routing values remain unknown names for negative tests.
+  }
+  const slug = (value: string) => value.normalize("NFKC").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return active.find((project) =>
+    project.id === legacyProjectId ||
+    (requestedKey !== undefined && project.nameKey === requestedKey) ||
+    slug(project.name) === slug(legacyProjectId)
+  );
+}
+
+function addTestProjects(
+  settings: UserSettingsStore,
+  projects: Array<{ name: string; cwd: string }>
+): void {
+  settings.updateWithProjectOperations(
+    {},
+    projects.map((project) => ({ kind: "add", project })),
+    undefined,
+    settings.current.registryRevision
+  );
+}
+
 async function runTask(client: Client, arguments_: Record<string, unknown>): Promise<unknown> {
-  return client.callTool({ name: "codex_task", arguments: arguments_ });
+  const task = (await client.listTools()).tools.find((entry) => entry.name === "codex_task");
+  const executionPolicyRef = (
+    task?.inputSchema.properties?.executionPolicyRef as { const?: string } | undefined
+  )?.const;
+  return client.callTool({
+    name: "codex_task",
+    arguments: {
+      executionMode: "foreground",
+      ...(executionPolicyRef ? { executionPolicyRef } : {}),
+      ...arguments_
+    }
+  });
+}
+
+async function presentCompactActivity(
+  client: Client,
+  activityId?: string,
+  presentationId = nextRequestId()
+): Promise<unknown> {
+  return client.callTool({
+    name: "codex_activity",
+    arguments: {
+      mode: "compact-monitor",
+      presentationId,
+      ...(activityId ? { activityId } : {})
+    }
+  });
+}
+
+function automaticCardProof(result: unknown): {
+  activityId: string;
+  generation: number;
+  presentation: {
+    kind: "automatic";
+    activityPresentationId: string;
+    reservationOwnerId?: string;
+  };
+} {
+  const view = privateActivityView(result);
+  if (
+    !view.mountedActivity ||
+    view.mountedPresentation?.kind !== "automatic" ||
+    typeof view.mountedPresentation.activityPresentationId !== "string"
+  ) {
+    throw new Error(`Activity result is not a compact automatic presentation: ${JSON.stringify(result)}`);
+  }
+  return {
+    activityId: view.mountedActivity.activityId,
+    generation: view.mountedActivity.cardGeneration,
+    presentation: {
+      kind: "automatic",
+      activityPresentationId: view.mountedPresentation.activityPresentationId,
+      ...(view.mountedPresentation.reservationOwnerId
+        ? { reservationOwnerId: view.mountedPresentation.reservationOwnerId }
+        : {})
+    }
+  };
+}
+
+function currentTaskTestArguments(input: Record<string, unknown>): Record<string, unknown> {
+  const current = { ...input };
+  const activityId = typeof current.activityId === "string" ? current.activityId : undefined;
+  const continuationOf = typeof current.continuationOfActivityId === "string"
+    ? current.continuationOfActivityId
+    : undefined;
+  const title = typeof current.activityTitle === "string" ? current.activityTitle : undefined;
+  const kind = typeof current.activityKind === "string" ? current.activityKind : undefined;
+  const handoff = typeof current.handoffPolicy === "string" ? current.handoffPolicy : undefined;
+  const completion = typeof current.completionTrigger === "string"
+    ? current.completionTrigger
+    : undefined;
+  if (!current.activity) {
+    if (activityId) {
+      current.activity = { mode: "existing", id: activityId };
+    } else if (continuationOf || title || kind || handoff || completion) {
+      current.activity = {
+        mode: "new",
+        ...(continuationOf ? { continuationOf } : {}),
+        ...(title ? { title } : {}),
+        ...(kind || handoff || completion
+          ? {
+              policy: {
+                ...(kind ? { kind } : {}),
+                ...(handoff ? { handoff } : {}),
+                ...(completion ? { completion } : {})
+              }
+            }
+          : {})
+      };
+    }
+  }
+
+  const agentId = typeof current.agentId === "string" ? current.agentId : undefined;
+  const agentName = typeof current.agentName === "string" ? current.agentName : undefined;
+  const context = typeof current.contextMode === "string"
+    ? current.contextMode
+    : current.sessionMode === "continue"
+      ? "continue"
+      : current.sessionMode === "new"
+        ? "fresh"
+        : undefined;
+  if (!current.agent) {
+    if (agentId) {
+      current.agent = { mode: "existing", id: agentId, ...(context ? { context } : {}) };
+    } else if (agentName) {
+      current.agent = { mode: "new", name: agentName };
+    }
+  }
+
+  for (const key of [
+    "activityId",
+    "continuationOfActivityId",
+    "activityTitle",
+    "activityKind",
+    "handoffPolicy",
+    "completionTrigger",
+    "agentId",
+    "agentName",
+    "agentRole",
+    "contextMode",
+    "sessionMode"
+  ]) {
+    delete current[key];
+  }
+  return current;
+}
+
+function currentToolTestArguments(
+  toolName: string,
+  input: Record<string, unknown>,
+  settingsStore: UserSettingsStore
+): Record<string, unknown> {
+  if (toolName === "codex_status" && !input.query) {
+    const current = { ...input };
+    if (typeof current.jobId === "string") {
+      current.query = {
+        kind: "job",
+        id: current.jobId,
+        ...(typeof current.waitFor === "string" ? { waitFor: current.waitFor } : {}),
+        ...(typeof current.waitMs === "number" ? { waitMs: current.waitMs } : {})
+      };
+    } else if (typeof current.activityId === "string") {
+      current.query = { kind: "activity", id: current.activityId };
+    } else if (typeof current.threadId === "string") {
+      current.query = { kind: "thread", id: current.threadId };
+    } else {
+      for (const collection of ["sessions", "jobs", "activities"] as const) {
+        const prefix = collection === "activities" ? "activity" : collection.slice(0, -1);
+        const limit = current[`${prefix}Limit`];
+        const cursor = current[`${prefix}Cursor`];
+        if (typeof limit === "number" || typeof cursor === "string") {
+          current.query = {
+            kind: "page",
+            collection,
+            ...(typeof limit === "number" ? { limit } : {}),
+            ...(typeof cursor === "string" ? { cursor } : {})
+          };
+          break;
+        }
+      }
+    }
+    if (current.query) {
+      for (const key of [
+        "jobId",
+        "activityId",
+        "threadId",
+        "waitFor",
+        "waitMs",
+        "sessionLimit",
+        "sessionOffset",
+        "sessionCursor",
+        "jobLimit",
+        "jobOffset",
+        "jobCursor",
+        "activityLimit",
+        "activityOffset",
+        "activityCursor"
+      ]) {
+        delete current[key];
+      }
+    }
+    return current;
+  }
+
+  if (toolName === "codex_agent" && !input.operation) {
+    const current = { ...input };
+    if (current.action === "archive" || current.action === "restore") {
+      current.operation = { kind: current.action };
+    } else if (current.action === "rename" && typeof current.agentName === "string") {
+      current.operation = { kind: "rename", name: current.agentName };
+    }
+    if (current.operation) {
+      delete current.action;
+      delete current.agentName;
+    }
+    return current;
+  }
+
+  if (toolName === "codex_activity_update" && !input.operation) {
+    const current = { ...input };
+    const action = current.action;
+    if (action === "seal" || action === "start-verification") {
+      current.operation = { kind: action };
+    } else if ((action === "complete" || action === "abandon") &&
+      (current.reason === undefined || typeof current.reason === "string")) {
+      current.operation = { kind: action, ...(current.reason ? { reason: current.reason } : {}) };
+    } else if (action === "verification-passed" && current.evidence) {
+      current.operation = { kind: action, evidence: current.evidence };
+    } else if (action === "verification-failed" && typeof current.reason === "string") {
+      current.operation = { kind: action, reason: current.reason };
+    } else if (action === "set-policy") {
+      current.operation = {
+        kind: action,
+        policy: {
+          ...(current.activityKind ? { kind: current.activityKind } : {}),
+          ...(current.executionMode ? { executionMode: current.executionMode } : {}),
+          ...(current.handoffPolicy ? { handoff: current.handoffPolicy } : {}),
+          ...(current.completionTrigger ? { completion: current.completionTrigger } : {})
+        }
+      };
+    }
+    if (current.operation) {
+      for (const key of [
+        "action",
+        "reason",
+        "evidence",
+        "activityKind",
+        "executionMode",
+        "handoffPolicy",
+        "completionTrigger"
+      ]) {
+        delete current[key];
+      }
+    }
+    return current;
+  }
+
+  if (toolName === "codex_update_settings") {
+    const current = { ...input };
+    if (!current.operation) {
+      if (current.reset === true) {
+        current.operation = { kind: "reset" };
+        delete current.reset;
+      } else {
+        const settings: Record<string, unknown> = {};
+        for (const key of [
+          "accessStrategy",
+          "modelPolicy",
+          "usePriorityServiceTier",
+          "uiLocalePreference",
+          "maxConcurrentJobs"
+        ]) {
+          if (Object.prototype.hasOwnProperty.call(current, key)) settings[key] = current[key];
+        }
+        if (current.activityCardVisibility !== undefined || current.completionHandoff !== undefined) {
+          settings.activityCard = {
+            ...(current.activityCardVisibility !== undefined
+              ? { visibility: current.activityCardVisibility }
+              : {}),
+            ...(current.completionHandoff !== undefined
+              ? { completionHandoff: current.completionHandoff }
+              : {})
+          };
+        }
+        if (Object.keys(settings).length > 0) {
+          current.operation = { kind: "patch", settings };
+          for (const key of [
+            ...Object.keys(settings),
+            "activityCardVisibility",
+            "completionHandoff"
+          ]) {
+            delete current[key];
+          }
+        }
+      }
+    }
+    const operation = current.operation as Record<string, any> | undefined;
+    if (operation?.kind === "patch" && operation.settings) {
+      const projectOperations = operation.settings.projectOperations as
+        | Array<Record<string, any>>
+        | undefined;
+      if (projectOperations) {
+        operation.settings = {
+          ...operation.settings,
+          projectOperations: projectOperations.map((entry) => {
+            if (entry.kind === "add") {
+              return {
+                kind: "add",
+                project: {
+                  name: entry.project?.name || entry.project?.label || entry.project?.id,
+                  cwd: entry.project?.cwd
+                }
+              };
+            }
+            const target = selectTestProject(settingsStore, entry.projectId);
+            const projectId = target?.id || entry.projectId;
+            if (entry.kind === "remove") return { kind: "archive", projectId };
+            if (entry.kind === "rename") {
+              return { kind: "rename", projectId, name: entry.name || entry.label };
+            }
+            if (entry.kind === "relocate") return { kind: "relocate", projectId, cwd: entry.cwd };
+            return { ...entry, projectId };
+          })
+        };
+        current.expectedRegistryRevision ??= settingsStore.current.registryRevision;
+      }
+    }
+    const hasGeneralMutation = operation?.kind === "reset" ||
+      (operation?.kind === "patch" && Object.keys(operation.settings || {})
+        .some((key) => key !== "projectOperations"));
+    if (hasGeneralMutation && current.expectedSettingsRevision === undefined) {
+      current.expectedSettingsRevision = current.expectedRevision;
+    }
+    delete current.expectedRevision;
+    return current;
+  }
+
+  return input;
+}
+
+function taskActivityId(result: unknown): string {
+  const activityId = (result as { structuredContent?: Record<string, any> }).structuredContent
+    ?.activityId;
+  if (typeof activityId !== "string") throw new Error("Task result did not include an Activity id.");
+  return activityId;
+}
+
+function taskSession(result: unknown): Record<string, unknown> {
+  return parseToolJson(result).bridgeSession || {};
 }
 
 function nextRequestId(): string {
@@ -2701,19 +16089,246 @@ function fakeCodexResult(threadId: string): ToolResult {
   };
 }
 
-function model(id: string, defaultEffort: string, efforts: string[]) {
+function model(
+  id: string,
+  defaultEffort: string,
+  efforts: string[],
+  isDefault = false,
+  displayName = id
+) {
+  const descriptions: Record<string, string> = {
+    "gpt-5.6-sol": "Latest frontier agentic coding model.",
+    "gpt-5.6-terra": "Balanced agentic coding model for everyday work.",
+    "gpt-5.6-luna": "Fast and affordable agentic coding model.",
+    "gpt-5.5": "Frontier model for complex coding, research, and real-world work.",
+    "gpt-5.4": "Strong model for everyday coding.",
+    "gpt-5.4-mini": "Small, fast, and cost-efficient model for simpler coding tasks.",
+    "gpt-5.3-codex-spark": "Ultra-fast coding model."
+  };
+  const effortDescriptions: Record<string, string> = {
+    low: "Fast responses with lighter reasoning.",
+    medium: "Balances speed and reasoning depth for everyday tasks.",
+    high: "Greater reasoning depth for complex problems.",
+    xhigh: "Extra high reasoning depth for complex problems.",
+    max: "Maximum reasoning depth for the hardest problems.",
+    ultra: "Maximum reasoning with automatic task delegation."
+  };
   return {
     id,
-    displayName: id,
+    displayName,
+    description: descriptions[id] || `${displayName} catalog guidance.`,
     defaultReasoningEffort: defaultEffort,
-    supportedReasoningEfforts: efforts.map((effort) => ({ effort })),
+    supportedReasoningEfforts: efforts.map((effort) => ({
+      effort,
+      description: effortDescriptions[effort] || `${effort} reasoning guidance.`
+    })),
+    isDefault,
+    serviceTiers: [],
+    inputModalities: ["text"],
     supportedInApi: true
   };
 }
 
 function parseToolJson(result: unknown): Record<string, any> {
-  const content = (result as { content?: Array<{ text?: string }> }).content;
-  return JSON.parse(content?.[0]?.text || "{}");
+  const structured = (result as { structuredContent?: unknown }).structuredContent;
+  if (!structured || typeof structured !== "object" || Array.isArray(structured)) {
+    throw new Error(`Tool result did not include authoritative structuredContent: ${JSON.stringify(result)}`);
+  }
+  const output = structured as Record<string, any>;
+  const metadata = (result as { _meta?: Record<string, any> })._meta || {};
+  const privateActivityView = metadata["codex/activityView@11"]?.view;
+  // Activity lifecycle tests inspect the app-hydration projection. W3 keeps
+  // the model projection compact, so read the validated private view instead
+  // of recreating the retired public fallback.
+  const testAliases: Record<string, unknown> = {};
+  const alias = (key: string, value: unknown) => {
+    if (value === undefined || Object.prototype.hasOwnProperty.call(output, key)) return;
+    testAliases[key] = value;
+  };
+  if (output.kind === "activity" && privateActivityView) {
+    for (const [key, value] of Object.entries(privateActivityView)) alias(key, value);
+    return privateActivityView;
+  }
+  if (output.kind === "task") {
+    alias("status", output.state);
+    const bootstrap = metadata["codex/activityBootstrap@11"];
+    if (bootstrap) {
+      const bridgeActivity = {
+        activityId: bootstrap.activity?.activityId,
+        jobId: bootstrap.correlation?.jobId,
+        agentId: output.agentId,
+        projectName: output.projectName,
+        executionMode: output.execution?.mode,
+        cardGeneration: bootstrap.activity?.cardGeneration,
+        presentationKind: bootstrap.presentation?.kind,
+        activityPresentationId: bootstrap.correlation?.activityPresentationId,
+        shouldRenderActivityCard: bootstrap.render?.eligible,
+        renderReason: bootstrap.render?.reason,
+        renderTiming: bootstrap.render?.timing,
+        statusTool: "codex_status",
+        automaticRenderTool: "codex_activity",
+        explicitRenderTool: "codex_activity",
+        followUpRenderRequired: false,
+        renderToolAvailable: true,
+        explicitRenderAllowed: true
+      };
+      alias("bridgeActivity", bridgeActivity);
+      alias("activityTracking", bridgeActivity);
+      alias("bridgeSession", {
+        requestId: output.requestId,
+        projectName: output.projectName,
+        scopeId: SCOPE_A,
+        threadId: output.threadId
+      });
+    }
+  }
+  if (output.kind === "overview" || output.kind === "page" ||
+      output.kind === "activity" || output.kind === "thread" || output.kind === "job") {
+    const items = Array.isArray(output.items) ? output.items : [];
+    const statusItemView = (entry: Record<string, any>) => {
+      if (entry.type === "job") {
+        return {
+          ...entry,
+          jobId: entry.id,
+          status: entry.state,
+          executionMode: entry.execution?.mode,
+          backendKind: entry.execution?.backend,
+          sandbox: entry.execution?.sandbox,
+          resultOmitted: entry.result?.omitted
+        };
+      }
+      if (entry.type === "activity") {
+        return { ...entry, activityId: entry.id, lifecycle: entry.state };
+      }
+      if (entry.type === "agent") {
+        return { ...entry, agentId: entry.id, lifecycle: entry.state };
+      }
+      if (entry.type === "thread") {
+        return { ...entry, threadId: entry.id };
+      }
+      return entry;
+    };
+    const statusItems = items.map(statusItemView);
+    alias("scopeView", output.scope);
+    alias("scopeCounts", output.counts);
+    alias("sessions", statusItems.filter((entry: any) => entry.type === "thread"));
+    alias("jobs", statusItems.filter((entry: any) => entry.type === "job"));
+    alias("activities", statusItems.filter((entry: any) => entry.type === "activity"));
+    alias("agents", statusItems.filter((entry: any) => entry.type === "agent"));
+    if (output.kind === "page") {
+      alias("query", { kind: "page", collection: output.page?.collection });
+      alias("pagination", output.page);
+    } else if (output.kind === "job") {
+      const job = statusItems.find((entry: any) => entry.type === "job") || {};
+      for (const [key, value] of Object.entries({
+        jobId: job.id,
+        status: job.state,
+        terminal: job.terminal,
+        delivery: job.delivery,
+        replay: job.replay,
+        activityId: job.activityId,
+        agentId: job.agentId,
+        threadId: job.threadId,
+        versions: job.versions,
+        executionMode: job.execution?.mode,
+        backendKind: job.execution?.backend,
+        sandbox: job.execution?.sandbox,
+        result: job.result,
+        error: job.error,
+        wait: job.wait,
+        message: job.message
+      })) alias(key, value);
+    }
+  }
+  if (output.kind === "mutation" && output.target) {
+    const target = output.target;
+    alias(target.type, {
+      [`${target.type}Id`]: target.id,
+      status: target.state,
+      lifecycle: target.state,
+      version: target.version,
+      terminal: target.state === "completed" || target.state === "failed" ||
+        target.state === "cancelled"
+    });
+  }
+  const privateSettings = metadata["codex/settingsView"];
+  if (privateSettings) {
+    alias("settings", privateSettings.settings);
+    alias("policyActivation", privateSettings.policyActivation);
+  }
+  if (Array.isArray(output.models)) {
+    alias("activePolicy", output.policy);
+    alias("usePriorityServiceTier", output.priority);
+    testAliases.models = output.models.map((model: Record<string, any>) =>
+      Object.prototype.hasOwnProperty.call(model, "displayName")
+        ? model
+        : { ...model, displayName: model.name }
+    );
+  }
+  return { ...output, ...testAliases };
+}
+
+function privateSettingsView(result: unknown): Record<string, any> {
+  const toolResult = result as {
+    structuredContent?: Record<string, any>;
+    _meta?: Record<string, any>;
+  } | undefined;
+  const structured = toolResult?.structuredContent;
+  const candidate = structured?.settings && structured?.capabilities && structured?.catalog
+    ? structured
+    : toolResult?._meta?.["codex/settingsView"];
+  if (!candidate || typeof candidate !== "object") {
+    throw new Error(`Missing full Settings-card view: ${JSON.stringify(result)}`);
+  }
+  return candidate;
+}
+
+async function freshDashboardSnapshot(
+  rawCallTool: (request: {
+    name: string;
+    arguments?: Record<string, unknown>;
+    _meta?: Record<string, unknown>;
+  }) => Promise<any>,
+  options: {
+    scopeId?: string;
+    scope?: "auto" | "conversation" | "all";
+    metadata?: Record<string, unknown>;
+    limit?: number;
+    enrich?: boolean;
+    terminalOffset?: number;
+    idleOffset?: number;
+  } = {}
+): Promise<{ result: any; view: Record<string, any> }> {
+  dashboardWidgetSequence += 1;
+  const widgetSuffix = dashboardWidgetSequence.toString(16).padStart(12, "0");
+  const result = await rawCallTool({
+    name: options.scope ? "codex_ui_read" : "codex_dashboard_snapshot",
+    arguments: {
+      ...(options.scope ? { view: "dashboard", scope: options.scope } : {}),
+      ...(options.scopeId ? { scopeId: options.scopeId } : {}),
+      widgetInstanceId: `dddddddd-dddd-4ddd-8ddd-${widgetSuffix}`,
+      limit: options.limit || 20,
+      ...(options.terminalOffset !== undefined ? { terminalOffset: options.terminalOffset } : {}),
+      ...(options.idleOffset !== undefined ? { idleOffset: options.idleOffset } : {}),
+      enrich: options.enrich === true
+    },
+    ...(options.metadata ? { _meta: options.metadata } : {})
+  });
+  expect(result.isError).not.toBe(true);
+  const view = result.structuredContent as Record<string, any>;
+  expect(validateDashboardViewPrivateMetadata(
+    (result as { _meta?: Record<string, unknown> })._meta?.[DASHBOARD_VIEW_METADATA_KEY]
+  ).view).toEqual(view);
+  return { result, view };
+}
+
+function privateActivityView(result: unknown): Record<string, any> {
+  const candidate = (result as { _meta?: Record<string, any> } | undefined)
+    ?._meta?.[ACTIVITY_VIEW_METADATA_KEY];
+  if (!candidate || typeof candidate !== "object") {
+    throw new Error(`Missing private Activity view metadata: ${JSON.stringify(result)}`);
+  }
+  return (candidate as { view: Record<string, any> }).view;
 }
 
 async function waitForJobStatus(client: Client, jobId: string, expected: string): Promise<Record<string, any>> {
@@ -2726,3 +16341,451 @@ async function waitForJobStatus(client: Client, jobId: string, expected: string)
   }
   throw new Error(`Timed out waiting for job status ${expected}.`);
 }
+
+
+describe("bridge-owned task permissions and read-only project discovery", () => {
+  it.each([
+    { strategy: "read-only", defaultSandbox: "workspace-write", expected: "read-only" },
+    { strategy: "always-full", defaultSandbox: "read-only", expected: "danger-full-access" },
+    { strategy: "adaptive", defaultSandbox: "workspace-write", expected: "workspace-write" },
+    { strategy: "adaptive", defaultSandbox: "read-only", expected: "read-only" }
+  ] as const)("uses saved $strategy settings without GPT permission input", async ({ strategy, defaultSandbox, expected }) => {
+    const root = temporaryRoot();
+    const config = configFor(root, {
+      CODEX_MCP_BRIDGE_ALLOW_WRITE: "1", CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1",
+      CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: defaultSandbox
+    });
+    const settings = new UserSettingsStore(config);
+    settings.update({ accessStrategy: strategy, usePriorityServiceTier: false }, settings.current.revision);
+    const upstream = new FakeUpstream();
+    const c = await connectTestClient(config, upstream, undefined, new FakeModelCatalog(), settings);
+    try {
+      const task = (await c.client.listTools()).tools.find(t => t.name === "codex_task")!;
+      expect(task.inputSchema.properties).not.toHaveProperty("sandbox");
+      expect(task.inputSchema.properties).not.toHaveProperty("approval-policy");
+      expect(task.inputSchema.properties).not.toHaveProperty("projectLookup");
+      expect(task.description).not.toContain("render at most one compact Activity card");
+      const result = await runTask(c.client, { prompt: "permission fixture", agentName: "Owned policy", contextMode: "fresh" });
+      expect(result.isError).not.toBe(true);
+      expect(upstream.calls).toHaveLength(1);
+      expect(upstream.calls[0]?.args).toMatchObject({ sandbox: expected,
+        "approval-policy": strategy === "always-full" ? "never" : config.defaultApprovalPolicy,
+        "approvals-reviewer": "user", "app-tool-approval-mode": strategy === "always-full" ? "approve" : "auto" });
+      expect(settings.current.usePriorityServiceTier).toBe(false);
+    } finally { await c.close(); }
+  });
+
+  it("never reinterprets a cached permission-bearing request under saved full access", async () => {
+    const config = configFor(temporaryRoot(), { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" });
+    const settings = new UserSettingsStore(config);
+    settings.update({ accessStrategy: "always-full" }, settings.current.revision);
+    const upstream = new FakeUpstream();
+    const c = await connectTestClient(config, upstream, undefined, new FakeModelCatalog(), settings);
+    try {
+      for (const sandbox of ["read-only", "danger-full-access"] as const) {
+        const result = await runTask(c.client, { prompt: "cached request", sandbox });
+        expect(result.isError).toBe(true);
+        expect(JSON.stringify(result)).toContain("TASK_PERMISSION_INPUT_RETIRED");
+      }
+      expect(upstream.calls).toEqual([]);
+      expect(c.jobs.listForScope(SCOPE_A)).toEqual([]);
+      expect(c.jobs.listActivities(SCOPE_A)).toEqual([]);
+    } finally { await c.close(); }
+  });
+
+  it("resolves exact projects through a read-only tool without task admission or card metadata", async () => {
+    const upstream = new FakeUpstream();
+    const c = await connectTestClient(configFor(temporaryRoot()), upstream);
+    try {
+      const descriptor = (await c.client.listTools()).tools.find(t => t.name === "codex_status")!;
+      expect(descriptor.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: false });
+      const project = c.settings.current.projects[0]!;
+      const result = await c.client.callTool({ name: "codex_status", arguments: { query: { kind: "project", name: project.name } } });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({ kind: "project", project: {
+        name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision
+      } });
+      expect(JSON.stringify(result)).not.toContain(project.cwd);
+      expect(result._meta || {}).not.toHaveProperty("openai/outputTemplate");
+      const missing = await c.client.callTool({ name: "codex_status", arguments: { query: { kind: "project", name: "Missing project" } } });
+      expect(missing.isError).toBe(true);
+      expect(missing.structuredContent).toMatchObject({ kind: "project", project: null, error: { code: "PROJECT_NOT_FOUND" } });
+      expect(upstream.calls).toEqual([]);
+      expect(c.jobs.listForScope(SCOPE_A)).toEqual([]);
+      expect(c.jobs.listActivities(SCOPE_A)).toEqual([]);
+      expect(c.sessions.listForScope(SCOPE_A)).toEqual([]);
+    } finally { await c.close(); }
+  });
+});
+
+describe("session permission admission", () => {
+  it("rejects a retired permission input on continuation", async () => {
+    const root = temporaryRoot(), upstream = new FakeUpstream();
+    const c = await connectTestClient(configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1" }), upstream);
+    try {
+      const first = parseToolJson(await runTask(c.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh" }));
+      const result = await runTask(c.client, { prompt: "audit continue", agentId: first.agentId, contextMode: "continue", sandbox: "workspace-write" }) as ToolResult;
+      expect(result.isError).toBe(true);
+      expect(upstream.calls).toHaveLength(1);
+      expect(parseToolJson(result).jobId).toBeNull();
+    } finally { await c.close(); }
+  });
+  it("rejects a retired restricted fork request without escalating it", async () => {
+    const root = temporaryRoot(), upstream = new ForkLifecycleUpstream();
+    const c = await connectTestClient(configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1", CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "danger-full-access" }), upstream);
+    try {
+      const first = parseToolJson(await runTask(c.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh" }));
+      const result = await runTask(c.client, { prompt: "audit fork", agentId: first.agentId, contextMode: "fork", sandbox: "read-only" }) as ToolResult;
+      expect(result.isError).toBe(true);
+      expect(upstream.calls).toHaveLength(1);
+      expect(parseToolJson(result).jobId).toBeNull();
+    } finally { await c.close(); }
+  });
+  it.each(["continue", "fork"])("rechecks a reduced operator ceiling on %s", async (contextMode) => {
+    const root = temporaryRoot(), upstream = new ForkLifecycleUpstream();
+    const state = new BridgeStateStore({ file: ":memory:" });
+    const initialConfig = configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1", CODEX_MCP_BRIDGE_DEFAULT_SANDBOX: "danger-full-access" });
+    const initial = await connectTestClient(initialConfig, upstream, undefined, new FakeModelCatalog(), new UserSettingsStore(initialConfig, { stateStore: state }));
+    const first = parseToolJson(await runTask(initial.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh" }));
+    await initial.close();
+    const reducedConfig = configFor(root);
+    const reduced = await connectTestClient(reducedConfig, upstream, undefined, new FakeModelCatalog(), new UserSettingsStore(reducedConfig, { stateStore: state }));
+    try {
+      const result = await runTask(reduced.client, { prompt: "audit after operator change", agentId: first.agentId, contextMode }) as ToolResult;
+      expect(result.isError).toBe(true);
+      expect(upstream.calls).toHaveLength(1);
+      expect(parseToolJson(result).jobId).toBeNull();
+    } finally { await reduced.close(); state.close(); }
+  });
+});
+
+
+describe("public v2 permission admission", () => {
+  it("rejects a full-access fork with an explicit read-only v2 request before admission", async () => {
+    const root=temporaryRoot(), upstream=new ForkLifecycleUpstream();
+    const c=await connectTestClient(configFor(root,{CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS:"1",CODEX_MCP_BRIDGE_DEFAULT_SANDBOX:"danger-full-access"}),upstream);
+    try {
+      const tool=(await c.client.listTools()).tools.find(t=>t.name==="codex_task")!;
+      const p=c.settings.current.projects[0]!;
+      const envelope=(tool.inputSchema.properties!.executionEnvelopeRef as {const:string}).const;
+      const call=(args:Record<string,unknown>)=>c.bareCallTool({name:"codex_task",_meta:{"openai/session":"public-audit-session"},arguments:{taskContractVersion:"2",executionEnvelopeRef:envelope,executionMode:"foreground",...args}});
+      const first=await call({requestId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",prompt:"synthetic audit",project:{name:p.name,projectRef:p.projectRef,projectRevision:p.projectRevision},selection:{model:"gpt-5.6-sol",reasoningEffort:"max"}});
+
+      expect(first.isError).not.toBe(true);
+      const id=parseToolJson(first).agentId;
+      const result=await call({requestId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",prompt:"synthetic read-only fork",activity:{mode:"existing",id:parseToolJson(first).activityId},agent:{mode:"existing",id,context:"fork"},sandbox:"read-only"});
+      expect(result.isError).toBe(true);
+      expect(upstream.calls).toHaveLength(1);
+      expect(parseToolJson(result).jobId).toBeNull();
+    }finally{await c.close();}
+  });
+});
+
+
+describe("automatic recovery and original wait integration", () => {
+  it("releases only finished persistent connections and rechecks every eligible peer before shared-worker cleanup", async () => {
+    const upstream: CodexUpstream = new SelectiveLoadedTerminalUpstream();
+    const release = vi.fn<NonNullable<CodexUpstream["releaseThreadConnection"]>>();
+    upstream.releaseThreadConnection = release;
+    const {jobs,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    try {
+      const seed=(name:string,status:string,persistence:"persistent"|"ephemeral",scopeId=SCOPE_A) => {
+        const agent=jobs.createAgent({scopeId,agentName:name}),threadId=`release-${name}`,jobId=`release-job-${name}`,now=Date.now();
+        jobs.linkAgentThread({agentId:agent.agentId,threadId,backendKind:"app-server",cwd:process.cwd(),sandbox:"read-only",contextMode:"fresh"});
+        const record={jobId,requestId:nextRequestId(),scopeId,agentId:agent.agentId,backendKind:"app-server",threadId,
+          threadPersistence:persistence,upstreamRequestId:`turn-${name}`,status:"running",createdAt:now-2000,updatedAt:now-1000};
+        jobs.admissionStateStore.upsertJob(record);
+        if(status!=="running")jobs.admissionStateStore.upsertJob({...record,status,updatedAt:now});
+        return {agent,threadId,jobId};
+      };
+      const first=seed("failed","failed","persistent"),peer=seed("interrupted","interrupted","persistent",SCOPE_B);
+      const protectedThreads=[seed("success","completed","persistent"),seed("ephemeral","failed","ephemeral"),seed("active","running","persistent")];
+      release.mockImplementation(async (_id,options)=>{
+        expect([...options.eligibleThreadIds].sort()).toEqual([first.threadId,peer.threadId].sort());
+        for(const thread of protectedThreads)expect(options.canRelease(thread.threadId)).toBe(false);
+        for(const id of options.eligibleThreadIds)expect(options.canRelease(id)).toBe(true);
+        jobs.runtimeAdmission.pendingAdmissions=1;
+        for(const id of options.eligibleThreadIds)expect(options.canRelease(id)).toBe(false);
+        jobs.runtimeAdmission.pendingAdmissions=0;
+        return {phase:"released",evidence:"worker-exited",releasedThreadIds:[first.threadId,peer.threadId]};
+      });
+      jobs.runtimeAdmission.pendingAdmissions=1;await jobs.sweepAutomaticRecovery();expect(release).not.toHaveBeenCalled();
+      jobs.runtimeAdmission.pendingAdmissions=0;jobs.runtimeAdmission.acceptingNewJobs=false;
+      await jobs.sweepAutomaticRecovery();expect(release).not.toHaveBeenCalled();
+      jobs.runtimeAdmission.acceptingNewJobs=true;await jobs.sweepAutomaticRecovery();
+      expect(release).toHaveBeenCalledTimes(1);
+      for(const thread of [first,peer])expect(jobs.admissionStateStore.threadConnections.get(thread.threadId)).toMatchObject({phase:"released",evidence:"worker-exited"});
+      for(const thread of protectedThreads)expect(jobs.admissionStateStore.threadConnections.get(thread.threadId)?.phase).toBe("connected");
+      expect(jobs.admissionStateStore.automaticRecovery.list()).toEqual([expect.objectContaining({kind:"release",state:"resolved",attempts:1,evidence:"worker-exited"})]);
+      expect(jobs.admissionStateStore.listJobs().find(job=>job.jobId===first.jobId)?.status).toBe("failed");
+      await jobs.sweepAutomaticRecovery();expect(release).toHaveBeenCalledTimes(1);
+    } finally {await close();}
+  });
+
+  it("separates all finished failures from actionable problems without changing review or outcome", async () => {
+    const {jobs,applicationService,close}=await connectTestClient(configFor(temporaryRoot()),new FakeUpstream());
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Retained failures"});
+      for(let n=0;n<3;n++) {
+        const record={jobId:`auto-history-${n}`,requestId:`auto-request-${n}`,scopeId:SCOPE_A,agentId:agent.agentId,
+          status:n===2?"completed":"failed",createdAt:Date.now()-2000+n,updatedAt:Date.now()-1000+n};
+        jobs.admissionStateStore.upsertJob(record);jobs.admissionStateStore.deleteJob(record.jobId);
+      }
+      jobs.admissionStateStore.workHistory.acknowledge("auto-history-0");
+      const query={view:"actionable" as const,review:"pending" as const,kind:"all" as const,offset:0};
+      const live=await applicationService.dashboardSnapshot({statusFilter:"all",problems:query});
+      expect(live.counts).toMatchObject({problems:0,needsAttention:0,running:0});
+      expect(live.problems).toMatchObject({historyCount:2,acknowledgedCount:1,pendingCount:0,rows:[]});
+      const history=await applicationService.dashboardSnapshot({statusFilter:"problems",problems:{...query,view:"history"}});
+      expect(history.problems?.rows).toHaveLength(2);
+      expect(history.problems?.rows.map(row=>row.row.status)).toEqual(["failed","failed"]);
+      expect(history.problems?.rows.filter(row=>row.canAcknowledge)).toHaveLength(1);
+      expect(jobs.admissionStateStore.workHistory.acknowledgedJobIds().size).toBe(1);
+      expect(jobs.admissionStateStore.listDashboardRetainedJobs().filter(job=>job.status==="failed")).toHaveLength(2);
+    } finally {await close();}
+  });
+
+  it("never transfers recovery judgment to a later Job/input wait, including the same conversation with a legacy token", async () => {
+    const upstream=new DeferredUpstream(),{client,rawCallTool,jobs,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    const meta={"openai/session":"original-recovery-conversation","openai/subject":"fixture-user"};
+    try {
+      for (const kind of ["job","input"] as const) {
+        const args={prompt:"Original background work",sessionMode:"new",requestId:nextRequestId()};
+        const started=parseToolJson(await client.callTool({name:"codex_task",arguments:args,_meta:meta}));
+        expect(started.waitContext).toBeNull();expect(started.recovery).toBeNull();
+        const replay=parseToolJson(await client.callTool({name:"codex_task",arguments:args,_meta:meta}));
+        expect(replay.waitContext).toBeNull();expect(replay.recovery).toBeNull();
+        // This later callback could be in the next GPT response. Old issued
+        // tokens (or guessed tokens) remain compatible reads, never authority.
+        const query=kind === "job" ? {kind,id:started.jobId,waitFor:"terminal",waitMs:1000,waitToken:"A".repeat(43)}
+          : {kind,jobId:started.jobId,waitMs:1000,waitToken:"A".repeat(43)};
+        const outside=await rawCallTool({name:"codex_status",arguments:{query},_meta:{...meta,"openai/session":"unrelated-conversation"}});
+        expect(outside.isError).toBe(true);
+        const spy=vi.spyOn(jobs,kind === "job" ? "wait" : "waitForInput");
+        const waiting=rawCallTool({name:"codex_status",arguments:{query},_meta:meta});
+        await vi.waitFor(()=>expect(spy).toHaveBeenCalledTimes(1));
+        upstream.rejectNext(new Error("Failure after the original callback returned"));
+        const result=await waiting;
+        expect(result.isError,JSON.stringify(result)).not.toBe(true);
+        expect(result.structuredContent).not.toHaveProperty("recovery");
+        expect(result.structuredContent).not.toHaveProperty("waitContext");
+        spy.mockRestore();
+        await vi.waitFor(()=>expect(jobs.get(started.jobId)?.status).toBe("failed"));
+        const later=await rawCallTool({name:"codex_status",arguments:{query:{kind:"job",id:started.jobId}},_meta:meta});
+        expect(later.structuredContent).not.toHaveProperty("recovery");
+      }
+    } finally {await close();}
+  });
+
+  it("returns a foreground failure only to its still-open original caller, not concurrent status waits or replay", async () => {
+    const upstream=new DeferredUpstream(),{client,rawCallTool,jobs,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    try {
+      const args={prompt:"Foreground failure",sessionMode:"new",executionMode:"foreground",requestId:nextRequestId()};
+      const foreground=client.callTool({name:"codex_task",arguments:args});
+      await vi.waitFor(()=>expect(upstream.calls).toHaveLength(1));
+      const job=jobs.list()[0]!;
+      const waitSpy=vi.spyOn(jobs,"wait");
+      const waiting=rawCallTool({name:"codex_status",arguments:{scopeId:SCOPE_A,query:{kind:"job",id:job.jobId,waitFor:"terminal",waitMs:1000}}});
+      await vi.waitFor(()=>expect(waitSpy).toHaveBeenCalledTimes(1));
+      upstream.rejectNext(new Error("Foreground turn failed"));
+      const failed=(await foreground).structuredContent as any;
+      expect(failed).toMatchObject({state:"failed",recovery:{jobId:job.jobId,outcome:"failed"}});
+      expect(failed.waitContext).toBeNull();
+      expect((await waiting).structuredContent).not.toHaveProperty("recovery");
+      const replay=parseToolJson(await client.callTool({name:"codex_task",arguments:args}));
+      expect(replay.waitContext).toBeNull();expect(replay.recovery).toBeNull();
+    } finally {await close();}
+  });
+
+  it("discards recovery judgment when the original foreground MCP callback is aborted", async () => {
+    const upstream=new DeferredUpstream(),{client,jobs,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    try {
+      const abort=new AbortController(),finish=vi.spyOn(jobs.originWaits,"finish");
+      const foreground=client.callTool({name:"codex_task",arguments:{prompt:"Detached foreground",sessionMode:"new",executionMode:"foreground"}},undefined,{signal:abort.signal});
+      const detached=expect(foreground).rejects.toThrow(/cancel|abort/i);
+      await vi.waitFor(()=>expect(upstream.calls).toHaveLength(1));
+      const job=jobs.list()[0]!;
+      abort.abort();await detached;
+      await vi.waitFor(()=>expect(jobs.listTransportObservations("mcp-handler-aborted")).toHaveLength(1));
+      upstream.rejectNext(new Error("Failure after the caller detached"));
+      await vi.waitFor(()=>expect(finish).toHaveBeenCalledTimes(1));
+      expect(finish.mock.results[0]?.value).toEqual({});
+      expect(jobs.get(job.jobId)?.status).toBe("failed");
+      expect(jobs.listCancellationIntents({jobId:job.jobId})).toEqual([]);
+      const later=parseToolJson(await client.callTool({name:"codex_status",arguments:{query:{kind:"job",id:job.jobId}}}));
+      expect(later).not.toHaveProperty("recovery");
+    } finally {await close();}
+  });
+
+  it.each([6000,16*60_000])("rechecks recurring unknown runtime after %i ms without reusing resolved evidence or resuming work", async recurrenceDelay => {
+    const upstream=new SelectiveLoadedTerminalUpstream();
+    const {jobs,applicationService,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    let now=Date.now();const clock=vi.spyOn(Date,"now").mockImplementation(()=>now);
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Automatic inspection"});
+      jobs.linkAgentThread({agentId:agent.agentId,threadId:"auto-unknown",backendKind:"app-server",cwd:process.cwd(),sandbox:"read-only",contextMode:"fresh"});
+      const options={statusFilter:"all" as const,problems:{view:"actionable" as const,review:"pending" as const,kind:"all" as const,offset:0}};
+      await jobs.sweepAutomaticRecovery();expect(jobs.admissionStateStore.automaticRecovery.list()).toEqual([]);
+      const probe=vi.spyOn(upstream,"probeThread").mockImplementation(async threadId=>({state:"unknown",reason:"unavailable",threadId,retryable:true}));
+      const background=vi.spyOn(upstream,"listLoadedBackgroundTerminals").mockRejectedValue(new Error("not inspected"));
+      await applicationService.dashboardSnapshot({...options,inspectRuntime:true});
+      await jobs.sweepAutomaticRecovery();
+      expect(jobs.admissionStateStore.automaticRecovery.list()[0]).toMatchObject({kind:"recheck",attempts:1,state:"retrying"});
+      expect((await applicationService.dashboardSnapshot(options)).counts.problems).toBe(1);
+      expect(upstream.calls).toEqual([]);
+      now+=5000;probe.mockImplementation(async threadId=>({state:"resumable",runtimeStatus:"notLoaded",threadId}));background.mockResolvedValue(null);
+      await jobs.sweepAutomaticRecovery();
+      expect(jobs.admissionStateStore.automaticRecovery.list()[0]).toMatchObject({attempts:2,state:"resolved",evidence:"runtime-observed"});
+      expect((await applicationService.dashboardSnapshot(options)).counts.problems).toBe(0);
+      expect(upstream.calls).toEqual([]);
+      const automatic=await applicationService.dashboardSnapshot({...options,problems:{...options.problems,view:"automatic"}});
+      expect(automatic.problems?.rows[0]).toMatchObject({source:"recovery",review:"automatic",canAcknowledge:false,automatic:{state:"resolved"}});
+      const original=jobs.admissionStateStore.automaticRecovery.list()[0]!;
+      // The Agent and Job identities stay exactly the same when an outage recurs.
+      now+=recurrenceDelay;
+      probe.mockImplementation(async threadId=>({state:"unknown",reason:"unavailable again",threadId,retryable:true}));
+      background.mockRejectedValue(new Error("unavailable again"));
+      const recurring=await applicationService.dashboardSnapshot({...options,inspectRuntime:true});
+      expect(recurring.problems?.pendingCount).toBe(1);
+      expect(recurring.counts.runtimeUnknownAgents).toBe(1);
+      expect(recurring.problems?.rows[0]?.automatic).toBeUndefined();
+      const before=probe.mock.calls.length;
+      await jobs.sweepAutomaticRecovery();
+      expect(probe.mock.calls.length).toBeGreaterThan(before);
+      const records=jobs.admissionStateStore.automaticRecovery.list();
+      expect(records).toHaveLength(2);
+      expect(records.find(record=>record.key===original.key)).toEqual(original);
+      expect(records.find(record=>record.key!==original.key)).toMatchObject({kind:"recheck",attempts:1,state:"retrying"});
+      const unresolved=await applicationService.dashboardSnapshot(options);
+      expect(unresolved.problems?.rows[0]).toMatchObject({kind:"unknown",review:"pending",automatic:{state:"retrying",attempts:1}});
+      expect(unresolved.problems?.rows[0]?.automatic?.evidence).toBeUndefined();
+      expect(upstream.calls).toEqual([]);
+    } finally {clock.mockRestore();await close();}
+  });
+
+  it("automatically clears a disconnected runtime only with fresh evidence of no remaining work", async () => {
+    const upstream=new SelectiveLoadedTerminalUpstream(),{jobs,applicationService,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    let now=Date.now();const clock=vi.spyOn(Date,"now").mockImplementation(()=>now);
+    try {
+      const agent=jobs.createAgent({scopeId:SCOPE_A,agentName:"Automatic disconnection check"});
+      jobs.linkAgentThread({agentId:agent.agentId,threadId:"auto-missing",backendKind:"app-server",cwd:process.cwd(),sandbox:"read-only",contextMode:"fresh"});
+      jobs.setAgentExecutionState(agent.agentId,"orphaned",{orphanedReason:"missing"});
+      vi.spyOn(upstream,"probeThread").mockImplementation(async threadId=>({state:"orphaned",reason:"missing",threadId,retryable:false}));
+      await jobs.sweepAutomaticRecovery();
+      const view=await applicationService.dashboardSnapshot({statusFilter:"all",problems:{view:"actionable",review:"pending",kind:"all",offset:0}});
+      expect(view.counts.problems).toBe(0);
+      expect(jobs.admissionStateStore.automaticRecovery.list()[0]).toMatchObject({state:"resolved",evidence:"not-loaded-no-background"});
+      expect(jobs.getAgent(agent.agentId)?.lifecycle).toBe("orphaned");expect(upstream.calls).toEqual([]);
+      const original=jobs.admissionStateStore.automaticRecovery.list()[0]!;
+      for (let n=0;n<3;n++) {
+        now+=6000;
+        const refreshed=await applicationService.dashboardSnapshot({statusFilter:"all",inspectRuntime:true,problems:{view:"actionable",review:"pending",kind:"all",offset:0}});
+        await jobs.sweepAutomaticRecovery();
+        expect(refreshed.counts.problems).toBe(0);
+        expect(jobs.admissionStateStore.automaticRecovery.list()).toEqual([original]);
+      }
+    } finally {clock.mockRestore();await close();}
+  });
+
+  it("resumes a persisted unknown-state recheck after restart without requiring a dashboard mount", async () => {
+    const root=temporaryRoot(),config=configFor(root),file=path.join(root,"recovery.sqlite"),firstUpstream=new SelectiveLoadedTerminalUpstream();
+    let state=new BridgeStateStore({file});
+    let bridge=await connectTestClient(config,firstUpstream,undefined,undefined,new UserSettingsStore(config,{stateStore:state})),now=Date.now();
+    const clock=vi.spyOn(Date,"now").mockImplementation(()=>now);
+    try {
+      const agent=bridge.jobs.createAgent({scopeId:SCOPE_A,agentName:"Restarted inspection"});
+      bridge.jobs.linkAgentThread({agentId:agent.agentId,threadId:"restart-unknown",backendKind:"app-server",cwd:process.cwd(),sandbox:"read-only",contextMode:"fresh"});
+      vi.spyOn(firstUpstream,"probeThread").mockImplementation(async threadId=>({state:"unknown",reason:"unavailable",threadId,retryable:true}));
+      vi.spyOn(firstUpstream,"listLoadedBackgroundTerminals").mockRejectedValue(new Error("unavailable"));
+      await bridge.applicationService.dashboardSnapshot({statusFilter:"all",inspectRuntime:true,problems:{view:"actionable",review:"pending",kind:"all",offset:0}});
+      await bridge.jobs.sweepAutomaticRecovery();
+      expect(bridge.jobs.admissionStateStore.automaticRecovery.list()[0]).toMatchObject({attempts:1,state:"retrying"});
+      await bridge.close();state.close();now+=5000;
+      const restartedUpstream=new SelectiveLoadedTerminalUpstream(),probe=vi.spyOn(restartedUpstream,"probeThread");
+      state=new BridgeStateStore({file});
+      bridge=await connectTestClient(config,restartedUpstream,undefined,undefined,new UserSettingsStore(config,{stateStore:state}));
+      await bridge.jobs.sweepAutomaticRecovery();
+      expect(probe).toHaveBeenCalledWith("restart-unknown","app-server");
+      expect(bridge.jobs.admissionStateStore.automaticRecovery.list()).toEqual([expect.objectContaining({attempts:2,state:"resolved",evidence:"runtime-observed"})]);
+      expect(restartedUpstream.calls).toEqual([]);
+    } finally {clock.mockRestore();await bridge.close();state.close();}
+  });
+
+  it("automatically retries only the previously requested exact turn and leaves another conversation's shared worker work untouched", async () => {
+    const upstream=new MultiTurnAppUpstream(),{client,jobs,applicationService,close}=await connectTestClient(configFor(temporaryRoot()),upstream);
+    try {
+      const first=parseToolJson(await client.callTool({name:"codex_task",arguments:{prompt:"Requested stop",sessionMode:"new"}}));
+      const second=parseToolJson(await client.callTool({name:"codex_task",arguments:{prompt:"Other conversation work",sessionMode:"new",scopeId:SCOPE_B}}));
+      const job=jobs.get(first.jobId)!,other={...jobs.get(second.jobId)!};
+      const stop=vi.spyOn(upstream,"forceTerminateWorker").mockRejectedValueOnce(new Error("interrupt confirmation timed out"));
+      const {intent}=jobs.beginCancellationOperation({scopeId:job.scopeId,requestId:nextRequestId(),actionHash:"e".repeat(64),source:"operator",toolName:"test",actionName:"stop-job",
+        target:{kind:"job",jobId:job.jobId,activityId:job.activityId,agentId:job.agentId,threadId:job.threadId,turnId:job.upstreamRequestId},expectedVersion:job.version,reasonCode:"explicit-stop"});
+      await jobs.cancel(job.jobId,intent,{interruptOnly:true});expect(job.status).toBe("termination-failed");
+      await jobs.sweepAutomaticRecovery();
+      expect(stop).toHaveBeenCalledTimes(2);
+      expect((stop.mock.calls[1] as unknown[])[3]).toEqual({interruptOnly:true});
+      expect(jobs.get(job.jobId)?.status).toBe("cancelled");
+      expect(jobs.get(second.jobId)).toMatchObject({scopeId:SCOPE_B,status:"running",version:other.version,upstreamRequestId:other.upstreamRequestId});
+      expect(jobs.listCancellationIntents({jobId:second.jobId})).toEqual([]);
+      expect(jobs.admissionStateStore.automaticRecovery.list()).toEqual([expect.objectContaining({jobId:first.jobId,state:"resolved",evidence:"turn-interrupt",attempts:1})]);
+      expect(jobs.listCancellationIntents({jobId:first.jobId})).toEqual(expect.arrayContaining([expect.objectContaining({toolName:"bridge.automatic-recovery",reasonCode:"prior-stop-intent-retry"})]));
+      await jobs.sweepAutomaticRecovery();expect(stop).toHaveBeenCalledTimes(2);
+      const view=await applicationService.dashboardSnapshot({statusFilter:"all",scopeId:SCOPE_B,problems:{view:"automatic",review:"pending",kind:"all",offset:0}});
+      expect(view.problems?.automaticCount).toBe(0);
+    } finally {await close();}
+  });
+});
+
+describe("CLI contract and interaction admission", () => {
+  it("rejects unsupported execution before creating a Job, Activity, or Agent", async () => {
+    class UnsupportedUpstream extends FakeUpstream {
+      async prepareExecution() { throw new Error("CODEX_PROTOCOL_UNSUPPORTED: thread/resume.sandbox"); }
+    }
+    const upstream = new UnsupportedUpstream();
+    const connected = await connectTestClient(configFor(temporaryRoot()), upstream);
+    try {
+      const result = await runTask(connected.client, { prompt: "must not run", contextMode: "fresh", agentName: "Unsupported" });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("CODEX_PROTOCOL_UNSUPPORTED");
+      expect(connected.jobs.list()).toHaveLength(0);
+      expect(connected.jobs.listActivities(SCOPE_A, 100, 0)).toHaveLength(0);
+      expect(connected.jobs.listAgents(SCOPE_A, 100, 0)).toHaveLength(0);
+      expect(upstream.calls).toHaveLength(0);
+    } finally { await connected.close(); }
+  });
+
+  it("keeps nonblocking input running and exposes MCP URLs only in app-private controls", async () => {
+    class ElicitationUpstream extends InteractionUpstream {
+      interactionInput() { return { url: "https://example.test/verify?state=PRIVATE_CARD_URL" }; }
+    }
+    const upstream = new ElicitationUpstream();
+    const { client, jobs, close } = await connectTestClient(configFor(temporaryRoot()), upstream);
+    try {
+      const started = parseToolJson(await runTask(client, { prompt: "input test", agentName: "Input", contextMode: "fresh", executionMode: "background" }));
+      const emit = (interaction: CodexPendingInteraction) => upstream.progressNext({ progress: 1, event: {
+        eventId: interaction.interactionId, type: "input-required", phase: "updated", createdAt: Date.now(),
+        summary: interaction.summary, details: { interaction }
+      } } as CodexProgress);
+      emit({ interactionId: "nonblocking", kind: "user-input", isBlocking: false, threadId: "thread-1", turnId: "turn-1", itemId: "item-1",
+        summary: "Choose while working", questions: [{ id: "choice", header: "Choice", question: "Choose", isSecret: false, isOther: false }] });
+      expect(jobs.getAgent(started.agentId)?.lifecycle).toBe("active");
+      expect(jobs.get(started.jobId)?.pendingInteractions[0]).toMatchObject({ isBlocking: false, questions: [{ isOther: false }] });
+      const presentation = await presentCompactActivity(client, started.activityId, "61616161-6161-4161-8161-616161616161");
+      const card = automaticCardProof(presentation), meta = { "openai/widgetSessionId": "permission-input-card" };
+      const running = await client.callTool({ name: "codex_activity_snapshot", arguments: { card }, _meta: meta });
+      expect(JSON.stringify(parseToolJson(running))).not.toContain('"displayState":"input-required"');
+      emit({ interactionId: "elicitation", kind: "mcp-elicitation", isBlocking: true, threadId: "thread-1", turnId: "turn-1", itemId: "item-2",
+        summary: "Open the request", elicitation: { mode: "url", serverName: "fixture" } });
+      const pending = await client.callTool({ name: "codex_activity_snapshot", arguments: { card }, _meta: meta });
+      expect(JSON.stringify(pending.structuredContent)).not.toContain("PRIVATE_CARD_URL");
+      expect(JSON.stringify(pending._meta)).toContain("PRIVATE_CARD_URL");
+      expect(JSON.stringify(jobs.admissionStateStore.listJobs())).not.toContain("PRIVATE_CARD_URL");
+      const response = await client.callTool({ name: "codex_interaction_respond", arguments: {
+        requestId: "62626262-6262-4262-8262-626262626262", jobId: started.jobId, expectedJobVersion: jobs.get(started.jobId)!.version,
+        interactionId: "elicitation", response: { elicitation: { action: "accept", content: null } }, card
+      }, _meta: meta });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      expect(upstream.interactionResponses.at(-1)).toMatchObject({ interactionId: "elicitation", response: { elicitation: { action: "accept", content: null } } });
+    } finally { upstream.resolveNext(); await close(); }
+  });
+});

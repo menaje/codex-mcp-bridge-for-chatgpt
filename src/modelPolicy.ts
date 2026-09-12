@@ -1,0 +1,695 @@
+import type { CodexBackendKind } from "./config.js";
+import type {
+  CodexModelCatalogSnapshot,
+  CodexModelDescriptor
+} from "./modelCatalog.js";
+
+export const MODEL_POLICY_SCHEMA_VERSION = 4 as const;
+
+export type ModelChoice = {
+  model: string;
+  reasoningEffort: string;
+};
+
+export type ModelSelection = ModelChoice & {
+  serviceTier?: string;
+};
+
+export type ModelPolicyConstraints = {
+  /** Legacy wire name: controls Ultra eligibility, not every form of agent delegation. */
+  allowDelegation: boolean;
+};
+
+export type AllowedSelections =
+  | {
+      kind: "explicit";
+      selections: ModelChoice[];
+    }
+  | {
+      kind: "catalog-visible";
+    };
+
+export type ModelPolicy =
+  | {
+      mode: "fixed";
+      selection: ModelChoice;
+      constraints: ModelPolicyConstraints;
+    }
+  | {
+      mode: "automatic";
+      allowedSelections: AllowedSelections;
+      constraints: ModelPolicyConstraints;
+    };
+
+export type BackendCapabilities = {
+  selectionScope: "thread" | "turn";
+  supportsModelOverrideOnContinue: boolean;
+  supportsEffortOverrideOnContinue: boolean;
+  supportsServiceTierOverrideOnContinue: boolean;
+  supportsFork: boolean;
+  supportsSteering?: boolean;
+  supportsPreciseCancellation?: boolean;
+  supportsEphemeralThreads?: boolean;
+  supportsThreadInspection?: boolean;
+  supportsThreadUnsubscribe?: boolean;
+  supportsBackgroundTerminals?: boolean;
+  supportsTurnSelection?: boolean;
+};
+
+export type BackendFeature = "supportsSteering" | "supportsPreciseCancellation" |
+  "supportsEphemeralThreads" | "supportsThreadInspection" | "supportsBackgroundTerminals" | "supportsTurnSelection";
+
+/** Retired history never advertises executable capabilities. */
+export function backendSupports(kind: string | undefined, feature: BackendFeature): boolean {
+  if (kind === "app-server") return true;
+  return false;
+}
+
+export type CatalogValidationState =
+  | "valid"
+  | "temporarily-unverified-with-last-known-good"
+  | "invalid";
+
+export type ExecutionDecisionSource =
+  | "fixed"
+  | "configured-fallback"
+  | "caller"
+  | "thread-inherited"
+  | "backend-default"
+  | "compatibility-fallback";
+
+export type ExecutionDecision = {
+  policyRevision: number;
+  catalogFingerprint: string;
+  catalogValidation: CatalogValidationState;
+  backendKind: CodexBackendKind;
+  requestedSelection?: ModelChoice;
+  effectiveSelection: ModelSelection;
+  effectiveReasoningEffort: string;
+  savedSelectionSupported: boolean;
+  fallbackWarning?: string;
+  source: ExecutionDecisionSource;
+  appliedAt: "thread-start" | "turn-start";
+  reason: string;
+};
+
+export type ModelPolicyErrorCode =
+  | "MODEL_SELECTION_REQUIRED"
+  | "MODEL_SELECTION_FORBIDDEN"
+  | "MODEL_POLICY_CHANGED"
+  | "MODEL_UNAVAILABLE"
+  | "THREAD_OVERRIDE_UNSUPPORTED";
+
+export type ModelPolicyRecovery = "catalog" | "omit-selection" | "fresh-context";
+
+export class ModelPolicyError extends Error {
+  readonly name = "ModelPolicyError";
+
+  constructor(
+    readonly code: ModelPolicyErrorCode,
+    message: string,
+    readonly policyRevision: number,
+    readonly nextActions: string[],
+    readonly recovery: ModelPolicyRecovery = "catalog"
+  ) {
+    super(
+      code === "MODEL_SELECTION_REQUIRED"
+        ? `${code}: ${message}`
+        : `${code}: ${message} (policy revision ${policyRevision})`
+    );
+  }
+}
+
+export type ResolveModelPolicyInput = {
+  policyRevision: number;
+  policy: ModelPolicy;
+  catalog: CodexModelCatalogSnapshot;
+  operatorCeiling?: ModelChoice[];
+  backendKind: CodexBackendKind;
+  backendCapabilities: BackendCapabilities;
+  operation: "start" | "continue";
+  requestedSelection?: ModelChoice;
+  requestedPolicyRevision?: number;
+  currentSelection?: ModelSelection;
+};
+
+export function automaticModelPolicy(): ModelPolicy {
+  return {
+    mode: "automatic",
+    allowedSelections: { kind: "catalog-visible" },
+    constraints: { allowDelegation: true }
+  };
+}
+
+export function validateModelPolicy(value: unknown): ModelPolicy {
+  if (!isRecord(value)) throw new Error("Invalid model policy.");
+  const constraints = readConstraints(value.constraints);
+  if (value.mode === "fixed") {
+    const selection = readModelChoice(value.selection, "fixed model selection");
+    if (!constraints.allowDelegation && selection.reasoningEffort === "ultra") {
+      throw new Error("Ultra is disabled. Choose another reasoning level for the fixed model.");
+    }
+    return { mode: "fixed", selection, constraints };
+  }
+  if (value.mode !== "automatic" || !isRecord(value.allowedSelections)) {
+    throw new Error("Invalid model policy mode.");
+  }
+  const allowed = value.allowedSelections;
+  let allowedSelections: AllowedSelections;
+  if (allowed.kind === "catalog-visible") {
+    allowedSelections = { kind: "catalog-visible" };
+  } else if (allowed.kind === "explicit" && Array.isArray(allowed.selections)) {
+    const selections = allowed.selections.map((selection, index) =>
+      readModelChoice(selection, `allowed model selection ${index + 1}`)
+    );
+    if (selections.length === 0) throw new Error("An explicit model allowlist cannot be empty.");
+    if (selections.length > 500) throw new Error("An explicit model allowlist cannot exceed 500 selections.");
+    const unique = new Set(selections.map(modelChoiceKey));
+    if (unique.size !== selections.length) throw new Error("Explicit model selections must be unique.");
+    // Keep the user's saved choices when Ultra is disabled. Discovery and
+    // admission intersect them with the current constraint on every request.
+    allowedSelections = { kind: "explicit", selections };
+  } else {
+    throw new Error("Invalid allowed model selections.");
+  }
+  if (value.fallbackSelection !== undefined || value.preferredSelection !== undefined) {
+    throw new Error(
+      "Automatic model policy fallback/default selections are retired; callers must choose an exact selection for new work."
+    );
+  }
+  return {
+    mode: "automatic",
+    allowedSelections,
+    constraints
+  };
+}
+
+export function validateModelSelection(value: unknown, label = "model selection"): ModelSelection {
+  return readSelection(value, label);
+}
+
+export const ULTRA_DISABLED_NO_SELECTION_WARNING =
+  "Ultra is disabled and no saved model and reasoning choice can currently run. " +
+  "Saved Ultra choices are retained but inactive. Select another available reasoning level in Settings.";
+
+export function hasDisabledUltraSelections(policy: ModelPolicy): boolean {
+  return policy.mode === "automatic" &&
+    !policy.constraints.allowDelegation &&
+    policy.allowedSelections.kind === "explicit" &&
+    policy.allowedSelections.selections.some((selection) => selection.reasoningEffort === "ultra");
+}
+
+export function isModelPolicySuspended(
+  policy: ModelPolicy,
+  catalog: CodexModelCatalogSnapshot,
+  operatorCeiling?: ModelChoice[]
+): boolean {
+  return hasDisabledUltraSelections(policy) &&
+    listAllowedModelSelections(policy, catalog, operatorCeiling).length === 0;
+}
+
+export function validatePolicyAgainstCatalog(
+  policy: ModelPolicy,
+  catalog: CodexModelCatalogSnapshot,
+  operatorCeiling: ModelChoice[] | undefined,
+  policyRevision: number
+): void {
+  const normalized = validateModelPolicy(policy);
+  if (normalized.mode === "fixed") {
+    assertSelectionAllowed(normalized.selection, normalized, catalog, operatorCeiling, policyRevision);
+    return;
+  }
+  const allowed = listAllowedModelSelections(normalized, catalog, operatorCeiling);
+  if (allowed.length > 0) return;
+  // Disabling Ultra is a valid restrictive save even when it suspends all
+  // remaining choices. No implicit model is added and execution stays closed.
+  if (hasDisabledUltraSelections(normalized)) return;
+
+  const catalogAllowed = listAllowedModelSelections(normalized, catalog);
+  if (operatorCeiling && catalogAllowed.length > 0) {
+    throw forbidden(
+      policyRevision,
+      "The model policy has no current catalog selection inside the operator model ceiling."
+    );
+  }
+  throw unavailable(
+    policyRevision,
+    "The model policy and current backend catalog have no usable selection."
+  );
+}
+
+export function resolveModelPolicy(input: ResolveModelPolicyInput): ExecutionDecision {
+  const policy = validateModelPolicy(input.policy);
+  if (
+    input.requestedPolicyRevision !== undefined &&
+    input.requestedPolicyRevision !== input.policyRevision
+  ) {
+    throw policyChanged(
+      input.policyRevision,
+      `The request used policy revision ${input.requestedPolicyRevision}, but revision ${input.policyRevision} is active.`,
+    );
+  }
+
+  if (isModelPolicySuspended(policy, input.catalog, input.operatorCeiling)) {
+    throw unavailable(input.policyRevision, ULTRA_DISABLED_NO_SELECTION_WARNING);
+  }
+
+  let effectiveSelection: ModelSelection;
+  let source: ExecutionDecisionSource;
+  let savedSelectionSupported = true;
+  let fallbackWarning: string | undefined;
+  if (policy.mode === "fixed") {
+    if (input.requestedSelection) {
+      throw new ModelPolicyError(
+        "MODEL_SELECTION_FORBIDDEN",
+        "This bridge is in fixed model mode and does not accept a per-call model selection.",
+        input.policyRevision,
+        ["Omit selection and retry; the saved fixed selection will be applied."],
+        "omit-selection"
+      );
+    }
+    if (catalogSupportsSelection(input.catalog, policy.selection)) {
+      effectiveSelection = cloneSelection(policy.selection);
+      source = "fixed";
+    } else {
+      const fallback = savedSelectionFallback(
+        policy.selection,
+        input.catalog,
+        input.operatorCeiling,
+        policy.constraints.allowDelegation
+      );
+      if (!fallback) {
+        throw unavailable(
+          input.policyRevision,
+          `Saved fixed selection ${selectionLabel(policy.selection)} is no longer available and no compatible upstream default exists.`
+        );
+      }
+      effectiveSelection = fallback;
+      source = "compatibility-fallback";
+      savedSelectionSupported = false;
+      fallbackWarning =
+        `Saved selection ${selectionLabel(policy.selection)} is unsupported by the current catalog. ` +
+        `This turn uses ${selectionLabel(fallback)} without rewriting the saved selection.`;
+    }
+  } else if (input.requestedSelection) {
+    effectiveSelection = readModelChoice(input.requestedSelection, "requested model selection");
+    source = "caller";
+  } else if (
+    input.operation === "continue" &&
+    input.currentSelection
+  ) {
+    // Omission on a retained thread means inheritance, not "choose the
+    // omission fallback again". The current selection still has to survive
+    // the active catalog, user policy, operator ceiling, and delegation
+    // intersection; a policy change can therefore require an explicit fresh
+    // context on a backend that cannot override continued threads.
+    assertSelectionAllowed(
+      input.currentSelection,
+      policy,
+      input.catalog,
+      input.operatorCeiling,
+      input.policyRevision
+    );
+    effectiveSelection = cloneSelection(input.currentSelection);
+    source = "thread-inherited";
+  } else {
+    throw new ModelPolicyError(
+      "MODEL_SELECTION_REQUIRED",
+      "Automatic policy requires an exact model and reasoning effort.",
+      input.policyRevision,
+      ["codex_models"]
+    );
+  }
+
+  if (source === "compatibility-fallback") {
+    assertFallbackAllowed(
+      effectiveSelection,
+      policy.constraints.allowDelegation,
+      input.catalog,
+      input.operatorCeiling,
+      input.policyRevision
+    );
+  } else {
+    assertSelectionAllowed(
+      effectiveSelection,
+      policy,
+      input.catalog,
+      input.operatorCeiling,
+      input.policyRevision
+    );
+  }
+
+  if (
+    input.operation === "continue" &&
+    selectionChanged(input.currentSelection, effectiveSelection)
+  ) {
+    const capabilities = input.backendCapabilities;
+    const supported =
+      capabilities.supportsModelOverrideOnContinue &&
+      capabilities.supportsEffortOverrideOnContinue &&
+      (!effectiveSelection.serviceTier || capabilities.supportsServiceTierOverrideOnContinue);
+    if (!supported) {
+      throw new ModelPolicyError(
+        "THREAD_OVERRIDE_UNSUPPORTED",
+        `Backend ${input.backendKind} cannot apply the selected model configuration to the continued thread.`,
+        input.policyRevision,
+        ["Start explicit fresh context with contextMode='fresh'.", "Use the App Server backend for turn-level selection changes."],
+        "fresh-context"
+      );
+    }
+  }
+
+  const turnOverride =
+    input.operation === "continue" &&
+    source !== "thread-inherited" &&
+    input.backendCapabilities.supportsModelOverrideOnContinue &&
+    input.backendCapabilities.supportsEffortOverrideOnContinue;
+  const catalogValidation: CatalogValidationState = input.catalog.stale
+    ? "temporarily-unverified-with-last-known-good"
+    : "valid";
+  return {
+    policyRevision: input.policyRevision,
+    catalogFingerprint: input.catalog.fingerprint,
+    catalogValidation,
+    backendKind: input.backendKind,
+    ...(input.requestedSelection
+      ? { requestedSelection: cloneSelection(input.requestedSelection) }
+      : {}),
+    effectiveSelection,
+    effectiveReasoningEffort: effectiveSelection.reasoningEffort,
+    savedSelectionSupported,
+    ...(fallbackWarning ? { fallbackWarning } : {}),
+    source,
+    appliedAt: turnOverride ? "turn-start" : "thread-start",
+    reason: decisionReason(source, input.operation, input.backendKind, catalogValidation)
+  };
+}
+
+function savedSelectionFallback(
+  saved: ModelChoice,
+  catalog: CodexModelCatalogSnapshot,
+  operatorCeiling: ModelChoice[] | undefined,
+  allowDelegation: boolean
+): ModelChoice | undefined {
+  const model = catalog.models.find((entry) => entry.id === saved.model && !entry.hidden);
+  const orderedModels = model
+    ? [model]
+    : [
+        ...catalog.models.filter((entry) => !entry.hidden && entry.isDefault),
+        ...catalog.models.filter((entry) => !entry.hidden && !entry.isDefault)
+      ];
+  for (const candidateModel of orderedModels) {
+    const efforts = [
+      candidateModel.defaultReasoningEffort,
+      ...candidateModel.supportedReasoningEfforts.map((entry) => entry.effort)
+    ].filter((value, index, values): value is string =>
+      Boolean(value) && values.indexOf(value) === index && (allowDelegation || value !== "ultra")
+    );
+    for (const reasoningEffort of efforts) {
+      const selection: ModelSelection = { model: candidateModel.id, reasoningEffort };
+      if (
+        catalogSupportsSelection(catalog, selection) &&
+        (!operatorCeiling || operatorCeiling.some((entry) => sameModelChoice(entry, selection)))
+      ) return selection;
+    }
+  }
+  return undefined;
+}
+
+function assertFallbackAllowed(
+  selection: ModelChoice,
+  allowDelegation: boolean,
+  catalog: CodexModelCatalogSnapshot,
+  operatorCeiling: ModelChoice[] | undefined,
+  policyRevision: number
+): void {
+  if (!catalogSupportsSelection(catalog, selection)) {
+    throw unavailable(policyRevision, `Fallback selection ${selectionLabel(selection)} is unavailable.`);
+  }
+  if (!allowDelegation && selection.reasoningEffort === "ultra") {
+    throw forbidden(policyRevision, "Ultra reasoning is disabled by the active model policy.");
+  }
+  if (operatorCeiling && !operatorCeiling.some((entry) => sameModelChoice(entry, selection))) {
+    throw forbidden(policyRevision, `Fallback selection ${selectionLabel(selection)} exceeds the operator ceiling.`);
+  }
+}
+
+export function listAllowedModelSelections(
+  policy: ModelPolicy,
+  catalog: CodexModelCatalogSnapshot,
+  operatorCeiling?: ModelChoice[]
+): ModelChoice[] {
+  const normalized = validateModelPolicy(policy);
+  const candidates = normalized.mode === "fixed"
+    ? [normalized.selection]
+    : normalized.allowedSelections.kind === "explicit"
+      ? normalized.allowedSelections.selections
+      : catalogSelections(catalog.models);
+  const ceiling = operatorCeiling?.map((selection) => readModelChoice(selection, "operator model ceiling"));
+  return deduplicateSelections(candidates).filter((selection) =>
+    catalogSupportsSelection(catalog, selection) &&
+    (normalized.constraints.allowDelegation || selection.reasoningEffort !== "ultra") &&
+    (!ceiling || ceiling.some((entry) => sameModelChoice(entry, selection)))
+  );
+}
+
+export function catalogSupportsSelection(
+  catalog: CodexModelCatalogSnapshot,
+  selection: ModelSelection
+): boolean {
+  const model = catalog.models.find((entry) => entry.id === selection.model);
+  if (!model || model.hidden) return false;
+  if (!model.supportedReasoningEfforts.some((entry) => entry.effort === selection.reasoningEffort)) {
+    return false;
+  }
+  return !selection.serviceTier || model.serviceTiers.some((entry) => entry.id === selection.serviceTier);
+}
+
+export function sameModelSelection(
+  left: ModelSelection | undefined,
+  right: ModelSelection | undefined
+): boolean {
+  if (!left || !right) return left === right;
+  return modelSelectionKey(left) === modelSelectionKey(right);
+}
+
+export function sameModelChoice(
+  left: ModelChoice | undefined,
+  right: ModelChoice | undefined
+): boolean {
+  if (!left || !right) return left === right;
+  return modelChoiceKey(left) === modelChoiceKey(right);
+}
+
+export function sameModelPolicy(left: ModelPolicy, right: ModelPolicy): boolean {
+  return modelPolicyKey(validateModelPolicy(left)) === modelPolicyKey(validateModelPolicy(right));
+}
+
+export function modelSelectionKey(selection: ModelSelection): string {
+  return JSON.stringify([
+    selection.model,
+    selection.reasoningEffort,
+    selection.serviceTier || null
+  ]);
+}
+
+export function modelChoiceKey(selection: ModelChoice): string {
+  return JSON.stringify([selection.model, selection.reasoningEffort]);
+}
+
+function assertSelectionAllowed(
+  selection: ModelChoice,
+  policy: ModelPolicy,
+  catalog: CodexModelCatalogSnapshot,
+  operatorCeiling: ModelChoice[] | undefined,
+  policyRevision: number
+): void {
+  if (!catalogSupportsSelection(catalog, selection)) {
+    throw unavailable(
+      policyRevision,
+      `Selection ${selectionLabel(selection)} is not available in catalog ${catalog.fingerprint}.`
+    );
+  }
+  if (!policy.constraints.allowDelegation && selection.reasoningEffort === "ultra") {
+    throw policyChanged(policyRevision, "Ultra reasoning is disabled by the active model policy.");
+  }
+  if (
+    operatorCeiling &&
+    !operatorCeiling.some((entry) => sameModelChoice(entry, selection))
+  ) {
+    throw policyChanged(
+      policyRevision,
+      `Selection ${selectionLabel(selection)} exceeds the current operator model ceiling.`
+    );
+  }
+  if (policy.mode === "fixed" && !sameModelChoice(policy.selection, selection)) {
+    throw forbidden(policyRevision, "The selected model configuration differs from the fixed policy.");
+  }
+  if (
+    policy.mode === "automatic" &&
+    policy.allowedSelections.kind === "explicit" &&
+    !policy.allowedSelections.selections.some((entry) => sameModelChoice(entry, selection))
+  ) {
+    throw policyChanged(
+      policyRevision,
+      `Selection ${selectionLabel(selection)} is not in the current user allowlist.`
+    );
+  }
+}
+
+function modelPolicyKey(policy: ModelPolicy): string {
+  if (policy.mode === "fixed") {
+    return JSON.stringify([
+      "fixed",
+      modelChoiceKey(policy.selection),
+      policy.constraints.allowDelegation
+    ]);
+  }
+  return JSON.stringify([
+    "automatic",
+    policy.allowedSelections.kind,
+    policy.allowedSelections.kind === "explicit"
+      ? policy.allowedSelections.selections.map(modelChoiceKey).sort()
+      : null,
+    policy.constraints.allowDelegation
+  ]);
+}
+
+function catalogSelections(models: CodexModelDescriptor[]): ModelChoice[] {
+  return models.flatMap((model) =>
+    model.supportedReasoningEfforts.map(({ effort }) => ({
+      model: model.id,
+      reasoningEffort: effort
+    }))
+  );
+}
+
+function selectionChanged(
+  currentSelection: ModelSelection | undefined,
+  nextSelection: ModelChoice
+): boolean {
+  return !sameModelChoice(currentSelection, nextSelection);
+}
+
+function readConstraints(value: unknown): ModelPolicyConstraints {
+  if (value === undefined) return { allowDelegation: true };
+  if (!isRecord(value) || typeof value.allowDelegation !== "boolean") {
+    throw new Error("Invalid model policy constraints.");
+  }
+  return { allowDelegation: value.allowDelegation };
+}
+
+function readSelection(value: unknown, label: string): ModelSelection {
+  if (!isRecord(value)) throw new Error(`Invalid ${label}.`);
+  const model = identifier(value.model, `${label} model`, 200);
+  const reasoningEffort = identifier(value.reasoningEffort, `${label} reasoning effort`, 100);
+  const serviceTier = value.serviceTier === undefined
+    ? undefined
+    : identifier(value.serviceTier, `${label} service tier`, 100);
+  const keys = Object.keys(value);
+  if (keys.some((key) => key !== "model" && key !== "reasoningEffort" && key !== "serviceTier")) {
+    throw new Error(`Invalid ${label}: unknown fields are not allowed.`);
+  }
+  return { model, reasoningEffort, ...(serviceTier ? { serviceTier } : {}) };
+}
+
+function readModelChoice(value: unknown, label: string): ModelChoice {
+  if (!isRecord(value)) throw new Error(`Invalid ${label}.`);
+  const model = identifier(value.model, `${label} model`, 200);
+  const reasoningEffort = identifier(value.reasoningEffort, `${label} reasoning effort`, 100);
+  const keys = Object.keys(value);
+  if (keys.some((key) => key !== "model" && key !== "reasoningEffort")) {
+    throw new Error(`Invalid ${label}: only model and reasoningEffort are allowed.`);
+  }
+  return { model, reasoningEffort };
+}
+
+function identifier(value: unknown, label: string, maximum: number): string {
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    value !== value.trim() ||
+    value.length > maximum ||
+    /[\r\n]/.test(value)
+  ) {
+    throw new Error(`Invalid ${label}.`);
+  }
+  return value;
+}
+
+function deduplicateSelections(selections: ModelChoice[]): ModelChoice[] {
+  const seen = new Set<string>();
+  return selections.flatMap((selection) => {
+    const normalized = readModelChoice(selection, "model selection");
+    const key = modelChoiceKey(normalized);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [normalized];
+  });
+}
+
+function cloneSelection(selection: ModelSelection): ModelSelection {
+  return {
+    model: selection.model,
+    reasoningEffort: selection.reasoningEffort,
+    ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {})
+  };
+}
+
+function unavailable(policyRevision: number, message: string): ModelPolicyError {
+  return new ModelPolicyError(
+    "MODEL_UNAVAILABLE",
+    message,
+    policyRevision,
+    ["Refresh the model catalog and settings.", "Choose an exact selection allowed by both operator and user policy."]
+  );
+}
+
+function policyChanged(policyRevision: number, message: string): ModelPolicyError {
+  return new ModelPolicyError(
+    "MODEL_POLICY_CHANGED",
+    message,
+    policyRevision,
+    [
+      "Call codex_models to read the current policy-allowed model and reasoning-effort values.",
+      "Refresh the ChatGPT developer-mode connection before retrying with the current codex_task descriptor."
+    ]
+  );
+}
+
+function forbidden(policyRevision: number, message: string): ModelPolicyError {
+  return new ModelPolicyError(
+    "MODEL_SELECTION_FORBIDDEN",
+    message,
+    policyRevision,
+    ["Choose an exact selection exposed by the current codex_task descriptor.", "Open Codex settings to review the active policy and operator ceiling."]
+  );
+}
+
+function selectionLabel(selection: ModelSelection): string {
+  return `${selection.model}/${selection.reasoningEffort}${selection.serviceTier ? `/${selection.serviceTier}` : ""}`;
+}
+
+function decisionReason(
+  source: ExecutionDecisionSource,
+  operation: "start" | "continue",
+  backendKind: CodexBackendKind,
+  validation: CatalogValidationState
+): string {
+  const sourceText = source === "fixed"
+    ? "the saved fixed policy"
+    : source === "configured-fallback"
+      ? "the configured automatic fallback"
+      : source === "caller"
+        ? "the caller's exact selection"
+        : source === "thread-inherited"
+          ? "the retained thread's admission-time selection"
+        : source === "compatibility-fallback"
+          ? "the current upstream default because the saved selection is unsupported"
+          : "the validated backend catalog default";
+  return `Selected from ${sourceText} for ${operation} on ${backendKind}; catalog state is ${validation}.`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

@@ -1,6 +1,6 @@
 {
   "$schema": "./release-manifest.schema.json",
-  "manifestVersion": 1,
+  "manifestVersion": 6,
   "product": {
     "displayName": "Codex MCP Bridge for ChatGPT",
     "description": "A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.",
@@ -16,8 +16,23 @@
       "LICENSE",
       "UPSTREAM.md",
       "docs",
+      "scripts/build-fingerprint.mjs",
+      "scripts/child-shutdown.mjs",
+      "scripts/launcher-options.mjs",
+      "scripts/managed-file.mjs",
+      "scripts/managed-file.d.mts",
+      "scripts/runtime-env.mjs",
+      "scripts/runtime-lock.mjs",
+      "scripts/runtime-status.mjs",
+      "scripts/runtime-status.d.mts",
+      "scripts/start-codex-mcp-bridge.mjs",
+      "scripts/tunnel-profile.mjs",
+      ".codex-plugin",
+      ".app.json",
       "release-manifest.json",
-      "release-manifest.schema.json"
+      "release-manifest.schema.json",
+      "ui-release-catalog.json",
+      "state-migrations.json"
     ],
     "keywords": [
       "codex",
@@ -29,21 +44,149 @@
   },
   "toolchain": {
     "node": "22",
-    "npm": "10.9.3"
+    "npm": "10.9.3",
+    "codexCli": "0.153.3"
   },
   "repository": {
     "provider": "github",
     "owner": "menaje",
     "name": "codex-mcp-bridge-for-chatgpt"
   },
+  "plugin": {
+    "name": "codex-mcp-bridge",
+    "displayName": "Codex MCP Bridge for ChatGPT",
+    "shortDescription": "Connect ChatGPT to your local Codex",
+    "longDescription": "Run and monitor local Codex tasks from ChatGPT through a policy-enforcing MCP bridge. Connect directly to your selected Codex CLI through App Server, with local access controls, approvals, live progress, cancellation and conversation management.",
+    "developerName": "menaje",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Run and continue local Codex tasks",
+      "Monitor agents, activities, and jobs",
+      "Choose models and reasoning effort",
+      "Control working folders and access policy"
+    ],
+    "defaultPrompt": [
+      "Ask local Codex to inspect this project and explain how it works.",
+      "Use local Codex to implement this change and track the activity.",
+      "Show the status of my active Codex agents and activities."
+    ],
+    "app": {
+      "name": "codex-mcp-bridge",
+      "id": "plugin_asdk_app_6a86b6dc2fd4819192d54ec3fb27e5b0"
+    }
+  },
+  "uiResources": {
+    "strategy": "content-hash",
+    "hashAlgorithm": "sha256",
+    "hashLength": 12,
+    "minimumContractGeneration": {
+      "settings": 9,
+      "activity": 12,
+      "dashboard": 6,
+      "question": 1
+    },
+    "resources": [
+      "settings",
+      "activity",
+      "dashboard",
+      "question"
+    ],
+    "activeResources": [
+      "settings",
+      "dashboard",
+      "question"
+    ],
+    "compatibilityResources": [
+      "activity"
+    ],
+    "releaseCatalog": "ui-release-catalog.json",
+    "releaseCatalogSha256": "fcb76cea1b7f3a955f88ef47fe59d96dc44197576dc955d8bf2226148af9a9eb"
+  },
+  "stateCompatibility": {
+    "currentSchema": 19,
+    "supportedSourceSchemas": [
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18
+    ],
+    "unsupportedSourceSchemas": [
+      1,
+      2
+    ],
+    "retiredLegacyImports": [
+      "settings-state-json",
+      "session-state-json",
+      "job-state-json"
+    ],
+    "migrationCatalog": "state-migrations.json",
+    "migrationCatalogSha256": "810399dee06f768ee70896c69998b3d22c659db0f4dc9beb8baabb62ecad2909",
+    "stateProfilePolicy": "release-stage-isolated-v1",
+    "rollbackPolicy": "verified-original-before-service-open-v1",
+    "persistentContracts": {
+      "userSettingsSchema": 4,
+      "taskInputContract": 2,
+      "macosHelperProtocol": 2,
+      "localCompanionProtocol": 2,
+      "remoteCompanionProtocol": 1
+    },
+    "contractSources": {
+      "databaseSchema": "src/stateSchema.ts#CURRENT_STATE_SCHEMA_VERSION",
+      "userSettings": "src/modelPolicy.ts#MODEL_POLICY_SCHEMA_VERSION",
+      "taskInput": "src/tools.ts#CODEX_TASK_INPUT_CONTRACT_VERSION",
+      "macosHelper": "src/macosHelperServer.ts#MACOS_HELPER_PROTOCOL_VERSION",
+      "localCompanion": "src/companionServer.ts#COMPANION_PROTOCOL_VERSION",
+      "remoteCompanion": "src/remoteCompanionServer.ts#REMOTE_COMPANION_PROTOCOL_VERSION",
+      "uiResources": "uiResources.minimumContractGeneration",
+      "executionBackend": "toolchain.codexCli+app-server-schema.lock.json"
+    },
+    "recoveryContract": {
+      "backupMetadataVersion": 1,
+      "restoreReceiptVersion": 1,
+      "sourceRuntimeMatch": "exact-product-version-and-build",
+      "settingsRestore": "database-snapshot-and-source-runtime-configuration",
+      "automaticSnapshotRestoreUntil": "service-open"
+    }
+  },
   "release": {
-    "version": "0.3.0",
+    "releaseUnitId": "codex-mcp-bridge",
+    "version": "0.4.0",
+    "stage": "stable",
     "tagPrefix": "v",
     "channel": "stable",
+    "sourceVersion": "0.3.0",
+    "sourceCandidate": "0.4.0-rc.7",
     "generateNotes": true,
+    "targets": {
+      "macos": {
+        "architectures": [
+          "arm64",
+          "x64"
+        ],
+        "format": "dmg",
+        "minimumVersion": "13.0",
+        "signing": "ad-hoc",
+        "notarization": "none"
+      }
+    },
     "assets": [
       "npm-tarball",
-      "sha256"
+      "npm-sha256",
+      "macos-arm64-app",
+      "macos-x64-app",
+      "release-checksums"
     ]
   }
 }

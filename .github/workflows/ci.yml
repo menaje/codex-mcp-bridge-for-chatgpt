@@ -1,26 +1,58 @@
-name: Main CI and Release
+name: Release
 
+# Development pushes and ordinary pull requests targeting dev intentionally run
+# no release Actions. A same-repository release/X.Y.Z pull request targeting
+# main runs read-only release validation, a manual run publishes an RC, and a
+# main push publishes only a promoted stable release.
 on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - converted_to_draft
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: main-ci-release
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  check:
-    name: Check main
+  policy-context:
+    name: Validate release authority
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.policy.outputs.mode }}
+      stage: ${{ steps.policy.outputs.stage }}
+      publish: ${{ steps.policy.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: policy
+        name: Reject an invalid event, branch, version, or stage
+        env:
+          RELEASE_PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: node scripts/release-policy.mjs github-context >> "$GITHUB_OUTPUT"
+
+  check:
+    name: Check npm server runtime
+    needs:
+      - policy-context
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - id: metadata
-        name: Resolve release manifest
+        name: Read release manifest
         run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v7
         with:
@@ -28,14 +60,494 @@ jobs:
           cache: npm
       - run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
       - run: npm ci
+      - name: Install Codex CLI schema-test baseline
+        run: npm install --global "@openai/codex@${{ steps.metadata.outputs.codex_cli_version }}"
+      - name: Check App Server protocol schemas
+        run: npm run app-server:compat:check
       - run: npm run check
       - run: npm audit --omit=dev
 
-  release:
-    name: Release package version
-    needs: check
+  macos-check:
+    name: Check native macOS app (${{ matrix.architecture }})
+    needs:
+      - policy-context
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            machine: arm64
+            runner: macos-15
+            skipImageRendering: "0"
+          - architecture: x64
+            machine: x86_64
+            runner: macos-15-intel
+            skipImageRendering: "1"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - id: metadata
+        name: Read release manifest
+        run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
+      - name: Verify release runner architecture
+        env:
+          MACOS_ARCHITECTURES: ${{ steps.metadata.outputs.macos_architectures }}
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
+          MACOS_MACHINE: ${{ matrix.machine }}
+        run: |
+          test "$(uname -m)" = "$MACOS_MACHINE"
+          case ",$MACOS_ARCHITECTURES," in
+            *",$MACOS_TARGET_ARCHITECTURE,"*) ;;
+            *) echo "Manifest does not declare $MACOS_TARGET_ARCHITECTURE." >&2; exit 1 ;;
+          esac
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.metadata.outputs.node_version }}
+          cache: npm
+      - run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
+      - run: npm ci
+      - name: Build and test native app bundle
+        env:
+          CODEX_MCP_BRIDGE_SKIP_IMAGE_RENDER_TESTS: ${{ matrix.skipImageRendering }}
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
+        run: npm run macos:bundle
+      - name: Verify development app bundle signature
+        run: codesign --verify --deep --strict "macos/build/Codex MCP Bridge for ChatGPT.app"
+
+  npm-release-assets:
+    name: Build generic npm server assets
+    needs:
+      - policy-context
+      - check
+      - macos-check
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - id: metadata
+        name: Read release manifest
+        run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.metadata.outputs.node_version }}
+          cache: npm
+      - run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
+      - run: npm ci
+      - run: npm run build
+      - name: Build generic npm assets
+        env:
+          PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
+          CHECKSUM_FILE: ${{ steps.metadata.outputs.checksum_filename }}
+        run: |
+          mkdir -p release-assets
+          pack_json="$(npm pack --json --pack-destination release-assets)"
+          package_file="$(node -e 'const fs = require("node:fs"); const value = JSON.parse(fs.readFileSync(0, "utf8")); if (!Array.isArray(value) || value.length !== 1 || typeof value[0].filename !== "string") process.exit(1); process.stdout.write(value[0].filename);' <<< "$pack_json")"
+          if [[ "$package_file" != "$PACKAGE_FILE" ]]; then
+            echo "npm produced $package_file instead of $PACKAGE_FILE." >&2
+            exit 1
+          fi
+          (
+            cd release-assets
+            sha256sum "$PACKAGE_FILE" > "$CHECKSUM_FILE"
+          )
+      - name: Smoke-test the packed generic npm server
+        env:
+          PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
+        run: |
+          smoke_root="$(mktemp -d)"
+          smoke_pid=""
+          cleanup_smoke() {
+            if [[ -n "$smoke_pid" ]]; then
+              kill -TERM "$smoke_pid" >/dev/null 2>&1 || true
+              wait "$smoke_pid" >/dev/null 2>&1 || true
+            fi
+            rm -rf "$smoke_root"
+          }
+          trap cleanup_smoke EXIT
+          npm install \
+            --prefix "$smoke_root" \
+            --ignore-scripts \
+            --no-audit \
+            --no-fund \
+            "./release-assets/$PACKAGE_FILE"
+          CODEX_MCP_BRIDGE_HOST=127.0.0.1 \
+          CODEX_MCP_BRIDGE_PORT=18765 \
+          CODEX_MCP_BRIDGE_NO_AUTH=1 \
+          CODEX_MCP_BRIDGE_STATE_DATABASE_FILE="$smoke_root/state.sqlite" \
+            "$smoke_root/node_modules/.bin/codex-mcp-bridge" >"$smoke_root/server.log" 2>&1 &
+          smoke_pid="$!"
+          for _ in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:18765/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$smoke_root/server.log" >&2
+          exit 1
+      - name: Audit packaged DB and UI compatibility against published v0.3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
+        run: |
+          audit_root="$(mktemp -d)"
+          cleanup_audit() { rm -rf "$audit_root"; }
+          trap cleanup_audit EXIT
+          mkdir -p "$audit_root/current" "$audit_root/previous" state-audit
+          tar -xzf "release-assets/$PACKAGE_FILE" -C "$audit_root/current"
+          test -f "$audit_root/current/package/ui-release-catalog.json"
+          gh release download v0.3.0 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "codex-mcp-bridge-for-chatgpt-0.3.0.tgz" \
+            --pattern "codex-mcp-bridge-for-chatgpt-0.3.0.tgz.sha256" \
+            --dir "$audit_root/previous"
+          node - "$audit_root/previous" <<'NODE'
+          const fs = require("node:fs"), crypto = require("node:crypto"), path = require("node:path");
+          const root = process.argv[2], name = "codex-mcp-bridge-for-chatgpt-0.3.0.tgz";
+          const expected = fs.readFileSync(path.join(root, `${name}.sha256`), "utf8").trim().split(/\s+/)[0];
+          const actual = crypto.createHash("sha256").update(fs.readFileSync(path.join(root, name))).digest("hex");
+          if (actual !== expected) throw new Error("Published v0.3.0 package checksum mismatch.");
+          NODE
+          tar -xzf "$audit_root/previous/codex-mcp-bridge-for-chatgpt-0.3.0.tgz" \
+            -C "$audit_root/previous"
+          npm install --prefix "$audit_root/current/package" --omit=dev --legacy-peer-deps --no-audit --no-fund
+          npm install --prefix "$audit_root/previous/package" --omit=dev --legacy-peer-deps --no-audit --no-fund
+          artifact_sha="$(node -e 'const fs=require("node:fs"),c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "release-assets/$PACKAGE_FILE")"
+          npx tsx scripts/state-release-audit.ts \
+            --runtime-root "$audit_root/current/package" \
+            --artifact-kind npm \
+            --fixture-root "$PWD" \
+            --previous-runtime-root "$audit_root/previous/package" \
+            --artifact-sha256 "$artifact_sha" \
+            --report state-audit/npm.json
+      - if: steps.metadata.outputs.stage == 'stable'
+        name: Compare stable npm payload with the source RC
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_CANDIDATE_TAG: ${{ steps.metadata.outputs.source_candidate_tag }}
+          SOURCE_PACKAGE_FILE: ${{ steps.metadata.outputs.source_candidate_package_filename }}
+          STABLE_PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
+        run: |
+          mkdir -p candidate-assets
+          gh release download "$SOURCE_CANDIDATE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$SOURCE_PACKAGE_FILE" \
+            --dir candidate-assets
+          npm run release:payload -- compare \
+            --kind npm \
+            --candidate "candidate-assets/$SOURCE_PACKAGE_FILE" \
+            --stable "release-assets/$STABLE_PACKAGE_FILE"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-release-assets
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-state-compatibility-audit
+          path: state-audit/npm.json
+          if-no-files-found: error
+          retention-days: 90
+
+  macos-release-package:
+    name: Package unnotarized macOS app (${{ matrix.architecture }})
+    needs:
+      - policy-context
+      - check
+      - macos-check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            machine: arm64
+            runner: macos-15
+            skipImageRendering: "0"
+          - architecture: x64
+            machine: x86_64
+            runner: macos-15-intel
+            skipImageRendering: "1"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - id: metadata
+        name: Read release manifest
+        run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
+      - name: Verify release runner architecture
+        env:
+          MACOS_ARCHITECTURES: ${{ steps.metadata.outputs.macos_architectures }}
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
+          MACOS_MACHINE: ${{ matrix.machine }}
+        run: |
+          test "$(uname -m)" = "$MACOS_MACHINE"
+          case ",$MACOS_ARCHITECTURES," in
+            *",$MACOS_TARGET_ARCHITECTURE,"*) ;;
+            *) echo "Manifest does not declare $MACOS_TARGET_ARCHITECTURE." >&2; exit 1 ;;
+          esac
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.metadata.outputs.node_version }}
+          cache: npm
+      - run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
+      - run: npm ci
+      - id: macos-metadata
+        name: Select architecture-specific filenames
+        env:
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
+          MACOS_ARM64_FILE: ${{ steps.metadata.outputs.macos_arm64_archive_filename }}
+          MACOS_X64_FILE: ${{ steps.metadata.outputs.macos_x64_archive_filename }}
+          SOURCE_MACOS_ARM64_FILE: ${{ steps.metadata.outputs.source_candidate_macos_arm64_archive_filename }}
+          SOURCE_MACOS_X64_FILE: ${{ steps.metadata.outputs.source_candidate_macos_x64_archive_filename }}
+        run: |
+          case "$MACOS_TARGET_ARCHITECTURE" in
+            arm64)
+              echo "file=$MACOS_ARM64_FILE" >> "$GITHUB_OUTPUT"
+              echo "source_file=$SOURCE_MACOS_ARM64_FILE" >> "$GITHUB_OUTPUT"
+              ;;
+            x64)
+              echo "file=$MACOS_X64_FILE" >> "$GITHUB_OUTPUT"
+              echo "source_file=$SOURCE_MACOS_X64_FILE" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported macOS target: $MACOS_TARGET_ARCHITECTURE" >&2
+              exit 1
+              ;;
+          esac
+      - if: steps.metadata.outputs.stage != 'stable'
+        name: Build and ad-hoc sign unnotarized release DMG
+        env:
+          CODEX_MCP_BRIDGE_SKIP_IMAGE_RENDER_TESTS: ${{ matrix.skipImageRendering }}
+          MACOS_BUNDLE_VERSION: ${{ github.run_number }}
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
+          MACOS_FILE: ${{ steps.macos-metadata.outputs.file }}
+        run: |
+          mkdir -p release-assets
+          npm run macos:package -- \
+            --architecture "$MACOS_TARGET_ARCHITECTURE" \
+            --output "release-assets/$MACOS_FILE"
+      - if: steps.metadata.outputs.stage == 'stable'
+        name: Promote the source RC macOS app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MACOS_BUNDLE_VERSION: ${{ github.run_number }}
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
+          MACOS_FILE: ${{ steps.macos-metadata.outputs.file }}
+          SOURCE_CANDIDATE_TAG: ${{ steps.metadata.outputs.source_candidate_tag }}
+          SOURCE_MACOS_FILE: ${{ steps.macos-metadata.outputs.source_file }}
+        run: |
+          mkdir -p candidate-assets release-assets
+          gh release download "$SOURCE_CANDIDATE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$SOURCE_MACOS_FILE" \
+            --dir candidate-assets
+          ./macos/promote-release.sh \
+            --candidate "candidate-assets/$SOURCE_MACOS_FILE" \
+            --architecture "$MACOS_TARGET_ARCHITECTURE" \
+            --output "release-assets/$MACOS_FILE"
+      - name: Audit DMG DB and UI compatibility against published v0.3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}
+          MACOS_FILE: ${{ steps.macos-metadata.outputs.file }}
+        run: |
+          audit_root="$(mktemp -d)"
+          mount_root="$audit_root/mount"
+          mounted="false"
+          cleanup_audit() {
+            if [[ "$mounted" == "true" ]]; then
+              hdiutil detach "$mount_root" >/dev/null
+            fi
+            rm -rf "$audit_root"
+          }
+          trap cleanup_audit EXIT
+          mkdir -p "$mount_root" "$audit_root/previous" "state-audit"
+          gh release download v0.3.0 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "codex-mcp-bridge-for-chatgpt-0.3.0.tgz" \
+            --pattern "codex-mcp-bridge-for-chatgpt-0.3.0.tgz.sha256" \
+            --dir "$audit_root/previous"
+          node - "$audit_root/previous" <<'NODE'
+          const fs = require("node:fs"), crypto = require("node:crypto"), path = require("node:path");
+          const root = process.argv[2], name = "codex-mcp-bridge-for-chatgpt-0.3.0.tgz";
+          const expected = fs.readFileSync(path.join(root, `${name}.sha256`), "utf8").trim().split(/\s+/)[0];
+          const actual = crypto.createHash("sha256").update(fs.readFileSync(path.join(root, name))).digest("hex");
+          if (actual !== expected) throw new Error("Published v0.3.0 package checksum mismatch.");
+          NODE
+          tar -xzf "$audit_root/previous/codex-mcp-bridge-for-chatgpt-0.3.0.tgz" \
+            -C "$audit_root/previous"
+          npm install --prefix "$audit_root/previous/package" --omit=dev --legacy-peer-deps --no-audit --no-fund
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_root" "release-assets/$MACOS_FILE" >/dev/null
+          mounted="true"
+          app_count="$(find "$mount_root" -maxdepth 1 -type d -name '*.app' | wc -l | tr -d ' ')"
+          test "$app_count" = "1"
+          app_bundle="$(find "$mount_root" -maxdepth 1 -type d -name '*.app' -print -quit)"
+          test -f "$app_bundle/Contents/Resources/Runtime/ui-release-catalog.json"
+          artifact_sha="$(shasum -a 256 "release-assets/$MACOS_FILE" | awk '{print $1}')"
+          npx tsx scripts/state-release-audit.ts \
+            --runtime-root "$app_bundle/Contents/Resources/Runtime" \
+            --artifact-kind "macos-$MACOS_TARGET_ARCHITECTURE" \
+            --fixture-root "$PWD" \
+            --previous-runtime-root "$audit_root/previous/package" \
+            --artifact-sha256 "$artifact_sha" \
+            --report "state-audit/macos-$MACOS_TARGET_ARCHITECTURE.json"
+      - if: steps.metadata.outputs.stage == 'stable'
+        name: Compare stable macOS payload with the source RC
+        env:
+          SOURCE_MACOS_FILE: ${{ steps.macos-metadata.outputs.source_file }}
+          STABLE_MACOS_FILE: ${{ steps.macos-metadata.outputs.file }}
+        run: |
+          npm run release:payload -- compare \
+            --kind macos \
+            --candidate "candidate-assets/$SOURCE_MACOS_FILE" \
+            --stable "release-assets/$STABLE_MACOS_FILE"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-release-asset-${{ matrix.architecture }}
+          path: release-assets/${{ steps.macos-metadata.outputs.file }}
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-state-compatibility-audit-${{ matrix.architecture }}
+          path: state-audit/macos-${{ matrix.architecture }}.json
+          if-no-files-found: error
+          retention-days: 90
+
+  release-pr-validation:
+    name: Release PR validation
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs:
+      - policy-context
+      - check
+      - macos-check
+      - npm-release-assets
+      - macos-release-package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require every read-only release validation job to pass
+        env:
+          POLICY_RESULT: ${{ needs.policy-context.result }}
+          SERVER_RESULT: ${{ needs.check.result }}
+          MACOS_RESULT: ${{ needs.macos-check.result }}
+          NPM_ASSET_RESULT: ${{ needs.npm-release-assets.result }}
+          MACOS_ASSET_RESULT: ${{ needs.macos-release-package.result }}
+          RELEASE_STAGE: ${{ needs.policy-context.outputs.stage }}
+        run: |
+          results=(
+            "$POLICY_RESULT"
+            "$SERVER_RESULT"
+            "$MACOS_RESULT"
+            "$NPM_ASSET_RESULT"
+            "$MACOS_ASSET_RESULT"
+          )
+          for result in "${results[@]}"; do
+            if [[ "$result" != "success" ]]; then
+              echo "A required release validation job did not pass: ${results[*]}" >&2
+              exit 1
+            fi
+          done
+          echo "Read-only $RELEASE_STAGE release validation passed." >> "$GITHUB_STEP_SUMMARY"
+
+  stable-promotion-gate:
+    name: Stable promotion gate
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs:
+      - policy-context
+      - release-pr-validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - id: gate-mode
+        name: Verify the candidate draft hold or enter stable promotion
+        env:
+          VALIDATION_RESULT: ${{ needs.release-pr-validation.result }}
+          RELEASE_STAGE: ${{ needs.policy-context.outputs.stage }}
+          PR_IS_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          if [[ "$VALIDATION_RESULT" != "success" ]]; then
+            echo "Release PR validation did not pass." >&2
+            exit 1
+          fi
+
+          if [[ "$RELEASE_STAGE" == "candidate" ]]; then
+            if [[ "$PR_IS_DRAFT" != "true" ]]; then
+              echo "A candidate release PR must remain draft until stable promotion." >&2
+              exit 1
+            fi
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+            echo "Candidate validation passed. Draft status is the merge hold until stable promotion." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [[ "$RELEASE_STAGE" != "stable" ]]; then
+            echo "Unsupported release stage for the stable promotion gate: $RELEASE_STAGE" >&2
+            exit 1
+          fi
+
+          echo "stable=true" >> "$GITHUB_OUTPUT"
+      - if: ${{ steps.gate-mode.outputs.stable == 'true' }}
+        uses: actions/checkout@v7
+      - id: metadata
+        if: ${{ steps.gate-mode.outputs.stable == 'true' }}
+        name: Read release manifest
+        run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
+      - name: Require the latest published RC before merge
+        if: ${{ steps.gate-mode.outputs.stable == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_REPOSITORY: ${{ steps.metadata.outputs.repository }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          SOURCE_CANDIDATE_TAG: ${{ steps.metadata.outputs.source_candidate_tag }}
+        run: |
+          if [[ "$GITHUB_REPOSITORY" != "$EXPECTED_REPOSITORY" ]]; then
+            echo "Manifest repository $EXPECTED_REPOSITORY does not match workflow repository $GITHUB_REPOSITORY." >&2
+            exit 1
+          fi
+          candidate_is_prerelease="$(gh release view "$SOURCE_CANDIDATE_TAG" --json isPrerelease --jq .isPrerelease)"
+          if [[ "$candidate_is_prerelease" != "true" ]]; then
+            echo "$SOURCE_CANDIDATE_TAG is not an existing GitHub prerelease." >&2
+            exit 1
+          fi
+          latest_candidate_tag="$(
+            gh release list --limit 1000 --json tagName,isPrerelease |
+              node -e '
+                const releases = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+                const stableTag = process.argv[1];
+                const prefix = `${stableTag}-rc.`;
+                const candidates = releases
+                  .filter((release) => release.isPrerelease && release.tagName.startsWith(prefix))
+                  .map((release) => ({
+                    tag: release.tagName,
+                    rc: Number(release.tagName.slice(prefix.length))
+                  }))
+                  .filter((release) => Number.isSafeInteger(release.rc) && release.rc > 0)
+                  .sort((left, right) => right.rc - left.rc);
+                process.stdout.write(candidates[0]?.tag || "");
+              ' "$RELEASE_TAG"
+          )"
+          if [[ "$latest_candidate_tag" != "$SOURCE_CANDIDATE_TAG" ]]; then
+            echo "$SOURCE_CANDIDATE_TAG is not the latest RC for $RELEASE_TAG (latest: ${latest_candidate_tag:-none})." >&2
+            exit 1
+          fi
+
+  release:
+    name: Publish package version
+    if: ${{ github.event_name != 'pull_request' && needs.policy-context.outputs.publish == 'true' }}
+    needs:
+      - policy-context
+      - check
+      - macos-check
+      - npm-release-assets
+      - macos-release-package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -43,24 +555,56 @@ jobs:
         with:
           fetch-depth: 0
       - id: metadata
-        name: Resolve release manifest
+        name: Read release manifest
         run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.metadata.outputs.node_version }}
-          cache: npm
       - id: release-state
         name: Validate release target
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_REPOSITORY: ${{ steps.metadata.outputs.repository }}
           RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          RELEASE_STAGE: ${{ steps.metadata.outputs.stage }}
+          SOURCE_CANDIDATE_TAG: ${{ steps.metadata.outputs.source_candidate_tag }}
         run: |
           if [[ "$GITHUB_REPOSITORY" != "$EXPECTED_REPOSITORY" ]]; then
             echo "Manifest repository $EXPECTED_REPOSITORY does not match workflow repository $GITHUB_REPOSITORY." >&2
             exit 1
           fi
-
+          if [[ "$RELEASE_STAGE" == "stable" ]]; then
+            if [[ -z "$SOURCE_CANDIDATE_TAG" ]]; then
+              echo "Stable release is missing its source candidate." >&2
+              exit 1
+            fi
+            candidate_is_prerelease="$(gh release view "$SOURCE_CANDIDATE_TAG" --json isPrerelease --jq .isPrerelease)"
+            if [[ "$candidate_is_prerelease" != "true" ]]; then
+              echo "$SOURCE_CANDIDATE_TAG is not an existing GitHub prerelease." >&2
+              exit 1
+            fi
+            latest_candidate_tag="$(
+              gh release list --limit 1000 --json tagName,isPrerelease |
+                node -e '
+                  const releases = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+                  const stableTag = process.argv[1];
+                  const prefix = `${stableTag}-rc.`;
+                  const candidates = releases
+                    .filter((release) => release.isPrerelease && release.tagName.startsWith(prefix))
+                    .map((release) => ({
+                      tag: release.tagName,
+                      rc: Number(release.tagName.slice(prefix.length))
+                    }))
+                    .filter((release) => Number.isSafeInteger(release.rc) && release.rc > 0)
+                    .sort((left, right) => right.rc - left.rc);
+                  process.stdout.write(candidates[0]?.tag || "");
+                ' "$RELEASE_TAG"
+            )"
+            if [[ "$latest_candidate_tag" != "$SOURCE_CANDIDATE_TAG" ]]; then
+              echo "$SOURCE_CANDIDATE_TAG is not the latest RC for $RELEASE_TAG (latest: ${latest_candidate_tag:-none})." >&2
+              exit 1
+            fi
+          fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Release $RELEASE_TAG already exists; no duplicate release will be created."
@@ -78,55 +622,49 @@ jobs:
             fi
           fi
       - if: steps.release-state.outputs.exists != 'true'
-        run: npm install --global "npm@${{ steps.metadata.outputs.npm_version }}"
+        uses: actions/download-artifact@v8
+        with:
+          pattern: macos-release-asset-*
+          path: release-assets
+          merge-multiple: true
       - if: steps.release-state.outputs.exists != 'true'
-        run: npm ci
+        uses: actions/download-artifact@v8
+        with:
+          name: npm-release-assets
+          path: release-assets
       - if: steps.release-state.outputs.exists != 'true'
-        run: npm run build
-      - if: steps.release-state.outputs.exists != 'true'
-        id: package
-        name: Build release assets
-        env:
-          EXPECTED_PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
-          EXPECTED_CHECKSUM_FILE: ${{ steps.metadata.outputs.checksum_filename }}
+        name: Verify the complete release set and write aggregate checksums
         run: |
-          pack_json="$(npm pack --json)"
-          package_file="$(node -e 'const fs = require("node:fs"); const packed = JSON.parse(fs.readFileSync(0, "utf8")); if (!Array.isArray(packed) || packed.length !== 1 || typeof packed[0].filename !== "string") process.exit(1); process.stdout.write(packed[0].filename);' <<< "$pack_json")"
-          if [[ "$package_file" != "$EXPECTED_PACKAGE_FILE" ]]; then
-            echo "npm produced $package_file instead of manifest asset $EXPECTED_PACKAGE_FILE." >&2
-            exit 1
-          fi
-          checksum_file="$package_file.sha256"
-          if [[ "$checksum_file" != "$EXPECTED_CHECKSUM_FILE" ]]; then
-            echo "Checksum filename $checksum_file does not match manifest asset $EXPECTED_CHECKSUM_FILE." >&2
-            exit 1
-          fi
-          sha256sum "$package_file" > "$checksum_file"
-          echo "package_file=$package_file" >> "$GITHUB_OUTPUT"
-          echo "checksum_file=$checksum_file" >> "$GITHUB_OUTPUT"
+          npm run release:assets -- write --directory release-assets
+          npm run release:assets -- check --directory release-assets
       - if: steps.release-state.outputs.exists != 'true'
         name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
           RELEASE_TITLE: ${{ steps.metadata.outputs.release_title }}
+          RELEASE_NOTES_FILE: ${{ steps.metadata.outputs.release_notes_file }}
           RELEASE_CHANNEL: ${{ steps.metadata.outputs.channel }}
           GENERATE_NOTES: ${{ steps.metadata.outputs.generate_notes }}
-          PACKAGE_FILE: ${{ steps.package.outputs.package_file }}
-          CHECKSUM_FILE: ${{ steps.package.outputs.checksum_file }}
+          PACKAGE_FILE: ${{ steps.metadata.outputs.package_filename }}
+          CHECKSUM_FILE: ${{ steps.metadata.outputs.checksum_filename }}
+          MACOS_ARM64_FILE: ${{ steps.metadata.outputs.macos_arm64_archive_filename }}
+          MACOS_X64_FILE: ${{ steps.metadata.outputs.macos_x64_archive_filename }}
+          RELEASE_CHECKSUMS_FILE: ${{ steps.metadata.outputs.release_checksums_filename }}
           TAG_EXISTS: ${{ steps.release-state.outputs.tag_exists }}
         run: |
           release_args=(
             "$RELEASE_TAG"
-            "$PACKAGE_FILE#npm package"
-            "$CHECKSUM_FILE#SHA-256 checksum"
+            "release-assets/$MACOS_ARM64_FILE#macOS Apple Silicon app (ad-hoc signed, not notarized DMG)"
+            "release-assets/$MACOS_X64_FILE#macOS Intel app (ad-hoc signed, not notarized DMG)"
+            "release-assets/$PACKAGE_FILE#generic npm server package"
+            "release-assets/$CHECKSUM_FILE#npm package SHA-256"
+            "release-assets/$RELEASE_CHECKSUMS_FILE#all release SHA-256 checksums"
             --title "$RELEASE_TITLE"
+            --notes-file "$RELEASE_NOTES_FILE"
           )
-
           if [[ "$GENERATE_NOTES" == "true" ]]; then
             release_args+=(--generate-notes)
-          else
-            release_args+=(--notes "Automated release from $GITHUB_SHA")
           fi
           if [[ "$RELEASE_CHANNEL" == "prerelease" ]]; then
             release_args+=(--prerelease)
@@ -136,5 +674,4 @@ jobs:
           else
             release_args+=(--target "$GITHUB_SHA")
           fi
-
           gh release create "${release_args[@]}"

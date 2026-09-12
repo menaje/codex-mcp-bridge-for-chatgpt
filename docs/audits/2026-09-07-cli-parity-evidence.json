@@ -1,0 +1,861 @@
+{
+  "observedAt": "2026-09-07T11:27:32.746Z",
+  "platform": "darwin",
+  "arch": "arm64",
+  "scope": "Offline schema, policy negotiation, fixture filesystem, and catalog probes; no model turn or authenticated entitlement check.",
+  "checksPassed": true,
+  "reports": [
+    {
+      "source": "terminal",
+      "policies": [
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        }
+      ],
+      "filesystem": [
+        {
+          "name": "read-only-denies-write",
+          "exitCode": 1,
+          "created": false,
+          "passed": true
+        },
+        {
+          "name": "workspace-allows-project-write",
+          "exitCode": 0,
+          "created": true,
+          "passed": true
+        },
+        {
+          "name": "workspace-denies-sibling-write",
+          "exitCode": 1,
+          "created": false,
+          "passed": true
+        },
+        {
+          "name": "full-allows-sibling-write",
+          "exitCode": 0,
+          "created": true,
+          "passed": true
+        }
+      ],
+      "operations": [
+        {
+          "method": "model/list",
+          "accepted": true
+        },
+        {
+          "method": "skills/list",
+          "accepted": true
+        },
+        {
+          "method": "mcpServerStatus/list",
+          "accepted": true
+        },
+        {
+          "method": "thread/read",
+          "accepted": true
+        },
+        {
+          "method": "thread/backgroundTerminals/list",
+          "accepted": true
+        },
+        {
+          "method": "permissionProfile/list",
+          "accepted": true
+        },
+        {
+          "method": "collaborationMode/list",
+          "accepted": true
+        },
+        {
+          "method": "experimentalFeature/list",
+          "accepted": true
+        }
+      ],
+      "version": "codex-cli 0.153.3",
+      "schemaFiles": 416,
+      "schemaDigest": "59f583e6fa85cbe23b2a2460178caa0fc18f52ce44607a7105a0c0b22c38b7e5",
+      "initialize": "passed",
+      "fixtureDefaults": {
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "never"
+      },
+      "models": [
+        {
+          "model": "gpt-5.6-sol",
+          "isDefault": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        },
+        {
+          "model": "gpt-5.6-terra",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        },
+        {
+          "model": "gpt-5.6-luna",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        {
+          "model": "gpt-5.5",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        },
+        {
+          "model": "gpt-5.2",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      ],
+      "modelsComplete": true,
+      "featureCount": 135,
+      "featureDigest": "eefea8606964393c3daf01e495435a5e4e0639fc235ab47c53ba406f54739b3a",
+      "featuresComplete": true
+    },
+    {
+      "source": "app",
+      "policies": [
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        }
+      ],
+      "filesystem": [
+        {
+          "name": "read-only-denies-write",
+          "exitCode": 1,
+          "created": false,
+          "passed": true
+        },
+        {
+          "name": "workspace-allows-project-write",
+          "exitCode": 0,
+          "created": true,
+          "passed": true
+        },
+        {
+          "name": "workspace-denies-sibling-write",
+          "exitCode": 1,
+          "created": false,
+          "passed": true
+        },
+        {
+          "name": "full-allows-sibling-write",
+          "exitCode": 0,
+          "created": true,
+          "passed": true
+        }
+      ],
+      "operations": [
+        {
+          "method": "model/list",
+          "accepted": true
+        },
+        {
+          "method": "skills/list",
+          "accepted": true
+        },
+        {
+          "method": "mcpServerStatus/list",
+          "accepted": true
+        },
+        {
+          "method": "thread/read",
+          "accepted": true
+        },
+        {
+          "method": "thread/backgroundTerminals/list",
+          "accepted": true
+        },
+        {
+          "method": "permissionProfile/list",
+          "accepted": true
+        },
+        {
+          "method": "collaborationMode/list",
+          "accepted": true
+        },
+        {
+          "method": "experimentalFeature/list",
+          "accepted": true
+        }
+      ],
+      "version": "codex-cli 0.153.4",
+      "schemaFiles": 416,
+      "schemaDigest": "59f583e6fa85cbe23b2a2460178caa0fc18f52ce44607a7105a0c0b22c38b7e5",
+      "initialize": "passed",
+      "fixtureDefaults": {
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "never"
+      },
+      "models": [
+        {
+          "model": "gpt-6-astra",
+          "isDefault": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        },
+        {
+          "model": "gpt-5.6-sol",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        },
+        {
+          "model": "gpt-5.6-terra",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        },
+        {
+          "model": "gpt-5.6-luna",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        {
+          "model": "gpt-5.5",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        },
+        {
+          "model": "gpt-5.2",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      ],
+      "modelsComplete": true,
+      "featureCount": 135,
+      "featureDigest": "eefea8606964393c3daf01e495435a5e4e0639fc235ab47c53ba406f54739b3a",
+      "featuresComplete": true
+    },
+    {
+      "source": "bridge",
+      "policies": [
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "read-only",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "readOnly",
+              "networkAccess": false
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "workspace-write",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "workspaceWrite",
+              "networkAccess": false
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "untrusted",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "untrusted",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "on-request",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "on-request",
+            "reviewer": "user"
+          }
+        },
+        {
+          "sandbox": "danger-full-access",
+          "approvalPolicy": "never",
+          "passed": true,
+          "effective": {
+            "sandbox": {
+              "type": "dangerFullAccess"
+            },
+            "approvalPolicy": "never",
+            "reviewer": "user"
+          }
+        }
+      ],
+      "filesystem": [
+        {
+          "name": "read-only-denies-write",
+          "exitCode": 1,
+          "created": false,
+          "passed": true
+        },
+        {
+          "name": "workspace-allows-project-write",
+          "exitCode": 0,
+          "created": true,
+          "passed": true
+        },
+        {
+          "name": "workspace-denies-sibling-write",
+          "exitCode": 1,
+          "created": false,
+          "passed": true
+        },
+        {
+          "name": "full-allows-sibling-write",
+          "exitCode": 0,
+          "created": true,
+          "passed": true
+        }
+      ],
+      "operations": [
+        {
+          "method": "model/list",
+          "accepted": true
+        },
+        {
+          "method": "skills/list",
+          "accepted": true
+        },
+        {
+          "method": "mcpServerStatus/list",
+          "accepted": true
+        },
+        {
+          "method": "thread/read",
+          "accepted": true
+        },
+        {
+          "method": "thread/backgroundTerminals/list",
+          "accepted": true
+        },
+        {
+          "method": "permissionProfile/list",
+          "accepted": true
+        },
+        {
+          "method": "collaborationMode/list",
+          "accepted": true
+        },
+        {
+          "method": "experimentalFeature/list",
+          "accepted": true
+        }
+      ],
+      "version": "codex-cli 0.153.4",
+      "schemaFiles": 416,
+      "schemaDigest": "59f583e6fa85cbe23b2a2460178caa0fc18f52ce44607a7105a0c0b22c38b7e5",
+      "initialize": "passed",
+      "fixtureDefaults": {
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "never"
+      },
+      "models": [
+        {
+          "model": "gpt-6-astra",
+          "isDefault": true,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        },
+        {
+          "model": "gpt-5.6-sol",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        },
+        {
+          "model": "gpt-5.6-terra",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ]
+        },
+        {
+          "model": "gpt-5.6-luna",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        {
+          "model": "gpt-5.5",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        },
+        {
+          "model": "gpt-5.2",
+          "isDefault": false,
+          "inputModalities": [
+            "text",
+            "image"
+          ],
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      ],
+      "modelsComplete": true,
+      "featureCount": 135,
+      "featureDigest": "eefea8606964393c3daf01e495435a5e4e0639fc235ab47c53ba406f54739b3a",
+      "featuresComplete": true
+    }
+  ],
+  "comparisons": [
+    {
+      "source": "app",
+      "reference": "terminal",
+      "changedSchemas": [],
+      "sameFeatures": true,
+      "sameModels": false
+    },
+    {
+      "source": "bridge",
+      "reference": "terminal",
+      "changedSchemas": [],
+      "sameFeatures": true,
+      "sameModels": false
+    }
+  ]
+}

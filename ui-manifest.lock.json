@@ -1,0 +1,558 @@
+{
+  "manifestVersion": 2,
+  "strategy": "content-hash",
+  "hashAlgorithm": "sha256",
+  "hashLength": 12,
+  "minimumContractGeneration": {
+    "settings": 9,
+    "activity": 12,
+    "dashboard": 6,
+    "question": 1
+  },
+  "releaseInventory": {
+    "catalog": "ui-release-catalog.json",
+    "catalogSha256": "fcb76cea1b7f3a955f88ef47fe59d96dc44197576dc955d8bf2226148af9a9eb",
+    "activeResources": [
+      "settings",
+      "dashboard",
+      "question"
+    ],
+    "compatibilityResources": [
+      "activity"
+    ],
+    "retirement": {
+      "activity": {
+        "lifecycle": "compatibility-only",
+        "newPresentations": false,
+        "replacement": "dashboard-and-question",
+        "firstStableWithReplacement": "0.4.0",
+        "minimumSupportRule": "60-days-and-two-later-stable-releases",
+        "statePreserved": [
+          "activities",
+          "agents",
+          "jobs",
+          "questions",
+          "results",
+          "idempotency"
+        ]
+      }
+    },
+    "selected": [
+      {
+        "name": "settings",
+        "digest": "ea1fe7c9776bede4c19fb8a2a8eef1642ee49127825e66d5a1d23e2773ca72ed",
+        "uri": "ui://codex-mcp-bridge/settings/ea1fe7c9776b.html",
+        "inventories": [
+          "development-current"
+        ],
+        "sourceIds": [
+          "rendered-current"
+        ],
+        "presenterTool": "codex_settings",
+        "requiredTools": [
+          "codex_settings",
+          "codex_ui_read",
+          "codex_update_settings"
+        ]
+      },
+      {
+        "name": "settings",
+        "digest": "fc59cc3d4ed01af5fb1dd58d2897498b85efcdf8f591e34a2138440dd555fb13",
+        "uri": "ui://codex-mcp-bridge/settings/fc59cc3d4ed0.html",
+        "inventories": [
+          "temporary-exception"
+        ],
+        "sourceIds": [
+          "development-4611fdd4c4d7"
+        ],
+        "presenterTool": "codex_settings",
+        "requiredTools": [
+          "codex_settings",
+          "codex_ui_read",
+          "codex_update_settings"
+        ]
+      },
+      {
+        "name": "settings",
+        "digest": "88b6f22045fb3081f5a1a6d605b3915175928a3b6635234e504cfaa06c351899",
+        "uri": "ui://codex-mcp-bridge/settings-v6.html",
+        "inventories": [
+          "published-baseline"
+        ],
+        "sourceIds": [
+          "stable-v0.3.0"
+        ],
+        "presenterTool": "codex_settings",
+        "requiredTools": [
+          "codex_settings",
+          "codex_update_settings"
+        ]
+      },
+      {
+        "name": "activity",
+        "digest": "01763a387e94281507dab77818bb23cf316aa1947dc4d7a4ee881a59dc174443",
+        "uri": "ui://codex-mcp-bridge/activity/01763a387e94.html",
+        "inventories": [
+          "temporary-exception"
+        ],
+        "sourceIds": [
+          "development-4611fdd4c4d7"
+        ],
+        "presenterTool": "codex_activity",
+        "requiredTools": [
+          "codex_activity",
+          "codex_activity_handoff",
+          "codex_activity_job_cancel",
+          "codex_activity_snapshot",
+          "codex_background_process_terminate",
+          "codex_interaction_respond",
+          "codex_question_card",
+          "codex_question_notify",
+          "codex_question_submit"
+        ]
+      },
+      {
+        "name": "activity",
+        "digest": "87afd1c60061d7721e1ebecff7004dad9a2cbfffe2a08e6d4b6421b61c7d2265",
+        "uri": "ui://codex-mcp-bridge/activity-v1.html",
+        "inventories": [
+          "published-baseline"
+        ],
+        "sourceIds": [
+          "stable-v0.3.0"
+        ],
+        "presenterTool": "codex_activity",
+        "requiredTools": [
+          "codex_activity",
+          "codex_activity_handoff",
+          "codex_activity_update",
+          "codex_cancel",
+          "codex_status"
+        ]
+      },
+      {
+        "name": "dashboard",
+        "digest": "0c7a99fb68880f3395ed51382a63ecfb480e26040463f4a16216fb57b7a47494",
+        "uri": "ui://codex-mcp-bridge/dashboard/0c7a99fb6888.html",
+        "inventories": [
+          "development-current"
+        ],
+        "sourceIds": [
+          "rendered-current"
+        ],
+        "presenterTool": "codex_dashboard",
+        "requiredTools": [
+          "codex_dashboard",
+          "codex_ui_history",
+          "codex_ui_problem",
+          "codex_ui_read"
+        ]
+      },
+      {
+        "name": "dashboard",
+        "digest": "2fc770d257b50516aa0796caa236de93f6c5cdf80332042fdbda0e06502d23a6",
+        "uri": "ui://codex-mcp-bridge/dashboard/2fc770d257b5.html",
+        "inventories": [
+          "temporary-exception"
+        ],
+        "sourceIds": [
+          "development-4611fdd4c4d7"
+        ],
+        "presenterTool": "codex_dashboard",
+        "requiredTools": [
+          "codex_dashboard",
+          "codex_ui_history",
+          "codex_ui_problem",
+          "codex_ui_read"
+        ]
+      },
+      {
+        "name": "question",
+        "digest": "a93cf2f84a75b0927ac228363e165b08a3b35cbfffc002397b4ce38f0d6f5c9d",
+        "uri": "ui://codex-mcp-bridge/question/a93cf2f84a75.html",
+        "inventories": [
+          "development-current",
+          "temporary-exception"
+        ],
+        "sourceIds": [
+          "rendered-current",
+          "development-4611fdd4c4d7"
+        ],
+        "presenterTool": "codex_ask_user",
+        "requiredTools": [
+          "codex_ask_user",
+          "codex_question_action",
+          "codex_ui_read"
+        ]
+      }
+    ]
+  },
+  "resources": {
+    "settings": {
+      "digest": "ea1fe7c9776bede4c19fb8a2a8eef1642ee49127825e66d5a1d23e2773ca72ed",
+      "uri": "ui://codex-mcp-bridge/settings/ea1fe7c9776b.html",
+      "metadata": {
+        "descriptor": {
+          "title": "Codex MCP Bridge for ChatGPT Settings",
+          "description": "Localized interactive settings card for user-configurable Codex bridge preferences.",
+          "mimeType": "text/html;profile=mcp-app"
+        },
+        "content": {
+          "ui": {
+            "prefersBorder": false,
+            "csp": {
+              "connectDomains": [],
+              "resourceDomains": []
+            },
+            "domain": "https://web-sandbox.oaiusercontent.com"
+          },
+          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Fast mode, Codex-app thread visibility, interface-language, concurrency for Codex MCP Bridge for ChatGPT.",
+          "openai/widgetPrefersBorder": false,
+          "openai/widgetCSP": {
+            "connect_domains": [],
+            "resource_domains": []
+          },
+          "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+          "codex/uiContractGeneration": 21
+        }
+      },
+      "releaseProvenance": {
+        "inventories": [
+          "development-current"
+        ],
+        "sourceIds": [
+          "rendered-current"
+        ],
+        "presenterTool": "codex_settings",
+        "requiredTools": [
+          "codex_settings",
+          "codex_ui_read",
+          "codex_update_settings"
+        ]
+      },
+      "previous": [
+        {
+          "digest": "fc59cc3d4ed01af5fb1dd58d2897498b85efcdf8f591e34a2138440dd555fb13",
+          "uri": "ui://codex-mcp-bridge/settings/fc59cc3d4ed0.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Settings",
+              "description": "Localized interactive settings card for user-configurable Codex bridge preferences.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Fast mode, Codex-app thread visibility, interface-language, concurrency for Codex MCP Bridge for ChatGPT.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 21
+            }
+          },
+          "releaseProvenance": {
+            "inventories": [
+              "temporary-exception"
+            ],
+            "sourceIds": [
+              "development-4611fdd4c4d7"
+            ],
+            "presenterTool": "codex_settings",
+            "requiredTools": [
+              "codex_settings",
+              "codex_ui_read",
+              "codex_update_settings"
+            ]
+          }
+        },
+        {
+          "digest": "88b6f22045fb3081f5a1a6d605b3915175928a3b6635234e504cfaa06c351899",
+          "uri": "ui://codex-mcp-bridge/settings-v6.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Settings",
+              "description": "Localized interactive settings card for user-configurable Codex bridge preferences.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Configure saved access, model, working-directory, session, and concurrency defaults for Codex MCP Bridge for ChatGPT.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
+            }
+          },
+          "releaseProvenance": {
+            "inventories": [
+              "published-baseline"
+            ],
+            "sourceIds": [
+              "stable-v0.3.0"
+            ],
+            "presenterTool": "codex_settings",
+            "requiredTools": [
+              "codex_settings",
+              "codex_update_settings"
+            ]
+          }
+        }
+      ]
+    },
+    "activity": {
+      "digest": "01763a387e94281507dab77818bb23cf316aa1947dc4d7a4ee881a59dc174443",
+      "uri": "ui://codex-mcp-bridge/activity/01763a387e94.html",
+      "metadata": {
+        "descriptor": {
+          "title": "Codex MCP Bridge for ChatGPT Activity Feed",
+          "description": "Localized compact current-work summary with an explicit paginated Activity history view.",
+          "mimeType": "text/html;profile=mcp-app"
+        },
+        "content": {
+          "ui": {
+            "prefersBorder": true,
+            "csp": {
+              "connectDomains": [],
+              "resourceDomains": []
+            },
+            "domain": "https://web-sandbox.oaiusercontent.com"
+          },
+          "openai/widgetDescription": "Shows current Codex work compactly and opens paginated scoped Activity history on explicit request.",
+          "openai/widgetPrefersBorder": true,
+          "openai/widgetCSP": {
+            "connect_domains": [],
+            "resource_domains": []
+          },
+          "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+          "codex/uiContractGeneration": 30
+        }
+      },
+      "releaseProvenance": {
+        "inventories": [
+          "temporary-exception"
+        ],
+        "sourceIds": [
+          "development-4611fdd4c4d7"
+        ],
+        "presenterTool": "codex_activity",
+        "requiredTools": [
+          "codex_activity",
+          "codex_activity_handoff",
+          "codex_activity_job_cancel",
+          "codex_activity_snapshot",
+          "codex_background_process_terminate",
+          "codex_interaction_respond",
+          "codex_question_card",
+          "codex_question_notify",
+          "codex_question_submit"
+        ]
+      },
+      "previous": [
+        {
+          "digest": "87afd1c60061d7721e1ebecff7004dad9a2cbfffe2a08e6d4b6421b61c7d2265",
+          "uri": "ui://codex-mcp-bridge/activity-v1.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Activity Manager",
+              "description": "Localized live Activity view for Codex work in the current conversation.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows current GPT–Codex Activities, jobs, progress, verification state, and force-stop controls.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": []
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
+            }
+          },
+          "releaseProvenance": {
+            "inventories": [
+              "published-baseline"
+            ],
+            "sourceIds": [
+              "stable-v0.3.0"
+            ],
+            "presenterTool": "codex_activity",
+            "requiredTools": [
+              "codex_activity",
+              "codex_activity_handoff",
+              "codex_activity_update",
+              "codex_cancel",
+              "codex_status"
+            ]
+          }
+        }
+      ]
+    },
+    "dashboard": {
+      "digest": "0c7a99fb68880f3395ed51382a63ecfb480e26040463f4a16216fb57b7a47494",
+      "uri": "ui://codex-mcp-bridge/dashboard/0c7a99fb6888.html",
+      "metadata": {
+        "descriptor": {
+          "title": "Codex MCP Bridge for ChatGPT Codex Status",
+          "description": "Codex status card with conversation-first defaults, an all-conversations view, nested Agents, retained turn history, and validated request review.",
+          "mimeType": "text/html;profile=mcp-app"
+        },
+        "content": {
+          "ui": {
+            "prefersBorder": false,
+            "csp": {
+              "connectDomains": [],
+              "resourceDomains": []
+            },
+            "domain": "https://web-sandbox.oaiusercontent.com"
+          },
+          "openai/widgetDescription": "Shows Codex work and history from this conversation when records exist, otherwise all conversations. Switch scope at the top; both views use the same execution states and approval/input request review.",
+          "openai/widgetPrefersBorder": false,
+          "openai/widgetCSP": {
+            "connect_domains": [],
+            "resource_domains": [],
+            "redirect_domains": [
+              "https://chatgpt.com"
+            ]
+          },
+          "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+          "codex/uiContractGeneration": 29
+        }
+      },
+      "releaseProvenance": {
+        "inventories": [
+          "development-current"
+        ],
+        "sourceIds": [
+          "rendered-current"
+        ],
+        "presenterTool": "codex_dashboard",
+        "requiredTools": [
+          "codex_dashboard",
+          "codex_ui_history",
+          "codex_ui_problem",
+          "codex_ui_read"
+        ]
+      },
+      "previous": [
+        {
+          "digest": "2fc770d257b50516aa0796caa236de93f6c5cdf80332042fdbda0e06502d23a6",
+          "uri": "ui://codex-mcp-bridge/dashboard/2fc770d257b5.html",
+          "metadata": {
+            "descriptor": {
+              "title": "Codex MCP Bridge for ChatGPT Codex Status",
+              "description": "Codex status card with conversation-first defaults, an all-conversations view, nested Agents, retained turn history, and validated request review.",
+              "mimeType": "text/html;profile=mcp-app"
+            },
+            "content": {
+              "ui": {
+                "prefersBorder": true,
+                "csp": {
+                  "connectDomains": [],
+                  "resourceDomains": []
+                },
+                "domain": "https://web-sandbox.oaiusercontent.com"
+              },
+              "openai/widgetDescription": "Shows Codex work and history from this conversation when records exist, otherwise all conversations. Switch scope at the top; both views use the same execution states and approval/input request review.",
+              "openai/widgetPrefersBorder": true,
+              "openai/widgetCSP": {
+                "connect_domains": [],
+                "resource_domains": [],
+                "redirect_domains": [
+                  "https://chatgpt.com"
+                ]
+              },
+              "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+              "codex/uiContractGeneration": 29
+            }
+          },
+          "releaseProvenance": {
+            "inventories": [
+              "temporary-exception"
+            ],
+            "sourceIds": [
+              "development-4611fdd4c4d7"
+            ],
+            "presenterTool": "codex_dashboard",
+            "requiredTools": [
+              "codex_dashboard",
+              "codex_ui_history",
+              "codex_ui_problem",
+              "codex_ui_read"
+            ]
+          }
+        }
+      ]
+    },
+    "question": {
+      "digest": "a93cf2f84a75b0927ac228363e165b08a3b35cbfffc002397b4ce38f0d6f5c9d",
+      "uri": "ui://codex-mcp-bridge/question/a93cf2f84a75.html",
+      "metadata": {
+        "descriptor": {
+          "title": "Your input",
+          "description": "Questions written by GPT for the user; answers return to GPT.",
+          "mimeType": "text/html;profile=mcp-app"
+        },
+        "content": {
+          "ui": {
+            "prefersBorder": true,
+            "csp": {
+              "connectDomains": [],
+              "resourceDomains": []
+            },
+            "domain": "https://web-sandbox.oaiusercontent.com"
+          },
+          "openai/widgetDescription": "Collects the user's answers for GPT without directly answering or approving Codex requests.",
+          "openai/widgetPrefersBorder": true,
+          "openai/widgetCSP": {
+            "connect_domains": [],
+            "resource_domains": []
+          },
+          "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+          "codex/uiContractGeneration": 1
+        }
+      },
+      "releaseProvenance": {
+        "inventories": [
+          "development-current",
+          "temporary-exception"
+        ],
+        "sourceIds": [
+          "rendered-current",
+          "development-4611fdd4c4d7"
+        ],
+        "presenterTool": "codex_ask_user",
+        "requiredTools": [
+          "codex_ask_user",
+          "codex_question_action",
+          "codex_ui_read"
+        ]
+      },
+      "previous": []
+    }
+  }
+}

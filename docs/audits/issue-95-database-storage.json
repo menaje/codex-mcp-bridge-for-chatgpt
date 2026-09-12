@@ -1,0 +1,224 @@
+{
+  "issue": 95,
+  "testedAt": "2026-09-11T13:11:38.425Z",
+  "source": "read-only metrics plus a consistent disposable SQLite backup",
+  "productionDatabaseModified": false,
+  "sourceCapacity": {
+    "databaseBytes": 196378624,
+    "walBytes": 4124152,
+    "shmBytes": 32768,
+    "pageSize": 4096,
+    "pageCount": 47944,
+    "allocatedBytes": 196378624,
+    "freePages": 39161,
+    "reusableBytes": 160403456,
+    "btreeUsedBytes": 9934645,
+    "cellPayloadBytes": 9438802
+  },
+  "migrationBackups": {
+    "count": 5,
+    "totalBytes": 239480832,
+    "largestBytes": 189349888
+  },
+  "sourceSchema": 18,
+  "sourceRows": {
+    "tables": 30,
+    "rows": 27984
+  },
+  "sourceSerialization": {
+    "jobs": 672,
+    "storedPayloadBytes": {
+      "total": 270049,
+      "median": 402,
+      "p95": 649,
+      "max": 867
+    },
+    "structuredDuplicateFields": 5137,
+    "summaries": {
+      "rowsWithContent": 581,
+      "storedPayloadBytes": {
+        "total": 223504,
+        "median": 384,
+        "p95": 402,
+        "max": 548
+      },
+      "formalDuplicateFields": 226,
+      "unexpectedTopLevelFields": 226
+    },
+    "progressSerializationComparison": {
+      "beforeFullJobBytes": {
+        "total": 270049,
+        "median": 402,
+        "p95": 649,
+        "max": 867
+      },
+      "afterBoundedStateBytes": {
+        "total": 18144,
+        "median": 27,
+        "p95": 27,
+        "max": 27
+      },
+      "totalReductionPercent": 93.281
+    }
+  },
+  "beforeConnectionQuery": {
+    "lookups": 201,
+    "totalMs": 80.106,
+    "medianMs": 0.396,
+    "p95Ms": 0.428,
+    "plan": [
+      "SCAN j",
+      "SCALAR SUBQUERY 1",
+      "SEARCH thread_connections USING INDEX sqlite_autoindex_thread_connections_1 (thread_id=?)",
+      "CORRELATED SCALAR SUBQUERY 2",
+      "SCAN interaction VIRTUAL TABLE INDEX 3:",
+      "CORRELATED SCALAR SUBQUERY 3",
+      "MULTI-INDEX OR",
+      "INDEX 1",
+      "SEARCH cancellation USING INDEX cancellation_intents_target_job (target_job_id=?)",
+      "INDEX 2",
+      "SEARCH cancellation USING INDEX cancellation_intents_target_activity (target_activity_id=?)"
+    ],
+    "positiveResults": 0
+  },
+  "currentConnectionQuery": {
+    "lookups": 201,
+    "totalMs": 0.679,
+    "medianMs": 0.003,
+    "p95Ms": 0.003,
+    "plan": [
+      "COMPOUND QUERY",
+      "LEFT-MOST SUBQUERY",
+      "SEARCH jobs USING INDEX jobs_thread_active (thread_id=?)",
+      "CORRELATED SCALAR SUBQUERY 5",
+      "SEARCH interaction USING COVERING INDEX job_interactions_blocking (job_id=?)",
+      "CORRELATED SCALAR SUBQUERY 6",
+      "MULTI-INDEX OR",
+      "INDEX 1",
+      "SEARCH cancellation USING INDEX cancellation_intents_target_job (target_job_id=?)",
+      "INDEX 2",
+      "SEARCH cancellation USING INDEX cancellation_intents_target_activity (target_activity_id=?)",
+      "UNION ALL",
+      "SEARCH jobs USING INDEX jobs_source_thread_active (source_thread_id=?)",
+      "SEARCH jobs USING INDEX jobs_agent_active (agent_id=?)",
+      "SCALAR SUBQUERY 3",
+      "SEARCH thread_connections USING INDEX sqlite_autoindex_thread_connections_1 (thread_id=?)"
+    ],
+    "positiveResults": 0
+  },
+  "currentRetentionPlans": {
+    "eventByJob": [
+      "SEARCH job_events USING COVERING INDEX job_events_job_cursor (job_id=?)"
+    ],
+    "oldestEventBatch": [
+      "SEARCH job_events USING INTEGER PRIMARY KEY (rowid=?)",
+      "LIST SUBQUERY 1",
+      "SCAN job_events"
+    ],
+    "blockingInteraction": [
+      "SEARCH job_interactions USING COVERING INDEX job_interactions_blocking (job_id=?)"
+    ],
+    "historyCandidates": [
+      "SEARCH j USING INDEX jobs_status_recent (status=? AND updated_at<?)",
+      "CORRELATED SCALAR SUBQUERY 1",
+      "SEARCH h USING INDEX sqlite_autoindex_work_history_state_1 (job_id=?)",
+      "USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "expiredHolds": [
+      "SEARCH result_holds USING COVERING INDEX sqlite_autoindex_result_holds_1 (job_id=?)",
+      "LIST SUBQUERY 1",
+      "SCAN result_holds"
+    ]
+  },
+  "currentRows": {
+    "tables": 32,
+    "rows": 27228
+  },
+  "currentSerialization": {
+    "jobs": 672,
+    "storedPayloadBytes": {
+      "total": 80042,
+      "median": 110,
+      "p95": 357,
+      "max": 578
+    },
+    "structuredDuplicateFields": 0,
+    "summaries": {
+      "rowsWithContent": 581,
+      "storedPayloadBytes": {
+        "total": 218574,
+        "median": 384,
+        "p95": 402,
+        "max": 466
+      },
+      "formalDuplicateFields": 0,
+      "unexpectedTopLevelFields": 0
+    },
+    "interactions": {
+      "rows": 0,
+      "storedPayloadBytes": {
+        "total": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "structuredDuplicateFields": 0
+    }
+  },
+  "telemetryWritePath": {
+    "auditedSourceSchema": 18,
+    "comparisonBaseline": {
+      "commit": "b1104aa",
+      "schema": 18,
+      "sqlWriteStatementsPerOrdinaryPublicProgressEventWithoutInteractions": 9,
+      "fullJobRowUpserts": 1,
+      "fullJobSerializations": 1,
+      "unconditionalSummaryWrites": 1,
+      "unconditionalThreadConnectionWrites": 1
+    },
+    "current": {
+      "sqlWriteStatementsPerOrdinaryPublicProgressEventWithoutInteractions": 7,
+      "sqlWriteStatementsPerThrottledStateOnlyProgressWithoutInteractions": 2,
+      "fullJobRowUpserts": 0,
+      "fullJobSerializations": 0,
+      "boundedJobStateUpdates": 1,
+      "unconditionalSummaryWrites": 0,
+      "unconditionalThreadConnectionWrites": 0,
+      "interactionWrites": "one bounded delete plus one insert per current interaction"
+    },
+    "basis": "static SQL-path count from schema-18 commit b1104aa and current progress persistence; public-event counts include scope/coalescing/retention writes, state-only counts include the Job UPDATE plus interaction DELETE, and both exclude trigger-internal event_budget updates"
+  },
+  "currentCapacity": {
+    "databaseBytes": 196378624,
+    "walBytes": 0,
+    "shmBytes": 32768,
+    "pageSize": 4096,
+    "pageCount": 47944,
+    "allocatedBytes": 196378624,
+    "freePages": 45364,
+    "reusableBytes": 185810944,
+    "btreeUsedBytes": 9141643,
+    "cellPayloadBytes": 8763636
+  },
+  "compactedCapacity": {
+    "databaseBytes": 10252288,
+    "walBytes": 0,
+    "shmBytes": 0,
+    "pageSize": 4096,
+    "pageCount": 2503,
+    "allocatedBytes": 10252288,
+    "freePages": 0,
+    "reusableBytes": 0,
+    "btreeUsedBytes": 9140811,
+    "cellPayloadBytes": 8763636
+  },
+  "offlineCompaction": {
+    "sourceStopped": true,
+    "precompactBackupVerified": true,
+    "compactCopyVerifiedBeforeReplacement": true,
+    "rollbackCopyVerified": true,
+    "liveDatabaseReplacementPerformed": false
+  },
+  "passed": true,
+  "temporaryCopiesRemoved": true
+}

@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { CodexJobRegistry } from "../src/tools.js";
@@ -13,72 +13,6 @@ const ACTIVITY_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ACTIVITY_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("Activity SQLite state", () => {
-  it("migrates schema v1 jobs into one-job legacy Activities atomically", () => {
-    const file = stateFile();
-    createV1Database(file, {
-      payload: JSON.stringify({
-        jobId: "legacy-job",
-        scopeId: SCOPE_A,
-        requestId: "legacy-request",
-        status: "completed",
-        updatedAt: 20,
-        createdAt: 10,
-        sessionDecision: { threadId: "legacy-thread" }
-      })
-    });
-
-    const store = new BridgeStateStore({ file });
-    const [activity] = store.listActivities(SCOPE_A);
-    const [job] = store.listJobs() as Array<Record<string, unknown>>;
-
-    expect(store.schemaVersion).toBe(3);
-    expect(activity).toMatchObject({
-      scopeId: SCOPE_A,
-      title: "Legacy Codex job legacy-j",
-      kind: "other",
-      handoffPolicy: "none",
-      completionTrigger: "manual",
-      lifecycle: "open",
-      waitingOn: "orchestrator",
-      legacy: true,
-      counts: { total: 1, completed: 1, terminal: 1 }
-    });
-    expect(job).toMatchObject({
-      activityId: activity.activityId,
-      threadId: "legacy-thread",
-      executionMode: "auto",
-      backendKind: "mcp-server",
-      terminalVersion: 1
-    });
-    expect(store.getScopeVersion(SCOPE_A)).toBe(1);
-    expect(store.listActivityEvents(activity.activityId)).toEqual([
-      expect.objectContaining({ eventType: "legacy-job-grouped", scopeVersion: 1 })
-    ]);
-    expect(store.listJobEvents("legacy-job")).toEqual([
-      expect.objectContaining({ eventType: "legacy-imported", scopeVersion: 1 })
-    ]);
-    expect(store.listCompletionOutbox()).toHaveLength(0);
-    store.close();
-  });
-
-  it("rolls back a failed v1 migration without changing its schema marker", () => {
-    const file = stateFile();
-    createV1Database(file, { payload: "not-json" });
-
-    expect(() => new BridgeStateStore({ file })).toThrow(/Invalid job payload/);
-
-    const database = new Database(file, { readonly: true });
-    const marker = database
-      .prepare("SELECT value FROM bridge_meta WHERE key = 'schema_version'")
-      .get() as { value: string };
-    const activityTable = database
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'activities'")
-      .get();
-    expect(marker.value).toBe("1");
-    expect(activityTable).toBeUndefined();
-    database.close();
-  });
-
   it("keeps a default Activity open when its Codex turn reaches terminal state", () => {
     const store = new BridgeStateStore({ file: stateFile() });
     store.upsertJob(job("job-a", "request-a", ACTIVITY_A, "running", 10));
@@ -304,6 +238,77 @@ describe("Activity SQLite state", () => {
     store.close();
   });
 
+  it("scope-bounds Activity feed joins and returns every pending completion Activity", () => {
+    const store = new BridgeStateStore({ file: stateFile() });
+    const agentA = store.createAgent({ scopeId: SCOPE_A, agentName: "Scope A Agent", now: 1 });
+    const agentB = store.createAgent({ scopeId: SCOPE_B, agentName: "Scope B Agent", now: 2 });
+    store.createActivity({
+      activityId: ACTIVITY_A,
+      scopeId: SCOPE_A,
+      handoffPolicy: "notify",
+      completionTrigger: "manual",
+      now: 3
+    });
+    store.createActivity({
+      activityId: ACTIVITY_B,
+      scopeId: SCOPE_B,
+      handoffPolicy: "notify",
+      completionTrigger: "manual",
+      now: 4
+    });
+    store.assignAgent({
+      activityId: ACTIVITY_A,
+      agentId: agentA.agentId,
+      contextMode: "continue",
+      now: 5
+    });
+    store.assignAgent({
+      activityId: ACTIVITY_B,
+      agentId: agentB.agentId,
+      contextMode: "continue",
+      now: 6
+    });
+
+    store.upsertJob(job("scope-a-job", "scope-a-request", ACTIVITY_A, "completed", 7));
+    store.completeActivity(ACTIVITY_A, undefined, 8);
+    store.upsertJob({
+      ...job("scope-b-job", "scope-b-request", ACTIVITY_B, "completed", 9),
+      scopeId: SCOPE_B
+    });
+    store.completeActivity(ACTIVITY_B, undefined, 10);
+
+    const scopeAActivityIds = [ACTIVITY_A];
+    for (let index = 0; index < 100; index += 1) {
+      const activityId = randomUUID();
+      scopeAActivityIds.push(activityId);
+      store.createActivity({
+        activityId,
+        scopeId: SCOPE_A,
+        handoffPolicy: "notify",
+        completionTrigger: "manual",
+        now: 20 + index * 3
+      });
+      store.upsertJob(job(
+        `scope-a-job-${index}`,
+        `scope-a-request-${index}`,
+        activityId,
+        "completed",
+        21 + index * 3
+      ));
+      store.completeActivity(activityId, undefined, 22 + index * 3);
+    }
+
+    expect(store.listScopeActivityAgentAssignments(SCOPE_A)).toEqual([
+      expect.objectContaining({ activityId: ACTIVITY_A, agentId: agentA.agentId })
+    ]);
+    expect(store.listScopeActivityAgentAssignments(SCOPE_B)).toEqual([
+      expect.objectContaining({ activityId: ACTIVITY_B, agentId: agentB.agentId })
+    ]);
+    expect(store.listPendingCompletionActivityIds(SCOPE_A)).toEqual(scopeAActivityIds.sort());
+    expect(store.listPendingCompletionActivityIds(SCOPE_B)).toEqual([ACTIVITY_B]);
+    store.close();
+  });
+
   it("clears failed verification when an open Activity explicitly leaves verify policy", () => {
     const store = new BridgeStateStore({ file: stateFile() });
     store.createActivity({
@@ -375,9 +380,38 @@ describe("Activity SQLite state", () => {
     expect(store.countJobs(SCOPE_B)).toBe(0);
     expect(store.getScopeVersion(SCOPE_B)).toBe(scopeBVersion);
 
-    store.upsertJob(job("job-a", "request-a", ACTIVITY_A, "completed", 3));
+    store.upsertJob({
+      ...job("job-a", "request-a", ACTIVITY_A, "completed", 3),
+      createdAt: 1,
+      executionDecision: {
+        effectiveSelection: { model: "gpt-test", reasoningEffort: "high", serviceTier: "priority" }
+      },
+      publicEvents: [{
+        type: "model",
+        details: { kind: "rerouted", toModel: "gpt-rerouted" }
+      }],
+      result: { secret: "must-not-survive-pruning" }
+    } as any);
     store.deleteJob("job-a");
     expect(store.listJobs()).toHaveLength(0);
+    expect(store.listDashboardRetainedJobs()).toEqual([
+      expect.objectContaining({
+        jobId: "job-a",
+        scopeId: SCOPE_A,
+        activityId: ACTIVITY_A,
+        status: "completed",
+        createdAt: 1,
+        updatedAt: 3,
+        execution: {
+          model: "gpt-test",
+          reasoningEffort: "high",
+          serviceTier: "priority",
+          reroutedModel: "gpt-rerouted"
+        }
+      })
+    ]);
+    expect(JSON.stringify(store.listDashboardRetainedJobs()))
+      .not.toContain("must-not-survive-pruning");
     expect(store.getActivity(ACTIVITY_A)).toMatchObject({
       counts: { total: 1, completed: 1, terminal: 1 }
     });
@@ -480,45 +514,9 @@ function job(
     activityId,
     status,
     updatedAt,
-    executionMode: "auto" as const,
+    executionMode: "background" as const,
     backendKind: "mcp-server"
   };
-}
-
-function createV1Database(file: string, input: { payload: string }): void {
-  mkdirSync(path.dirname(file), { recursive: true });
-  const database = new Database(file);
-  database.exec(`
-    CREATE TABLE bridge_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
-    INSERT INTO bridge_meta(key, value) VALUES ('schema_version', '1');
-    CREATE TABLE sessions (
-      thread_id TEXT PRIMARY KEY,
-      scope_id TEXT NOT NULL,
-      cwd TEXT NOT NULL,
-      last_used_at INTEGER NOT NULL,
-      payload TEXT NOT NULL
-    ) STRICT;
-    CREATE TABLE jobs (
-      job_id TEXT PRIMARY KEY,
-      scope_id TEXT NOT NULL,
-      request_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      updated_at INTEGER NOT NULL,
-      payload TEXT NOT NULL,
-      UNIQUE(scope_id, request_id)
-    ) STRICT;
-    CREATE TABLE user_settings (
-      singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-      payload TEXT NOT NULL
-    ) STRICT;
-  `);
-  database
-    .prepare(`
-      INSERT INTO jobs(job_id, scope_id, request_id, status, updated_at, payload)
-      VALUES ('legacy-job', ?, 'legacy-request', 'completed', 20, ?)
-    `)
-    .run(SCOPE_A, input.payload);
-  database.close();
 }
 
 function registry(stateStore: BridgeStateStore, root: string): CodexJobRegistry {

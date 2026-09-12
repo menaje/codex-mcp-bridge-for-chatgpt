@@ -1,82 +1,421 @@
+import { CARD_FORM_SCRIPT } from "./cardForms.js";
+import { usesFastProcessing } from "./executionPresentation.js";
+import { QUESTION_CARD_SCRIPT } from "./questionCardUi.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { serializedUiTranslations } from "./uiI18n.js";
+import { resolveHostUiLocaleTag, serializedUiTranslations } from "./uiI18n.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import {
+  currentUiResourceUri,
+  htmlForUiResource,
+  uiResourceRevisions,
+  uiRevisionMetadata
+} from "./uiResources.js";
+import {
+  hostToolResultMetadata,
+  normalizeHostToolResult
+} from "./uiHostToolResult.js";
+import {
+  callUiToolWithFallback,
+  withUiToolCallTimeout
+} from "./uiToolCallFallback.js";
 
-export const ACTIVITY_CARD_URI = `ui://${PRODUCT_INFO.runtimeName}/activity-v1.html`;
+export const ACTIVITY_CARD_URI = currentUiResourceUri("activity");
+export const ACTIVITY_CARD_CONTRACT_GENERATION = 30;
+export const RETAINED_ACTIVITY_CARD_CONTRACT_GENERATION = 6;
+export const ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION = 11;
+export const ACTIVITY_BOOTSTRAP_METADATA_KEY = "codex/activityBootstrap@11";
+export const ACTIVITY_VIEW_METADATA_KEY = "codex/activityView@11";
+export const ACTIVITY_SCOPE_METADATA_KEY = "codex/activityScopeId";
 export const ACTIVITY_CARD_MIME_TYPE = "text/html;profile=mcp-app";
+export const ACTIVITY_CARD_HTML_MAX_BYTES = 156 * 1_024;
+
+export function shouldShowHistoricalActivityTitle(
+  activityTitle: unknown,
+  latestActivityId: unknown,
+  visibleActivityIds?: ReadonlySet<string>
+): boolean {
+  if (!String(activityTitle || "").trim()) return false;
+  const activityId = typeof latestActivityId === "string" ? latestActivityId.trim() : "";
+  return !activityId || !visibleActivityIds?.has(activityId);
+}
+
+type ActivityIdleAgentGroupRow = {
+  agentId?: unknown;
+  latestActivityId?: unknown;
+  latestActivityTitle?: unknown;
+};
+
+export function groupActivityIdleAgentsByActivity<Row extends ActivityIdleAgentGroupRow>(
+  rows: readonly Row[],
+  visibleActivityIds?: ReadonlySet<string>
+): Array<{ activityKey: string; activityId: string | null; activityTitle: string | null; rows: Row[] }> {
+  const groups: Array<{
+    activityKey: string;
+    activityId: string | null;
+    activityTitle: string | null;
+    rows: Row[];
+  }> = [];
+  const byKey = new Map<string, (typeof groups)[number]>();
+  for (const row of rows) {
+    const activityId = typeof row.latestActivityId === "string"
+      ? row.latestActivityId.trim()
+      : "";
+    if (activityId && visibleActivityIds?.has(activityId)) continue;
+    const activityKey = activityId ? `activity:${activityId}` : "no-recent-activity";
+    const title = typeof row.latestActivityTitle === "string" && row.latestActivityTitle.trim()
+      ? row.latestActivityTitle.trim()
+      : null;
+    const existing = byKey.get(activityKey);
+    if (existing) {
+      existing.rows.push(row);
+      if (!existing.activityTitle && title) existing.activityTitle = title;
+      continue;
+    }
+    const group = {
+      activityKey,
+      activityId: activityId || null,
+      activityTitle: title,
+      rows: [row]
+    };
+    byKey.set(activityKey, group);
+    groups.push(group);
+  }
+  return groups;
+}
+
+export const ACTIVITY_CARD_RESOURCE_DESCRIPTOR = {
+  title: `${PRODUCT_INFO.displayName} Activity Feed`,
+  description: "Localized compact current-work summary with an explicit paginated Activity history view.",
+  mimeType: ACTIVITY_CARD_MIME_TYPE
+} as const;
+export const ACTIVITY_CARD_CONTENT_METADATA = {
+  ui: {
+    prefersBorder: true,
+    csp: { connectDomains: [] as string[], resourceDomains: [] as string[] },
+    domain: "https://web-sandbox.oaiusercontent.com"
+  },
+  "openai/widgetDescription":
+    "Shows current Codex work compactly and opens paginated scoped Activity history on explicit request.",
+  "openai/widgetPrefersBorder": true,
+  "openai/widgetCSP": { connect_domains: [] as string[], resource_domains: [] as string[] },
+  "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
+  "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
+} as const;
 
 export function registerActivityCardResource(server: McpServer): void {
-  server.registerResource(
-    "codex-activity-card",
-    ACTIVITY_CARD_URI,
-    {
-      title: `${PRODUCT_INFO.displayName} Activity Manager`,
-      description: "Localized live Activity view for Codex work in the current conversation.",
-      mimeType: ACTIVITY_CARD_MIME_TYPE
-    },
-    async () => ({
-      contents: [
-        {
-          uri: ACTIVITY_CARD_URI,
-          mimeType: ACTIVITY_CARD_MIME_TYPE,
-          text: ACTIVITY_CARD_HTML,
-          _meta: {
-            ui: {
-              prefersBorder: true,
-              csp: { connectDomains: [], resourceDomains: [] },
-              domain: "https://web-sandbox.oaiusercontent.com"
-            },
-            "openai/widgetDescription":
-              "Shows current GPT–Codex Activities, jobs, progress, verification state, and force-stop controls.",
-            "openai/widgetPrefersBorder": true,
-            "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
-            "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com"
+  for (const [index, revision] of uiResourceRevisions("activity").entries()) {
+    const revisionMetadata = uiRevisionMetadata(
+      revision,
+      ACTIVITY_CARD_RESOURCE_DESCRIPTOR,
+      ACTIVITY_CARD_CONTENT_METADATA
+    );
+    server.registerResource(
+      index === 0 ? "codex-activity-card" : `codex-activity-card-compat-${index}`,
+      revision.uri,
+      revisionMetadata.descriptor,
+      async () => ({
+        contents: [
+          {
+            uri: revision.uri,
+            mimeType: ACTIVITY_CARD_MIME_TYPE,
+            text: htmlForUiResource("activity", revision.uri, ACTIVITY_CARD_HTML),
+            _meta: revisionMetadata.content
           }
-        }
-      ]
-    })
-  );
+        ]
+      })
+    );
+  }
 }
+
+const ACTIVITY_TRANSLATION_KEYS = [
+  "activity.allActivities",
+  "activity.answer",
+  "activity.approval",
+  "activity.approve",
+  "activity.approveSession",
+  "activity.backgroundConfirm",
+  "activity.backgroundProcesses",
+  "activity.backgroundUnavailable",
+  "activity.completedActivities",
+  "activity.completedCodex",
+  "activity.completedWork",
+  "activity.continued",
+  "activity.currentActivities",
+  "activity.decline",
+  "activity.defaultAgent",
+  "activity.endedActivities",
+  "activity.endedCodex",
+  "activity.enrichmentFailed",
+  "activity.followUpSent",
+  "activity.forceConfirm",
+  "activity.forceConfirmTitle",
+  "activity.forceStop",
+  "activity.forceStopped",
+  "activity.forceStopping",
+  "activity.historicalSnapshot",
+  "activity.history",
+  "activity.idleAgentCount",
+  "activity.idleCodex",
+  "activity.inputRequired",
+  "activity.jobs",
+  "activity.loadFailed",
+  "activity.nextPage",
+  "activity.no",
+  "activity.noCurrent",
+  "activity.noHistory",
+  "activity.openLive",
+  "activity.openRequest",
+  "activity.optionalInput",
+  "activity.otherAnswer",
+  "activity.partialChanges",
+  "activity.pastRecords",
+  "activity.previousFailures",
+  "activity.previousPage",
+  "activity.prompt.handoff",
+  "activity.prompt.retry",
+  "activity.prompt.verify",
+  "activity.refreshFailedRetained",
+  "activity.restoredSnapshot",
+  "activity.retry",
+  "activity.showMore",
+  "activity.stopBackground",
+  "activity.superseded",
+  "activity.temporaryJob",
+  "activity.title",
+  "activity.turns",
+  "activity.updated",
+  "activity.verify",
+  "activity.workComplete",
+  "activity.yes"
+];
 
 export const ACTIVITY_CARD_HTML = String.raw`<!doctype html>
 <html lang="en" dir="auto">
 <head>
-  <meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Codex activities</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Codex</title>
   <style>
-    :root{color-scheme:light dark;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--surface:color-mix(in srgb,Canvas 96%,CanvasText 4%);--muted:color-mix(in srgb,CanvasText 62%,transparent);--border:color-mix(in srgb,CanvasText 16%,transparent);--accent:#1777ff;--danger:#c34132;--warn:#b87503;--ok:#1a8f55}*{box-sizing:border-box}body{margin:0;padding:12px;background:transparent;color:CanvasText}.card{border:1px solid var(--border);border-radius:16px;background:var(--surface);padding:14px}header{display:flex;align-items:center;justify-content:space-between;gap:10px}h1{margin:0;font-size:18px}.counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin:12px 0}.count{border:1px solid var(--border);border-radius:10px;padding:8px}.count b{display:block;font-size:17px}.count span,.meta,.empty,.message{font-size:11px;color:var(--muted)}#activities{display:grid;gap:9px}.activity{border:1px solid var(--border);border-radius:12px;padding:11px}.activity-head{display:flex;align-items:start;justify-content:space-between;gap:8px}.activity h2{font-size:14px;margin:0}.badges{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}.badge{font-size:10px;border:1px solid var(--border);border-radius:999px;padding:2px 7px}.badge.bad{color:var(--danger)}.badge.warn{color:var(--warn)}.badge.ok{color:var(--ok)}details{margin-top:8px}summary{cursor:pointer;font-size:11px;color:var(--accent)}.job{border-top:1px solid var(--border);padding:8px 0;display:grid;gap:6px}.job:first-child{margin-top:6px}.job-row{display:flex;align-items:center;justify-content:space-between;gap:8px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;word-break:break-all}.actions{display:flex;gap:6px;flex-wrap:wrap}.panel{border:1px solid var(--border);border-radius:9px;padding:8px;display:grid;gap:6px}.event{font-size:10px;line-height:1.4;border-left:2px solid var(--border);padding-left:7px;overflow-wrap:anywhere}input,textarea,select{width:100%;border:1px solid var(--border);border-radius:8px;background:Canvas;color:CanvasText;padding:7px;font:inherit;font-size:11px}textarea{min-height:58px;resize:vertical}button{border:1px solid var(--border);border-radius:9px;background:Canvas;color:CanvasText;padding:6px 9px;font-size:11px;font-weight:650;cursor:pointer}button.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 45%,transparent)}button:disabled{opacity:.55;cursor:wait}.footer{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px}.message.error{color:var(--danger)}@media(max-width:520px){.counts{grid-template-columns:repeat(2,minmax(0,1fr))}.activity-head{display:grid}}
+    :root{color-scheme:light dark;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--surface:color-mix(in srgb,Canvas 97%,CanvasText 3%);--muted:color-mix(in srgb,CanvasText 62%,transparent);--faint:color-mix(in srgb,CanvasText 9%,transparent);--border:color-mix(in srgb,CanvasText 15%,transparent);--danger:#c34132;--warn:#b87503;--ok:#1a8f55;--active:#16875a;--discussion:#6373d8}*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;padding:12px;background:transparent;color:CanvasText}.card{border:1px solid var(--border);border-radius:16px;background:var(--surface);padding:14px}header,.header-title,.row-main,.actions,.footer,.disclosure,.activity-agent-head{display:flex;align-items:center;gap:8px}header,.footer{justify-content:space-between}h1{margin:0;font-size:17px}.header-count,.meta,.empty,.message,.summary{color:var(--muted)}.header-count{font-size:12px;font-weight:650}.icon-button{width:30px;height:30px;padding:0;display:grid;place-items:center;font-size:16px}.list{margin-top:9px}.row{display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:9px;padding:11px 0;border-bottom:1px solid var(--border)}.row:last-child{border-bottom:0}.state-icon{position:relative;width:18px;height:18px;margin-top:1px;color:var(--muted)}.state-icon::before{content:"●";position:absolute;inset:0;display:grid;place-items:center;font-size:13px}.state-icon.running{color:var(--active)}.state-icon.attention{color:var(--warn)}.state-icon.failed{color:var(--danger)}.state-icon.completed{color:var(--ok)}.state-icon.completed::before{content:"✓";font-size:16px;font-weight:750}.state-icon.discussion{width:15px;height:11px;margin:3px 1px 0;border:1.5px solid var(--discussion);border-radius:5px;color:var(--discussion)}.state-icon.discussion::before{content:""}.state-icon.discussion::after{content:"";position:absolute;left:2px;bottom:-4px;border-width:3px 3px 0 0;border-style:solid;border-color:var(--discussion) transparent transparent transparent}.content{min-width:0}.row-main{justify-content:space-between;align-items:flex-start}.name{font-size:14px;font-weight:700;overflow-wrap:anywhere}.summary{font-size:12px;line-height:1.45;margin-top:3px}.meta{font-size:11px;line-height:1.4;margin-top:3px;overflow-wrap:anywhere}.execution-list{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:6px}.execution{max-width:100%;padding:2px 7px;border:1px solid var(--border);border-radius:999px;background:var(--faint);color:var(--muted);font-size:11px;line-height:1.35;overflow-wrap:anywhere}.activity-agent-list{display:grid;margin-top:8px;padding-left:11px;border-left:2px solid var(--border)}.activity-agent{min-width:0;padding:8px 0;border-bottom:1px solid var(--border)}.activity-agent:last-child{border-bottom:0;padding-bottom:1px}.activity-agent-head{justify-content:space-between;align-items:flex-start}.activity-agent .name{font-size:12px;font-weight:700}.activity-agent .summary{font-size:11px}.activity-agent .actions{max-width:180px}.actions{justify-content:flex-end;flex-wrap:wrap;max-width:220px}button{border:1px solid var(--border);border-radius:8px;background:Canvas;color:CanvasText;padding:5px 8px;font-size:11px;font-weight:650;cursor:pointer}button:hover{background:var(--faint)}button:focus-visible{outline:2px solid color-mix(in srgb,var(--discussion) 70%,transparent);outline-offset:2px}button.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 42%,transparent)}button:disabled{opacity:.55;cursor:wait}.groups{border-top:1px solid var(--border);margin-top:5px}.group+.group{border-top:1px solid var(--border)}.disclosure{width:100%;justify-content:space-between;border:0;border-radius:0;background:transparent;padding:11px 0;font-size:12px}.disclosure-label{display:flex;align-items:center;gap:7px}.chevron{display:inline-block;width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .12s ease}.disclosure[aria-expanded="true"] .chevron{transform:rotate(45deg)}.group-list{padding-left:20px}.history-row .name{font-weight:650}.interaction{border-top:1px solid var(--border);margin-top:9px;padding-top:9px;display:grid;gap:7px}.interaction input,.interaction select,.interaction textarea{width:100%;border:1px solid var(--border);border-radius:8px;background:Canvas;color:CanvasText;padding:7px;font:inherit;font-size:11px}.interaction label,.interaction .message{font-size:11px}.footer{margin-top:10px}.message{font-size:11px}.message.error{color:var(--danger)}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(max-width:520px){.card{padding:12px}.row{grid-template-columns:18px minmax(0,1fr)}.row>.actions{grid-column:2;justify-content:flex-start;max-width:none}.row-main{display:block}.row-main>.actions{margin-top:7px;justify-content:flex-start;max-width:none}.activity-agent-head{display:block}.activity-agent .actions{justify-content:flex-start;max-width:none;margin-top:6px}.group-list{padding-left:10px}.footer{align-items:flex-start;gap:5px;flex-direction:column}}
+    .weekly-usage{margin-top:10px;padding:8px 9px;border:1px solid var(--border);border-radius:10px;background:var(--faint)}.weekly-usage-head{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px}.weekly-usage-label{color:var(--muted);font-weight:650}.weekly-usage-value{font-size:13px}.weekly-usage-track{height:4px;margin-top:6px;overflow:hidden;border-radius:999px;background:color-mix(in srgb,CanvasText 12%,transparent)}.weekly-usage-fill{display:block;height:100%;border-radius:inherit;background:var(--active);transition:width .2s ease}.weekly-usage-reset{margin-top:4px;color:var(--muted);font-size:10px}
+    .cancellation{margin-top:8px}.cancellation-toggle{display:flex;align-items:center;gap:7px;width:max-content;max-width:100%;color:var(--muted);font-size:11px;font-weight:650;cursor:pointer;list-style:none}.cancellation-toggle::-webkit-details-marker{display:none}.cancellation-toggle:focus-visible{outline:2px solid color-mix(in srgb,var(--discussion) 70%,transparent);outline-offset:2px}.cancellation[open] .chevron{transform:rotate(45deg)}.cancellation-list{display:grid;gap:7px;margin-top:7px;padding-left:11px;border-left:2px solid color-mix(in srgb,var(--danger) 32%,var(--border))}.cancellation-item{min-width:0}.cancellation-reason{margin-top:2px;font-size:11px;line-height:1.45;overflow-wrap:anywhere}
+    body{padding:0}.card{border:0;border-radius:0;background:transparent}.row{grid-template-columns:20px minmax(0,1fr)}html[data-collapsed="true"],html[data-collapsed="true"] body{height:1px!important;min-height:1px!important;max-height:1px!important;overflow:hidden!important}
+  .fast-mode{display:inline-flex;align-items:center;margin-left:6px;padding:1px 5px;border-radius:5px;background:color-mix(in srgb,#497ec8 14%,transparent);color:CanvasText;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:10px;font-weight:650;white-space:nowrap}
   </style>
 </head>
-<body><main class="card"><header><h1 data-i18n="activity.title"></h1><button id="refresh" data-i18n="common.refresh"></button></header><section class="counts" id="counts"></section><section id="activities"></section><div class="footer"><span class="message" id="message" role="status" aria-live="polite"></span><span class="meta" id="updated"></span></div></main>
-<script>
-  const BUNDLES=${serializedUiTranslations()};const pending=new Map();let requestId=1,snapshot=null,mounted=true,watching=false,failures=0,handoffTimer=null;const initialMetadata=window.openai&&window.openai.toolResponseMetadata||{};let localeTag=String(window.openai&&window.openai.locale||initialMetadata["openai/locale"]||initialMetadata["webplus/i18n"]||navigator.language||"en"),locale=resolveLocale(localeTag),t=BUNDLES[locale]||BUNDLES.en;
-  const activities=document.getElementById("activities"),counts=document.getElementById("counts"),message=document.getElementById("message"),updated=document.getElementById("updated"),refresh=document.getElementById("refresh");
+<body hidden>
+  <main class="card">
+    <header>
+      <div class="header-title"><h1 id="activity-heading" data-i18n="activity.currentActivities"></h1><span class="header-count" id="current-count"></span></div>
+      <button id="refresh" class="icon-button" type="button"><span aria-hidden="true">↻</span></button>
+    </header>
+    <section class="weekly-usage" id="weekly-usage" aria-labelledby="weekly-usage-label" hidden>
+      <div class="weekly-usage-head"><span class="weekly-usage-label" id="weekly-usage-label" data-i18n="usage.weeklyRemaining"></span><strong class="weekly-usage-value" id="weekly-usage-value"></strong></div>
+      <div class="weekly-usage-track" id="weekly-usage-track" role="progressbar"><span class="weekly-usage-fill" id="weekly-usage-fill"></span></div>
+      <div class="weekly-usage-reset" id="weekly-usage-reset"></div>
+      <div class="weekly-usage-reset" id="weekly-usage-observed"></div>
+    </section>
+    <section class="list" id="active-list"></section>
+    <section class="groups" id="groups"></section>
+    <div class="footer"><span class="message" id="message" role="status" aria-live="polite"></span><span class="meta" id="updated"></span></div>
+  </main>
+	<script>
+	  const BUNDLES=${serializedUiTranslations(["common", "question", "usage", "cancellation", ...ACTIVITY_TRANSLATION_KEYS, "agent", "job", "lifecycle", "verification", "kind", "dashboard.status", "dashboard.time", "dashboard.duration", "dashboard.recentActivity", "dashboard.noRecentActivity", "dashboard.execution"])};
+	  ${resolveHostUiLocaleTag.toString()}
+	  ${groupActivityIdleAgentsByActivity.toString()}
+	  ${normalizeHostToolResult.toString()}
+	  ${hostToolResultMetadata.toString()}
+	  ${withUiToolCallTimeout.toString()}
+	  ${callUiToolWithFallback.toString()}
+		  const pending=new Map();
+		  const ACTIVITY_SCOPE_METADATA_KEY=${JSON.stringify(ACTIVITY_SCOPE_METADATA_KEY)};
+		  let activityScopeId=null;
+	  const ACTIVITY_BOOTSTRAP_METADATA_KEY=${JSON.stringify(ACTIVITY_BOOTSTRAP_METADATA_KEY)},ACTIVITY_VIEW_METADATA_KEY=${JSON.stringify(ACTIVITY_VIEW_METADATA_KEY)},MOUNTED_CARD_TOOLS=new Set(["codex_activity_rehydrate","codex_activity_snapshot","codex_activity_handoff","codex_activity_job_cancel","codex_background_process_terminate","codex_interaction_respond","codex_job_steer"]),AUTOMATIC_BOOTSTRAP_REASONS=new Set(["new-presentation","render-retry","render-latest","render-reserved","render-confirmed","active-lease"]),STANDARD_BRIDGE_INIT_TIMEOUT_MS=5000,TOOL_CALL_TIMEOUT_MS=15000,ENRICHMENT_TIMEOUT_MS=10000,WATCH_CALL_TIMEOUT_MS=70000,STANDARD_CALL_BUDGET_MS=STANDARD_BRIDGE_INIT_TIMEOUT_MS+TOOL_CALL_TIMEOUT_MS+1000,widgetInstanceId=crypto.randomUUID();
+			  let requestId=1,snapshot=null,mountedActivityHint=null,mountedPresentationHint=null,rehydrationCorrelation=null,activityInputMode=null,automaticBootstrapRequestId=null,taskBootstrapKey=null,controls={agents:[]},mounted=true,watching=false,watchTimer=null,enriching=false,busy=false,enrichmentEpoch=0,operationEpoch=0,watchEpoch=0,hydrationEpoch=0,failures=0,handoffTimer=null,viewLimit=30,historyCursor=null,recoveryAction=null,standardBridgeReady=Promise.resolve(false),standardBridgeAttempt=null,standardBridgeInitialized=false,lastRenderedAt=0,sizeReportingReady=false,sizeFrame=0,sizeChangeForced=false,resizeObserver=null,lastWidth=-1,lastHeight=-1;
+  const expandedGroups={completed:false,idle:false,ended:false},expandedCancellations=new Set();
+  const initialResponseMetadata=window.openai&&window.openai.toolResponseMetadata||{},initialMetadata=hostToolResultMetadata(initialResponseMetadata),initialToolInput=window.openai&&window.openai.toolInput;
+  let taskInvocation=Boolean(initialToolInput&&typeof initialToolInput.prompt==="string"),taskInputRequestId=initialToolInput&&typeof initialToolInput.requestId==="string"?initialToolInput.requestId:null;
+  let hostLocaleTag=resolveHostUiLocaleTag(window.openai&&window.openai.locale,initialMetadata,navigator.language),localePreference="auto",localeTag=hostLocaleTag,locale=resolveLocale(localeTag),t=BUNDLES[locale]||BUNDLES.en;
+		  const cardRoot=document.querySelector("main.card"),activityHeading=document.getElementById("activity-heading"),activeList=document.getElementById("active-list"),groups=document.getElementById("groups"),message=document.getElementById("message"),updated=document.getElementById("updated"),refresh=document.getElementById("refresh"),currentCount=document.getElementById("current-count"),weeklyUsage=document.getElementById("weekly-usage"),weeklyUsageValue=document.getElementById("weekly-usage-value"),weeklyUsageTrack=document.getElementById("weekly-usage-track"),weeklyUsageFill=document.getElementById("weekly-usage-fill"),weeklyUsageReset=document.getElementById("weekly-usage-reset"),weeklyUsageObserved=document.getElementById("weekly-usage-observed");
+
   function resolveLocale(value){const v=String(value||"en").replaceAll("_","-").toLowerCase();if(v==="ko"||v.startsWith("ko-"))return"ko";if(v==="ja"||v.startsWith("ja-"))return"ja";if(v==="zh-hant"||/^zh-(tw|hk|mo)(-|$)/.test(v))return"zh-Hant";if(v==="zh"||v==="zh-hans"||v.startsWith("zh-"))return"zh-Hans";for(const key of["es","fr","de","pt"])if(v===key||v.startsWith(key+"-"))return key;return"en"}
-  function setLocale(value){localeTag=String(value||"en").replaceAll("_","-");locale=resolveLocale(localeTag);t=BUNDLES[locale]||BUNDLES.en;document.documentElement.lang=localeTag;for(const node of document.querySelectorAll("[data-i18n]"))node.textContent=t[node.dataset.i18n]||BUNDLES.en[node.dataset.i18n];refresh.setAttribute("aria-label",t["common.refresh"]);if(snapshot)render(snapshot)}
-  function rpcRequest(method,params,timeout=70000){return new Promise((resolve,reject)=>{const id=requestId++,timer=setTimeout(()=>{pending.delete(id);reject(new Error(t["common.error"]))},timeout);pending.set(id,{resolve:(v)=>{clearTimeout(timer);resolve(v)},reject:(e)=>{clearTimeout(timer);reject(e)}});window.parent.postMessage({jsonrpc:"2.0",id,method,params},"*")})}
-  function callTool(name,args,timeout=70000){if(window.openai&&typeof window.openai.callTool==="function")return window.openai.callTool(name,args);return rpcRequest("tools/call",{name,arguments:args},timeout)}
-  function unwrap(result){if(result&&result._meta){const responseLocale=result._meta["openai/locale"]||result._meta["webplus/i18n"];if(responseLocale)setLocale(responseLocale)}if(result&&result.isError){const entry=Array.isArray(result.content)&&result.content.find((item)=>item&&item.type==="text");throw new Error(entry&&entry.text||t["common.error"])}const data=result&&result.structuredContent||result;if(data&&typeof data==="object"&&result&&result._meta&&result._meta.activityDetails)return Object.assign({},data,{__private:result._meta.activityDetails});return data}
-  function node(tag,className,text){const el=document.createElement(tag);if(className)el.className=className;if(text!==undefined)el.textContent=text;return el}
-  function badge(text,kind){return node("span","badge "+(kind||""),text)}
+  function effectiveLocaleTag(){return localePreference==="auto"?hostLocaleTag:localePreference}
+  function refreshLabel(){return recoveryAction?t["activity.retry"]:rehydratedView()&&Boolean(snapshot&&snapshot.mountedActivity)?t["activity.openLive"]:t["common.refresh"]}
+  function updateRefreshLabel(){const label=refreshLabel();refresh.setAttribute("aria-label",label);refresh.setAttribute("title",label)}
+  function setLocale(value,rerender=true){localeTag=String(value||"en").replaceAll("_","-");locale=resolveLocale(localeTag);t=BUNDLES[locale]||BUNDLES.en;document.documentElement.lang=localeTag;document.title=t["activity.title"];for(const item of document.querySelectorAll("[data-i18n]"))item.textContent=t[item.dataset.i18n]||BUNDLES.en[item.dataset.i18n];updateRefreshLabel();if(userQuestion){refreshQuestionLocale();return}if(rerender&&snapshot)render(snapshot,true)}
+		  function rpcRequest(method,params,timeout=TOOL_CALL_TIMEOUT_MS,timeoutCode=""){if(!mounted)return Promise.reject(new Error("Activity card unmounted"));return new Promise((resolve,reject)=>{const id=requestId++,timer=setTimeout(()=>{pending.delete(id);const error=new Error(t["common.error"]);if(timeoutCode)error.code=timeoutCode;reject(error)},timeout);pending.set(id,{resolve:(value)=>{clearTimeout(timer);resolve(value)},reject:(error)=>{clearTimeout(timer);reject(error)}});window.parent.postMessage({jsonrpc:"2.0",id,method,params},"*")})}
+		  function rpcNotification(method,params){window.parent.postMessage({jsonrpc:"2.0",method,params},"*")}
+		  async function initializeStandardBridge(){try{const result=await rpcRequest("ui/initialize",{appInfo:{name:"codex-mcp-bridge-activity",version:"${ACTIVITY_CARD_CONTRACT_GENERATION}"},appCapabilities:{availableDisplayModes:["inline"]},protocolVersion:"2026-01-26"},STANDARD_BRIDGE_INIT_TIMEOUT_MS);if(!result||typeof result.protocolVersion!=="string")return false;standardBridgeInitialized=true;document.documentElement.dataset.mcpApps="initialized";const context=result.hostContext||{};if(context.locale)hostLocaleTag=String(context.locale);rpcNotification("ui/notifications/initialized",{});if(localePreference==="auto")setLocale(hostLocaleTag);if(sizeReportingReady)scheduleSizeChanged(true);return true}catch{document.documentElement.dataset.mcpApps="fallback";return false}}
+		  function beginStandardBridge(){if(standardBridgeInitialized)return Promise.resolve(true);if(standardBridgeAttempt)return standardBridgeAttempt;standardBridgeAttempt=initializeStandardBridge().finally(()=>{standardBridgeAttempt=null});standardBridgeReady=standardBridgeAttempt;return standardBridgeAttempt}
+		  function rememberActivityScope(metadata){const scopeId=metadata&&metadata[ACTIVITY_SCOPE_METADATA_KEY];if(typeof scopeId==="string")activityScopeId=scopeId}
+		  function mountedToolArgs(name,args){const mounted=MOUNTED_CARD_TOOLS.has(name)?Object.assign({},args,{widgetInstanceId}):args;if((name==="codex_activity_snapshot"||name==="codex_activity_rehydrate")&&activityScopeId)return Object.assign({},mounted,{scopeId:activityScopeId});return mounted}
+		  async function standardToolCall(name,args,timeout){const ready=standardBridgeInitialized||await beginStandardBridge();if(!ready)throw new Error(t["common.error"]);const result=await rpcRequest("tools/call",{name,arguments:args},timeout,"MCP_TOOL_CALL_DISPATCH_TIMEOUT");return result&&result.result||result}
+		  async function callTool(name,args,timeout=TOOL_CALL_TIMEOUT_MS,allowFallback=true){const toolArgs=mountedToolArgs(name,args),compatibility=window.openai&&typeof window.openai.callTool==="function"?()=>window.openai.callTool(name,toolArgs):undefined,standard=()=>standardToolCall(name,toolArgs,timeout);const response=compatibility?await callUiToolWithFallback(compatibility,allowFallback?standard:undefined,{standardTimeoutMs:timeout,compatibilityTimeoutMs:Math.max(timeout,STANDARD_CALL_BUDGET_MS),timeoutMessage:t["common.error"]}):await callUiToolWithFallback(standard,undefined,{standardTimeoutMs:Math.max(timeout,STANDARD_CALL_BUDGET_MS),compatibilityTimeoutMs:timeout,timeoutMessage:t["common.error"]});const result=normalizeHostToolResult(response);if(result&&result.isError)throw new Error(errorText(result));return result}
+	  function privateActivityOutput(metadataValue){const metadata=hostToolResultMetadata(metadataValue),view=metadata&&metadata[ACTIVITY_VIEW_METADATA_KEY];if(view&&view.kind==="codex/activityView"&&view.version===${ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION}&&view.purpose==="presentation-hydration-only"&&view.view&&view.correlation)return view.view;const bootstrap=metadata&&metadata[ACTIVITY_BOOTSTRAP_METADATA_KEY],activity=bootstrap&&bootstrap.activity,presentation=bootstrap&&bootstrap.presentation,correlation=bootstrap&&bootstrap.correlation,renderState=bootstrap&&bootstrap.render;if(!bootstrap||bootstrap.kind!=="codex/activityBootstrap"||bootstrap.version!==${ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION}||bootstrap.purpose!=="presentation-hydration-only"||!activity||!presentation||!correlation||!renderState)return null;return{requestId:correlation.requestId,bridgeActivity:{activityId:activity.activityId,cardGeneration:activity.cardGeneration,presentationKind:"automatic",activityPresentationId:correlation.activityPresentationId,jobId:correlation.jobId,shouldRenderActivityCard:renderState.eligible,renderReason:renderState.reason,renderTiming:renderState.timing}}}
+	  function parsedToolText(result){const entry=result&&Array.isArray(result.content)&&result.content.find((item)=>item&&item.type==="text"&&typeof item.text==="string");if(!entry)return null;try{return JSON.parse(entry.text)}catch{return null}}
+	  function errorText(value){if(typeof value==="string")return value;if(value&&typeof value.message==="string")return value.message;if(value&&value.error)return errorText(value.error);const entry=value&&Array.isArray(value.content)&&value.content.find((item)=>item&&item.type==="text"&&typeof item.text==="string");if(entry)return entry.text;return t["common.error"]}
+	  function unwrap(value){const result=normalizeHostToolResult(value),metadata=hostToolResultMetadata(value);if(metadata["codex/userQuestion@1"])return{kind:"user-question",question:metadata["codex/userQuestion@1"]};const responseHostLocale=metadata.hostLocale||metadata["openai/locale"]||metadata["webplus/i18n"];if(responseHostLocale)hostLocaleTag=String(responseHostLocale);if(metadata.interactionControls)controls=metadata.interactionControls;if(result&&result.isError)throw new Error(errorText(result));rememberActivityScope(metadata);return privateActivityOutput(metadata)||result&&result.structuredContent||parsedToolText(result)||result}
+	  function intrinsicHeight(){if(document.documentElement.dataset.collapsed==="true")return 1;if(document.body.hidden)return 0;const html=document.documentElement,original=html.style.height;html.style.height="max-content";const height=Math.ceil(html.getBoundingClientRect().height);html.style.height=original;return height}
+	  function emitSizeChanged(force=false){if(!sizeReportingReady)return;const compatibility=window.openai&&typeof window.openai.notifyIntrinsicHeight==="function";if(!standardBridgeInitialized&&!compatibility)return;const width=Math.ceil(window.innerWidth),height=intrinsicHeight();if(!force&&width===lastWidth&&height===lastHeight)return;lastWidth=width;lastHeight=height;if(standardBridgeInitialized)rpcNotification("ui/notifications/size-changed",{width,height});if(compatibility)window.openai.notifyIntrinsicHeight(height)}
+	  function scheduleSizeChanged(force=false){sizeChangeForced=sizeChangeForced||force;if(sizeFrame)return;sizeFrame=requestAnimationFrame(()=>{sizeFrame=0;const forced=sizeChangeForced;sizeChangeForced=false;emitSizeChanged(forced)})}
+	  function setCardVisible(visible){document.body.hidden=false;cardRoot.hidden=!visible;document.documentElement.dataset.collapsed=visible?"false":"true";sizeReportingReady=true;scheduleSizeChanged()}
+  function node(tag,className,text){const item=document.createElement(tag);if(className)item.className=className;if(text!==undefined)item.textContent=text;return item}
+  function localizedText(key,values={}){let value=t[key]||BUNDLES.en[key]||key;for(const[name,replacement]of Object.entries(values))value=value.replaceAll("{"+name+"}",String(replacement));return value}
   function codeLabel(group,value){return t[group+"."+value]||String(value||"")}
-  function isActive(status){return status==="running"||status==="terminating"||status==="termination-failed"}
-  function statusClass(status){return status==="completed"||status==="verified"?"ok":status==="running"?"":status==="terminating"?"warn":"bad"}
-  function render(next){if(!next||!Array.isArray(next.activities))return;snapshot=next;counts.replaceChildren();const a=next.aggregates||{};for(const item of [["activity.running",a.running||0],["activity.attention",a.needsAttention||0],["activity.verification",a.readyForVerification||0],["activity.failed",a.failed||0]]){const box=node("div","count");box.append(node("b","",String(item[1])),node("span","",t[item[0]]));counts.appendChild(box)}activities.replaceChildren();if(next.activities.length===0)activities.appendChild(node("p","empty",t["activity.empty"]));for(const item of next.activities)activities.appendChild(renderActivity(item));updated.textContent=t["activity.updated"]+": "+new Date(next.generatedAt).toLocaleTimeString(localeTag);message.textContent="";message.classList.remove("error");scheduleHandoffs();if(!watching)void watch()}
-  function renderActivity(item){const box=node("article","activity"),head=node("div","activity-head"),left=node("div"),title=node("h2","",item.title),badges=node("div","badges");badges.append(badge(codeLabel("kind",item.kind)),badge(codeLabel("lifecycle",item.lifecycle),statusClass(item.lifecycle)),badge(codeLabel("waiting",item.waitingOn)),badge(codeLabel("verification",item.verification),statusClass(item.verification)));left.append(title,badges);const actions=node("div","actions");if((item.jobs||[]).some((job)=>isActive(job.status))){const stop=node("button","danger",t["activity.forceStop"]);stop.setAttribute("aria-label",t["activity.forceStop"]+" "+item.title);stop.addEventListener("click",()=>forceActivity(item,stop));actions.appendChild(stop)}head.append(left,actions);box.appendChild(head);const meta=node("div","meta",(item.counts&&item.counts.total||0)+" "+t["activity.jobs"]+" · "+(item.threadCount||0)+" "+t["activity.threads"]);box.appendChild(meta);if(item.lifecycle==="terminating")box.appendChild(node("p","message",t["activity.terminating"]));const detail=document.createElement("details"),summary=document.createElement("summary");summary.textContent=t["activity.viewDetails"];detail.addEventListener("toggle",()=>summary.textContent=detail.open?t["activity.hideDetails"]:t["activity.viewDetails"]);detail.appendChild(summary);for(const job of item.jobs||[])detail.appendChild(renderJob(item,job));box.appendChild(detail);return box}
-  function privateJob(jobId){for(const activity of snapshot&&snapshot.__private&&snapshot.__private.activities||[]){const found=(activity.jobs||[]).find((job)=>job.jobId===jobId);if(found)return found}return null}
-  function renderJob(activity,job){const box=node("div","job"),row=node("div","job-row"),left=node("div"),details=privateJob(job.jobId)||{};left.append(node("div","mono",(job.threadId||job.jobId)),badge(codeLabel("job",job.status),statusClass(job.status)));row.appendChild(left);if(isActive(job.status)){const stop=node("button","danger",t["activity.forceStop"]);stop.setAttribute("aria-label",t["activity.forceStop"]+" "+job.jobId);stop.addEventListener("click",()=>forceJob(job,stop));row.appendChild(stop)}box.append(row,node("div","meta",(job.operation||"")+" · "+(job.backendKind||"")+" · "+(job.workingDirectory||"")));if(job.health==="no-progress-observed")box.appendChild(node("div","message",t["activity.noSignal"]));if(job.health==="orphaned")box.appendChild(node("div","message error",t["activity.orphaned"]));if(job.health==="worker-lost")box.appendChild(node("div","message error",t["activity.workerLost"]));if(job.status==="terminating")box.appendChild(node("div","message",t["activity.terminating"]));if(job.status==="termination-failed")box.appendChild(node("div","message error",t["activity.terminationFailed"]));if(job.error)box.appendChild(node("div","message error",job.error));for(const interaction of details.pendingInteractions||[])box.appendChild(renderInteraction(activity,job,interaction));if(job.canSteer)box.appendChild(renderSteering(activity,job));const events=node("div","panel"),eventsTitle=node("strong","",t["activity.events"]),list=(details.publicEvents||[]).slice(-20);events.appendChild(eventsTitle);if(list.length===0)events.appendChild(node("div","message",t["activity.noEvents"]));for(const event of list)events.appendChild(node("div","event",new Date(event.createdAt).toLocaleTimeString(localeTag)+" · "+event.type+"/"+event.phase+" · "+event.summary));box.appendChild(events);return box}
-  function renderInteraction(activity,job,interaction){const panel=node("div","panel"),title=node("strong","",interaction.kind==="user-input"?t["activity.inputRequired"]:t["activity.approval"]);panel.append(title,node("div","message",interaction.summary));if(interaction.kind!=="user-input"){const actions=node("div","actions"),approve=node("button","",t["activity.approve"]),decline=node("button","",t["activity.decline"]);approve.addEventListener("click",()=>respondInteraction(activity,job,interaction,{interactionDecision:"accept"},approve));decline.addEventListener("click",()=>respondInteraction(activity,job,interaction,{interactionDecision:"decline"},decline));actions.append(approve,decline);panel.appendChild(actions);return panel}const fields=[];for(const question of interaction.questions||[]){const input=document.createElement("input"),inputId="input-"+interaction.interactionId+"-"+question.id,label=node("label","message",question.question);input.id=inputId;label.htmlFor=inputId;input.type=question.isSecret?"password":"text";input.autocomplete="off";input.dataset.questionId=question.id;panel.appendChild(label);if(question.options&&question.options.length){const listId="options-"+interaction.interactionId+"-"+question.id,list=document.createElement("datalist");list.id=listId;for(const choice of question.options){const option=document.createElement("option");option.value=choice.label;option.label=choice.description||choice.label;list.appendChild(option)}input.setAttribute("list",listId);panel.appendChild(list)}panel.appendChild(input);fields.push(input)}const send=node("button","",t["activity.answer"]);send.addEventListener("click",()=>{const answers={};for(const field of fields)answers[field.dataset.questionId]=[field.value];void respondInteraction(activity,job,interaction,{interactionAnswers:answers},send)});panel.appendChild(send);return panel}
-  function renderSteering(activity,job){const panel=node("div","panel"),input=document.createElement("textarea"),send=node("button","",t["activity.steer"]);input.placeholder=t["activity.steerPlaceholder"];input.setAttribute("aria-label",t["activity.steer"]);send.addEventListener("click",async()=>{const prompt=input.value.trim();if(!prompt)return;send.disabled=true;try{await callTool("codex_activity_update",{activityId:activity.activityId,action:"steer",jobId:job.jobId,expectedJobVersion:job.version,steeringPrompt:prompt});input.value="";await reload()}catch(error){message.textContent=String(error&&error.message||error);message.classList.add("error");send.disabled=false}});panel.append(input,send);return panel}
-  async function respondInteraction(activity,job,interaction,response,button){button.disabled=true;try{await callTool("codex_activity_update",Object.assign({activityId:activity.activityId,action:"respond-interaction",jobId:job.jobId,expectedJobVersion:job.version,interactionId:interaction.interactionId},response));await reload()}catch(error){message.textContent=String(error&&error.message||error);message.classList.add("error");button.disabled=false}}
-  async function forceActivity(item,button){if(!confirm(t["activity.forceConfirmTitle"]+"\n\n"+t["activity.forceConfirm"]+"\n"+t["activity.partialChanges"]))return;button.disabled=true;message.textContent=t["activity.forceStopping"];try{const affected=[...new Set((item.jobs||[]).flatMap((job)=>job.affectedJobIds||[job.jobId]))];await callTool("codex_activity_update",{activityId:item.activityId,expectedVersion:item.version,action:"cancel",acknowledgeAffectedJobIds:affected});message.textContent=t["activity.forceStopped"];await reload()}catch(error){message.textContent=String(error&&error.message||error);message.classList.add("error");button.disabled=false}}
-  async function forceJob(job,button){if(!confirm(t["activity.forceConfirmTitle"]+"\n\n"+t["activity.forceConfirm"]+"\n"+t["activity.partialChanges"]))return;button.disabled=true;message.textContent=t["activity.forceStopping"];try{await callTool("codex_cancel",{jobId:job.jobId,expectedVersion:job.version,acknowledgeAffectedJobIds:job.affectedJobIds||[job.jobId]});message.textContent=t["activity.forceStopped"];await reload()}catch(error){message.textContent=String(error&&error.message||error);message.classList.add("error");button.disabled=false}}
-  async function reload(){const next=unwrap(await callTool("codex_status",{activityView:true}));render(next)}
-  async function watch(){if(!mounted||!snapshot||watching)return;watching=true;try{const next=unwrap(await callTool("codex_status",{activityView:true,afterVersion:snapshot.scopeVersion,waitFor:"change",waitMs:55000}));failures=0;watching=false;if(mounted)render(next)}catch(error){watching=false;if(!mounted)return;failures++;if(failures>=5){message.textContent=t["activity.manualRefresh"];message.classList.add("error");return}const jitter=Math.floor(Math.random()*750);setTimeout(()=>void watch(),Math.min(30000,1000*Math.pow(2,failures))+jitter)}}
-  function scheduleHandoffs(){if(handoffTimer||!snapshot||snapshot.deliveryMode!=="auto-handoff"||!Array.isArray(snapshot.pendingHandoffs)||snapshot.pendingHandoffs.length===0)return;handoffTimer=setTimeout(()=>{handoffTimer=null;void dispatchHandoffs()},1500)}
-  async function sendFollowUp(prompt){try{return await rpcRequest("ui/message",{role:"user",content:{type:"text",text:prompt}},10000)}catch(standardError){if(window.openai&&typeof window.openai.sendFollowUpMessage==="function")return window.openai.sendFollowUpMessage({prompt});throw standardError}}
-  async function dispatchHandoffs(){let claimed=[];try{const claim=unwrap(await callTool("codex_activity_handoff",{action:"claim-batch",outboxIds:snapshot.pendingHandoffs.map((event)=>event.outboxId)}));claimed=claim&&Array.isArray(claim.events)?claim.events:[];if(claimed.length===0)return;const lookup=new Map(snapshot.pendingHandoffs.map((event)=>[event.outboxId,event])),ids=claimed.map((event)=>event.activityId),jobs=claimed.flatMap((event)=>lookup.get(event.outboxId)&&lookup.get(event.outboxId).jobIds||[]),outboxIds=claimed.map((event)=>event.outboxId);const prompt="Codex Activity completion handoff. origin="+claim.origin+"; handoffDepth="+claim.handoffDepth+"; handoffBatchId="+claim.handoffBatchId+". Activity IDs: "+ids.join(", ")+". Job IDs: "+jobs.join(", ")+". Retrieve authoritative results with codex_status/codex_activity. For verify activities, independently inspect requested files, git diff/status, tests, and artifacts before reporting completion or continuing the exact thread for corrections. For notify activities, summarize without inventing verification. Do not quote raw Codex output and do not create another automatic handoff from this handoff.";await sendFollowUp(prompt);await callTool("codex_activity_handoff",{action:"delivered-batch",outboxIds})}catch(error){if(claimed.length)await callTool("codex_activity_handoff",{action:"release-batch",outboxIds:claimed.map((event)=>event.outboxId)}).catch(()=>{});message.textContent=String(error&&error.message||error);message.classList.add("error")}}
-  window.addEventListener("message",(event)=>{if(event.source!==window.parent)return;const m=event.data;if(!m||m.jsonrpc!=="2.0")return;if(m.id!==undefined&&pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(new Error(m.error.message||t["common.error"])):p.resolve(m.result);return}if(m.method==="ui/notifications/tool-result")render(unwrap(m.params))},{passive:true});
-  window.addEventListener("openai:set_globals",(event)=>{const g=event.detail&&event.detail.globals,metadata=g&&g.toolResponseMetadata;const responseLocale=metadata&&(metadata["openai/locale"]||metadata["webplus/i18n"]);if(g&&g.locale)setLocale(g.locale);else if(responseLocale)setLocale(responseLocale);if(g&&g.toolOutput)render(Object.assign({},g.toolOutput,metadata&&metadata.activityDetails?{__private:metadata.activityDetails}:{}))});
-  window.addEventListener("pagehide",()=>{mounted=false;watching=false;for(const [id,request] of pending){window.parent.postMessage({jsonrpc:"2.0",method:"notifications/cancelled",params:{requestId:id,reason:"Activity card unmounted"}},"*");request.reject(new Error("Activity card unmounted"))}pending.clear()});window.addEventListener("pageshow",()=>{mounted=true;if(snapshot&&!watching)void reload()});document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){mounted=true;if(snapshot&&!watching)void reload()}});refresh.addEventListener("click",()=>reload().catch((error)=>{message.textContent=String(error&&error.message||error);message.classList.add("error")}));
-  setLocale(localeTag);if(window.openai&&window.openai.toolOutput)render(Object.assign({},window.openai.toolOutput,window.openai.toolResponseMetadata&&window.openai.toolResponseMetadata.activityDetails?{__private:window.openai.toolResponseMetadata.activityDetails}:{}));else void reload().catch((error)=>{message.textContent=String(error&&error.message||error);message.classList.add("error")});
-</script></body></html>`;
+	  function formatNumber(value){return new Intl.NumberFormat(localeTag).format(Number(value||0))}
+	  function detailsIncomplete(value){return Boolean(value&&(value.usageTimedOut||value.timeouts>0||value.runtimeUnavailable>0))}
+    function renderWeeklyUsage(usage){const valid=usage&&Number.isFinite(Number(usage.remainingPercent));weeklyUsage.hidden=!valid;if(!valid)return;const observedAt=new Date(usage.observedAt);weeklyUsageObserved.hidden=!Number.isFinite(observedAt.getTime());weeklyUsageObserved.textContent=Number.isFinite(observedAt.getTime())?t["usage.observedAt"].replace("{time}",new Intl.DateTimeFormat(localeTag,{dateStyle:"short",timeStyle:"medium"}).format(observedAt)):"";const remaining=Math.min(100,Math.max(0,Number(usage.remainingPercent))),formatted=new Intl.NumberFormat(localeTag,{maximumFractionDigits:1}).format(remaining)+"%";weeklyUsageValue.textContent=formatted;weeklyUsageFill.style.width=remaining+"%";weeklyUsageTrack.setAttribute("aria-valuemin","0");weeklyUsageTrack.setAttribute("aria-valuemax","100");weeklyUsageTrack.setAttribute("aria-valuenow",String(remaining));weeklyUsageTrack.setAttribute("aria-valuetext",(t["usage.weeklyRemaining"]||"")+" "+formatted);const resetAt=usage.resetsAt&&new Date(usage.resetsAt);if(resetAt&&Number.isFinite(resetAt.getTime())){weeklyUsageReset.hidden=false;weeklyUsageReset.textContent=t["usage.resetsAt"].replace("{time}",new Intl.DateTimeFormat(localeTag,{dateStyle:"short",timeStyle:"short"}).format(resetAt))}else{weeklyUsageReset.hidden=true;weeklyUsageReset.textContent=""}}
+  function formatDuration(ms){const seconds=Math.max(0,Math.floor(Number(ms||0)/1000));if(seconds<60)return new Intl.NumberFormat(localeTag,{style:"unit",unit:"second",unitDisplay:"short"}).format(seconds);const minutes=Math.floor(seconds/60);if(minutes<60)return new Intl.NumberFormat(localeTag,{style:"unit",unit:"minute",unitDisplay:"short"}).format(minutes);return new Intl.NumberFormat(localeTag,{style:"unit",unit:"hour",unitDisplay:"short"}).format(Math.floor(minutes/60))}
+  function relativeTime(iso){const delta=Date.parse(iso)-Date.now(),minutes=Math.round(delta/60000);if(Math.abs(minutes)<1)return new Intl.RelativeTimeFormat(localeTag,{numeric:"auto"}).format(0,"minute");if(Math.abs(minutes)<60)return new Intl.RelativeTimeFormat(localeTag,{numeric:"auto"}).format(minutes,"minute");return new Intl.RelativeTimeFormat(localeTag,{numeric:"auto"}).format(Math.round(minutes/60),"hour")}
+  function mutationId(){return crypto.randomUUID()}
+  function controlFor(agentId){return(controls&&controls.agents||[]).find((item)=>item.agentId===agentId)||{}}
+  function unique(values){return[...new Set(values.filter(Boolean))]}
+  function stateLabel(value){if(value==="input-required")return t["activity.inputRequired"];if(value==="approval-required")return t["activity.approval"];if(value==="waiting-gpt"||value==="verification")return t["activity.workComplete"];if(value==="orphaned")return t["agent.orphaned"];if(value==="liveness-unknown")return t["dashboard.status.liveness-unknown"];if(value==="background-unavailable")return t["activity.backgroundUnavailable"];if(value==="ended")return t["activity.endedCodex"];if(value==="idle")return t["agent.idle"];return codeLabel("job",value)}
+  function toneFor(row){const state=row.displayState;if(["completed","waiting-gpt","verification"].includes(state))return"completed";if(["failed","interrupted","termination-failed","orphaned","background-unavailable"].includes(state))return"failed";if(["input-required","approval-required"].includes(state))return"attention";if(["running","terminating"].includes(state))return row.kind==="discussion"?"discussion":"running";return row.kind==="discussion"?"discussion":"muted"}
+  function stateIcon(row){const tone=toneFor(row),icon=node("span","state-icon "+tone);icon.setAttribute("aria-hidden","true");return icon}
+  function activityLifecycleLabel(row){return codeLabel("lifecycle",row.lifecycle)}
+  function activityLifecycleTone(row){if(row.lifecycle==="completed")return"completed";if(row.lifecycle==="cancelled"||row.lifecycle==="abandoned")return"failed";if(row.lifecycle==="terminating")return"running";return row.kind==="discussion"?"discussion":"muted"}
+  function activityLifecycleIcon(row){const icon=node("span","state-icon "+activityLifecycleTone(row));icon.setAttribute("aria-hidden","true");return icon}
+  function displayAgentName(value){const name=String(value||"").trim();return/^Codex Agent [0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(name)?t["activity.defaultAgent"]:name}
+  function previousFailureText(row){const count=Number(row.counts&&row.counts.failed||0);return count>0&&row.displayState!=="failed"?t["activity.previousFailures"].replace("{count}",formatNumber(count)):""}
+  function summaryText(row,includeUpdatedAt=false){const parts=[activityLifecycleLabel(row)];if(row.kind==="discussion")parts.push("GPT · "+formatNumber(row.counts&&row.counts.total||0)+" "+t["activity.turns"]);else{parts.push(previousFailureText(row));if((row.displayState==="running"||row.displayState==="terminating")&&!(Array.isArray(row.agents)&&row.agents.length))parts.push(t["dashboard.time.active"].replace("{duration}",formatDuration(row.elapsedMs)))}if(includeUpdatedAt&&row.updatedAt)parts.push(relativeTime(row.updatedAt));return unique(parts).join(" · ")}
+  function metadataText(row,showWorkspace){const values=[codeLabel("kind",row.kind)];if(showWorkspace)values.push(...(row.workspaceLabels||[]));if(row.kind!=="discussion"&&row.counts&&row.counts.total>1)values.push(formatNumber(row.counts.total)+" "+t["activity.jobs"]);if(row.continued)values.push(t["activity.continued"]);return unique(values).join(" · ")}
+  ${usesFastProcessing.toString()}
+    function executionText(execution){const selected=execution.modelDisplayName||execution.model,rerouted=execution.reroutedModelDisplayName||execution.reroutedModel,model=rerouted?selected+" → "+rerouted:selected,effort=String(execution.reasoningEffort||"").trim().toLowerCase();return model+" · "+effort}
+  function appendExecutions(parent,agents,showAgentName){const available=(agents||[]).filter(Boolean);if(!available.length)return;const list=node("div","execution-list");for(const agent of available){const execution=agent.execution,prefix=showAgentName?displayAgentName(agent.agentName)+" · ":"",text=prefix+(execution?executionText(execution):t["dashboard.execution.unavailable"]),badge=node("span","execution",text);badge.title=text;if(usesFastProcessing(execution))badge.appendChild(node("span","fast-mode","⚡ "+t["dashboard.execution.fast"]));list.appendChild(badge)}parent.appendChild(list)}
+  function agentWorkTime(agent){return agent&&agent.durationMs!=null?t["dashboard.time.duration"].replace("{duration}",formatDuration(agent.durationMs)):t["dashboard.time.durationUnknown"]}
+  function appendActivityAgents(parent,row,readOnly){const agents=Array.isArray(row.agents)?row.agents:[],list=node("div","activity-agent-list");if(!agents.length){const empty=node("div","activity-agent");empty.appendChild(node("div","name",t["activity.temporaryJob"]));list.appendChild(empty)}for(const agent of agents){const item=node("div","activity-agent"),head=node("div","activity-agent-head"),identity=node("div","identity"),actions=node("div","actions"),agentName=displayAgentName(agent.agentName),summary=[agent.role,stateLabel(agent.displayState),agentWorkTime(agent)];let control=null;if(Number(agent.backgroundProcessCount)>0)summary.push(t["activity.backgroundProcesses"]+" · "+formatNumber(agent.backgroundProcessCount));identity.appendChild(node("div","name",agentName));const agentMeta=unique(summary).join(" · ");if(agentMeta)identity.appendChild(node("div","summary",agentMeta));appendExecutions(identity,[agent],false);if(!readOnly){control=controlFor(agent.agentId);if(agent.canForceStop){const stop=actionButton(t["activity.forceStop"],()=>forceAgent(row,agent,stop),"danger");stop.setAttribute("title",agentName);actions.appendChild(stop)}if((control.backgroundProcesses||[]).length){const stopBackground=actionButton(t["activity.stopBackground"],()=>terminateBackgroundProcesses(agent,control,stopBackground),"danger");stopBackground.setAttribute("title",agentName);actions.appendChild(stopBackground)}}head.appendChild(identity);if(actions.childElementCount)head.appendChild(actions);item.appendChild(head);if(control){for(const interaction of control.pendingInteractions||[])item.appendChild(renderInteraction(row,agent,control,interaction))}list.appendChild(item)}parent.appendChild(list)}
+  function cancellationHeading(entry){if(entry.status==="requested")return t["cancellation.requestReason"];if(entry.status==="failed")return t["cancellation.attemptReason"];return t["cancellation.reason"]}
+  function appendCancellations(parent,row){const entries=Array.isArray(row.cancellations)?row.cancellations.filter((entry)=>entry&&typeof entry.reason==="string"&&entry.reason.trim()):[];if(!entries.length)return;const key=String(row.activityId||row.title||"activity"),details=node("details","cancellation"),summary=node("summary","cancellation-toggle"),chevron=node("span","chevron"),label=entries.length===1?cancellationHeading(entries[0]):t["cancellation.reasons"].replace("{count}",formatNumber(entries.length)),list=node("div","cancellation-list");chevron.setAttribute("aria-hidden","true");summary.append(chevron,node("span","",label));for(const entry of entries){const item=node("div","cancellation-item"),meta=[cancellationHeading(entry)];if(entry.targetKind==="job"&&entry.agentName)meta.push(displayAgentName(entry.agentName));meta.push(t["cancellation.target."+entry.targetKind]||String(entry.targetKind||""));const requestedAt=new Date(entry.requestedAt);if(Number.isFinite(requestedAt.getTime()))meta.push(new Intl.DateTimeFormat(localeTag,{dateStyle:"short",timeStyle:"short"}).format(requestedAt));item.append(node("div","meta",unique(meta).join(" · ")),node("div","cancellation-reason",entry.reason));list.appendChild(item)}details.append(summary,list);details.open=expandedCancellations.has(key);details.addEventListener("toggle",()=>{if(details.open)expandedCancellations.add(key);else expandedCancellations.delete(key);scheduleSizeChanged(true)});parent.appendChild(details)}
+	  function actionButton(label,handler,className){const button=node("button",className||"",label);button.type="button";button.addEventListener("click",handler);return button}
+	  function rehydratedView(){const kind=snapshot&&snapshot.mountedPresentation&&snapshot.mountedPresentation.kind;return kind==="historical"||kind==="restored-explicit"}
+	  function fullView(value=snapshot){return Boolean(value&&value.feed&&value.feed.mode==="full")}
+	  function setBusy(value){busy=value;refresh.disabled=value;cardRoot.setAttribute("aria-busy",String(value))}
+	  function invalidateWatch(){watchEpoch+=1;if(watchTimer!==null){clearTimeout(watchTimer);watchTimer=null}}
+	  function beginOperation(){operationEpoch+=1;invalidateWatch();return operationEpoch}
+	  function operationCurrent(epoch){return mounted&&epoch===operationEpoch}
+	  function canWatch(){return mounted&&!busy&&snapshot&&!rehydratedView()&&(!snapshot.watcherPolicy||snapshot.watcherPolicy.live!==false)}
+	  function scheduleWatch(waitMs=0){if(!canWatch()||watching||watchTimer!==null)return;watchTimer=setTimeout(()=>{watchTimer=null;void watch()},waitMs)}
+		  function rehydrateArgs(correlation,enrich=false){if(!correlation)throw new Error(t["common.error"]);const args=correlation.kind==="historical"?{jobId:correlation.jobId,requestId:correlation.requestId,limit:viewLimit}:{mode:"full-history",limit:viewLimit,...(correlation.activityId?{activityId:correlation.activityId}:{}),...(Number.isInteger(correlation.activityVersion)?{activityVersion:correlation.activityVersion}:{}),...(historyCursor?{cursor:historyCursor}:{})};if(enrich)args.enrich=true;return args}
+
+	  function renderActivityRow(row,showWorkspace,includeUpdatedAt=false){const box=node("article","row"),content=node("div","content"),main=node("div","row-main"),identity=node("div","identity"),actions=node("div","actions"),readOnly=rehydratedView();box.appendChild(activityLifecycleIcon(row));identity.append(node("div","name",row.title),node("div","summary",summaryText(row,includeUpdatedAt)));const metadata=metadataText(row,showWorkspace);if(metadata)identity.appendChild(node("div","meta",metadata));if(!readOnly){if(row.canRequestVerification){const verify=actionButton(t["activity.verify"],()=>requestFollowUp("verify",row,verify));actions.appendChild(verify)}if(row.canRetry){const retry=actionButton(t["activity.retry"],()=>requestFollowUp("retry",row,retry));actions.appendChild(retry)}}main.append(identity,actions);content.appendChild(main);appendActivityAgents(content,row,readOnly);appendCancellations(content,row);box.appendChild(content);return box}
+  function groupLabel(kind,group){if(kind==="completed")return t["activity.completedCodex"]+" · "+formatNumber(group.agentCount)+" · "+t["activity.completedWork"]+" "+formatNumber(group.activityCount);const key=kind==="idle"?"activity.idleCodex":"activity.endedCodex";return t[key]+" · "+formatNumber(group.agentCount)}
+  function commonWorkspaceLabels(rows){if(!rows.length)return[];const first=Array.isArray(rows[0].workspaceLabels)?rows[0].workspaceLabels:[];return rows.every((row)=>JSON.stringify(Array.isArray(row.workspaceLabels)?row.workspaceLabels:[])===JSON.stringify(first))?first:[]}
+  function renderIdleActivityGroup(group,showWorkspace){const first=group.rows[0];if(!first)return null;const box=node("article","row history-row"),content=node("div","content"),title=group.activityTitle||t["dashboard.noRecentActivity"],summary=[t["dashboard.recentActivity"]],workspaces=showWorkspace?commonWorkspaceLabels(group.rows):[],list=node("div","activity-agent-list"),updatedAt=group.rows.map((row)=>Date.parse(row.updatedAt)).filter(Number.isFinite).sort((left,right)=>right-left)[0];box.appendChild(stateIcon({displayState:"idle",kind:"other"}));content.appendChild(node("div","name",title));summary.push(...workspaces);if(group.activityId&&updatedAt)summary.push(relativeTime(new Date(updatedAt).toISOString()));content.appendChild(node("div","summary",unique(summary).join(" · ")));for(const agent of group.rows){const item=node("div","activity-agent"),identity=node("div","identity"),agentSummary=[agent.role,agentWorkTime(agent)];if(showWorkspace&&!workspaces.length)agentSummary.push(...(agent.workspaceLabels||[]));identity.append(node("div","name",displayAgentName(agent.agentName)),node("div","summary",unique(agentSummary).join(" · ")));appendExecutions(identity,[agent],false);item.appendChild(identity);list.appendChild(item)}content.appendChild(list);box.appendChild(content);return box}
+  function renderIdleActivityGroups(group,showWorkspace,visibleActivityIds){if(!group||!Array.isArray(group.rows))return;const activityGroups=groupActivityIdleAgentsByActivity(group.rows,visibleActivityIds),visibleCount=activityGroups.reduce((count,item)=>count+item.rows.length,0);if(!visibleCount)return;const wrapper=node("section","group"),button=node("button","disclosure"),label=node("span","disclosure-label"),chevron=node("span","chevron"),panel=node("div","group-list"),panelId="group-idle";button.type="button";button.setAttribute("aria-expanded",String(expandedGroups.idle));button.setAttribute("aria-controls",panelId);chevron.setAttribute("aria-hidden","true");label.append(chevron,node("span","",groupLabel("idle",{agentCount:visibleCount})));button.append(label);panel.id=panelId;panel.hidden=!expandedGroups.idle;for(const activityGroup of activityGroups){const row=renderIdleActivityGroup(activityGroup,showWorkspace);if(row)panel.appendChild(row)}button.addEventListener("click",()=>{expandedGroups.idle=!expandedGroups.idle;button.setAttribute("aria-expanded",String(expandedGroups.idle));panel.hidden=!expandedGroups.idle});wrapper.append(button,panel);groups.appendChild(wrapper)}
+  function historySummaryText(feed){const summary=feed&&feed.historySummary||{};return t["activity.pastRecords"]+" · "+t["activity.completedActivities"]+" "+formatNumber(summary.completedActivities)+" · "+t["activity.endedActivities"]+" "+formatNumber(summary.endedActivities)+" · "+t["activity.idleAgentCount"]+" "+formatNumber(summary.idleAgents)}
+  function renderHistorySummary(feed){const wrapper=node("section","group"),line=node("div","disclosure",historySummaryText(feed));line.setAttribute("role","status");wrapper.appendChild(line);groups.appendChild(wrapper)}
+  function renderRecentActivities(feed,showWorkspace){const history=feed.history||{},rows=Array.isArray(history.rows)?history.rows:[],visibleActivityIds=new Set(rows.map((row)=>String(row&&row.activityId||"").trim()).filter(Boolean)),section=node("section","group"),heading=node("div","disclosure",t["activity.history"]),list=node("div","group-list");if(rows.length||fullView()&&!feed.activityTotal){section.appendChild(heading);if(rows.length===0)list.appendChild(node("p","empty",t["activity.noHistory"]));for(const row of rows)list.appendChild(renderActivityRow(row,showWorkspace,true));section.appendChild(list);groups.appendChild(section)}return visibleActivityIds}
+  function renderActivityHistory(feed,showWorkspace){const visibleActivityIds=renderRecentActivities(feed,showWorkspace);if(feed.idleAgents&&Array.isArray(feed.idleAgents.rows)&&feed.idleAgents.rows.length)renderIdleActivityGroups(feed.idleAgents,showWorkspace,visibleActivityIds);if(fullView()){const page=feed.history&&feed.history.pagination||{},controls=node("div","actions");if(page.hasPrevious){const previous=actionButton(t["activity.previousPage"],()=>loadHistoryPage(page.previousCursor,previous));controls.appendChild(previous)}if(page.nextCursor){const next=actionButton(t["activity.nextPage"],()=>loadHistoryPage(page.nextCursor,next));controls.appendChild(next)}if(controls.childElementCount){const wrapper=node("section","group");wrapper.appendChild(controls);groups.appendChild(wrapper)}}}
+	  async function loadHistoryPage(cursor,button){button.disabled=true;const prior=historyCursor;historyCursor=cursor||null;try{rehydratedView()?await reloadRehydrated():await reload()}catch(error){historyCursor=prior;showRefreshError(error);button.disabled=false}}
+		  function showMoreButton(){const more=actionButton(t["activity.showMore"],async()=>{more.disabled=true;viewLimit=Math.min(100,viewLimit+30);try{rehydratedView()?await reloadRehydrated():await reload()}catch(error){showRefreshError(error);more.disabled=false}});more.className="disclosure";return more}
+
+			  function render(next,localeReady=false){
+			    if(!next||!next.feed||!Array.isArray(next.feed.active))throw new Error(t["activity.loadFailed"]);
+			    const nextScopeVersion=Number(next.scopeVersion),currentScopeVersion=Number(snapshot&&snapshot.scopeVersion),renderedAt=Date.parse(next.generatedAt);if(snapshot&&Number.isInteger(nextScopeVersion)&&Number.isInteger(currentScopeVersion)&&nextScopeVersion<currentScopeVersion)return false;if(snapshot&&nextScopeVersion===currentScopeVersion&&Number.isFinite(renderedAt)&&renderedAt<lastRenderedAt)return false;if(Number.isFinite(renderedAt))lastRenderedAt=renderedAt;
+			    if(next.watcherPolicy&&next.watcherPolicy.stopReason==="presentation-duplicate"){snapshot=null;rehydrationCorrelation=null;historyCursor=null;lastRenderedAt=0;invalidateWatch();setBusy(false);setCardVisible(false);return false}
+			    recoveryAction=null;setBusy(false);setCardVisible(true);snapshot=next;renderWeeklyUsage(next.weeklyUsage);
+			    if(next.mountedActivity)mountedActivityHint=next.mountedActivity;
+			    if(next.mountedPresentation){mountedPresentationHint=next.mountedPresentation;rehydrationCorrelation=next.mountedPresentation.kind==="historical"?{kind:"historical",jobId:next.mountedPresentation.jobId,requestId:next.mountedPresentation.requestId}:next.mountedPresentation.kind==="restored-explicit"?{kind:"full-history",...(next.mountedPresentation.activityId?{activityId:next.mountedPresentation.activityId}:{}),...(Number.isInteger(next.mountedPresentation.activityVersion)?{activityVersion:next.mountedPresentation.activityVersion}:{})}:null}
+		    if(fullView(next)){const page=next.feed.history&&next.feed.history.pagination||{};historyCursor=page.currentCursor||null}else historyCursor=null;
+		    localePreference=next.uiLocalePreference||"auto";if(!localeReady)setLocale(effectiveLocaleTag(),false);
+		    updateRefreshLabel();
+		    activityHeading.textContent=fullView(next)?t["activity.allActivities"]:t["activity.currentActivities"];
+		    currentCount.textContent="· "+formatNumber(fullView(next)?next.feed.activityTotal:next.feed.activeCount||0);
+		    activeList.replaceChildren();const showWorkspace=Boolean(next.feed.showWorkspaceLabels);
+		    if(next.feed.active.length===0)activeList.appendChild(node("p","empty",t["activity.noCurrent"]));
+		    for(const row of next.feed.active)activeList.appendChild(renderActivityRow(row,showWorkspace));
+		    groups.replaceChildren();renderActivityHistory(next.feed,showWorkspace);renderHistorySummary(next.feed);
+		    if(!fullView(next)&&next.feed.activeHasMore&&viewLimit<100)groups.appendChild(showMoreButton());
+		    updated.textContent=t["activity.updated"]+": "+new Date(next.generatedAt).toLocaleTimeString(localeTag);message.textContent=detailsIncomplete(next.enrichment)?t["common.detailsRefreshFailed"]:"";message.classList.remove("error");scheduleSizeChanged();
+			    if(next.watcherPolicy&&next.watcherPolicy.live===false){invalidateWatch();if(handoffTimer){clearTimeout(handoffTimer);handoffTimer=null}message.textContent=rehydratedView()?t[next.mountedPresentation&&next.mountedPresentation.kind==="restored-explicit"?"activity.restoredSnapshot":"activity.historicalSnapshot"]:t["activity.superseded"];scheduleSizeChanged();if(rehydratedView())scheduleEnrichment(next);return true}
+				    scheduleHandoffs();scheduleEnrichment(next);scheduleWatch();return true
+			  }
+			  function scheduleEnrichment(next){const rehydrated=rehydratedView();if(!mounted||!next||!next.enrichment||next.enrichment.state!=="structural"||!rehydrated&&next.watcherPolicy&&next.watcherPolicy.live===false)return;const epoch=++enrichmentEpoch,operation=operationEpoch;if(enriching)return;enriching=true;const current=()=>operationCurrent(operation)&&epoch===enrichmentEpoch;void(async()=>{let enriched;if(rehydrated){const correlation=rehydrationCorrelation&&{...rehydrationCorrelation};enriched=await readActivityView("codex_activity_rehydrate",rehydrateArgs(correlation,true),ENRICHMENT_TIMEOUT_MS,current)}else{const card=cardProof(),args={card,limit:viewLimit,enrich:true};if(card.presentation.kind==="explicit"&&historyCursor)args.cursor=historyCursor;enriched=await readActivityView("codex_activity_snapshot",args,ENRICHMENT_TIMEOUT_MS,current)}if(enriched&&current())render(enriched)} )().catch(()=>{if(current()){message.textContent=t["activity.enrichmentFailed"];message.classList.remove("error");scheduleSizeChanged()}}).finally(()=>{enriching=false;if(epoch!==enrichmentEpoch&&snapshot&&snapshot.enrichment&&snapshot.enrichment.state==="structural")scheduleEnrichment(snapshot)})}
+
+		  function rememberToolInput(input){if(!input)return;if(typeof input.prompt==="string")taskInvocation=true;if(typeof input.requestId==="string")taskInputRequestId=input.requestId;if(input.mode==="compact-monitor"||input.mode==="full-history")activityInputMode=input.mode}
+			  function shouldCollapseRehydrateError(error){const raw=String(error&&error.message||error||"");return/ACTIVITY_REHYDRATE_(?:VISIBILITY_DISABLED|DUPLICATE)/.test(raw)}
+			  function consumeToolOutput(next){if(next&&next.kind==="user-question"){if(next.question)void hydrateQuestion(next.question).catch(showQuestionError);return true}if(next&&next.feed&&Array.isArray(next.feed.active)){render(next);return true}const outputRequestId=next&&next.bridgeSession&&next.bridgeSession.requestId||next&&next.requestId;if(taskInputRequestId&&typeof outputRequestId==="string"&&taskInputRequestId!==outputRequestId){setCardVisible(false);return true}if(next&&next.kind==="activity"&&(next.mode==="full-history"||!next.mode&&activityInputMode==="full-history")){const activityId=typeof next.activityId==="string"&&next.activityId?next.activityId:null,activityVersion=Number(next.activityVersion),key="restored-explicit\u0000"+(activityId||"")+"\u0000"+(Number.isInteger(activityVersion)?activityVersion:"")+"\u0000"+String(next.scopeVersion||"");if(taskBootstrapKey===key)return true;taskBootstrapKey=key;rehydrationCorrelation={kind:"full-history",...(activityId?{activityId}:{}),...(Number.isInteger(activityVersion)&&activityVersion>0?{activityVersion}:{})};mountedActivityHint=null;mountedPresentationHint=null;void hydrateWithRetry(reloadRehydrated,key);return true}if(next&&next.kind==="task"&&typeof next.jobId==="string"&&typeof next.requestId==="string"&&typeof next.activityId==="string"){if(automaticBootstrapRequestId===next.requestId)return true;taskInvocation=true;const key="historical\u0000"+next.jobId+"\u0000"+next.requestId;if(taskBootstrapKey===key)return true;taskBootstrapKey=key;rehydrationCorrelation={kind:"historical",jobId:next.jobId,requestId:next.requestId};mountedActivityHint=null;mountedPresentationHint=null;void hydrateWithRetry(reloadRehydrated,key);return true}const presentation=next&&(next.bridgeActivity||next.activityTracking);if(!presentation){if(taskInvocation||next&&next.error)setCardVisible(false);return false}taskInvocation=true;if(typeof outputRequestId==="string")automaticBootstrapRequestId=outputRequestId;rehydrationCorrelation=null;const bootstrapEligible=presentation.shouldRenderActivityCard||AUTOMATIC_BOOTSTRAP_REASONS.has(presentation.renderReason);if(!bootstrapEligible){setCardVisible(false);return true}const activityId=presentation.activityId,cardGeneration=Number(presentation.cardGeneration),activityPresentationId=presentation.activityPresentationId,reservationOwnerId=presentation.jobId;if(typeof activityId!=="string"||!activityId||!Number.isInteger(cardGeneration)||cardGeneration<1||presentation.presentationKind!=="automatic"||typeof activityPresentationId!=="string"||!activityPresentationId){setCardVisible(false);return true}const key=activityPresentationId+"\u0000"+(typeof reservationOwnerId==="string"?reservationOwnerId:"");if(taskBootstrapKey===key)return true;taskBootstrapKey=key;mountedActivityHint={activityId,cardGeneration};mountedPresentationHint={kind:"automatic",activityPresentationId,...(typeof reservationOwnerId==="string"&&reservationOwnerId?{reservationOwnerId}:{})};void hydrateWithRetry(reload,key);return true}
+		  function consumeHostResult(value){const consumed=consumeToolOutput(unwrap(value));if(!consumed)throw new Error(t["activity.loadFailed"]);return true}
+		  function applyHostGlobals(globals){const metadataValue=globals&&globals.toolResponseMetadata,metadata=hostToolResultMetadata(metadataValue);rememberActivityScope(metadata);hostLocaleTag=resolveHostUiLocaleTag(globals&&globals.locale,metadata,hostLocaleTag);if(globals&&globals.toolInput)rememberToolInput(globals.toolInput);if(metadata.interactionControls)controls=metadata.interactionControls;if(localePreference==="auto")setLocale(hostLocaleTag);if(metadata["codex/userQuestion@1"])return consumeHostResult({_meta:metadata});const privateOutput=privateActivityOutput(metadataValue);if(privateOutput)return consumeHostResult(privateOutput);if(globals&&Object.prototype.hasOwnProperty.call(globals,"toolOutput")&&globals.toolOutput!==undefined)return consumeHostResult(globals.toolOutput);return false}
+		  function hydrateCurrentHost(){if(!window.openai||!applyHostGlobals(window.openai))throw new Error(t["activity.loadFailed"]);return true}
+
+  function interactionDecisionLabel(decision){if(decision==="accept")return t["activity.approve"];if(decision==="acceptForSession")return t["activity.approveSession"];if(decision==="decline")return t["activity.decline"];return t["common.cancel"]}
+${QUESTION_CARD_SCRIPT}
+  function renderInteraction(row,agent,control,interaction){
+    const panel=node("div","interaction"),isInput=interaction.kind==="user-input"||interaction.kind==="mcp-elicitation";
+    panel.append(node("strong","",isInput?t["activity.inputRequired"]:t["activity.approval"]),node("div","message",interaction.summary));
+    if(interaction.origin==="codex-question"&&!(interaction.questions||[]).some(q=>q.isSecret)){panel.appendChild(node("div","message",t["question.gptHandles"]));return panel}
+    if(interaction.isBlocking===false)panel.appendChild(node("div","meta",t["activity.optionalInput"]));
+    const context=[];
+    if(interaction.cwdLabel)context.push(interaction.cwdLabel);
+    if(interaction.grantRootLabel)context.push(interaction.grantRootLabel);
+    if(interaction.networkContext)context.push(interaction.networkContext.protocol+"://"+interaction.networkContext.host);
+    if(context.length)panel.appendChild(node("div","meta",unique(context).join(" · ")));
+    if(interaction.kind==="mcp-elicitation")return renderElicitation(panel,row,agent,control,interaction);
+    if(!isInput){
+      const actions=node("div","actions");
+      for(const decision of interaction.availableDecisions||[]){let button;button=actionButton(interactionDecisionLabel(decision),()=>respondInteraction(row,agent,control,interaction,{decision},button),decision==="cancel"?"danger":"");actions.appendChild(button)}
+      if(actions.childElementCount)panel.appendChild(actions);return panel;
+    }
+    const fields=questionFields(panel,interaction.questions||[]);
+    const send=actionButton(t["activity.answer"],()=>{if(!fields.every(field=>field.valid()))return;const answers=Object.fromEntries(fields.map(field=>[field.id,[field.read()]]));void respondInteraction(row,agent,control,interaction,{answers},send)});
+    panel.appendChild(send);return panel;
+  }
+${CARD_FORM_SCRIPT}
+  function renderElicitation(panel,row,agent,control,interaction){
+    const request=interaction.elicitation||{},fields=[],schema=request.requestedSchema;
+    if(request.mode==="url"&&request.url){
+      const link=node("a","message",t["activity.openRequest"]);link.href=request.url;link.target="_blank";link.rel="noopener noreferrer";link.referrerPolicy="no-referrer";
+      link.addEventListener("click",event=>{if(window.openai&&typeof window.openai.openExternal==="function"){event.preventDefault();try{window.openai.openExternal({href:request.url,redirectUrl:false})}catch(error){showError(error)}}});panel.appendChild(link);
+    }else if(request.mode==="form"&&schema&&schema.properties){
+      for(const [key,field] of Object.entries(schema.properties))fields.push(elicitationField(panel,key,field,(schema.required||[]).includes(key)));
+    }else panel.appendChild(node("div","message",t["activity.loadFailed"]));
+    const actions=node("div","actions");
+    for(const action of ["accept","decline","cancel"]){
+      let button;button=actionButton(action==="accept"?t["activity.answer"]:interactionDecisionLabel(action),()=>{
+        if(action==="accept"&&!fields.every(field=>field.valid()))return;
+        const content=action==="accept"&&request.mode==="form"?Object.fromEntries(fields.map(field=>[field.key,field.read()]).filter(entry=>entry[1]!==undefined)):null;
+        void respondInteraction(row,agent,control,interaction,{elicitation:{action,content}},button);
+      });
+      if(action==="accept"&&!request.url&&!schema)button.disabled=true;actions.appendChild(button);
+    }
+    panel.appendChild(actions);return panel;
+  }
+  async function respondInteraction(row,agent,control,interaction,response,button){button.disabled=true;try{await callTool("codex_interaction_respond",{requestId:mutationId(),jobId:control.jobId,expectedJobVersion:control.jobVersion,interactionId:interaction.interactionId,response,card:cardProof()},TOOL_CALL_TIMEOUT_MS,false);await reload()}catch(error){showError(error);button.disabled=false}}
+
+	  async function forceAgent(row,agent,button){const control=controlFor(agent.agentId);if(!control.jobId)return;if(!confirm(t["activity.forceConfirmTitle"]+"\n\n"+t["activity.forceConfirm"]+"\n"+t["activity.partialChanges"]))return;button.disabled=true;message.textContent=t["activity.forceStopping"];try{await callTool("codex_activity_job_cancel",{requestId:mutationId(),jobId:control.jobId,expectedJobVersion:control.jobVersion,card:cardProof(),acknowledgeAffectedJobIds:control.affectedJobIds||[control.jobId]},TOOL_CALL_TIMEOUT_MS,false);message.textContent=t["activity.forceStopped"];await reload()}catch(error){showError(error);button.disabled=false}}
+	  async function terminateBackgroundProcesses(agent,control,button){if(!confirm(t["activity.backgroundConfirm"]))return;button.disabled=true;try{if(!control.agentVersion)throw new Error(t["common.error"]);const card=cardProof();for(const process of control.backgroundProcesses||[]){const result=await callTool("codex_background_process_terminate",{requestId:mutationId(),agentId:agent.agentId,expectedAgentVersion:control.agentVersion,processId:process.processId,card},TOOL_CALL_TIMEOUT_MS,false),payload=result&&result.structuredContent||result;if(payload&&payload.ok===false)throw new Error(t["common.error"])}await reload()}catch(error){showError(error);button.disabled=false}}
+  async function requestFollowUp(kind,row,button){button.disabled=true;const prompt=localizedText(kind==="verify"?"activity.prompt.verify":"activity.prompt.retry",{activityId:row.activityId});try{await sendFollowUp(prompt);message.textContent=t["activity.followUpSent"]}catch(error){showError(error);button.disabled=false}}
+		  function showError(error,fallback=t["common.error"]){const raw=String(error&&error.message||error||""),code=raw.match(/\b[A-Z][A-Z0-9_]{2,}\b/),localized=Object.values(t).includes(raw)?raw:(code?t["common.errorCode"].replace("{code}",code[0]):fallback);message.textContent=localized;message.classList.add("error");scheduleSizeChanged()}
+		  function showRefreshError(error){if(!mounted)return;setBusy(false);if(snapshot){message.textContent=t["activity.refreshFailedRetained"];message.classList.remove("error");scheduleSizeChanged();scheduleWatch(1000);return}showHydrationError(error,hydrateCurrentHost)}
+		  function showHydrationLoading(){recoveryAction=null;setBusy(true);message.textContent=t["common.loading"];message.classList.remove("error");if(!snapshot){renderWeeklyUsage(null);activityHeading.textContent=rehydrationCorrelation&&rehydrationCorrelation.kind==="full-history"?t["activity.allActivities"]:t["activity.currentActivities"];currentCount.textContent="";activeList.replaceChildren();groups.replaceChildren();updated.textContent="";setCardVisible(true)}updateRefreshLabel();scheduleSizeChanged()}
+		  function showHydrationError(error,retry){recoveryAction=retry;setBusy(false);if(!snapshot){renderWeeklyUsage(null);activityHeading.textContent=rehydrationCorrelation&&rehydrationCorrelation.kind==="full-history"?t["activity.allActivities"]:t["activity.currentActivities"];currentCount.textContent="";activeList.replaceChildren();groups.replaceChildren();updated.textContent="";setCardVisible(true)}updateRefreshLabel();showError(error,t["activity.loadFailed"])}
+		  function delay(ms){return new Promise((resolve)=>setTimeout(resolve,ms))}
+		  async function readActivityView(name,args,timeout,current,attempts=3){for(let attempt=0;attempt<attempts;attempt++){if(attempt>0)await delay(attempt===1?750:1500);if(!current())return null;try{const result=await callTool(name,args,timeout,true);if(!current())return null;const next=unwrap(result);if(!next||!next.feed||!Array.isArray(next.feed.active))throw new Error(t["activity.loadFailed"]);return next}catch(error){if(!current())return null;if(attempt===attempts-1||shouldCollapseRehydrateError(error))throw error}}return null}
+		  async function hydrateWithRetry(action,key){const epoch=++hydrationEpoch;showHydrationLoading();let lastError=new Error(t["activity.loadFailed"]);for(let attempt=0;attempt<3;attempt++){if(!mounted||epoch!==hydrationEpoch||taskBootstrapKey!==key){setBusy(false);return false}if(attempt>0)await delay(attempt===1?750:1500);if(!mounted||epoch!==hydrationEpoch||taskBootstrapKey!==key){setBusy(false);return false}try{await action(false);if(mounted&&epoch===hydrationEpoch&&taskBootstrapKey===key)return true;return false}catch(error){lastError=error;if(shouldCollapseRehydrateError(error)){snapshot=null;rehydrationCorrelation=null;historyCursor=null;lastRenderedAt=0;setBusy(false);setCardVisible(false);return false}showHydrationLoading()}}if(mounted&&epoch===hydrationEpoch&&taskBootstrapKey===key)showHydrationError(lastError,()=>hydrateWithRetry(action,key));return false}
+		  function cardProof(){const mountedActivity=snapshot&&snapshot.mountedActivity||mountedActivityHint,presentation=snapshot&&snapshot.mountedPresentation||mountedPresentationHint;if(!mountedActivity||!presentation||presentation.kind==="historical"||presentation.kind==="restored-explicit"||presentation.kind==="automatic"&&!presentation.activityPresentationId||presentation.kind!=="automatic"&&presentation.kind!=="explicit")throw new Error(t["common.error"]);return{activityId:mountedActivity.activityId,generation:mountedActivity.cardGeneration,presentation:presentation.kind==="automatic"?{kind:"automatic",activityPresentationId:presentation.activityPresentationId,...(presentation.reservationOwnerId?{reservationOwnerId:presentation.reservationOwnerId}:{})}:{kind:"explicit"}}}
+		  async function reloadRehydrated(retry=true){if(!rehydrationCorrelation)throw new Error(t["common.error"]);const epoch=beginOperation(),correlation={...rehydrationCorrelation},identity=JSON.stringify(correlation),current=()=>operationCurrent(epoch)&&rehydrationCorrelation&&JSON.stringify(rehydrationCorrelation)===identity;setBusy(true);try{const next=await readActivityView("codex_activity_rehydrate",rehydrateArgs(correlation,false),TOOL_CALL_TIMEOUT_MS,current,retry?3:1);if(!next||!current())return false;const rendered=render(next);if(!rendered)setBusy(false);return rendered}catch(error){if(!current())return false;setBusy(false);throw error}}
+		  async function promoteRehydrated(){const mountedActivity=snapshot&&snapshot.mountedActivity||mountedActivityHint;if(!mountedActivity)throw new Error(t["common.error"]);const epoch=beginOperation();setBusy(true);viewLimit=30;historyCursor=null;try{const next=await readActivityView("codex_activity_snapshot",{card:{activityId:mountedActivity.activityId,generation:mountedActivity.cardGeneration,presentation:{kind:"explicit"}},limit:viewLimit,enrich:false},TOOL_CALL_TIMEOUT_MS,()=>operationCurrent(epoch));if(!next||!operationCurrent(epoch))return false;const rendered=render(next);if(!rendered)setBusy(false);return rendered}catch(error){if(!operationCurrent(epoch))return false;setBusy(false);throw error}}
+		  async function reload(retry=true){const epoch=beginOperation(),card=cardProof(),args={card,limit:viewLimit,enrich:false};if(card.presentation.kind==="explicit"&&historyCursor)args.cursor=historyCursor;setBusy(true);try{const next=await readActivityView("codex_activity_snapshot",args,TOOL_CALL_TIMEOUT_MS,()=>operationCurrent(epoch),retry?3:1);if(!next||!operationCurrent(epoch))return false;const rendered=render(next);if(!rendered)setBusy(false);return rendered}catch(error){if(!operationCurrent(epoch))return false;setBusy(false);throw error}}
+	  async function resumeCard(){if(!snapshot||busy)return;rehydratedView()?await reloadRehydrated():await reload()}
+	  async function watch(){if(!canWatch()||watching)return;const token=watchEpoch;let retryDelay=0;watching=true;try{const card=cardProof(),args={card,limit:viewLimit,afterVersion:snapshot.scopeVersion,waitMs:55000,enrich:false};if(card.presentation.kind==="explicit"&&historyCursor)args.cursor=historyCursor;const result=await callTool("codex_activity_snapshot",args,WATCH_CALL_TIMEOUT_MS,false);if(!mounted||token!==watchEpoch)return;const next=unwrap(result);failures=0;render(next)}catch(error){if(!mounted||token!==watchEpoch)return;failures++;retryDelay=Math.min(30000,1000*Math.pow(2,Math.min(failures,5)))+Math.floor(Math.random()*750);if(failures>=5){message.textContent=t["activity.refreshFailedRetained"];message.classList.remove("error");scheduleSizeChanged()}}finally{watching=false;scheduleWatch(retryDelay)}}
+  function scheduleHandoffs(){if(handoffTimer||!snapshot||snapshot.completionHandoff!=="auto-handoff"||snapshot.watcherPolicy&&snapshot.watcherPolicy.ownsCompletionHandoff===false||!Array.isArray(snapshot.pendingHandoffs)||snapshot.pendingHandoffs.length===0)return;handoffTimer=setTimeout(()=>{handoffTimer=null;void dispatchHandoffs()},1500)}
+	  async function sendFollowUp(prompt){if(window.openai&&typeof window.openai.sendFollowUpMessage==="function")return withUiToolCallTimeout(()=>window.openai.sendFollowUpMessage({prompt}),10000,t["common.error"]);return rpcRequest("ui/message",{role:"user",content:{type:"text",text:prompt}},10000)}
+	  async function dispatchHandoffs(){let claimed=[],card;try{card=cardProof();if(card.presentation.kind!=="automatic")return;const claim=unwrap(await callTool("codex_activity_handoff",{action:"claim-batch",outboxIds:snapshot.pendingHandoffs.map((event)=>event.outboxId),card},TOOL_CALL_TIMEOUT_MS,false));claimed=claim&&Array.isArray(claim.events)?claim.events:[];if(claimed.length===0)return;const lookup=new Map(snapshot.pendingHandoffs.map((event)=>[event.outboxId,event])),ids=claimed.map((event)=>event.activityId),jobIds=claimed.flatMap((event)=>lookup.get(event.outboxId)&&lookup.get(event.outboxId).jobIds||[]),outboxIds=claimed.map((event)=>event.outboxId);const prompt=localizedText("activity.prompt.handoff",{origin:claim.origin,handoffDepth:claim.handoffDepth,handoffBatchId:claim.handoffBatchId,activityIds:ids.join(", "),jobIds:jobIds.join(", ")});await sendFollowUp(prompt);await callTool("codex_activity_handoff",{action:"delivered-batch",outboxIds,card},TOOL_CALL_TIMEOUT_MS,false)}catch(error){if(claimed.length&&card)await callTool("codex_activity_handoff",{action:"release-batch",outboxIds:claimed.map((event)=>event.outboxId),card},TOOL_CALL_TIMEOUT_MS,false).catch(()=>{});showError(error)}}
+		  function cancelPending(reason){for(const[id,request]of pending){rpcNotification("notifications/cancelled",{requestId:id,reason});request.reject(new Error(reason))}pending.clear()}
+		  function suspendCard(reason){mounted=false;if(userQuestion){questionEpoch+=1;setQuestionBusy(false);if(questionExpiryTimer){clearTimeout(questionExpiryTimer);questionExpiryTimer=null}}operationEpoch+=1;invalidateWatch();hydrationEpoch+=1;enrichmentEpoch+=1;setBusy(false);if(handoffTimer){clearTimeout(handoffTimer);handoffTimer=null}cancelPending(reason)}
+		  window.addEventListener("message",(event)=>{if(event.source!==window.parent)return;const value=event.data;if(!value||value.jsonrpc!=="2.0")return;if(value.method==="ping"&&value.id!==undefined){window.parent.postMessage({jsonrpc:"2.0",id:value.id,result:{}},"*");return}if(value.method==="ui/resource-teardown"&&value.id!==undefined){suspendCard("Activity card unmounted");if(resizeObserver)resizeObserver.disconnect();window.parent.postMessage({jsonrpc:"2.0",id:value.id,result:{}},"*");return}if(value.id!==undefined&&pending.has(value.id)){const request=pending.get(value.id);pending.delete(value.id);value.error?request.reject(new Error(value.error.message||t["common.error"])):request.resolve(value.result);return}if(value.method==="ui/notifications/tool-input"){rememberToolInput(value.params&&value.params.arguments||value.params);return}if(value.method==="ui/notifications/host-context-changed"){if(value.params&&value.params.locale){hostLocaleTag=String(value.params.locale);if(localePreference==="auto")setLocale(hostLocaleTag)}return}if(value.method==="ui/notifications/tool-result"){try{consumeHostResult(value.params)}catch(error){showHydrationError(error,()=>consumeHostResult(value.params))}}},{passive:true});
+		  window.addEventListener("openai:set_globals",(event)=>{const globals=event.detail&&event.detail.globals;try{if(!applyHostGlobals(globals)&&!snapshot&&!userQuestion)showHydrationError(new Error(t["activity.loadFailed"]),hydrateCurrentHost)}catch(error){showHydrationError(error,hydrateCurrentHost)}});
+		  window.addEventListener("pagehide",()=>suspendCard("Activity card unmounted"));
+		  window.addEventListener("pageshow",()=>{const resumed=!mounted;mounted=true;void beginStandardBridge();if(resumed&&userQuestion)void hydrateQuestion(questionProof()).catch(showError);if(resumed&&snapshot)void resumeCard().catch(showRefreshError)});
+		  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){mounted=true;void beginStandardBridge();if(userQuestion)void hydrateQuestion(questionProof()).catch(showError);if(snapshot)void resumeCard().catch(showRefreshError)}else suspendCard("Activity card hidden")});
+		  window.addEventListener("online",()=>{if(mounted&&snapshot)void resumeCard().catch(showRefreshError)});
+			  refresh.addEventListener("click",()=>{if(userQuestion){if(!questionBusy)void hydrateQuestion(questionProof()).catch(showQuestionError);return}if(busy)return;const recovery=recoveryAction;if(recovery){showHydrationLoading();Promise.resolve().then(recovery).catch((error)=>showHydrationError(error,recovery));return}const mountedActivity=snapshot&&snapshot.mountedActivity||mountedActivityHint,action=rehydratedView()?(mountedActivity?promoteRehydrated():reloadRehydrated()):reload();action.catch(showRefreshError)});
+	  setLocale(localeTag);
+	  standardBridgeReady=beginStandardBridge();
+	  if(typeof ResizeObserver==="function"){resizeObserver=new ResizeObserver(()=>scheduleSizeChanged());resizeObserver.observe(document.documentElement);resizeObserver.observe(document.body)}
+	  try{if(!window.openai||!applyHostGlobals(window.openai))showHydrationError(new Error(t["activity.loadFailed"]),hydrateCurrentHost)}catch(error){showHydrationError(error,hydrateCurrentHost)}
+</script>
+</body>
+</html>`;

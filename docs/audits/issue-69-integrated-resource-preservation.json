@@ -1,0 +1,34 @@
+{
+  "sourceCommit": "f5027b367309088d2e68782d99e13aa0e46b7033",
+  "comparison": "Git blob bytes plus unchanged immutable URI and metadata",
+  "results": [
+    {
+      "ref": "6d84d4d",
+      "resourceCount": 142,
+      "missing": 0,
+      "alteredMetadata": 0,
+      "alteredHtml": 0
+    },
+    {
+      "ref": "323d55c",
+      "resourceCount": 135,
+      "missing": 0,
+      "alteredMetadata": 0,
+      "alteredHtml": 0
+    },
+    {
+      "ref": "2c3658b",
+      "resourceCount": 148,
+      "missing": 0,
+      "alteredMetadata": 0,
+      "alteredHtml": 0
+    },
+    {
+      "ref": "95bfa04",
+      "resourceCount": 147,
+      "missing": 0,
+      "alteredMetadata": 0,
+      "alteredHtml": 0
+    }
+  ]
+}

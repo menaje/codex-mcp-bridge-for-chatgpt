@@ -1,0 +1,1025 @@
+{
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/start"
+          ]
+        },
+        "params": {
+          "properties": {
+            "approvalPolicy": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/AskForApproval"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "config": {
+              "additionalProperties": true,
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "ephemeral": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "experimentalRawEvents": {
+              "type": "boolean"
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sandbox": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/SandboxMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "serviceTier": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "approvalsReviewer": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "user",
+                    "auto_review"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/resume"
+          ]
+        },
+        "params": {
+          "properties": {
+            "approvalPolicy": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/AskForApproval"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sandbox": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/SandboxMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "threadId": {
+              "type": "string"
+            },
+            "approvalsReviewer": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "user",
+                    "auto_review"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "config": {
+              "additionalProperties": true,
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "threadId"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/fork"
+          ]
+        },
+        "params": {
+          "properties": {
+            "approvalPolicy": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/AskForApproval"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "ephemeral": {
+              "type": "boolean"
+            },
+            "sandbox": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/SandboxMode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "threadId": {
+              "type": "string"
+            },
+            "approvalsReviewer": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "user",
+                    "auto_review"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "config": {
+              "additionalProperties": true,
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "threadId"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/archive"
+          ]
+        },
+        "params": {
+          "properties": {
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/unarchive"
+          ]
+        },
+        "params": {
+          "properties": {
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/backgroundTerminals/list"
+          ]
+        },
+        "params": {
+          "properties": {
+            "cursor": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/backgroundTerminals/terminate"
+          ]
+        },
+        "params": {
+          "properties": {
+            "processId": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "processId",
+            "threadId"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/read"
+          ]
+        },
+        "params": {
+          "properties": {
+            "includeTurns": {
+              "type": "boolean"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "turn/start"
+          ]
+        },
+        "params": {
+          "properties": {
+            "approvalPolicy": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/AskForApproval"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "approvalsReviewer": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ApprovalsReviewer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "effort": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ReasoningEffort"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "input": {
+              "items": {
+                "$ref": "#/definitions/UserInput"
+              },
+              "type": "array"
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "permissions": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sandboxPolicy": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/SandboxPolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "serviceTier": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "input",
+            "threadId"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "turn/steer"
+          ]
+        },
+        "params": {
+          "properties": {
+            "expectedTurnId": {
+              "type": "string"
+            },
+            "input": {
+              "items": {
+                "$ref": "#/definitions/UserInput"
+              },
+              "type": "array"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "expectedTurnId",
+            "input",
+            "threadId"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "turn/interrupt"
+          ]
+        },
+        "params": {
+          "properties": {
+            "threadId": {
+              "type": "string"
+            },
+            "turnId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId",
+            "turnId"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "model/list"
+          ]
+        },
+        "params": {
+          "properties": {
+            "cursor": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "includeHidden": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/unsubscribe"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId"
+          ]
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/loaded/list"
+          ]
+        },
+        "params": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": []
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    }
+  ],
+  "definitions": {
+    "AskForApproval": {
+      "oneOf": [
+        {
+          "enum": [
+            "untrusted",
+            "on-request",
+            "never"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "granular": {
+              "properties": {
+                "mcp_elicitations": {
+                  "type": "boolean"
+                },
+                "request_permissions": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "rules": {
+                  "type": "boolean"
+                },
+                "sandbox_approval": {
+                  "type": "boolean"
+                },
+                "skill_approval": {
+                  "default": false,
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "mcp_elicitations",
+                "rules",
+                "sandbox_approval"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "granular"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SandboxMode": {
+      "enum": [
+        "read-only",
+        "workspace-write",
+        "danger-full-access"
+      ],
+      "type": "string"
+    },
+    "ApprovalsReviewer": {
+      "enum": [
+        "user",
+        "auto_review",
+        "guardian_subagent"
+      ],
+      "type": "string"
+    },
+    "ReasoningEffort": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "UserInput": {
+      "oneOf": [
+        {
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "text_elements": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/TextElement"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "text"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "text",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "detail": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageDetail"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "type": {
+              "enum": [
+                "image"
+              ],
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "detail": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageDetail"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "localImage"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "audio"
+              ],
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "localAudio"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "skill"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "path",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "mention"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "path",
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TextElement": {
+      "properties": {
+        "byteRange": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ByteRange"
+            }
+          ]
+        },
+        "placeholder": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "byteRange"
+      ],
+      "type": "object"
+    },
+    "ByteRange": {
+      "properties": {
+        "end": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "start": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "end",
+        "start"
+      ],
+      "type": "object"
+    },
+    "ImageDetail": {
+      "enum": [
+        "auto",
+        "low",
+        "high",
+        "original"
+      ],
+      "type": "string"
+    },
+    "SandboxPolicy": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "dangerFullAccess"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "networkAccess": {
+              "default": false,
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "readOnly"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "networkAccess": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/NetworkAccess"
+                }
+              ],
+              "default": "restricted"
+            },
+            "type": {
+              "enum": [
+                "externalSandbox"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "excludeSlashTmp": {
+              "default": false,
+              "type": "boolean"
+            },
+            "excludeTmpdirEnvVar": {
+              "default": false,
+              "type": "boolean"
+            },
+            "networkAccess": {
+              "default": false,
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "workspaceWrite"
+              ],
+              "type": "string"
+            },
+            "writableRoots": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/AbsolutePathBuf"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "NetworkAccess": {
+      "enum": [
+        "restricted",
+        "enabled"
+      ],
+      "type": "string"
+    },
+    "AbsolutePathBuf": {
+      "type": "string"
+    }
+  }
+}

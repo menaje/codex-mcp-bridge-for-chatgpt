@@ -1,150 +1,359 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import type { AccessStrategy, BridgeConfig, DefaultSessionMode, SandboxMode } from "./config.js";
-import { enforceSandbox, requireAllowedCwd } from "./config.js";
-import type { BridgeStateStore } from "./stateStore.js";
+import { DEFAULT_HISTORY_RETENTION_DAYS, HISTORY_RETENTION_DAYS, historyRetentionDays, type HistoryRetentionDays } from "./workHistory.js";
+import { createHmac, randomBytes } from "node:crypto";
+import type { AccessStrategy, BridgeConfig, SandboxMode } from "./config.js";
+import { DEFAULT_USER_MAX_CONCURRENT_JOBS } from "./config.js";
+import { EXECUTION_POLICY_VERSION, resolveTaskSandbox } from "./executionPolicy.js";
+import { BridgeStateStore } from "./stateStore.js";
+import {
+  MODEL_POLICY_SCHEMA_VERSION,
+  automaticModelPolicy,
+  validateModelPolicy,
+  type ModelPolicy
+} from "./modelPolicy.js";
+import { isUiLocalePreference, type UiLocalePreference } from "./uiI18n.js";
+import { normalizeModelDescriptionOverrides, type ModelDescriptionOverrides } from "./modelDescriptions.js";
+import {
+  MAX_REGISTERED_PROJECTS,
+  PROJECT_REQUIRED,
+  ProjectRegistry,
+  type ProjectRegistryOperation,
+  type ProjectRegistrySnapshot,
+  type RuntimeProjectSelection,
+  type ProjectTarget
+} from "./projectRegistry.js";
 
-export const MIN_AUTO_RESUME_TTL_MS = 60 * 1000;
-export const MAX_AUTO_RESUME_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export type { ProjectRegistryOperation } from "./projectRegistry.js";
+
+export const ACTIVITY_CARD_VISIBILITIES = ["always", "background-only", "never"] as const;
+export type ActivityCardVisibility = (typeof ACTIVITY_CARD_VISIBILITIES)[number];
+export const COMPLETION_HANDOFF_MODES = ["off", "auto-handoff"] as const;
+export type CompletionHandoffMode = (typeof COMPLETION_HANDOFF_MODES)[number];
+export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
+const EXECUTION_POLICY_HMAC_SECRET_META_KEY = "execution_policy_hmac_secret_v1";
+const EXECUTION_POLICY_REF_CONTRACT_VERSION = 5;
+const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 2;
+
 export type BridgeUserSettings = {
+  schemaVersion: typeof MODEL_POLICY_SCHEMA_VERSION;
+  settingsRevision: number;
+  registryRevision: number;
+  /** Internal compatibility spelling used by model-policy code. */
   revision: number;
   updatedAt: string | null;
   accessStrategy: AccessStrategy;
-  defaultModel: string | null;
-  defaultReasoningEffort: string | null;
-  defaultCwd: string | null;
-  defaultSessionMode: DefaultSessionMode;
-  autoResumeTtlMs: number;
+  modelPolicy: ModelPolicy;
+  modelDescriptionOverrides: ModelDescriptionOverrides;
+  usePriorityServiceTier: boolean;
+  /** App-private composed registry view. UUID/cwd are stripped from public results. */
+  projects: ProjectTarget[];
+  uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
-  completionDeliveryMode: "off" | "card-only" | "auto-handoff";
+  showBridgeThreadsInCodexApp: boolean;
+  activityCardVisibility: ActivityCardVisibility;
+  completionHandoff: CompletionHandoffMode;
+  historyRetentionDays: HistoryRetentionDays;
 };
 
 export type BridgeUserSettingsPatch = Partial<
-  Omit<BridgeUserSettings, "revision" | "updatedAt">
+  Omit<
+    BridgeUserSettings,
+    | "schemaVersion"
+    | "settingsRevision"
+    | "registryRevision"
+    | "revision"
+    | "updatedAt"
+    | "projects"
+  >
 >;
 
-type PersistedSettingsState = {
-  version: 1;
-  settings: BridgeUserSettings;
-};
+type GeneralSettings = Omit<
+  BridgeUserSettings,
+  "registryRevision" | "revision" | "projects"
+>;
 
 export type UserSettingsStoreOptions = {
-  stateFile?: string;
   stateStore?: BridgeStateStore;
   now?: () => number;
 };
 
 export class UserSettingsStore {
-  private readonly stateFile?: string;
-  private readonly stateStore?: BridgeStateStore;
+  private readonly stateStore: BridgeStateStore;
+  private readonly executionPolicyHmacSecret: Buffer;
   private readonly now: () => number;
-  private readonly initial: BridgeUserSettings;
-  private settings: BridgeUserSettings;
+  private readonly initial: GeneralSettings;
+  private settings: GeneralSettings;
   private readonly warnings: string[] = [];
-  private retiredTimeoutMigrationPending = false;
+  private readonly changeListeners = new Set<() => void>();
+
+  subscribeChanges(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => { this.changeListeners.delete(listener); };
+  }
 
   constructor(
     private readonly config: BridgeConfig,
     options: UserSettingsStoreOptions = {}
   ) {
-    this.stateFile = options.stateFile;
-    this.stateStore = options.stateStore;
+    this.stateStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
+    this.executionPolicyHmacSecret = loadOrCreateExecutionPolicySecret(this.stateStore);
     this.now = options.now || Date.now;
-    this.initial = this.validate({
-      revision: 0,
+    this.initial = this.validateGeneral({
+      schemaVersion: MODEL_POLICY_SCHEMA_VERSION,
+      settingsRevision: 0,
       updatedAt: null,
       accessStrategy: config.defaultAccessStrategy,
-      defaultModel: config.defaultModel || null,
-      defaultReasoningEffort: config.defaultReasoningEffort || null,
-      defaultCwd: config.allowedRoots.length === 1 ? config.allowedRoots[0] : null,
-      defaultSessionMode: config.defaultSessionMode,
-      autoResumeTtlMs: config.autoResumeTtlMs,
-      maxConcurrentJobs: config.maxConcurrentJobs,
-      completionDeliveryMode: "card-only"
+      modelPolicy: automaticModelPolicy(),
+      modelDescriptionOverrides: {},
+      usePriorityServiceTier: false,
+      uiLocalePreference: "auto",
+      maxConcurrentJobs: Math.min(DEFAULT_USER_MAX_CONCURRENT_JOBS, config.maxConcurrentJobs),
+      // Durable context is the default for a new installation. Loaded legacy
+      // settings retain their explicit (or historical missing-field) choice.
+      showBridgeThreadsInCodexApp: true,
+      // Retained cards still interpret this setting. Current presenters do not
+      // use it; preserve the default so legacy completion handoff can migrate.
+      activityCardVisibility: "always",
+      completionHandoff: "off",
+      historyRetentionDays: DEFAULT_HISTORY_RETENTION_DAYS
     });
-    this.settings = { ...this.initial };
+    this.settings = cloneGeneralSettings(this.initial);
     this.load();
+    this.noteUnavailableProjects();
   }
 
+  get historyPolicy() { return this.stateStore.workHistory.policy(this.settings.historyRetentionDays); }
+
   get persistent(): boolean {
-    return Boolean(this.stateStore?.persistent || this.stateFile);
+    return this.stateStore.persistent;
   }
 
   get persistencePath(): string | null {
-    return this.stateStore?.persistencePath || this.stateFile || null;
+    return this.stateStore.persistencePath;
+  }
+
+  /** Internal composition hook: admission participants must share this DB. */
+  get admissionStateStore(): BridgeStateStore {
+    return this.stateStore;
   }
 
   get current(): BridgeUserSettings {
-    return { ...this.settings };
+    const registry = this.stateStore.getProjectRegistrySnapshot();
+    return composeSettings(this.settings, registry);
   }
 
   get defaults(): BridgeUserSettings {
-    return { ...this.initial };
+    return composeSettings(this.initial, this.stateStore.getProjectRegistrySnapshot());
   }
 
   get loadWarnings(): string[] {
     return [...this.warnings];
   }
 
-  get maxAutoResumeTtlMs(): number {
-    return Math.max(MAX_AUTO_RESUME_TTL_MS, this.config.autoResumeTtlMs);
+  /**
+   * Opaque, installation-bound reference to execution-affecting policy.
+   * Presentation-only settings intentionally do not invalidate admission.
+   */
+  executionPolicyRef(
+    settings: BridgeUserSettings = this.current,
+    admissionCatalogFingerprint: string | null = null
+  ): string {
+    return createHmac("sha256", this.executionPolicyHmacSecret)
+      .update(
+        `codex-mcp-bridge/execution-policy/v${EXECUTION_POLICY_REF_CONTRACT_VERSION}\0`
+      )
+      .update(canonicalJsonValue({
+        contract: EXECUTION_POLICY_REF_CONTRACT_VERSION,
+        accessStrategy: settings.accessStrategy,
+        modelPolicy: canonicalExecutionModelPolicy(settings.modelPolicy),
+        usePriorityServiceTier: settings.usePriorityServiceTier,
+        // Bind only catalog fields that can alter admission or dispatch.
+        // GPT-facing names and guidance may refresh Settings/UI catalog data,
+        // but do not make an otherwise equivalent admission snapshot stale.
+        admissionCatalogFingerprint,
+        showBridgeThreadsInCodexApp: settings.showBridgeThreadsInCodexApp,
+        maxConcurrentJobs: settings.maxConcurrentJobs,
+        operator: canonicalExecutionOperatorEnvelope(this.config)
+      }))
+      .digest("hex");
   }
 
-  update(patch: BridgeUserSettingsPatch, expectedRevision?: number): BridgeUserSettings {
-    this.assertRevision(expectedRevision);
-    const candidate: BridgeUserSettings = {
-      ...this.settings,
-      ...patch,
-      revision: this.settings.revision + 1,
-      updatedAt: new Date(this.now()).toISOString()
+  /**
+   * Stable installation-bound reference to the maximum authority and static
+   * wire shape advertised by codex_task contract v2.
+   *
+   * User settings, projects, and the live model catalog are deliberately not
+   * included: contract v2 declares their runtime-authoritative behavior in a
+   * stable schema. A process/operator change can alter the maximum authority
+   * or the schema itself and therefore still requires a connection Refresh.
+   */
+  taskExecutionEnvelopeRef(): string {
+    return createHmac("sha256", this.executionPolicyHmacSecret)
+      .update(
+        `codex-mcp-bridge/task-execution-envelope/v${TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION}\0`
+      )
+      .update(canonicalJsonValue({
+        contract: TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION,
+        taskInputContract: 2,
+        maxPromptChars: this.config.maxPromptChars,
+        operator: canonicalExecutionOperatorEnvelope(this.config)
+      }))
+      .digest("hex");
+  }
+
+  get projectRegistry(): ProjectRegistry {
+    const snapshot = this.stateStore.getProjectRegistrySnapshot();
+    return new ProjectRegistry(
+      snapshot.projects,
+      this.config.allowedRoots,
+      snapshot.registryRevision,
+      { retainUnavailable: true }
+    );
+  }
+
+  /** Runtime opaque-ref resolution, with global-generation compatibility for cached descriptors. */
+  resolveProject(selection?: RuntimeProjectSelection): ProjectTarget {
+    if (!selection) return this.projectRegistry.resolve();
+    return this.stateStore.resolveProjectSelection(selection, this.config.allowedRoots);
+  }
+
+  update(patch: BridgeUserSettingsPatch, expectedRevision: number): BridgeUserSettings {
+    assertSettingsPatchKeys(patch);
+    return this.applyConfiguration(
+      patch,
+      [],
+      Object.keys(patch).length > 0 ? expectedRevision : undefined,
+      undefined
+    );
+  }
+
+  assertExpectedRevision(expectedRevision: number): void {
+    this.stateStore.assertSettingsRevision(expectedRevision);
+  }
+
+  assertExpectedRegistryRevision(expectedRevision: number): void {
+    this.stateStore.assertProjectRegistryRevision(expectedRevision);
+  }
+
+  updateWithProjectOperations(
+    patch: BridgeUserSettingsPatch,
+    operations: readonly ProjectRegistryOperation[],
+    expectedSettingsRevision: number | undefined,
+    expectedRegistryRevision = this.current.registryRevision
+  ): BridgeUserSettings {
+    assertSettingsPatchKeys(patch);
+    return this.applyConfiguration(
+      patch,
+      operations,
+      Object.keys(patch).length > 0 ? expectedSettingsRevision : undefined,
+      operations.length > 0 ? expectedRegistryRevision : undefined
+    );
+  }
+
+  reset(
+    expectedSettingsRevision: number,
+    modelPolicy: ModelPolicy = this.initial.modelPolicy
+  ): BridgeUserSettings {
+    const patch: BridgeUserSettingsPatch = {
+      accessStrategy: this.initial.accessStrategy,
+      modelPolicy,
+      modelDescriptionOverrides: {},
+      usePriorityServiceTier: this.initial.usePriorityServiceTier,
+      uiLocalePreference: this.initial.uiLocalePreference,
+      maxConcurrentJobs: this.initial.maxConcurrentJobs,
+      showBridgeThreadsInCodexApp: this.initial.showBridgeThreadsInCodexApp,
+      activityCardVisibility: this.initial.activityCardVisibility,
+      completionHandoff: this.initial.completionHandoff,
+      historyRetentionDays: this.initial.historyRetentionDays
     };
-    if (patch.defaultModel === null && patch.defaultReasoningEffort === undefined) {
-      candidate.defaultReasoningEffort = null;
-    }
-    const validated = this.validate(candidate);
-    this.persist(validated);
-    this.settings = validated;
-    return this.current;
+    return this.applyConfiguration(patch, [], expectedSettingsRevision, undefined);
   }
 
-  reset(expectedRevision?: number): BridgeUserSettings {
-    this.assertRevision(expectedRevision);
-    const validated = this.validate({
-      ...this.initial,
-      revision: this.settings.revision + 1,
-      updatedAt: new Date(this.now()).toISOString()
-    });
-    this.persist(validated);
-    this.settings = validated;
-    return this.current;
+  resolveSandbox(): SandboxMode {
+    return resolveTaskSandbox(this.config, this.settings);
   }
 
-  resolveSandbox(requested?: SandboxMode): SandboxMode {
-    if (this.settings.accessStrategy === "read-only") {
-      return "read-only";
-    }
-    if (this.settings.accessStrategy === "always-full") {
-      return enforceSandbox(this.config, "danger-full-access");
-    }
-    return enforceSandbox(this.config, requested);
+  /** Keep registry verification and Activity/Agent/Job admission in one sync boundary. */
+  admissionTransaction<T>(operation: () => T): T {
+    return this.stateStore.transaction(operation);
   }
 
-  resolveCwd(requested?: string): string {
-    const cwd = requested || this.settings.defaultCwd;
-    if (cwd) return requireAllowedCwd(cwd, this.config.allowedRoots);
-    if (this.config.allowedRoots.length === 1) return this.config.allowedRoots[0];
-    throw new Error("cwd is required when multiple CODEX_MCP_BRIDGE_ROOTS are configured.");
-  }
-
-  private assertRevision(expectedRevision: number | undefined): void {
-    if (expectedRevision !== undefined && expectedRevision !== this.settings.revision) {
+  private applyConfiguration(
+    patch: BridgeUserSettingsPatch,
+    operations: readonly ProjectRegistryOperation[],
+    expectedSettingsRevision: number | undefined,
+    expectedRegistryRevision: number | undefined
+  ): BridgeUserSettings {
+    if (operations.length > MAX_REGISTERED_PROJECTS * 2) {
       throw new Error(
-        `Settings changed after this card was opened (expected revision ${expectedRevision}, current ${this.settings.revision}). Refresh the settings card and try again.`
+        `PROJECT_OPERATION_LIMIT: At most ${MAX_REGISTERED_PROJECTS * 2} project operations are allowed per save.`
       );
     }
+    const hasGeneralPatch = Object.keys(patch).length > 0;
+    if (hasGeneralPatch && expectedSettingsRevision === undefined) {
+      throw new Error(`${SETTINGS_REVISION_CONFLICT}: expectedSettingsRevision is required.`);
+    }
+    if (operations.length > 0 && expectedRegistryRevision === undefined) {
+      throw new Error("PROJECT_REGISTRY_REVISION_CONFLICT: expectedRegistryRevision is required.");
+    }
+
+    const merged = {
+      ...this.settings,
+      ...patch,
+      settingsRevision: this.settings.settingsRevision,
+      updatedAt: this.settings.updatedAt
+    } as GeneralSettings;
+    const candidate = this.validateGeneral(merged, {
+      allowUnavailableFullAccess:
+        this.settings.accessStrategy === "always-full" &&
+        merged.accessStrategy === "always-full"
+    });
+    const generalChanged = hasGeneralPatch &&
+      canonicalGeneralSettings(candidate) !== canonicalGeneralSettings(this.settings);
+    const now = this.now();
+    let committedSettings = this.settings;
+
+    this.stateStore.transaction(() => {
+      if (hasGeneralPatch) {
+        this.stateStore.assertSettingsRevision(expectedSettingsRevision as number);
+      }
+      if (operations.length > 0) {
+        this.stateStore.assertProjectRegistryRevision(expectedRegistryRevision as number);
+      }
+      if (generalChanged) {
+        const persisted = {
+          ...candidate,
+          settingsRevision: (expectedSettingsRevision as number) + 1,
+          updatedAt: new Date(now).toISOString()
+        };
+        this.stateStore.writeSettings(
+          persisted,
+          expectedSettingsRevision as number,
+          now
+        );
+        committedSettings = this.validateGeneral(persisted);
+      }
+      if (operations.length > 0) {
+        this.stateStore.applyProjectOperations(
+          operations,
+          expectedRegistryRevision as number,
+          this.config.allowedRoots,
+          now
+        );
+      }
+    });
+
+    this.settings = committedSettings;
+    this.config.codexService?.setAppVisibility(this.settings.showBridgeThreadsInCodexApp);
+    if (generalChanged || operations.length > 0) {
+      for (const listener of this.changeListeners) listener();
+    }
+    return this.current;
   }
 
-  private validate(candidate: BridgeUserSettings): BridgeUserSettings {
+  private validateGeneral(
+    candidate: GeneralSettings,
+    options: { allowUnavailableFullAccess?: boolean } = {}
+  ): GeneralSettings {
     if (
       candidate.accessStrategy !== "read-only" &&
       candidate.accessStrategy !== "adaptive" &&
@@ -152,200 +361,390 @@ export class UserSettingsStore {
     ) {
       throw new Error(`Invalid access strategy: ${String(candidate.accessStrategy)}`);
     }
-    if (candidate.accessStrategy === "always-full" && !this.config.allowDangerFullAccess) {
-      throw new Error("always-full is unavailable because the bridge owner disabled danger-full-access.");
+    if (
+      candidate.accessStrategy === "always-full" &&
+      !this.config.allowDangerFullAccess &&
+      !options.allowUnavailableFullAccess
+    ) {
+      throw new Error(
+        "always-full is unavailable because the bridge security policy disables danger-full-access."
+      );
     }
-    if (candidate.defaultCwd !== null) {
-      candidate.defaultCwd = requireAllowedCwd(candidate.defaultCwd, this.config.allowedRoots);
+    if (candidate.schemaVersion !== MODEL_POLICY_SCHEMA_VERSION) {
+      throw new Error("Invalid settings schema version.");
     }
-    validateOptionalIdentifier(candidate.defaultModel, "default model", 200);
-    validateOptionalIdentifier(candidate.defaultReasoningEffort, "default reasoning effort", 100);
-    if (!candidate.defaultModel && candidate.defaultReasoningEffort) {
-      throw new Error("A default reasoning effort requires a default model.");
+    if (!HISTORY_RETENTION_DAYS.includes(candidate.historyRetentionDays)) {
+      throw new Error("Invalid execution history retention period.");
     }
-    if (candidate.defaultSessionMode !== "auto" && candidate.defaultSessionMode !== "new") {
-      throw new Error(`Invalid default session mode: ${String(candidate.defaultSessionMode)}`);
+    candidate.modelPolicy = validateModelPolicy(candidate.modelPolicy);
+    candidate.modelDescriptionOverrides = normalizeModelDescriptionOverrides(candidate.modelDescriptionOverrides);
+    if (typeof candidate.usePriorityServiceTier !== "boolean") {
+      throw new Error("Invalid Priority service-tier preference.");
+    }
+    if (!isUiLocalePreference(candidate.uiLocalePreference)) {
+      throw new Error(`Invalid interface language preference: ${String(candidate.uiLocalePreference)}`);
     }
     validateIntegerRange(
-      candidate.autoResumeTtlMs,
-      MIN_AUTO_RESUME_TTL_MS,
-      this.maxAutoResumeTtlMs,
-      "Auto-resume window"
+      candidate.maxConcurrentJobs,
+      1,
+      this.config.maxConcurrentJobs,
+      "Concurrent job limit",
+      "jobs"
     );
-    validateIntegerRange(candidate.maxConcurrentJobs, 1, this.config.maxConcurrentJobs, "Concurrent job limit", "jobs");
-    if (
-      candidate.completionDeliveryMode !== "off" &&
-      candidate.completionDeliveryMode !== "card-only" &&
-      candidate.completionDeliveryMode !== "auto-handoff"
-    ) {
-      throw new Error(`Invalid completion delivery mode: ${String(candidate.completionDeliveryMode)}`);
+    if (typeof candidate.showBridgeThreadsInCodexApp !== "boolean") {
+      throw new Error("Invalid Codex app thread-visibility preference.");
     }
-    if (!Number.isInteger(candidate.revision) || candidate.revision < 0) {
+    if (!ACTIVITY_CARD_VISIBILITIES.includes(candidate.activityCardVisibility)) {
+      throw new Error(`Invalid Activity card visibility: ${String(candidate.activityCardVisibility)}`);
+    }
+    if (!COMPLETION_HANDOFF_MODES.includes(candidate.completionHandoff)) {
+      throw new Error(`Invalid completion handoff mode: ${String(candidate.completionHandoff)}`);
+    }
+    if (
+      candidate.activityCardVisibility === "never" &&
+      candidate.completionHandoff === "auto-handoff"
+    ) {
+      throw new Error("Automatic GPT handoff requires the Activity card to be visible.");
+    }
+    if (!Number.isInteger(candidate.settingsRevision) || candidate.settingsRevision < 0) {
       throw new Error("Invalid settings revision.");
     }
     if (candidate.updatedAt !== null && !Number.isFinite(Date.parse(candidate.updatedAt))) {
       throw new Error("Invalid settings update timestamp.");
     }
-    return { ...candidate };
+    return cloneGeneralSettings(candidate);
   }
 
   private load(): void {
-    if (this.stateStore) {
-      const stored = this.stateStore.getSettings();
-      if (stored !== undefined) {
-        if (!isRecord(stored)) throw new Error("Invalid bridge settings in the state database.");
-        this.noteRetiredTaskTimeout(stored);
-        this.loadCandidate(readSettings(stored, this.stateStore.persistencePath || "state database"));
-      }
-      this.importLegacyState(stored !== undefined);
-      return;
-    }
-    if (!this.stateFile || !existsSync(this.stateFile)) return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(this.stateFile, "utf8"));
-    } catch (error) {
-      throw new Error(
-        `Could not read bridge settings at ${this.stateFile}: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-    if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.settings)) {
-      throw new Error(`Invalid bridge settings format at ${this.stateFile}.`);
-    }
-    this.noteRetiredTaskTimeout(parsed.settings);
-    this.loadCandidate(readSettings(parsed.settings, this.stateFile));
-  }
-
-  private importLegacyState(alreadyStored: boolean): void {
-    if (!this.stateStore || !this.stateFile || !existsSync(this.stateFile)) return;
-    const marker = `legacy_settings_imported:${this.stateFile}`;
-    if (this.stateStore.getMeta(marker)) return;
-    this.stateStore.transaction(() => {
-      if (!alreadyStored) {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(readFileSync(this.stateFile as string, "utf8"));
-        } catch (error) {
-          throw new Error(
-            `Could not read bridge settings at ${this.stateFile}: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
-        if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.settings)) {
-          throw new Error(`Invalid bridge settings format at ${this.stateFile}.`);
-        }
-        this.noteRetiredTaskTimeout(parsed.settings);
-        this.loadCandidate(readSettings(parsed.settings, this.stateFile as string));
-        this.stateStore?.setSettings(this.settings);
-      }
-      this.stateStore?.setMeta(marker, new Date().toISOString());
-    });
-  }
-
-  private loadCandidate(candidate: BridgeUserSettings): void {
-    const reconciled = { ...candidate };
-    if (reconciled.accessStrategy === "always-full" && !this.config.allowDangerFullAccess) {
-      reconciled.accessStrategy = "read-only";
-      this.warnings.push(
-        "Saved full-access mode was downgraded to read-only because the bridge owner disabled danger-full-access."
-      );
-    }
-    if (reconciled.defaultCwd !== null) {
-      try {
-        reconciled.defaultCwd = requireAllowedCwd(reconciled.defaultCwd, this.config.allowedRoots);
-      } catch {
-        reconciled.defaultCwd = this.config.allowedRoots.length === 1 ? this.config.allowedRoots[0] : null;
+    const stored = this.stateStore.getSettingsRecord();
+    if (stored) {
+      const source = isRecord(stored.payload) ? stored.payload : undefined;
+      if (!source) throw new Error("Invalid bridge settings in the state database.");
+      if (isRecord(stored.payload) && "projects" in stored.payload) {
         this.warnings.push(
-          "Saved working directory was outside the current owner allowlist and was replaced with a safe allowed default."
+          "Legacy project IDs/default aliases were intentionally not migrated. Register projects by name in Settings."
         );
       }
+      const loaded = this.reconcileLoadedGeneral(
+        source,
+        "state database",
+        stored.settingsRevision
+      );
+      if (loaded.changed) {
+        this.stateStore.writeSettings(
+          loaded.settings,
+          stored.settingsRevision,
+          Date.parse(loaded.settings.updatedAt as string)
+        );
+      }
+      this.settings = loaded.settings;
+      return;
     }
-    if (reconciled.maxConcurrentJobs > this.config.maxConcurrentJobs) {
-      reconciled.maxConcurrentJobs = this.config.maxConcurrentJobs;
-      this.warnings.push("Saved concurrent-job limit was reduced to the current owner maximum.");
-    }
-    const changed =
-      this.retiredTimeoutMigrationPending || JSON.stringify(reconciled) !== JSON.stringify(candidate);
-    if (changed) {
-      reconciled.revision += 1;
-      reconciled.updatedAt = new Date(this.now()).toISOString();
-    }
-    this.settings = this.validate(reconciled);
-    if (changed) {
-      this.persist(this.settings);
-      this.retiredTimeoutMigrationPending = false;
-    }
+    return;
   }
 
-  private noteRetiredTaskTimeout(value: Record<string, unknown>): void {
-    if (!("taskTimeoutMs" in value)) return;
-    this.retiredTimeoutMigrationPending = true;
-    if (!this.warnings.some((warning) => warning.includes("taskTimeoutMs"))) {
+  private reconcileLoadedGeneral(
+    source: Record<string, unknown>,
+    sourceLabel: string,
+    settingsRevision: number
+  ): { settings: GeneralSettings; changed: boolean } {
+    const candidate = readGeneralSettings(source, sourceLabel, settingsRevision);
+    let changed = needsGeneralSettingsRewrite(source);
+    const rawPolicy = isRecord(source.modelPolicy) ? source.modelPolicy : undefined;
+    if (
+      (
+        rawPolicy?.mode === "automatic" &&
+        (rawPolicy.fallbackSelection !== undefined || rawPolicy.preferredSelection !== undefined)
+      ) ||
+      typeof source.legacyPreferredModel === "string" ||
+      typeof source.defaultModel === "string" ||
+      typeof source.defaultReasoningEffort === "string"
+    ) {
       this.warnings.push(
-        "Saved taskTimeoutMs was retired and removed. Codex execution is now unlimited-only."
+        "A retired automatic model default was removed. GPT must now choose an exact model and reasoning effort for new work."
+      );
+    }
+    if (candidate.accessStrategy === "always-full" && !this.config.allowDangerFullAccess) {
+      this.warnings.push(
+        "Saved full-access mode is retained but inactive because the bridge security policy disables danger-full-access. Read-only is enforced until full access is enabled in runtime settings."
+      );
+    }
+    if (candidate.maxConcurrentJobs > this.config.maxConcurrentJobs) {
+      candidate.maxConcurrentJobs = this.config.maxConcurrentJobs;
+      changed = true;
+      this.warnings.push("Saved concurrent-job limit was reduced to the current bridge maximum.");
+    }
+    if (changed) {
+      candidate.settingsRevision = settingsRevision + 1;
+      candidate.updatedAt = new Date(this.now()).toISOString();
+    }
+    return {
+      settings: this.validateGeneral(candidate, { allowUnavailableFullAccess: true }),
+      changed
+    };
+  }
+
+  private noteUnavailableProjects(): void {
+    for (const entry of this.projectRegistry.availability) {
+      if (entry.project.archivedAt !== undefined || entry.available) continue;
+      this.warnings.push(
+        `PROJECT_UNAVAILABLE: Saved project "${entry.project.name}" is unavailable and cannot admit new work.`
       );
     }
   }
 
-  private persist(settings: BridgeUserSettings): void {
-    if (this.stateStore) {
-      this.stateStore.setSettings(settings);
-      return;
-    }
-    if (!this.stateFile) return;
-    const directory = path.dirname(this.stateFile);
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const temporary = `${this.stateFile}.${process.pid}.tmp`;
-    const state: PersistedSettingsState = {
-      version: 1,
-      settings
-    };
-    writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600
-    });
-    renameSync(temporary, this.stateFile);
-    chmodSync(this.stateFile, 0o600);
-  }
+
 }
 
-function readSettings(value: Record<string, unknown>, stateFile: string): BridgeUserSettings {
-  const requiredStringOrNull = (key: string): string | null => {
-    const entry = value[key];
-    if (entry === null || typeof entry === "string") return entry;
-    throw new Error(`Invalid ${key} in bridge settings at ${stateFile}.`);
-  };
-  const requiredNumber = (key: string): number => {
-    const entry = value[key];
-    if (typeof entry === "number") return entry;
-    throw new Error(`Invalid ${key} in bridge settings at ${stateFile}.`);
-  };
-  const accessStrategy = value.accessStrategy;
-  const defaultSessionMode = value.defaultSessionMode;
-  const updatedAt = requiredStringOrNull("updatedAt");
+function composeSettings(
+  settings: GeneralSettings,
+  registry: ProjectRegistrySnapshot
+): BridgeUserSettings {
   return {
-    revision: requiredNumber("revision"),
-    updatedAt,
-    accessStrategy: accessStrategy as AccessStrategy,
-    defaultModel: requiredStringOrNull("defaultModel"),
-    defaultReasoningEffort: requiredStringOrNull("defaultReasoningEffort"),
-    defaultCwd: requiredStringOrNull("defaultCwd"),
-    defaultSessionMode: defaultSessionMode as DefaultSessionMode,
-    autoResumeTtlMs: requiredNumber("autoResumeTtlMs"),
-    maxConcurrentJobs: requiredNumber("maxConcurrentJobs"),
-    completionDeliveryMode:
-      value.completionDeliveryMode === "off" ||
-      value.completionDeliveryMode === "auto-handoff" ||
-      value.completionDeliveryMode === "card-only"
-        ? value.completionDeliveryMode
-        : "card-only"
+    ...cloneGeneralSettings(settings),
+    registryRevision: registry.registryRevision,
+    revision: settings.settingsRevision,
+    projects: registry.projects.map((project) => ({ ...project }))
   };
 }
 
-function validateOptionalIdentifier(value: string | null, label: string, maxLength: number): void {
-  if (value === null) return;
-  if (!value.trim() || value.length > maxLength || /[\r\n]/.test(value)) {
-    throw new Error(`Invalid ${label}.`);
+function cloneGeneralSettings(settings: GeneralSettings): GeneralSettings {
+  return {
+    ...settings,
+    modelPolicy: validateModelPolicy(settings.modelPolicy),
+    modelDescriptionOverrides: { ...settings.modelDescriptionOverrides }
+  };
+}
+
+function canonicalGeneralSettings(settings: GeneralSettings): string {
+  const { settingsRevision: _revision, updatedAt: _updatedAt, ...semantic } = settings;
+  return JSON.stringify(semantic);
+}
+
+function loadOrCreateExecutionPolicySecret(stateStore: BridgeStateStore): Buffer {
+  return stateStore.transaction(() => {
+    const encoded = stateStore.getMeta(EXECUTION_POLICY_HMAC_SECRET_META_KEY);
+    if (encoded !== undefined) {
+      let decoded: Buffer;
+      try {
+        decoded = Buffer.from(encoded, "base64url");
+      } catch {
+        throw new Error("Invalid persisted execution-policy HMAC key encoding.");
+      }
+      if (decoded.length !== 32 || decoded.toString("base64url") !== encoded) {
+        throw new Error("Invalid persisted execution-policy HMAC key.");
+      }
+      return decoded;
+    }
+    const created = randomBytes(32);
+    stateStore.setMeta(EXECUTION_POLICY_HMAC_SECRET_META_KEY, created.toString("base64url"));
+    return created;
+  });
+}
+
+function canonicalJsonValue(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("Cannot sign a non-finite policy number.");
+    return JSON.stringify(value);
   }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalJsonValue(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJsonValue(entry)}`)
+      .join(",")}}`;
+  }
+  throw new Error(`Cannot sign unsupported policy value of type ${typeof value}.`);
+}
+
+function canonicalExecutionModelPolicy(policy: ModelPolicy): ModelPolicy {
+  if (
+    policy.mode !== "automatic" ||
+    policy.allowedSelections.kind !== "explicit"
+  ) {
+    return policy;
+  }
+  return {
+    ...policy,
+    allowedSelections: {
+      kind: "explicit",
+      selections: canonicalModelChoices(policy.allowedSelections.selections)
+    }
+  };
+}
+
+function canonicalExecutionOperatorEnvelope(config: BridgeConfig): Record<string, unknown> {
+  return {
+    executionPolicyVersion: EXECUTION_POLICY_VERSION,
+    codexCommand: config.codexCommand,
+    backend: config.defaultBackend,
+    allowedRoots: [...config.allowedRoots].sort(),
+    defaultSandbox: config.defaultSandbox,
+    allowWorkspaceWrite: config.allowWorkspaceWrite,
+    allowDangerFullAccess: config.allowDangerFullAccess,
+    approvalPolicy: config.defaultApprovalPolicy,
+    approvalsReviewer: config.defaultApprovalsReviewer,
+    modelCeiling: config.operatorModelCeiling
+      ? canonicalModelChoices(config.operatorModelCeiling)
+      : null,
+    secretScan: config.secretScan
+  };
+}
+
+function canonicalModelChoices<T extends { model: string; reasoningEffort: string }>(
+  selections: readonly T[]
+): T[] {
+  return [...selections].sort((left, right) =>
+    left.model.localeCompare(right.model) ||
+    left.reasoningEffort.localeCompare(right.reasoningEffort)
+  );
+}
+
+function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
+  const required = [
+    "schemaVersion",
+    "settingsRevision",
+    "updatedAt",
+    "accessStrategy",
+    "modelPolicy",
+    "usePriorityServiceTier",
+    "uiLocalePreference",
+    "maxConcurrentJobs",
+    "showBridgeThreadsInCodexApp",
+    "activityCardVisibility",
+    "completionHandoff",
+    "historyRetentionDays"
+  ];
+  if (required.some((key) => !Object.prototype.hasOwnProperty.call(value, key))) return true;
+  if (value.schemaVersion !== MODEL_POLICY_SCHEMA_VERSION) return true;
+  if (
+    [
+      "revision",
+      "projects",
+      "defaultProjectId",
+      "defaultCwd",
+      "defaultModel",
+      "defaultReasoningEffort",
+      "legacyPreferredModel",
+      "completionDeliveryMode",
+      "activityCardView",
+      "taskTimeoutMs",
+      "defaultSessionMode",
+      "autoResumeTtlMs"
+    ].some((key) => Object.prototype.hasOwnProperty.call(value, key))
+  ) {
+    return true;
+  }
+  const migrated = migrateModelPolicyServiceTiers(value.modelPolicy);
+  return JSON.stringify(migrated.value) !== JSON.stringify(value.modelPolicy);
+}
+
+function readGeneralSettings(
+  value: unknown,
+  source: string,
+  settingsRevision: number
+): GeneralSettings {
+  if (!isRecord(value)) throw new Error(`Invalid bridge settings at ${source}.`);
+  const accessStrategy = value.accessStrategy as AccessStrategy;
+  const migratedPolicy = migrateModelPolicyServiceTiers(value.modelPolicy);
+  const hasMigratablePolicy =
+    (
+      value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION ||
+      value.schemaVersion === 3 ||
+      value.schemaVersion === 2
+    ) &&
+    value.modelPolicy;
+  const modelPolicy = hasMigratablePolicy
+    ? validateModelPolicy(migratedPolicy.value)
+    : automaticModelPolicy();
+  const updatedAt = value.updatedAt === null || typeof value.updatedAt === "string"
+    ? value.updatedAt
+    : null;
+  const maxConcurrentJobs = typeof value.maxConcurrentJobs === "number"
+    ? value.maxConcurrentJobs
+    : 1;
+  return {
+    schemaVersion: MODEL_POLICY_SCHEMA_VERSION,
+    settingsRevision,
+    updatedAt,
+    accessStrategy,
+    modelPolicy,
+    modelDescriptionOverrides: normalizeModelDescriptionOverrides(value.modelDescriptionOverrides ?? {}),
+    usePriorityServiceTier: typeof value.usePriorityServiceTier === "boolean"
+      ? value.usePriorityServiceTier
+      : migratedPolicy.usedFastTier,
+    uiLocalePreference: isUiLocalePreference(value.uiLocalePreference)
+      ? value.uiLocalePreference
+      : "auto",
+    maxConcurrentJobs,
+    showBridgeThreadsInCodexApp: typeof value.showBridgeThreadsInCodexApp === "boolean"
+      ? value.showBridgeThreadsInCodexApp
+      : false,
+    activityCardVisibility:
+      value.activityCardVisibility === "always" ||
+      value.activityCardVisibility === "background-only" ||
+      value.activityCardVisibility === "never"
+        ? value.activityCardVisibility
+        : "always",
+    historyRetentionDays: historyRetentionDays(value.historyRetentionDays),
+    completionHandoff:
+      value.completionHandoff === "off" || value.completionHandoff === "auto-handoff"
+        ? value.completionHandoff
+        : value.completionDeliveryMode === "auto-handoff"
+          ? "auto-handoff"
+          : "off"
+  };
+}
+
+function migrateModelPolicyServiceTiers(value: unknown): {
+  value: unknown;
+  usedFastTier: boolean;
+} {
+  if (!isRecord(value)) return { value, usedFastTier: false };
+  let usedFastTier = false;
+  const withoutTier = (selection: unknown): unknown => {
+    if (!isRecord(selection) || !("serviceTier" in selection)) return selection;
+    const tier = selection.serviceTier;
+    if (typeof tier === "string" && ["priority", "fast"].includes(tier.toLowerCase())) {
+      usedFastTier = true;
+    }
+    const copy = { ...selection };
+    delete copy.serviceTier;
+    return copy;
+  };
+  const migrated: Record<string, unknown> = { ...value };
+  if (value.mode === "fixed") {
+    migrated.selection = withoutTier(value.selection);
+  } else if (value.mode === "automatic") {
+    const fallbackSelection = value.fallbackSelection ?? value.preferredSelection;
+    if (fallbackSelection !== undefined) {
+      // Preserve the legacy service-tier preference, but never retain the
+      // retired omission fallback itself.
+      withoutTier(fallbackSelection);
+    }
+    delete migrated.fallbackSelection;
+    delete migrated.preferredSelection;
+    if (isRecord(value.allowedSelections) && Array.isArray(value.allowedSelections.selections)) {
+      const seen = new Set<string>();
+      migrated.allowedSelections = {
+        ...value.allowedSelections,
+        selections: value.allowedSelections.selections.flatMap((selection) => {
+          const normalized = withoutTier(selection);
+          if (!isRecord(normalized)) return [normalized];
+          const key = JSON.stringify([normalized.model, normalized.reasoningEffort]);
+          if (seen.has(key)) return [];
+          seen.add(key);
+          return [normalized];
+        })
+      };
+    }
+  }
+  return { value: migrated, usedFastTier };
 }
 
 function validateIntegerRange(
@@ -358,6 +757,34 @@ function validateIntegerRange(
   if (!Number.isInteger(value) || value < minimum || value > maximum) {
     throw new Error(`${label} must be an integer between ${minimum} and ${maximum} ${unit}.`);
   }
+}
+
+function assertSettingsPatchKeys(patch: BridgeUserSettingsPatch): void {
+  const allowed = new Set([
+    "accessStrategy",
+    "modelPolicy",
+    "modelDescriptionOverrides",
+    "usePriorityServiceTier",
+    "uiLocalePreference",
+    "maxConcurrentJobs",
+    "showBridgeThreadsInCodexApp",
+    "activityCardVisibility",
+    "completionHandoff",
+    "historyRetentionDays"
+  ]);
+  const unsupported = Object.keys(patch).find((key) => !allowed.has(key));
+  if (!unsupported) return;
+  if (
+    unsupported === "projects" ||
+    unsupported === "defaultProjectId" ||
+    unsupported === "defaultCwd" ||
+    unsupported === "projectId"
+  ) {
+    throw new Error(
+      `SETTINGS_FIELD_RETIRED: ${unsupported} was removed; projects are selected only by current user-defined name.`
+    );
+  }
+  throw new Error(`SETTINGS_FIELD_UNKNOWN: Unsupported setting: ${unsupported}`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

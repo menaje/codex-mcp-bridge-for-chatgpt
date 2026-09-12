@@ -1,0 +1,111 @@
+/** Shared execution-history policy and controls. */
+export const WORK_HISTORY_TRANSLATIONS = {
+  "en": {
+    "history.title": "Run history retention",
+    "history.period": "Retention period",
+    "history.days": "{days} days",
+    "history.forever": "Keep indefinitely",
+    "history.finite": "Finished runs are automatically cleaned up after {days} days.",
+    "history.unlimited": "Run history is kept indefinitely.",
+    "history.notice": "Failed and interrupted runs need review for 7 days. Acknowledge removes them from the issue count. Active work and undelivered results are protected; Codex conversations and project files are kept.",
+    "history.cleanup": "Last cleanup: {time} · {count} runs",
+    "history.acknowledge": "Acknowledge",
+    "history.started": "Started {relative}"
+  },
+  "ko": {
+    "history.title": "실행 기록 보관",
+    "history.period": "보관 기간",
+    "history.days": "{days}일",
+    "history.forever": "계속 보관",
+    "history.finite": "종료한 실행 기록은 {days}일 뒤 자동 정리됩니다.",
+    "history.unlimited": "실행 기록을 계속 보관합니다.",
+    "history.notice": "실패·중단은 최근 7일 동안 확인이 필요합니다. 확인함을 누르면 문제 집계에서 제외됩니다. 진행 중인 작업과 미전달 결과는 보존하며, Codex 대화와 프로젝트 파일은 유지됩니다.",
+    "history.cleanup": "최근 정리: {time} · {count}건",
+    "history.acknowledge": "확인함",
+    "history.started": "시작 {relative}"
+  },
+  "ja": {
+    "history.title": "実行履歴の保持",
+    "history.period": "保持期間",
+    "history.days": "{days}日",
+    "history.forever": "無期限に保持",
+    "history.finite": "終了した実行履歴は{days}日後に自動整理されます。",
+    "history.unlimited": "実行履歴を無期限に保持します。",
+    "history.notice": "失敗・中断は直近7日間、確認が必要です。「確認済み」で問題の集計から除外します。進行中の作業と未配信の結果、Codexの会話とプロジェクトファイルは保持します。",
+    "history.cleanup": "前回の整理: {time} · {count}件",
+    "history.acknowledge": "確認済み",
+    "history.started": "開始 {relative}"
+  },
+  "zh-Hans": {
+    "history.title": "执行记录保留",
+    "history.period": "保留期限",
+    "history.days": "{days}天",
+    "history.forever": "永久保留",
+    "history.finite": "已结束的执行记录将在{days}天后自动清理。",
+    "history.unlimited": "永久保留执行记录。",
+    "history.notice": "失败和中断记录在最近7天内需要查看。点击“已查看”可将其从问题统计中排除。正在进行的工作、未送达的结果、Codex对话和项目文件将保留。",
+    "history.cleanup": "上次清理：{time} · {count}条",
+    "history.acknowledge": "已查看",
+    "history.started": "开始于{relative}"
+  },
+  "zh-Hant": {
+    "history.title": "執行記錄保留",
+    "history.period": "保留期限",
+    "history.days": "{days}天",
+    "history.forever": "永久保留",
+    "history.finite": "已結束的執行記錄將在{days}天後自動清理。",
+    "history.unlimited": "永久保留執行記錄。",
+    "history.notice": "失敗和中斷記錄在最近7天內需要查看。按下「已查看」可將其從問題統計中排除。進行中的工作、未送達的結果、Codex對話和專案檔案將保留。",
+    "history.cleanup": "上次清理：{time} · {count}筆",
+    "history.acknowledge": "已查看",
+    "history.started": "開始於{relative}"
+  },
+  "es": {
+    "history.title": "Conservación del historial",
+    "history.period": "Periodo de conservación",
+    "history.days": "{days} días",
+    "history.forever": "Conservar siempre",
+    "history.finite": "Las ejecuciones finalizadas se limpian automáticamente después de {days} días.",
+    "history.unlimited": "El historial se conserva indefinidamente.",
+    "history.notice": "Los fallos y las interrupciones requieren revisión durante 7 días. Marcar como revisado los excluye del contador de problemas. Se conservan el trabajo activo, los resultados sin entregar, las conversaciones de Codex y los archivos del proyecto.",
+    "history.cleanup": "Última limpieza: {time} · {count} ejecuciones",
+    "history.acknowledge": "Marcar como revisado",
+    "history.started": "Iniciado {relative}"
+  },
+  "fr": {
+    "history.title": "Conservation de l’historique",
+    "history.period": "Durée de conservation",
+    "history.days": "{days} jours",
+    "history.forever": "Conserver indéfiniment",
+    "history.finite": "Les exécutions terminées sont nettoyées automatiquement après {days} jours.",
+    "history.unlimited": "L’historique est conservé indéfiniment.",
+    "history.notice": "Les échecs et interruptions nécessitent une vérification pendant 7 jours. Les marquer comme vérifiés les retire du compteur de problèmes. Le travail actif, les résultats non remis, les conversations Codex et les fichiers du projet sont conservés.",
+    "history.cleanup": "Dernier nettoyage : {time} · {count} exécutions",
+    "history.acknowledge": "Marquer comme vérifié",
+    "history.started": "Démarré {relative}"
+  },
+  "de": {
+    "history.title": "Aufbewahrung des Verlaufs",
+    "history.period": "Aufbewahrungsdauer",
+    "history.days": "{days} Tage",
+    "history.forever": "Unbegrenzt behalten",
+    "history.finite": "Beendete Ausführungen werden nach {days} Tagen automatisch bereinigt.",
+    "history.unlimited": "Der Verlauf wird unbegrenzt aufbewahrt.",
+    "history.notice": "Fehler und Unterbrechungen müssen 7 Tage lang geprüft werden. Bestätigte Einträge werden nicht mehr als Probleme gezählt. Aktive Arbeit, nicht zugestellte Ergebnisse, Codex-Gespräche und Projektdateien bleiben erhalten.",
+    "history.cleanup": "Letzte Bereinigung: {time} · {count} Ausführungen",
+    "history.acknowledge": "Bestätigen",
+    "history.started": "Gestartet {relative}"
+  },
+  "pt": {
+    "history.title": "Retenção do histórico",
+    "history.period": "Período de retenção",
+    "history.days": "{days} dias",
+    "history.forever": "Manter sempre",
+    "history.finite": "As execuções terminadas são limpas automaticamente após {days} dias.",
+    "history.unlimited": "O histórico é mantido indefinidamente.",
+    "history.notice": "Falhas e interrupções precisam de revisão durante 7 dias. Marcar como revisto exclui-as da contagem de problemas. O trabalho ativo, os resultados não entregues, as conversas do Codex e os ficheiros do projeto são mantidos.",
+    "history.cleanup": "Última limpeza: {time} · {count} execuções",
+    "history.acknowledge": "Marcar como revisto",
+    "history.started": "Iniciado {relative}"
+  }
+};

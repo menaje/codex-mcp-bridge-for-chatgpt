@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "issue": 70,
+  "date": "2026-09-08",
+  "validatedCommit": "f5027b367309088d2e68782d99e13aa0e46b7033",
+  "sourceSha256": "73a0f0c880b815c4b1bf099438f83175026df11dbb7b6e6d0fbbaa6d957652e9",
+  "developmentCommit": "323d55c725acfa82e81a0e3d350adf16f53468e7",
+  "modelRecoveryFix": "52607c9f85d0ffb893a009340c534d3d1fec9f25",
+  "parallelIntegrationCommit": "ee9bd3539e1d6cd3a255b6435244339e9cd45d33",
+  "validationCommand": "node scripts/release-validation.mjs affected --base origin/dev",
+  "releaseChecksPassed": true,
+  "cliContractVersion": "0.153.3",
+  "node": {
+    "filesPassed": 63,
+    "testsPassed": 780,
+    "failed": 0
+  },
+  "macos": {
+    "executed": 101,
+    "passed": 99,
+    "skipped": 2,
+    "failed": 0,
+    "strictConcurrency": true
+  },
+  "developmentIncluded": true,
+  "originalAuditFilesPreserved": true,
+  "liveRuntimeChangedByThisTask": true,
+  "actualChatGptAdoptionVerified": true,
+  "remaining": "Issue #70 is ready for dev integration after the current-PR execution, ChatGPT unread indication and active-work drain/restart verification. Independent native banners, ended-response Job wake and original live control scenarios remain tracked in issue #69.",
+  "actualHostBlocker": {
+    "reason": "ChatGPT automatic review rejected the single synthetic codex_task before admission",
+    "lockResolved": true,
+    "candidateBuild": "f5027b367309:21c885d97b57",
+    "newJobs": 0,
+    "retried": false,
+    "activeWorkRestartAttempted": false,
+    "operatingDeploymentClaimed": false,
+    "evidence": "issue-70-unlocked-host.json",
+    "historical": true
+  },
+  "actualChatGptAdoptionScope": "Current Settings description and model catalog v2 verified in new and freshly-discovered existing-conversation tools; old loaded bindings remained cached. Independent question round trip also passed. Current-PR background execution, exact result retrieval, unread indication, retained global overview and active-work graceful restart subsequently passed.",
+  "latestDevelopmentIntegration": {
+    "commit": "d0bd2d7534f41b6c2abeb77f1f24d351d31010a9",
+    "developmentCommit": "be98e0008bca0306598718d659ca49c2f7f6c028",
+    "alreadyIntegratedSnapshotBase": "2c3658b8e0996cf287d577262e198bb7ef5f5bc7",
+    "contentMergeUsedVerifiedSnapshotBase": true,
+    "productSrcUnchangedFromHostCandidate": true,
+    "localizationSemanticsUnchanged": true,
+    "repositoryTests": {
+      "command": "npm run check",
+      "files": 63,
+      "passed": 780,
+      "failed": 0,
+      "testDiscoveryDirectory": "test"
+    },
+    "nativeLocalization": {
+      "passed": true,
+      "strings": 572,
+      "languages": 9,
+      "compilationPassed": true
+    },
+    "outputContractAudit": {
+      "passed": true,
+      "auditVersion": 5,
+      "modelBytes": 18747,
+      "modelBudgetBytes": 19500,
+      "currentAppBytes": 71004,
+      "dedicatedQuestionBytes": 2290,
+      "removedToolSubtotalReferenceFixed": true,
+      "nonFiniteSubtotalRejected": true
+    }
+  },
+  "latestActualHostEvidence": "pr-71-runtime-acceptance.json"
+}

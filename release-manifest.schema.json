@@ -4,13 +4,13 @@
   "title": "Codex MCP Bridge for ChatGPT release manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["$schema", "manifestVersion", "product", "package", "toolchain", "repository", "release"],
+  "required": ["$schema", "manifestVersion", "product", "package", "toolchain", "repository", "plugin", "uiResources", "stateCompatibility", "release"],
   "properties": {
     "$schema": {
       "const": "./release-manifest.schema.json"
     },
     "manifestVersion": {
-      "const": 1
+      "const": 6
     },
     "product": {
       "type": "object",
@@ -54,10 +54,11 @@
     "toolchain": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["node", "npm"],
+      "required": ["node", "npm", "codexCli"],
       "properties": {
         "node": { "type": "string", "pattern": "^(?:[2-9][0-9]*)$" },
-        "npm": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" }
+        "npm": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+        "codexCli": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$" }
       }
     },
     "repository": {
@@ -70,30 +71,354 @@
         "name": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$", "maxLength": 100 }
       }
     },
+    "plugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "displayName",
+        "shortDescription",
+        "longDescription",
+        "developerName",
+        "category",
+        "capabilities",
+        "defaultPrompt",
+        "app"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "maxLength": 64
+        },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "shortDescription": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "longDescription": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "developerName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "defaultPrompt": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+        },
+        "app": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "id"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              "maxLength": 64
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^plugin_asdk_app_[A-Za-z0-9]+$",
+              "maxLength": 128
+            }
+          }
+        }
+      }
+    },
+    "uiResources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy",
+        "hashAlgorithm",
+        "hashLength",
+        "minimumContractGeneration",
+        "resources",
+        "activeResources",
+        "compatibilityResources",
+        "releaseCatalog",
+        "releaseCatalogSha256"
+      ],
+      "properties": {
+        "strategy": { "const": "content-hash" },
+        "hashAlgorithm": { "const": "sha256" },
+        "hashLength": { "type": "integer", "minimum": 12, "maximum": 64 },
+        "minimumContractGeneration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["settings", "activity", "dashboard", "question"],
+          "properties": {
+            "settings": { "type": "integer", "minimum": 1 },
+            "activity": { "type": "integer", "minimum": 1 },
+            "dashboard": { "type": "integer", "minimum": 1 },
+            "question": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "resources": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": { "enum": ["settings", "activity", "dashboard", "question"] },
+          "allOf": [
+            { "contains": { "const": "settings" } },
+            { "contains": { "const": "activity" } },
+            { "contains": { "const": "dashboard" } },
+            { "contains": { "const": "question" } }
+          ]
+        },
+        "activeResources": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            { "const": "settings" },
+            { "const": "dashboard" },
+            { "const": "question" }
+          ],
+          "items": false
+        },
+        "compatibilityResources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "prefixItems": [{ "const": "activity" }],
+          "items": false
+        },
+        "releaseCatalog": { "const": "ui-release-catalog.json" },
+        "releaseCatalogSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "stateCompatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "currentSchema",
+        "supportedSourceSchemas",
+        "unsupportedSourceSchemas",
+        "retiredLegacyImports",
+        "migrationCatalog",
+        "migrationCatalogSha256",
+        "stateProfilePolicy",
+        "rollbackPolicy",
+        "persistentContracts",
+        "contractSources",
+        "recoveryContract"
+      ],
+      "properties": {
+        "currentSchema": { "const": 19 },
+        "supportedSourceSchemas": {
+          "type": "array",
+          "minItems": 16,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "prefixItems": [
+            { "const": 3 }, { "const": 4 }, { "const": 5 }, { "const": 6 },
+            { "const": 7 }, { "const": 8 }, { "const": 9 }, { "const": 10 },
+            { "const": 11 }, { "const": 12 }, { "const": 13 }, { "const": 14 },
+            { "const": 15 }, { "const": 16 }, { "const": 17 }, { "const": 18 }
+          ],
+          "items": false
+        },
+        "unsupportedSourceSchemas": {
+          "type": "array",
+          "prefixItems": [{ "const": 1 }, { "const": 2 }],
+          "minItems": 2,
+          "maxItems": 2,
+          "items": false
+        },
+        "retiredLegacyImports": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "settings-state-json" },
+            { "const": "session-state-json" },
+            { "const": "job-state-json" }
+          ],
+          "minItems": 3,
+          "maxItems": 3,
+          "items": false
+        },
+        "migrationCatalog": { "const": "state-migrations.json" },
+        "migrationCatalogSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "stateProfilePolicy": { "const": "release-stage-isolated-v1" },
+        "rollbackPolicy": { "const": "verified-original-before-service-open-v1" },
+        "persistentContracts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "userSettingsSchema",
+            "taskInputContract",
+            "macosHelperProtocol",
+            "localCompanionProtocol",
+            "remoteCompanionProtocol"
+          ],
+          "properties": {
+            "userSettingsSchema": { "const": 4 },
+            "taskInputContract": { "const": 2 },
+            "macosHelperProtocol": { "const": 2 },
+            "localCompanionProtocol": { "const": 2 },
+            "remoteCompanionProtocol": { "const": 1 }
+          }
+        },
+        "contractSources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "databaseSchema", "userSettings", "taskInput", "macosHelper",
+            "localCompanion", "remoteCompanion", "uiResources", "executionBackend"
+          ],
+          "properties": {
+            "databaseSchema": { "const": "src/stateSchema.ts#CURRENT_STATE_SCHEMA_VERSION" },
+            "userSettings": { "const": "src/modelPolicy.ts#MODEL_POLICY_SCHEMA_VERSION" },
+            "taskInput": { "const": "src/tools.ts#CODEX_TASK_INPUT_CONTRACT_VERSION" },
+            "macosHelper": { "const": "src/macosHelperServer.ts#MACOS_HELPER_PROTOCOL_VERSION" },
+            "localCompanion": { "const": "src/companionServer.ts#COMPANION_PROTOCOL_VERSION" },
+            "remoteCompanion": { "const": "src/remoteCompanionServer.ts#REMOTE_COMPANION_PROTOCOL_VERSION" },
+            "uiResources": { "const": "uiResources.minimumContractGeneration" },
+            "executionBackend": { "const": "toolchain.codexCli+app-server-schema.lock.json" }
+          }
+        },
+        "recoveryContract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "backupMetadataVersion", "restoreReceiptVersion", "sourceRuntimeMatch",
+            "settingsRestore", "automaticSnapshotRestoreUntil"
+          ],
+          "properties": {
+            "backupMetadataVersion": { "const": 1 },
+            "restoreReceiptVersion": { "const": 1 },
+            "sourceRuntimeMatch": { "const": "exact-product-version-and-build" },
+            "settingsRestore": { "const": "database-snapshot-and-source-runtime-configuration" },
+            "automaticSnapshotRestoreUntil": { "const": "service-open" }
+          }
+        }
+      }
+    },
     "release": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["version", "tagPrefix", "channel", "generateNotes", "assets"],
+      "required": [
+        "releaseUnitId",
+        "version",
+        "stage",
+        "tagPrefix",
+        "channel",
+        "sourceVersion",
+        "sourceCandidate",
+        "generateNotes",
+        "targets",
+        "assets"
+      ],
       "properties": {
+        "releaseUnitId": { "const": "codex-mcp-bridge" },
         "version": {
           "type": "string",
-          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$"
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-rc\\.([1-9][0-9]*))?$"
         },
+        "stage": { "enum": ["development", "candidate", "stable", "deprecated"] },
         "tagPrefix": { "type": "string", "pattern": "^[A-Za-z0-9._-]{0,16}$" },
-        "channel": { "enum": ["stable", "prerelease"] },
+        "channel": { "enum": ["none", "stable", "prerelease"] },
+        "sourceVersion": {
+          "type": ["string", "null"],
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+        },
+        "sourceCandidate": {
+          "type": ["string", "null"],
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)-rc\\.([1-9][0-9]*)$"
+        },
         "generateNotes": { "type": "boolean" },
+        "targets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["macos"],
+          "properties": {
+            "macos": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["architectures", "format", "minimumVersion", "signing", "notarization"],
+              "properties": {
+                "architectures": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "uniqueItems": true,
+                  "prefixItems": [
+                    { "const": "arm64" },
+                    { "const": "x64" }
+                  ],
+                  "items": false
+                },
+                "format": { "const": "dmg" },
+                "minimumVersion": { "const": "13.0" },
+                "signing": { "const": "ad-hoc" },
+                "notarization": { "const": "none" }
+              }
+            }
+          }
+        },
         "assets": {
           "type": "array",
-          "minItems": 2,
-          "maxItems": 2,
+          "minItems": 5,
+          "maxItems": 5,
           "uniqueItems": true,
-          "items": { "enum": ["npm-tarball", "sha256"] },
+          "items": {
+            "enum": [
+              "npm-tarball",
+              "npm-sha256",
+              "macos-arm64-app",
+              "macos-x64-app",
+              "release-checksums"
+            ]
+          },
           "allOf": [
             { "contains": { "const": "npm-tarball" } },
-            { "contains": { "const": "sha256" } }
+            { "contains": { "const": "npm-sha256" } },
+            { "contains": { "const": "macos-arm64-app" } },
+            { "contains": { "const": "macos-x64-app" } },
+            { "contains": { "const": "release-checksums" } }
           ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "stage": { "const": "candidate" } } },
+          "then": {
+            "properties": {
+              "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)-rc\\.([1-9][0-9]*)$" },
+              "channel": { "const": "prerelease" },
+              "sourceVersion": { "type": "string" },
+              "sourceCandidate": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "stage": { "const": "stable" } } },
+          "then": {
+            "properties": {
+              "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+              "channel": { "const": "stable" },
+              "sourceVersion": { "type": "string" },
+              "sourceCandidate": { "type": "string" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "stage": { "enum": ["development", "deprecated"] } } },
+          "then": {
+            "properties": {
+              "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+              "channel": { "const": "none" },
+              "sourceVersion": { "type": "null" },
+              "sourceCandidate": { "type": "null" }
+            }
+          }
+        }
+      ]
     }
   }
 }

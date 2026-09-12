@@ -1,0 +1,110 @@
+{
+  "issue": 69,
+  "testedAt": "2026-09-08T01:35:35.334363+00:00",
+  "host": "Authenticated ChatGPT Web in Safari, existing conversations; normal UI only",
+  "candidateRuntimeBuildId": "cf029606c66d-dirty:7cc1b24623e9",
+  "compiledRuntimeMatchesFinalTestedBuild": true,
+  "discovery": {
+    "total": 29,
+    "model": 12,
+    "app": 17,
+    "currentContract": 17,
+    "retainedAppDescriptors": 12,
+    "unadvertisedServerAliases": 2
+  },
+  "compatibilityExperiments": [
+    {
+      "configuration": "17 descriptors, resources retained, aliases accepted by server only",
+      "existingActivity": "template fetch failed"
+    },
+    {
+      "configuration": "17 descriptors, Activity resource referenced by current app reader",
+      "templateDiscovered": true,
+      "existingActivity": "template fetch failed"
+    },
+    {
+      "configuration": "18 descriptors, original Activity presenter app-only",
+      "existingActivityFrame": true,
+      "refresh": "failed; stale prior-day data retained"
+    },
+    {
+      "configuration": "29 descriptors, retained app callers advertised app-only",
+      "existingActivityFrame": true,
+      "freshRead": true,
+      "manualRefresh": true,
+      "refreshObservedAtKst": "2026-09-08 10:25:07"
+    }
+  ],
+  "existingGlobalOverview": {
+    "reopened": true,
+    "currentData": true,
+    "selectedWorkDetails": true,
+    "mutationsPerformed": false
+  },
+  "existingSettings": {
+    "reopened": true,
+    "savedAlwaysFullPolicyVisible": true,
+    "projectRegistryVisible": true,
+    "activityPresentationControlsVisible": false,
+    "settingsChanged": false
+  },
+  "independentQuestion": {
+    "resource": "ui://codex-mcp-bridge/question/04852baeb268.html",
+    "rendered": true,
+    "answerGeneratedAfterCardCreation": true,
+    "answerEnteredOnlyInCard": true,
+    "draftSurvivedRefresh": true,
+    "submitted": true,
+    "hostFollowupStarted": true,
+    "gptReturnedExactStoredAnswer": true,
+    "persistedStatus": "answered",
+    "persistedNotification": "requested",
+    "persistedConsumedAtPresent": true,
+    "codexExecutionRequested": false,
+    "reentry": "passed: consumed message shown, no answer input or submit control"
+  },
+  "cardFreeCompletion": {
+    "conversationLeftDuringProcessing": true,
+    "newJobs": 0,
+    "newActivities": 0,
+    "newAgents": 0,
+    "newActivityCard": false,
+    "outcome": "blocked-before-admission",
+    "hostReview": "project lookup and danger-full-access execution rejected before bridge admission",
+    "saferAttempt": "read-only admission rejected by existing always-full policy with SANDBOX_CONFLICT",
+    "codexCompletionVerified": false,
+    "gptJobResultRetrievalVerified": false,
+    "nativeNotificationVerified": false,
+    "chatgptCompletionNotificationVerified": false,
+    "chatgptUnreadFinalMarkerObserved": true
+  },
+  "state": {
+    "jobsBefore": 475,
+    "jobsAfter": 475,
+    "schema": 13,
+    "realAnsweredQuestionPreservedInCopy": true,
+    "copiedStateRestartPasses": 2,
+    "activeJobRecoveryExercised": false,
+    "settingsChangedByTest": false,
+    "otherSettingsAndProjectsUnchanged": true,
+    "userConfirmedPriorityChange": {
+      "usePriorityServiceTier": false,
+      "changedAt": "2026-09-08T01:38:38.650Z",
+      "preserved": true
+    }
+  },
+  "runtimeRestore": {
+    "status": "restored",
+    "runtimeBuildId": "54296e0f0010-dirty:9af435da30f3",
+    "phase": "running",
+    "tunnel": "connected",
+    "chatgptRefreshedToOriginalToolCount": 30,
+    "productionDatabaseReplaced": false,
+    "existingActivityReopenedWithFreshData": true,
+    "testQuestionExpiredNormallyAfterTenMinutes": true
+  },
+  "omissions": [
+    "No live approval, active-stop or idle-process mutation was performed.",
+    "No raw question answer, user identifiers, private paths or credentials are included."
+  ]
+}

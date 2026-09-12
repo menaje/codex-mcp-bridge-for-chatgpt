@@ -29,6 +29,16 @@ type PendingRequest = {
   timer?: NodeJS.Timeout;
 };
 
+type TimedOutRequest = {
+  method: string;
+  timeoutMs: number;
+  timedOutAt: number;
+  lateResponseContext?: JsonRpcLateResponseContext;
+};
+
+const MAX_TRACKED_TIMED_OUT_REQUESTS = 256;
+export const MAX_JSON_RPC_TIMEOUT_MS = 2_147_483_647;
+
 export type JsonRpcProcessIdentity = {
   pid: number;
   processGroupId: number | null;
@@ -47,6 +57,22 @@ export type JsonRpcRequestOptions = {
   timeoutMs?: number;
   progress?: boolean;
   onProgress?: (value: unknown) => void;
+  /**
+   * Bounded, non-sensitive identifiers needed to reconcile a response that
+   * arrives after timeout. Request parameters are deliberately never retained.
+   */
+  lateResponseContext?: JsonRpcLateResponseContext;
+};
+
+export type JsonRpcLateResponseContext = Readonly<
+  Record<string, string | number | boolean | null>
+>;
+
+export type JsonRpcLateResponse = TimedOutRequest & {
+  requestId: number;
+  receivedAt: number;
+  /** The exact decoded response object received from the supervised process. */
+  response: Readonly<Record<string, unknown>>;
 };
 
 export type JsonRpcServerRequestHandler = (
@@ -57,6 +83,17 @@ export type JsonRpcServerRequestHandler = (
 
 export type JsonRpcNotificationHandler = (method: string, params: unknown) => void;
 
+/**
+ * Signals that the peer already resolved an inbound server request through a
+ * separate protocol path. No duplicate JSON-RPC response must be written.
+ */
+export class JsonRpcServerRequestResolved extends Error {
+  constructor() {
+    super("The peer already resolved this server request.");
+    this.name = "JsonRpcServerRequestResolved";
+  }
+}
+
 export type JsonRpcProcessOptions = {
   command: string;
   args: string[];
@@ -66,6 +103,12 @@ export type JsonRpcProcessOptions = {
   onNotification?: JsonRpcNotificationHandler;
   onRequest?: JsonRpcServerRequestHandler;
   onExit?: (error: Error) => void;
+  /**
+   * Receives responses for recently timed-out requests. The transport retains
+   * a bounded ledger so callers can correlate partial upstream success without
+   * allowing abandoned request metadata to grow without limit.
+   */
+  onLateResponse?: (response: JsonRpcLateResponse) => void;
   /** Codex App Server uses JSON-RPC semantics but omits the jsonrpc header on the wire. */
   omitJsonRpcHeader?: boolean;
 };
@@ -85,6 +128,7 @@ export class JsonRpcProcess {
   private lines?: ReadLineInterface;
   private nextRequestId = 1;
   private readonly pending = new Map<JsonRpcId, PendingRequest>();
+  private readonly timedOut = new Map<JsonRpcId, TimedOutRequest>();
   private readonly inboundQueue: unknown[] = [];
   private inboundDrainScheduled = false;
   private pendingExitError?: Error;
@@ -109,6 +153,11 @@ export class JsonRpcProcess {
       this.exitNotified ||
       (this.child && (this.child.exitCode !== null || this.child.signalCode !== null))
     );
+  }
+
+  /** Diagnostic count used to assert lifecycle cleanup without exposing request payloads. */
+  get pendingRequestCount(): number {
+    return this.pending.size;
   }
 
   async start(): Promise<JsonRpcProcessIdentity> {
@@ -170,10 +219,19 @@ export class JsonRpcProcess {
   }
 
   async request<T = unknown>(method: string, params?: unknown, options: JsonRpcRequestOptions = {}): Promise<T> {
-    await this.start();
-    if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs <= 0)) {
-      throw new Error("JSON-RPC timeout must be a positive integer when supplied.");
+    const timeoutMs = options.timeoutMs;
+    if (
+      timeoutMs !== undefined &&
+      (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_JSON_RPC_TIMEOUT_MS)
+    ) {
+      throw new Error(
+        `JSON-RPC timeout must be an integer between 1 and ${MAX_JSON_RPC_TIMEOUT_MS}ms when supplied.`
+      );
     }
+    const lateResponseContext = options.lateResponseContext
+      ? boundedLateResponseContext(options.lateResponseContext)
+      : undefined;
+    await this.start();
     const id = this.nextRequestId++;
     const requestParams = options.progress ? addProgressToken(params, id) : params;
     const promise = new Promise<T>((resolve, reject) => {
@@ -182,11 +240,24 @@ export class JsonRpcProcess {
         reject,
         onProgress: options.onProgress
       };
-      if (options.timeoutMs !== undefined) {
+      if (timeoutMs !== undefined) {
         pending.timer = setTimeout(() => {
           if (!this.pending.delete(id)) return;
-          reject(Object.assign(new Error(`${method} timed out after ${options.timeoutMs}ms.`), { code: -32001 }));
-        }, options.timeoutMs);
+          const timedOutAt = Date.now();
+          this.rememberTimedOutRequest(id, {
+            method,
+            timeoutMs,
+            timedOutAt,
+            ...(lateResponseContext ? { lateResponseContext } : {})
+          });
+          reject(Object.assign(new Error(`${method} timed out after ${timeoutMs}ms (request ${id}).`), {
+            code: -32001,
+            requestId: id,
+            method,
+            timeoutMs,
+            processIdentity: this.identity
+          }));
+        }, timeoutMs);
       }
       this.pending.set(id, pending);
     });
@@ -212,6 +283,7 @@ export class JsonRpcProcess {
       return;
     }
     this.closing = true;
+    this.rejectPending(new Error(`${this.options.debugLabel} process was closed.`));
     if (!this.child || this.exited) return;
     try {
       this.child.stdin.end();
@@ -328,7 +400,10 @@ export class JsonRpcProcess {
     }
     if (typeof message.id !== "number") return;
     const pending = this.pending.get(message.id);
-    if (!pending) return;
+    if (!pending) {
+      this.reportLateResponse(message.id, message);
+      return;
+    }
     this.pending.delete(message.id);
     if (pending.timer) clearTimeout(pending.timer);
     if (isRecord(message.error)) {
@@ -343,13 +418,18 @@ export class JsonRpcProcess {
   }
 
   private async handleServerRequest(request: JsonRpcRequest): Promise<void> {
+    if (!this.canRespondToServer) return;
     try {
       if (!this.options.onRequest) {
         throw Object.assign(new Error(`Unsupported server request: ${request.method}`), { code: -32601 });
       }
       const result = await this.options.onRequest(request.method, request.params, request.id);
+      // Approval/input handlers can settle after shutdown or a worker crash.
+      // The response belongs to that dead connection and cannot be delivered.
+      if (!this.canRespondToServer) return;
       this.write({ jsonrpc: "2.0", id: request.id, result: result ?? {} });
     } catch (error) {
+      if (error instanceof JsonRpcServerRequestResolved || !this.canRespondToServer) return;
       const code = isRecord(error) && typeof error.code === "number" ? error.code : -32603;
       this.write({
         jsonrpc: "2.0",
@@ -360,6 +440,10 @@ export class JsonRpcProcess {
         }
       });
     }
+  }
+
+  private get canRespondToServer(): boolean {
+    return !this.closing && !this.exited && this.child?.stdin.writable === true;
   }
 
   private write(message: unknown): void {
@@ -380,6 +464,34 @@ export class JsonRpcProcess {
     this.pending.clear();
   }
 
+  private rememberTimedOutRequest(requestId: JsonRpcId, request: TimedOutRequest): void {
+    this.timedOut.set(requestId, request);
+    while (this.timedOut.size > MAX_TRACKED_TIMED_OUT_REQUESTS) {
+      const oldest = this.timedOut.keys().next().value as JsonRpcId | undefined;
+      if (oldest === undefined) break;
+      this.timedOut.delete(oldest);
+    }
+  }
+
+  private reportLateResponse(requestId: JsonRpcId, response: Record<string, unknown>): void {
+    const request = this.timedOut.get(requestId);
+    if (!request) return;
+    this.timedOut.delete(requestId);
+    try {
+      this.options.onLateResponse?.({
+        requestId,
+        ...request,
+        receivedAt: Date.now(),
+        response
+      });
+    } catch (error) {
+      if (process.env.CODEX_MCP_BRIDGE_DEBUG === "1") {
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`[${this.options.debugLabel}] late-response observer failed: ${message}\n`);
+      }
+    }
+  }
+
   private notifyProcessExit(error: Error): void {
     if (this.exitNotified || this.pendingExitError) return;
     if (this.inboundDrainScheduled || this.inboundQueue.length > 0) {
@@ -393,6 +505,7 @@ export class JsonRpcProcess {
     if (this.exitNotified) return;
     this.exitNotified = true;
     this.rejectPending(error);
+    this.timedOut.clear();
     this.resolveExit?.();
     this.resolveExit = undefined;
     this.options.onExit?.(error);
@@ -405,6 +518,39 @@ function addProgressToken(params: unknown, requestId: number): Record<string, un
   meta.progressToken = requestId;
   base._meta = meta;
   return base;
+}
+
+function boundedLateResponseContext(
+  value: JsonRpcLateResponseContext
+): JsonRpcLateResponseContext {
+  const entries = Object.entries(value);
+  if (entries.length === 0 || entries.length > 8) {
+    throw new Error("JSON-RPC late-response context must contain between 1 and 8 safe identifiers.");
+  }
+  const normalized: Record<string, string | number | boolean | null> = {};
+  for (const [key, entry] of entries) {
+    if (!/^[a-z][a-zA-Z0-9]*$/.test(key) || key.length > 40) {
+      throw new Error("JSON-RPC late-response context contains an invalid key.");
+    }
+    if (typeof entry === "string") {
+      const identifier = entry.trim();
+      if (!identifier || identifier.length > 200 || /[\u0000-\u001f\u007f]/.test(identifier)) {
+        throw new Error("JSON-RPC late-response context contains an invalid string identifier.");
+      }
+      normalized[key] = identifier;
+      continue;
+    }
+    if (
+      entry === null ||
+      typeof entry === "boolean" ||
+      (typeof entry === "number" && Number.isSafeInteger(entry))
+    ) {
+      normalized[key] = entry;
+      continue;
+    }
+    throw new Error("JSON-RPC late-response context contains an unsupported value.");
+  }
+  return Object.freeze(normalized);
 }
 
 function inheritedChildEnvironment(): NodeJS.ProcessEnv {

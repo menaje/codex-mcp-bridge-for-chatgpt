@@ -1,0 +1,104 @@
+{
+  "events": [
+    {
+      "event": "before-update",
+      "at": "2026-09-10T01:03:41.216Z",
+      "impact": {
+        "acceptingNewJobs": true,
+        "activeJobs": 0,
+        "pendingAdmissions": 0,
+        "pendingInteractions": 0,
+        "memoryOnlyThreads": 0,
+        "backgroundProcessState": "confirmed",
+        "backgroundProcesses": 0,
+        "backgroundProcessAgents": 0,
+        "backgroundProcessUnknownAgents": 0
+      },
+      "build": {
+        "version": "0.3.0",
+        "commit": "535e264da4ca763a28d8606dc2c7f10f26ad8fc5",
+        "dirty": false,
+        "sourceHash": "38cb8ce3a4d30e0abed2cf757e18a386a6080953a687fae8add03c5502bf1701",
+        "builtAt": "2026-09-09T23:51:53.681Z",
+        "id": "535e264da4ca:38cb8ce3a4d3"
+      }
+    },
+    {
+      "event": "graceful-app-shutdown",
+      "at": "2026-09-10T01:03:42.829Z",
+      "requestId": "d88fa8a9-5908-4b7c-919b-5852da825130"
+    },
+    {
+      "event": "automatic-start-ready",
+      "at": "2026-09-10T01:05:09.916Z",
+      "buildId": "917363a4a745:6f0b979b4158",
+      "appPid": 32219,
+      "runtimePid": 32246,
+      "lifecycle": {
+        "requestId": "2D20AF4B-1FDC-41E7-8DEE-B9B37C015551",
+        "kind": "start",
+        "force": false,
+        "phase": "completed",
+        "createdAt": "2026-09-10T01:04:33.328Z",
+        "updatedAt": "2026-09-10T01:05:09.592Z",
+        "reasons": [],
+        "error": null,
+        "targetDescription": "app · 0.153.4",
+        "cancellable": false
+      },
+      "tunnel": {
+        "phase": "connected",
+        "profile": "codex-mcp-bridge-macos",
+        "transport": "http",
+        "doctorPassed": true,
+        "processRunning": true,
+        "connected": true,
+        "lastCheckedAt": "2026-09-10T01:05:09.350Z",
+        "lastError": null,
+        "lastProblem": null
+      },
+      "privateEnvironmentPreserved": true,
+      "previousShutdownCompleted": true
+    },
+    {
+      "event": "graceful-app-shutdown",
+      "at": "2026-09-10T01:06:10.205Z",
+      "requestId": "73474716-c4b3-4c47-9474-edf8194e803e"
+    },
+    {
+      "event": "automatic-start-ready",
+      "at": "2026-09-10T01:07:45.911Z",
+      "buildId": "917363a4a745:6f0b979b4158",
+      "appPid": 36571,
+      "runtimePid": 36620,
+      "lifecycle": {
+        "requestId": "AD6792B5-FEEA-4613-B844-5DACBE71B6B3",
+        "kind": "start",
+        "force": false,
+        "phase": "completed",
+        "createdAt": "2026-09-10T01:06:58.733Z",
+        "updatedAt": "2026-09-10T01:07:44.319Z",
+        "reasons": [],
+        "error": null,
+        "targetDescription": "app · 0.153.4",
+        "cancellable": false
+      },
+      "tunnel": {
+        "phase": "connected",
+        "profile": "codex-mcp-bridge-macos",
+        "transport": "http",
+        "doctorPassed": true,
+        "processRunning": true,
+        "connected": true,
+        "lastCheckedAt": "2026-09-10T01:07:43.699Z",
+        "lastError": null,
+        "lastProblem": null
+      },
+      "privateEnvironmentPreserved": true,
+      "previousShutdownCompleted": true
+    }
+  ],
+  "stateIntegrity": "ok",
+  "installedNativeMatchesBuiltArtifact": true,
+  "sourceMatchesBuiltRuntime": true
+}

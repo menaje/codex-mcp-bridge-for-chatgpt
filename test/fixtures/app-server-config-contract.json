@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "properties": {
+    "config": {
+      "type": "object",
+      "properties": {
+        "apps": {
+          "type": "object",
+          "properties": {
+            "_default": {
+              "type": "object",
+              "properties": {
+                "default_tools_approval_mode": {
+                  "enum": ["auto", "prompt", "writes", "approve", null]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

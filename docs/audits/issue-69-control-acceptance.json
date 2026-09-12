@@ -1,0 +1,165 @@
+{
+  "issue": 69,
+  "status": "partial-original-input-host-gate",
+  "sourceCommit": "26ee1522f165a14d6b8b79949cc5d8724474d1b9",
+  "buildId": "26ee1522f165:994b2f5f82d7",
+  "actualHost": {
+    "existingOverviewReopened": true,
+    "inCardStopConfirmation": true,
+    "jobStop": {
+      "jobId": "51026ac6-5482-40fb-83d6-b990f50b2f24",
+      "status": "cancelled",
+      "origin": "explicit-cancellation",
+      "source": "widget-control",
+      "tool": "codex_ui_stop",
+      "expectedVersion": 16,
+      "finalVersion": 18
+    },
+    "originalApproval": {
+      "jobId": "27134b8b-499d-4482-ac79-5602962187a0",
+      "kind": "mcp-elicitation",
+      "decision": "decline",
+      "status": "completed",
+      "toolBodyInvoked": false
+    },
+    "idleProcessStop": {
+      "jobId": "72fbeda0-fb9d-4eec-8aff-08452ad17d32",
+      "processId": "50860",
+      "activeJobsAtInspection": 0,
+      "processesBefore": 1,
+      "processesAfter": 0,
+      "completedJobPreserved": true
+    },
+    "originalFormInput": {
+      "status": "blocked-before-admission",
+      "blockSource": "ChatGPT reported safety check",
+      "detailedReasonAvailable": false,
+      "jobCreated": false,
+      "passed": false
+    },
+    "nativeBanner": {
+      "observed": false,
+      "nativeUiAccess": "denied by Computer Use safety policy",
+      "ownerIssue": 15
+    },
+    "newEndedResponseWake": {
+      "requiredByIssue69": false
+    }
+  },
+  "validation": {
+    "tests": 780,
+    "testFiles": 63,
+    "macosTotal": 101,
+    "macosPassed": 99,
+    "macosSkipped": 2,
+    "macosFailed": 0,
+    "sandboxedStopBrowserCases": 6,
+    "originalInputBrowserCases": 4,
+    "typescript": true,
+    "releaseAndUiManifest": true,
+    "cliContract": "0.153.3",
+    "githubCi": "not-configured"
+  },
+  "preservation": {
+    "jobs": {
+      "existing": 480,
+      "current": 484,
+      "changedExisting": 0
+    },
+    "activities": {
+      "existing": 208,
+      "current": 212,
+      "changedExisting": 0
+    },
+    "agents": {
+      "existing": 239,
+      "current": 243,
+      "changedExisting": 0
+    },
+    "user_settings": {
+      "existing": 1,
+      "current": 1,
+      "changedExisting": 0
+    },
+    "projects": {
+      "existing": 4,
+      "current": 4,
+      "changedExisting": 0
+    },
+    "project_registry": {
+      "existing": 1,
+      "current": 1,
+      "changedExisting": 0
+    },
+    "agent_threads": {
+      "existing": 247,
+      "current": 251,
+      "changedExisting": 0
+    },
+    "activity_agents": {
+      "existing": 479,
+      "current": 483,
+      "changedExisting": 0
+    },
+    "activity_events": {
+      "existing": 1899,
+      "current": 1921,
+      "changedExisting": 0
+    },
+    "job_events": {
+      "existing": 103336,
+      "current": 103405,
+      "changedExisting": 0
+    },
+    "completion_outbox": {
+      "existing": 0,
+      "current": 0,
+      "changedExisting": 0
+    },
+    "agent_mutations": {
+      "existing": 8,
+      "current": 10,
+      "changedExisting": 0
+    },
+    "cancellation_operations": {
+      "existing": 16,
+      "current": 17,
+      "changedExisting": 0
+    },
+    "cancellation_intents": {
+      "existing": 18,
+      "current": 19,
+      "changedExisting": 0
+    },
+    "steering_deliveries": {
+      "existing": 68,
+      "current": 68,
+      "changedExisting": 0
+    },
+    "user_questions": {
+      "existing": 0,
+      "current": 0,
+      "changedExisting": 0
+    },
+    "codex_question_deliveries": {
+      "existing": 0,
+      "current": 0,
+      "changedExisting": 0
+    }
+  },
+  "finalRuntime": {
+    "phase": "running",
+    "tunnelConnected": true,
+    "acceptingNewJobs": true,
+    "activeJobs": 0,
+    "pendingAdmissions": 0,
+    "pendingInteractions": 0,
+    "memoryOnlyThreads": 0,
+    "backgroundProcessState": "confirmed",
+    "backgroundProcesses": 0,
+    "backgroundProcessAgents": 0,
+    "backgroundProcessUnknownAgents": 0,
+    "lastError": null
+  },
+  "temporaryProjectConfigurationRestored": true
+}

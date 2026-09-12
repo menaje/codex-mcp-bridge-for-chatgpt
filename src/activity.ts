@@ -6,7 +6,7 @@ export const ACTIVITY_KINDS = [
   "other"
 ] as const;
 
-export const ACTIVITY_EXECUTION_MODES = ["auto", "foreground", "background"] as const;
+export const ACTIVITY_EXECUTION_MODES = ["foreground", "background"] as const;
 export const ACTIVITY_HANDOFF_POLICIES = ["none", "notify", "verify"] as const;
 export const ACTIVITY_COMPLETION_TRIGGERS = ["manual", "sealed-jobs-terminal"] as const;
 export const ACTIVITY_LIFECYCLES = [
@@ -71,6 +71,12 @@ export type ActivityVerificationEvidence = {
 export type BridgeActivity = {
   activityId: string;
   scopeId: string;
+  /** Stable project identity pinned when the Activity admits its first work. */
+  projectId?: string;
+  projectName?: string;
+  continuationOfActivityId?: string;
+  /** Presentation generation is independent from Agent/thread continuity. */
+  cardGeneration: number;
   title: string;
   kind: ActivityKind;
   executionMode: ActivityExecutionMode;

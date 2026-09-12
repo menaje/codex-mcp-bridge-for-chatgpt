@@ -1,0 +1,72 @@
+{
+  "codex_activity": [
+    {
+      "fixture": "empty-activity-view",
+      "structuredContent": {
+        "kind": "activity",
+        "mode": "compact-monitor",
+        "scopeVersion": 0,
+        "counts": {
+          "activities": 0,
+          "agents": 0,
+          "active": 0,
+          "needsAttention": 0
+        }
+      }
+    }
+  ],
+  "codex_activity_cancel": [
+    {
+      "fixture": "activity-cancelled",
+      "structuredContent": {
+        "kind": "mutation",
+        "ok": true,
+        "action": "cancel",
+        "target": {
+          "type": "activity",
+          "id": "activity-cancelled",
+          "state": "cancelled",
+          "version": 4
+        },
+        "affectedJobIds": [
+          "job-cancelled"
+        ],
+        "policySource": "explicit-tool-input",
+        "codexOutputCanMutatePolicy": false,
+        "warnings": [
+          "Partial filesystem changes were not rolled back."
+        ],
+        "nextActions": []
+      }
+    }
+  ],
+  "codex_input": [
+    {
+      "fixture": "gpt-question-flow",
+      "structuredContent": {
+        "kind": "codex-input",
+        "jobId": "fixture-job",
+        "jobVersion": 1,
+        "cursor": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "changed": true,
+        "active": true,
+        "questions": [],
+        "approvals": [],
+        "messages": [
+          {
+            "id": "message",
+            "text": "Which option?",
+            "createdAt": 1780000000000
+          }
+        ],
+        "historyLimited": true,
+        "hasMoreQuestions": false,
+        "nextActions": [
+          "Judge the message and answer within delegation."
+        ],
+        "waitedMs": 0,
+        "timedOut": false
+      }
+    }
+  ]
+}

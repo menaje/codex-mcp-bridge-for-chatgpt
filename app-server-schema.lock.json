@@ -1,0 +1,13 @@
+{
+  "lockVersion": 1,
+  "supportedCodexCliVersion": "0.153.3",
+  "includeExperimental": true,
+  "jsonSchema": {
+    "fileCount": 416,
+    "sha256": "f3a5018e923206d44af954f75db5078f98e574a405d1327f12b67e7021528cc9"
+  },
+  "typescript": {
+    "fileCount": 827,
+    "sha256": "55c31c1c40c351ba2b46095ed25e97c31ec5dc42088b805a430eba204862cb27"
+  }
+}

@@ -1,0 +1,464 @@
+{
+  "observedAt": "2026-09-07T13:11:35.751Z",
+  "scope": "Technical feasibility research; production bridge unchanged. Authenticated CLI probes use isolated temporary homes and a synthetic color question. Parent GPT tool execution and the live ChatGPT UI have not been validated.",
+  "liveMessageReplies": [
+    {
+      "source": "app",
+      "version": "codex-cli 0.153.4",
+      "model": "gpt-6-astra",
+      "requests": [],
+      "notifications": {
+        "remoteControl/status/changed": 1,
+        "thread/started": 1,
+        "mcpServer/startupStatus/updated": 3,
+        "thread/status/changed": 2,
+        "turn/started": 1,
+        "item/started": 5,
+        "item/completed": 5,
+        "thread/tokenUsage/updated": 2,
+        "account/rateLimits/updated": 2,
+        "item/agentMessage/delta": 12,
+        "turn/completed": 1
+      },
+      "messages": [
+        {
+          "phase": "final_answer",
+          "text": "Which probe color?\n- Blue\n- Red",
+          "elapsedMs": 7145
+        },
+        {
+          "phase": "commentary",
+          "text": "PROBE_CONTINUES\n",
+          "elapsedMs": 9944
+        },
+        {
+          "phase": "final_answer",
+          "text": "PROBE_ANSWER_Blue",
+          "elapsedMs": 10253
+        }
+      ],
+      "adapterUsed": false,
+      "replyToMessage": true,
+      "replyMethod": "turn/steer",
+      "steerAccepted": true,
+      "turnStatus": "completed",
+      "finalContainsAnswer": true,
+      "modelToolFlags": [
+        {
+          "slug": "gpt-6-astra",
+          "tools": [
+            "send_user_message_async",
+            "clock"
+          ]
+        }
+      ],
+      "elapsedMs": 10318,
+      "temporaryHomeRemoved": true
+    },
+    {
+      "version": "codex-cli 0.153.3",
+      "model": "gpt-6-astra",
+      "source": "terminal",
+      "requests": [],
+      "notifications": {
+        "remoteControl/status/changed": 1,
+        "thread/started": 1,
+        "mcpServer/startupStatus/updated": 3,
+        "thread/status/changed": 2,
+        "turn/started": 1,
+        "item/started": 5,
+        "item/completed": 5,
+        "thread/tokenUsage/updated": 2,
+        "account/rateLimits/updated": 2,
+        "item/agentMessage/delta": 12,
+        "turn/completed": 1
+      },
+      "messages": [
+        {
+          "phase": "final_answer",
+          "text": "Which probe color?\n- Blue\n- Red",
+          "elapsedMs": 5769
+        },
+        {
+          "phase": "commentary",
+          "text": "PROBE_CONTINUES\n",
+          "elapsedMs": 8633
+        },
+        {
+          "phase": "final_answer",
+          "text": "PROBE_ANSWER_Blue",
+          "elapsedMs": 8903
+        }
+      ],
+      "adapterUsed": false,
+      "replyToMessage": true,
+      "replyMethod": "turn/steer",
+      "steerAccepted": true,
+      "turnStatus": "completed",
+      "finalContainsAnswer": true,
+      "modelToolFlags": [
+        {
+          "slug": "gpt-6-astra",
+          "tools": [
+            "send_user_message_async",
+            "clock"
+          ]
+        }
+      ],
+      "elapsedMs": 8984,
+      "temporaryHomeRemoved": true
+    },
+    {
+      "version": "codex-cli 0.153.4",
+      "model": "gpt-6-astra",
+      "source": "bridge",
+      "requests": [],
+      "notifications": {
+        "remoteControl/status/changed": 1,
+        "thread/started": 1,
+        "mcpServer/startupStatus/updated": 3,
+        "thread/status/changed": 2,
+        "turn/started": 1,
+        "item/started": 5,
+        "item/completed": 5,
+        "thread/tokenUsage/updated": 2,
+        "account/rateLimits/updated": 2,
+        "item/agentMessage/delta": 12,
+        "turn/completed": 1
+      },
+      "messages": [
+        {
+          "phase": "final_answer",
+          "text": "Which probe color?\n- Blue\n- Red",
+          "elapsedMs": 6287
+        },
+        {
+          "phase": "commentary",
+          "text": "PROBE_CONTINUES\n",
+          "elapsedMs": 9765
+        },
+        {
+          "phase": "final_answer",
+          "text": "PROBE_ANSWER_Blue",
+          "elapsedMs": 10035
+        }
+      ],
+      "adapterUsed": false,
+      "replyToMessage": true,
+      "replyMethod": "turn/steer",
+      "steerAccepted": true,
+      "turnStatus": "completed",
+      "finalContainsAnswer": true,
+      "modelToolFlags": [
+        {
+          "slug": "gpt-6-astra",
+          "tools": [
+            "send_user_message_async",
+            "clock"
+          ]
+        }
+      ],
+      "elapsedMs": 10105,
+      "temporaryHomeRemoved": true
+    }
+  ],
+  "liveStructuredRequestOnlyAttempts": [
+    {
+      "version": "codex-cli 0.153.4",
+      "model": "gpt-6-astra",
+      "defaultModeInputFlagOverridden": false,
+      "questionObserved": false,
+      "nonblocking": false,
+      "answerSent": false,
+      "progressBeforeAnswer": false,
+      "finalContainsAnswer": false,
+      "passed": false,
+      "error": "Synthetic asynchronous-input probe exceeded 150 seconds.",
+      "elapsedMs": 150037,
+      "temporaryHomeRemoved": true
+    },
+    {
+      "version": "codex-cli 0.153.4",
+      "model": "gpt-6-astra",
+      "defaultModeInputFlagOverridden": false,
+      "questionObserved": false,
+      "nonblocking": false,
+      "answerSent": false,
+      "progressBeforeAnswer": false,
+      "finalContainsAnswer": false,
+      "passed": false,
+      "authenticated": true,
+      "requestedModelListed": true,
+      "threadAssigned": true,
+      "error": "Synthetic asynchronous-input probe exceeded 150 seconds.",
+      "elapsedMs": 150073,
+      "stages": [
+        {
+          "name": "connecting",
+          "elapsedMs": 15
+        },
+        {
+          "name": "account-confirmed",
+          "elapsedMs": 1155
+        },
+        {
+          "name": "models-read",
+          "elapsedMs": 1157
+        },
+        {
+          "name": "thread-assigned",
+          "elapsedMs": 1171
+        },
+        {
+          "name": "event-turn",
+          "elapsedMs": 1175
+        },
+        {
+          "name": "event-agent-message",
+          "elapsedMs": 6904
+        },
+        {
+          "name": "event-usage",
+          "elapsedMs": 6934
+        }
+      ],
+      "eventCounts": {
+        "turn": 1,
+        "agent-message": 8,
+        "usage": 17
+      },
+      "temporaryHomeRemoved": true
+    }
+  ],
+  "wireObservationWithoutAnswer": {
+    "version": "codex-cli 0.153.4",
+    "model": "gpt-6-astra",
+    "requests": [],
+    "notifications": {
+      "remoteControl/status/changed": 1,
+      "thread/started": 1,
+      "mcpServer/startupStatus/updated": 3,
+      "thread/status/changed": 1,
+      "turn/started": 1,
+      "item/started": 6,
+      "item/completed": 5,
+      "thread/tokenUsage/updated": 2,
+      "account/rateLimits/updated": 2,
+      "item/agentMessage/delta": 5
+    },
+    "messages": [
+      {
+        "phase": "final_answer",
+        "text": "Which probe color?\n- Blue\n- Red",
+        "elapsedMs": 5339
+      },
+      {
+        "phase": "commentary",
+        "text": "PROBE_CONTINUES",
+        "elapsedMs": 7556
+      }
+    ],
+    "adapterUsed": false,
+    "timedOut": true,
+    "modelToolFlags": [
+      {
+        "slug": "gpt-6-astra",
+        "tools": [
+          "send_user_message_async",
+          "clock"
+        ]
+      }
+    ],
+    "elapsedMs": 45399,
+    "temporaryHomeRemoved": true
+  },
+  "bridgeContractPrototype": {
+    "observedAt": "2026-09-07T13:00:19.522Z",
+    "scope": "Real bridge MCP/registry with synthetic upstream and research-only prototype answer tool; no ChatGPT model execution.",
+    "checks": {
+      "currentResponderIsAppOnly": true,
+      "terminalWaitDoesNotReturnForPendingQuestion": true,
+      "pendingQuestionRetainedInternally": true,
+      "publicStatusOmitsPendingQuestion": true,
+      "changeWaitReturnsForProgress": true,
+      "progressChangesJobButNotQuestion": true,
+      "prototypeRejectsOtherScope": true,
+      "prototypeRejectsChangedQuestion": true,
+      "prototypeModelToolDeliversWithoutCardAfterProgress": true,
+      "prototypeReplayDeliversOnce": true,
+      "prototypeRejectsResolvedQuestion": true
+    },
+    "measurements": {
+      "jobVersions": [
+        3,
+        4
+      ]
+    }
+  },
+  "cardPrototype": {
+    "scope": "Real Chromium and existing card renderer; prototype submit handler and simulated ChatGPT host.",
+    "results": [
+      {
+        "mode": "normal",
+        "passed": true,
+        "saved": 1,
+        "followUpAttempts": 1,
+        "directCodexResponses": 0
+      },
+      {
+        "mode": "retry",
+        "passed": true,
+        "saved": 1,
+        "followUpAttempts": 2,
+        "directCodexResponses": 0
+      },
+      {
+        "mode": "expired",
+        "passed": true,
+        "saved": 0,
+        "followUpAttempts": 0,
+        "directCodexResponses": 0
+      }
+    ]
+  },
+  "generatedInputContract": {
+    "request": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "definitions": {
+        "ToolRequestUserInputOption": {
+          "description": "EXPERIMENTAL. Defines a single selectable option for request_user_input.",
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "description",
+            "label"
+          ],
+          "type": "object"
+        },
+        "ToolRequestUserInputQuestion": {
+          "description": "EXPERIMENTAL. Represents one request_user_input question and its required options.",
+          "properties": {
+            "header": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "isOther": {
+              "default": false,
+              "type": "boolean"
+            },
+            "isSecret": {
+              "default": false,
+              "type": "boolean"
+            },
+            "options": {
+              "items": {
+                "$ref": "#/definitions/ToolRequestUserInputOption"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "question": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "header",
+            "id",
+            "question"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "EXPERIMENTAL. Params sent with a request_user_input event.",
+      "properties": {
+        "autoResolutionMs": {
+          "default": null,
+          "description": "@deprecated Use `isBlocking` to decide whether the request should block.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "isBlocking": {
+          "type": "boolean"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/definitions/ToolRequestUserInputQuestion"
+          },
+          "type": "array"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "isBlocking",
+        "itemId",
+        "questions",
+        "threadId",
+        "turnId"
+      ],
+      "title": "ToolRequestUserInputParams",
+      "type": "object"
+    },
+    "response": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "definitions": {
+        "ToolRequestUserInputAnswer": {
+          "description": "EXPERIMENTAL. Captures a user's answer to a request_user_input question.",
+          "properties": {
+            "answers": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "answers"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "EXPERIMENTAL. Response payload mapping question ids to answers.",
+      "properties": {
+        "answers": {
+          "additionalProperties": {
+            "$ref": "#/definitions/ToolRequestUserInputAnswer"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "answers"
+      ],
+      "title": "ToolRequestUserInputResponse",
+      "type": "object"
+    }
+  },
+  "officialSources": [
+    "https://learn.chatgpt.com/docs/changelog",
+    "https://learn.chatgpt.com/docs/app-server#toolrequestuserinput",
+    "https://developers.openai.com/plugins/build/chatgpt-ui",
+    "https://developers.openai.com/plugins/reference#windowopenai-component-bridge"
+  ]
+}

@@ -1,508 +1,179 @@
 # Codex MCP Bridge for ChatGPT
 
-A policy-enforcing Streamable HTTP MCP bridge from ChatGPT to local Codex.
+Use ChatGPT to run Codex against projects on your own computer, keep work organized, and check progress without repeatedly copying commands and results between apps.
 
-- Repository: `menaje/codex-mcp-bridge-for-chatgpt`
-- npm package: `codex-mcp-bridge-for-chatgpt`
-- Product name: **Codex MCP Bridge for ChatGPT**
+[Download releases](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/releases) · [Detailed setup guide](docs/setup.md) · [Security model](docs/security.md)
+
+## What it gives you
+
+- Run and continue local Codex work from a ChatGPT conversation.
+- Organize work as reusable Agents and goal-oriented Activities instead of isolated terminal calls.
+- See running work, requests needing a response, and problems from the native macOS menu-bar app or the ChatGPT status card. Select a summary count to filter current work, or open Run History. The card starts with this conversation when it has retained work, with a switch to all conversations.
+- Choose which project folders Codex may use and control model, reasoning, concurrency, and access policy centrally.
+- Run one Mac as the server and use another Mac as a client for status and settings.
+- Keep the normal starting policy read-only and place an operator-controlled ceiling on broader access.
 
 ```text
 ChatGPT
-  -> OpenAI Secure MCP Tunnel
-  -> Codex MCP Bridge for ChatGPT (loopback HTTP)
-  -> sticky backend router
-       -> codex mcp-server (stable default)
-       -> codex app-server (feature-selectable rich events/controls)
-  -> one or more explicitly allowed working roots
+  → OpenAI Secure MCP Tunnel
+  → Codex MCP Bridge for ChatGPT on your server computer
+  → Codex working in a registered project folder
 ```
 
-The official Codex MCP server already provides `codex` and `codex-reply`. This bridge exposes a smaller lifecycle-oriented surface for safer daily use from ChatGPT:
+## What the menu-bar app shows
 
-- `codex_status`: inspect exact scope/Activity/thread/turn/job state, follow opaque cursors, retrieve results, or perform a bounded job/scope watch.
-- `codex_activity`: render the localized Activity card; the mounted card refreshes through `codex_status` instead of per-job polling.
-- `codex_cancel`: force-stop one scope-owned job and record a terminal state only after exact turn or worker-process exit is confirmed. Partial filesystem changes may remain.
-- `codex_activity_update`: apply one validated Activity lifecycle or policy transition.
-- `codex_models`: read the current selectable models and supported reasoning efforts from Codex.
-- `codex_settings`: render an interactive card for saved user preferences and current owner limits.
-- `codex_task`: create or attach an Activity and start or continue a policy-limited Codex turn.
+On macOS, open the menu-bar icon to check the selected server without opening ChatGPT:
 
-The cards use two additional app-only actions: `codex_update_settings` for
-preferences and `codex_activity_handoff` for transactional completion delivery.
-ChatGPT's model does not need to invoke either directly.
+- **Connection and Codex usage:** server/client target, Bridge health, and—when available—weekly Codex usage remaining with its reset time.
+- **Work state:** running, response-required, and issue counts, plus a conditional background-process indicator. Selecting a count filters the loaded current-work snapshot without another server read.
+- **Activity details:** filtered current-work lists or 12-row on-demand run history, with project, conversation, Agent, actual model, canonical lowercase reasoning effort, conditional next-run settings, snapshot work time, and background processes.
+- **Quick actions:** refresh status, continue a conversation in Codex after verified connection release, open Settings, control the server, or quit the app. See [conversation connections and retention](docs/thread-lifecycle.md) for waiting reasons, persistence constraints and returning to the bridge.
 
-## Security defaults
+<p align="center">
+  <img src="docs/images/macos-menubar-usage-light-en.png" alt="English macOS menu-bar app in light appearance showing weekly Codex usage and the three current work-state counts" width="360" valign="top">
+  <img src="docs/images/macos-dashboard-light-en.png" alt="English macOS menu-bar app in light appearance with Work and Run History selected, showing current Agents and their actual execution settings" width="360" valign="top">
+</p>
 
-- Binds to `127.0.0.1`.
-- Allows one current working directory unless roots are explicitly configured.
-- Uses the `read-only` Codex sandbox.
-- Uses the `on-request` approval policy.
-- Does not expose `workspace-write` or `danger-full-access` unless the bridge
-  owner explicitly enables those capabilities.
-- Rejects paths outside the configured real-path roots.
-- Refuses repositories containing common secret-file names unless the owner explicitly disables the preflight.
-- Limits prompt size and concurrent Codex jobs.
-- Suppresses upstream Codex stderr unless local debug logging is enabled.
-- Stores settings, session metadata, jobs, and bounded results in one private
-  transactional SQLite database and revalidates every saved value
-  against owner-enforced capabilities and limits.
+## Choose how to use it
 
-These controls are a policy layer, not OS-level isolation. Use a staging copy, container, VM, or separate OS user when hard isolation is required.
+| Your situation | Recommended setup | What runs on this computer |
+| --- | --- | --- |
+| This Mac will run Codex work | macOS app in **Run Server on This Mac** mode | App, helper, Bridge, Tunnel, and Codex |
+| This Mac will only manage another Mac | macOS app in **Connect to Existing Server** mode | Client app only |
+| Windows or Linux will run Codex work | Node.js server | Bridge, Tunnel, and Codex |
+| macOS without the native app | Node.js server | Bridge, Tunnel, and Codex |
 
-## Requirements
+The native client-only mode is currently available on macOS. Windows and Linux users run the Node.js server and use the ChatGPT Settings and Dashboard cards.
 
-- Node.js 22 or later.
-- Codex CLI installed, authenticated, and providing `codex mcp-server`.
-- `tunnel-client` and an OpenAI Secure MCP Tunnel for ChatGPT access.
+<p align="center">
+  <img src="docs/images/macos-app-roles-light-en.png" alt="English macOS settings in light appearance showing the local server role and the option to connect to an existing server" width="720">
+</p>
 
-Official references:
+## Quick start
 
-- [Run Codex as an MCP server](https://developers.openai.com/codex/mcp/)
-- [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
-- [Build MCP Apps for ChatGPT](https://developers.openai.com/plugins/reference)
+### macOS app
 
-## Install
+1. Download the DMG for your Mac from [Releases](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/releases): `arm64` for Apple Silicon or `x64` for Intel.
+2. Move **Codex MCP Bridge for ChatGPT** to Applications and open it.
+3. Choose one role:
+   - **Run Server on This Mac** to run Codex locally.
+   - **Connect to Existing Server** to use this Mac only as a client.
+
+Server mode requires macOS 13 or later, Node.js 22 or later, and `tunnel-client`. In **Settings → Codex**, use an existing app/terminal Codex or install a bridge-managed CLI. A single existing installation is selected automatically; saved choices and manual update preferences are preserved. The app guides you through the Tunnel runtime key, Tunnel ID, Codex browser login, and first project.
+
+The bridge connects directly to the selected Codex through App Server. See [Codex installation and updates](docs/codex-runtimes.md) for ownership, compatibility, authentication and recovery.
+
+Client mode does not start or require a local Bridge, Tunnel, or Codex runtime. Paste the one-time invitation copied from the server Mac, then select that saved server.
+
+The current app is ad-hoc signed and not notarized. On first launch, macOS may require approval in **System Settings → Privacy & Security**.
+
+### Windows, Linux, or a terminal-managed server
+
+Install Node.js 22 or later, the Codex CLI, and `tunnel-client`, then authenticate Codex:
+
+```bash
+codex login
+git clone https://github.com/menaje/codex-mcp-bridge-for-chatgpt.git
+cd codex-mcp-bridge-for-chatgpt
+npm ci
+npm run build
+```
+
+Copy `.env.example` to the private runtime configuration location, set `CONTROL_PLANE_API_KEY` and `CONTROL_PLANE_TUNNEL_ID`, then start the server:
+
+```bash
+npm run bridge:secure
+```
+
+Use `npm run bridge:local` only for loopback development. ChatGPT access normally uses the Secure MCP Tunnel. See the [detailed setup guide](docs/setup.md) for Linux/macOS shell commands, Windows PowerShell commands, and configuration locations.
+
+## Connect it to ChatGPT
+
+After the server reports that the Bridge and Tunnel are ready:
+
+1. Enable Developer mode in ChatGPT.
+2. Create a developer-mode connection and choose Secure MCP Tunnel.
+3. Select the Tunnel ID used by the server.
+4. Choose **No Auth** for the ChatGPT connection.
+5. Ask ChatGPT to open the bridge settings and register at least one project folder.
+
+Routine computer, app, Bridge, or Tunnel restarts do not require a ChatGPT connection refresh. Refresh the connection after installing a release that changes tools or card UI.
+
+<p align="center">
+  <img src="docs/images/chatgpt-dashboard-light-en.png" alt="English ChatGPT Codex status card in light appearance showing conversation scope, three current work-state counts, Run History, and a background-process indicator" width="645">
+</p>
+
+## Settings at a glance
+
+| Area | What it controls |
+| --- | --- |
+| Connection | This Mac's server/client role, saved servers, remote access, and device pairing |
+| General | Access strategy, model policy, Priority/Fast use, language, concurrent work, and card behavior |
+| Projects | The folders Codex may use for new work |
+| Server | Codex backend and the maximum access the server may grant |
+
+Changes in the native app's General tab are saved automatically. In the ChatGPT Settings card, choose **Save settings** after editing. These settings are shared by every ChatGPT conversation using that server. In client mode, General and Projects edit the selected remote server. The login-at-startup preference always belongs to the current Mac. Server settings require an explicit save and restart.
+
+<p align="center">
+  <img src="docs/images/chatgpt-settings-light-en.png" alt="English ChatGPT settings card in light appearance showing access strategy, execution model policy, project registration, interface language, and concurrency" width="645">
+</p>
+
+For every option and its effect, see [Setup and settings](docs/setup.md#settings-reference).
+
+## Remote client mode
+
+On the server Mac, open **Settings → Connection**, enable **Manage This Server from Another Mac**, and select **Create and copy a new pairing invitation valid for 5 minutes**. Paste that invitation into the client Mac. It contains the server address and security identity together, expires after five minutes, and can be used once.
+
+<p align="center">
+  <img src="docs/images/macos-pairing-invitation-light-en.png" alt="English macOS server setting in light appearance for creating and copying a five-minute one-time pairing invitation" width="720">
+</p>
+
+You can save more than one server on the client, but only one is active at a time. Switching servers changes the Dashboard and the target of shared settings. A project path entered on a client is always a path on the selected server.
+
+Use remote management only on a private LAN or private VPN that you control. See [Remote client mode](docs/remote-client.md) for the network and security boundaries.
+
+## Safety notes
+
+- The Bridge binds to loopback by default and begins with read-only access.
+- Project folders must be registered explicitly; the Bridge does not guess a working folder.
+- Broader write or full access must be allowed by the server before a task can use it.
+- This is a personal bridge for one trusted operator. Shared settings are not isolated by ChatGPT account.
+- These controls are policy boundaries, not operating-system isolation. Use a separate OS user, container, VM, or disposable project copy when stronger isolation is required.
+- Execution uses the selected Codex CLI through App Server. Compatibility depends on the public protocol and required features, without a bridge-owned version allowlist.
+
+## Documentation
+
+- [Setup and settings](docs/setup.md) — macOS server/client setup, Windows/Linux Node.js setup, ChatGPT connection, and every user-facing setting
+- [Native macOS app](docs/macos-app.md) — app architecture, lifecycle, local files, recovery, and build details
+- [Remote client mode](docs/remote-client.md) — pairing, server switching, network scope, and credential handling
+- [ChatGPT integration](docs/chatgpt-setup.md) — advanced plugin contracts, refresh behavior, orchestration, and smoke checks
+- [Security model](docs/security.md) — trust boundaries, authentication, access policy, and remaining risks
+- [Database schema and lifecycle](docs/database-schema.md) — state ownership, every table, upgrades, retention, capacity, backups, and offline compaction
+- [State upgrade and recovery runbook](docs/state-upgrade-recovery.md) — release-stage profiles, migration preflight, verified restore, and post-service recovery
+- [Input contracts](docs/input-contracts.md) and [output contracts](docs/output-contracts.md) — public and app-private protocol details
+- [Release process](docs/releasing.md) and [release governance](docs/release-governance.md) — maintainer workflow and distribution gates
+- [UI release compatibility](docs/ui-release-compatibility.md) — published card baselines, development revisions and Activity retirement
+
+## Development
 
 ```bash
 npm ci
 npm run check
 ```
 
-## Development and releases
-
-Use `dev` as the working branch. Pushes to `dev` and pull-request updates do
-not start GitHub Actions. Never merge, fast-forward, cherry-pick, or push
-development work to `main` without an explicit user instruction to do so. The
-single workflow runs only after an explicitly approved change reaches `main`,
-where it performs the full build, test, and production dependency audit.
-
-[`release-manifest.json`](release-manifest.json) is the canonical source for the
-product name, npm package and binary names, Node/npm toolchain, GitHub
-repository, SemVer version, tag prefix, release channel, generated-notes
-policy, and release assets.
-`package.json`, `package-lock.json`, runtime build metadata, npm archive names,
-and the GitHub Release workflow consume or validate that manifest instead of
-maintaining independent release values.
-
-Before merging a release into `main`, update the manifest and synchronized npm
-metadata together on `dev`:
+On macOS:
 
 ```bash
-npm run release:version -- patch
-npm run release:check
-npm run check
+npm run macos:check
+npm run macos:bundle
 ```
 
-Use `minor`, `major`, or an exact SemVer value such as `0.4.0-beta.1` when
-appropriate. Use `npm run release:sync` only to repair derived npm metadata
-after an intentional manifest edit. After the `main` checks pass, the workflow
-validates that the manifest names the active GitHub repository and creates the
-manifest-derived tag, title, npm package tarball, and SHA-256 checksum. An
-existing release is never replaced or duplicated. See
-[docs/releasing.md](docs/releasing.md) for the complete contract.
+Release identity and supported targets are defined in `release-manifest.json`. Historical attribution is in [UPSTREAM.md](UPSTREAM.md).
 
-### Current name and legacy runtime namespace
+## License
 
-The current product, repository, and npm package names always include
-**for ChatGPT**. A bare `codex-mcp-bridge` string in a command or path does not
-refer to the current product or repository name. It is the legacy local runtime
-namespace retained for existing installations only.
+MIT
 
-That compatibility namespace currently covers the `codex-mcp-bridge`
-executable alias, `CODEX_MCP_BRIDGE_*` environment variables,
-`~/.codex-mcp-bridge` state directory, Keychain service keys, tunnel profile,
-and MCP App resource URIs. Changing it requires a separate migration of local
-services, credentials, state, and cached UI resources; a repository rename
-alone must not silently perform that migration.
+GPT handles ordinary Codex questions through `codex_status` (input query) and `codex_answer`. When the user’s opinion is needed, GPT can open a question card with `codex_ask_user` and retrieve the response with `codex_user_answer`. See [question orchestration](docs/gpt-questions.md) for the protocol, retention policy, and host validation limits.
 
-## Local smoke test
-
-Local mode never creates a public endpoint:
-
-```bash
-npm run bridge:local -- --root /absolute/path/to/repository
-```
-
-The MCP endpoint is `http://127.0.0.1:8876/mcp` and the health endpoint is `http://127.0.0.1:8876/healthz`.
-
-## Secure MCP Tunnel
-
-Create a tunnel in OpenAI Platform, then provide its runtime credentials outside this repository:
-
-```bash
-export CONTROL_PLANE_API_KEY="<runtime-key>"
-export CONTROL_PLANE_TUNNEL_ID="tunnel_..."
-
-npm run bridge:secure -- --root /absolute/path/to/repository
-```
-
-The launcher builds the bridge, starts it on loopback, initializes the tunnel profile, runs `tunnel-client doctor`, and keeps the tunnel client running.
-
-For a deliberate write session:
-
-```bash
-npm run bridge:secure -- --root /absolute/path/to/repository --write
-```
-
-Do not leave a write profile running when it is not needed.
-
-For an approval-gated workflow that stays read-only by default but permits an
-explicit `workspace-write` request:
-
-```bash
-npm run bridge:secure -- --root /absolute/path/to/repository --allow-write
-```
-
-To keep `read-only` as the default while making both mutation sandboxes
-available to an authorized MCP caller:
-
-```bash
-npm run bridge:secure -- --root /absolute/path/to/projects --allow-full-access
-```
-
-`--allow-full-access` does not change the initial adaptive/read-only behavior. It adds
-`workspace-write` and `danger-full-access` to `codex_task` so ChatGPT can select
-one for a concrete user-authorized change or build request and makes the
-`always-full` card strategy available.
-
-### Interactive settings card
-
-Ask ChatGPT to **open the Codex MCP Bridge for ChatGPT settings**. It calls
-`codex_settings` and renders an inline card where the bridge user can set:
-
-- access strategy: `read-only`, `adaptive`, or `always-full` when the owner has
-  enabled full access;
-- default Codex model and its supported reasoning effort from the live Codex
-  catalog;
-- default working directory inside the owner allowlist;
-- default session behavior (`auto` or `new`) and automatic-resume window;
-- active-job limit and completion delivery (`off`, card-only, or opt-in
-  automatic GPT handoff while a card remains mounted).
-
-Codex execution is unlimited-only: no task timeout exists in the card, saved
-settings, environment contract, or `codex_task`. Fast return and status/card
-waits remain bounded control-plane operations. Use the Activity card's single
-**Force stop** action when a tracked turn or worker must be ended.
-
-Saved values are authoritative defaults for later calls. `read-only` forces all
-new work to read-only even if a caller asks for more permission. `adaptive`
-keeps the current GPT-selected behavior. `always-full` forces new work to
-`danger-full-access`; an older session with a different sandbox must be replaced
-with a new compatible session.
-
-The card cannot change allowed roots, capability gates, approval policy, tunnel
-credentials, secret scanning, or process-level hard limits. Settings are global
-to this bridge instance—not per ChatGPT account—because the no-auth private
-tunnel connection does not provide an end-user identity to the bridge. They are
-stored in `~/.codex-mcp-bridge/state.sqlite` with mode `0600` by default.
-
-### ChatGPT plugin permissions and Codex permissions
-
-ChatGPT's plugin settings provide the four host-level choices shown in the UI:
-always confirm, allow read actions, allow low-risk actions, and allow all
-actions. Those choices control whether ChatGPT asks before invoking the MCP
-tool. They do not directly select a Codex sandbox.
-
-In the default `adaptive` strategy, the `sandbox` passed to `codex_task`
-controls the Codex process itself:
-
-- Omitted or `read-only`: inspect without modifying files.
-- `workspace-write`: mutate within Codex's workspace sandbox.
-- `danger-full-access`: unrestricted local filesystem and network access under
-  the current macOS user.
-
-When ChatGPT plugin permissions are the intended outer approval boundary, the
-bridge can use `CODEX_MCP_BRIDGE_APPROVAL_POLICY=never` to avoid a second Codex
-approval prompt. Use this only with a trusted, private plugin connection. With
-the plugin set to allow all actions, authorized mutation calls can then run
-without another confirmation. With the plugin set to always confirm, ChatGPT
-still asks before the MCP call.
-
-Call `codex_models` before presenting model or reasoning-effort choices. It
-loads the current catalog with `codex debug models`, filters it to selectable
-entries, and caches the result briefly. Model ids and reasoning-effort values
-are intentionally not hard-coded into the MCP schema, so a normal Codex model
-catalog update does not require a bridge or plugin schema update. The last
-successful catalog is also stored privately so a temporary CLI catalog failure
-after a restart can fall back to a validated stale result.
-
-`codex_task` accepts optional exact `model` and `reasoningEffort` values when
-starting a new session. Set the saved defaults in `codex_settings`; the
-`CODEX_MCP_BRIDGE_DEFAULT_MODEL` and
-`CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT` variables seed those values before
-the first save. The bridge validates the pair against the
-current catalog and forwards the effort through Codex's
-`model_reasoning_effort` config. Use `sessionMode: new` to change model or
-effort because continued Codex threads keep their original configuration.
-
-## Session lifecycle
-
-`codex_task` consolidates new and follow-up calls:
-
-- In ChatGPT, omit `scopeId`. The bridge derives a stable opaque UUID from the
-  host-provided anonymous organization, subject, and conversation session tuple
-  using a private HMAC key. OpenAI defines `openai/session` as an anonymized
-  conversation id for correlating calls within the same ChatGPT session. Equal
-  host tuples resolve to one scope and a different session value resolves to a
-  different scope; the bridge does not infer device, copy, or branch identity
-  beyond those host values. MCP hosts without ChatGPT session metadata must
-  provide and reuse an explicit compatibility `scopeId` instead.
-- `requestId` is required. ChatGPT generates one UUID for each logical task
-  call and reuses that exact value only when retrying the same arguments. The
-  bridge returns the existing job/result for a duplicate and rejects reuse with
-  changed arguments.
-- Omit `activityId` to create one Activity for the current user intent. Reuse the
-  returned exact `activityId` to group later turns or parallel threads into that
-  same intent. An existing Activity accepts new jobs only while `open`; creation
-  policy fields cannot be smuggled into an attachment call.
-- A new Activity accepts an optional sanitized `activityTitle` (120 characters),
-  `activityKind`, `executionMode`, `handoffPolicy`, and `completionTrigger`.
-  Defaults are `other`, `auto`, `none`, and `manual`, so a Codex response cannot
-  automatically complete the user's work or change its policy.
-
-- `sessionMode: auto` continues the only compatible session in the conversation
-  scope, or starts a new one when no compatible recent session exists. If
-  several compatible sessions exist, it requires an exact `threadId` instead of
-  guessing.
-- `sessionMode: new` always starts with fresh conversation context.
-- `sessionMode: continue` requires an exact `threadId` returned by
-  `codex_status` or an earlier task result.
-
-When `sessionMode` is omitted, the saved `auto` or `new` preference is used.
-
-Execution delivery is independent of Activity completion:
-
-- `executionMode: foreground` keeps the current tool call open until the Codex
-  turn reaches a terminal state or the host/bridge connection ends.
-- `executionMode: background` returns the `activityId` and `jobId` immediately.
-- `executionMode: auto` returns the normal result when it finishes inside
-  `fastReturnMs`; otherwise it returns a tracked background job.
-
-In every mode, a terminal Codex job is only a child outcome. It does not by
-itself mean the Activity, user request, or verification is complete.
-
-Auto selection requires the same resolved conversation scope, working directory, sandbox, and
-requested/default model and effort. There is no bridge-global
-"most recent session" fallback, so one ChatGPT conversation cannot
-accidentally auto-resume another conversation's thread. It never reuses a
-workspace-write or danger-full-access session for a read-only call. The
-auto-resume window defaults to six hours. Exact continuation can use an older
-persisted thread only while `resumeAvailability` remains `available` in the
-current worker generation.
-
-An exact thread also remains owned by its scope. Moving it to another
-conversation requires `threadId` plus `adoptThread: true`, and
-should be done only after the user explicitly requests that handoff. When host
-metadata is present, it is authoritative and any input `scopeId` is ignored.
-Raw host identifiers are never stored; only the HMAC-derived UUID is persisted.
-The version-1 HMAC key is generated once in the private state database. It is
-not rotated automatically because changing it without a scope-alias migration
-would disconnect existing session/job history; key rotation therefore requires
-an explicit state migration or a deliberate state reset.
-Pre-upgrade model-generated scopes are not automatically merged into a derived
-scope, because trusting a caller-provided migration target would defeat the new
-isolation boundary. Their retained history remains available to a trusted
-compatibility/admin audit until normal retention removes it.
-Scope UUIDs remain routing labels, not authentication credentials; every caller
-that can reach this private bridge still shares the same operator trust boundary.
-
-Sessions may run concurrently in the same working directory up to the saved
-active-job limit, which cannot exceed `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS`.
-This includes `workspace-write` and `danger-full-access` jobs. The same
-Codex thread remains serialized, while different threads under one scope can
-run concurrently. There is no up-front single/parallel mode: begin with the
-ordinary session and use `sessionMode: new` whenever parallel work becomes
-useful. If the only compatible thread is busy, auto mode asks the caller to wait
-or deliberately start another thread. The caller is responsible for
-partitioning overlapping mutations or assigning separate worktrees when
-isolation is needed.
-Each new thread is pinned to the Codex MCP worker that created it, so a later
-reply is routed back to that same worker even when other pool workers are idle.
-The owner maximum is a bridge-side admission limit, not a guarantee that the
-ChatGPT host, tunnel, local Codex process, or machine can sustain that many
-simultaneous calls. The secure launcher sets the tunnel's active MCP request and
-control-plane buffer limits to the same value.
-
-An allowed root may contain multiple repositories. Pass the exact repository or
-worktree path as `cwd`. Git worktree creation and task partitioning remain
-ordinary instructions for ChatGPT/Codex to decide for each job rather than a
-separate MCP management tool.
-
-Session metadata is stored in `~/.codex-mcp-bridge/state.sqlite` by default so
-the bridge can restore routing history after a restart. A `codex mcp-server`
-thread itself belongs to the worker process that created it and cannot be
-continued after that worker or the bridge restarts. Restored rows are therefore
-shown with `resumeAvailability: "unavailable-after-worker-restart"`, excluded
-from automatic selection, and rejected for exact continuation; `auto` starts a
-fresh thread instead. New App Server threads support rich public turn events,
-approval/input responses, steering, and exact turn interruption. Existing MCP
-threads remain pinned to their original backend and are never silently
-migrated. OpenAI currently documents App Server as experimental, so
-`mcp-server` remains the conservative package default. Session rows contain only thread id,
-`scopeId`, cwd, sandbox, model/effort, and timestamps; prompts and results are
-not written to them. Existing `sessions.json` records are imported once;
-pre-scope records are migrated to a quarantined
-legacy scope that is never auto-selected; older task-lane records are collapsed
-into ordinary sessions under their existing scope. Legacy sessions require an
-exact thread handoff. Long-running tasks return a `jobId`; retrieve the result with
-`codex_status({ jobId })` in ChatGPT, or use
-`codex_status({ jobId, waitFor: "terminal", waitMs: 55000 })` to hold one
-bounded status call until completion, failure, interruption, or the wait
-expires. `waitFor: "change"` returns on the next upstream progress or terminal
-transition. A wait timeout leaves the job running and can be repeated; it is
-not a Codex task timeout. `codex_cancel({ jobId })` is a single force-stop
-operation: exact App Server `turn/interrupt` is attempted first, otherwise the
-tracked worker generation's detached process group receives TERM and then KILL
-automatically if needed. The bridge records `cancelled` only after exit is
-confirmed; shared-worker collateral becomes `interrupted`, and an unconfirmed
-exit stays active as `termination-failed`. Callers must inspect the working
-tree because edits made before interruption are not rolled back.
-
-ChatGPT tool calls automatically receive their current host-derived scope even
-when `scopeId` is omitted. A non-ChatGPT host with neither metadata nor an
-explicit compatibility scope receives policy-only status. `includeAllScopes`
-is rejected for ChatGPT conversation calls and remains a compatibility/admin
-operation for trusted hosts without ChatGPT session metadata.
-
-Job metadata and bounded results are stored transactionally in
-`~/.codex-mcp-bridge/state.sqlite` with mode `0600` by default. Schema v3 also
-stores conversation scopes, Activity lifecycle rows, Activity/job events,
-scope-wide change versions, bridge process generations, and an idempotent
-completion outbox. Existing schema-v1 jobs are migrated atomically into one-job
-legacy Activities without changing their scope, request-deduplication key, or
-thread relation. Current `codex_task` calls create an Activity or attach to an
-exact open Activity with safe defaults: `kind=other`, `executionMode=auto`,
-`handoffPolicy=none`, and `completionTrigger=manual`. Consequently, a terminal
-Codex turn does not by itself mark a user Activity completed or enqueue an
-automatic handoff.
-
-`codex_activity_update` is the single Activity mutation surface. It supports
-`seal`, `complete`, `abandon`, `cancel`, `start-verification`,
-`verification-passed`, `verification-failed`, and `set-policy`. The server
-rejects illegal transitions, cross-scope IDs, empty seals, completion with live
-children, stale optional `expectedVersion` values, and verification success
-without bounded evidence. `cancel` force-stops every exact active child
-turn/worker set, but never rolls back filesystem changes. A failed verification reopens the Activity for rework;
-a successful evidence-backed verification is what completes a `verify`
-Activity. Policy and completion mutations come only from explicit tool input—
-never from fields or instructions contained in a Codex result.
-
-Completed and failed results remain retrievable across bridge restarts. A job
-that was still running when the bridge stopped is changed to `interrupted` at
-startup because the new process cannot safely claim the former upstream
-request; its Activity records the interruption and waits for orchestrator
-judgment instead of reporting success. While a job is live, upstream MCP
-progress updates refresh `lastProgressAt`. No observed progress for ten minutes
-produces `health: "no-progress-observed"` together with
-`processLiveness: "unknown"`; absence of an MCP progress event is not proof that
-Codex stopped, so callers should inspect actual work evidence before waiting
-longer or cancelling.
-
-The in-memory/status view retains at most 100 jobs for six hours and one MiB per
-result by default. When that result-retention window expires, the result body is
-removed from the active registry while a minimal archived job summary,
-Activity counts, events, scope version, and any unread completion-outbox record
-remain durable. This preserves completion facts and request UUID deduplication
-without retaining repository result content indefinitely. Oversized results are
-replaced earlier by a bounded completion notice while their session id remains
-tracked. The localized Activity card is available now. It shows prioritized
-Activity state, public progress, approvals/input, unread completion,
-verification, and per-job/whole-Activity force-stop controls. One scope-wide
-version watcher per mounted widget is admitted independently from the 30 job
-slots, with bounded wait, host cancellation, backoff, jitter, and a
-manual-refresh fallback. The transactional outbox leases one completion batch
-to one mounted card, atomically acknowledges or releases the whole batch, and
-sends only a fixed template with Activity/job IDs—not raw Codex output—to the
-GPT handoff. The stable `handoffBatchId` lets the conversation recognize a
-retry if the host accepted the message but the delivery acknowledgement was
-lost; an external UI message and a local SQLite commit cannot be made one
-distributed exactly-once transaction.
-
-For a user request that asks for a finished outcome, a running `jobId` is only
-an intermediate response. The plugin instructions tell ChatGPT to wait for a
-terminal state, inspect the result, verify the requested artifacts and relevant
-tests, and only then give its final completion answer. An immediate final answer
-with a running `jobId` is reserved for explicit start-only or background-work
-requests.
-
-### macOS Keychain
-
-The service strings below are legacy runtime keys used by existing
-installations; they are not the repository or product name.
-
-```bash
-security add-generic-password -a "$USER" -s "codex-mcp-bridge:control-plane-api-key" -w "<runtime-key>" -U
-security add-generic-password -a "$USER" -s "codex-mcp-bridge:control-plane-tunnel-id" -w "tunnel_..." -U
-
-CODEX_MCP_BRIDGE_ROOT=/absolute/path/to/repository npm run bridge:secure:keychain
-```
-
-Use `bridge:secure:write:keychain` only for an intentional write session.
-
-## Configuration
-
-`CODEX_MCP_BRIDGE_*` is the stable legacy configuration namespace. The current
-product and package name remains **Codex MCP Bridge for ChatGPT**.
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CODEX_MCP_BRIDGE_HOST` | `127.0.0.1` | HTTP bind host; no-auth mode rejects non-loopback values |
-| `CODEX_MCP_BRIDGE_PORT` | `8765` | Direct-server port; the bundled local/secure launcher defaults to `8876` |
-| `CODEX_MCP_BRIDGE_TOKEN` | unset | Optional bearer token; required unless loopback-only no-auth mode is enabled |
-| `CODEX_MCP_BRIDGE_NO_AUTH` | unset | Set to `1` only for a loopback endpoint or Secure MCP Tunnel transport boundary |
-| `CODEX_MCP_BRIDGE_ALLOWED_HOSTS` | unset | Optional comma-separated HTTP Host allowlist; the launcher sets loopback hosts |
-| `CODEX_MCP_BRIDGE_CODEX` | `codex` | Codex CLI executable path or command |
-| `CODEX_MCP_BRIDGE_ROOTS` | current directory | Comma-separated absolute allowed roots |
-| `CODEX_MCP_BRIDGE_DEFAULT_SANDBOX` | `read-only` | `read-only`, `workspace-write`, or `danger-full-access`; the matching capability must be enabled |
-| `CODEX_MCP_BRIDGE_DEFAULT_ACCESS_STRATEGY` | `adaptive` | Initial card strategy: `read-only`, `adaptive`, or `always-full`; the last value requires full-access capability |
-| `CODEX_MCP_BRIDGE_ALLOW_WRITE` | unset | Must be `1` before write mode is accepted |
-| `CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS` | unset | Must be `1` before danger-full-access is accepted |
-| `CODEX_MCP_BRIDGE_APPROVAL_POLICY` | `on-request` | `untrusted`, `on-request`, or `never` |
-| `CODEX_MCP_BRIDGE_DEFAULT_MODEL` | unset | Optional default Codex model id; individual initial calls may override it |
-| `CODEX_MCP_BRIDGE_DEFAULT_REASONING_EFFORT` | unset | Optional default effort; must be supported by the selected model |
-| `CODEX_MCP_BRIDGE_MODEL_CATALOG_CACHE_TTL_MS` | `600000` | Time to cache a successful dynamic Codex model catalog |
-| `CODEX_MCP_BRIDGE_MODEL_CATALOG_TIMEOUT_MS` | `30000` | Timeout for refreshing the Codex model catalog |
-| `CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE` | `~/.codex-mcp-bridge/models.json` | Private last-successful model catalog fallback |
-| `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE` | `~/.codex-mcp-bridge/state.sqlite` | Primary private transactional settings/session/job store |
-| `CODEX_MCP_BRIDGE_SETTINGS_STATE_FILE` | `~/.codex-mcp-bridge/settings.json` | Legacy settings JSON imported once when present |
-| `CODEX_MCP_BRIDGE_SESSION_STATE_FILE` | `~/.codex-mcp-bridge/sessions.json` | Legacy session JSON imported once when present |
-| `CODEX_MCP_BRIDGE_JOB_STATE_FILE` | `~/.codex-mcp-bridge/jobs.json` | Legacy job JSON imported once when present |
-| `CODEX_MCP_BRIDGE_DEFAULT_SESSION_MODE` | `auto` | Initial card default for omitted session mode: `auto` or `new` |
-| `CODEX_MCP_BRIDGE_AUTO_RESUME_TTL_MS` | `21600000` | Initial saved idle window for automatic recent-session reuse; explicit continuation is still allowed |
-| `CODEX_MCP_BRIDGE_MAX_CONCURRENT_JOBS` | `30` | Owner maximum and initial saved active Codex-call limit |
-| `CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE` | `4` | Lazy Codex MCP worker pool; cannot exceed the active-job limit |
-| `CODEX_MCP_BRIDGE_DEFAULT_BACKEND` | `mcp-server` | Backend for new threads: stable `mcp-server` or experimental `app-server`; each thread remains sticky |
-| `CODEX_MCP_BRIDGE_MAX_PROMPT_CHARS` | `50000` | Maximum prompt length per tool call |
-| `CODEX_MCP_BRIDGE_FAST_RETURN_MS` | `25000` | Delay before returning a job ID |
-| `CODEX_MCP_BRIDGE_JOB_TTL_MS` | `21600000` | Completed job retention |
-| `CODEX_MCP_BRIDGE_JOB_STALE_AFTER_MS` | `600000` | No-progress interval before a running job is labeled no-progress-observed; this does not establish process liveness |
-| `CODEX_MCP_BRIDGE_MAX_RETAINED_JOBS` | `100` | Maximum running/terminal job records retained in memory and durable state |
-| `CODEX_MCP_BRIDGE_MAX_JOB_RESULT_BYTES` | `1048576` | Maximum retained serialized result size per job |
-| `CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN` | unset | Explicitly bypass filename preflight |
-| `CODEX_MCP_BRIDGE_DEBUG` | unset | Emit local diagnostic errors and Codex stderr |
-
-These are package defaults. A local launcher or LaunchAgent may deliberately
-override them—for example, an installation may select `app-server` while the
-portable package keeps the conservative `mcp-server` default. Inspect
-`codex_status` to confirm the effective policy and backend of a running bridge.
-
-The retired `CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS` variable is ignored for one
-compatibility release and emits an operator warning. Remove it from service
-definitions; it cannot re-enable a finite Codex task deadline.
-
-The deprecated pre-fork `CODEX_GPT_BRIDGE_*` variable prefix is accepted only
-as a temporary compatibility fallback.
-
-`npm run build` validates the release manifest, then writes a source fingerprint and version record to
-`dist/build-info.json`. The launcher verifies that fingerprint even with
-`--no-build` and rebuilds stale output instead of silently running old code.
-Both `/healthz` and `codex_status` expose the active build record so the source
-and running service can be compared directly.
-
-## ChatGPT setup
-
-See [docs/chatgpt-setup.md](docs/chatgpt-setup.md).
-
-## Upstream
-
-Historical upstream attribution and the original third-party repository name
-are isolated in [UPSTREAM.md](UPSTREAM.md); they are not names for this project.
+The current card/tool consolidation and retained-card migration are described in [Card tools](docs/card-tools.md). Activity screens are retired for new work; open the status card for this conversation or all work and work details.

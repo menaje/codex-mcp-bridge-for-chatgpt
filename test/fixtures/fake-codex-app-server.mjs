@@ -1,19 +1,38 @@
 #!/usr/bin/env node
+import "./app-server-schema-fixture.mjs";
+import { readFileSync } from "node:fs";
 import readline from "node:readline";
+import { threadPolicyResponse, assertTurnPolicy } from "./app-server-policy-fixture.mjs";
+
+const manifest = JSON.parse(readFileSync(new URL("../../release-manifest.json", import.meta.url), "utf8"));
+
+if (process.argv.includes("--version")) {
+  process.stdout.write(`codex-cli ${manifest.toolchain.codexCli}\n`);
+  process.exit(0);
+}
 
 const lines = readline.createInterface({ input: process.stdin });
 const activeTurns = new Map();
 const pendingServerRequests = new Map();
+const archivedThreads = new Set();
+const knownThreads = new Set();
+const threadLineages = new Map();
+const threadEphemeral = new Map();
+const loadedThreads = new Set();
+const systemErrorThreads = new Set();
+const backgroundTerminals = new Map();
+const interruptedTurnCounts = new Map();
 let initialized = false;
 let threadSequence = 0;
 let turnSequence = 0;
+let rateLimitsReadCount = 0;
 
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
-const sendBatch = (messages) => process.stdout.write(`${messages.map(JSON.stringify).join("\n")}\n`);
+const sendBatch = (messages) => process.stdout.write(`${messages.map(message => JSON.stringify(message)).join("\n")}\n`);
 const response = (id, result) => send({ id, result });
 const notification = (method, params = {}) => send({ method, params });
 const serverRequest = (id, method, params, accept) => {
-  pendingServerRequests.set(String(id), accept);
+  pendingServerRequests.set(String(id), { requestId: id, threadId: params.threadId, accept });
   send({ id, method, params });
 };
 
@@ -23,6 +42,7 @@ lines.on("line", (line) => {
 
   if (message.method === "initialize") {
     const capabilities = message.params?.capabilities || {};
+    const clientInfo = message.params?.clientInfo || {};
     const optedOut = new Set(capabilities.optOutNotificationMethods || []);
     const required = [
       "item/reasoning/summaryTextDelta",
@@ -31,37 +51,264 @@ lines.on("line", (line) => {
       "rawResponseItem/completed",
       "rawResponse/completed"
     ];
-    if (!required.every((method) => optedOut.has(method)) || capabilities.requestAttestation !== false) {
+    if (
+      !required.every((method) => optedOut.has(method)) ||
+      capabilities.requestAttestation !== false ||
+      clientInfo.name !== manifest.product.runtimeName ||
+      clientInfo.title !== manifest.product.displayName ||
+      clientInfo.version !== manifest.release.version
+    ) {
       send({ id: message.id, error: { code: -32602, message: "missing safe initialization capabilities" } });
       return;
     }
     initialized = true;
-    response(message.id, { userAgent: "fake", platformFamily: "unix", platformOs: "test" });
+    response(message.id, { userAgent: "fake", platformFamily: "unix", platformOs: "test", futureOptionalField: { enabled: true } });
     return;
   }
-  if (message.method === "initialized") return;
+  if (message.method === "initialized") {
+    notification("mcpServer/startupStatus/updated", {
+      threadId: null,
+      name: "fixture-server",
+      status: "ready",
+      error: null,
+      failureReason: null
+    });
+    return;
+  }
   if (!initialized) {
     send({ id: message.id, error: { code: -32000, message: "Not initialized" } });
     return;
   }
 
+  if (message.method === "account/read") {
+    response(message.id, {
+      account: process.argv.includes("--api-account") ? { type: "apiKey" }
+        : { type: "chatgpt", email: "private-fixture@example.com", planType: "pro" },
+      requiresOpenaiAuth: true
+    });
+    return;
+  }
+
+  if (message.method === "account/rateLimits/read") {
+    rateLimitsReadCount += 1;
+    response(message.id, {
+      rateLimits: {
+        limitId: "codex",
+        primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: 1_900_000_000 },
+        secondary: {
+          usedPercent: 20 + rateLimitsReadCount,
+          windowDurationMins: 10_080,
+          resetsAt: 1_900_604_800
+        }
+      },
+      rateLimitsByLimitId: {
+        codex: {
+          limitId: "codex",
+          primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: 1_900_000_000 },
+          secondary: {
+            usedPercent: 20 + rateLimitsReadCount,
+            windowDurationMins: 10_080,
+            resetsAt: 1_900_604_800
+          }
+        },
+        codex_spark: {
+          limitId: "codex_spark",
+          primary: { usedPercent: 99, windowDurationMins: 10_080, resetsAt: 1_900_604_800 },
+          secondary: null
+        }
+      }
+    });
+    return;
+  }
+
+  if (message.method === "model/list") {
+    if (rateLimitsReadCount > 0) notification("account/rateLimits/updated");
+    response(message.id, {
+      data: [
+        {
+          id: "gpt-5.6-sol",
+          model: "gpt-5.6-sol",
+          displayName: "GPT-5.6-Sol",
+          description: "Fixture default",
+          defaultReasoningEffort: "max",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "high" },
+            { reasoningEffort: "max" }
+          ],
+          hidden: false,
+          isDefault: true,
+          defaultServiceTier: "priority",
+          serviceTiers: [{ id: "priority", name: "Priority" }],
+          inputModalities: ["text", "image"]
+        },
+        {
+          id: "gpt-5.6-terra",
+          model: "gpt-5.6-terra",
+          displayName: "GPT-5.6-Terra",
+          description: "Fixture continuation model",
+          defaultReasoningEffort: "medium",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "medium" },
+            { reasoningEffort: "high" }
+          ],
+          hidden: false,
+          isDefault: false,
+          defaultServiceTier: null,
+          serviceTiers: [],
+          inputModalities: ["text"]
+        }
+      ],
+      nextCursor: null
+    });
+    return;
+  }
+
+  if (message.method === "experimentalFeature/list") {
+    if (process.env.CODEX_TEST_QUESTION_ROUTING === "unsupported") {
+      send({ id: message.id, error: { code: -32601, message: "unsupported feature inspection" } }); return;
+    }
+    if (!loadedThreads.has(message.params.threadId)) {
+      send({ id: message.id, error: { code: -32602, message: "feature inspection requires a loaded thread" } }); return;
+    }
+    response(message.id, { data: [{ name: "tool_call_mcp_elicitation", stage: "stable", enabled: process.env.CODEX_TEST_QUESTION_ROUTING !== "disabled", defaultEnabled: true }], nextCursor: null });
+    return;
+  }
   if (message.method === "thread/start") {
     if (message.params.experimentalRawEvents !== false) {
       send({ id: message.id, error: { code: -32602, message: "raw events must be disabled" } });
       return;
     }
     const id = `fake-thread-${++threadSequence}`;
-    response(message.id, { thread: { id } });
+    knownThreads.add(id);
+    threadLineages.set(id, { sessionId: `fake-session-${threadSequence}`, forkedFromId: null });
+    threadEphemeral.set(id, message.params.ephemeral === true);
+    loadedThreads.add(id);
+    response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
     return;
   }
   if (message.method === "thread/resume") {
-    response(message.id, { thread: { id: message.params.threadId } });
+    const threadId = message.params.threadId;
+    if (!knownThreads.has(threadId) || archivedThreads.has(threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
+    loadedThreads.add(threadId);
+    response(message.id, { ...threadPolicyResponse(message.method, message.params, threadId), thread: { id: threadId, ephemeral: threadEphemeral.get(threadId), ...threadLineages.get(threadId) } });
+    return;
+  }
+  if (message.method === "thread/unsubscribe") {
+    const id = message.params.threadId;
+    const unload = process.env.CODEX_TEST_UNSUBSCRIBE_UNLOAD === "1";
+    const status = loadedThreads.has(id) ? "unsubscribed" : "notLoaded";
+    if (unload) {
+      loadedThreads.delete(id);
+      notification("thread/closed", {threadId: id});
+    }
+    response(message.id, {status});
+    return;
+  }
+  if (message.method === "thread/loaded/list") {
+    response(message.id, {data: [...loadedThreads], nextCursor: null});
+    return;
+  }
+  if (message.method === "thread/read") {
+    const threadId = message.params.threadId;
+    if (!knownThreads.has(threadId) || archivedThreads.has(threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
+    const active = [...activeTurns.values()].some((turn) => turn.threadId === threadId);
+    const status = systemErrorThreads.has(threadId)
+      ? { type: "systemError" }
+      : active
+        ? { type: "active", activeFlags: [] }
+        : loadedThreads.has(threadId)
+          ? { type: "idle" }
+          : { type: "notLoaded" };
+    response(message.id, {
+      thread: {
+        id: threadId,
+        ...threadLineages.get(threadId),
+        status,
+        turns: []
+      }
+    });
+    return;
+  }
+  if (message.method === "thread/fork") {
+    const id = `fake-thread-${++threadSequence}`;
+    knownThreads.add(id);
+    threadLineages.set(id, {
+      sessionId: threadLineages.get(message.params.threadId)?.sessionId || `fake-session-${threadSequence}`,
+      forkedFromId: message.params.threadId
+    });
+    threadEphemeral.set(id, message.params.ephemeral === true);
+    loadedThreads.add(id);
+    response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
+    return;
+  }
+  if (message.method === "thread/archive") {
+    const threadId = message.params.threadId;
+    if (!knownThreads.has(threadId) || archivedThreads.has(threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
+    archivedThreads.add(threadId);
+    loadedThreads.delete(threadId);
+    response(message.id, {});
+    return;
+  }
+  if (message.method === "thread/unarchive") {
+    const threadId = message.params.threadId;
+    if (!archivedThreads.has(threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
+    archivedThreads.delete(threadId);
+    response(message.id, { thread: { id: threadId } });
+    return;
+  }
+  if (message.method === "thread/backgroundTerminals/list") {
+    if (!loadedThreads.has(message.params.threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
+    response(message.id, {
+      data: backgroundTerminals.get(message.params.threadId) || [],
+      nextCursor: null
+    });
+    return;
+  }
+  if (message.method === "thread/backgroundTerminals/terminate") {
+    if (!loadedThreads.has(message.params.threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
+    const terminals = backgroundTerminals.get(message.params.threadId) || [];
+    const remaining = terminals.filter((terminal) => terminal.processId !== message.params.processId);
+    const terminated = remaining.length !== terminals.length;
+    backgroundTerminals.set(message.params.threadId, remaining);
+    response(message.id, { terminated });
     return;
   }
   if (message.method === "turn/start") {
+    assertTurnPolicy(message.params);
+    if (!loadedThreads.has(message.params.threadId)) {
+      send({ id: message.id, error: { code: -32000, message: "thread not found" } });
+      return;
+    }
     const turnId = `fake-turn-${++turnSequence}`;
     const prompt = message.params.input?.[0]?.text || "";
-    const context = { threadId: message.params.threadId, turnId, prompt };
+    const context = {
+      threadId: message.params.threadId,
+      turnId,
+      prompt,
+      selection: {
+        model: message.params.model,
+        effort: message.params.effort,
+        serviceTier: message.params.serviceTier
+      }
+    };
     activeTurns.set(turnId, context);
     const startResult = {
       turn: {
@@ -77,7 +324,7 @@ lines.on("line", (line) => {
     };
     if (prompt.includes("batched completion")) {
       activeTurns.delete(turnId);
-      sendBatch([
+      const messages = [
         { id: message.id, result: startResult },
         { method: "turn/started", params: { threadId: context.threadId, turn: { id: turnId } } },
         {
@@ -116,7 +363,8 @@ lines.on("line", (line) => {
             }
           }
         }
-      ]);
+      ];
+      sendBatch(messages);
       return;
     }
     response(message.id, startResult);
@@ -136,22 +384,80 @@ lines.on("line", (line) => {
   if (message.method === "turn/interrupt") {
     const context = activeTurns.get(message.params.turnId);
     response(message.id, {});
-    if (context) finishTurn(context, "interrupted", "INTERRUPTED");
+    if (context) {
+      interruptedTurnCounts.set(context.threadId, (interruptedTurnCounts.get(context.threadId) || 0) + 1);
+      if (context.prompt.includes("ignore interrupt")) return;
+      if (context.prompt.includes("delayed interrupt")) {
+        setTimeout(() => finishTurn(context, "interrupted", "INTERRUPTED"), 150);
+      } else {
+        finishTurn(context, "interrupted", "INTERRUPTED");
+      }
+    }
     return;
   }
 
   if (message.id !== undefined && message.method === undefined) {
-    const accept = pendingServerRequests.get(String(message.id));
-    if (accept) {
+    const pending = pendingServerRequests.get(String(message.id));
+    if (pending) {
       pendingServerRequests.delete(String(message.id));
-      accept(message.result);
+      notification("serverRequest/resolved", {
+        threadId: pending.threadId,
+        requestId: pending.requestId
+      });
+      pending.accept(message.result, message.error);
     }
   }
 });
 
 function beginTurn(context) {
   const { threadId, turnId, prompt } = context;
+  if (prompt.includes("future optional notification")) {
+    notification("future/optionalObservation", { threadId, turnId, detail: "PRIVATE_FUTURE_PAYLOAD" });
+  }
+  if (prompt.includes("unknown permission request")) {
+    serverRequest("future-approval", "item/futurePermission/requestApproval", {
+      threadId, turnId, itemId: "future-item"
+    }, (result, error) => {
+      if (result === undefined && error?.code === -32601) {
+        finishTurn(context, "failed", "UNSUPPORTED PERMISSION REQUEST", { message: error.message });
+      } else {
+        finishTurn(context, "completed", "UNEXPECTED PERMISSION RESPONSE");
+      }
+    });
+    return;
+  }
   notification("turn/started", { threadId, turn: { id: turnId } });
+  if (prompt.startsWith("elicitation ")) {
+    const urlMode = prompt.includes("url");
+    serverRequest("mcp-request-41", "mcpServer/elicitation/request", {
+      threadId, turnId: urlMode ? null : turnId, serverName: "fixture-mcp", mode: urlMode ? "url" : "form",
+      message: "Complete the fixture request.",
+      ...(urlMode ? { elicitationId: "external-1", url: "https://example.test/verify?state=PRIVATE_ELICITATION_URL" }
+        : { requestedSchema: { type: "object", properties: {
+          color: { type: "string", enum: ["red", "blue"], title: "Color" },
+          count: { type: "integer", minimum: 1, maximum: 3 },
+          enabled: { type: "boolean" },
+          tags: { type: "array", items: { type: "string", enum: ["a", "b"] } }
+        }, required: ["color", "count", "enabled", "tags"] } })
+    }, result => {
+      const valid = result.action === "accept" && (urlMode ? result.content === null
+        : result.content?.color === "blue" && result.content?.count === 2 && result.content?.enabled === false && result.content?.tags?.[0] === "b");
+      notification("serverRequest/resolved", { threadId, requestId: "mcp-request-41" });
+      finishTurn(context, valid ? "completed" : "failed", valid ? "ELICITATION COMPLETE" : "INVALID ELICITATION RESPONSE");
+    });
+    return;
+  }
+  if (["nonblocking input", "blocking input", "dynamic input", "legacy app input"].includes(prompt)) {
+    if (prompt === "dynamic input") notification("item/started", { threadId, turnId, item: { type: "dynamicToolCall", id: "question-1", namespace: "functions", tool: "request_user_input" } });
+    const questionId = prompt === "legacy app input" ? "mcp_tool_call_approval_1" : "color";
+    serverRequest("optional-question-1", "item/tool/requestUserInput", {
+      threadId, turnId, itemId: "question-1", isBlocking: prompt === "blocking input",
+      questions: [{ id: questionId, header: "Color", question: "Choose a color", isSecret: false, isOther: false, options: [{ label: "blue", description: "Blue" }] }]
+    }, result => finishTurn(context, "completed", result.answers?.[questionId]?.answers?.[0] === "blue" ? "OPTIONAL INPUT COMPLETE" : "INVALID ANSWER"));
+    notification("item/agentMessage/delta", { threadId, turnId, itemId: "continued-1", delta: "Work continues" });
+    return;
+  }
+
   notification("item/reasoning/textDelta", {
     threadId,
     turnId,
@@ -222,13 +528,145 @@ function beginTurn(context) {
         status: "completed"
       }
     });
+    notification("warning", {
+      threadId,
+      message: "Fixture warning"
+    });
+    notification("configWarning", {
+      summary: "Fixture config warning",
+      details: "Review the fixture configuration",
+      path: `${process.cwd()}/config.toml`
+    });
+    notification("model/rerouted", {
+      threadId,
+      turnId,
+      fromModel: "gpt-fixture-a",
+      toModel: "gpt-fixture-b",
+      reason: "highRiskCyberActivity"
+    });
+    notification("model/verification", {
+      threadId,
+      turnId,
+      verifications: ["trustedAccessForCyber"]
+    });
+    notification("model/safetyBuffering/updated", {
+      threadId,
+      turnId,
+      model: "gpt-fixture-b",
+      useCases: ["fixture"],
+      reasons: ["fixture safety"],
+      showBufferingUi: true,
+      fasterModel: "gpt-fixture-fast"
+    });
+    notification("thread/tokenUsage/updated", {
+      threadId,
+      turnId,
+      tokenUsage: {
+        total: {
+          totalTokens: 12,
+          inputTokens: 7,
+          cachedInputTokens: 2,
+          cacheWriteInputTokens: 0,
+          outputTokens: 5,
+          reasoningOutputTokens: 1
+        },
+        last: {
+          totalTokens: 4,
+          inputTokens: 2,
+          cachedInputTokens: 0,
+          cacheWriteInputTokens: 0,
+          outputTokens: 2,
+          reasoningOutputTokens: 1
+        },
+        modelContextWindow: 128000
+      }
+    });
+    notification("thread/compacted", { threadId, turnId });
+    notification("item/mcpToolCall/progress", {
+      threadId,
+      turnId,
+      itemId: "mcp-1",
+      message: "Fixture MCP progress"
+    });
+    notification("item/completed", {
+      threadId,
+      turnId,
+      item: {
+        type: "mcpToolCall",
+        id: "mcp-1",
+        server: "fixture-server",
+        tool: "fixture-tool",
+        status: "completed",
+        arguments: { prompt: "PRIVATE_MCP_ARGUMENT_MUST_NEVER_APPEAR" },
+        appContext: null,
+        pluginId: null,
+        result: { content: ["PRIVATE_MCP_RESULT_MUST_NEVER_APPEAR"], structuredContent: null, _meta: null },
+        error: null,
+        durationMs: 3
+      }
+    });
+    notification("item/completed", {
+      threadId,
+      turnId,
+      item: {
+        type: "collabAgentToolCall",
+        id: "collab-1",
+        tool: "spawnAgent",
+        status: "completed",
+        senderThreadId: threadId,
+        receiverThreadIds: ["fixture-subagent-thread"],
+        prompt: "PRIVATE_COLLAB_PROMPT_MUST_NEVER_APPEAR",
+        model: "gpt-fixture-b",
+        reasoningEffort: "high",
+        agentsStates: {}
+      }
+    });
   }
 
   if (prompt.includes("interactions")) {
     requestCommand(context);
     return;
   }
+  if (prompt.includes("auto resolve input")) {
+    requestAutoResolvedInput(context);
+    return;
+  }
+  if (prompt.includes("expire input locally")) {
+    requestLocallyExpiredInput(context);
+    return;
+  }
+  if (prompt.includes("leave background terminal")) {
+    backgroundTerminals.set(threadId, [{
+      processId: "background-process-1",
+      itemId: "background-item-1",
+      command: "fixture background command",
+      cwd: process.cwd(),
+      osPid: 43210,
+      cpuPercent: 1.5,
+      rssKb: 2048
+    }]);
+  }
   if (prompt.includes("hold")) return;
+  if (prompt.includes("report interrupt count")) {
+    finishTurn(context, "completed", `INTERRUPTS:${interruptedTurnCounts.get(threadId) || 0}`);
+    return;
+  }
+  if (prompt.includes("report selection")) {
+    finishTurn(context, "completed", `SELECTION:${JSON.stringify(context.selection)}`);
+    return;
+  }
+  if (prompt.includes("report ephemeral")) {
+    finishTurn(context, "completed", `EPHEMERAL:${String(threadEphemeral.get(threadId))}`);
+    return;
+  }
+  if (prompt.includes("context window exceeded")) {
+    finishTurn(context, "failed", "CONTEXT WINDOW EXCEEDED", {
+      message: "Fixture context window exceeded.",
+      codexErrorInfo: "contextWindowExceeded",
+      additionalDetails: null
+    });
+    return;
+  }
   finishTurn(context, "completed", "APP SERVER");
 }
 
@@ -242,8 +680,19 @@ function requestCommand(context) {
       itemId: "command-approval-1",
       startedAtMs: Date.now(),
       environmentId: null,
+      reason: "Fixture network approval",
+      networkApprovalContext: { host: "example.test", protocol: "https" },
       command: "echo approved",
-      cwd: process.cwd()
+      cwd: process.cwd(),
+      commandActions: [{
+        type: "read",
+        command: "cat fixture.txt",
+        name: "fixture.txt",
+        path: `${process.cwd()}/fixture.txt`
+      }],
+      proposedExecpolicyAmendment: ["echo", "approved"],
+      proposedNetworkPolicyAmendments: [{ host: "example.test", action: "allow" }],
+      availableDecisions: ["accept", "acceptForSession", "decline", "cancel"]
     },
     (result) => {
       if (result?.decision !== "accept") process.exit(72);
@@ -255,7 +704,8 @@ function requestCommand(context) {
           turnId: context.turnId,
           itemId: "file-approval-1",
           startedAtMs: Date.now(),
-          reason: "write fixture"
+          reason: "write fixture",
+          grantRoot: process.cwd()
         },
         (fileResult) => {
           if (fileResult?.decision !== "decline") process.exit(73);
@@ -310,14 +760,75 @@ function requestPermission(context) {
       permissions
     },
     (result) => {
-      if (result?.scope !== "turn" || result?.permissions?.network?.enabled !== true) process.exit(75);
+      if (result?.scope !== "session" || result?.permissions?.network?.enabled !== true) process.exit(75);
       finishTurn(context, "completed", "INTERACTIONS COMPLETE");
     }
   );
 }
 
-function finishTurn(context, status, text) {
+function requestAutoResolvedInput(context) {
+  const requestId = "request-auto-input-55";
+  serverRequest(
+    requestId,
+    "item/tool/requestUserInput",
+    {
+      threadId: context.threadId,
+      turnId: context.turnId,
+      itemId: "auto-input-1",
+      autoResolutionMs: 100,
+      questions: [{
+        id: "auto",
+        header: "Automatic",
+        question: "This request resolves automatically",
+        isOther: false,
+        isSecret: false,
+        options: []
+      }]
+    },
+    () => process.exit(76)
+  );
+  setTimeout(() => {
+    pendingServerRequests.delete(String(requestId));
+    notification("serverRequest/resolved", {
+      threadId: context.threadId,
+      requestId
+    });
+    finishTurn(context, "completed", "AUTO INPUT RESOLVED");
+  }, 25);
+}
+
+function requestLocallyExpiredInput(context) {
+  const requestId = "request-expiring-input-66";
+  serverRequest(
+    requestId,
+    "item/tool/requestUserInput",
+    {
+      threadId: context.threadId,
+      turnId: context.turnId,
+      itemId: "expiring-input-1",
+      autoResolutionMs: 20,
+      questions: [{
+        id: "expiring",
+        header: "Expiring",
+        question: "This request expires locally",
+        isOther: false,
+        isSecret: false,
+        options: []
+      }]
+    },
+    () => process.exit(77)
+  );
+  setTimeout(() => {
+    pendingServerRequests.delete(String(requestId));
+    finishTurn(context, "completed", "LOCAL INPUT EXPIRED");
+  }, 75);
+}
+
+function finishTurn(context, status, text, error = null) {
   if (!activeTurns.delete(context.turnId)) return;
+  if (context.prompt.includes("mark thread system error")) {
+    systemErrorThreads.add(context.threadId);
+  }
   notification("item/completed", {
     threadId: context.threadId,
     turnId: context.turnId,
@@ -330,7 +841,7 @@ function finishTurn(context, status, text) {
       items: [{ type: "agentMessage", id: "agent-1", text, phase: "final_answer", memoryCitation: null }],
       itemsView: "full",
       status,
-      error: null,
+      error,
       startedAt: 1,
       completedAt: 2,
       durationMs: 1

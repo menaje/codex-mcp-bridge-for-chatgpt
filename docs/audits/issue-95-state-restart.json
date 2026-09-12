@@ -1,0 +1,207 @@
+{
+  "issue": 95,
+  "testedAt": "2026-09-11T13:11:38.755Z",
+  "source": "consistent read-only backup of the explicitly supplied database",
+  "productionDatabaseModified": false,
+  "codexCalls": 0,
+  "appReads": 4,
+  "restartPasses": [
+    {
+      "pass": 1,
+      "discoveredToolCount": 31,
+      "stableAgainstPreviousPass": null,
+      "changedTables": []
+    },
+    {
+      "pass": 2,
+      "discoveredToolCount": 31,
+      "stableAgainstPreviousPass": true,
+      "changedTables": []
+    }
+  ],
+  "sourceSchema": 18,
+  "sourceCounts": {
+    "activities": 311,
+    "activity_agents": 671,
+    "activity_events": 1021,
+    "agent_mutations": 21,
+    "agent_threads": 356,
+    "agents": 348,
+    "automatic_recovery": 1,
+    "automatic_recovery_incidents": 1,
+    "bridge_instances": 558,
+    "bridge_meta": 43,
+    "cancellation_intents": 23,
+    "cancellation_operations": 21,
+    "codex_question_deliveries": 0,
+    "completion_outbox": 0,
+    "event_budget": 1,
+    "job_events": 21189,
+    "job_summaries": 581,
+    "jobs": 672,
+    "project_registry": 1,
+    "projects": 7,
+    "result_holds": 0,
+    "scope_versions": 71,
+    "scopes": 71,
+    "sessions": 394,
+    "steering_deliveries": 208,
+    "thread_connections": 394,
+    "transport_observations": 1000,
+    "user_questions": 0,
+    "user_settings": 1,
+    "work_history_state": 19
+  },
+  "criticalState": {
+    "activeJobs": 0,
+    "blockingInteractions": 0,
+    "pendingQuestions": 0,
+    "undeliveredOutbox": 0,
+    "activeCancellations": 0,
+    "unresolvedSteering": 0,
+    "unresolvedRecovery": 0,
+    "validResultHolds": 0,
+    "archivedReceipts": 672
+  },
+  "approvedDrops": {
+    "invalidProjectSessions": 43,
+    "invalidProjectAgentThreads": 43,
+    "sessionRejectedAgentThreads": 0
+  },
+  "stage": "complete",
+  "currentSchema": 19,
+  "currentTableCount": 32,
+  "currentIndexCount": 42,
+  "currentTriggerCount": 3,
+  "preservedEntities": {
+    "scopes": 71,
+    "project_registry": 1,
+    "projects": 7,
+    "user_settings": 1,
+    "activities": 311,
+    "agents": 348,
+    "activity_agents": 671,
+    "jobs": 672,
+    "activity_events": 1021,
+    "completion_outbox": 0,
+    "agent_mutations": 21,
+    "cancellation_operations": 21,
+    "cancellation_intents": 23,
+    "steering_deliveries": 208,
+    "transport_observations": 1000,
+    "codex_question_deliveries": 0,
+    "thread_connections": 394,
+    "automatic_recovery": 1,
+    "automatic_recovery_incidents": 1,
+    "sessions": 351,
+    "agent_threads": 313,
+    "job_events": 21189,
+    "result_holds": 0,
+    "work_history_state": 19,
+    "user_questions": 0
+  },
+  "jobReceipts": {
+    "count": 672,
+    "digest": "864ea02308241be0bd2ffde30c91f5f82d318b4a7565451baf4b26e0a73f21a2"
+  },
+  "sessionContexts": {
+    "count": 351,
+    "digest": "3052bae95f9e1e783029468ce94cf0320da971ef9efda704771fb38785109818"
+  },
+  "agentThreadRelationships": {
+    "count": 313,
+    "digest": "01d4df3a344b3fd234ffd1f2b7026c90d67b62bf09390ba373493ea71bc23f35"
+  },
+  "scopeState": {
+    "count": 71,
+    "digest": "a25d26d306c7638e3ecbd90605327c737f6d820152627e2ae902978fe56a87a9"
+  },
+  "activityState": {
+    "count": 311,
+    "digest": "4d208d4c3f1e3ddff3bed23c60e1734a5157a20ff9b8a7492081de72c5856bcd"
+  },
+  "agentState": {
+    "count": 348,
+    "digest": "b1e179d6be721b496e3d08b7f5f993b9c5c72674d1a0af9791199d307afc3b2b"
+  },
+  "workHistoryState": {
+    "count": 19,
+    "digest": "30725a53d5ba8496ef0f197f6078e9a67db6ba9ed9d5467fe0b9d8c5ea71f359"
+  },
+  "exactCriticalTables": {
+    "project_registry": {
+      "count": 1,
+      "digest": "d7bfe94c0f16622c4d02f88b4778aa38d659b779c66a36e21d9b1c2446b256c1"
+    },
+    "projects": {
+      "count": 7,
+      "digest": "e53cd010e38519c808f0e5ee27028912b8173597db85c5867e6e10931294724d"
+    },
+    "user_settings": {
+      "count": 1,
+      "digest": "9dcf563f3cbd0e8b46a5e959e1fce9a4fda0af853559b4c0d4e82a4e851acf98"
+    },
+    "activity_agents": {
+      "count": 671,
+      "digest": "6a6af0e6c5212bc2f35160dec75309637d779296d2884b6f1df49e07a1310af9"
+    },
+    "activity_events": {
+      "count": 1021,
+      "digest": "9eed7b572fd57a5cdfcced3e33fcd7e93191bea1e0b03ba19c2f1bdb32be80bd"
+    },
+    "job_events": {
+      "count": 21189,
+      "digest": "77f31c8ffc9bbf134896d725466fe487aa3d21436e18755714e9ce0d52d1b1f5"
+    },
+    "completion_outbox": {
+      "count": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "agent_mutations": {
+      "count": 21,
+      "digest": "01e1691c71ddba848e6b2a089507ab521a6029fe3c659e429b07a2a223f9085a"
+    },
+    "cancellation_operations": {
+      "count": 21,
+      "digest": "d01c2e47b1041aa7e46139c767179115ded9cee7c244ab323a756824fc010631"
+    },
+    "cancellation_intents": {
+      "count": 23,
+      "digest": "445f649b435b6698b2825bdee04e87940408c6db17a24017cdaf5ac7c3eb048b"
+    },
+    "steering_deliveries": {
+      "count": 208,
+      "digest": "cc03f724dca84d5ed652d9704d79d982ee2b28561f12d3e3fa21b6e7079c8453"
+    },
+    "transport_observations": {
+      "count": 1000,
+      "digest": "e23f9221392d0f3a5a6c14aec33b0e97fc6556f3e77f2386a735f72d639b3b57"
+    },
+    "user_questions": {
+      "count": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "codex_question_deliveries": {
+      "count": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "thread_connections": {
+      "count": 394,
+      "digest": "1fc4d6195e6fe084d8aec0243e583c67853ef0a3c74eb358fb372172a0b8e2d7"
+    },
+    "result_holds": {
+      "count": 0,
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "automatic_recovery": {
+      "count": 1,
+      "digest": "bcf81bf38cbacdbb8b630a45195dfd550acf0def182152e0c3c63a054b4210b2"
+    },
+    "automatic_recovery_incidents": {
+      "count": 1,
+      "digest": "092f759d601aef351c9386a112619e40893e4a060b7c1c6a2e0edd7560f18c7d"
+    }
+  },
+  "passed": true,
+  "temporaryCopyRemoved": true
+}

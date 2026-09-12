@@ -1,0 +1,44 @@
+[
+  {
+    "fixture": "task-completed-primary",
+    "tool": "codex_task",
+    "support": "primary-payload",
+    "cap": "retained-result-limit",
+    "content": "ISSUE38_FOREGROUND_SENTINEL\n\n## Files\n- src/tools.ts\n\n## Tests\n- output contract passed\n\n## Remaining\n- none"
+  },
+  {
+    "fixture": "task-running",
+    "tool": "codex_task",
+    "support": "documented-support-level",
+    "cap": 1024,
+    "content": "Codex job job-running is running."
+  },
+  {
+    "fixture": "task-structured-error",
+    "tool": "codex_task",
+    "support": "documented-support-level",
+    "cap": 1536,
+    "content": "CONTEXT_WINDOW_EXCEEDED: The upstream turn exhausted its context window."
+  },
+  {
+    "fixture": "status-running",
+    "tool": "codex_status",
+    "support": "documented-support-level",
+    "cap": 1024,
+    "content": "Job job-running is running. Result: pending."
+  },
+  {
+    "fixture": "status-completed-primary",
+    "tool": "codex_status",
+    "support": "primary-payload",
+    "cap": "retained-result-limit",
+    "content": "ISSUE38_BACKGROUND_SENTINEL\n\n## Result\n- background report recovered"
+  },
+  {
+    "fixture": "cancel-success",
+    "tool": "codex_cancel",
+    "support": "documented-support-level",
+    "cap": 768,
+    "content": "cancel-job job-cancelled: succeeded."
+  }
+]

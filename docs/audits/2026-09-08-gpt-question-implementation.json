@@ -1,0 +1,144 @@
+{
+  "date": "2026-09-08",
+  "issue": 68,
+  "environment": "local-working-tree",
+  "productionDeployed": false,
+  "liveChatGptVerified": false,
+  "nativeServerInputOriginVerified": false,
+  "gptAnswerContract": "synthetic-upstream-verified; native App Server origin remains unknown",
+  "liveCli": [
+    {
+      "source": "app",
+      "cli": "codex-cli 0.153.4",
+      "model": "gpt-6-astra",
+      "productionMcp": true,
+      "parentChatGpt": false,
+      "answerRoute": "codex_steer",
+      "questionObserved": true,
+      "terminalStatus": "completed",
+      "answerReflected": true,
+      "passed": true,
+      "temporaryHomeRemoved": true,
+      "elapsedMs": 11553
+    },
+    {
+      "source": "terminal",
+      "cli": "codex-cli 0.153.3",
+      "model": "gpt-6-astra",
+      "productionMcp": true,
+      "parentChatGpt": false,
+      "answerRoute": "codex_steer",
+      "questionObserved": true,
+      "terminalStatus": "completed",
+      "answerReflected": true,
+      "passed": true,
+      "temporaryHomeRemoved": true,
+      "elapsedMs": 9817
+    },
+    {
+      "source": "bridge",
+      "cli": "codex-cli 0.153.4",
+      "model": "gpt-6-astra",
+      "productionMcp": true,
+      "parentChatGpt": false,
+      "answerRoute": "codex_steer",
+      "questionObserved": true,
+      "terminalStatus": "completed",
+      "answerReflected": true,
+      "passed": true,
+      "temporaryHomeRemoved": true,
+      "elapsedMs": 11025
+    }
+  ],
+  "browser": {
+    "builtRenderer": true,
+    "codexCalls": 0,
+    "results": [
+      {
+        "mode": "standard",
+        "calls": [
+          "codex_question_card",
+          "codex_question_card",
+          "codex_question_submit",
+          "codex_question_notify",
+          "codex_question_notify",
+          "codex_question_card",
+          "codex_question_card"
+        ],
+        "followUps": 1,
+        "passed": true
+      },
+      {
+        "mode": "compatibility",
+        "calls": [
+          "codex_question_card",
+          "codex_question_submit",
+          "codex_question_notify",
+          "codex_question_notify",
+          "codex_question_card"
+        ],
+        "followUps": 1,
+        "passed": true
+      },
+      {
+        "mode": "denied",
+        "calls": [
+          "codex_question_card",
+          "codex_question_submit",
+          "codex_question_notify",
+          "codex_question_notify",
+          "codex_question_card",
+          "codex_question_notify",
+          "codex_question_notify",
+          "codex_question_card"
+        ],
+        "followUps": 2,
+        "passed": true
+      },
+      {
+        "mode": "uncertain",
+        "calls": [
+          "codex_question_card",
+          "codex_question_submit",
+          "codex_question_notify",
+          "codex_question_notify",
+          "codex_question_card"
+        ],
+        "followUps": 0,
+        "passed": true
+      },
+      {
+        "mode": "expired",
+        "calls": [
+          "codex_question_card"
+        ],
+        "followUps": 0,
+        "passed": true
+      }
+    ]
+  },
+  "validation": {
+    "typescriptBuild": "passed",
+    "releaseContract": "passed",
+    "vitest": {
+      "files": 61,
+      "tests": 742,
+      "failed": 0,
+      "excluded": "output/** (ignored historical build copies)"
+    },
+    "outputContractAudit": "passed",
+    "appServerCompatibility": {
+      "cli": "0.153.3",
+      "jsonFiles": 416,
+      "typescriptFiles": 827,
+      "passed": true
+    },
+    "macos": {
+      "executed": 100,
+      "skipped": 2,
+      "failed": 0,
+      "languages": 9
+    },
+    "realChatGptBlocker": "Mac is locked; no live host result observed"
+  }
+}

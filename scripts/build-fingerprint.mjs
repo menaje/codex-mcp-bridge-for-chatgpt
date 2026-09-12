@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -6,6 +7,8 @@ export function computeSourceHash(repoRoot) {
   const files = [
     "release-manifest.json",
     "release-manifest.schema.json",
+    "ui-release-catalog.json",
+    "state-migrations.json",
     "package.json",
     "package-lock.json",
     "tsconfig.json",
@@ -20,6 +23,18 @@ export function computeSourceHash(repoRoot) {
     hash.update("\0");
   }
   return hash.digest("hex");
+}
+
+export function hasTrackedSourceChanges(repoRoot) {
+  try {
+    return Boolean(execFileSync(
+      "git",
+      ["status", "--porcelain", "--untracked-files=no"],
+      { cwd: repoRoot, encoding: "utf8" }
+    ).trim());
+  } catch {
+    return false;
+  }
 }
 
 function walk(repoRoot, relativeDirectory) {

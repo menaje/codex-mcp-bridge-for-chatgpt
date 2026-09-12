@@ -1,0 +1,104 @@
+{
+  "inventoryVersion": 1,
+  "issue": 25,
+  "baselineCommit": "d57f94083dc1bc3f5427042c80e7ce5e67279ad7",
+  "baselineRef": "origin/dev",
+  "generatedOn": "2026-08-24",
+  "profile": {
+    "accessStrategy": "adaptive",
+    "modelPolicy": "automatic",
+    "activityCardVisibility": "always",
+    "projects": 1
+  },
+  "measurement": {
+    "propertyCount": "Object.keys(inputSchema.properties).length",
+    "schemaBytes": "Buffer.byteLength(JSON.stringify(inputSchema), 'utf8')",
+    "visibility": "derived from ui.visibility, openai/visibility, and openai/widgetAccessible"
+  },
+  "tools": [
+    {
+      "name": "codex_status",
+      "visibility": { "model": true, "app": false, "operatorCapability": false },
+      "propertyCount": 22,
+      "properties": ["activityCursor", "activityId", "activityLimit", "activityOffset", "activityPresentationId", "activityView", "afterVersion", "cardGeneration", "includeAllScopes", "jobCursor", "jobId", "jobLimit", "jobOffset", "mountedActivityId", "presentationKind", "scopeId", "sessionCursor", "sessionLimit", "sessionOffset", "threadId", "waitFor", "waitMs"],
+      "schemaBytes": 3368,
+      "annotations": { "readOnly": true, "destructive": false, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_activity",
+      "visibility": { "model": true, "app": true, "operatorCapability": false },
+      "propertyCount": 7,
+      "properties": ["activityId", "cardGeneration", "forceNewCard", "limit", "scopeId", "sinceVersion", "waitMs"],
+      "schemaBytes": 987,
+      "annotations": { "readOnly": true, "destructive": false, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_activity_handoff",
+      "visibility": { "model": false, "app": true, "operatorCapability": false },
+      "propertyCount": 6,
+      "properties": ["action", "activityPresentationId", "outboxId", "outboxIds", "presentationKind", "scopeId"],
+      "schemaBytes": 719,
+      "annotations": { "readOnly": false, "destructive": false, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_agent",
+      "visibility": { "model": true, "app": true, "operatorCapability": false },
+      "propertyCount": 7,
+      "properties": ["action", "activityId", "agentId", "agentName", "processId", "requestId", "scopeId"],
+      "schemaBytes": 1031,
+      "annotations": { "readOnly": false, "destructive": false, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_cancel",
+      "visibility": { "model": true, "app": false, "operatorCapability": false },
+      "propertyCount": 4,
+      "properties": ["acknowledgeAffectedJobIds", "expectedVersion", "jobId", "scopeId"],
+      "schemaBytes": 707,
+      "annotations": { "readOnly": false, "destructive": true, "idempotent": true, "openWorld": false }
+    },
+    {
+      "name": "codex_activity_update",
+      "visibility": { "model": true, "app": false, "operatorCapability": false },
+      "propertyCount": 17,
+      "properties": ["acknowledgeAffectedJobIds", "action", "activityId", "activityKind", "completionTrigger", "evidence", "executionMode", "expectedJobVersion", "expectedVersion", "handoffPolicy", "interactionAnswers", "interactionDecision", "interactionId", "jobId", "reason", "scopeId", "steeringPrompt"],
+      "schemaBytes": 2975,
+      "annotations": { "readOnly": false, "destructive": true, "idempotent": false, "openWorld": false }
+    },
+    {
+      "name": "codex_models",
+      "visibility": { "model": true, "app": false, "operatorCapability": false },
+      "propertyCount": 1,
+      "properties": ["refresh"],
+      "schemaBytes": 215,
+      "annotations": { "readOnly": true, "destructive": false, "idempotent": true, "openWorld": true }
+    },
+    {
+      "name": "codex_settings",
+      "visibility": { "model": true, "app": true, "operatorCapability": false },
+      "propertyCount": 1,
+      "properties": ["refreshModels"],
+      "schemaBytes": 203,
+      "annotations": { "readOnly": true, "destructive": false, "idempotent": true, "openWorld": true }
+    },
+    {
+      "name": "codex_update_settings",
+      "visibility": { "model": false, "app": true, "operatorCapability": false },
+      "propertyCount": 12,
+      "properties": ["accessStrategy", "activityCardVisibility", "completionHandoff", "defaultCwd", "defaultProjectId", "expectedRevision", "maxConcurrentJobs", "modelPolicy", "projects", "reset", "uiLocalePreference", "usePriorityServiceTier"],
+      "schemaBytes": 2848,
+      "annotations": { "readOnly": false, "destructive": false, "idempotent": false, "openWorld": false }
+    },
+    {
+      "name": "codex_task",
+      "visibility": { "model": true, "app": true, "operatorCapability": false },
+      "propertyCount": 19,
+      "properties": ["activityId", "activityKind", "activityPresentationId", "activityTitle", "agentId", "agentName", "agentRole", "completionTrigger", "contextMode", "continuationOfActivityId", "executionMode", "handoffPolicy", "modelPolicyRevision", "projectId", "prompt", "requestId", "sandbox", "scopeId", "selection"],
+      "schemaBytes": 5314,
+      "annotations": { "readOnly": false, "destructive": false, "idempotent": false, "openWorld": false }
+    }
+  ],
+  "runtimeOnlyCompatibility": {
+    "codex_task": ["sessionMode", "threadId", "adoptThread", "cwd", "model", "reasoningEffort", "serviceTier"],
+    "codex_agent": ["action=detach", "action=terminate-background-process"]
+  }
+}

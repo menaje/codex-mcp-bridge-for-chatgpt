@@ -1,0 +1,246 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-10",
+  "sourceBase": "535e264da4ca",
+  "installedBuild": "535e264da4ca:38cb8ce3a4d3",
+  "macOS": "26.6.2 (25G83)",
+  "scopeChanges": {
+    "issue9": "closed-not-planned",
+    "iosIncluded": false,
+    "issue15VoiceOverRequired": false
+  },
+  "productFixes": [
+    "notification-initial-permission-state",
+    "atomic-runtime-lease-publication",
+    "private-host-question-drafts",
+    "network-availability-and-tunnel-poll-freshness"
+  ],
+  "startupFixReference": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/90",
+  "actualService": {
+    "startedAt": "2026-09-10T00:11:29.720Z",
+    "finishedAt": "2026-09-10T00:14:59.029Z",
+    "passed": true,
+    "checks": [
+      {
+        "name": "operating helper retains real work and restart reservation beyond 60 seconds",
+        "elapsedMs": 61007
+      },
+      {
+        "name": "cancelling the reservation preserves the same running Codex Job"
+      },
+      {
+        "name": "real SIGKILL and launchd respawn preserve Job, runtime PID and pending reservation"
+      },
+      {
+        "name": "Job completes once and the reserved restart reconnects bridge and real Tunnel without another request"
+      },
+      {
+        "name": "one Job is retained for the request after restart"
+      },
+      {
+        "name": "final admission and interaction counts are zero"
+      }
+    ],
+    "readDuringReconnect": "HTTP 504",
+    "readRetryAfterReady": "passed",
+    "jobResubmitted": false
+  },
+  "actualNative": {
+    "views": "production",
+    "service": "installed",
+    "reservationElapsedMs": 62301,
+    "sameReservation": true,
+    "pendingPhase": "blocked",
+    "cancelledPhase": "cancelled",
+    "secondReservationError": "CODEX_LEASE_INVALID",
+    "idleRetry": {
+      "phase": "completed",
+      "kind": "restart",
+      "bridge": true,
+      "tunnel": true,
+      "pidChanged": true
+    },
+    "fullAppExitTested": false
+  },
+  "physicalNetwork": {
+    "outageCount": 3,
+    "allRestored": true,
+    "baseline": {
+      "physicalOffConfirmed": true,
+      "offlineProbe": {
+        "reachable": false,
+        "exitCode": 6
+      },
+      "powerRestored": true,
+      "finalReady": true,
+      "runtimePidPreserved": true
+    },
+    "updatedNative": {
+      "physicalOffConfirmed": true,
+      "powerRestored": true,
+      "finalReady": true,
+      "runtimePidPreserved": true
+    },
+    "nativeJournal": {
+      "offline": {
+        "at": "2026-09-10T00:55:43Z",
+        "networkAvailable": false,
+        "localIPCConnected": true,
+        "healthLabel": "Codex 브리지 상태 확인 중"
+      },
+      "normalAfterRecovery": {
+        "at": "2026-09-10T00:56:05Z",
+        "networkAvailable": true,
+        "localIPCConnected": true,
+        "healthLabel": "Codex 브리지 정상"
+      }
+    },
+    "newLauncherRuleActualLongOutage": false
+  },
+  "actualNotification": {
+    "authorizationResult": "UNErrorDomain Code=1",
+    "arrivalVerified": false,
+    "clickVerified": false,
+    "inAppCodexSettingsRouteVerified": true
+  },
+  "actualChatGPT": {
+    "installedQuestionURI": "ui://codex-mcp-bridge/question/afdc0d76ab49.html",
+    "installedDraftFullReload": "failed",
+    "submittedSelectionAndMemoAutomaticallyRead": true,
+    "cancellationAutomaticallyRead": true,
+    "newPrivateStateResourceActualReload": "not-run",
+    "deliveryFaultInjection": "blocked"
+  },
+  "automated": {
+    "nodeBeforeStartupDeduplication": {
+      "passed": 939,
+      "files": 78,
+      "workers": 2,
+      "seconds": 198.38
+    },
+    "native": {
+      "executed": 136,
+      "passed": 134,
+      "skipped": 2,
+      "failed": 0
+    },
+    "questionBrowser": {
+      "sourceModes": 9,
+      "builtModes": 9,
+      "codexCalls": 0
+    },
+    "launchdIsolated": {
+      "passed": 9,
+      "startedAt": "2026-09-10T01:06:22.975Z",
+      "real": [
+        "launchd",
+        "production-helper"
+      ],
+      "synthetic": [
+        "work",
+        "tunnel",
+        "native-handoff-receipt"
+      ]
+    },
+    "earlierConcurrentNodeRun": {
+      "passed": 925,
+      "testTimeouts": 11
+    },
+    "preDevIntegrationRun": {
+      "passed": 933,
+      "failedTests": 5,
+      "oldSchemaReadingInstalledState": 3,
+      "workerRecoveryTimeout": 1,
+      "helperExitAndCleanupTimeout": 1,
+      "fixtureIsolationCorrected": true
+    },
+    "integratedDevFullRun": {
+      "executed": 947,
+      "passed": 940,
+      "testTimeouts": 7,
+      "files": 78,
+      "workers": 1,
+      "seconds": 545.2
+    },
+    "firstSelectedRetry": {
+      "passed": 12,
+      "testTimeouts": 1
+    },
+    "paginationFixtureCorrection": {
+      "seededCompletedJobs": 14,
+      "assertionsPreserved": true,
+      "passed": 1,
+      "durationMs": 304,
+      "timeoutsChanged": false
+    },
+    "finalSelectedRetry": {
+      "passed": 13,
+      "failed": 0,
+      "matchedFiles": 4,
+      "unselected": 485,
+      "seconds": 15.14,
+      "includesAllSevenFullRunTimeouts": true
+    },
+    "finalNativeBundle": {
+      "executed": 142,
+      "passed": 140,
+      "skipped": 2,
+      "failed": 0,
+      "localizationStrings": 720,
+      "locales": 9,
+      "strictBuild": true,
+      "architecture": "arm64"
+    }
+  },
+  "immutableUI": {
+    "retainedRevisionCount": 173,
+    "currentRevisionCount": 174,
+    "existingResourceFilesUnchanged": 216,
+    "otherCurrentCardsUnchanged": true,
+    "questionURI": "ui://codex-mcp-bridge/question/a93cf2f84a75.html"
+  },
+  "cleanup": {
+    "testProjectRemoved": true,
+    "testDirectoryRemoved": true,
+    "existingProjectsUnchanged": true,
+    "ordinarySettingsUnchanged": true,
+    "canaryAgentsArchived": 3,
+    "finalRuntimeCounts": {
+      "activeJobs": 0,
+      "pendingAdmissions": 0,
+      "pendingInteractions": 0,
+      "memoryOnlyThreads": 0,
+      "backgroundProcesses": 0,
+      "backgroundProcessUnknownAgents": 0
+    }
+  },
+  "installedAppReplaced": false,
+  "releaseCreated": false,
+  "limitations": [
+    "physical-sleep-wake",
+    "allowed-system-notification-click",
+    "actual-new-widget-reload",
+    "actual-host-delivery-faults",
+    "full-keyboard-and-voiceover",
+    "native-codex-handoff-warning",
+    "remaining-mode-switch-and-helper-replacement-acceptance"
+  ],
+  "separateInstalledAppUpdate": {
+    "issue": 89,
+    "build": "917363a4a745:6f0b979b4158",
+    "evidence": "2026-09-10-issue-89-menubar-startup.md",
+    "actualQuitAndReopen": true,
+    "actualTunnel": true
+  },
+  "localTestApp": {
+    "artifact": "Codex-MCP-Bridge-direct-20260910-macOS-arm64.dmg",
+    "sha256": "0be4b669083a903bd60e89703e089bff4d5e3302a07329ac8437df171e7119c6",
+    "architecture": "arm64",
+    "version": "0.3.0",
+    "dmgVerified": true,
+    "mountedAppSignatureVerified": true,
+    "installedAppChangedByPackaging": false,
+    "buildId": "20d91ae5e488:754746e7394b",
+    "bytes": 47412461
+  }
+}

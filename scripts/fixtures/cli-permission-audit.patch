@@ -1,0 +1,72 @@
+diff --git a/test/tools.test.ts b/test/tools.test.ts
+index 1ab2df4..4cd16fd 100644
+--- a/test/tools.test.ts
++++ b/test/tools.test.ts
+@@ -16194,3 +16194,67 @@ async function waitForJobStatus(client: Client, jobId: string, expected: string)
+   }
+   throw new Error(`Timed out waiting for job status ${expected}.`);
+ }
++
++
++describe("permission audit reproductions", () => {
++  it("rejects an unapplied read-only to workspace-write continuation override", async () => {
++    const root = temporaryRoot(), upstream = new FakeUpstream();
++    const c = await connectTestClient(configFor(root, { CODEX_MCP_BRIDGE_ALLOW_WRITE: "1" }), upstream);
++    try {
++      const first = parseToolJson(await runTask(c.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh", sandbox: "read-only" }));
++      const result = await runTask(c.client, { prompt: "audit continue", agentId: first.agentId, contextMode: "continue", sandbox: "workspace-write" }) as ToolResult;
++      const job = c.jobs.get(parseToolJson(result).jobId);
++      console.log(JSON.stringify({ case: "continue-read-to-write", isError: result.isError === true, recordedSandbox: job?.sandbox, upstreamCalls: upstream.calls.length }));
++      expect(result.isError).toBe(true);
++    } finally { await c.close(); }
++  });
++  it("rejects a fork that would ignore an explicit read-only sandbox", async () => {
++    const root = temporaryRoot(), upstream = new ForkLifecycleUpstream();
++    const c = await connectTestClient(configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" }), upstream);
++    try {
++      const first = parseToolJson(await runTask(c.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh", sandbox: "danger-full-access" }));
++      const result = await runTask(c.client, { prompt: "audit fork", agentId: first.agentId, contextMode: "fork", sandbox: "read-only" }) as ToolResult;
++      const job = c.jobs.get(parseToolJson(result).jobId);
++      console.log(JSON.stringify({ case: "fork-full-to-read", isError: result.isError === true, recordedSandbox: job?.sandbox, upstreamCalls: upstream.calls.length }));
++      expect(result.isError).toBe(true);
++    } finally { await c.close(); }
++  });
++  it.each(["continue", "fork"])("rechecks a reduced operator ceiling on %s", async (contextMode) => {
++    const root = temporaryRoot(), upstream = new ForkLifecycleUpstream();
++    const state = new BridgeStateStore({ file: ":memory:" });
++    const initialConfig = configFor(root, { CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS: "1" });
++    const initial = await connectTestClient(initialConfig, upstream, undefined, new FakeModelCatalog(), new UserSettingsStore(initialConfig, { stateStore: state }));
++    const first = parseToolJson(await runTask(initial.client, { prompt: "audit start", agentName: "Audit", contextMode: "fresh", sandbox: "danger-full-access" }));
++    await initial.close();
++    const reducedConfig = configFor(root);
++    const reduced = await connectTestClient(reducedConfig, upstream, undefined, new FakeModelCatalog(), new UserSettingsStore(reducedConfig, { stateStore: state }));
++    try {
++      const result = await runTask(reduced.client, { prompt: "audit after operator change", agentId: first.agentId, contextMode }) as ToolResult;
++      const job = reduced.jobs.get(parseToolJson(result).jobId);
++      console.log(JSON.stringify({ case: "reduced-ceiling-" + contextMode, isError: result.isError === true, recordedSandbox: job?.sandbox, allowDangerFullAccess: reducedConfig.allowDangerFullAccess, upstreamCalls: upstream.calls.length }));
++      expect(result.isError).toBe(true);
++    } finally { await reduced.close(); state.close(); }
++  });
++});
++
++
++describe("public v2 audit", () => {
++  it("observes a full-access fork despite an explicit read-only v2 request", async () => {
++    const root=temporaryRoot(), upstream=new ForkLifecycleUpstream();
++    const c=await connectTestClient(configFor(root,{CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS:"1"}),upstream);
++    try {
++      const tool=(await c.client.listTools()).tools.find(t=>t.name==="codex_task")!;
++      const p=c.settings.current.projects[0]!;
++      const envelope=(tool.inputSchema.properties!.executionEnvelopeRef as {const:string}).const;
++      const call=(args:Record<string,unknown>)=>c.bareCallTool({name:"codex_task",_meta:{"openai/session":"public-audit-session"},arguments:{taskContractVersion:"2",executionEnvelopeRef:envelope,executionMode:"foreground",...args}});
++      const first=await call({requestId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",prompt:"synthetic audit",project:{name:p.name,projectRef:p.projectRef,projectRevision:p.projectRevision},selection:{model:"gpt-5.6-sol",reasoningEffort:"max"},sandbox:"danger-full-access"});
++
++      expect(first.isError).not.toBe(true);
++      const id=parseToolJson(first).agentId;
++      const result=await call({requestId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",prompt:"synthetic read-only fork",activity:{mode:"existing",id:parseToolJson(first).activityId},agent:{mode:"existing",id,context:"fork"},sandbox:"read-only"});
++      const job=c.jobs.get(parseToolJson(result).jobId);
++      console.log(JSON.stringify({case:"public-v2-fork-full-to-read",isError:result.isError===true,recordedSandbox:job?.sandbox,result:result.isError ? result : undefined}));
++      expect(result.isError).toBe(true);
++    }finally{await c.close();}
++  });
++});

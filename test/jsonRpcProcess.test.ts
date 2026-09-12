@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { JsonRpcProcess } from "../src/jsonRpcProcess.js";
+import { JsonRpcProcess, type JsonRpcLateResponse } from "../src/jsonRpcProcess.js";
 
 const FAKE_SERVER = String.raw`
 const { spawn } = require("node:child_process");
@@ -14,6 +14,7 @@ rl.on("line", (line) => {
   omitted = message.jsonrpc === undefined;
   if (message.method === "echo") return send({ id: message.id, result: message.params });
   if (message.method === "hold") { heldId = message.id; return; }
+  if (message.method === "exit-now") return process.exit(0);
   if (message.method === "release") {
     send({ id: message.id, result: {} });
     if (heldId !== undefined) { send({ id: heldId, result: { released: true } }); heldId = undefined; }
@@ -37,6 +38,7 @@ function processFor(options: {
   omitJsonRpcHeader?: boolean;
   onRequest?: (method: string, params: unknown, requestId: number | string) => unknown;
   onExit?: (error: Error) => void;
+  onLateResponse?: (response: JsonRpcLateResponse) => void;
 } = {}) {
   return new JsonRpcProcess({
     command: process.execPath,
@@ -97,6 +99,109 @@ describe("JsonRpcProcess", () => {
     }
   });
 
+  it("identifies an exact late response without disturbing newer request tracking", async () => {
+    const lateResponses: JsonRpcLateResponse[] = [];
+    const rpc = processFor({
+      omitJsonRpcHeader: true,
+      onLateResponse: (response) => lateResponses.push(response)
+    });
+    try {
+      const held = rpc.request(
+        "hold",
+        { marker: "late", secret: "request-params-are-not-retained" },
+        { timeoutMs: 25, lateResponseContext: { threadId: "safe-thread-id" } }
+      );
+      await expect(held).rejects.toMatchObject({
+        code: -32001,
+        requestId: 1,
+        method: "hold",
+        timeoutMs: 25,
+        processIdentity: expect.objectContaining({ pid: expect.any(Number) })
+      });
+
+      await expect(rpc.request("release", {}, { timeoutMs: 2_000 })).resolves.toEqual({});
+      await eventually(() => lateResponses.length === 1);
+      expect(lateResponses[0]).toMatchObject({
+        requestId: 1,
+        method: "hold",
+        timeoutMs: 25,
+        lateResponseContext: { threadId: "safe-thread-id" },
+        response: { id: 1, result: { released: true } }
+      });
+      expect(JSON.stringify(lateResponses[0])).not.toContain("request-params-are-not-retained");
+      expect(lateResponses[0]!.receivedAt).toBeGreaterThanOrEqual(lateResponses[0]!.timedOutAt);
+
+      await expect(rpc.request("echo", { still: "tracked" }, { timeoutMs: 2_000 })).resolves.toEqual({
+        still: "tracked"
+      });
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it("validates explicit timeouts before spawning a process", async () => {
+    const rpc = processFor();
+    await expect(rpc.request("echo", {}, { timeoutMs: 0 })).rejects.toThrow(
+      "JSON-RPC timeout must be an integer between 1"
+    );
+    await expect(
+      rpc.request("echo", {}, {
+        timeoutMs: 100,
+        lateResponseContext: { threadId: "unsafe\nidentifier" }
+      })
+    ).rejects.toThrow("late-response context contains an invalid string identifier");
+    expect(rpc.identity).toBeUndefined();
+    await rpc.close();
+  });
+
+  it("clears pending requests as soon as process shutdown begins", async () => {
+    const rpc = processFor({ omitJsonRpcHeader: true });
+    const held = rpc.request("hold");
+    await eventually(() => rpc.pendingRequestCount === 1);
+    const rejected = expect(held).rejects.toThrow("process was closed");
+    await rpc.close();
+    await rejected;
+    expect(rpc.pendingRequestCount).toBe(0);
+  });
+
+  it.each([
+    ["resolve", "close"], ["reject", "close"], ["resolve", "exit"], ["reject", "exit"]
+  ] as const)("handles an approval that %ss after process %s", async (outcome, stop) => {
+    let finish!: () => void;
+    let requested!: () => void;
+    const arrived = new Promise<void>(resolve => { requested = resolve; });
+    const rpc = processFor({
+      onRequest: () => new Promise((resolve, reject) => {
+        finish = () => outcome === "resolve" ? resolve({ decision: "accept" }) : reject(new Error("Approval dismissed"));
+        requested();
+      })
+    });
+    const running = rpc.request("ask-client");
+    const rejected = expect(running).rejects.toThrow(stop === "close" ? "process was closed" : "exited");
+    await arrived;
+    if (stop === "close") await rpc.close();
+    else await expect(rpc.request("exit-now")).rejects.toThrow("exited");
+    finish();
+    await rejected;
+    // Let the detached inbound handler finish; Vitest also catches any
+    // unhandled rejection that would terminate the production bridge process.
+    await new Promise(resolve => setImmediate(resolve));
+    expect(rpc.pendingRequestCount).toBe(0);
+    await rpc.close();
+  });
+
+  it("leaves no pending state when the child command cannot start", async () => {
+    const rpc = new JsonRpcProcess({
+      command: `${process.execPath}-does-not-exist`,
+      args: [],
+      debugLabel: "missing-jsonrpc"
+    });
+    await expect(rpc.request("echo", {}, { timeoutMs: 100 })).rejects.toThrow();
+    await eventually(() => rpc.exited);
+    expect(rpc.pendingRequestCount).toBe(0);
+    await rpc.close();
+  });
+
   it.runIf(process.platform !== "win32")(
     "force-stops the exact detached process group, including descendants",
     async () => {
@@ -127,9 +232,10 @@ describe("JsonRpcProcess", () => {
     });
     const held = rpc.request("hold");
     const rejected = expect(held).rejects.toThrow(/exited/);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await eventually(() => rpc.pendingRequestCount === 1);
     await rpc.forceTerminate(500);
     await rejected;
+    expect(rpc.pendingRequestCount).toBe(0);
     expect(exits).toHaveLength(1);
   });
 });

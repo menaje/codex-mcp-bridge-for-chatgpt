@@ -1,0 +1,220 @@
+# Native macOS menu bar app
+
+This directory contains the SwiftUI/AppKit companion for issue #44. It does not
+embed the existing cards in a WebView. The Dashboard popover and Settings window
+decode the same application-service snapshots used by the retained MCP cards.
+
+The app can either own the server on this Mac or act only as a client of one
+selected saved server. Client mode does not start a local helper, Bridge, Tunnel,
+Codex runtime, or login flow. Its Dashboard, General settings, and Projects
+settings use the active server; switching a saved profile atomically changes
+that target. The menu-bar login-item preference remains local to this Mac.
+Pairing and the security model are documented in
+[Remote client mode](../docs/remote-client.md).
+
+The Dashboard uses the same **Running / Response needed / Issues** summary as
+the current ChatGPT status card. The three tiles keep the previous menu-bar
+dashboard styling, with an icon and label above each larger number.
+The popover starts at that summary. The tiles filter one complete, history-free
+status index in memory, while **Work & Run History** loads retained history in
+12-row pages only when opened. Closing the popover collapses any selected list, and
+reopening it performs the next Dashboard read. Keeping it open, connectivity
+events, and work-change notices do not trigger display-only Dashboard reads.
+Counts classify current work and recent actionable outcomes;
+background processes appear separately when present. Idle Agents have no
+standalone count or section, but their recorded turns remain in run history.
+The menu-bar icon and header describe bridge service health. Work failures,
+interruptions, orphaned Agents, and input/approval waits appear in the Dashboard
+without marking the bridge unhealthy. Loading the first Dashboard snapshot
+does not delay a healthy service indicator; connection, authentication, and
+snapshot request failures still show a service warning. Native snapshot
+requests explicitly select `statusFilter: all` and `includeHistory: false` for
+the summary, so the server and native client should be updated together.
+Immutable older clients retain their original projection when those optional
+parameters are omitted.
+
+Native and ChatGPT rows use the same status, actual execution, snapshot/recorded
+time, and older-history order. Next-run settings appear only when they differ
+from the latest actual model, effort, effective Fast tier, or reroute. Effort
+values stay as canonical lowercase catalog text in the menu, card, and both
+Settings surfaces; labels and descriptions remain localized.
+
+## Development
+
+Requirements for local-server development:
+
+- macOS 13 or later
+- Swift 5.9 or later
+- Node.js 22 or later
+- an installed and authenticated Codex CLI
+- `tunnel-client` available in `/opt/homebrew/bin`, `/usr/local/bin`,
+  `~/.local/bin`, or `PATH`
+
+```bash
+npm run build
+npm run macos:check
+swift run --package-path macos CodexBridgeMenuBar
+```
+
+When run from the repository, the app starts the helper directly from the local
+`dist` tree. A packaged app installs a per-user LaunchAgent that keeps the helper
+alive when the popover or Settings window closes. Explicit **Quit App** stops the
+runtime and boots that helper out for the current login session before the menu
+bar process exits. It also stops an in-progress Codex browser-login process, and
+the app remains open if pending Settings changes cannot be saved. The helper owns the existing bridge launcher,
+the loopback HTTP Secure MCP Tunnel profile, crash backoff, and the versioned
+private Unix sockets.
+It uses the dedicated `codex-mcp-bridge-macos` Tunnel profile and one canonical
+per-user launcher lock. A restarted helper can safely adopt a still-healthy
+app-managed runtime instead of duplicating it.
+
+On macOS, Activity Monitor identifies the menu-bar app as **Codex MCP Bridge for
+ChatGPT** and the Node.js processes by their roles: **Codex MCP Bridge Helper**
+for background supervision, **Codex MCP Bridge Launcher** for bridge and tunnel
+lifecycle, and **Codex MCP Bridge Server** for MCP requests. Both the stdio and
+HTTP server entry points use the Server name. Search for **Codex MCP Bridge** to
+find these processes together. The separate `tunnel-client` and `codex` processes
+keep their own names.
+
+The everyday Settings window contains General, Projects, and Server tabs backed
+by the same application service as the retained Settings card. General changes
+are debounced, serialized, and saved automatically; server backend and maximum
+access remain an explicit apply-and-restart operation. Connection credentials,
+Codex login, and Tunnel repair stay in a separate first-run/repair surface.
+The General tab adds one native-only Mac control backed by
+`SMAppService.mainApp`: whether the menu-bar UI opens at user login. Its state
+comes from macOS, is not stored in `.env` or shared Settings, and does not stop
+the background helper when disabled. Registration is opt-in from native
+Settings rather than being enabled silently on first run.
+
+## Local data and credentials
+
+- Runtime dotenv: `~/.config/codex-mcp-bridge/.env`
+- Optional override: `CODEX_MCP_BRIDGE_ENV_FILE`
+- Helper socket: `~/.config/codex-mcp-bridge/run/helper.sock`
+- Bridge snapshot socket: `~/.config/codex-mcp-bridge/run/bridge.sock`
+- Existing bridge SQLite state remains unchanged and is never read by Swift.
+
+The setup UI writes only `CONTROL_PLANE_API_KEY` and
+`CONTROL_PLANE_TUNNEL_ID`. Existing comments, ordering, and unknown dotenv keys
+are retained. The directory and file are validated as current-user-owned
+`0700`/`0600` non-symlinks and replacement is atomic. Apply drains the old
+runtime before commit and restores the old dotenv/runtime if new readiness
+fails. Concurrent edits detected before replacement are not overwritten. A runtime dotenv inside a
+registered project is rejected. The API key is never
+stored in UserDefaults, a plist, Keychain, command arguments, logs, or the
+pasteboard.
+An existing regular current-user-owned dotenv with only overly broad
+permissions can be restricted to `0700/0600` from the repair UI without
+rewriting its contents. Group/world-writable paths are rejected from automatic
+repair and must be inspected first.
+
+Codex authentication remains the existing `codex login` cache. The app checks
+`codex login status` and can start the browser login flow; it does not copy or
+alter `~/.codex` credentials. Explicit API-key backend selection remains out of
+scope until issue #29 defines that contract. App-managed Codex children do not
+inherit `OPENAI_API_KEY` or `CODEX_API_KEY` merely because an older dotenv or
+parent process contains one.
+The menu status cannot report healthy while login is missing, and login status
+continues to refresh after the browser flow starts.
+
+Graceful stop and replacement wait for Jobs, then refuse to proceed if known
+background processes remain or their state cannot be verified. Force actions
+perform a fresh impact check and show active/background counts before the user
+confirms. If LaunchAgent replacement fails after changing its plist, the prior
+definition and service are restored.
+
+The Settings window polls the shared revision while visible. Untouched values
+follow changes from the retained Settings card; autosave preserves newer local
+edits while one save is in flight, and a genuine external revision conflict
+pauses autosave until an explicitly confirmed reload. The selected native UI
+locale changes optimistically and is also sent to the Settings snapshot service.
+One shared preference supports Automatic, English, Korean, Japanese, Simplified
+and Traditional Chinese, Spanish, French, German, and Portuguese. An explicit
+language applies to both the native app and retained cards. Automatic follows
+the language of the host displaying each surface, so the macOS app and a ChatGPT
+card can differ only while Automatic is selected.
+Runtime discovery runs away from the menu-bar UI thread.
+Dashboard refreshes, panel changes, and closing/reopening the popover share one
+in-flight enrichment request. Its completed observations are read back for the
+current panel and page, so work-change notices do not leave cancelled native
+requests running overlapping inspections on the server. Per-Agent observation
+reads also avoid repeating the full Job-retention sweep, including when
+protected results exceed the configured retained-Job limit.
+
+Remote-client mode needs only the matching macOS app on the client. The server
+Mac must be running this app's managed Bridge with remote management explicitly
+enabled. Its one-time invitation carries the HTTPS origin, immutable server ID,
+and TLS certificate fingerprint; the resulting per-device credential is stored
+only in the client Keychain. Profiles in UserDefaults contain no credential.
+
+## Build an app bundle
+
+```bash
+./macos/build-app.sh
+open "macos/build/Codex MCP Bridge for ChatGPT.app"
+```
+
+Set `MACOS_BUILD_OUTPUT_DIRECTORY` to an absolute staging directory when the
+default bundle is running. This lets the complete replacement build and pass
+verification before the running app is stopped and replaced.
+
+`Resources/Localization/Localizable.xcstrings` is the native translation source.
+Run `npm run macos:localizations:sync` after adding SwiftUI text, fill every new
+locale entry, and use `npm run macos:localizations:check` to verify source-key,
+placeholder, and nine-language coverage.
+
+The current build is an ad-hoc-signed development artifact for the host
+architecture. Node.js, Codex CLI, and `tunnel-client` remain managed external
+prerequisites. Public packaging is a separate command and requires the exact
+manifest-derived DMG filename:
+
+```bash
+npm run macos:package -- \
+  --architecture arm64 \
+  --output release-assets/Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-arm64-unnotarized.dmg
+
+# Run this on a native Intel host (including the macos-15-intel CI runner).
+npm run macos:package -- \
+  --architecture x64 \
+  --output release-assets/Codex-MCP-Bridge-for-ChatGPT-0.3.0-macOS-x64-unnotarized.dmg
+```
+
+Public packaging intentionally uses ad-hoc signing and does not submit to Apple
+notarization. It needs no Apple developer account, signing certificate, or
+notarization secret. The packager validates the manifest version, minimum OS,
+selected native architecture, matching `better-sqlite3` prebuild, app signature,
+and DMG signature. The filename and release
+notes state `unnotarized`; after downloading, a user may need to approve this
+specific app in **System Settings > Privacy & Security**. Do not disable
+Gatekeeper globally.
+
+The manifest explicitly supports macOS 13+ through separate Apple Silicon
+(`arm64`) and Intel (`x64`) packages. Each release package must be built and
+tested on a matching native runner; cross-compilation is rejected. A Universal
+package remains unsupported. Updater policy and the physical accessibility,
+sleep/wake, and network-recovery checks remain release gates for both targets.
+
+## App icons
+
+`generate-app-icons.swift` is the source of truth for the app icon. The bundle
+uses a continuous rounded silhouette with transparent exterior pixels, so the
+legacy `.icns` artwork also works in macOS versions and views that do not apply
+an icon mask. The 16 pt and 32 pt designs have optical adjustments; each 1x and
+2x image is rendered from its corresponding design instead of downsampling one
+1024 px bitmap. The generator checks dimensions and actual transparency during
+every app build. macOS 26 can apply its own icon appearance to the packaged icon.
+
+To refresh the checked-in SVG and PNG previews after changing the design:
+
+```bash
+swift macos/generate-app-icons.swift \
+  --iconset macos/build/AppIcon.iconset \
+  --preview-directory macos/Resources/AppIcon
+```
+
+The menu-bar icon remains a black-and-clear template image; in-app branding uses
+transparent vector shapes and SF Symbols. Neither uses the app icon's background.
+Menu-bar health uses no badge when healthy, an open circle while checking, a
+filled circle when attention is needed, and a filled circle with a clear minus
+when unavailable. The accessible label and Dashboard provide the exact status.

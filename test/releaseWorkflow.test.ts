@@ -1,0 +1,131 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import { deriveReleaseMetadata, loadReleaseManifest } from "../scripts/release-manifest.mjs";
+
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const WORKFLOW = readFileSync(path.join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
+const MACOS_PACKAGER = readFileSync(path.join(REPO_ROOT, "macos/package-release.sh"), "utf8");
+const MACOS_PROMOTER = readFileSync(path.join(REPO_ROOT, "macos/promote-release.sh"), "utf8");
+const MACOS_BUILDER = readFileSync(path.join(REPO_ROOT, "macos/build-app.sh"), "utf8");
+
+describe("macOS and generic npm release workflow", () => {
+  it("validates only release PRs and publishes only explicit RC or stable promotions", () => {
+    expect(WORKFLOW).toMatch(/on:\n  push:\n    branches:\n      - main/);
+    expect(WORKFLOW).toMatch(/pull_request:\n    branches:\n      - main/);
+    expect(WORKFLOW).toContain("- converted_to_draft");
+    expect(WORKFLOW).toContain("workflow_dispatch:");
+    expect(WORKFLOW).not.toContain("pull_request_target:");
+    expect(WORKFLOW).not.toMatch(/branches:\n(?:\s+- [^\n]+\n)*\s+- dev/);
+    expect(WORKFLOW).toContain("macos-check:");
+    expect(WORKFLOW).toContain("runner: macos-15\n");
+    expect(WORKFLOW).toContain("runner: macos-15-intel");
+    expect(WORKFLOW).toContain("runs-on: ${{ matrix.runner }}");
+    expect(WORKFLOW).toContain("MACOS_TARGET_ARCHITECTURE: ${{ matrix.architecture }}");
+    expect(WORKFLOW.match(/CODEX_MCP_BRIDGE_SKIP_IMAGE_RENDER_TESTS: \$\{\{ matrix\.skipImageRendering \}\}/g))
+      .toHaveLength(2);
+    expect(WORKFLOW.match(/skipImageRendering: "0"/g)).toHaveLength(2);
+    expect(WORKFLOW.match(/skipImageRendering: "1"/g)).toHaveLength(2);
+    expect(WORKFLOW).toContain("--architecture \"$MACOS_TARGET_ARCHITECTURE\"");
+    expect(WORKFLOW).toContain("name: macos-release-asset-${{ matrix.architecture }}");
+    expect(WORKFLOW).toContain("pattern: macos-release-asset-*");
+    expect(WORKFLOW).toContain("merge-multiple: true");
+    expect(WORKFLOW).toContain("node scripts/release-policy.mjs github-context");
+    expect(WORKFLOW).toContain("RELEASE_PR_HEAD_REPOSITORY");
+    expect(WORKFLOW).toContain("publish: ${{ steps.policy.outputs.publish }}");
+    expect(WORKFLOW).toContain("name: Release PR validation");
+    expect(WORKFLOW).toContain("name: Stable promotion gate");
+    expect(WORKFLOW).toContain("PR_IS_DRAFT: ${{ github.event.pull_request.draft }}");
+    expect(WORKFLOW).toContain("A candidate release PR must remain draft until stable promotion.");
+    expect(WORKFLOW.match(/if: \$\{\{ steps\.gate-mode\.outputs\.stable == 'true' \}\}/g)).toHaveLength(3);
+    expect(WORKFLOW).toContain(
+      "if: ${{ github.event_name != 'pull_request' && needs.policy-context.outputs.publish == 'true' }}"
+    );
+    expect(WORKFLOW.match(/gh release create/g)).toHaveLength(1);
+
+    const prJobs = WORKFLOW.slice(
+      WORKFLOW.indexOf("  release-pr-validation:"),
+      WORKFLOW.indexOf("\n  release:\n")
+    );
+    expect(prJobs).toContain("contents: read");
+    expect(prJobs).not.toContain("contents: write");
+    expect(prJobs).not.toContain("gh release create");
+    expect(prJobs).toContain("Draft status is the merge hold until stable promotion.");
+  });
+
+  it("requires ad-hoc macOS and generic npm assets before assembly", () => {
+    for (const job of [
+      "npm-release-assets",
+      "macos-release-package"
+    ]) {
+      expect(WORKFLOW).toContain(`${job}:`);
+    }
+    expect(WORKFLOW).toContain("npm run macos:package");
+    expect(WORKFLOW).toContain("name: Promote the source RC macOS app");
+    expect(WORKFLOW).toContain("./macos/promote-release.sh");
+    expect(MACOS_PACKAGER).toContain('CODE_SIGN_IDENTITY="-"');
+    expect(MACOS_PACKAGER.match(/\^Signature=adhoc\$/g)).toHaveLength(2);
+    expect(MACOS_BUILDER).toContain("supports ad-hoc macOS signing only");
+    expect(MACOS_BUILDER).toContain('require("better-sqlite3")');
+    expect(MACOS_BUILDER).toContain('new Database(":memory:")');
+    expect(MACOS_BUILDER).toContain("--disable-swift-testing");
+    expect(MACOS_BUILDER).not.toContain("--options runtime");
+    expect(MACOS_PACKAGER).not.toContain("notarytool");
+    expect(MACOS_PROMOTER).toContain('manifest.release.stage !== "stable"');
+    expect(MACOS_PROMOTER).toContain('manifest.release?.stage !== "candidate"');
+    expect(MACOS_PROMOTER).toContain('cp "$repository_root/dist/build-info.json"');
+    expect(MACOS_PROMOTER).toContain('codesign --force --deep --sign - "$app_bundle"');
+    expect(WORKFLOW).not.toContain("MACOS_DEVELOPER_ID");
+    expect(WORKFLOW).not.toContain("APPLE_NOTARY");
+    expect(WORKFLOW).not.toContain("skills:package");
+    expect(WORKFLOW).not.toContain("skills_archive_filename");
+    expect(WORKFLOW).not.toContain("archive/skills");
+    expect(WORKFLOW).toContain("npm run release:assets -- write");
+    expect(WORKFLOW).toContain("npm run release:assets -- check");
+    expect(WORKFLOW).toContain("Smoke-test the packed generic npm server");
+    expect(WORKFLOW).toContain("node_modules/.bin/codex-mcp-bridge");
+    expect(WORKFLOW).toContain("npm run release:payload -- compare");
+    expect(WORKFLOW).toContain("--kind npm");
+    expect(WORKFLOW).toContain("--kind macos");
+    expect(WORKFLOW).toContain("source_candidate_tag");
+    expect(WORKFLOW).toContain("is not the latest RC");
+    expect(WORKFLOW).toContain("RELEASE_NOTES_FILE: ${{ steps.metadata.outputs.release_notes_file }}");
+    expect(WORKFLOW).toContain('--notes-file "$RELEASE_NOTES_FILE"');
+    expect(WORKFLOW).not.toContain('--notes "The macOS Apple Silicon');
+  });
+
+  it("audits state migration and restore in the unpacked npm archive and both mounted DMGs", () => {
+    expect(WORKFLOW).toContain("scripts/state-release-audit.ts");
+    expect(WORKFLOW).toContain("ui-release-catalog.json");
+    expect(WORKFLOW).toContain("--artifact-kind npm");
+    expect(WORKFLOW).toContain('--artifact-kind "macos-$MACOS_TARGET_ARCHITECTURE"');
+    expect(WORKFLOW).toContain('hdiutil attach -nobrowse -readonly');
+    expect(WORKFLOW).toContain('"$app_bundle/Contents/Resources/Runtime"');
+    expect(WORKFLOW.match(/gh release download v0\.3\.0/g)).toHaveLength(2);
+    expect(WORKFLOW.match(/Published v0\.3\.0 package checksum mismatch/g)).toHaveLength(2);
+    expect(WORKFLOW.match(/npm install --prefix .* --omit=dev --legacy-peer-deps --no-audit --no-fund/g))
+      .toHaveLength(3);
+    expect(WORKFLOW).toContain("npm-state-compatibility-audit");
+    expect(WORKFLOW).toContain("macos-state-compatibility-audit-${{ matrix.architecture }}");
+    expect(WORKFLOW.match(/retention-days: 90/g)).toHaveLength(2);
+    expect(MACOS_BUILDER).toContain('release-manifest.schema.json');
+    expect(MACOS_BUILDER).toContain('ui-release-catalog.json');
+    expect(MACOS_BUILDER).toContain('state-migrations.json');
+  });
+
+  it("publishes every manifest-derived filename in the one release command", () => {
+    const metadata = deriveReleaseMetadata(loadReleaseManifest(REPO_ROOT));
+    for (const output of [
+      "package_filename",
+      "checksum_filename",
+      "macos_arm64_archive_filename",
+      "macos_x64_archive_filename",
+      "release_checksums_filename"
+    ]) {
+      expect(WORKFLOW).toContain(`steps.metadata.outputs.${output}`);
+    }
+    expect(metadata.macosArm64ArchiveFilename).toContain("macOS-arm64-unnotarized.dmg");
+    expect(metadata.macosX64ArchiveFilename).toContain("macOS-x64-unnotarized.dmg");
+  });
+});
