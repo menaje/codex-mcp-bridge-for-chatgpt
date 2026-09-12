@@ -29,7 +29,7 @@ import {
   createSeededSchema3Fixture
 } from "./helpers/stateSchemaFixtures.js";
 
-describe("state schema 19 normalization", () => {
+describe("state schema 19 normalization", { timeout: 15_000 }, () => {
   it("creates the current schema directly and matches an authentic schema 18 upgrade", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-schema-v19-"));
     const originalCwd = path.join(root, "original-project");

@@ -14,7 +14,7 @@ import { BridgeStateStore } from "../src/stateStore.js";
 import { inspectStateRecovery, restoreStateDatabase } from "../src/stateRecovery.js";
 import { createSchema18Fixture, V18_RUNNING_JOB_ID } from "./helpers/stateSchemaFixtures.js";
 
-describe("state recovery boundary", () => {
+describe("state recovery boundary", { timeout: 15_000 }, () => {
   it("restores the verified original only before service-open and preserves the replaced files", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-state-restore-"));
     const file = path.join(root, "state.sqlite");

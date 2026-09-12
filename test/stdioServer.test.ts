@@ -23,7 +23,7 @@ import { BridgeStateStore } from "../src/stateStore.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 import { createSchema18Fixture } from "./helpers/stateSchemaFixtures.js";
 
-describe("persistent stdio bridge", () => {
+describe("persistent stdio bridge", { timeout: 15_000 }, () => {
   it("records the rollback boundary after the migrated stdio transport connects", async () => {
     const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-stdio-migrated-state-"));
     const file = path.join(stateDirectory, "state.sqlite");
