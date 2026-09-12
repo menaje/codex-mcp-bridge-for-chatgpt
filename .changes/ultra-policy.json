@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Ultra를 꺼도 자동 모드의 기존 선택을 보존해 저장하고 실행 목록에서 제외하며, 카드와 앱의 안내를 실제 Ultra 제한 범위에 맞춥니다.",
-  "breaking": false,
-  "migration": null
-}

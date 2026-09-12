@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Simplify macOS button labels, add icon-only menu controls with tooltips, and show credits and settings context directly.",
-  "breaking": false,
-  "migration": null
-}

@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Keep CLI selection, recovery and update controls consistent with verified installation state and avoid downloading staged updates again.",
-  "breaking": false,
-  "migration": null
-}

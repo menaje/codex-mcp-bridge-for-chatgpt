@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Run affected checks for deleted and renamed code, preserve exact Git paths, and reject missing comparison bases instead of skipping committed changes.",
-  "breaking": false,
-  "migration": null
-}

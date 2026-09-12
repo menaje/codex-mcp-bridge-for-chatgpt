@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Reduce repeated Dashboard projection reads, protect native Settings from obsolete responses, and show freshness and incomplete runtime details consistently in cards and the app.",
-  "breaking": false,
-  "migration": null
-}

@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "minor",
-  "summary": "Show a compact menu bar summary with selectable details, and automatically start the local server when the app launches after a normal shutdown.",
-  "breaking": false,
-  "migration": null
-}

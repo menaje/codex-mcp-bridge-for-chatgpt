@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Run configuration and release-governance tests against development, candidate, and stable checkout metadata without stage-specific fixture drift.",
-  "breaking": false,
-  "migration": null
-}

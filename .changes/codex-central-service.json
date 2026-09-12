@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "minor",
-  "summary": "Centralize Codex authentication, session storage and usage; verify latest managed installs and add separate API billing connections.",
-  "breaking": false,
-  "migration": null
-}

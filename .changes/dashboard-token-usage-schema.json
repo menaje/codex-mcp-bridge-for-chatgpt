@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Fix Codex Dashboard loading when running or completed tasks contain token usage.",
-  "breaking": false,
-  "migration": null
-}

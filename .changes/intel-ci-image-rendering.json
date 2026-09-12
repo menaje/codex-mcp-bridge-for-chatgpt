@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Keep Intel release builds and 145 native tests running on the macOS 15 runner while skipping its two unsupported Metal-backed image-rendering checks.",
-  "breaking": false,
-  "migration": null
-}

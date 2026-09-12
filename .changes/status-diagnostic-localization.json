@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "macOS 앱의 helper·Tunnel·원격 관리 상태를 선택 언어로 표시하고 연결 대기 상태를 오류와 구분합니다.",
-  "breaking": false,
-  "migration": null
-}

@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "원격 관리의 동시 시작·중지 요청을 직렬화하고 IPv6 연결을 지원하며 macOS 원격 세션을 재사용하고 종료 시 정리합니다.",
-  "breaking": false,
-  "migration": null
-}

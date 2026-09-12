@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "minor",
-  "summary": "자동 모드의 모델 설명을 설정 앱과 설정카드에서 수정하고 공식 설명으로 복원할 수 있으며, 공식 카탈로그 조회와 캐시는 그대로 유지합니다.",
-  "breaking": false,
-  "migration": null
-}

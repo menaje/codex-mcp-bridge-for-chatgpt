@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "Preserve native executable permissions when removing signatures for RC-to-stable payload comparison so permission changes require another candidate.",
-  "breaking": false,
-  "migration": null
-}

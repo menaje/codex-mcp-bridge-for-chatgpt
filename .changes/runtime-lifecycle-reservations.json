@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "재시작·중지·설정 적용·종료 예약을 중앙에서 저장하고 작업 완료 이벤트로 실행합니다. 헬퍼 재기동 시 작업을 보존하고 복구 중 취소와 종료 인계 실패를 처리하며, 대기 이유·취소·오류 원인과 설정 복구 결과를 앱에 표시합니다.",
-  "breaking": false,
-  "migration": null
-}
