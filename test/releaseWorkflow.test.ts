@@ -13,6 +13,7 @@ describe("macOS and generic npm release workflow", () => {
   it("validates only release PRs and publishes only explicit RC or stable promotions", () => {
     expect(WORKFLOW).toMatch(/on:\n  push:\n    branches:\n      - main/);
     expect(WORKFLOW).toMatch(/pull_request:\n    branches:\n      - main/);
+    expect(WORKFLOW).toContain("- converted_to_draft");
     expect(WORKFLOW).toContain("workflow_dispatch:");
     expect(WORKFLOW).not.toContain("pull_request_target:");
     expect(WORKFLOW).not.toMatch(/branches:\n(?:\s+- [^\n]+\n)*\s+- dev/);
@@ -34,6 +35,9 @@ describe("macOS and generic npm release workflow", () => {
     expect(WORKFLOW).toContain("publish: ${{ steps.policy.outputs.publish }}");
     expect(WORKFLOW).toContain("name: Release PR validation");
     expect(WORKFLOW).toContain("name: Stable promotion gate");
+    expect(WORKFLOW).toContain("PR_IS_DRAFT: ${{ github.event.pull_request.draft }}");
+    expect(WORKFLOW).toContain("A candidate release PR must remain draft until stable promotion.");
+    expect(WORKFLOW.match(/if: \$\{\{ steps\.gate-mode\.outputs\.stable == 'true' \}\}/g)).toHaveLength(3);
     expect(WORKFLOW).toContain(
       "if: ${{ github.event_name != 'pull_request' && needs.policy-context.outputs.publish == 'true' }}"
     );
@@ -46,7 +50,7 @@ describe("macOS and generic npm release workflow", () => {
     expect(prJobs).toContain("contents: read");
     expect(prJobs).not.toContain("contents: write");
     expect(prJobs).not.toContain("gh release create");
-    expect(prJobs).toContain("remains on HOLD until its candidate is promoted to stable");
+    expect(prJobs).toContain("Draft status is the merge hold until stable promotion.");
   });
 
   it("requires ad-hoc macOS and generic npm assets before assembly", () => {

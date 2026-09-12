@@ -116,8 +116,9 @@ npm run release:prepare-candidate
 
 Open one draft pull request from that same-repository `release/X.Y.Z` branch to
 `main`. While the manifest is `candidate`, the pull request runs the complete
-read-only release validation, but its required **Stable promotion gate** remains
-on `HOLD`; the pull request must not be merged in candidate state. Publish each
+read-only release validation. Its required **Stable promotion gate** succeeds only
+while the candidate PR remains draft; the draft state is the merge hold. Marking a
+candidate PR ready before stable promotion makes the gate fail. Publish each
 validated RC only through the manual release workflow.
 
 If a candidate validation or publication run fails for a transient runner or
@@ -203,11 +204,12 @@ Pushes to `dev`, pushes to release branches, and ordinary pull requests to
 `dev` do not run this workflow. A non-release pull request targeting `main` is
 rejected by the first policy job. The policy validates the event, same-repository
 head, base, stage, branch, and version before installing dependencies or
-building. Candidate PRs expose successful read-only validation while their
-Stable promotion gate deliberately remains on `HOLD`. Stable PRs additionally
-require the latest existing GitHub prerelease for `sourceCandidate` and compare
-both npm and macOS payloads before the gate passes. Only manual candidate and
-`main` push runs receive publication authority. The publisher rejects
+building. Candidate PRs expose successful read-only validation only while they
+remain draft; converting one to ready before stable promotion makes the required
+Stable promotion gate fail. Stable PRs additionally require the latest existing
+GitHub prerelease for `sourceCandidate` and compare both npm and macOS payloads
+before the gate passes. Only manual candidate and `main` push runs receive
+publication authority. The publisher rejects
 repository mismatches, conflicting tags, duplicate releases, missing declared
 assets, and extra undeclared assets.
 

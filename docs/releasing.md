@@ -314,8 +314,9 @@ may append GitHub's generated change list; a missing or incomplete file fails
 the release check.
 Open a draft pull request from that same-repository release branch to `main`;
 it is the only PR shape admitted by the release workflow. Candidate commits run
-read-only validation while the required Stable promotion gate remains on
-`HOLD`.
+read-only validation, and the required Stable promotion gate succeeds while the
+candidate remains draft. The draft state blocks merging; marking the candidate
+ready before stable promotion makes the gate fail.
 
 Use `npm run release:next-rc` after any candidate payload change and
 `npm run release:promote` only after the final candidate passes every gate.
@@ -371,10 +372,11 @@ matching `release/X.Y.Z` branch, or an explicit push to `main`. The PR path
 accepts only a same-repository `release/X.Y.Z` head in candidate or stable
 state, remains read-only, and never publishes. Development pushes,
 release-branch pushes, and ordinary PRs to `dev` run no release Actions. A
-candidate PR stays on `HOLD` at the required Stable promotion gate; after
-promotion, the same PR must pass its stable validations before merge. The
-manual path accepts only an RC and the `main` path accepts only a
-source-RC-backed stable promotion. The workflow:
+candidate PR stays on `HOLD` through its draft state; the required Stable
+promotion gate is green for a draft candidate and fails if that candidate is
+marked ready. After promotion, the same PR must pass its stable validations
+before merge. The manual path accepts only an RC and the `main` path accepts
+only a source-RC-backed stable promotion. The workflow:
 
 1. runs the full Node.js server checks and production dependency audit;
 2. builds the canonical npm tarball and its checksum;

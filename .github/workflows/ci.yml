@@ -16,6 +16,7 @@ on:
       - synchronize
       - reopened
       - ready_for_review
+      - converted_to_draft
   workflow_dispatch:
 
 permissions:
@@ -450,24 +451,42 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Keep candidate pull requests on hold until stable promotion
+      - id: gate-mode
+        name: Verify the candidate draft hold or enter stable promotion
         env:
           VALIDATION_RESULT: ${{ needs.release-pr-validation.result }}
           RELEASE_STAGE: ${{ needs.policy-context.outputs.stage }}
+          PR_IS_DRAFT: ${{ github.event.pull_request.draft }}
         run: |
           if [[ "$VALIDATION_RESULT" != "success" ]]; then
             echo "Release PR validation did not pass." >&2
             exit 1
           fi
+
+          if [[ "$RELEASE_STAGE" == "candidate" ]]; then
+            if [[ "$PR_IS_DRAFT" != "true" ]]; then
+              echo "A candidate release PR must remain draft until stable promotion." >&2
+              exit 1
+            fi
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+            echo "Candidate validation passed. Draft status is the merge hold until stable promotion." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           if [[ "$RELEASE_STAGE" != "stable" ]]; then
-            echo "The release PR remains on HOLD until its candidate is promoted to stable." >&2
+            echo "Unsupported release stage for the stable promotion gate: $RELEASE_STAGE" >&2
             exit 1
           fi
-      - uses: actions/checkout@v7
+
+          echo "stable=true" >> "$GITHUB_OUTPUT"
+      - if: ${{ steps.gate-mode.outputs.stable == 'true' }}
+        uses: actions/checkout@v7
       - id: metadata
+        if: ${{ steps.gate-mode.outputs.stable == 'true' }}
         name: Read release manifest
         run: node scripts/release-manifest.mjs github-output >> "$GITHUB_OUTPUT"
       - name: Require the latest published RC before merge
+        if: ${{ steps.gate-mode.outputs.stable == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_REPOSITORY: ${{ steps.metadata.outputs.repository }}
