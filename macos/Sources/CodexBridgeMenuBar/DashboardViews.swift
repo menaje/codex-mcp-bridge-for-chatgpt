@@ -17,6 +17,7 @@ enum ApplicationQuitConfirmationPolicy {
 }
 
 struct DashboardPopoverView: View {
+    var fitsMenuBarWindow = false
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
     @State private var showForceStopConfirmation = false
@@ -26,6 +27,7 @@ struct DashboardPopoverView: View {
     @State private var isRefreshingOverview = false
     @State private var regionHeights: [DashboardPopoverRegion: CGFloat] = [:]
     @State private var screenHeight: CGFloat = NSScreen.main?.visibleFrame.height ?? 800
+    @State private var isPresented = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -50,11 +52,19 @@ struct DashboardPopoverView: View {
         }
         .frame(width: DashboardPopoverLayout.width)
         .fixedSize(horizontal: false, vertical: true)
-        .background(DashboardPopoverScreen { screenHeight = $0 })
+        .background(DashboardPopoverScreen(fitsWindow: fitsMenuBarWindow, isPresented: isPresented) {
+            screenHeight = $0
+        })
         .onPreferenceChange(DashboardPopoverHeights.self) { regionHeights = $0 }
         .environment(\.locale, model.interfaceLocale)
-        .onAppear { model.setDashboardVisible(true) }
-        .onDisappear { model.setDashboardVisible(false) }
+        .onAppear {
+            isPresented = true
+            model.setDashboardVisible(true)
+        }
+        .onDisappear {
+            isPresented = false
+            model.setDashboardVisible(false)
+        }
         .task {
             if model.isRemoteClient ? model.remoteHello == nil : model.helperStatus == nil {
                 await model.start()

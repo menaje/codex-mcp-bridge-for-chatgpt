@@ -20,6 +20,9 @@ status index in memory, while **Work & Run History** loads retained history in
 12-row pages only when opened. Closing the popover collapses any selected list, and
 reopening it performs the next Dashboard read. Keeping it open, connectivity
 events, and work-change notices do not trigger display-only Dashboard reads.
+The native menu window follows the measured content height while retaining its
+top edge. Expanding and collapsing a panel moves only the bottom edge; long
+lists scroll below the summary and above the footer within the owning display.
 Counts classify current work and recent actionable outcomes;
 background processes appear separately when present. Idle Agents have no
 standalone count or section, but their recorded turns remain in run history.

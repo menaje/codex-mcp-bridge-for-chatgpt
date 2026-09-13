@@ -80,16 +80,29 @@ extension View {
     }
 }
 
-/// Fit below the popover's actual top edge, including on a secondary display.
+/// Keep the menu window fitted to its content, growing down from its opening position.
+/// Ordinary windows using the same dashboard only report their available space.
 struct DashboardPopoverScreen: NSViewRepresentable {
+    var fitsWindow = false
+    var isPresented = true
     let changed: (CGFloat) -> Void
 
     func makeNSView(context: Context) -> ScreenView { ScreenView(changed: changed) }
-    func updateNSView(_ view: ScreenView, context: Context) { view.changed = changed }
+    func updateNSView(_ view: ScreenView, context: Context) {
+        view.changed = changed
+        view.configure(fitsWindow: fitsWindow, isPresented: isPresented)
+    }
 
     final class ScreenView: NSView {
         var changed: (CGFloat) -> Void
         private var lastAvailable: CGFloat?
+        private var fitsWindow = false
+        private var isPresented = false
+        private var topEdge: CGFloat?
+        private var lastWindowFrame: NSRect?
+        private var contentChromeHeight: CGFloat?
+        private var updatePending = false
+        private var applyingFrame = false
 
         init(changed: @escaping (CGFloat) -> Void) {
             self.changed = changed
@@ -98,35 +111,118 @@ struct DashboardPopoverScreen: NSViewRepresentable {
 
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+        func configure(fitsWindow: Bool, isPresented: Bool) {
+            if self.isPresented != isPresented || self.fitsWindow != fitsWindow {
+                resetAnchor()
+            }
+            self.fitsWindow = fitsWindow
+            self.isPresented = isPresented
+            scheduleUpdate()
+        }
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             NotificationCenter.default.removeObserver(self)
+            resetAnchor()
             if let window {
                 NotificationCenter.default.addObserver(self, selector: #selector(screenChanged),
                     name: NSWindow.didChangeScreenNotification, object: window)
-                NotificationCenter.default.addObserver(self, selector: #selector(screenChanged),
+                NotificationCenter.default.addObserver(self, selector: #selector(windowGeometryChanged),
                     name: NSWindow.didMoveNotification, object: window)
-                NotificationCenter.default.addObserver(self, selector: #selector(screenChanged),
+                NotificationCenter.default.addObserver(self, selector: #selector(windowGeometryChanged),
                     name: NSWindow.didResizeNotification, object: window)
             }
-            reportScreen()
+            scheduleUpdate()
         }
 
-        @objc private func screenChanged(_ notification: Notification) { reportScreen() }
+        @objc private func screenChanged(_ notification: Notification) {
+            resetAnchor()
+            scheduleUpdate()
+        }
+
+        @objc private func windowGeometryChanged(_ notification: Notification) {
+            guard !applyingFrame else { return }
+            scheduleUpdate()
+        }
 
         override func layout() {
             super.layout()
-            reportScreen()
+            scheduleUpdate()
         }
 
-        private func reportScreen() {
+        private func resetAnchor() {
+            topEdge = nil
+            lastWindowFrame = nil
+            contentChromeHeight = nil
+            lastAvailable = nil
+        }
+
+        private func scheduleUpdate() {
+            guard !updatePending else { return }
+            updatePending = true
+            // AppKit resizing during a SwiftUI layout pass can feed a stale size
+            // back into that pass. Coalesce measurements after layout instead.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.updatePending = false
+                self.updateWindow()
+            }
+        }
+
+        func updateWindow() {
             guard let window, let screen = window.screen, bounds.height > 0 else { return }
-            let top = window.convertPoint(toScreen: convert(
-                NSPoint(x: bounds.minX, y: isFlipped ? bounds.minY : bounds.maxY), to: nil)).y
+            let top: CGFloat
+            if fitsWindow {
+                guard isPresented else { return }
+                let currentFrame = window.frame
+                // A move without a resize is a new placement (for example when
+                // reopening at a different status-item position). A content
+                // resize must retain the previous top edge, even if SwiftUI
+                // has already resized the host around its center.
+                if topEdge == nil || (lastWindowFrame?.size == currentFrame.size &&
+                    lastWindowFrame?.origin != currentFrame.origin) {
+                    topEdge = currentFrame.maxY
+                }
+                let anchoredTop = min(topEdge ?? currentFrame.maxY, screen.visibleFrame.maxY)
+                topEdge = anchoredTop
+                let contentRect = window.contentRect(forFrameRect: currentFrame)
+                // Some SwiftUI hosts expose their fixed outer padding through
+                // contentMinSize instead of their intrinsic/fitting size. That
+                // minimum can retain the largest prior height on Intel, though,
+                // so use it only to learn the fixed chrome around this view.
+                // The current ScreenView bounds remain the source of the
+                // changing content height, which lets a collapsed panel shrink.
+                let hostContentHeight = max(window.contentMinSize.height,
+                    window.contentView?.fittingSize.height ?? 0)
+                let measuredChromeHeight = max(0, hostContentHeight - bounds.height)
+                if let contentChromeHeight {
+                    self.contentChromeHeight = contentChromeHeight > 0
+                        ? min(contentChromeHeight, measuredChromeHeight)
+                        : measuredChromeHeight
+                } else {
+                    contentChromeHeight = measuredChromeHeight
+                }
+                let height = ceil(bounds.height + (contentChromeHeight ?? 0))
+                var frame = window.frameRect(forContentRect: NSRect(
+                    x: contentRect.minX, y: contentRect.minY, width: contentRect.width, height: height))
+                frame.origin.y = anchoredTop - frame.height
+                if frame != currentFrame {
+                    applyingFrame = true
+                    window.setFrame(frame, display: true)
+                    applyingFrame = false
+                }
+                lastWindowFrame = window.frame
+                // Available height must use the window anchor, not the inner
+                // view's position inside a previously oversized, centered host.
+                top = anchoredTop - (frame.height - bounds.height)
+            } else {
+                top = window.convertPoint(toScreen: convert(
+                    NSPoint(x: bounds.minX, y: isFlipped ? bounds.minY : bounds.maxY), to: nil)).y
+            }
             let available = floor(min(screen.visibleFrame.maxY, top) - screen.visibleFrame.minY)
             guard available > 0, available != lastAvailable else { return }
             lastAvailable = available
-            DispatchQueue.main.async { [weak self] in self?.changed(available) }
+            changed(available)
         }
 
         deinit { NotificationCenter.default.removeObserver(self) }

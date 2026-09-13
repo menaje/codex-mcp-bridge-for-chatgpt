@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 @testable import CodexBridgeKit
 @testable import CodexBridgeMenuBar
@@ -105,6 +107,54 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
+    func testDashboardLongListAndEmptyPanelResizeTheActualWindowBelowItsHeader() async throws {
+        let f = try PopoverFixture()
+        defer { f.remove() }
+        f.state.rowCount = 24
+        await f.model.refreshDashboard(enrich: false)
+        let screen = try XCTUnwrap(NSScreen.main)
+        let window = NSPanel(contentRect: NSRect(x: screen.visibleFrame.midX - 230,
+            y: screen.visibleFrame.maxY - 612, width: 460, height: 600),
+            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: DashboardPopoverView(fitsMenuBarWindow: true)
+            .environmentObject(f.model))
+        host.sizingOptions = []
+        window.contentView = host
+        defer { window.contentView = nil; window.close() }
+        let top = window.frame.maxY
+
+        func settle() async throws {
+            for _ in 0..<30 {
+                host.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        try await settle()
+        let compactHeight = window.frame.height
+        XCTAssertLessThan(compactHeight, 600)
+        XCTAssertEqual(window.frame.maxY, top, accuracy: 1)
+
+        await f.model.toggleDashboardPanel(.running)
+        try await settle()
+        let longHeight = window.frame.height
+        XCTAssertGreaterThan(longHeight, compactHeight + 100)
+        XCTAssertGreaterThanOrEqual(window.frame.minY, screen.visibleFrame.minY + 23)
+        XCTAssertEqual(window.frame.maxY, top, accuracy: 1)
+
+        await f.model.toggleDashboardPanel(.responseRequired)
+        try await settle()
+        XCTAssertLessThan(window.frame.height, longHeight)
+        XCTAssertGreaterThan(window.frame.height, compactHeight)
+        XCTAssertEqual(window.frame.maxY, top, accuracy: 1)
+
+        await f.model.toggleDashboardPanel(.responseRequired)
+        try await settle()
+        XCTAssertEqual(window.frame.height, compactHeight, accuracy: 1)
+        XCTAssertEqual(window.frame.maxY, top, accuracy: 1)
+    }
+
+    @MainActor
     func testAppLaunchSubmitsStartOnceAndLaterBootstrapDoesNotUndoAManualStop() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         async let first: Void = f.model.start()
@@ -206,6 +256,8 @@ private final class PopoverReplyState: @unchecked Sendable {
     private var completedEnrichments = 0
     private var dashboardReads = 0
     private var slowHistory = false
+    private var runningRowCount = 0
+    var rowCount: Int { get { lock.withLock { runningRowCount } } set { lock.withLock { runningRowCount = newValue } } }
     var holdEnrichment: Bool { get { lock.withLock { pausedEnrichment } } set { lock.withLock { pausedEnrichment = newValue } } }
     var enrichmentReadCount: Int { lock.withLock { enrichmentReads } }
     var maximumConcurrentEnrichments: Int { lock.withLock { maximumEnrichments } }
@@ -261,12 +313,24 @@ private final class PopoverReplyState: @unchecked Sendable {
             let names = ["trackedProjects", "trackedConversations", "retainedJobs", "active", "running", "inputRequired",
                 "approvalRequired", "terminating", "needsAttention", "backgroundProcesses", "backgroundProcessAgents",
                 "runtimeUnknownAgents", "runtimeProbeSkippedAgents", "completed", "failed", "interrupted", "cancelled", "idleAgents", "orphanedAgents"]
-            var counts = Dictionary(uniqueKeysWithValues: names.map { ($0, 0) }); counts["running"] = 3
+            let rowCount = self.rowCount
+            let rows: [[String: Any]] = (0..<rowCount).map { index in [
+                "rowKey": "window-row-\(index)", "activityKey": "window-activity-\(index)",
+                "conversationKey": "window-conversation-\(index)", "bucket": "active",
+                "sessionAlias": "window-session-\(index)", "projectKey": "window-project",
+                "projectName": "Window fixture", "agentName": "Task \(index)",
+                "activityTitle": "Running task \(index)", "status": "running",
+                "createdAt": "2026-09-10T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z",
+                "elapsedMs": 5000, "backgroundProcessCount": 0
+            ] }
+            var counts = Dictionary(uniqueKeysWithValues: names.map { ($0, 0) })
+            counts["running"] = rowCount == 0 ? 3 : rowCount
             let page: [String: Any] = ["offset": 0, "limit": 12, "returned": 0, "total": 0,
                 "returnedConversations": 0, "conversationTotal": 0, "hasPrevious": false, "hasNext": false]
             result = ["kind": "dashboard", "generatedAt": "2026-09-10T00:00:00Z", "scope": filter,
                 "statusSource": "codex-runtime-only", "coverage": "complete", "counts": counts,
-                "activeRows": [], "terminalRows": [], "idleRows": [], "statusRows": [],
+                "activeRows": rows, "terminalRows": [], "idleRows": [], "statusRows": rows,
+                "statusRowsComplete": true,
                 "historyIncluded": includeHistory,
                 "pagination": ["active": page, "terminal": page, "idle": page],
                 "enrichment": ["state": "structural", "runtimeRequests": 0,
