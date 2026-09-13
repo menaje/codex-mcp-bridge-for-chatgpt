@@ -124,7 +124,8 @@ struct DashboardPopoverView: View {
     }
 
     private var fallbackHeight: CGFloat {
-        min(440, max(160, screenHeight - 24 - (regionHeights[.header] ?? 80) - (regionHeights[.footer] ?? 50)))
+        min(440, max(160, screenHeight - DashboardPopoverLayout.screenMargin -
+            (regionHeights[.header] ?? 80) - (regionHeights[.footer] ?? 50)))
     }
 
     private var detailHeight: CGFloat {

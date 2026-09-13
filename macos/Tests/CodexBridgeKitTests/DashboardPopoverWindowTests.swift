@@ -37,7 +37,7 @@ final class DashboardPopoverWindowTests: XCTestCase {
     }
 
     @MainActor
-    func testScreenMeasurementDoesNotMutateTheNativeHostWindow() async throws {
+    func testScreenMeasurementIsStableAndDoesNotMutateTheNativeHostWindow() async throws {
         let screen = try XCTUnwrap(NSScreen.main)
         let state = WindowState()
         let window = NSPanel(
@@ -64,7 +64,20 @@ final class DashboardPopoverWindowTests: XCTestCase {
         }
 
         XCTAssertNotNil(state.availableHeight)
+        XCTAssertEqual(state.availableHeight, floor(screen.visibleFrame.height))
         XCTAssertEqual(window.frame, originalFrame)
+
+        window.setFrame(NSRect(
+            x: originalFrame.minX,
+            y: screen.visibleFrame.minY + 10,
+            width: originalFrame.width,
+            height: screen.visibleFrame.height - 40
+        ), display: true)
+        for _ in 0..<12 {
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(state.availableHeight, floor(screen.visibleFrame.height))
     }
 
     func testContentSizePreferenceAcceptsTheLatestValidMeasurement() {

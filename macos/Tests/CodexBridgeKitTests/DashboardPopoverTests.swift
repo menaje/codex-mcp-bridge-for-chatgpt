@@ -122,6 +122,15 @@ final class DashboardPopoverTests: XCTestCase {
             ),
             72
         )
+        let animatedMeasurements: [CGFloat] = [1049, 1205, 1049, 1205, 1049]
+        let clampedHeights = animatedMeasurements.map {
+            DashboardPopoverLayout.popoverHeight(measured: $0, screen: 1073)
+        }
+        XCTAssertEqual(Set(clampedHeights), [1049])
+        XCTAssertEqual(
+            DashboardPopoverLayout.popoverHeight(measured: 360, screen: 1073),
+            360
+        )
     }
 
     @MainActor

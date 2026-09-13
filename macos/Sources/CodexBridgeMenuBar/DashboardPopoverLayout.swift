@@ -54,9 +54,10 @@ enum DashboardPanel: String, CaseIterable {
 enum DashboardPopoverLayout {
     static let width: CGFloat = 460
     static let initialHeight: CGFloat = 160
+    static let screenMargin: CGFloat = 24
 
     static func detailHeight(content: CGFloat, fixed: CGFloat, screen: CGFloat) -> CGFloat {
-        min(max(1, content), max(1, screen - 24 - fixed))
+        min(max(1, content), max(1, screen - screenMargin - fixed))
     }
 
     static func detailHeight(
@@ -65,12 +66,16 @@ enum DashboardPopoverLayout {
         fixed: CGFloat,
         screen: CGFloat
     ) -> CGFloat {
-        let available = max(1, screen - 24 - fixed)
+        let available = max(1, screen - screenMargin - fixed)
         // History is fetched only after the user opens it. Reserve its final
         // scroll viewport immediately so the loading view and populated list
         // do not repeatedly resize and re-anchor the native popover.
         if panel == .history { return available }
         return min(max(1, content), available)
+    }
+
+    static func popoverHeight(measured: CGFloat, screen: CGFloat) -> CGFloat {
+        min(ceil(measured), max(1, floor(screen - screenMargin)))
     }
 }
 
@@ -104,8 +109,10 @@ extension View {
     }
 }
 
-/// Report the vertical space below the popover anchor. The native NSPopover owns
-/// its window frame, corner radius, material, shadow, and anchored resizing.
+/// Report the stable vertical space for the screen that owns the popover. The
+/// native NSPopover owns its animated window frame. Deriving this value from
+/// that moving frame feeds the animation back into SwiftUI's requested height
+/// and makes the popover repeatedly grow and shrink.
 struct DashboardPopoverScreen: NSViewRepresentable {
     let changed: (CGFloat) -> Void
 
@@ -166,9 +173,7 @@ struct DashboardPopoverScreen: NSViewRepresentable {
 
         private func updateAvailableHeight() {
             guard let window, let screen = window.screen, bounds.height > 0 else { return }
-            let top = window.convertPoint(toScreen: convert(
-                NSPoint(x: bounds.minX, y: isFlipped ? bounds.minY : bounds.maxY), to: nil)).y
-            let available = floor(min(screen.visibleFrame.maxY, top) - screen.visibleFrame.minY)
+            let available = floor(screen.visibleFrame.height)
             guard available > 0, available != lastAvailable else { return }
             lastAvailable = available
             changed(available)

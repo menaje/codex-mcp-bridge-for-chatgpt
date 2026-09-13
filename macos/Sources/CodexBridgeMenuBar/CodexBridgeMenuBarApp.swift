@@ -187,9 +187,15 @@ final class BridgeMenuBarController: NSObject, NSPopoverDelegate {
     private func updatePopoverSize(_ measuredSize: CGSize) {
         guard measuredSize.width.isFinite, measuredSize.height.isFinite,
               measuredSize.width > 0, measuredSize.height > 0 else { return }
+        let screen = statusItem?.button?.window?.screen ??
+            hostingController?.view.window?.screen ?? NSScreen.main
         let next = NSSize(
             width: DashboardPopoverLayout.width,
-            height: ceil(measuredSize.height)
+            height: DashboardPopoverLayout.popoverHeight(
+                measured: measuredSize.height,
+                screen: screen?.visibleFrame.height ??
+                    measuredSize.height + DashboardPopoverLayout.screenMargin
+            )
         )
         pendingPopoverSize = next
         guard !popoverSizeUpdateScheduled else { return }
