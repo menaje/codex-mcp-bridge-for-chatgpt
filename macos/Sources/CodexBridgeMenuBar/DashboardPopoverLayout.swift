@@ -100,6 +100,7 @@ struct DashboardPopoverScreen: NSViewRepresentable {
         private var isPresented = false
         private var topEdge: CGFloat?
         private var lastWindowFrame: NSRect?
+        private var contentChromeHeight: CGFloat?
         private var updatePending = false
         private var applyingFrame = false
 
@@ -152,6 +153,7 @@ struct DashboardPopoverScreen: NSViewRepresentable {
         private func resetAnchor() {
             topEdge = nil
             lastWindowFrame = nil
+            contentChromeHeight = nil
             lastAvailable = nil
         }
 
@@ -184,11 +186,23 @@ struct DashboardPopoverScreen: NSViewRepresentable {
                 let anchoredTop = min(topEdge ?? currentFrame.maxY, screen.visibleFrame.maxY)
                 topEdge = anchoredTop
                 let contentRect = window.contentRect(forFrameRect: currentFrame)
-                // Some SwiftUI hosts expose their content (including padding)
-                // through contentMinSize instead of an intrinsic/fitting size.
-                // Respect that minimum to avoid fighting AppKit's constraints.
-                let height = ceil(max(bounds.height, max(window.contentMinSize.height,
-                    window.contentView?.fittingSize.height ?? 0)))
+                // Some SwiftUI hosts expose their fixed outer padding through
+                // contentMinSize instead of their intrinsic/fitting size. That
+                // minimum can retain the largest prior height on Intel, though,
+                // so use it only to learn the fixed chrome around this view.
+                // The current ScreenView bounds remain the source of the
+                // changing content height, which lets a collapsed panel shrink.
+                let hostContentHeight = max(window.contentMinSize.height,
+                    window.contentView?.fittingSize.height ?? 0)
+                let measuredChromeHeight = max(0, hostContentHeight - bounds.height)
+                if let contentChromeHeight {
+                    self.contentChromeHeight = contentChromeHeight > 0
+                        ? min(contentChromeHeight, measuredChromeHeight)
+                        : measuredChromeHeight
+                } else {
+                    contentChromeHeight = measuredChromeHeight
+                }
+                let height = ceil(bounds.height + (contentChromeHeight ?? 0))
                 var frame = window.frameRect(forContentRect: NSRect(
                     x: contentRect.minX, y: contentRect.minY, width: contentRect.width, height: height))
                 frame.origin.y = anchoredTop - frame.height
