@@ -107,51 +107,63 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
-    func testDashboardLongListAndEmptyPanelResizeTheActualWindowBelowItsHeader() async throws {
+    func testDashboardLongListAndEmptyPanelResizeTheNativePopoverContent() async throws {
         let f = try PopoverFixture()
         defer { f.remove() }
         f.state.rowCount = 24
         await f.model.refreshDashboard(enrich: false)
         let screen = try XCTUnwrap(NSScreen.main)
-        let window = NSPanel(contentRect: NSRect(x: screen.visibleFrame.midX - 230,
-            y: screen.visibleFrame.maxY - 612, width: 460, height: 600),
-            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        let host = NSHostingView(rootView: DashboardPopoverView(fitsMenuBarWindow: true)
-            .environmentObject(f.model))
-        host.sizingOptions = []
-        window.contentView = host
-        defer { window.contentView = nil; window.close() }
-        let top = window.frame.maxY
+        let anchorWindow = NSPanel(contentRect: NSRect(
+            x: screen.visibleFrame.midX,
+            y: screen.visibleFrame.maxY - 80,
+            width: 40,
+            height: 30
+        ), styleMask: [.borderless], backing: .buffered, defer: false)
+        anchorWindow.isReleasedWhenClosed = false
+        let anchor = NSButton(frame: NSRect(x: 0, y: 0, width: 40, height: 30))
+        anchorWindow.contentView = anchor
+        anchorWindow.orderFrontRegardless()
+
+        let popover = NSPopover()
+        popover.animates = false
+        let host = NSHostingController(rootView: AnyView(
+            DashboardPopoverView(onContentSizeChange: { size in
+                popover.contentSize = NSSize(
+                    width: DashboardPopoverLayout.width,
+                    height: ceil(size.height)
+                )
+            })
+            .environmentObject(f.model)
+        ))
+        host.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = host
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        defer { popover.performClose(nil); anchorWindow.close() }
 
         func settle() async throws {
             for _ in 0..<30 {
-                host.layoutSubtreeIfNeeded()
+                host.view.layoutSubtreeIfNeeded()
                 try await Task.sleep(for: .milliseconds(10))
             }
         }
         try await settle()
-        let compactHeight = window.frame.height
-        XCTAssertLessThan(compactHeight, 600)
-        XCTAssertEqual(window.frame.maxY, top, accuracy: 1)
+        let compactHeight = popover.contentSize.height
+        XCTAssertGreaterThan(compactHeight, 100)
 
         await f.model.toggleDashboardPanel(.running)
         try await settle()
-        let longHeight = window.frame.height
+        let longHeight = popover.contentSize.height
         XCTAssertGreaterThan(longHeight, compactHeight + 100)
-        XCTAssertGreaterThanOrEqual(window.frame.minY, screen.visibleFrame.minY + 23)
-        XCTAssertEqual(window.frame.maxY, top, accuracy: 1)
+        XCTAssertLessThanOrEqual(longHeight, screen.visibleFrame.height)
 
         await f.model.toggleDashboardPanel(.responseRequired)
         try await settle()
-        XCTAssertLessThan(window.frame.height, longHeight)
-        XCTAssertGreaterThan(window.frame.height, compactHeight)
-        XCTAssertEqual(window.frame.maxY, top, accuracy: 1)
+        XCTAssertLessThan(popover.contentSize.height, longHeight)
+        XCTAssertGreaterThan(popover.contentSize.height, compactHeight)
 
         await f.model.toggleDashboardPanel(.responseRequired)
         try await settle()
-        XCTAssertEqual(window.frame.height, compactHeight, accuracy: 1)
-        XCTAssertEqual(window.frame.maxY, top, accuracy: 1)
+        XCTAssertEqual(popover.contentSize.height, compactHeight, accuracy: 1)
     }
 
     @MainActor

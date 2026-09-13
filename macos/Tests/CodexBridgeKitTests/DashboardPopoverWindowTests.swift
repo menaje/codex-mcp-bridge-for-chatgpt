@@ -1,157 +1,99 @@
 import AppKit
 import SwiftUI
 import XCTest
+@testable import CodexBridgeKit
 @testable import CodexBridgeMenuBar
 
 final class DashboardPopoverWindowTests: XCTestCase {
     @MainActor
-    func testActualWindowGrowsAndShrinksBelowTheSameTopEdge() async throws {
-        let fixture = try WindowFixture()
-        defer { fixture.close() }
-        let openingFrame = fixture.window.frame
+    func testNativePopoverCannotCollapseWhileTheModelIsStillStarting() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-empty-popover-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(
+            environment: ["XDG_CONFIG_HOME": root.path, "CODEX_MCP_BRIDGE_DISABLE_LAUNCH_AGENT": "1"],
+            currentDirectory: root
+        )
+        let model = AppModel(paths: paths)
+        let controller = BridgeMenuBarController()
+        controller.install(model: model)
+        defer {
+            controller.uninstall()
+            model.cancelAllPolling()
+            try? FileManager.default.removeItem(at: root)
+        }
 
-        try await fixture.waitForHeight(180)
-        XCTAssertEqual(fixture.window.frame.maxY, openingFrame.maxY, accuracy: 1)
-        XCTAssertEqual(fixture.window.frame.minX, openingFrame.minX, accuracy: 1)
-        XCTAssertEqual(fixture.window.frame.width, openingFrame.width, accuracy: 1)
-        let available = try XCTUnwrap(fixture.state.available)
+        let button = try XCTUnwrap(controller.statusItem?.button)
+        button.performClick(nil)
+        for _ in 0..<12 {
+            controller.popover.contentViewController?.view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
-        fixture.state.height = 420
-        try await fixture.waitForHeight(420)
-        XCTAssertEqual(fixture.window.frame.maxY, openingFrame.maxY, accuracy: 1)
-        XCTAssertEqual(fixture.window.frame.minY, openingFrame.maxY - 420, accuracy: 1)
-
-        fixture.state.height = 180
-        try await fixture.waitForHeight(180)
-        XCTAssertEqual(fixture.window.frame.maxY, openingFrame.maxY, accuracy: 1)
-        XCTAssertEqual(try XCTUnwrap(fixture.state.available), available, accuracy: 1)
+        XCTAssertEqual(controller.popover.contentSize.width, DashboardPopoverLayout.width)
+        XCTAssertGreaterThan(controller.popover.contentSize.height, 80)
+        XCTAssertEqual(
+            controller.popover.contentViewController?.preferredContentSize,
+            controller.popover.contentSize
+        )
     }
 
     @MainActor
-    func testHostResizingAroundItsCenterDoesNotMoveThePopoverAnchor() async throws {
-        let fixture = try WindowFixture()
-        defer { fixture.close() }
-        try await fixture.waitForHeight(180)
-        let top = fixture.window.frame.maxY
+    func testScreenMeasurementDoesNotMutateTheNativeHostWindow() async throws {
+        let screen = try XCTUnwrap(NSScreen.main)
+        let state = WindowState()
+        let window = NSPanel(
+            contentRect: NSRect(
+                x: screen.visibleFrame.midX - 230,
+                y: screen.visibleFrame.maxY - 400,
+                width: DashboardPopoverLayout.width,
+                height: 240
+            ),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: ScreenMeasurementContent(state: state))
+        host.sizingOptions = []
+        window.contentView = host
+        defer { window.contentView = nil; window.close() }
+        let originalFrame = window.frame
 
-        // Reproduce a host that responds to larger content by resizing around
-        // its center before the dashboard's AppKit update runs.
-        fixture.state.height = 380
-        var centered = fixture.window.frame
-        centered.origin.y -= 100
-        centered.size.height += 200
-        fixture.window.setFrame(centered, display: false)
+        for _ in 0..<12 {
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
-        try await fixture.waitForHeight(380, top: top)
-        XCTAssertEqual(fixture.window.frame.maxY, top, accuracy: 1)
+        XCTAssertNotNil(state.availableHeight)
+        XCTAssertEqual(window.frame, originalFrame)
     }
 
-    @MainActor
-    func testWindowFitRetainsPaddingAddedByTheNativeHost() async throws {
-        let fixture = try WindowFixture(hostPadding: 12, sizingOptions: [.minSize])
-        defer { fixture.close() }
-        let top = fixture.window.frame.maxY
-        try await fixture.waitForHeight(204, top: top)
-        fixture.state.height = 360
-        try await fixture.waitForHeight(384, top: top)
-        fixture.state.height = 180
-        try await fixture.waitForHeight(204, top: top)
-    }
+    func testContentSizePreferenceAcceptsTheLatestValidMeasurement() {
+        var size = CGSize.zero
+        DashboardPopoverContentSize.reduce(value: &size) {
+            CGSize(width: DashboardPopoverLayout.width, height: 180.2)
+        }
+        DashboardPopoverContentSize.reduce(value: &size) { .zero }
+        XCTAssertEqual(size.width, DashboardPopoverLayout.width)
+        XCTAssertEqual(size.height, 180.2)
 
-    @MainActor
-    func testReopeningAcceptsANewMenuPosition() async throws {
-        let fixture = try WindowFixture()
-        defer { fixture.close() }
-        try await fixture.waitForHeight(180)
-        fixture.state.presented = false
-        await fixture.flushLayout()
-
-        fixture.window.setFrameOrigin(NSPoint(
-            x: fixture.window.frame.minX + 25, y: fixture.window.frame.minY - 70))
-        let reopenedTop = fixture.window.frame.maxY
-        fixture.state.height = 240
-        fixture.state.presented = true
-        try await fixture.waitForHeight(240, top: reopenedTop)
-        XCTAssertEqual(fixture.window.frame.maxY, reopenedTop, accuracy: 1)
-    }
-
-    @MainActor
-    func testOrdinaryDashboardWindowKeepsItsOwnSizingPolicy() async throws {
-        let fixture = try WindowFixture(fitsWindow: false)
-        defer { fixture.close() }
-        let frame = fixture.window.frame
-        await fixture.flushLayout()
-        fixture.state.height = 300
-        await fixture.flushLayout()
-        XCTAssertEqual(fixture.window.frame, frame)
+        DashboardPopoverContentSize.reduce(value: &size) {
+            CGSize(width: DashboardPopoverLayout.width, height: 420.8)
+        }
+        XCTAssertEqual(size.height, 420.8)
     }
 }
 
 @MainActor
 private final class WindowState: ObservableObject {
-    @Published var height: CGFloat = 180
-    @Published var presented = true
-    var available: CGFloat?
+    @Published var availableHeight: CGFloat?
 }
 
-private struct WindowContent: View {
+private struct ScreenMeasurementContent: View {
     @ObservedObject var state: WindowState
-    let fitsWindow: Bool
-    let hostPadding: CGFloat
 
     var body: some View {
         Color.clear
-            .frame(width: DashboardPopoverLayout.width, height: state.height)
-            .fixedSize()
-            .background(DashboardPopoverScreen(fitsWindow: fitsWindow, isPresented: state.presented) {
-                state.available = $0
-            })
-            .padding(hostPadding)
-    }
-}
-
-@MainActor
-private final class WindowFixture {
-    let state = WindowState()
-    let window: NSPanel
-    let host: NSHostingView<WindowContent>
-
-    init(fitsWindow: Bool = true, hostPadding: CGFloat = 0,
-         sizingOptions: NSHostingSizingOptions = []) throws {
-        let screen = try XCTUnwrap(NSScreen.main)
-        window = NSPanel(contentRect: NSRect(x: screen.visibleFrame.midX - 230,
-            y: screen.visibleFrame.maxY - 612, width: 460, height: 600),
-            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        host = NSHostingView(rootView: WindowContent(state: state, fitsWindow: fitsWindow, hostPadding: hostPadding))
-        // Model the stale MenuBarExtra host: its frame is independent of the
-        // SwiftUI content's current ideal size. The production bridge must
-        // resize the NSWindow itself, including when content becomes shorter.
-        host.sizingOptions = sizingOptions
-        window.contentView = host
-    }
-
-    func flushLayout() async {
-        for _ in 0..<8 {
-            host.layoutSubtreeIfNeeded()
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-    }
-
-    func waitForHeight(_ height: CGFloat, top: CGFloat? = nil,
-                       file: StaticString = #filePath, line: UInt = #line) async throws {
-        for _ in 0..<100 {
-            host.layoutSubtreeIfNeeded()
-            try await Task.sleep(for: .milliseconds(10))
-            if abs(window.frame.height - height) < 1,
-               top.map({ abs(window.frame.maxY - $0) < 1 }) ?? true { return }
-        }
-        XCTFail("Window did not fit content: \(window.frame), expected height \(height), top \(String(describing: top))",
-                file: file, line: line)
-    }
-
-    func close() {
-        window.contentView = nil
-        window.close()
+            .frame(width: DashboardPopoverLayout.width, height: 180)
+            .background(DashboardPopoverScreen { state.availableHeight = $0 })
     }
 }

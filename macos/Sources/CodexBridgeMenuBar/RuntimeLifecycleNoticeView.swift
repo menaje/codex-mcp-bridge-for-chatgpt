@@ -6,32 +6,52 @@ struct RuntimeLifecycleNoticeView: View {
 
     var body: some View {
         if let operation = model.lifecycleOperation, operation.isPending || operation.phase == "failed" {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack {
-                    Label(text(actionKey(operation.kind)), systemImage: operation.isExecuting ? "arrow.triangle.2.circlepath" : "clock")
-                        .font(.caption.weight(.semibold))
-                    Spacer()
+            if operation.kind == "start", operation.isPending {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("브리지 연결을 확인하고 있습니다…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
                     if operation.cancellable {
                         Button("예약 취소") { Task { await model.cancelLifecycle() } }
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
                             .disabled(model.isBusy)
                     }
                 }
-                Text(operation.phase == "failed"
-                    ? BridgeAppLocalization.lifecycleFailureDescription(operation.error, locale: model.interfaceLocale)
-                    : text(phaseKey(operation)))
-                    .font(.caption)
-                ForEach(Array(operation.reasons.enumerated()), id: \.offset) { _, reason in
-                    Text(reasonText(reason)).font(.caption).foregroundStyle(.secondary)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("runtime-lifecycle-reservation")
+            } else {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Label(text(actionKey(operation.kind)), systemImage: operation.isExecuting ? "arrow.triangle.2.circlepath" : "clock")
+                            .font(.caption.weight(.semibold))
+                        Spacer()
+                        if operation.cancellable {
+                            Button("예약 취소") { Task { await model.cancelLifecycle() } }
+                                .disabled(model.isBusy)
+                        }
+                    }
+                    Text(operation.phase == "failed"
+                        ? BridgeAppLocalization.lifecycleFailureDescription(operation.error, locale: model.interfaceLocale)
+                        : text(phaseKey(operation)))
+                        .font(.caption)
+                    ForEach(Array(operation.reasons.enumerated()), id: \.offset) { _, reason in
+                        Text(reasonText(reason)).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let target = operation.targetDescription, !target.isEmpty {
+                        Text(verbatim: target).font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
-                if let target = operation.targetDescription, !target.isEmpty {
-                    Text(verbatim: target).font(.caption2).foregroundStyle(.secondary)
-                }
+                .padding(9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("runtime-lifecycle-reservation")
             }
-            .padding(9)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("runtime-lifecycle-reservation")
         }
     }
 

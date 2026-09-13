@@ -111,6 +111,23 @@ final class RuntimeLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testStartupLifecycleNoticeStaysCompact() throws {
+        let f = try LifecycleNativeFixture(); defer { f.remove() }
+        f.state.setKind("start")
+        f.state.setPhase("executing")
+        let model = AppModel(paths: f.paths, bootstrapper: f.bootstrap)
+        model.recordLocalConnectionStatus(try f.state.status())
+        try requireImageRendering()
+        let content = RuntimeLifecycleNoticeView()
+            .environmentObject(model)
+            .frame(width: 416)
+            .background(Color.white)
+            .environment(\.colorScheme, .light)
+        let rendered = try XCTUnwrap(ImageRenderer(content: content).nsImage)
+        XCTAssertLessThan(rendered.size.height, 48)
+    }
+
+    @MainActor
     func testFailedReservationNoticeRendersRecoveryReason() throws {
         let f = try LifecycleNativeFixture(); defer { f.remove() }
         f.state.setFailure("RUNTIME_READINESS_TIMEOUT: timeout CONFIG_ROLLBACK_RESTART_FAILED: startup failed")
@@ -320,6 +337,7 @@ private final class LifecycleReplyState: @unchecked Sendable {
     private var ids: [String] = []
     private let dropFirstReceipt: Bool
     init(dropFirstReceipt: Bool) { self.dropFirstReceipt = dropFirstReceipt }
+    func setKind(_ value: String) { lock.withLock { kind = value } }
     func setPhase(_ value: String) { lock.withLock { phase = value } }
     func setFailure(_ value: String) { lock.withLock { phase = "failed"; error = value } }
     func failNextHandoffStatus() { lock.withLock { statusFailures = 1 } }

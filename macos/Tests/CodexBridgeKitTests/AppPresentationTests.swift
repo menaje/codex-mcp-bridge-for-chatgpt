@@ -216,6 +216,11 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertTrue(window.collectionBehavior.contains(.participatesInCycle))
         XCTAssertFalse(window.collectionBehavior.contains(.auxiliary))
         XCTAssertFalse(window.collectionBehavior.contains(.canJoinAllApplications))
+        XCTAssertTrue(window.styleMask.contains(.fullSizeContentView))
+        XCTAssertTrue(window.titlebarAppearsTransparent)
+        XCTAssertEqual(window.titleVisibility, .hidden)
+        XCTAssertEqual(window.backgroundColor, .windowBackgroundColor)
+        XCTAssertTrue(window.hasShadow)
     }
 
     func testBrandMarkScalesInsideItsSquare() {

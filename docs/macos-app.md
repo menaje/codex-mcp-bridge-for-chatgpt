@@ -29,7 +29,7 @@ and refreshes. Remote clients do not start a local server. See
 ## Architecture
 
 ```text
-MenuBarExtra and native Settings window
+Native NSStatusItem/NSPopover and native Settings window
   -> versioned private helper socket
      -> per-user background helper
         -> existing secure loopback-HTTP launcher

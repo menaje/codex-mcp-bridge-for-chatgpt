@@ -17,7 +17,8 @@ enum ApplicationQuitConfirmationPolicy {
 }
 
 struct DashboardPopoverView: View {
-    var fitsMenuBarWindow = false
+    var onContentSizeChange: ((CGSize) -> Void)?
+    var onRequestClose: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
     @State private var showForceStopConfirmation = false
@@ -27,7 +28,14 @@ struct DashboardPopoverView: View {
     @State private var isRefreshingOverview = false
     @State private var regionHeights: [DashboardPopoverRegion: CGFloat] = [:]
     @State private var screenHeight: CGFloat = NSScreen.main?.visibleFrame.height ?? 800
-    @State private var isPresented = false
+
+    init(
+        onContentSizeChange: ((CGSize) -> Void)? = nil,
+        onRequestClose: (() -> Void)? = nil
+    ) {
+        self.onContentSizeChange = onContentSizeChange
+        self.onRequestClose = onRequestClose
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,13 +46,13 @@ struct DashboardPopoverView: View {
                 } else if model.needsSetup {
                     ConnectionRepairView().frame(height: fallbackHeight)
                 } else if !model.bridgeConnected, model.isBridgeConnectionChecking, model.dashboard == nil {
-                    connectionCheckingView.frame(height: fallbackHeight)
+                    connectionCheckingView
                 } else if !model.bridgeConnected, !model.isBridgeConnectionChecking {
                     runtimeUnavailableView.frame(height: fallbackHeight)
                 } else if let dashboard = model.dashboard {
                     dashboardContent(dashboard)
                 } else {
-                    loadingView.frame(height: fallbackHeight)
+                    loadingView
                 }
             }
             Divider()
@@ -52,19 +60,18 @@ struct DashboardPopoverView: View {
         }
         .frame(width: DashboardPopoverLayout.width)
         .fixedSize(horizontal: false, vertical: true)
-        .background(DashboardPopoverScreen(fitsWindow: fitsMenuBarWindow, isPresented: isPresented) {
+        .background(DashboardPopoverScreen {
             screenHeight = $0
         })
+        .background(GeometryReader { geometry in
+            Color.clear.preference(key: DashboardPopoverContentSize.self, value: geometry.size)
+        })
         .onPreferenceChange(DashboardPopoverHeights.self) { regionHeights = $0 }
+        .onPreferenceChange(DashboardPopoverContentSize.self) { size in
+            guard size.width > 0, size.height > 0 else { return }
+            onContentSizeChange?(size)
+        }
         .environment(\.locale, model.interfaceLocale)
-        .onAppear {
-            isPresented = true
-            model.setDashboardVisible(true)
-        }
-        .onDisappear {
-            isPresented = false
-            model.setDashboardVisible(false)
-        }
         .task {
             if model.isRemoteClient ? model.remoteHello == nil : model.helperStatus == nil {
                 await model.start()
@@ -191,15 +198,11 @@ struct DashboardPopoverView: View {
         .padding(14)
     }
 
+    @ViewBuilder
     private var loadingView: some View {
-        VStack(spacing: 12) {
-            BridgeBrandMark()
-                .frame(width: 42, height: 42)
-            ProgressView()
-            Text("현황을 불러오는 중…")
-                .foregroundStyle(.secondary)
-            if let error = model.connectionErrorMessage ?? model.startupErrorMessage ??
-                model.statusErrorMessage ?? model.dashboardErrorMessage {
+        if let error = model.connectionErrorMessage ?? model.startupErrorMessage ??
+            model.statusErrorMessage ?? model.dashboardErrorMessage {
+            VStack(spacing: 10) {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
@@ -216,23 +219,39 @@ struct DashboardPopoverView: View {
                 }
                 .disabled(model.isBusy)
             }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+        } else if !hasStartupLifecycleNotice {
+            compactProgress("현황을 불러오는 중…")
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
     }
 
     private var connectionCheckingView: some View {
-        VStack(spacing: 12) {
-            BridgeBrandStatusIcon(health: .checking, size: 48)
-            ProgressView()
-            Text("브리지 연결을 확인하고 있습니다…")
-                .font(.headline)
-            Text("연결되는 대로 현황을 표시합니다.")
+        Group {
+            if !hasStartupLifecycleNotice {
+                compactProgress("브리지 연결을 확인하고 있습니다…")
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+            }
+        }
+    }
+
+    private var hasStartupLifecycleNotice: Bool {
+        model.lifecycleOperation?.kind == "start" && model.lifecycleOperation?.isPending == true
+    }
+
+    private func compactProgress(_ title: LocalizedStringKey) -> some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(title)
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(28)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var runtimeUnavailableView: some View {
@@ -762,6 +781,10 @@ struct DashboardPopoverView: View {
     }
 
     private func dismissMenuBarWindow() {
+        if let onRequestClose {
+            onRequestClose()
+            return
+        }
         let menuBarWindow = NSApp.keyWindow
         dismiss()
         menuBarWindow?.orderOut(nil)

@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
-// Build the actual MenuBarExtra popover in an isolated application. The helper,
+// Build the actual native status-item popover in an isolated application. The helper,
 // work rows and actions are synthetic; no installed service or user task is used.
 if (process.platform !== "darwin") throw new Error("Requires macOS.");
 const repository = fileURLToPath(new URL("..", import.meta.url));
@@ -77,4 +77,4 @@ await writeFile(path.join(app, "Contents", "Info.plist"), `<?xml version="1.0" e
 execFileSync("xcrun", ["xcstringstool", "compile", path.join(repository, "macos/Resources/Localization/Localizable.xcstrings"),
   "--output-directory", path.join(app, "Contents", "Resources"), "--serialization-format", "text"]);
 execFileSync("codesign", ["--force", "--sign", "-", app], { stdio: "inherit" });
-console.log(JSON.stringify({ app, root, scope: "real native menu bar popover; synthetic work and socket state" }));
+console.log(JSON.stringify({ app, root, scope: "real native status-item popover; synthetic work and socket state" }));

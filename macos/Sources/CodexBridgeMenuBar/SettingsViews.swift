@@ -124,6 +124,7 @@ struct NativeSettingsView: View {
             }
         }
         .padding(18)
+        .background(Color(nsColor: .windowBackgroundColor))
         .environment(\.locale, model.interfaceLocale)
         .onAppear {
             synchronizeDraft()
@@ -832,18 +833,11 @@ private struct SettingsConnectionUnavailablePane: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            BridgeBrandStatusIcon(
-                health: model.isBridgeConnectionChecking ? .checking : .unavailable,
-                size: 52
-            )
             if !model.bridgeConnected, model.isBridgeConnectionChecking {
-                ProgressView()
-                Text("브리지 연결을 확인하고 있습니다…")
-                    .font(.headline)
-                Text("연결되는 대로 현황을 표시합니다.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                ProgressView("브리지 연결을 확인하고 있습니다…")
+                    .controlSize(.small)
             } else if model.isRemoteClient {
+                BridgeBrandStatusIcon(health: .unavailable, size: 44)
                 if model.activeRemoteProfile == nil {
                     Text("연결 탭에서 서버를 페어링해 주세요.")
                         .font(.headline)
@@ -864,15 +858,20 @@ private struct SettingsConnectionUnavailablePane: View {
                         .buttonStyle(.borderedProminent)
                 }
             } else if !model.bridgeConnected {
+                BridgeBrandStatusIcon(health: .unavailable, size: 44)
                 Text("설정을 불러오려면 이 Mac의 브리지 서버를 시작해 주세요.")
                 Button("서버 시작") { Task { await model.startRuntime() } }
                     .buttonStyle(.borderedProminent)
                 if let error = model.runtimeErrorMessage ?? model.statusErrorMessage {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
-            } else if let error = model.settingsLoadErrorMessage {
+            } else if model.settingsLoadErrorMessage != nil {
+                BridgeBrandStatusIcon(health: .attention, size: 44)
                 Text("설정을 불러오지 못했습니다.").font(.headline)
-                Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                Text("로그인 정보, 대화 기록, 프로젝트와 브리지 설정은 유지됩니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
                 Button("다시 시도") { Task { await model.refreshSettings() } }
             } else {
                 ProgressView("설정을 불러오는 중…")

@@ -53,6 +53,7 @@ enum DashboardPanel: String, CaseIterable {
 
 enum DashboardPopoverLayout {
     static let width: CGFloat = 460
+    static let initialHeight: CGFloat = 160
 
     static func detailHeight(content: CGFloat, fixed: CGFloat, screen: CGFloat) -> CGFloat {
         min(max(1, content), max(1, screen - 24 - fixed))
@@ -72,6 +73,15 @@ struct DashboardPopoverHeights: PreferenceKey {
     }
 }
 
+struct DashboardPopoverContentSize: PreferenceKey {
+    static let defaultValue = CGSize.zero
+
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        let next = nextValue()
+        if next.width > 0, next.height > 0 { value = next }
+    }
+}
+
 extension View {
     func dashboardHeight(_ region: DashboardPopoverRegion) -> some View {
         background(GeometryReader { geometry in
@@ -80,29 +90,21 @@ extension View {
     }
 }
 
-/// Keep the menu window fitted to its content, growing down from its opening position.
-/// Ordinary windows using the same dashboard only report their available space.
+/// Report the vertical space below the popover anchor. The native NSPopover owns
+/// its window frame, corner radius, material, shadow, and anchored resizing.
 struct DashboardPopoverScreen: NSViewRepresentable {
-    var fitsWindow = false
-    var isPresented = true
     let changed: (CGFloat) -> Void
 
     func makeNSView(context: Context) -> ScreenView { ScreenView(changed: changed) }
     func updateNSView(_ view: ScreenView, context: Context) {
         view.changed = changed
-        view.configure(fitsWindow: fitsWindow, isPresented: isPresented)
+        view.scheduleUpdate()
     }
 
     final class ScreenView: NSView {
         var changed: (CGFloat) -> Void
         private var lastAvailable: CGFloat?
-        private var fitsWindow = false
-        private var isPresented = false
-        private var topEdge: CGFloat?
-        private var lastWindowFrame: NSRect?
-        private var contentChromeHeight: CGFloat?
         private var updatePending = false
-        private var applyingFrame = false
 
         init(changed: @escaping (CGFloat) -> Void) {
             self.changed = changed
@@ -111,114 +113,47 @@ struct DashboardPopoverScreen: NSViewRepresentable {
 
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-        func configure(fitsWindow: Bool, isPresented: Bool) {
-            if self.isPresented != isPresented || self.fitsWindow != fitsWindow {
-                resetAnchor()
-            }
-            self.fitsWindow = fitsWindow
-            self.isPresented = isPresented
-            scheduleUpdate()
-        }
-
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             NotificationCenter.default.removeObserver(self)
-            resetAnchor()
+            lastAvailable = nil
             if let window {
                 NotificationCenter.default.addObserver(self, selector: #selector(screenChanged),
                     name: NSWindow.didChangeScreenNotification, object: window)
-                NotificationCenter.default.addObserver(self, selector: #selector(windowGeometryChanged),
+                NotificationCenter.default.addObserver(self, selector: #selector(windowChanged),
                     name: NSWindow.didMoveNotification, object: window)
-                NotificationCenter.default.addObserver(self, selector: #selector(windowGeometryChanged),
+                NotificationCenter.default.addObserver(self, selector: #selector(windowChanged),
                     name: NSWindow.didResizeNotification, object: window)
             }
             scheduleUpdate()
         }
 
         @objc private func screenChanged(_ notification: Notification) {
-            resetAnchor()
+            lastAvailable = nil
             scheduleUpdate()
         }
 
-        @objc private func windowGeometryChanged(_ notification: Notification) {
-            guard !applyingFrame else { return }
-            scheduleUpdate()
-        }
+        @objc private func windowChanged(_ notification: Notification) { scheduleUpdate() }
 
         override func layout() {
             super.layout()
             scheduleUpdate()
         }
 
-        private func resetAnchor() {
-            topEdge = nil
-            lastWindowFrame = nil
-            contentChromeHeight = nil
-            lastAvailable = nil
-        }
-
-        private func scheduleUpdate() {
+        func scheduleUpdate() {
             guard !updatePending else { return }
             updatePending = true
-            // AppKit resizing during a SwiftUI layout pass can feed a stale size
-            // back into that pass. Coalesce measurements after layout instead.
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.updatePending = false
-                self.updateWindow()
+                self.updateAvailableHeight()
             }
         }
 
-        func updateWindow() {
+        private func updateAvailableHeight() {
             guard let window, let screen = window.screen, bounds.height > 0 else { return }
-            let top: CGFloat
-            if fitsWindow {
-                guard isPresented else { return }
-                let currentFrame = window.frame
-                // A move without a resize is a new placement (for example when
-                // reopening at a different status-item position). A content
-                // resize must retain the previous top edge, even if SwiftUI
-                // has already resized the host around its center.
-                if topEdge == nil || (lastWindowFrame?.size == currentFrame.size &&
-                    lastWindowFrame?.origin != currentFrame.origin) {
-                    topEdge = currentFrame.maxY
-                }
-                let anchoredTop = min(topEdge ?? currentFrame.maxY, screen.visibleFrame.maxY)
-                topEdge = anchoredTop
-                let contentRect = window.contentRect(forFrameRect: currentFrame)
-                // Some SwiftUI hosts expose their fixed outer padding through
-                // contentMinSize instead of their intrinsic/fitting size. That
-                // minimum can retain the largest prior height on Intel, though,
-                // so use it only to learn the fixed chrome around this view.
-                // The current ScreenView bounds remain the source of the
-                // changing content height, which lets a collapsed panel shrink.
-                let hostContentHeight = max(window.contentMinSize.height,
-                    window.contentView?.fittingSize.height ?? 0)
-                let measuredChromeHeight = max(0, hostContentHeight - bounds.height)
-                if let contentChromeHeight {
-                    self.contentChromeHeight = contentChromeHeight > 0
-                        ? min(contentChromeHeight, measuredChromeHeight)
-                        : measuredChromeHeight
-                } else {
-                    contentChromeHeight = measuredChromeHeight
-                }
-                let height = ceil(bounds.height + (contentChromeHeight ?? 0))
-                var frame = window.frameRect(forContentRect: NSRect(
-                    x: contentRect.minX, y: contentRect.minY, width: contentRect.width, height: height))
-                frame.origin.y = anchoredTop - frame.height
-                if frame != currentFrame {
-                    applyingFrame = true
-                    window.setFrame(frame, display: true)
-                    applyingFrame = false
-                }
-                lastWindowFrame = window.frame
-                // Available height must use the window anchor, not the inner
-                // view's position inside a previously oversized, centered host.
-                top = anchoredTop - (frame.height - bounds.height)
-            } else {
-                top = window.convertPoint(toScreen: convert(
-                    NSPoint(x: bounds.minX, y: isFlipped ? bounds.minY : bounds.maxY), to: nil)).y
-            }
+            let top = window.convertPoint(toScreen: convert(
+                NSPoint(x: bounds.minX, y: isFlipped ? bounds.minY : bounds.maxY), to: nil)).y
             let available = floor(min(screen.visibleFrame.maxY, top) - screen.visibleFrame.minY)
             guard available > 0, available != lastAvailable else { return }
             lastAvailable = available
