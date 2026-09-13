@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "메뉴바 창의 상단 위치를 유지하면서 표시 내용에 맞춰 아래쪽으로 확장·축소되도록 수정합니다.",
-  "breaking": false,
-  "migration": null
-}

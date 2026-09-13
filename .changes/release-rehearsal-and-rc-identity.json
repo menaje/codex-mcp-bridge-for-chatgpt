@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "releaseUnitId": "codex-mcp-bridge",
-  "bump": "patch",
-  "summary": "공개 RC 전에 비게시 stable 승격을 연습하고 공개 여부와 산출물 영향에 따라 RC 증가를 결정합니다.",
-  "breaking": false,
-  "migration": null
-}
