@@ -403,6 +403,12 @@ enum BridgeAppLocalization {
         case .emptyResponse:
             return string("로컬 서비스가 응답 없이 연결을 닫았습니다.", locale: locale)
         case .malformedResponse(let message):
+            if message == "BRIDGE_RESPONSE_CONTRACT_MISMATCH" {
+                return string(
+                    "실행 중인 브리지 helper가 현재 앱과 호환되지 않습니다. 앱을 다시 열어 갱신해 주세요.",
+                    locale: locale
+                )
+            }
             return format(
                 "로컬 서비스 응답을 읽을 수 없습니다: %@",
                 locale: locale,

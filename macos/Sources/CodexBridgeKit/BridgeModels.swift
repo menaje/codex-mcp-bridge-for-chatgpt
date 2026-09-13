@@ -314,7 +314,6 @@ public struct BridgeProject: Codable, Identifiable, Sendable {
     public let projectRef: String
     public let projectRevision: Int
     public let name: String
-    public let label: String
     public let nameKey: String
     public let cwd: String
     public let sortOrder: Int

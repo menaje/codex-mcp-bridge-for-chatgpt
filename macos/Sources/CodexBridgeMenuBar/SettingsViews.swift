@@ -29,38 +29,15 @@ struct NativeSettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var syncState = SettingsDraftSyncState()
     @State private var showDiscardDraftConfirmation = false
-    @State private var selectedTab = "general"
+    @AppStorage("settings.selectedPane") private var selectedTab = "general"
+    var onSelectedPaneChange: ((String) -> Void)?
+
+    init(onSelectedPaneChange: ((String) -> Void)? = nil) {
+        self.onSelectedPaneChange = onSelectedPaneChange
+    }
 
     var body: some View {
         VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                BridgeBrandStatusIcon(health: model.health, size: 32)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Codex MCP Bridge for ChatGPT")
-                        .font(.headline)
-                    HStack(spacing: 5) {
-                        Image(systemName: model.isRemoteClient ? "network" : "desktopcomputer")
-                            .accessibilityHidden(true)
-                        if model.isRemoteClient {
-                            Text(verbatim: BridgeAppLocalization.format(
-                                "%@ · 원격 관리",
-                                locale: model.interfaceLocale,
-                                model.connectionTargetName
-                            ))
-                        } else {
-                            Text("이 Mac의 설정")
-                        }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    if model.health == .checking {
-                        Text("브리지 연결을 확인하고 있습니다…")
-                            .font(.caption2)
-                            .foregroundStyle(.blue)
-                    }
-                }
-                Spacer()
-            }
             RuntimeLifecycleNoticeView()
             if syncState.externalChangeDetected {
                 HStack(spacing: 10) {
@@ -93,33 +70,54 @@ struct NativeSettingsView: View {
                     ConnectionRepairView()
                         .tabItem { Label("서버", systemImage: "wrench.and.screwdriver") }
                         .tag("general")
-                } else if let snapshot = model.settings, let draft = syncState.draft {
-                    GeneralSettingsPane(
-                        snapshot: snapshot,
-                        draft: binding(for: draft),
-                        didReset: {
-                            synchronizeDraft(force: true)
-                            model.restorePersistedInterfaceLocale()
-                        }
-                    )
-                        .environmentObject(model)
-                        .tabItem { Label("일반", systemImage: "gearshape") }
-                        .tag("general")
-                    ProjectsSettingsPane(snapshot: snapshot, usesRemotePaths: model.isRemoteClient)
-                        .environmentObject(model)
-                        .tabItem { Label("프로젝트", systemImage: "folder") }
-                        .tag("projects")
-                    if !model.isRemoteClient {
-                        RuntimeStatusPane(snapshot: snapshot)
-                            .environmentObject(model)
-                            .tabItem { Label("서버", systemImage: "server.rack") }
-                            .tag("server")
-                    }
                 } else {
-                    SettingsConnectionUnavailablePane()
-                        .environmentObject(model)
-                        .tabItem { Label("서버 설정", systemImage: "gearshape") }
-                        .tag("general")
+                    Group {
+                        if let snapshot = model.settings, let draft = syncState.draft {
+                            GeneralSettingsPane(
+                                snapshot: snapshot,
+                                draft: binding(for: draft),
+                                didReset: {
+                                    synchronizeDraft(force: true)
+                                    model.restorePersistedInterfaceLocale()
+                                }
+                            )
+                            .environmentObject(model)
+                        } else {
+                            SettingsConnectionUnavailablePane()
+                                .environmentObject(model)
+                        }
+                    }
+                    .tabItem { Label("일반", systemImage: "gearshape") }
+                    .tag("general")
+
+                    Group {
+                        if let snapshot = model.settings {
+                            ProjectsSettingsPane(
+                                snapshot: snapshot,
+                                usesRemotePaths: model.isRemoteClient
+                            )
+                            .environmentObject(model)
+                        } else {
+                            SettingsConnectionUnavailablePane()
+                                .environmentObject(model)
+                        }
+                    }
+                    .tabItem { Label("프로젝트", systemImage: "folder") }
+                    .tag("projects")
+
+                    if !model.isRemoteClient {
+                        Group {
+                            if let snapshot = model.settings {
+                                RuntimeStatusPane(snapshot: snapshot)
+                                    .environmentObject(model)
+                            } else {
+                                SettingsConnectionUnavailablePane()
+                                    .environmentObject(model)
+                            }
+                        }
+                        .tabItem { Label("서버", systemImage: "server.rack") }
+                        .tag("server")
+                    }
                 }
             }
         }
@@ -129,8 +127,9 @@ struct NativeSettingsView: View {
         .onAppear {
             synchronizeDraft()
             if let target = model.requestedSettingsTab { selectedTab = target; model.requestedSettingsTab = nil }
-            else if model.settings == nil { selectedTab = "connection" }
+            reportSelectedPane()
         }
+        .onChange(of: selectedTab) { _ in reportSelectedPane() }
         .onChange(of: model.requestedSettingsTab) { target in
             if let target { selectedTab = target; model.requestedSettingsTab = nil }
         }
@@ -148,7 +147,10 @@ struct NativeSettingsView: View {
             } else {
                 synchronizeDraft()
             }
+            reportSelectedPane()
         }
+        .onChange(of: model.needsSetup) { _ in reportSelectedPane() }
+        .onChange(of: model.interfaceLocalePreference) { _ in reportSelectedPane() }
         .alert("설정 충돌", isPresented: Binding(
             get: { model.settingsConflictMessage != nil },
             set: { if !$0 { model.settingsConflictMessage = nil } }
@@ -172,6 +174,19 @@ struct NativeSettingsView: View {
     private func synchronizeDraft(force: Bool = false) {
         guard let snapshot = model.settings else { return }
         syncState.synchronize(with: snapshot, force: force)
+    }
+
+    private func reportSelectedPane() {
+        let key: String
+        switch selectedTab {
+        case "connection": key = "연결"
+        case "codex": key = "Codex"
+        case "projects": key = "프로젝트"
+        case "server": key = "서버"
+        default:
+            key = model.needsSetup ? "서버 설정" : "일반"
+        }
+        onSelectedPaneChange?(BridgeAppLocalization.string(key, locale: model.interfaceLocale))
     }
 
     private func binding(for value: SettingsDraft) -> Binding<SettingsDraft> {

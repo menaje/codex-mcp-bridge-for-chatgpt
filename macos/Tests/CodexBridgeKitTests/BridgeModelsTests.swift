@@ -2,6 +2,29 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class BridgeModelsTests: XCTestCase {
+    func testBridgeProjectDecodesTheServerProjectContract() throws {
+        let data = #"""
+        {
+          "id":"project-1",
+          "projectRef":"project_ref_1",
+          "projectRevision":3,
+          "name":"Bridge",
+          "nameKey":"bridge",
+          "cwd":"/private/bridge",
+          "sortOrder":0,
+          "createdAt":1700000000000,
+          "updatedAt":1700000001000
+        }
+        """#.data(using: .utf8)!
+
+        let project = try JSONDecoder().decode(BridgeProject.self, from: data)
+
+        XCTAssertEqual(project.id, "project-1")
+        XCTAssertEqual(project.name, "Bridge")
+        XCTAssertEqual(project.cwd, "/private/bridge")
+        XCTAssertNil(project.archivedAt)
+    }
+
     @MainActor
     func testDisplayFormatParsesBackendTimestampsWithAndWithoutFractions() {
         XCTAssertNotNil(DisplayFormat.parseDate("2026-09-02T00:00:00.000Z"))

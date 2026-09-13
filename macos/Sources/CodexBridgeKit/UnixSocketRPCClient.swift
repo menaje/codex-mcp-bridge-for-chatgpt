@@ -100,6 +100,12 @@ public struct UnixSocketRPCClient: Sendable {
             return result
         } catch let error as LocalRPCError {
             throw error
+        } catch is DecodingError {
+            // Foundation's localized DecodingError text can say that data was
+            // "lost", which sounds like persistent state was deleted. A decode
+            // failure means the app and service disagree about their response
+            // contract; keep that distinction explicit for recovery UI.
+            throw LocalRPCError.malformedResponse("BRIDGE_RESPONSE_CONTRACT_MISMATCH")
         } catch {
             throw LocalRPCError.malformedResponse(error.localizedDescription)
         }

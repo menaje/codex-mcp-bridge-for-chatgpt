@@ -104,6 +104,8 @@ final class BridgeMenuBarController: NSObject, NSPopoverDelegate {
     private var hostingController: NSHostingController<AnyView>?
     private weak var model: AppModel?
     private var modelObservation: AnyCancellable?
+    private var pendingPopoverSize: NSSize?
+    private var popoverSizeUpdateScheduled = false
 
     func install(model: AppModel) {
         guard statusItem == nil else { return }
@@ -189,10 +191,22 @@ final class BridgeMenuBarController: NSObject, NSPopoverDelegate {
             width: DashboardPopoverLayout.width,
             height: ceil(measuredSize.height)
         )
-        hostingController?.preferredContentSize = next
-        guard abs(popover.contentSize.width - next.width) >= 0.5 ||
-                abs(popover.contentSize.height - next.height) >= 0.5 else { return }
-        popover.contentSize = next
+        pendingPopoverSize = next
+        guard !popoverSizeUpdateScheduled else { return }
+        popoverSizeUpdateScheduled = true
+        // SwiftUI can publish several geometry preferences while replacing a
+        // loading view with a scroll view. Apply only the final measurement for
+        // this run-loop pass so NSPopover performs one anchored transition.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.popoverSizeUpdateScheduled = false
+            guard let next = self.pendingPopoverSize else { return }
+            self.pendingPopoverSize = nil
+            self.hostingController?.preferredContentSize = next
+            guard abs(self.popover.contentSize.width - next.width) >= 0.5 ||
+                    abs(self.popover.contentSize.height - next.height) >= 0.5 else { return }
+            self.popover.contentSize = next
+        }
     }
 
     private func updateStatusItem() {
@@ -214,6 +228,7 @@ final class BridgeMenuBarController: NSObject, NSPopoverDelegate {
     func uninstall() {
         closePopover()
         modelObservation = nil
+        pendingPopoverSize = nil
         hostingController = nil
         popover.contentViewController = nil
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
@@ -340,10 +355,12 @@ enum PrimaryAppWindowPresentation {
         window.tabbingMode = .disallowed
         window.hasShadow = true
         window.backgroundColor = .windowBackgroundColor
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.styleMask.insert(.fullSizeContentView)
-        window.isMovableByWindowBackground = true
+        window.titleVisibility = .visible
+        window.titlebarAppearsTransparent = false
+        window.styleMask.remove(.fullSizeContentView)
+        window.isMovableByWindowBackground = false
+        window.standardWindowButton(.miniaturizeButton)?.isEnabled = false
+        window.standardWindowButton(.zoomButton)?.isEnabled = false
     }
 
     static func show(_ window: NSWindow) {
@@ -374,18 +391,24 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         if window == nil {
             let settingsWindow = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 820, height: 700),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false
             )
-            settingsWindow.title = "Codex MCP Bridge for ChatGPT"
+            settingsWindow.title = BridgeAppLocalization.string(
+                "일반",
+                locale: model.interfaceLocale
+            )
+            settingsWindow.subtitle = "Codex MCP Bridge for ChatGPT"
             settingsWindow.isReleasedWhenClosed = false
             settingsWindow.delegate = self
             PrimaryAppWindowPresentation.configure(settingsWindow)
+            settingsWindow.toolbarStyle = .preference
             settingsWindow.setFrameAutosaveName("CodexBridgeSettingsWindow")
-            settingsWindow.contentMinSize = NSSize(width: 720, height: 620)
             settingsWindow.contentViewController = NSHostingController(
-                rootView: NativeSettingsView()
+                rootView: NativeSettingsView(onSelectedPaneChange: { [weak settingsWindow] title in
+                    settingsWindow?.title = title
+                })
                     .environmentObject(model)
                     .frame(minWidth: 720, minHeight: 620)
             )
@@ -419,7 +442,7 @@ final class ConnectionRepairWindowController: NSObject, NSWindowDelegate {
         if window == nil {
             let repairWindow = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 560, height: 660),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false
             )

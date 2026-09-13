@@ -4,6 +4,25 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class UnixSocketRPCClientTests: XCTestCase {
+    func testContractDecodeFailureIsNotReportedAsPersistentDataLoss() async throws {
+        struct RequiredResult: Decodable { let value: String }
+        let path = "/tmp/cb-rpc-contract-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { _ in
+            NativeFixtureReply(body: #"{"result":{}}"#)
+        }
+        defer { server.stop() }
+
+        do {
+            let _: RequiredResult = try await UnixSocketRPCClient(socketPath: path).call(
+                "test.contract",
+                params: EmptyParameters()
+            )
+            XCTFail("A response missing the required value should fail decoding.")
+        } catch LocalRPCError.malformedResponse(let message) {
+            XCTAssertEqual(message, "BRIDGE_RESPONSE_CONTRACT_MISMATCH")
+        }
+    }
+
     func testPendingChangeWaitDoesNotDelayIndependentHealthRead() async throws {
         let path = "/tmp/cb-rpc-independent-\(UUID().uuidString.prefix(8)).sock"
         let connected = expectation(description: "change wait received")

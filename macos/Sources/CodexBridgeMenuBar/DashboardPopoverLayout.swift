@@ -58,6 +58,20 @@ enum DashboardPopoverLayout {
     static func detailHeight(content: CGFloat, fixed: CGFloat, screen: CGFloat) -> CGFloat {
         min(max(1, content), max(1, screen - 24 - fixed))
     }
+
+    static func detailHeight(
+        for panel: DashboardPanel,
+        content: CGFloat,
+        fixed: CGFloat,
+        screen: CGFloat
+    ) -> CGFloat {
+        let available = max(1, screen - 24 - fixed)
+        // History is fetched only after the user opens it. Reserve its final
+        // scroll viewport immediately so the loading view and populated list
+        // do not repeatedly resize and re-anchor the native popover.
+        if panel == .history { return available }
+        return min(max(1, content), available)
+    }
 }
 
 enum DashboardPopoverRegion: Hashable {

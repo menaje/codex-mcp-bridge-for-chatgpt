@@ -129,6 +129,7 @@ struct DashboardPopoverView: View {
 
     private var detailHeight: CGFloat {
         DashboardPopoverLayout.detailHeight(
+            for: model.dashboardPanel ?? .running,
             content: regionHeights[.detail] ?? 100,
             fixed: (regionHeights[.header] ?? 80) + (regionHeights[.summary] ?? 260) +
                 (regionHeights[.footer] ?? 50) + 2,
