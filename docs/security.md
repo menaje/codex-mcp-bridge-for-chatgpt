@@ -26,20 +26,19 @@ authorize a project, a task, a cancellation, or a settings change.
 
 ## Tool and card boundary
 
-The current discovery inventory contains 12 model-visible tools and 14
-app-private tools. Each has a closed JSON Schema 2020-12 input contract and a
+The current discovery inventory contains 10 model-visible tools and 5 app-only
+tools. Each has a closed JSON Schema 2020-12 input contract and a
 validated output projection. The model-visible inventory does not expose
 card-proof operations, private IDs, paths, complete settings, raw prompts, or
 full result history.
 
-App-private tools require their normal proof, scope, revision, ownership, and
+App-only tools require their normal proof, scope, revision, ownership, and
 permission checks. A card can use those tools only within the same bridge
 authorization boundary; a widget identifier or resource URI is not authority.
 
-There are four active immutable card resources: Settings, Activity, Dashboard,
-and Question. Prior card URIs are not registered or served. Removing a card
-revision does not delete its Activity, Agent, Job, result, question, or
-idempotency records.
+There are two active immutable card resources: Settings and Dashboard. Prior
+card URIs are not registered or served. Removing a card revision does not delete
+its Activity, Agent, Job, result, legacy question, or idempotency records.
 
 ## Project and execution boundary
 

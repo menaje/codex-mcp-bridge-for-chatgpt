@@ -47,8 +47,8 @@ struct SettingsDraft: Equatable {
     var maxConcurrentJobs: Int
     var historyRetentionDays: Int
     var showBridgeThreadsInCodexApp: Bool
-    var activityCardVisibility: String
-    var completionHandoff: String
+    var dashboardAutoOpenBackground: Bool
+    var completionFollowUp: Bool
     private let originalPolicyState: PolicyState
 
     private struct PolicyState: Equatable {
@@ -75,8 +75,8 @@ struct SettingsDraft: Equatable {
         maxConcurrentJobs = settings.maxConcurrentJobs
         historyRetentionDays = settings.historyRetentionDays ?? 30
         showBridgeThreadsInCodexApp = settings.showBridgeThreadsInCodexApp
-        activityCardVisibility = settings.activityCardVisibility
-        completionHandoff = settings.completionHandoff
+        dashboardAutoOpenBackground = settings.dashboardAutoOpenBackground
+        completionFollowUp = settings.completionFollowUp
         originalPolicyState = PolicyState(
             mode: policyMode,
             fixedSelectionKey: fixedSelectionKey,
@@ -113,8 +113,8 @@ struct SettingsDraft: Equatable {
         rebased.maxConcurrentJobs = maxConcurrentJobs
         rebased.historyRetentionDays = historyRetentionDays
         rebased.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
-        rebased.activityCardVisibility = activityCardVisibility
-        rebased.completionHandoff = completionHandoff
+        rebased.dashboardAutoOpenBackground = dashboardAutoOpenBackground
+        rebased.completionFollowUp = completionFollowUp
         return rebased
     }
 
@@ -130,15 +130,8 @@ struct SettingsDraft: Equatable {
             maxConcurrentJobs == other.maxConcurrentJobs &&
             historyRetentionDays == other.historyRetentionDays &&
             showBridgeThreadsInCodexApp == other.showBridgeThreadsInCodexApp &&
-            activityCardVisibility == other.activityCardVisibility &&
-            completionHandoff == other.completionHandoff
-    }
-
-    mutating func setActivityCardVisibility(_ visibility: String) {
-        activityCardVisibility = visibility
-        if visibility == "never" {
-            completionHandoff = "off"
-        }
+            dashboardAutoOpenBackground == other.dashboardAutoOpenBackground &&
+            completionFollowUp == other.completionFollowUp
     }
 
     private var policyState: PolicyState {
@@ -2292,10 +2285,8 @@ final class AppModel: ObservableObject {
                 maxConcurrentJobs: draft.maxConcurrentJobs,
                 historyRetentionDays: settings?.settings.historyRetentionDays == nil ? nil : draft.historyRetentionDays,
                 showBridgeThreadsInCodexApp: draft.showBridgeThreadsInCodexApp,
-                activityCard: ActivityCardPatch(
-                    visibility: draft.activityCardVisibility,
-                    completionHandoff: draft.completionHandoff
-                )
+                dashboardAutoOpenBackground: draft.dashboardAutoOpenBackground,
+                completionFollowUp: draft.completionFollowUp
             ))
         )
         return await performSettingsMutation(

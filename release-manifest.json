@@ -76,30 +76,23 @@
     }
   },
   "uiResources": {
-    "strategy": "content-hash",
+    "strategy": "versioned-uri",
     "hashAlgorithm": "sha256",
-    "hashLength": 12,
     "minimumContractGeneration": {
       "settings": 9,
-      "activity": 12,
-      "dashboard": 6,
-      "question": 1
+      "dashboard": 6
     },
     "resources": [
       "settings",
-      "activity",
-      "dashboard",
-      "question"
+      "dashboard"
     ],
     "activeResources": [
       "settings",
-      "activity",
-      "dashboard",
-      "question"
+      "dashboard"
     ],
     "compatibilityResources": [],
     "releaseCatalog": "ui-release-catalog.json",
-    "releaseCatalogSha256": "8e2031a2489994ab5702c5e3f94d5439c7fa78e164fe1e8774b979c71af3fd11"
+    "releaseCatalogSha256": "f6bfd3a96106c6fb8448272ca7ff9609b7984e42128d96911ef34f08e696c086"
   },
   "stateCompatibility": {
     "currentSchema": 19,

@@ -1090,11 +1090,9 @@ private struct GeneralSettingsPane: View {
                         .frame(width: 46)
                         .multilineTextAlignment(.trailing)
                         .textFieldStyle(.roundedBorder)
-                        Stepper(
-                            "",
-                            value: concurrentJobsBinding,
-                            in: 1...snapshot.capabilities.maxConcurrentJobs
-                        )
+                        Stepper(value: concurrentJobsBinding, in: 1...snapshot.capabilities.maxConcurrentJobs) {
+                            EmptyView()
+                        }
                         .labelsHidden()
                     }
                 }
@@ -1115,6 +1113,14 @@ private struct GeneralSettingsPane: View {
                 }
                 Toggle("새 Agent 작업을 Codex 앱에 보존", isOn: $draft.showBridgeThreadsInCodexApp)
                 Text(threadVisibilityDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("백그라운드 작업 시 현황 카드 자동 표시", isOn: $draft.dashboardAutoOpenBackground)
+                Text("백그라운드 작업을 시작한 대화에서만 현황 카드를 자동으로 엽니다. 포그라운드 결과는 원래 도구 응답으로 반환됩니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("완료 후 자동 응답", isOn: $draft.completionFollowUp)
+                Text("검증된 호스트 이벤트가 있으면 이를 사용하고, 없으면 자동으로 열린 현황 카드가 완료 알림을 보냅니다. 가능한 경로가 없으면 전달 기록을 보관합니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

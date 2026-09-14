@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import {
@@ -8,8 +8,6 @@ import {
   MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET,
   MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET,
   MODEL_VISIBLE_OUTPUT_SCHEMAS,
-  validateActivityBootstrapPrivateMetadata,
-  validateActivityViewPrivateMetadata,
   type ModelVisibleOutputToolName
 } from "../src/tools.js";
 import {
@@ -32,10 +30,6 @@ type ContentFixture = {
 
 const repositoryRoot = process.cwd();
 const fixtureRoot = path.join(repositoryRoot, "test/fixtures/output-contracts");
-const baselinePath = path.join(
-  repositoryRoot,
-  "docs/audits/issue-36-output-contract-baseline.json"
-);
 
 function jsonBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
@@ -109,15 +103,6 @@ const modelResults = readJson<Record<ModelVisibleOutputToolName, StructuredFixtu
 const contentFixtures = readJson<ContentFixture[]>(
   path.join(fixtureRoot, "content-only-compatibility.json")
 );
-const activityPrivateMetadata = readJson<{
-  bootstrap: Record<string, unknown>;
-  view: Record<string, unknown>;
-}>(path.join(fixtureRoot, "activity-private-metadata.json"));
-const validatedActivityBootstrap = validateActivityBootstrapPrivateMetadata(
-  activityPrivateMetadata.bootstrap
-);
-const validatedActivityView = validateActivityViewPrivateMetadata(activityPrivateMetadata.view);
-
 const structuredResults = Object.fromEntries(
   sortedEntries(modelResults).map(([toolName, fixtures]) => [
     toolName,
@@ -144,9 +129,9 @@ const largestModelVisibleSchema = Object.entries(modelVisibleSchemas.byTool)
   .sort(([left], [right]) => left.localeCompare(right))
   .sort(([, left], [, right]) => right - left)[0];
 assert.ok(largestModelVisibleSchema, "At least one model-visible output schema is required.");
-// Input now shares codex_status with other reads; count that schema once in the
-// overall budget, and only dedicated question tools in the question subtotal.
-const dedicatedQuestionTools = ["codex_answer", "codex_ask_user", "codex_user_answer"];
+// Input now shares codex_status with other reads. Ordinary Codex questions use
+// the host conversation, so codex_answer is the only dedicated tool left.
+const dedicatedQuestionTools = ["codex_answer"];
 const dedicatedQuestionSchemaBytes = dedicatedQuestionTools.reduce((total, name) => {
   const bytes = modelVisibleSchemas.byTool[name];
   assert.ok(Number.isSafeInteger(bytes) && bytes > 0,
@@ -156,94 +141,18 @@ const dedicatedQuestionSchemaBytes = dedicatedQuestionTools.reduce((total, name)
 const untypedNumericModelSchemaLiterals = untypedNumericLiteralPointers(
   MODEL_VISIBLE_OUTPUT_SCHEMAS
 );
-const issueSchemaBaselineBytes = 20_128;
-const issue40SteeringSchemaBytes = modelVisibleSchemas.byTool.codex_steer || 0;
 
 const report = {
-  auditVersion: 5,
-  questionFeatureIssue: 68,
-  issue: 36,
-  regressionIssue: 38,
-  featureIssue: 40,
+  auditVersion: 6,
+  issue: 108,
   basis: {
-    commit: "8a2cf54",
-    normativeClient: "ChatGPT",
     measurement: "Buffer.byteLength(JSON.stringify(value), 'utf8')",
     schemaInventory: {
       modelTools: Object.keys(MODEL_VISIBLE_OUTPUT_SCHEMAS).length,
-      currentAppTools: Object.keys(APP_ONLY_OUTPUT_SCHEMAS).length,
-      compatibilityDescriptorsIncluded: false,
-      scope: "Current exported output contracts; retained compatibility discovery is measured separately in the issue-69 inventory."
+      appTools: Object.keys(APP_ONLY_OUTPUT_SCHEMAS).length,
+      scope: "Current exported output contracts only; retired Question and Activity card routes are absent."
     },
-    fixtureProfile: "bounded deterministic W0/W1/W2/W3 plus issue-38 answer-recovery fixtures",
-    phasesIncluded: ["W0", "W1", "W2", "M1", "W3", "M2", "R38"],
-    phasesDeferred: [],
-    m1Evidence: {
-      status: "passed",
-      source: "authoritative real ChatGPT Work conversation",
-      activityResourceUri: "ui://codex-mcp-bridge/activity/17c24231c553.html",
-      generation11InitialHydration: true,
-      generation11SnapshotRefresh: true,
-      retainedGeneration10Resolved: true
-    },
-    m2Evidence: {
-      status: "passed",
-      source: "authoritative real ChatGPT Work conversation",
-      currentActivityResourceUri: "ui://codex-mcp-bridge/activity/17c24231c553.html",
-      foregroundResult: "ISSUE36_M2_OK",
-      backgroundResult: "ISSUE36_BG_OK",
-      settingsHydrated: true,
-      generation11InitialHydration: true,
-      generation11SnapshotRefresh: true,
-      sameResponseSiblingWinner: true,
-      nextResponseSupersession: true,
-      retainedActivityResourceUri: "ui://codex-mcp-bridge/activity/b4725cb7de0b.html",
-      retainedGeneration10Hydrated: true,
-      retainedGeneration10SnapshotRefresh: true
-    },
-    issue38Evidence: {
-      status: "fixture-passed-real-host-pending",
-      source: "authenticated raw ChatGPT Work conversation response plus bridge SQLite",
-      exactJobStatusCalled: true,
-      bridgeRetainedPrimaryContent: true,
-      chatGptToolMessageStructuredContent: true,
-      chatGptToolMessagePrimaryContent: false,
-      chatGptToolMessagePrivateMeta: false,
-      foregroundStructuredAnswerFixture: "ISSUE38_FOREGROUND_SENTINEL",
-      backgroundStructuredAnswerFixture: "ISSUE38_BACKGROUND_SENTINEL"
-    },
-    issue40Evidence: {
-      status: "passed",
-      source: "authenticated Codex App Server 0.145.0 through public Bridge tools",
-      canaryRecord: "docs/audits/issue-40-app-server-canary.md",
-      modelVisibleTool: "codex_steer",
-      activeTurnOnly: true,
-      activeSteerDelivered: true,
-      staleVersionRejectedBeforeDispatch: true,
-      terminalSteerRejectedWithoutNewTurn: true,
-      exactReplayUpstreamCalls: 1,
-      durableDispatchBoundary: true,
-      hostDerivedScopeRegression: true,
-      exactPromptEchoRedacted: true,
-      rawPromptPersisted: false,
-      distributedExactlyOnceClaimed: false
-    }
-  },
-  issueBaseline: {
-    modelVisibleSchemaBytes: issueSchemaBaselineBytes,
-    byTool: {
-      codex_activity: 6_720,
-      codex_settings: 10_664,
-      codex_task: 2_078,
-      otherSixToolsEach: 111
-    },
-    representativeResultBytes: {
-      codex_activity_one_activity: { structuredContent: 3_625, content: 1_666, total: 5_291 },
-      codex_models_three_models: { structuredContent: 2_061, content: 3_143, total: 5_204 },
-      codex_settings: { structuredContent: 5_805, content: 7_618, total: 13_423 },
-      codex_status_empty_overview: { structuredContent: 4_077, content: 5_129, total: 9_206 },
-      codex_task_foreground_completed: { structuredContent: 2_075, content: 28, total: 2_103 }
-    }
+    inputProtocol: "Ordinary Codex questions use codex_status input queries and codex_answer."
   },
   current: {
     schemaBytes: {
@@ -252,25 +161,13 @@ const report = {
     },
     resultBytes: {
       structuredContent: structuredResults,
-      content: contentResults,
-      privateMeta: {
-        deterministicFixtures: {
-          "codex/activityBootstrap@11": jsonBytes(validatedActivityBootstrap),
-          "codex/activityView@11": jsonBytes(validatedActivityView)
-        },
-        realHostCapture: {
-          measured: false,
-          functionalEvidence: "M1 and M2 passed",
-          reason: "Exact raw ChatGPT metadata bytes were not supplied; deterministic fixture bytes are reported without fabricating a host capture."
-        }
-      }
+      content: contentResults
     },
     contentByteCaps: TOOL_CONTENT_BYTE_CAPS,
     structuredContentByteCaps: TOOL_STRUCTURED_BYTE_CAPS,
     modelPrimaryAnswerMaxJsonBytes: MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES
   },
-  finalGenerationBudget: {
-    historicalIssue36ReductionTargetPercent: 40,
+  generationBudget: {
     targetModelVisibleSchemaBytes: MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET,
     targetSingleModelVisibleSchemaBytes: MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET,
     actualModelVisibleSchemaBytes: modelVisibleSchemas.totalBytes,
@@ -307,12 +204,18 @@ if (process.argv.includes("--check")) {
     `Single model-visible schema budget exceeded: ${largestModelVisibleSchema[0]} ` +
       `${largestModelVisibleSchema[1]} > ${MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET} bytes.`
   );
-  const baseline = readJson<typeof report>(baselinePath);
-  assert.deepStrictEqual(report, baseline, "Output contract audit differs from the checked-in baseline.");
-  console.log(`Output contract audit matches ${path.relative(repositoryRoot, baselinePath)}.`);
-} else if (process.argv.includes("--write")) {
-  writeFileSync(baselinePath, `${JSON.stringify(report, null, 2)}\n`);
-  console.log(`Wrote ${path.relative(repositoryRoot, baselinePath)}.`);
+  const retired = [
+    "codex_ask_user", "codex_user_answer", "codex_question_action", "codex_activity",
+    "codex_activity_rehydrate", "codex_activity_snapshot", "codex_activity_handoff",
+    "codex_activity_job_cancel", "codex_background_process_terminate", "codex_job_steer",
+    "codex_ui_history"
+  ];
+  assert.deepStrictEqual(
+    retired.filter(name => name in MODEL_VISIBLE_OUTPUT_SCHEMAS || name in APP_ONLY_OUTPUT_SCHEMAS),
+    [],
+    "Retired Question or Activity routes still export an output contract."
+  );
+  console.log("Current output contracts satisfy the #108 inventory and schema budget.");
 } else {
   console.log(JSON.stringify(report, null, 2));
 }

@@ -436,6 +436,13 @@ export type CompletionOutboxRecord = {
   createdAt: number;
 };
 
+/**
+ * An accepted UI message cannot be observed end-to-end. Keep an uncertain
+ * completion out of automatic retries until a future verified route can make
+ * an explicit recovery decision.
+ */
+export const COMPLETION_OUTBOX_UNCERTAIN_HOLD_AT = 8_640_000_000_000_000;
+
 export type BridgeInstanceRecord = {
   instanceId: string;
   startedAt: number;
@@ -2599,13 +2606,15 @@ export class BridgeStateStore {
   }
 
   listPendingCompletionOutbox(scopeId: string, limit = 20): CompletionOutboxRecord[] {
+    const now = Date.now();
     const rows = this.database
       .prepare(`
-        SELECT * FROM completion_outbox
+          SELECT * FROM completion_outbox
          WHERE scope_id = ? AND delivered_at IS NULL AND acknowledged_at IS NULL
+           AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
          ORDER BY created_at ASC LIMIT ?
       `)
-      .all(scopeId, Math.max(0, Math.min(100, limit)));
+      .all(scopeId, now, Math.max(0, Math.min(100, limit)));
     return (rows as Array<Record<string, unknown>>).map(readCompletionOutboxRow);
   }
 
@@ -2632,12 +2641,14 @@ export class BridgeStateStore {
       const result = this.database
         .prepare(`
           UPDATE completion_outbox
-             SET lease_owner = ?, lease_expires_at = ?, attempt_count = attempt_count + 1
+             SET lease_owner = ?, lease_expires_at = ?, next_attempt_at = NULL,
+                 attempt_count = attempt_count + 1
            WHERE outbox_id = ? AND scope_id = ?
              AND delivered_at IS NULL AND acknowledged_at IS NULL
+             AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
              AND (lease_owner IS NULL OR lease_expires_at <= ? OR lease_owner = ?)
         `)
-        .run(leaseOwner, now + leaseMs, outboxId, scopeId, now, leaseOwner);
+        .run(leaseOwner, now + leaseMs, outboxId, scopeId, now, now, leaseOwner);
       if (result.changes !== 1) return undefined;
       const row = this.database
         .prepare("SELECT * FROM completion_outbox WHERE outbox_id = ?")
@@ -2656,7 +2667,8 @@ export class BridgeStateStore {
       const result = this.database
         .prepare(`
           UPDATE completion_outbox
-             SET delivered_at = COALESCE(delivered_at, ?), lease_owner = NULL, lease_expires_at = NULL
+             SET delivered_at = COALESCE(delivered_at, ?), lease_owner = NULL,
+                 lease_expires_at = NULL, next_attempt_at = NULL
            WHERE outbox_id = ? AND scope_id = ? AND (lease_owner = ? OR delivered_at IS NOT NULL)
         `)
         .run(now, outboxId, scopeId, leaseOwner);
@@ -2680,6 +2692,32 @@ export class BridgeStateStore {
          WHERE outbox_id = ? AND scope_id = ? AND lease_owner = ? AND delivered_at IS NULL
       `)
       .run(outboxId, scopeId, leaseOwner);
+  }
+
+  markCompletionOutboxUncertain(
+    outboxId: number,
+    scopeId: string,
+    leaseOwner: string
+  ): CompletionOutboxRecord {
+    return this.transaction(() => {
+      const result = this.database
+        .prepare(`
+          UPDATE completion_outbox
+             SET lease_owner = NULL, lease_expires_at = NULL,
+                 next_attempt_at = ?
+           WHERE outbox_id = ? AND scope_id = ? AND lease_owner = ?
+             AND delivered_at IS NULL AND acknowledged_at IS NULL
+        `)
+        .run(COMPLETION_OUTBOX_UNCERTAIN_HOLD_AT, outboxId, scopeId, leaseOwner);
+      if (result.changes !== 1) {
+        throw new Error("Completion handoff lease is missing or owned by another widget.");
+      }
+      const row = this.database
+        .prepare("SELECT * FROM completion_outbox WHERE outbox_id = ?")
+        .get(outboxId) as Record<string, unknown> | undefined;
+      if (!row) throw new Error("Unknown completion handoff event.");
+      return readCompletionOutboxRow(row);
+    });
   }
 
   listBridgeInstances(): BridgeInstanceRecord[] {

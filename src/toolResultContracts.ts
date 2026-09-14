@@ -61,7 +61,6 @@ export const TOOL_CONTENT_BYTE_CAPS = Object.freeze({
   codex_status: 1_024,
   codex_models: 512,
   codex_settings: 768,
-  codex_activity: 1_024,
   codex_agent: 512,
   codex_cancel: 768,
   codex_activity_update: 512,
@@ -79,7 +78,6 @@ export const TOOL_STRUCTURED_BYTE_CAPS = Object.freeze({
   codex_status: 512 * 1_024,
   codex_models: 256 * 1_024,
   codex_settings: 32 * 1_024,
-  codex_activity: 512 * 1_024,
   codex_agent: 128 * 1_024,
   codex_cancel: 128 * 1_024,
   codex_activity_update: 128 * 1_024,
@@ -222,9 +220,44 @@ function jsonValue(value: unknown, label: string): string {
   // must not publish a value whose wire representation means something else.
   const decoded = JSON.parse(encoded) as unknown;
   if (!isDeepStrictEqual(value, decoded)) {
-    throw new Error(`${label} must be a JSON value without lossy serialization.`);
+    throw new Error(
+      `${label} must be a JSON value without lossy serialization (${firstJsonDifference(value, decoded)}).`
+    );
   }
   return encoded;
+}
+
+function firstJsonDifference(value: unknown, decoded: unknown, path = "$"): string {
+  if (isDeepStrictEqual(value, decoded)) return path;
+  if (typeof value !== typeof decoded) {
+    return `${path}: ${typeof value} became ${typeof decoded}`;
+  }
+  if (value === null || decoded === null || typeof value !== "object") {
+    return `${path}: ${String(value)} became ${String(decoded)}`;
+  }
+  if (Array.isArray(value) || Array.isArray(decoded)) {
+    if (!Array.isArray(value) || !Array.isArray(decoded)) return `${path}: array shape changed`;
+    if (value.length !== decoded.length) return `${path}: array length changed`;
+    for (let index = 0; index < value.length; index += 1) {
+      if (!isDeepStrictEqual(value[index], decoded[index])) {
+        return firstJsonDifference(value[index], decoded[index], `${path}[${index}]`);
+      }
+    }
+    return `${path}: array representation changed`;
+  }
+  const original = value as Record<string, unknown>;
+  const roundTripped = decoded as Record<string, unknown>;
+  for (const key of Object.keys(original)) {
+    const childPath = `${path}.${key}`;
+    if (!Object.hasOwn(roundTripped, key)) return `${childPath}: property was omitted`;
+    if (!isDeepStrictEqual(original[key], roundTripped[key])) {
+      return firstJsonDifference(original[key], roundTripped[key], childPath);
+    }
+  }
+  for (const key of Object.keys(roundTripped)) {
+    if (!Object.hasOwn(original, key)) return `${path}.${key}: property was added`;
+  }
+  return `${path}: object representation changed`;
 }
 
 export function boundedUtf8Text(text: string, maxBytes: number): string {

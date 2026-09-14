@@ -28,8 +28,8 @@ It remains inside the cards and is not an external MCP compatibility path.
 
 Reconnect the ChatGPT connector after deploying this release, then use
 **Refresh** in its details page so it fetches the current descriptors and
-immutable resource URIs. Reopen any card that was mounted from a previous
-build. Old tool definitions and old card URIs are intentionally unavailable.
+versioned resource URIs. Reopen any card that was mounted from a previous
+build. Old tool definitions and retired card URIs are intentionally unavailable.
 
 For an HTTP client, send the 2026-07-28 protocol version and the current
 per-request metadata and headers. Do not send a legacy initialization request
@@ -60,19 +60,19 @@ replacement for a logical `requestId`.
 
 ## Cards
 
-The release catalog contains exactly four active immutable resources:
+The release catalog contains exactly two active resources, each backed by one
+current HTML file:
 
 | Card | Current resource |
 | --- | --- |
-| Settings | `ui://codex-mcp-bridge/settings/52c19aebb4e9.html` |
-| Activity | `ui://codex-mcp-bridge/activity/bc75a45e4875.html` |
-| Dashboard | `ui://codex-mcp-bridge/dashboard/86e53748068a.html` |
-| Question | `ui://codex-mcp-bridge/question/a93cf2f84a75.html` |
+| Settings | `ui://codex-mcp-bridge/settings/v1.html` |
+| Dashboard | `ui://codex-mcp-bridge/dashboard/v1.html` |
 
-`ui-release-catalog.json` version 3 has no published-baseline or temporary
-compatibility entries. The package selector emits only these resources. Earlier
-files may remain in Git history or the working tree, but the bridge does not
-advertise, select, or serve them.
+`ui-release-catalog.json` has no published-baseline or temporary compatibility
+entries. The package selector emits only these resources. Earlier files may
+remain in Git history, but the working tree and package contain only
+`settings.html` and `dashboard.html`. Compatible changes preserve these URIs;
+cache-incompatible changes increment the affected card's explicit URI version.
 
 ## Verification and deployment evidence
 
@@ -103,9 +103,10 @@ It enables diagnostic fixture tools there and nowhere in normal bridge startup.
 They exercise the suite's required-client-capability, response-stream, logging,
 and list-change probes through the same HTTP handler. Normal bridge startup
 never enables them, so they cannot appear in a deployed `tools/list` response.
-The ordinary HTTP and stdio integration tests continue to cover the actual
-advertised product surface, headers, error codes, cache hints, metadata, and
-detached-request behavior.
+The fixture capability is not part of the bridge's product surface and normal
+startup must never advertise it. Ordinary HTTP and stdio integration tests
+cover the actual advertised tools and resources, headers, error codes, cache
+hints, metadata, and detached-request behavior.
 
 Before publishing, run the connector through a real ChatGPT conversation and
 Secure MCP Tunnel, record the current protocol discovery, a tool call, and a

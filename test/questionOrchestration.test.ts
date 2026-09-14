@@ -4,7 +4,6 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { loadConfig } from "../src/config.js";
 import { createHttpServer, type BridgeHttpServer } from "../src/server.js";
 import { BridgeStateStore } from "../src/stateStore.js";
-import { USER_QUESTION_META } from "../src/questionTools.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
 const metadata = { "openai/session": "question-contract-test" };
@@ -21,7 +20,7 @@ class FixtureUpstream implements CodexUpstream {
   async close(): Promise<void> {}
 }
 
-describe("current question-card contract", () => {
+describe("current Codex input contract", () => {
   let state: BridgeStateStore;
   let server: BridgeHttpServer;
   let client: Client;
@@ -50,67 +49,57 @@ describe("current question-card contract", () => {
     state.close();
   });
 
-  it("uses codex_ui_read and codex_question_action for the full card lifecycle", async () => {
-    const created = await client.callTool({
-      name: "codex_ask_user",
+  it("uses codex_status and codex_answer while keeping questions in the host conversation", async () => {
+    const names = new Set((await client.listTools()).tools.map((tool) => tool.name));
+    expect(names.has("codex_status")).toBe(true);
+    expect(names.has("codex_answer")).toBe(true);
+    for (const retired of ["codex_ask_user", "codex_user_answer", "codex_question_action"]) {
+      expect(names.has(retired)).toBe(false);
+    }
+
+    const missingInput = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "input", jobId: "missing-job" } },
+      _meta: metadata
+    });
+    expect(missingInput.isError).toBe(true);
+    expect(JSON.stringify(missingInput)).toContain("INPUT_JOB_UNAVAILABLE");
+
+    const missingAnswer = await client.callTool({
+      name: "codex_answer",
       arguments: {
         requestId: randomUUID(),
-        title: "Color",
-        questions: [{
-          id: "color",
-          header: "Color",
-          question: "Which color?",
-          isOther: false,
-          options: [{ label: "Blue", description: "Blue" }, { label: "Red", description: "Red" }]
-        }]
+        jobId: "missing-job",
+        questionRef: "a".repeat(64),
+        answers: { color: ["Blue"] }
       },
       _meta: metadata
     });
-    expect(created.isError, JSON.stringify(created)).not.toBe(true);
-    const question = (created._meta as Record<string, any>)[USER_QUESTION_META];
-    const proof = {
-      questionId: question.questionId,
-      revision: question.revision,
-      presentationToken: question.presentationToken,
-      scopeId: question.scopeId
-    };
-    expect(proof).toMatchObject({ questionId: expect.any(String), revision: 1, presentationToken: expect.any(String) });
+    expect(missingAnswer.isError).toBe(true);
+    expect(JSON.stringify(missingAnswer)).toContain("INPUT_JOB_UNAVAILABLE");
 
-    const card = await client.callTool({
+    const questionRead = await client.callTool({
       name: "codex_ui_read",
-      arguments: { view: "question", ...proof },
+      arguments: { view: "question", widgetInstanceId: randomUUID() },
       _meta: metadata
     });
-    expect(card.isError, JSON.stringify({ card, proof })).not.toBe(true);
-    expect(card.structuredContent).toEqual({ kind: "user-question-card", status: "pending" });
+    expect(questionRead.isError).toBe(true);
+    expect(JSON.stringify(questionRead)).toMatch(/Invalid arguments|view/i);
 
-    const submitted = await client.callTool({
-      name: "codex_question_action",
-      arguments: {
-        ...proof,
-        operation: { kind: "submit", response: { answers: { color: ["Blue"] } } }
-      },
-      _meta: metadata
-    });
-    expect(submitted.isError).not.toBe(true);
-    const responseRef = (submitted._meta as Record<string, any>)[USER_QUESTION_META].responseRef;
-    expect(responseRef).toEqual(expect.any(String));
-
-    const answer = await client.callTool({
-      name: "codex_user_answer",
-      arguments: { responseRef },
-      _meta: metadata
-    });
-    expect(answer.isError).not.toBe(true);
-    expect(answer.structuredContent).toMatchObject({
-      kind: "user-answers",
-      responses: [{ responseRef, answers: [{ questionId: "color", values: ["Blue"] }] }]
-    });
+    const resources = await client.listResources();
+    expect(resources.resources.map((resource) => resource.name)).not.toContain("codex-question-card");
   });
 
-  it("does not register retired question tool aliases", async () => {
+  it("does not register retired question aliases", async () => {
     const names = new Set((await client.listTools()).tools.map((tool) => tool.name));
-    for (const retired of ["codex_question_card", "codex_question_submit", "codex_question_notify"]) {
+    for (const retired of [
+      "codex_question_card",
+      "codex_question_submit",
+      "codex_question_notify",
+      "codex_ask_user",
+      "codex_user_answer",
+      "codex_question_action"
+    ]) {
       expect(names.has(retired)).toBe(false);
     }
   });

@@ -121,7 +121,7 @@ try {
     await row.locator('[data-description-source="user"]').waitFor();
     check(await page.locator('#concurrency').inputValue()==='7','Description save must preserve unrelated unsaved fields');
     check(await page.evaluate(()=>window.__descriptionInjected===undefined),'User text must not execute');
-    let listed=(await tool('codex_models',{contractVersion:'2'})).structuredContent;
+    let listed=(await tool('codex_models')).structuredContent;
     check(listed.models.find(x=>x.id==='gpt-6-astra').description===custom,'Real MCP result uses custom text');
     check(listed.models.find(x=>x.id==='gpt-6-astra').descriptionSource==='user','Mark user source');
     const stored=(await tool('codex_ui_read',{view:'settings'})).structuredContent;
@@ -174,7 +174,7 @@ try {
     await page.locator('#model-policy-mode').selectOption('fixed');
     await page.locator('#save').click();
     await page.waitForFunction(()=>!document.querySelector('#save').disabled);
-    listed=(await tool('codex_models',{contractVersion:'2'})).structuredContent;
+    listed=(await tool('codex_models')).structuredContent;
     const fixed=listed.models.find(x=>x.id==='gpt-6-astra');
     if(fixed)check(!fixed.descriptionSource&&fixed.description==='Updated official Astra description.','Fixed mode uses official text');
     await page.locator('#model-policy-mode').selectOption('automatic');

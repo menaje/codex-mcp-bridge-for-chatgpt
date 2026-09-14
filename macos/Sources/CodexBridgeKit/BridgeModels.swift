@@ -318,8 +318,10 @@ public struct BridgeSettings: Codable, Sendable {
     public let uiLocalePreference: String
     public let maxConcurrentJobs: Int
     public let showBridgeThreadsInCodexApp: Bool
-    public let activityCardVisibility: String
-    public let completionHandoff: String
+    /// Automatically opens Dashboard only for background work in the origin conversation.
+    public let dashboardAutoOpenBackground: Bool
+    /// Requests a durable completion follow-up when a verified delivery route is available.
+    public let completionFollowUp: Bool
 }
 
 public struct BridgeProject: Codable, Identifiable, Sendable {
@@ -387,8 +389,6 @@ public struct ModelPolicy: Codable, Sendable {
 public struct SettingsCapabilities: Codable, Sendable {
     public let availableAccessStrategies: [String]
     public let availableUiLocalePreferences: [String]
-    public let availableActivityCardVisibilities: [String]
-    public let availableCompletionHandoffs: [String]
     public let projectAvailability: [ProjectAvailability]
     public let maxConcurrentJobs: Int
     public let defaultBackend: String
@@ -551,7 +551,8 @@ public struct SettingsPatch: Encodable, Sendable {
     public var maxConcurrentJobs: Int?
     public var historyRetentionDays: Int?
     public var showBridgeThreadsInCodexApp: Bool?
-    public var activityCard: ActivityCardPatch?
+    public var dashboardAutoOpenBackground: Bool?
+    public var completionFollowUp: Bool?
     public var projectOperations: [ProjectOperation]?
 
     public init(
@@ -563,7 +564,8 @@ public struct SettingsPatch: Encodable, Sendable {
         maxConcurrentJobs: Int? = nil,
         historyRetentionDays: Int? = nil,
         showBridgeThreadsInCodexApp: Bool? = nil,
-        activityCard: ActivityCardPatch? = nil,
+        dashboardAutoOpenBackground: Bool? = nil,
+        completionFollowUp: Bool? = nil,
         projectOperations: [ProjectOperation]? = nil
     ) {
         self.accessStrategy = accessStrategy
@@ -574,18 +576,9 @@ public struct SettingsPatch: Encodable, Sendable {
         self.maxConcurrentJobs = maxConcurrentJobs
         self.historyRetentionDays = historyRetentionDays
         self.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
-        self.activityCard = activityCard
+        self.dashboardAutoOpenBackground = dashboardAutoOpenBackground
+        self.completionFollowUp = completionFollowUp
         self.projectOperations = projectOperations
-    }
-}
-
-public struct ActivityCardPatch: Encodable, Sendable {
-    public var visibility: String
-    public var completionHandoff: String
-
-    public init(visibility: String, completionHandoff: String) {
-        self.visibility = visibility
-        self.completionHandoff = completionHandoff
     }
 }
 

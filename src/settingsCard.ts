@@ -7,8 +7,8 @@ import { serializeUiFunction } from "./uiFunctionSerialization.js";
 import { MODEL_DESCRIPTION_EDITOR_SCRIPT } from "./modelDescriptionCard.js";
 import {
   currentUiResourceUri,
+  currentUiResourceRevision,
   htmlForUiResource,
-  uiResourceRevisions,
   uiRevisionMetadata
 } from "./uiResources.js";
 
@@ -29,7 +29,7 @@ export const SETTINGS_CARD_CONTENT_METADATA = {
     domain: "https://web-sandbox.oaiusercontent.com"
   },
   "openai/widgetDescription":
-    `Configure named projects, saved access, model/effort policy, Fast mode, Codex-app thread visibility, interface-language, concurrency for ${PRODUCT_INFO.displayName}.`,
+    `Configure named projects, saved access, model/effort policy, Codex-app thread visibility, background Dashboard display, completion follow-up, interface-language, and concurrency for ${PRODUCT_INFO.displayName}.`,
   "openai/widgetPrefersBorder": false,
   "openai/widgetCSP": { connect_domains: [] as string[], resource_domains: [] as string[] },
   "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
@@ -84,28 +84,27 @@ export function uiBridgeErrorMessage(
 }
 
 export function registerSettingsCardResource(server: McpServer): void {
-  for (const [index, revision] of uiResourceRevisions("settings").entries()) {
-    const revisionMetadata = uiRevisionMetadata(
-      revision,
-      SETTINGS_CARD_RESOURCE_DESCRIPTOR,
-      SETTINGS_CARD_CONTENT_METADATA
-    );
-    server.registerResource(
-      index === 0 ? "codex-settings-card" : `codex-settings-card-compat-${index}`,
-      revision.uri,
-      revisionMetadata.descriptor,
-      async () => ({
-        contents: [
-          {
-            uri: revision.uri,
-            mimeType: SETTINGS_CARD_MIME_TYPE,
-            text: htmlForUiResource("settings", revision.uri, SETTINGS_CARD_HTML),
-            _meta: revisionMetadata.content
-          }
-        ]
-      })
-    );
-  }
+  const revision = currentUiResourceRevision("settings");
+  const revisionMetadata = uiRevisionMetadata(
+    revision,
+    SETTINGS_CARD_RESOURCE_DESCRIPTOR,
+    SETTINGS_CARD_CONTENT_METADATA
+  );
+  server.registerResource(
+    "codex-settings-card",
+    revision.uri,
+    revisionMetadata.descriptor,
+    async () => ({
+      contents: [
+        {
+          uri: revision.uri,
+          mimeType: SETTINGS_CARD_MIME_TYPE,
+          text: htmlForUiResource("settings", revision.uri, SETTINGS_CARD_HTML),
+          _meta: revisionMetadata.content
+        }
+      ]
+    })
+  );
 }
 
 export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
@@ -250,6 +249,8 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
           <p class="field-error" id="project-error" role="alert" aria-live="polite"></p>
         </section>
         <div class="wide"><label class="checkline"><input id="show-bridge-threads-in-codex-app" type="checkbox" /><span data-i18n="settings.codexAppThreads"></span></label><span class="hint" id="codex-app-threads-hint"></span></div>
+        <div class="wide"><label class="checkline"><input id="dashboard-auto-open-background" type="checkbox" /><span data-i18n="settings.dashboardAutoOpenBackground"></span></label><span class="hint" data-i18n="settings.dashboardAutoOpenBackgroundHint"></span></div>
+        <div class="wide"><label class="checkline"><input id="completion-follow-up" type="checkbox" /><span data-i18n="settings.completionFollowUp"></span></label><span class="hint" data-i18n="settings.completionFollowUpHint"></span></div>
         <label><span data-i18n="settings.language"></span><select id="ui-language"></select><span class="hint" data-i18n="settings.languageHint"></span></label>
         <section class="wide" id="history-settings" hidden><label><span data-i18n="history.period"></span><select id="history-retention"></select></label><p id="history-settings-policy" class="hint" style="white-space:pre-line"></p></section>
         <label><span data-i18n="settings.concurrency"></span><input id="concurrency" type="number" min="1" step="1" required /></label>
@@ -284,7 +285,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     let locale = resolveLocale(localeTag);
     let t = BUNDLES[locale] || BUNDLES.en;
     const byId = (id) => document.getElementById(id);
-    const elements = { history:byId("history-settings"),historyRetention:byId("history-retention"),historyPolicy:byId("history-settings-policy"),form:byId("settings-form"),loading:byId("settings-loading"),retryLoad:byId("retry-load"),access:byId("access-strategy"),accessHint:byId("access-hint"),mode:byId("model-policy-mode"),delegation:byId("allow-delegation"),ultraWarning:byId("ultra-policy-warning"),priority:byId("use-priority-service-tier"),fixedPanel:byId("fixed-policy-panel"),automaticPanel:byId("automatic-policy-panel"),model:byId("policy-model"),effort:byId("policy-effort"),effortDescription:byId("effort-description"),effortCompatibility:byId("effort-compatibility"),allowedScope:byId("allowed-scope"),explicitPanel:byId("explicit-selection-panel"),allowedModels:byId("allowed-models"),effortGroups:byId("effort-groups"),selectionCount:byId("selection-count"),addProject:byId("add-project"),projectList:byId("project-list"),noProjects:byId("no-projects"),projectError:byId("project-error"),codexAppThreads:byId("show-bridge-threads-in-codex-app"),codexAppThreadsHint:byId("codex-app-threads-hint"),language:byId("ui-language"),concurrency:byId("concurrency"),save:byId("save"),retryModels:byId("retry-models"),reset:byId("reset"),status:byId("status"),fullWarning:byId("full-warning"),catalogStatus:byId("catalog-status"),catalogStatusLabel:byId("catalog-status-label"),catalogWarning:byId("catalog-warning"),catalogWarningText:byId("catalog-warning-text") };
+    const elements = { history:byId("history-settings"),historyRetention:byId("history-retention"),historyPolicy:byId("history-settings-policy"),form:byId("settings-form"),loading:byId("settings-loading"),retryLoad:byId("retry-load"),access:byId("access-strategy"),accessHint:byId("access-hint"),mode:byId("model-policy-mode"),delegation:byId("allow-delegation"),ultraWarning:byId("ultra-policy-warning"),priority:byId("use-priority-service-tier"),fixedPanel:byId("fixed-policy-panel"),automaticPanel:byId("automatic-policy-panel"),model:byId("policy-model"),effort:byId("policy-effort"),effortDescription:byId("effort-description"),effortCompatibility:byId("effort-compatibility"),allowedScope:byId("allowed-scope"),explicitPanel:byId("explicit-selection-panel"),allowedModels:byId("allowed-models"),effortGroups:byId("effort-groups"),selectionCount:byId("selection-count"),addProject:byId("add-project"),projectList:byId("project-list"),noProjects:byId("no-projects"),projectError:byId("project-error"),codexAppThreads:byId("show-bridge-threads-in-codex-app"),codexAppThreadsHint:byId("codex-app-threads-hint"),dashboardAutoOpenBackground:byId("dashboard-auto-open-background"),completionFollowUp:byId("completion-follow-up"),language:byId("ui-language"),concurrency:byId("concurrency"),save:byId("save"),retryModels:byId("retry-models"),reset:byId("reset"),status:byId("status"),fullWarning:byId("full-warning"),catalogStatus:byId("catalog-status"),catalogStatusLabel:byId("catalog-status-label"),catalogWarning:byId("catalog-warning"),catalogWarningText:byId("catalog-warning-text") };
     const LANGUAGE_LABELS = {en:"English",ko:"한국어",ja:"日本語","zh-Hans":"简体中文","zh-Hant":"繁體中文",es:"Español",fr:"Français",de:"Deutsch",pt:"Português"};
     const KNOWN_EFFORTS = new Set(["minimal","low","medium","high","xhigh","max","ultra"]);
     ${MODEL_DESCRIPTION_EDITOR_SCRIPT}
@@ -423,7 +424,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     function updateCodexAppThreadsHint() { elements.codexAppThreadsHint.textContent=t["settings.codexAppThreadsHint"]; }
     async function loadSettings() { if(initialLoading)return;initialLoading=true;loadError=null;elements.retryLoad.disabled=true;elements.retryLoad.hidden=true;elements.loading.classList.remove("error");elements.loading.textContent=t["common.loading"];try{render(unwrap(await callTool("codex_ui_read",{view:"settings",refreshModels:hostToolResultMetadata(initialMetadata)["codex/refreshModels"]===true})));}catch(error){setError(error);}finally{initialLoading=false;elements.retryLoad.disabled=false;} }
     function renderHistorySettings(next){const policy=next.historyPolicy;elements.history.hidden=!policy||next.settings.historyRetentionDays===undefined;if(elements.history.hidden)return;elements.historyRetention.replaceChildren();for(const days of [7,30,90,0])elements.historyRetention.appendChild(option(String(days),days?t["history.days"].replace("{days}",String(days)):t["history.forever"]));elements.historyRetention.value=String(next.settings.historyRetentionDays);const values=[policy.retentionDays===0?t["history.unlimited"]:t["history.finite"].replace("{days}",String(policy.retentionDays)),t[policy.automaticRecovery?"problem.automaticHistoryNotice":policy.reviewUntilRetention?"problem.historyNotice":"history.notice"]];if(policy.lastCleanupAt)values.push(t["history.cleanup"].replace("{time}",new Intl.DateTimeFormat(localeTag,{dateStyle:"short",timeStyle:"short"}).format(new Date(policy.lastCleanupAt))).replace("{count}",String(policy.lastCleanupCount)));elements.historyPolicy.textContent=values.join("\n")}
-    function render(next,localeReady=false,preserveLocalePreference=false) { if(!next||!next.settings)return;view=next;loadError=null;elements.retryLoad.hidden=true;elements.loading.hidden=true;elements.loading.classList.remove("error");elements.catalogStatus.hidden=false;elements.form.hidden=false;const settings=next.settings,limits=next.capabilities;if(!preserveLocalePreference)localePreference=settings.uiLocalePreference||"auto";if(!localeReady)setLocale(effectiveLocaleTag(),false);elements.access.replaceChildren();const accessLabels={"read-only":t["settings.access.readOnly"],adaptive:t["settings.access.adaptive"],"always-full":t["settings.access.full"]};for(const value of limits.availableAccessStrategies||[])elements.access.appendChild(option(value,accessLabels[value]||value));elements.access.value=settings.accessStrategy;elements.priority.checked=settings.usePriorityServiceTier===true;elements.codexAppThreads.checked=settings.showBridgeThreadsInCodexApp===true;modelPolicyDirty=false;renderModelPolicy(settings.modelPolicy);renderProjects(settings,limits);elements.language.replaceChildren();for(const value of limits.availableUiLocalePreferences||["auto",...Object.keys(LANGUAGE_LABELS)])elements.language.appendChild(option(value,value==="auto"?t["settings.language.auto"]:LANGUAGE_LABELS[value]||value));elements.language.value=localePreference;elements.concurrency.value=String(settings.maxConcurrentJobs);elements.concurrency.max=String(limits.maxConcurrentJobs);updateAccessNotice();updateCodexAppThreadsHint();localizeCatalog(next);descriptionEditor.setSnapshot(next);renderHistorySettings(next); }
+    function render(next,localeReady=false,preserveLocalePreference=false) { if(!next||!next.settings)return;view=next;loadError=null;elements.retryLoad.hidden=true;elements.loading.hidden=true;elements.loading.classList.remove("error");elements.catalogStatus.hidden=false;elements.form.hidden=false;const settings=next.settings,limits=next.capabilities;if(!preserveLocalePreference)localePreference=settings.uiLocalePreference||"auto";if(!localeReady)setLocale(effectiveLocaleTag(),false);elements.access.replaceChildren();const accessLabels={"read-only":t["settings.access.readOnly"],adaptive:t["settings.access.adaptive"],"always-full":t["settings.access.full"]};for(const value of limits.availableAccessStrategies||[])elements.access.appendChild(option(value,accessLabels[value]||value));elements.access.value=settings.accessStrategy;elements.priority.checked=settings.usePriorityServiceTier===true;elements.codexAppThreads.checked=settings.showBridgeThreadsInCodexApp===true;elements.dashboardAutoOpenBackground.checked=settings.dashboardAutoOpenBackground===true;elements.completionFollowUp.checked=settings.completionFollowUp===true;modelPolicyDirty=false;renderModelPolicy(settings.modelPolicy);renderProjects(settings,limits);elements.language.replaceChildren();for(const value of limits.availableUiLocalePreferences||["auto",...Object.keys(LANGUAGE_LABELS)])elements.language.appendChild(option(value,value==="auto"?t["settings.language.auto"]:LANGUAGE_LABELS[value]||value));elements.language.value=localePreference;elements.concurrency.value=String(settings.maxConcurrentJobs);elements.concurrency.max=String(limits.maxConcurrentJobs);updateAccessNotice();updateCodexAppThreadsHint();localizeCatalog(next);descriptionEditor.setSnapshot(next);renderHistorySettings(next); }
     function localizeCatalog(next) { const catalogState=next.catalog.validation||"invalid",catalogStatusKey=catalogState==="valid"?"settings.catalogStatus.valid":catalogState==="temporarily-unverified-with-last-known-good"?"settings.catalogStatus.lastKnownGood":"settings.catalogStatus.invalid";elements.catalogStatus.dataset.state=catalogState;elements.catalogStatusLabel.textContent=t[catalogStatusKey];const catalogProblem=Boolean(next.catalog.warning||next.catalog.stale||catalogState==="invalid"),warnings=[next.catalog.warning,...(next.warnings||[])].filter(Boolean).join("\n")||(catalogProblem?t["common.error"]:"");elements.catalogWarningText.textContent=warnings;elements.catalogWarning.classList.toggle("show",Boolean(warnings));elements.retryModels.hidden=!catalogProblem; }
     function mutationStatus(next,ordinaryMessage) { return next&&next.policyActivation&&next.policyActivation.developerModeRefreshRequired?t["settings.developerModeRefreshRequired"]:ordinaryMessage; }
     function setBusy(busy,message) { descriptionEditor.setDisabled(busy);for(const node of[elements.save,elements.retryModels,elements.reset,...elements.projectList.querySelectorAll("button")])node.disabled=busy;elements.addProject.disabled=busy||projectRows().length>=100;elements.status.classList.remove("error");elements.status.textContent=message||""; }
@@ -444,7 +445,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     elements.allowedModels.addEventListener("change",(event)=>{const target=event.target;if(!(target instanceof HTMLInputElement)||target.dataset.action!=="model")return;modelPolicyDirty=true;const modelId=target.dataset.model;if(!modelId)return;if(target.checked){explicitSelectedModels.add(modelId);seedExplicitModel(modelId);}else explicitSelectedModels.delete(modelId);renderExplicitPolicy();});
     elements.effortGroups.addEventListener("change",(event)=>{const target=event.target;if(!(target instanceof HTMLInputElement))return;modelPolicyDirty=true;const action=target.dataset.action,modelId=target.dataset.model;if(action==="all-efforts"&&modelId){if(target.checked){const availableKeys=new Set(availableSelections().map(selectionKey));for(const [effort,candidates] of groupedModelSelections(modelId)){if(!candidates.some((selection)=>availableKeys.has(selectionKey(selection)))||exactSelectionsForEffort(modelId,effort).length>0)continue;const primary=primarySelectionForEffort(modelId,effort,candidates);if(primary)explicitSelectionMemory.set(selectionKey(primary),primary);}}else for(const [key,selection] of explicitSelectionMemory)if(selection.model===modelId)explicitSelectionMemory.delete(key);}else if(action==="effort"&&modelId){const effort=target.dataset.effort;if(!effort)return;if(target.checked){if(exactSelectionsForEffort(modelId,effort).length===0){const selection=selectionFromKey(target.value);if(selection)explicitSelectionMemory.set(selectionKey(selection),selection);}}else for(const [key,selection] of explicitSelectionMemory)if(selection.model===modelId&&selection.reasoningEffort===effort)explicitSelectionMemory.delete(key);}else return;renderExplicitPolicy();});
     elements.language.addEventListener("change",()=>{localePreference=elements.language.value;setLocale(effectiveLocaleTag());});
-    elements.form.addEventListener("submit",async(event)=>{event.preventDefault();if(!view)return;const projectSettings=buildProjectSettings();if(!projectSettings||!elements.form.reportValidity())return;setBusy(true,t["settings.saving"]);try{const settings={accessStrategy:elements.access.value,usePriorityServiceTier:elements.priority.checked,showBridgeThreadsInCodexApp:elements.codexAppThreads.checked,uiLocalePreference:elements.language.value,maxConcurrentJobs:integerValue(elements.concurrency)},projectOperations=buildProjectOperations(projectSettings.projects);if(view.settings.historyRetentionDays!==undefined)settings.historyRetentionDays=Number(elements.historyRetention.value);if(projectOperations.length)settings.projectOperations=projectOperations;if(modelPolicyDirty)settings.modelPolicy=buildModelPolicy();const args={expectedSettingsRevision:view.settings.settingsRevision,expectedRegistryRevision:view.settings.registryRevision,operation:{kind:"patch",settings}};const result=await callTool("codex_update_settings",args),next=unwrap(result);render(next);setBusy(false,mutationStatus(next,t["settings.saved"]));}catch(error){await handleMutationError(error);}});
+    elements.form.addEventListener("submit",async(event)=>{event.preventDefault();if(!view)return;const projectSettings=buildProjectSettings();if(!projectSettings||!elements.form.reportValidity())return;setBusy(true,t["settings.saving"]);try{const settings={accessStrategy:elements.access.value,usePriorityServiceTier:elements.priority.checked,showBridgeThreadsInCodexApp:elements.codexAppThreads.checked,dashboardAutoOpenBackground:elements.dashboardAutoOpenBackground.checked,completionFollowUp:elements.completionFollowUp.checked,uiLocalePreference:elements.language.value,maxConcurrentJobs:integerValue(elements.concurrency)},projectOperations=buildProjectOperations(projectSettings.projects);if(view.settings.historyRetentionDays!==undefined)settings.historyRetentionDays=Number(elements.historyRetention.value);if(projectOperations.length)settings.projectOperations=projectOperations;if(modelPolicyDirty)settings.modelPolicy=buildModelPolicy();const args={expectedSettingsRevision:view.settings.settingsRevision,expectedRegistryRevision:view.settings.registryRevision,operation:{kind:"patch",settings}};const result=await callTool("codex_update_settings",args),next=unwrap(result);render(next);setBusy(false,mutationStatus(next,t["settings.saved"]));}catch(error){await handleMutationError(error);}});
     elements.retryModels.addEventListener("click",async()=>{setBusy(true,t["settings.refreshing"]);try{const next=unwrap(await callTool("codex_ui_read",{view:"settings",refreshModels:true}));render(next);setBusy(false,mutationStatus(next,t["settings.refreshed"]));}catch(error){setBusy(false);setError(error);}});
     elements.reset.addEventListener("click",async()=>{if(!view)return;setBusy(true,t["settings.resetting"]);try{const next=unwrap(await callTool("codex_update_settings",{expectedSettingsRevision:view.settings.settingsRevision,operation:{kind:"reset"}}));descriptionEditor.reset();render(next);setBusy(false,mutationStatus(next,t["settings.resetDone"]));}catch(error){await handleMutationError(error);}});
     elements.retryLoad.addEventListener("click",()=>void loadSettings());

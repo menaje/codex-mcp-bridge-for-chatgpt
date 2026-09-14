@@ -78,6 +78,8 @@ const ENGLISH = {
   "settings.usePriorityHint": "Runs supported models faster. The model and reasoning level stay the same; usage or costs may increase.",
   "dashboard.execution.fast": "Fast",
   "dashboard.control.requests": "Review requests",
+  "dashboard.control.work": "Work controls",
+  "dashboard.control.stop": "Force stop",
   "dashboard.control.close": "Collapse",
   "dashboard.control.empty": "No review requests need attention.",
   "settings.fixedNotice": "This exact selection is enforced for Codex turns admitted after saving. An already active turn keeps its admission-time decision.",
@@ -136,7 +138,12 @@ const ENGLISH = {
   "settings.concurrency": "Maximum concurrent jobs",
   "settings.codexAppThreads": "Show bridge threads in the Codex app",
   "settings.codexAppThreadsHint": "Applies to new and forked App Server threads. Turning this off keeps them in memory only: they will not appear in the Codex app and cannot be resumed after the App Server worker or bridge restarts. Existing threads are unchanged.",
-
+  "settings.dashboardAutoOpenBackground": "Automatically show Dashboard for background work",
+  "settings.dashboardAutoOpenBackgroundHint": "Opens Dashboard only in the conversation that started a background task. Foreground results remain in the original tool response.",
+  "settings.completionFollowUp": "Automatically send a completion follow-up",
+  "settings.completionFollowUpHint": "A durable dispatcher sends completion notices through a verified host event when available, or through an open Dashboard card. Pending notices stay queued until a route is available.",
+  // Historical labels remain so retained UI snapshots can be read, but no
+  // current Settings or Dashboard UI references them.
   "settings.cardVisibility": "Activity card",
   "settings.cardVisibility.always": "Automatically show for all Codex work",
   "settings.cardVisibility.background": "Automatically show only for background Codex work",
@@ -149,7 +156,7 @@ const ENGLISH = {
   "settings.save": "Save settings",
   "settings.refreshModels": "Retry model lookup",
   "settings.reset": "Restore general defaults",
-  "settings.resetHint": "Restores access, model, Codex-app thread visibility, interface, concurrency, and Activity settings. Projects and their order are kept.",
+  "settings.resetHint": "Restores access, model, Codex-app thread visibility, background Dashboard display, completion follow-up, interface, and concurrency settings. Projects and their order are kept.",
   "settings.saving": "Saving…",
   "settings.saved": "Saved.",
   "settings.developerModeRefreshRequired": "Saved and active. This deployment also changed the static tool contract; refresh the ChatGPT developer-mode connection once to adopt it.",
@@ -1347,60 +1354,6 @@ const MODEL_POLICY_UX_OVERRIDES: Record<
   }
 };
 
-const ISSUE24_OVERRIDES: Record<
-  Exclude<SupportedUiLocale, "en">,
-  Partial<UiTranslationBundle>
-> = {
-  ko: {
-    "settings.cardVisibility.always": "모든 Codex 작업에 자동 표시",
-    "settings.cardVisibility.background": "백그라운드 Codex 작업에만 자동 표시",
-    "settings.cardVisibility.never": "자동 카드 표시 안 함",
-    "activity.superseded": "더 최신 Activity 카드가 실시간 갱신을 맡았습니다. 이 스냅샷은 그대로 볼 수 있습니다."
-  },
-  ja: {
-    "settings.cardVisibility.always": "すべての Codex 作業に自動表示",
-    "settings.cardVisibility.background": "バックグラウンドの Codex 作業にのみ自動表示",
-    "settings.cardVisibility.never": "自動カードを表示しない",
-    "activity.superseded": "新しい Activity カードがライブ更新を引き継ぎました。このスナップショットは引き続き表示できます。"
-  },
-  "zh-Hans": {
-    "settings.cardVisibility.always": "为所有 Codex 工作自动显示",
-    "settings.cardVisibility.background": "仅为后台 Codex 工作自动显示",
-    "settings.cardVisibility.never": "不自动显示卡片",
-    "activity.superseded": "较新的 Activity 卡片已接管实时更新。此快照仍可查看。"
-  },
-  "zh-Hant": {
-    "settings.cardVisibility.always": "為所有 Codex 工作自動顯示",
-    "settings.cardVisibility.background": "僅為背景 Codex 工作自動顯示",
-    "settings.cardVisibility.never": "不自動顯示卡片",
-    "activity.superseded": "較新的 Activity 卡片已接管即時更新。此快照仍可查看。"
-  },
-  es: {
-    "settings.cardVisibility.always": "Mostrar automáticamente para todo el trabajo de Codex",
-    "settings.cardVisibility.background": "Mostrar automáticamente solo para trabajo de Codex en segundo plano",
-    "settings.cardVisibility.never": "Sin tarjetas automáticas",
-    "activity.superseded": "Una tarjeta de Activity más reciente controla ahora las actualizaciones en vivo. Esta instantánea seguirá disponible."
-  },
-  fr: {
-    "settings.cardVisibility.always": "Afficher automatiquement pour tout travail Codex",
-    "settings.cardVisibility.background": "Afficher automatiquement uniquement pour le travail Codex en arrière-plan",
-    "settings.cardVisibility.never": "Aucune carte automatique",
-    "activity.superseded": "Une carte Activity plus récente gère désormais les mises à jour en direct. Cet instantané reste disponible."
-  },
-  de: {
-    "settings.cardVisibility.always": "Für alle Codex-Arbeiten automatisch anzeigen",
-    "settings.cardVisibility.background": "Nur für Codex-Hintergrundarbeiten automatisch anzeigen",
-    "settings.cardVisibility.never": "Keine automatischen Karten",
-    "activity.superseded": "Eine neuere Activity-Karte übernimmt jetzt die Live-Aktualisierung. Dieser Snapshot bleibt verfügbar."
-  },
-  pt: {
-    "settings.cardVisibility.always": "Mostrar automaticamente para todo trabalho do Codex",
-    "settings.cardVisibility.background": "Mostrar automaticamente apenas para trabalho do Codex em segundo plano",
-    "settings.cardVisibility.never": "Sem cartões automáticos",
-    "activity.superseded": "Um cartão de Activity mais recente agora controla as atualizações ao vivo. Este instantâneo continuará disponível."
-  }
-};
-
 const ACTIVITY_EXECUTION_OVERRIDES: Record<
   Exclude<SupportedUiLocale, "en">,
   Partial<UiTranslationBundle>
@@ -1444,68 +1397,6 @@ const ACTIVITY_EXECUTION_OVERRIDES: Record<
     "activity.currentExecution": "Execução atual",
     "activity.latestExecution": "Última execução",
     "activity.reasoningEffort": "esforço"
-  }
-};
-
-const ISSUE37_OVERRIDES: Record<
-  Exclude<SupportedUiLocale, "en">,
-  Partial<UiTranslationBundle>
-> = {
-  ko: {
-    "activity.historicalSnapshot": "과거 스냅샷 · 새로 고침하면 실시간 제어로 엽니다.",
-    "activity.restoredSnapshot": "복구된 전체 Activity · 새로고침하면 실시간 보기로 엽니다.",
-    "activity.enrichmentFailed": "사용량 또는 런타임 정보를 갱신하지 못했습니다. Activity 기록은 계속 표시됩니다.",
-    "activity.refreshFailedRetained": "새로고침하지 못해 마지막으로 불러온 Activity를 표시합니다.",
-    "activity.openLive": "실시간 Activity 열기"
-  },
-  ja: {
-    "activity.historicalSnapshot": "履歴スナップショット · 更新するとライブ操作で開きます。",
-    "activity.restoredSnapshot": "復元した Activity 全体表示 · 更新するとライブ表示で開きます。",
-    "activity.enrichmentFailed": "使用量またはランタイムの詳細を更新できませんでした。Activity の記録は引き続き表示されます。",
-    "activity.refreshFailedRetained": "更新できなかったため、最後に読み込んだ Activity を表示しています。",
-    "activity.openLive": "ライブ Activity を開く"
-  },
-  "zh-Hans": {
-    "activity.historicalSnapshot": "历史快照 · 刷新以打开实时控制。",
-    "activity.restoredSnapshot": "已恢复完整 Activity 视图 · 刷新以打开实时更新。",
-    "activity.enrichmentFailed": "无法刷新用量或运行时详情。Activity 记录仍可查看。",
-    "activity.refreshFailedRetained": "刷新失败；正在显示上次加载的 Activity 数据。",
-    "activity.openLive": "打开实时 Activity"
-  },
-  "zh-Hant": {
-    "activity.historicalSnapshot": "歷史快照 · 重新整理以開啟即時控制。",
-    "activity.restoredSnapshot": "已復原完整 Activity 檢視 · 重新整理以開啟即時更新。",
-    "activity.enrichmentFailed": "無法更新用量或執行階段詳細資料。Activity 記錄仍可查看。",
-    "activity.refreshFailedRetained": "重新整理失敗；正在顯示上次載入的 Activity 資料。",
-    "activity.openLive": "開啟即時 Activity"
-  },
-  es: {
-    "activity.historicalSnapshot": "Instantánea histórica · Actualiza para abrir los controles en vivo.",
-    "activity.restoredSnapshot": "Vista completa de Activity restaurada · Actualiza para abrir las novedades en vivo.",
-    "activity.enrichmentFailed": "No se pudieron actualizar los datos de uso o ejecución. Los registros de Activity siguen disponibles.",
-    "activity.refreshFailedRetained": "La actualización falló; se muestran los últimos datos de Activity cargados.",
-    "activity.openLive": "Abrir Activity en vivo"
-  },
-  fr: {
-    "activity.historicalSnapshot": "Instantané historique · Actualisez pour ouvrir les contrôles en direct.",
-    "activity.restoredSnapshot": "Vue Activity complète restaurée · Actualisez pour ouvrir les mises à jour en direct.",
-    "activity.enrichmentFailed": "Les détails d’utilisation ou d’exécution n’ont pas pu être actualisés. Les enregistrements Activity restent disponibles.",
-    "activity.refreshFailedRetained": "L’actualisation a échoué ; les dernières données Activity chargées sont affichées.",
-    "activity.openLive": "Ouvrir l’Activity en direct"
-  },
-  de: {
-    "activity.historicalSnapshot": "Historischer Snapshot · Aktualisieren, um die Live-Steuerung zu öffnen.",
-    "activity.restoredSnapshot": "Wiederhergestellte vollständige Activity-Ansicht · Aktualisieren, um Live-Updates zu öffnen.",
-    "activity.enrichmentFailed": "Nutzungs- oder Laufzeitdetails konnten nicht aktualisiert werden. Die Activity-Einträge bleiben verfügbar.",
-    "activity.refreshFailedRetained": "Aktualisierung fehlgeschlagen; die zuletzt geladenen Activity-Daten werden angezeigt.",
-    "activity.openLive": "Live-Activity öffnen"
-  },
-  pt: {
-    "activity.historicalSnapshot": "Instantâneo histórico · Atualize para abrir os controles ao vivo.",
-    "activity.restoredSnapshot": "Visualização completa de Activity restaurada · Atualize para abrir as atualizações ao vivo.",
-    "activity.enrichmentFailed": "Não foi possível atualizar os detalhes de uso ou execução. Os registros de Activity continuam disponíveis.",
-    "activity.refreshFailedRetained": "A atualização falhou; os últimos dados de Activity carregados estão sendo exibidos.",
-    "activity.openLive": "Abrir Activity ao vivo"
   }
 };
 
@@ -1867,50 +1758,75 @@ const CODEX_APP_THREAD_OVERRIDES: Record<
   ko: {
     "settings.codexAppThreads": "브리지 스레드를 Codex 앱에 표시",
     "settings.codexAppThreadsHint": "새로 만들거나 포크하는 App Server 스레드에 적용됩니다. 끄면 메모리에만 유지되어 Codex 앱 목록에 나타나지 않으며, App Server worker 또는 브리지를 재시작한 뒤에는 이어갈 수 없습니다. 기존 스레드는 바뀌지 않습니다.",
+    "settings.dashboardAutoOpenBackground": "백그라운드 작업 시 현황 카드 자동 표시",
+    "settings.dashboardAutoOpenBackgroundHint": "백그라운드 작업을 시작한 이 대화세션에서만 현황 카드를 자동으로 엽니다. 포그라운드 결과는 기존 도구 응답으로 반환됩니다.",
+    "settings.completionFollowUp": "완료 후 자동 응답",
+    "settings.completionFollowUpHint": "검증된 호스트 이벤트가 있으면 그것을 사용하고, 없으면 열려 있는 현황 카드를 통해 완료 알림을 전달합니다. 전달 경로가 없으면 대기 상태를 보존합니다.",
 
-    "settings.resetHint": "접근, 모델, Codex 앱 목록 표시, 인터페이스, 동시 작업 수, Activity 설정만 복원합니다. 프로젝트와 순서는 유지됩니다."
+    "settings.resetHint": "접근, 모델, Codex 앱 목록 표시, 백그라운드 현황 카드, 완료 후 자동 응답, 인터페이스와 동시 작업 수 설정만 복원합니다. 프로젝트와 순서는 유지됩니다."
   },
   ja: {
     "settings.codexAppThreads": "ブリッジのスレッドを Codex アプリに表示",
     "settings.codexAppThreadsHint": "新規およびフォークした App Server スレッドに適用されます。オフにするとメモリ内だけに保持され、Codex アプリには表示されず、App Server ワーカーまたはブリッジの再起動後は再開できません。既存のスレッドは変わりません。",
-
-    "settings.resetHint": "アクセス、モデル、Codex アプリでのスレッド表示、表示言語、同時実行数、Activity の設定だけを戻します。プロジェクトと順序は保持されます。"
+    "settings.dashboardAutoOpenBackground": "バックグラウンド作業でダッシュボードを自動表示",
+    "settings.dashboardAutoOpenBackgroundHint": "バックグラウンド作業を開始した会話でのみダッシュボードを開きます。フォアグラウンドの結果は元のツール応答に残ります。",
+    "settings.completionFollowUp": "完了後にフォローアップを自動送信",
+    "settings.completionFollowUpHint": "確認済みのホストイベントが利用可能な場合はそれを使い、利用できない場合は開いているダッシュボードカードで完了通知を送信します。経路が利用できない間は通知をキューに保持します。",
+    "settings.resetHint": "アクセス、モデル、Codex アプリでのスレッド表示、バックグラウンドのダッシュボード表示、完了後のフォローアップ、表示言語、同時実行数だけを戻します。プロジェクトと順序は保持されます。"
   },
   "zh-Hans": {
     "settings.codexAppThreads": "在 Codex 应用中显示桥接线程",
     "settings.codexAppThreadsHint": "适用于新建和分叉的 App Server 线程。关闭后，线程只保留在内存中，不会出现在 Codex 应用里，并且在 App Server 工作进程或桥接重启后无法继续。现有线程不会改变。",
-
-    "settings.resetHint": "仅恢复访问、模型、Codex 应用线程显示、界面、并发数和 Activity 设置。项目和顺序会保留。"
+    "settings.dashboardAutoOpenBackground": "后台工作时自动显示概览卡片",
+    "settings.dashboardAutoOpenBackgroundHint": "仅在启动后台任务的对话中打开概览卡片。前台结果仍保留在原始工具响应中。",
+    "settings.completionFollowUp": "完成后自动发送后续消息",
+    "settings.completionFollowUpHint": "有已验证的主机事件时会使用它；否则，打开的概览卡片会发送完成通知。没有可用路径时，通知会保留在队列中。",
+    "settings.resetHint": "仅恢复访问、模型、Codex 应用线程显示、后台概览卡片显示、完成后续消息、界面和并发数。项目和顺序会保留。"
   },
   "zh-Hant": {
     "settings.codexAppThreads": "在 Codex 應用程式中顯示橋接執行緒",
     "settings.codexAppThreadsHint": "適用於新建與分支的 App Server 執行緒。關閉後，執行緒只保留在記憶體中，不會出現在 Codex 應用程式，且 App Server 工作程序或橋接重新啟動後無法繼續。現有執行緒不會改變。",
-
-    "settings.resetHint": "只還原存取、模型、Codex 應用程式執行緒顯示、介面、並行數與 Activity 設定。專案與順序會保留。"
+    "settings.dashboardAutoOpenBackground": "背景工作時自動顯示總覽卡片",
+    "settings.dashboardAutoOpenBackgroundHint": "僅在啟動背景任務的對話中開啟總覽卡片。前景結果仍保留在原始工具回應中。",
+    "settings.completionFollowUp": "完成後自動傳送後續訊息",
+    "settings.completionFollowUpHint": "有已驗證的主機事件時會使用它；否則，開啟的總覽卡片會傳送完成通知。沒有可用路徑時，通知會保留在佇列中。",
+    "settings.resetHint": "只還原存取、模型、Codex 應用程式執行緒顯示、背景總覽卡片顯示、完成後續訊息、介面與並行數。專案與順序會保留。"
   },
   es: {
     "settings.codexAppThreads": "Mostrar los hilos del puente en la app Codex",
     "settings.codexAppThreadsHint": "Se aplica a los hilos nuevos y bifurcados de App Server. Al desactivarlo, solo se conservan en memoria: no aparecen en la app Codex y no pueden reanudarse tras reiniciar el worker de App Server o el puente. Los hilos existentes no cambian.",
-
-    "settings.resetHint": "Restaura solo acceso, modelo, visibilidad de hilos en la app Codex, interfaz, concurrencia y Activity. Se conservan los proyectos y su orden."
+    "settings.dashboardAutoOpenBackground": "Mostrar automáticamente el panel para el trabajo en segundo plano",
+    "settings.dashboardAutoOpenBackgroundHint": "Abre el panel solo en la conversación que inició una tarea en segundo plano. Los resultados en primer plano permanecen en la respuesta original de la herramienta.",
+    "settings.completionFollowUp": "Enviar automáticamente un seguimiento al finalizar",
+    "settings.completionFollowUpHint": "Usa un evento de host verificado cuando está disponible; de lo contrario, la tarjeta de panel abierta envía el aviso de finalización. Los avisos permanecen en cola mientras no haya una ruta disponible.",
+    "settings.resetHint": "Restaura solo acceso, modelo, visibilidad de hilos en la app Codex, panel para trabajo en segundo plano, seguimiento al finalizar, interfaz y concurrencia. Se conservan los proyectos y su orden."
   },
   fr: {
     "settings.codexAppThreads": "Afficher les fils du pont dans l’app Codex",
     "settings.codexAppThreadsHint": "S’applique aux fils App Server nouveaux et dérivés. Si cette option est désactivée, ils restent uniquement en mémoire : ils n’apparaissent pas dans l’app Codex et ne peuvent pas être repris après le redémarrage du worker App Server ou du pont. Les fils existants ne changent pas.",
-
-    "settings.resetHint": "Rétablit uniquement l’accès, le modèle, la visibilité des fils dans l’app Codex, l’interface, la simultanéité et Activity. Les projets et leur ordre sont conservés."
+    "settings.dashboardAutoOpenBackground": "Afficher automatiquement le tableau de bord pour le travail en arrière-plan",
+    "settings.dashboardAutoOpenBackgroundHint": "Ouvre le tableau de bord uniquement dans la conversation qui a lancé une tâche en arrière-plan. Les résultats au premier plan restent dans la réponse d’outil d’origine.",
+    "settings.completionFollowUp": "Envoyer automatiquement un suivi à la fin",
+    "settings.completionFollowUpHint": "Utilise un événement hôte vérifié lorsqu’il est disponible ; sinon, la carte du tableau de bord ouverte envoie l’avis de fin. Les avis restent en file d’attente tant qu’aucune voie n’est disponible.",
+    "settings.resetHint": "Rétablit uniquement l’accès, le modèle, la visibilité des fils dans l’app Codex, le tableau de bord en arrière-plan, le suivi de fin, l’interface et la simultanéité. Les projets et leur ordre sont conservés."
   },
   de: {
     "settings.codexAppThreads": "Bridge-Threads in der Codex-App anzeigen",
     "settings.codexAppThreadsHint": "Gilt für neue und geforkte App-Server-Threads. Wenn dies deaktiviert ist, bleiben sie nur im Arbeitsspeicher: Sie erscheinen nicht in der Codex-App und können nach einem Neustart des App-Server-Workers oder der Bridge nicht fortgesetzt werden. Bestehende Threads bleiben unverändert.",
-
-    "settings.resetHint": "Setzt nur Zugriff, Modell, Thread-Sichtbarkeit in der Codex-App, Oberfläche, Parallelität und Activity zurück. Projekte und Reihenfolge bleiben erhalten."
+    "settings.dashboardAutoOpenBackground": "Dashboard bei Hintergrundarbeit automatisch anzeigen",
+    "settings.dashboardAutoOpenBackgroundHint": "Öffnet das Dashboard nur in der Unterhaltung, die eine Hintergrundaufgabe gestartet hat. Vordergrundergebnisse bleiben in der ursprünglichen Werkzeugantwort.",
+    "settings.completionFollowUp": "Nach Abschluss automatisch eine Folgenachricht senden",
+    "settings.completionFollowUpHint": "Verwendet ein verifiziertes Hostereignis, wenn es verfügbar ist; andernfalls sendet die geöffnete Dashboard-Karte die Abschlussbenachrichtigung. Benachrichtigungen bleiben in der Warteschlange, solange kein Weg verfügbar ist.",
+    "settings.resetHint": "Setzt nur Zugriff, Modell, Thread-Sichtbarkeit in der Codex-App, Dashboard für Hintergrundarbeit, Folgenachricht nach Abschluss, Oberfläche und Parallelität zurück. Projekte und Reihenfolge bleiben erhalten."
   },
   pt: {
     "settings.codexAppThreads": "Mostrar threads da ponte no app Codex",
     "settings.codexAppThreadsHint": "Aplica-se a threads novos e bifurcados do App Server. Ao desativar, eles ficam apenas na memória: não aparecem no app Codex e não podem ser retomados após reiniciar o worker do App Server ou a ponte. Threads existentes não mudam.",
-
-    "settings.resetHint": "Restaura apenas acesso, modelo, visibilidade de threads no app Codex, interface, concorrência e Activity. Projetos e ordem são mantidos."
+    "settings.dashboardAutoOpenBackground": "Mostrar automaticamente o painel para trabalho em segundo plano",
+    "settings.dashboardAutoOpenBackgroundHint": "Abre o painel somente na conversa que iniciou uma tarefa em segundo plano. Os resultados em primeiro plano permanecem na resposta original da ferramenta.",
+    "settings.completionFollowUp": "Enviar automaticamente uma mensagem de acompanhamento ao concluir",
+    "settings.completionFollowUpHint": "Usa um evento de host verificado quando disponível; caso contrário, o cartão de painel aberto envia o aviso de conclusão. Os avisos permanecem na fila enquanto não houver uma rota disponível.",
+    "settings.resetHint": "Restaura apenas acesso, modelo, visibilidade de threads no app Codex, painel para trabalho em segundo plano, acompanhamento ao concluir, interface e concorrência. Projetos e ordem são mantidos."
   }
 };
 
@@ -2173,41 +2089,57 @@ const FAST_MODE_OVERRIDES: Record<Exclude<SupportedUiLocale, "en">, Partial<UiTr
 const DASHBOARD_CONTROL_OVERRIDES: Partial<Record<SupportedUiLocale, Partial<UiTranslationBundle>>> = {
   ko: {
     "dashboard.control.requests": "요청 확인",
+    "dashboard.control.work": "작업 제어",
+    "dashboard.control.stop": "강제 종료",
     "dashboard.control.close": "접기",
     "dashboard.control.empty": "확인할 요청이 없습니다."
   },
   ja: {
     "dashboard.control.requests": "リクエストを確認",
+    "dashboard.control.work": "作業の操作",
+    "dashboard.control.stop": "強制終了",
     "dashboard.control.close": "折りたたむ",
     "dashboard.control.empty": "確認が必要なリクエストはありません。"
   },
   "zh-Hans": {
     "dashboard.control.requests": "查看请求",
+    "dashboard.control.work": "工作控制",
+    "dashboard.control.stop": "强制停止",
     "dashboard.control.close": "收起",
     "dashboard.control.empty": "没有需要查看的请求。"
   },
   "zh-Hant": {
     "dashboard.control.requests": "查看請求",
+    "dashboard.control.work": "工作控制",
+    "dashboard.control.stop": "強制停止",
     "dashboard.control.close": "收合",
     "dashboard.control.empty": "沒有需要查看的請求。"
   },
   es: {
     "dashboard.control.requests": "Revisar solicitudes",
+    "dashboard.control.work": "Controles de trabajo",
+    "dashboard.control.stop": "Forzar detención",
     "dashboard.control.close": "Contraer",
     "dashboard.control.empty": "No hay solicitudes que requieran revisión."
   },
   fr: {
     "dashboard.control.requests": "Examiner les demandes",
+    "dashboard.control.work": "Contrôles du travail",
+    "dashboard.control.stop": "Forcer l’arrêt",
     "dashboard.control.close": "Replier",
     "dashboard.control.empty": "Aucune demande ne nécessite d’examen."
   },
   de: {
     "dashboard.control.requests": "Anfragen prüfen",
+    "dashboard.control.work": "Arbeitssteuerung",
+    "dashboard.control.stop": "Erzwungen stoppen",
     "dashboard.control.close": "Zuklappen",
     "dashboard.control.empty": "Keine Anfragen müssen geprüft werden."
   },
   pt: {
     "dashboard.control.requests": "Revisar solicitações",
+    "dashboard.control.work": "Controles de trabalho",
+    "dashboard.control.stop": "Forçar parada",
     "dashboard.control.close": "Recolher",
     "dashboard.control.empty": "Não há solicitações que precisem de revisão."
   }
@@ -2217,10 +2149,31 @@ export const UI_TRANSLATIONS: Record<SupportedUiLocale, UiTranslationBundle> = O
   SUPPORTED_UI_LOCALES.map((locale) => [locale, Object.assign({}, ENGLISH,
     ...(locale === "en" ? [] : [OVERRIDES[locale],
       ...(locale === "ko" ? [] : [REMAINDER[locale]]),
-      STATE_OVERRIDES[locale], ISSUE19_OVERRIDES[locale], ISSUE20_OVERRIDES[locale], ISSUE41_OVERRIDES[locale], ISSUE46_OVERRIDES[locale], BACKGROUND_PROCESS_OVERRIDES[locale], CURRENT_WORK_OVERRIDES[locale], ISSUE21_OVERRIDES[locale], MODEL_POLICY_UX_OVERRIDES[locale], ISSUE24_OVERRIDES[locale], ACTIVITY_EXECUTION_OVERRIDES[locale], ISSUE37_OVERRIDES[locale], ISSUE22_OVERRIDES[locale], ISSUE26_OVERRIDES[locale], ISSUE33_OVERRIDES[locale], CODEX_APP_THREAD_OVERRIDES[locale], DASHBOARD_OVERRIDES[locale], CARD_FRESHNESS_OVERRIDES[locale], LOCALIZATION_AUDIT_OVERRIDES[locale], QUESTION_UI_TRANSLATIONS[locale], FAST_MODE_OVERRIDES[locale], DASHBOARD_CONTROL_OVERRIDES[locale], ULTRA_POLICY_TRANSLATIONS[locale], MODEL_DESCRIPTION_TRANSLATIONS[locale], DASHBOARD_SCOPE_TRANSLATIONS[locale], DASHBOARD_SUMMARY_TRANSLATIONS[locale], WORK_HISTORY_TRANSLATIONS[locale], PROBLEM_REVIEW_TRANSLATIONS[locale]
+      STATE_OVERRIDES[locale], ISSUE19_OVERRIDES[locale], ISSUE20_OVERRIDES[locale], ISSUE41_OVERRIDES[locale], ISSUE46_OVERRIDES[locale], BACKGROUND_PROCESS_OVERRIDES[locale], CURRENT_WORK_OVERRIDES[locale], ISSUE21_OVERRIDES[locale], MODEL_POLICY_UX_OVERRIDES[locale], ACTIVITY_EXECUTION_OVERRIDES[locale], ISSUE22_OVERRIDES[locale], ISSUE26_OVERRIDES[locale], ISSUE33_OVERRIDES[locale], CODEX_APP_THREAD_OVERRIDES[locale], DASHBOARD_OVERRIDES[locale], CARD_FRESHNESS_OVERRIDES[locale], LOCALIZATION_AUDIT_OVERRIDES[locale], QUESTION_UI_TRANSLATIONS[locale], FAST_MODE_OVERRIDES[locale], DASHBOARD_CONTROL_OVERRIDES[locale], ULTRA_POLICY_TRANSLATIONS[locale], MODEL_DESCRIPTION_TRANSLATIONS[locale], DASHBOARD_SCOPE_TRANSLATIONS[locale], DASHBOARD_SUMMARY_TRANSLATIONS[locale], WORK_HISTORY_TRANSLATIONS[locale], PROBLEM_REVIEW_TRANSLATIONS[locale]
     ])
   )])
 ) as Record<SupportedUiLocale, UiTranslationBundle>;
+
+// These labels belonged to the retired Activity card. Keep old retained
+// snapshots readable in memory, but never ship the labels in a current card.
+const RETIRED_ACTIVITY_CARD_TRANSLATION_KEYS = new Set<string>([
+  "settings.cardVisibility",
+  "settings.cardVisibility.always",
+  "settings.cardVisibility.background",
+  "settings.cardVisibility.never",
+  "settings.handoff",
+  "settings.handoff.off",
+  "settings.handoff.auto",
+  "settings.handoffRequiresCard",
+  "activity.followUpSent",
+  "activity.prompt.handoff",
+  "activity.superseded",
+  "activity.historicalSnapshot",
+  "activity.restoredSnapshot",
+  "activity.enrichmentFailed",
+  "activity.refreshFailedRetained",
+  "activity.openLive"
+]);
 
 export function uiTranslation(
   locale: SupportedUiLocale,
@@ -2390,17 +2343,23 @@ export function resolveHostUiLocaleTag(
 }
 
 export function serializedUiTranslations(namespaces?: readonly string[]): string {
+  const select = (bundle: UiTranslationBundle) => Object.fromEntries(
+    Object.entries(bundle).filter(([key]) =>
+      !RETIRED_ACTIVITY_CARD_TRANSLATION_KEYS.has(key) &&
+      (!namespaces || namespaces.length === 0 || namespaces.some(
+        (namespace) => key === namespace || key.startsWith(`${namespace}.`)
+      ))
+    )
+  );
   if (!namespaces || namespaces.length === 0) {
-    return JSON.stringify(UI_TRANSLATIONS).replaceAll("<", "\\u003c");
+    return JSON.stringify(Object.fromEntries(
+      Object.entries(UI_TRANSLATIONS).map(([locale, bundle]) => [locale, select(bundle)])
+    )).replaceAll("<", "\\u003c");
   }
   const selected = Object.fromEntries(
     Object.entries(UI_TRANSLATIONS).map(([locale, bundle]) => [
       locale,
-      Object.fromEntries(
-        Object.entries(bundle).filter(([key]) => namespaces.some(
-          (namespace) => key === namespace || key.startsWith(`${namespace}.`)
-        ))
-      )
+      select(bundle)
     ])
   );
   return JSON.stringify(selected).replaceAll("<", "\\u003c");

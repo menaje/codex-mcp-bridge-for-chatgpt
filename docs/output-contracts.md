@@ -40,7 +40,7 @@ Model-visible `nextActions` is a closed union, never a free-form string list.
 Each entry is one of:
 
 - a safe, allow-listed tool call to `codex_models`, `codex_settings`,
-  `codex_status`, `codex_dashboard`, or `codex_user_answer` with a validated
+  `codex_status`, or `codex_dashboard` with a validated
   argument object; or
 - a `guidance` record with a short user-facing message.
 
@@ -62,10 +62,10 @@ configuration.
 ## Validation
 
 `test/outputContracts.test.ts` supplies fixtures for setup, replay, running,
-completed, failed, and cancelled task results; all twelve model-visible tools;
+completed, failed, and cancelled task results; all ten model-visible tools;
 root expansion; state contradictions; and structured action validation. The
-The output-contract audit measures the current model-visible output schemas at
-54,811 UTF-8 JSON bytes. The total descriptor budget is 56,000 bytes and no
+output-contract audit measures the current model-visible output schemas at
+44,337 UTF-8 JSON bytes. The total descriptor budget is 56,000 bytes and no
 single public output schema may exceed 18,000 bytes. These are descriptor
 measurements, not model-token counts or result-payload limits.
 

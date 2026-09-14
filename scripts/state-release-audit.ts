@@ -140,15 +140,17 @@ try {
 
 function auditUiCompatibility(): Record<string, unknown> {
   const manifest = readJson(path.join(runtimeRoot, "dist/ui-manifest.json"));
-  assert.equal(manifest.manifestVersion, 2);
+  assert.equal(manifest.manifestVersion, 3);
+  assert.equal(manifest.strategy, "versioned-uri");
   assert.equal(manifest.releaseInventory.catalog, "ui-release-catalog.json");
   assert.equal(manifest.releaseInventory.catalogSha256, runtimeManifest.uiResources.releaseCatalogSha256);
   assert.deepEqual(manifest.releaseInventory.activeResources, runtimeUiCatalog.activeResources);
   assert.deepEqual(manifest.releaseInventory.compatibilityResources, runtimeUiCatalog.compatibilityResources);
   assert.deepEqual(manifest.releaseInventory.retirement, runtimeUiCatalog.retirement);
-  assert.deepEqual(runtimeUiCatalog.activeResources, ["settings", "activity", "dashboard", "question"]);
+  assert.deepEqual(runtimeUiCatalog.activeResources, ["settings", "dashboard"]);
   assert.deepEqual(runtimeUiCatalog.compatibilityResources, []);
-  assert.equal(runtimeUiCatalog.retirement.activity.newPresentations, true);
+  assert.equal(runtimeUiCatalog.retirement.activity.newPresentations, false);
+  assert.equal(runtimeUiCatalog.retirement.question.newPresentations, false);
 
   const selected = [] as Array<any>;
   const physicalFiles = new Set<string>();
@@ -163,48 +165,47 @@ function auditUiCompatibility(): Record<string, unknown> {
     .join("\n");
 
   for (const [name, resource] of Object.entries(manifest.resources) as Array<[string, any]>) {
-    for (const revision of [resource, ...(resource.previous || [])]) {
-      const relativeDirectory = path.join("dist", "ui", name);
-      const plain = path.join(runtimeRoot, relativeDirectory, `${revision.digest}.html`);
-      const encoded = `${plain}.base64`;
-      const file = existsSync(plain) ? plain : encoded;
-      assert.ok(existsSync(file), `selected UI snapshot is missing: ${name}/${revision.digest}`);
-      const stored = readFileSync(file, "utf8");
-      const html = file.endsWith(".base64")
-        ? Buffer.from(stored.trim(), "base64").toString("utf8")
-        : stored;
-      assert.equal(
-        sha256(Buffer.from(stableJson({ html, metadata: revision.metadata }))),
-        revision.digest,
-        `selected UI snapshot digest must match: ${name}/${revision.digest}`
+    const revision = resource;
+    const file = path.join(runtimeRoot, "dist", "ui", `${name}.html`);
+    assert.ok(existsSync(file), `current UI file is missing: ${name}.html`);
+    const html = readFileSync(file, "utf8");
+    assert.equal(
+      sha256(Buffer.from(stableJson({ html, metadata: revision.metadata }))),
+      revision.digest,
+      `current UI file digest must match: ${name}.html`
+    );
+    assert.equal(
+      revision.uri,
+      `ui://${runtimeManifest.product.runtimeName}/${name}/v${revision.uriVersion}.html`
+    );
+    assert.equal(revision.uriVersion, runtimeUiCatalog.currentContracts[name].uriVersion);
+    const provenance = revision.releaseProvenance;
+    assert.ok(Array.isArray(provenance?.inventories) && provenance.inventories.length > 0);
+    assert.ok(Array.isArray(provenance?.sourceIds) && provenance.sourceIds.length > 0);
+    assert.ok(Array.isArray(provenance?.requiredTools) && provenance.requiredTools.length > 0);
+    assert.ok(provenance.requiredTools.includes(provenance.presenterTool));
+    for (const tool of provenance.requiredTools) {
+      assert.ok(
+        toolSource.includes(`"${tool}"`) || toolSource.includes(`'${tool}'`),
+        `selected UI tool contract is missing from the artifact: ${tool}`
       );
-      const provenance = revision.releaseProvenance;
-      assert.ok(Array.isArray(provenance?.inventories) && provenance.inventories.length > 0);
-      assert.ok(Array.isArray(provenance?.sourceIds) && provenance.sourceIds.length > 0);
-      assert.ok(Array.isArray(provenance?.requiredTools) && provenance.requiredTools.length > 0);
-      assert.ok(provenance.requiredTools.includes(provenance.presenterTool));
-      for (const tool of provenance.requiredTools) {
-        assert.ok(
-          toolSource.includes(`"${tool}"`) || toolSource.includes(`'${tool}'`),
-          `selected UI tool contract is missing from the artifact: ${tool}`
-        );
-      }
-      const relative = path.relative(runtimeRoot, file);
-      physicalFiles.add(relative);
-      counts.uniqueBytes += Buffer.byteLength(html);
-      counts.selected += 1;
-      if (provenance.inventories.includes("development-current")) counts.developmentCurrent += 1;
-      selected.push({
-        name,
-        digest: revision.digest,
-        uri: revision.uri,
-        inventories: provenance.inventories,
-        sourceIds: provenance.sourceIds,
-        presenterTool: provenance.presenterTool,
-        requiredTools: provenance.requiredTools,
-        bytes: Buffer.byteLength(html)
-      });
     }
+    const relative = path.relative(runtimeRoot, file);
+    physicalFiles.add(relative);
+    counts.uniqueBytes += Buffer.byteLength(html);
+    counts.selected += 1;
+    if (provenance.inventories.includes("development-current")) counts.developmentCurrent += 1;
+    selected.push({
+      name,
+      uriVersion: revision.uriVersion,
+      digest: revision.digest,
+      uri: revision.uri,
+      inventories: provenance.inventories,
+      sourceIds: provenance.sourceIds,
+      presenterTool: provenance.presenterTool,
+      requiredTools: provenance.requiredTools,
+      bytes: Buffer.byteLength(html)
+    });
   }
   assert.deepEqual(
     selected.map(({ bytes: _bytes, ...entry }) => entry),
@@ -215,8 +216,8 @@ function auditUiCompatibility(): Record<string, unknown> {
   );
   assert.deepEqual(packagedFiles, physicalFiles, "artifact must contain only explicitly selected UI snapshots");
 
-  assert.equal(counts.selected, 4);
-  assert.equal(counts.developmentCurrent, 4);
+  assert.equal(counts.selected, 2);
+  assert.equal(counts.developmentCurrent, 2);
   return {
     catalogVersion: runtimeUiCatalog.catalogVersion,
     activeResources: runtimeUiCatalog.activeResources,

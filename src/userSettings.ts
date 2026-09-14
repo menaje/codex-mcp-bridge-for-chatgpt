@@ -24,10 +24,6 @@ import {
 
 export type { ProjectRegistryOperation } from "./projectRegistry.js";
 
-export const ACTIVITY_CARD_VISIBILITIES = ["always", "background-only", "never"] as const;
-export type ActivityCardVisibility = (typeof ACTIVITY_CARD_VISIBILITIES)[number];
-export const COMPLETION_HANDOFF_MODES = ["off", "auto-handoff"] as const;
-export type CompletionHandoffMode = (typeof COMPLETION_HANDOFF_MODES)[number];
 export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
 const EXECUTION_POLICY_HMAC_SECRET_META_KEY = "execution_policy_hmac_secret_v1";
 const EXECUTION_POLICY_REF_CONTRACT_VERSION = 5;
@@ -49,8 +45,10 @@ export type BridgeUserSettings = {
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
   showBridgeThreadsInCodexApp: boolean;
-  activityCardVisibility: ActivityCardVisibility;
-  completionHandoff: CompletionHandoffMode;
+  /** Automatically open Dashboard only for background work in its origin conversation. */
+  dashboardAutoOpenBackground: boolean;
+  /** Request a completion follow-up through the durable delivery dispatcher. */
+  completionFollowUp: boolean;
   historyRetentionDays: HistoryRetentionDays;
 };
 
@@ -110,10 +108,8 @@ export class UserSettingsStore {
       // Durable context is the default for a new installation. Loaded legacy
       // settings retain their explicit (or historical missing-field) choice.
       showBridgeThreadsInCodexApp: true,
-      // Retained cards still interpret this setting. Current presenters do not
-      // use it; preserve the default so legacy completion handoff can migrate.
-      activityCardVisibility: "always",
-      completionHandoff: "off",
+      dashboardAutoOpenBackground: true,
+      completionFollowUp: false,
       historyRetentionDays: DEFAULT_HISTORY_RETENTION_DAYS
     });
     this.settings = cloneGeneralSettings(this.initial);
@@ -261,8 +257,8 @@ export class UserSettingsStore {
       uiLocalePreference: this.initial.uiLocalePreference,
       maxConcurrentJobs: this.initial.maxConcurrentJobs,
       showBridgeThreadsInCodexApp: this.initial.showBridgeThreadsInCodexApp,
-      activityCardVisibility: this.initial.activityCardVisibility,
-      completionHandoff: this.initial.completionHandoff,
+      dashboardAutoOpenBackground: this.initial.dashboardAutoOpenBackground,
+      completionFollowUp: this.initial.completionFollowUp,
       historyRetentionDays: this.initial.historyRetentionDays
     };
     return this.applyConfiguration(patch, [], expectedSettingsRevision, undefined);
@@ -394,17 +390,11 @@ export class UserSettingsStore {
     if (typeof candidate.showBridgeThreadsInCodexApp !== "boolean") {
       throw new Error("Invalid Codex app thread-visibility preference.");
     }
-    if (!ACTIVITY_CARD_VISIBILITIES.includes(candidate.activityCardVisibility)) {
-      throw new Error(`Invalid Activity card visibility: ${String(candidate.activityCardVisibility)}`);
+    if (typeof candidate.dashboardAutoOpenBackground !== "boolean") {
+      throw new Error("Invalid background Dashboard auto-open preference.");
     }
-    if (!COMPLETION_HANDOFF_MODES.includes(candidate.completionHandoff)) {
-      throw new Error(`Invalid completion handoff mode: ${String(candidate.completionHandoff)}`);
-    }
-    if (
-      candidate.activityCardVisibility === "never" &&
-      candidate.completionHandoff === "auto-handoff"
-    ) {
-      throw new Error("Automatic GPT handoff requires the Activity card to be visible.");
+    if (typeof candidate.completionFollowUp !== "boolean") {
+      throw new Error("Invalid completion follow-up preference.");
     }
     if (!Number.isInteger(candidate.settingsRevision) || candidate.settingsRevision < 0) {
       throw new Error("Invalid settings revision.");
@@ -616,8 +606,8 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
-    "activityCardVisibility",
-    "completionHandoff",
+    "dashboardAutoOpenBackground",
+    "completionFollowUp",
     "historyRetentionDays"
   ];
   if (required.some((key) => !Object.prototype.hasOwnProperty.call(value, key))) return true;
@@ -632,6 +622,8 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
       "defaultReasoningEffort",
       "legacyPreferredModel",
       "completionDeliveryMode",
+      "activityCardVisibility",
+      "completionHandoff",
       "activityCardView",
       "taskTimeoutMs",
       "defaultSessionMode",
@@ -685,19 +677,13 @@ function readGeneralSettings(
     showBridgeThreadsInCodexApp: typeof value.showBridgeThreadsInCodexApp === "boolean"
       ? value.showBridgeThreadsInCodexApp
       : false,
-    activityCardVisibility:
-      value.activityCardVisibility === "always" ||
-      value.activityCardVisibility === "background-only" ||
-      value.activityCardVisibility === "never"
-        ? value.activityCardVisibility
-        : "always",
+    dashboardAutoOpenBackground: typeof value.dashboardAutoOpenBackground === "boolean"
+      ? value.dashboardAutoOpenBackground
+      : value.activityCardVisibility !== "never",
     historyRetentionDays: historyRetentionDays(value.historyRetentionDays),
-    completionHandoff:
-      value.completionHandoff === "off" || value.completionHandoff === "auto-handoff"
-        ? value.completionHandoff
-        : value.completionDeliveryMode === "auto-handoff"
-          ? "auto-handoff"
-          : "off"
+    completionFollowUp: typeof value.completionFollowUp === "boolean"
+      ? value.completionFollowUp
+      : value.completionHandoff === "auto-handoff" || value.completionDeliveryMode === "auto-handoff"
   };
 }
 
@@ -768,8 +754,8 @@ function assertSettingsPatchKeys(patch: BridgeUserSettingsPatch): void {
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
-    "activityCardVisibility",
-    "completionHandoff",
+    "dashboardAutoOpenBackground",
+    "completionFollowUp",
     "historyRetentionDays"
   ]);
   const unsupported = Object.keys(patch).find((key) => !allowed.has(key));

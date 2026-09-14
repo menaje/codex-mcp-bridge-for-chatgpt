@@ -20,22 +20,12 @@ import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 const CURRENT_PROTOCOL = "2026-07-28";
 const CURRENT_TOOL_ORDER = [
   "codex_answer",
-  "codex_ask_user",
-  "codex_user_answer",
-  "codex_question_action",
   "codex_dashboard",
   "codex_status",
-  "codex_activity",
-  "codex_activity_rehydrate",
-  "codex_activity_snapshot",
-  "codex_activity_handoff",
   "codex_agent",
-  "codex_background_process_terminate",
   "codex_cancel",
-  "codex_activity_job_cancel",
   "codex_interaction_respond",
   "codex_steer",
-  "codex_job_steer",
   "codex_activity_update",
   "codex_models",
   "codex_settings",
@@ -43,7 +33,6 @@ const CURRENT_TOOL_ORDER = [
   "codex_task",
   "codex_ui_read",
   "codex_ui_problem",
-  "codex_ui_history",
   "codex_ui_stop"
 ] as const;
 
@@ -238,15 +227,23 @@ describe("MCP 2026-07-28 HTTP server", () => {
       const tools = await client.listTools();
       const names = tools.tools.map((tool) => tool.name);
       expect(names).toEqual(CURRENT_TOOL_ORDER);
-      for (const current of ["codex_task", "codex_models", "codex_ui_read", "codex_question_action"]) {
+      for (const current of ["codex_task", "codex_models", "codex_ui_read", "codex_answer"]) {
         expect(names).toContain(current);
       }
       for (const retired of [
         "codex_dashboard_snapshot",
         "codex_settings_snapshot",
-        "codex_question_card",
-        "codex_question_submit",
-        "codex_question_notify"
+        "codex_ask_user",
+        "codex_user_answer",
+        "codex_question_action",
+        "codex_activity",
+        "codex_activity_rehydrate",
+        "codex_activity_snapshot",
+        "codex_activity_handoff",
+        "codex_activity_job_cancel",
+        "codex_background_process_terminate",
+        "codex_job_steer",
+        "codex_ui_history"
       ]) expect(names).not.toContain(retired);
 
       const task = tools.tools.find((tool) => tool.name === "codex_task");
@@ -264,10 +261,13 @@ describe("MCP 2026-07-28 HTTP server", () => {
       expect(models.structuredContent).toMatchObject({ contractVersion: "2" });
 
       const resources = await client.listResources();
-      expect(resources.resources).toHaveLength(4);
-      const activity = resources.resources.find((resource) => resource.name === "codex-activity-card");
-      expect(activity?.uri).toMatch(/^ui:\/\/codex-mcp-bridge\/activity\/[a-f0-9]{12}\.html$/);
-      expect((await client.readResource({ uri: activity!.uri })).contents).toHaveLength(1);
+      expect(resources.resources.map((resource) => resource.name).sort()).toEqual([
+        "codex-dashboard-card",
+        "codex-settings-card"
+      ]);
+      const dashboard = resources.resources.find((resource) => resource.name === "codex-dashboard-card");
+      expect(dashboard?.uri).toBe("ui://codex-mcp-bridge/dashboard/v1.html");
+      expect((await client.readResource({ uri: dashboard!.uri })).contents).toHaveLength(1);
     } finally {
       await client.close();
     }

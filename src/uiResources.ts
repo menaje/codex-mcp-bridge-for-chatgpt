@@ -1,7 +1,19 @@
-import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { repairRetainedDashboardStops } from "./dashboardStopConfirmation.js";
-import { UI_RESOURCE_MANIFEST, type UiResourceName } from "./uiManifest.generated.js";
+import {
+  UI_RESOURCE_MANIFEST,
+  type UiResourceName as GeneratedUiResourceName
+} from "./uiManifest.generated.js";
+
+export type UiResourceName = GeneratedUiResourceName;
+
+function activeResource(name: UiResourceName) {
+  return (UI_RESOURCE_MANIFEST.resources as Record<string, unknown>)[name] as {
+    readonly uriVersion: number;
+    readonly digest: string;
+    readonly uri: string;
+    readonly metadata?: { readonly content?: Readonly<Record<string, unknown>> };
+    readonly releaseProvenance?: UiResourceRevision["releaseProvenance"];
+  } | undefined;
+}
 
 const STALE_UI_TRANSLATIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   en: {
@@ -9,7 +21,6 @@ const STALE_UI_TRANSLATIONS: Readonly<Record<string, Readonly<Record<string, str
     "stale.body": "This {card} card revision is no longer retained. Refresh the plugin metadata and open a new conversation.",
     "stale.currentResource": "Current resource:",
     "stale.card.settings": "settings",
-    "stale.card.activity": "Activity",
     "stale.card.dashboard": "overview"
   },
   ko: {
@@ -17,7 +28,6 @@ const STALE_UI_TRANSLATIONS: Readonly<Record<string, Readonly<Record<string, str
     "stale.body": "이 {card} 카드 버전은 더 이상 보관되지 않습니다. 플러그인 메타데이터를 새로고침하고 새 대화를 여세요.",
     "stale.currentResource": "현재 리소스:",
     "stale.card.settings": "설정",
-    "stale.card.activity": "Activity",
     "stale.card.dashboard": "전체 현황"
   },
   ja: {
@@ -25,7 +35,6 @@ const STALE_UI_TRANSLATIONS: Readonly<Record<string, Readonly<Record<string, str
     "stale.body": "この{card}カードの版は保持されていません。プラグインのメタデータを更新して、新しい会話を開いてください。",
     "stale.currentResource": "現在のリソース:",
     "stale.card.settings": "設定",
-    "stale.card.activity": "Activity",
     "stale.card.dashboard": "全体状況"
   },
   "zh-Hans": {
@@ -33,7 +42,6 @@ const STALE_UI_TRANSLATIONS: Readonly<Record<string, Readonly<Record<string, str
     "stale.body": "此{card}卡片版本已不再保留。请刷新插件元数据并打开新对话。",
     "stale.currentResource": "当前资源：",
     "stale.card.settings": "设置",
-    "stale.card.activity": "Activity",
     "stale.card.dashboard": "概览"
   },
   "zh-Hant": {
@@ -41,7 +49,6 @@ const STALE_UI_TRANSLATIONS: Readonly<Record<string, Readonly<Record<string, str
     "stale.body": "此{card}卡片版本已不再保留。請重新整理外掛程式中繼資料並開啟新對話。",
     "stale.currentResource": "目前資源：",
     "stale.card.settings": "設定",
-    "stale.card.activity": "Activity",
     "stale.card.dashboard": "概覽"
   },
   es: {
@@ -49,7 +56,6 @@ const STALE_UI_TRANSLATIONS: Readonly<Record<string, Readonly<Record<string, str
     "stale.body": "Esta versión de la tarjeta de {card} ya no se conserva. Actualiza los metadatos del plugin y abre una conversación nueva.",
     "stale.currentResource": "Recurso actual:",
     "stale.card.settings": "configuración",
-    "stale.card.activity": "Activity",
     "stale.card.dashboard": "resumen"
   },
   fr: {
@@ -57,7 +63,6 @@ const STALE_UI_TRANSLATIONS: Readonly<Record<string, Readonly<Record<string, str
     "stale.body": "Cette version de la carte {card} n’est plus conservée. Actualisez les métadonnées du plugin et ouvrez une nouvelle conversation.",
     "stale.currentResource": "Ressource actuelle :",
     "stale.card.settings": "des paramètres",
-    "stale.card.activity": "Activity",
     "stale.card.dashboard": "de la vue d’ensemble"
   },
   de: {
@@ -65,7 +70,6 @@ const STALE_UI_TRANSLATIONS: Readonly<Record<string, Readonly<Record<string, str
     "stale.body": "Diese Version der {card}-Karte wird nicht mehr vorgehalten. Aktualisieren Sie die Plugin-Metadaten und öffnen Sie eine neue Unterhaltung.",
     "stale.currentResource": "Aktuelle Ressource:",
     "stale.card.settings": "Einstellungen",
-    "stale.card.activity": "Activity",
     "stale.card.dashboard": "Übersicht"
   },
   pt: {
@@ -73,12 +77,12 @@ const STALE_UI_TRANSLATIONS: Readonly<Record<string, Readonly<Record<string, str
     "stale.body": "Esta versão do cartão de {card} não é mais mantida. Atualize os metadados do plugin e abra uma nova conversa.",
     "stale.currentResource": "Recurso atual:",
     "stale.card.settings": "configurações",
-    "stale.card.activity": "Activity",
     "stale.card.dashboard": "visão geral"
   }
 };
 
 export type UiResourceRevision = {
+  uriVersion: number;
   digest: string;
   uri: string;
   contractGeneration?: number;
@@ -106,34 +110,20 @@ export function uiRevisionMetadata<Descriptor, Content>(
 }
 
 export function currentUiResourceUri(name: UiResourceName): string {
-  return UI_RESOURCE_MANIFEST.resources[name].uri;
+  return currentUiResourceRevision(name).uri;
 }
 
-export function uiResourceRevisions(name: UiResourceName): UiResourceRevision[] {
-  const resource = UI_RESOURCE_MANIFEST.resources[name] as unknown as {
-    readonly digest: string;
-    readonly uri: string;
-    readonly metadata?: { readonly content?: Readonly<Record<string, unknown>> };
-    readonly previous: ReadonlyArray<UiResourceRevision & {
-      readonly metadata?: { readonly content?: Readonly<Record<string, unknown>> };
-    }>;
+export function currentUiResourceRevision(name: UiResourceName): UiResourceRevision {
+  const resource = activeResource(name);
+  if (!resource) throw new Error(`Current UI resource is missing: ${name}.`);
+  return {
+    uriVersion: resource.uriVersion,
+    digest: resource.digest,
+    uri: resource.uri,
+    contractGeneration: readContractGeneration(resource.metadata),
+    metadata: resource.metadata,
+    releaseProvenance: resource.releaseProvenance
   };
-  return [
-    {
-      digest: resource.digest,
-      uri: resource.uri,
-      contractGeneration: readContractGeneration(resource.metadata),
-      metadata: resource.metadata,
-      releaseProvenance: (resource as UiResourceRevision).releaseProvenance
-    },
-    ...resource.previous.map((entry) => ({
-      digest: entry.digest,
-      uri: entry.uri,
-      contractGeneration: readContractGeneration(entry.metadata),
-      metadata: entry.metadata,
-      releaseProvenance: entry.releaseProvenance
-    }))
-  ];
 }
 
 function readContractGeneration(
@@ -148,43 +138,7 @@ export function htmlForUiResource(
   uri: string,
   currentHtml: string
 ): string {
-  const revisions = uiResourceRevisions(name);
-  const revision = revisions.find((entry) => entry.uri === uri);
-  if (!revision) {
-    return staleUiResourceNotice(name);
-  }
-  if (revision.uri === currentUiResourceUri(name)) return currentHtml;
-
-  for (const candidate of snapshotCandidates(name, revision.digest)) {
-    if (!existsSync(candidate.file)) continue;
-    const stored = readFileSync(candidate.file, "utf8");
-    const html = candidate.encoding === "base64"
-      ? Buffer.from(stored.trim(), "base64").toString("utf8")
-      : stored;
-    return retainedUiRuntime(html);
-  }
-  return staleUiResourceNotice(name);
-}
-
-function retainedUiRuntime(html: string): string {
-  html = repairRetainedDashboardStops(html);
-  // Some retained source-rendered helpers captured esbuild's keepNames call
-  // without its runtime. Preserve the immutable files and their contracts;
-  // supply only the missing name decorator when serving those older cards.
-  if (!html.includes("__name(") || /(?:function|const|let|var)\s+__name\b/.test(html)) return html;
-  return html.replace("<script>", '<script>\nfunction __name(target,value){Object.defineProperty(target,"name",{value,configurable:true});return target}\n');
-}
-
-function snapshotCandidates(
-  name: UiResourceName,
-  digest: string
-): Array<{ file: string; encoding: "utf8" | "base64" }> {
-  return [
-    { file: fileURLToPath(new URL(`./ui/${name}/${digest}.html`, import.meta.url)), encoding: "utf8" },
-    { file: fileURLToPath(new URL(`./ui/${name}/${digest}.html.base64`, import.meta.url)), encoding: "base64" },
-    { file: fileURLToPath(new URL(`../ui-resources/${name}/${digest}.html`, import.meta.url)), encoding: "utf8" },
-    { file: fileURLToPath(new URL(`../ui-resources/${name}/${digest}.html.base64`, import.meta.url)), encoding: "base64" }
-  ];
+  return uri === currentUiResourceUri(name) ? currentHtml : staleUiResourceNotice(name);
 }
 
 function staleUiResourceNotice(name: UiResourceName): string {

@@ -410,47 +410,5 @@
         ]
       }
     }
-  ],
-  "codex_ask_user": [
-    {
-      "fixture": "gpt-question-flow",
-      "structuredContent": {
-        "kind": "user-question",
-        "questionId": "fixture-question",
-        "status": "pending",
-        "expiresAt": 1780000000000,
-        "nextActions": [
-          {
-            "kind": "guidance",
-            "message": "Read the user answer."
-          }
-        ]
-      }
-    }
-  ],
-  "codex_user_answer": [
-    {
-      "fixture": "gpt-question-flow",
-      "structuredContent": {
-        "kind": "user-answers",
-        "responses": [
-          {
-            "questionId": "fixture-question",
-            "responseRef": "fixture-response",
-            "status": "answered",
-            "title": "Choice",
-            "answers": [
-              {
-                "questionId": "color",
-                "values": [
-                  "Blue"
-                ]
-              }
-            ],
-            "expiresAt": 1780000000000
-          }
-        ]
-      }
-    }
   ]
 }

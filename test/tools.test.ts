@@ -8,11 +8,13 @@ import { loadConfig } from "../src/config.js";
 import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import { createHttpServer, type BridgeHttpServer } from "../src/server.js";
 import { BridgeStateStore } from "../src/stateStore.js";
-import type { CodexUpstream, ToolResult } from "../src/upstream.js";
+import { DASHBOARD_CARD_URI } from "../src/dashboardCard.js";
+import type { CodexProgress, CodexUpstream, ToolResult, UpstreamWorkerAssignment } from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 
 const selection = { model: "gpt-5.6-sol", reasoningEffort: "medium" };
 const metadata = { "openai/session": "current-tool-contract-test" };
+const fixtureThreadId = "99999999-9999-4999-8999-999999999999";
 
 class FixtureUpstream implements CodexUpstream {
   readonly calls: Array<{ name: string; args: Record<string, unknown> }> = [];
@@ -20,34 +22,53 @@ class FixtureUpstream implements CodexUpstream {
     started: () => void;
     result: Promise<ToolResult>;
     release: (result: ToolResult) => void;
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void;
   };
 
   async listTools(): Promise<unknown> {
     return { tools: [{ name: "codex" }] };
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    _onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+  ): Promise<ToolResult> {
     this.calls.push({ name, args });
     const held = this.heldCall;
     if (held) {
       this.heldCall = undefined;
+      held.onAssigned = onAssigned;
       held.started();
       return held.result;
     }
     return {
-      structuredContent: { threadId: "tool-contract-thread", content: "Completed fixture work." },
+      structuredContent: { threadId: fixtureThreadId, content: "Completed fixture work." },
       content: [{ type: "text", text: "Completed fixture work." }]
     };
   }
 
-  holdNextCall(): { started: Promise<void>; release(): void } {
+  holdNextCall(): { started: Promise<void>; assign(threadId: string): void; release(): void } {
     let started!: () => void;
     let release!: (result: ToolResult) => void;
     const startedPromise = new Promise<void>((resolve) => { started = resolve; });
     const result = new Promise<ToolResult>((resolve) => { release = resolve; });
-    this.heldCall = { started, result, release };
+    const heldCall = { started, result, release };
+    this.heldCall = heldCall;
     return {
       started: startedPromise,
+      assign: (threadId) => {
+        if (!heldCall.onAssigned) {
+          throw new Error("The held upstream call has not registered its assignment callback.");
+        }
+        heldCall.onAssigned({
+          backendKind: "app-server",
+          workerId: "fixture-worker",
+          workerGeneration: 1,
+          threadId
+        });
+      },
       release: () => release({
         structuredContent: { threadId: "tool-contract-thread", content: "Completed delayed fixture work." },
         content: [{ type: "text", text: "Completed delayed fixture work." }]
@@ -73,6 +94,7 @@ class FixtureCatalog implements CodexModelCatalogProvider {
       defaultReasoningEffort: selection.reasoningEffort,
       supportedReasoningEfforts: [{ effort: selection.reasoningEffort }],
       isDefault: true,
+      defaultServiceTier: undefined,
       serviceTiers: [],
       inputModalities: ["text"]
     }]
@@ -106,6 +128,7 @@ describe("current bridge tool contracts", () => {
     });
     settings = new UserSettingsStore(config, { stateStore: state });
     settings.update({
+      completionFollowUp: true,
       modelPolicy: {
         mode: "automatic",
         constraints: { allowDelegation: false },
@@ -157,6 +180,96 @@ describe("current bridge tool contracts", () => {
     expect(tools.tools.some((tool) => "codex/registrationTier" in (tool._meta || {}))).toBe(false);
   });
 
+  it("publishes Settings hydration without undefined optional catalog fields", async () => {
+    const result = await client.callTool({
+      name: "codex_ui_read",
+      arguments: { view: "settings" }
+    });
+
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    expect(result.structuredContent).toBeDefined();
+    expect(JSON.parse(JSON.stringify(result.structuredContent))).toStrictEqual(result.structuredContent);
+    const settingsView = result.structuredContent as any;
+    expect(settingsView.catalog.models[0]).not.toHaveProperty("defaultServiceTier");
+    expect(settingsView.settings).toMatchObject({
+      dashboardAutoOpenBackground: true,
+      completionFollowUp: true
+    });
+    expect(settingsView.settings).not.toHaveProperty("activityCardVisibility");
+    expect(settingsView.settings).not.toHaveProperty("completionHandoff");
+    expect(settingsView.capabilities).not.toHaveProperty("availableActivityCardVisibilities");
+    expect(settingsView.capabilities).not.toHaveProperty("availableCompletionHandoffs");
+  });
+
+  it("publishes Dashboard hydration without undefined thread-handoff fields", async () => {
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const task = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: "77777777-7777-4777-8777-777777777777",
+        requestId: randomUUID(),
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Create a completed Dashboard handoff fixture.",
+        project: {
+          name: project.name,
+          projectRef: project.projectRef,
+          projectRevision: project.projectRevision
+        },
+        selection,
+        executionMode: "background"
+      },
+      _meta: metadata
+    });
+    expect(task.isError, JSON.stringify(task)).not.toBe(true);
+    const admitted = task.structuredContent as { jobId: string };
+    await hold.started;
+    hold.assign(fixtureThreadId);
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === admitted.jobId && job.threadId === fixtureThreadId
+    ));
+
+    const result = await client.callTool({
+      name: "codex_ui_read",
+      arguments: {
+        view: "dashboard",
+        widgetInstanceId: randomUUID(),
+        scope: "all",
+        statusFilter: "all",
+        enrich: false,
+        includeHistory: false
+      }
+    });
+    hold.release();
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === admitted.jobId && job.status === "completed"
+    ));
+
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    expect(result.structuredContent).toBeDefined();
+    expect(JSON.parse(JSON.stringify(result.structuredContent))).toStrictEqual(result.structuredContent);
+    const dashboard = result.structuredContent as any;
+    const rows = [
+      ...dashboard.activeRows,
+      ...dashboard.terminalRows,
+      ...dashboard.idleRows,
+      ...(dashboard.statusRows || [])
+    ];
+    const row = rows.find((candidate: any) =>
+      candidate.codexThreadUrl === `codex://threads/${fixtureThreadId}`
+    );
+    expect(row).toBeDefined();
+    expect(row?.handoff).toMatchObject({
+      phase: "connected",
+      requested: false,
+      canOpen: false
+    });
+    expect(row?.handoff).not.toHaveProperty("reason");
+  });
+
   it("publishes draft-2020-12-compatible v3 task input without retired fields", async () => {
     const tools = await client.listTools();
     const task = tools.tools.find((tool) => tool.name === "codex_task")!;
@@ -189,102 +302,115 @@ describe("current bridge tool contracts", () => {
       },
       _meta: metadata
     });
-    expect(result.isError).not.toBe(true);
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
     expect(result.structuredContent).toMatchObject({ contractVersion: "2", state: "completed" });
     expect(result.structuredContent).not.toHaveProperty("waitContext");
+    expect(result._meta).not.toHaveProperty("openai/outputTemplate");
     expect(upstream.calls).toHaveLength(1);
   });
 
-  it("does not disclose copied handle existence outside the current conversation scope", async () => {
+  it("does not distinguish scope-mismatched handles from missing handles", async () => {
     const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
     const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
     const project = settings.current.projects[0]!;
-    const sourceScopeInput = "77777777-7777-4777-8777-777777777777";
-    const source = await client.callTool({
+    const admitted = await client.callTool({
       name: "codex_task",
       arguments: {
-        scopeId: sourceScopeInput,
+        scopeId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         requestId: randomUUID(),
         taskContractVersion: properties.taskContractVersion?.const,
         executionEnvelopeRef: properties.executionEnvelopeRef?.const,
-        prompt: "Create scoped handles for access isolation.",
+        prompt: "Create handles for the scope-isolation fixture.",
         project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
         selection,
         executionMode: "foreground"
       },
-      _meta: { "openai/session": "handle-isolation-source" }
+      _meta: metadata
     });
-    expect(source.isError).not.toBe(true);
-    const handles = source.structuredContent as {
-      jobId: string;
-      jobVersion: number;
-      activityId: string;
-      activityVersion: number;
-      agentId: string;
-      threadId: string;
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    const handles = admitted.structuredContent as {
+      jobId: string | null;
+      activityId: string | null;
+      agentId: string | null;
+      threadId: string | null;
+      jobVersion: number | null;
     };
-    for (const key of ["jobId", "jobVersion", "activityId", "activityVersion", "agentId", "threadId"] as const) {
-      expect(handles[key]).toBeTruthy();
-    }
-
-    const foreignMeta = { "openai/session": "handle-isolation-foreign" };
-    const unavailable = async (name: string, args: Record<string, unknown>) => {
-      const result = await client.callTool({ name, arguments: args, _meta: foreignMeta });
-      expect(result.isError).toBe(true);
-      const text = result.content.find((item) => item.type === "text")?.text;
-      expect(text).toMatch(/^HANDLE_UNAVAILABLE:/);
-      expect(text).not.toMatch(/another conversation|unknown .*id/i);
-      return text;
+    expect(handles).toMatchObject({
+      jobId: expect.any(String),
+      activityId: expect.any(String),
+      agentId: expect.any(String),
+      threadId: expect.any(String),
+      jobVersion: expect.any(Number)
+    });
+    const foreignMetadata = { "openai/session": "foreign-tool-contract-test" };
+    const errorText = async (name: string, arguments_: Record<string, unknown>): Promise<string> => {
+      const result = await client.callTool({ name, arguments: arguments_, _meta: foreignMetadata });
+      expect(result.isError, JSON.stringify(result)).toBe(true);
+      const content = result.content || [];
+      return content
+        .filter((item): item is { type: "text"; text: string } => item.type === "text")
+        .map((item) => item.text)
+        .join("\n");
+    };
+    const expectSameUnavailable = async (
+      name: string,
+      foreignArguments: Record<string, unknown>,
+      missingArguments: Record<string, unknown>
+    ) => {
+      const [foreign, missing] = await Promise.all([
+        errorText(name, foreignArguments),
+        errorText(name, missingArguments)
+      ]);
+      expect(foreign).toContain("HANDLE_UNAVAILABLE");
+      expect(foreign).toBe(missing);
+      expect(foreign).not.toMatch(/another conversation|does not exist|unknown/i);
     };
 
-    const foreignJob = await unavailable("codex_status", {
-      scopeId: sourceScopeInput,
-      query: { kind: "job", id: handles.jobId }
-    });
-    const missingJob = await unavailable("codex_status", {
-      scopeId: sourceScopeInput,
-      query: { kind: "job", id: "job-not-retained" }
-    });
-    expect(foreignJob).toBe(missingJob);
-
-    await unavailable("codex_status", {
-      scopeId: sourceScopeInput,
-      query: { kind: "thread", id: handles.threadId }
-    });
-    await unavailable("codex_task", {
-      scopeId: sourceScopeInput,
-      requestId: randomUUID(),
-      taskContractVersion: properties.taskContractVersion?.const,
-      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
-      prompt: "Attempt to reuse an inaccessible Activity.",
-      activity: { mode: "existing", id: handles.activityId },
-      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
-      selection,
-      executionMode: "foreground"
-    });
-    await unavailable("codex_task", {
-      scopeId: sourceScopeInput,
-      requestId: randomUUID(),
-      taskContractVersion: properties.taskContractVersion?.const,
-      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
-      prompt: "Attempt to reuse an inaccessible Agent.",
-      agent: { mode: "existing", id: handles.agentId },
-      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
-      selection,
-      executionMode: "foreground"
-    });
-    await unavailable("codex_activity_update", {
-      scopeId: sourceScopeInput,
-      activityId: handles.activityId,
-      expectedVersion: handles.activityVersion,
-      operation: { kind: "seal" }
-    });
-    await unavailable("codex_cancel", {
-      requestId: randomUUID(),
-      target: { kind: "job", id: handles.jobId },
-      expectedVersion: handles.jobVersion,
-      reason: "foreign scope access test"
-    });
+    await expectSameUnavailable(
+      "codex_status",
+      { query: { kind: "job", id: handles.jobId } },
+      { query: { kind: "job", id: "missing-job" } }
+    );
+    await expectSameUnavailable(
+      "codex_status",
+      { query: { kind: "activity", id: handles.activityId } },
+      { query: { kind: "activity", id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" } }
+    );
+    await expectSameUnavailable(
+      "codex_status",
+      { query: { kind: "thread", id: handles.threadId } },
+      { query: { kind: "thread", id: "missing-thread" } }
+    );
+    await expectSameUnavailable(
+      "codex_agent",
+      { agentId: handles.agentId, requestId: randomUUID(), operation: { kind: "rename", name: "Foreign" } },
+      {
+        agentId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        requestId: randomUUID(), operation: { kind: "rename", name: "Missing" }
+      }
+    );
+    await expectSameUnavailable(
+      "codex_cancel",
+      {
+        requestId: randomUUID(), target: { kind: "job", id: handles.jobId },
+        expectedVersion: handles.jobVersion, reason: "fixture"
+      },
+      {
+        requestId: randomUUID(), target: { kind: "job", id: "missing-job" },
+        expectedVersion: handles.jobVersion, reason: "fixture"
+      }
+    );
+    await expectSameUnavailable(
+      "codex_activity_update",
+      {
+        activityId: handles.activityId, expectedVersion: 1,
+        operation: { kind: "set-policy", policy: { executionMode: "foreground" } }
+      },
+      {
+        activityId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", expectedVersion: 1,
+        operation: { kind: "set-policy", policy: { executionMode: "foreground" } }
+      }
+    );
   });
 
   it("records a detached HTTP task call without turning it into cancellation", async () => {
@@ -328,6 +454,193 @@ describe("current bridge tool contracts", () => {
       (item as { requestId?: unknown; status?: unknown }).requestId === requestId &&
       (item as { status?: unknown }).status === "completed"
     ));
+  });
+
+  it("keeps a background admission valid before App Server assigns its thread", async () => {
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const requestId = randomUUID();
+    const result = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: "78787878-7878-4787-8787-787878787878",
+        requestId,
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Wait for an App Server thread assignment.",
+        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+        selection,
+        executionMode: "background"
+      },
+      _meta: metadata
+    });
+
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    await hold.started;
+    const admitted = result.structuredContent as { jobId: string; state: string; threadId: string | null };
+    expect(admitted).toMatchObject({
+      jobId: expect.any(String),
+      state: "running",
+      threadId: null
+    });
+    const pendingJob = state.listJobs().find((job) => job.jobId === admitted.jobId);
+    expect(pendingJob?.threadId ?? null).toBeNull();
+
+    hold.assign("assigned-after-admission-thread");
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === admitted.jobId && job.threadId === "assigned-after-admission-thread"
+    ));
+    const status = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "job", id: admitted.jobId } },
+      _meta: metadata
+    });
+    expect(status.isError, JSON.stringify(status)).not.toBe(true);
+    expect(status.structuredContent).toMatchObject({
+      kind: "job",
+      items: [{
+        threadId: "assigned-after-admission-thread",
+        state: "running"
+      }]
+    });
+
+    hold.release();
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === admitted.jobId && job.status === "completed"
+    ));
+  });
+
+  it("automatically opens the originating conversation Dashboard only for background work", async () => {
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const result = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: "88888888-8888-4888-8888-888888888888",
+        requestId: randomUUID(),
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Complete background fixture work.",
+        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+        selection,
+        executionMode: "background"
+      },
+      _meta: metadata
+    });
+
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    const hydration = result._meta as Record<string, any>;
+    expect(hydration["openai/outputTemplate"])
+      .toBe(DASHBOARD_CARD_URI);
+    expect(hydration["codex/dashboardOpen@1"]).toMatchObject({
+      scope: "conversation",
+      automatic: true,
+      completionDeliveryRoute: "dashboard",
+      presentationToken: expect.any(String)
+    });
+    expect(hydration["openai/outputTemplate"]).not.toMatch(/activity|question/);
+
+    const origin = state.listJobs().find((job) =>
+      job.jobId === (result.structuredContent as { jobId?: string }).jobId
+    );
+    expect(origin).toBeDefined();
+    const completionActivityId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    state.createActivity({
+      activityId: completionActivityId,
+      scopeId: origin!.scopeId,
+      handoffPolicy: "notify",
+      completionTrigger: "sealed-jobs-terminal"
+    });
+    state.upsertJob({
+      jobId: "dashboard-completion-job",
+      requestId: "dashboard-completion-request",
+      scopeId: origin!.scopeId,
+      activityId: completionActivityId,
+      status: "completed",
+      updatedAt: Date.now()
+    });
+    state.sealActivity(completionActivityId);
+    const [outbox] = state.listPendingCompletionOutbox(origin!.scopeId);
+    expect(outbox).toMatchObject({ activityId: completionActivityId });
+
+    const widgetInstanceId = randomUUID();
+    const dashboard = await client.callTool({
+      name: "codex_ui_read",
+      arguments: {
+        view: "dashboard",
+        widgetInstanceId,
+        scope: "conversation",
+        presentationToken: hydration["codex/dashboardOpen@1"].presentationToken
+      },
+      _meta: metadata
+    });
+    expect(dashboard.isError, JSON.stringify(dashboard)).not.toBe(true);
+    const completion = (dashboard.structuredContent as any).completionDelivery;
+    expect(completion).toMatchObject({ route: "dashboard", events: [{ outboxId: outbox!.outboxId }] });
+
+    const claimed = await client.callTool({
+      name: "codex_ui_problem",
+      arguments: {
+        action: "completion-claim",
+        outboxIds: [outbox!.outboxId],
+        presentationToken: hydration["codex/dashboardOpen@1"].presentationToken,
+        widgetInstanceId
+      },
+      _meta: metadata
+    });
+    expect(claimed.isError, JSON.stringify(claimed)).not.toBe(true);
+    expect(claimed.structuredContent).toMatchObject({
+      kind: "completion-delivery",
+      state: "claimed",
+      events: [{ outboxId: outbox!.outboxId }]
+    });
+    const uncertain = await client.callTool({
+      name: "codex_ui_problem",
+      arguments: {
+        action: "completion-uncertain",
+        outboxIds: [outbox!.outboxId],
+        presentationToken: hydration["codex/dashboardOpen@1"].presentationToken,
+        widgetInstanceId
+      },
+      _meta: metadata
+    });
+    expect(uncertain.isError, JSON.stringify(uncertain)).not.toBe(true);
+    expect(uncertain.structuredContent).toMatchObject({ state: "uncertain" });
+    expect(state.listPendingCompletionOutbox(origin!.scopeId)).toEqual([]);
+
+    const settingsUpdate = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedSettingsRevision: settings.current.settingsRevision,
+        operation: { kind: "patch", settings: { dashboardAutoOpenBackground: false } }
+      },
+      _meta: metadata
+    });
+    expect(settingsUpdate.isError, JSON.stringify(settingsUpdate)).not.toBe(true);
+
+    const suppressed = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: "99999999-9999-4999-8999-999999999999",
+        requestId: randomUUID(),
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Complete hidden background fixture work.",
+        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+        selection,
+        executionMode: "background"
+      },
+      _meta: metadata
+    });
+    expect(suppressed.isError, JSON.stringify(suppressed)).not.toBe(true);
+    expect(suppressed._meta).not.toHaveProperty("openai/outputTemplate");
+    expect(suppressed._meta).not.toHaveProperty("codex/dashboardOpen@1");
+    expect((suppressed.structuredContent as any).warnings).toContain(
+      "Completion follow-up is queued because no verified host event or automatic Dashboard presentation is available."
+    );
   });
 });
 

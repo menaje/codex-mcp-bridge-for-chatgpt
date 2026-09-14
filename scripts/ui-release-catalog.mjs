@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 export const UI_RELEASE_CATALOG_FILENAME = "ui-release-catalog.json";
-export const UI_RESOURCE_NAMES = Object.freeze(["settings", "activity", "dashboard", "question"]);
-export const UI_ACTIVE_RESOURCE_NAMES = Object.freeze(["settings", "activity", "dashboard", "question"]);
+export const UI_RESOURCE_NAMES = Object.freeze(["settings", "dashboard"]);
+export const UI_ACTIVE_RESOURCE_NAMES = Object.freeze(["settings", "dashboard"]);
 export const UI_COMPATIBILITY_RESOURCE_NAMES = Object.freeze([]);
 
 const TOOL_PATTERN = /^codex_[a-z0-9_]+$/;
@@ -36,7 +36,7 @@ export function validateUiReleaseCatalog(value) {
     ],
     "UI release catalog"
   );
-  if (root.catalogVersion !== 3) fail("catalogVersion must be 3");
+  if (root.catalogVersion !== 4) fail("catalogVersion must be 4");
   exactResourceList(root.activeResources, UI_ACTIVE_RESOURCE_NAMES, "activeResources");
   exactResourceList(
     root.compatibilityResources,
@@ -64,29 +64,20 @@ export function validateUiReleaseCatalog(value) {
   }
 
   const retirement = record(root.retirement, "retirement");
-  exactKeys(retirement, ["activity"], "retirement");
-  const activity = record(retirement.activity, "retirement.activity");
-  exactKeys(
-    activity,
-    [
-      "lifecycle",
-      "newPresentations",
-      "replacement",
-      "firstStableWithReplacement",
-      "minimumSupportRule",
-      "statePreserved"
-    ],
-    "retirement.activity"
-  );
-  if (activity.lifecycle !== "historical-revisions-retired") fail("retirement.activity.lifecycle must be historical-revisions-retired");
-  if (activity.newPresentations !== true) fail("retirement.activity.newPresentations must be true");
-  if (activity.replacement !== "current-resource") fail("retirement.activity.replacement must be current-resource");
-  stringMatching(activity.firstStableWithReplacement, SEMVER_PATTERN, "retirement.activity.firstStableWithReplacement", 32);
-  if (activity.minimumSupportRule !== "none") {
-    fail("retirement.activity.minimumSupportRule must be none");
+  exactKeys(retirement, ["activity", "question"], "retirement");
+  for (const [name, expectedReplacement, preserved] of [
+    ["activity", "dashboard", ["activities", "agents", "jobs", "results", "idempotency"]],
+    ["question", "host-conversation", ["questions", "idempotency"]]
+  ]) {
+    const entry = record(retirement[name], `retirement.${name}`);
+    exactKeys(entry, ["lifecycle", "newPresentations", "replacement", "firstStableWithReplacement", "minimumSupportRule", "statePreserved"], `retirement.${name}`);
+    if (entry.lifecycle !== "historical-revisions-retired") fail(`retirement.${name}.lifecycle must be historical-revisions-retired`);
+    if (entry.newPresentations !== false) fail(`retirement.${name}.newPresentations must be false`);
+    if (entry.replacement !== expectedReplacement) fail(`retirement.${name}.replacement must be ${expectedReplacement}`);
+    stringMatching(entry.firstStableWithReplacement, SEMVER_PATTERN, `retirement.${name}.firstStableWithReplacement`, 32);
+    if (entry.minimumSupportRule !== "none") fail(`retirement.${name}.minimumSupportRule must be none`);
+    exactResourceList(entry.statePreserved, preserved, `retirement.${name}.statePreserved`);
   }
-  const preserved = ["activities", "agents", "jobs", "questions", "results", "idempotency"];
-  exactResourceList(activity.statePreserved, preserved, "retirement.activity.statePreserved");
 
   return value;
 }
@@ -95,14 +86,12 @@ export function uiReleaseCatalogSha256(value) {
   return createHash("sha256").update(`${JSON.stringify(value, null, 2)}\n`).digest("hex");
 }
 
-export function catalogCompatibilityRevisions(catalog) {
-  void catalog;
-  return [];
-}
-
 function validateToolContract(value, label) {
   const contract = record(value, label);
-  exactKeys(contract, ["presenterTool", "requiredTools"], label);
+  exactKeys(contract, ["uriVersion", "presenterTool", "requiredTools"], label);
+  if (!Number.isInteger(contract.uriVersion) || contract.uriVersion < 1 || contract.uriVersion > 9999) {
+    fail(`${label}.uriVersion must be an integer between 1 and 9999`);
+  }
   stringMatching(contract.presenterTool, TOOL_PATTERN, `${label}.presenterTool`, 100);
   if (!Array.isArray(contract.requiredTools) || contract.requiredTools.length < 1 || contract.requiredTools.length > 30) {
     fail(`${label}.requiredTools must contain 1 to 30 tools`);

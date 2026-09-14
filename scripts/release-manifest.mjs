@@ -1,6 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -8,7 +17,6 @@ import {
   UI_COMPATIBILITY_RESOURCE_NAMES,
   UI_RELEASE_CATALOG_FILENAME,
   UI_RESOURCE_NAMES,
-  catalogCompatibilityRevisions,
   loadUiReleaseCatalog,
   uiReleaseCatalogSha256,
   validateUiReleaseCatalog
@@ -20,7 +28,14 @@ const PLUGIN_MANIFEST_FILENAME = ".codex-plugin/plugin.json";
 const APP_MANIFEST_FILENAME = ".app.json";
 const UI_LOCK_FILENAME = "ui-manifest.lock.json";
 const UI_GENERATED_SOURCE = "src/uiManifest.generated.ts";
-const UI_SNAPSHOT_DIRECTORY = "ui-resources";
+const UI_RESOURCE_DIRECTORY = "ui-resources";
+const LEGACY_UI_RESOURCE_DIRECTORIES = Object.freeze([
+  "settings",
+  "activity",
+  "dashboard",
+  "question"
+]);
+const LEGACY_UI_SNAPSHOT_PATTERN = /^[0-9a-f]{64}\.html(?:\.base64)?$/;
 const APP_SERVER_SCHEMA_LOCK = "app-server-schema.lock.json";
 const STATE_MIGRATION_CATALOG = "state-migrations.json";
 const RELEASE_NOTES_DIRECTORY = "docs/releases";
@@ -237,7 +252,6 @@ export function validateReleaseManifest(value) {
     [
       "strategy",
       "hashAlgorithm",
-      "hashLength",
       "minimumContractGeneration",
       "resources",
       "activeResources",
@@ -247,11 +261,8 @@ export function validateReleaseManifest(value) {
     ],
     "uiResources"
   );
-  if (uiResources.strategy !== "content-hash") fail("uiResources.strategy must be content-hash");
+  if (uiResources.strategy !== "versioned-uri") fail("uiResources.strategy must be versioned-uri");
   if (uiResources.hashAlgorithm !== "sha256") fail("uiResources.hashAlgorithm must be sha256");
-  if (!Number.isInteger(uiResources.hashLength) || uiResources.hashLength < 12 || uiResources.hashLength > 64) {
-    fail("uiResources.hashLength must be an integer between 12 and 64");
-  }
   const minimumContractGeneration = requiredRecord(
     uiResources.minimumContractGeneration,
     "uiResources.minimumContractGeneration"
@@ -273,7 +284,7 @@ export function validateReleaseManifest(value) {
     UI_RESOURCE_NAMES.some((name) => !uiResources.resources.includes(name)) ||
     new Set(uiResources.resources).size !== uiResources.resources.length
   ) {
-    fail("uiResources.resources must contain settings, activity, dashboard, and question exactly once");
+    fail(`uiResources.resources must contain ${UI_RESOURCE_NAMES.join(", ")} exactly once`);
   }
   if (!sameJson(uiResources.activeResources, UI_ACTIVE_RESOURCE_NAMES)) {
     fail(`uiResources.activeResources must be ${UI_ACTIVE_RESOURCE_NAMES.join(", ")} in that order`);
@@ -968,7 +979,6 @@ function assertImmutableStateMigrationHistory(previous, next) {
 export function deriveUiResourceManifest(
   manifest,
   rendered,
-  _previous,
   catalog = loadUiReleaseCatalog(DEFAULT_REPO_ROOT)
 ) {
   validateReleaseManifest(manifest);
@@ -980,7 +990,6 @@ export function deriveUiResourceManifest(
   }
   const resources = {};
   const seenUris = new Set();
-  const catalogEntries = catalogCompatibilityRevisions(catalog);
   for (const name of config.resources) {
     const html = rendered?.resources?.[name]?.html;
     if (typeof html !== "string" || !html.trim()) {
@@ -991,7 +1000,9 @@ export function deriveUiResourceManifest(
       throw new Error(`Rendered UI resource ${name} is missing canonical cache metadata.`);
     }
     const digest = uiResourceDigest(config.hashAlgorithm, html, metadata);
-    const uri = `ui://${manifest.product.runtimeName}/${name}/${digest.slice(0, config.hashLength)}.html`;
+    const contract = catalog.currentContracts[name];
+    const uriVersion = contract.uriVersion;
+    const uri = `ui://${manifest.product.runtimeName}/${name}/v${uriVersion}.html`;
     const minimumContractGeneration = config.minimumContractGeneration[name];
     const currentContractGeneration = uiContractGeneration({ metadata });
     if (currentContractGeneration === undefined) {
@@ -1003,67 +1014,35 @@ export function deriveUiResourceManifest(
         `the supported minimum ${minimumContractGeneration}.`
       );
     }
-    const selected = [];
-    if (config.activeResources.includes(name)) {
-      const contract = catalog.currentContracts[name];
-      mergeSelectedUiRevision(selected, {
-        digest,
-        uri,
-        metadata: structuredClone(metadata),
-        releaseProvenance: {
-          inventories: ["development-current"],
-          sourceIds: ["rendered-current"],
-          presenterTool: contract.presenterTool,
-          requiredTools: [...contract.requiredTools]
-        }
-      });
+    if (!config.activeResources.includes(name)) {
+      throw new Error(`UI resource ${name} is not active in release-manifest.json.`);
     }
-    for (const catalogEntry of catalogEntries.filter((entry) => entry.revision.name === name)) {
-      const revision = catalogEntry.revision;
-      mergeSelectedUiRevision(selected, {
-        digest: revision.digest,
-        uri: revision.uri,
-        metadata: structuredClone(revision.metadata),
-        releaseProvenance: {
-          inventories: [catalogEntry.inventory],
-          sourceIds: [catalogEntry.sourceId],
-          presenterTool: revision.presenterTool,
-          requiredTools: [...revision.requiredTools]
-        }
-      });
-    }
-    if (selected.length === 0) {
-      throw new Error(`UI resource ${name} has no selected release revision.`);
-    }
-    if (config.compatibilityResources.includes(name)) {
-      const compatibility = selected[0];
-      if (compatibility.digest !== digest || compatibility.uri !== uri || !sameJson(compatibility.metadata, metadata)) {
-        throw new Error(
-          `Compatibility-only ${name} renderer changed from its selected deployed revision. ` +
-          `Record and review a new temporary exception before changing its release payload.`
-        );
+    if (seenUris.has(uri)) throw new Error(`UI resource URI collision: ${uri}.`);
+    seenUris.add(uri);
+    resources[name] = {
+      uriVersion,
+      digest,
+      uri,
+      metadata: structuredClone(metadata),
+      releaseProvenance: {
+        inventories: ["development-current"],
+        sourceIds: ["rendered-current"],
+        presenterTool: contract.presenterTool,
+        requiredTools: [...contract.requiredTools]
       }
-    }
-    const [current, ...previousRevisions] = selected;
-    for (const candidateUri of selected.map((entry) => entry.uri)) {
-      if (seenUris.has(candidateUri)) throw new Error(`UI resource URI collision: ${candidateUri}.`);
-      seenUris.add(candidateUri);
-    }
-    resources[name] = { ...current, previous: previousRevisions };
+    };
   }
-  const selected = Object.entries(resources).flatMap(([name, resource]) =>
-    [resource, ...resource.previous].map((revision) => ({
+  const selected = Object.entries(resources).map(([name, revision]) => ({
       name,
+      uriVersion: revision.uriVersion,
       digest: revision.digest,
       uri: revision.uri,
       ...structuredClone(revision.releaseProvenance)
-    }))
-  );
+    }));
   return {
-    manifestVersion: 2,
+    manifestVersion: 3,
     strategy: config.strategy,
     hashAlgorithm: config.hashAlgorithm,
-    hashLength: config.hashLength,
     minimumContractGeneration: structuredClone(config.minimumContractGeneration),
     releaseInventory: {
       catalog: UI_RELEASE_CATALOG_FILENAME,
@@ -1077,59 +1056,55 @@ export function deriveUiResourceManifest(
   };
 }
 
-function mergeSelectedUiRevision(selected, candidate) {
-  const existing = selected.find((entry) => entry.uri === candidate.uri);
-  if (!existing) {
-    if (selected.some((entry) => entry.digest === candidate.digest && !sameJson(entry.metadata, candidate.metadata))) {
-      throw new Error(`UI revision ${candidate.digest} has conflicting cache metadata.`);
-    }
-    selected.push(candidate);
-    return;
-  }
-  if (existing.digest !== candidate.digest || !sameJson(existing.metadata, candidate.metadata)) {
-    throw new Error(`UI resource URI ${candidate.uri} has conflicting immutable content or metadata.`);
-  }
-  if (existing.releaseProvenance.presenterTool !== candidate.releaseProvenance.presenterTool ||
-      !sameJson(existing.releaseProvenance.requiredTools, candidate.releaseProvenance.requiredTools)) {
-    throw new Error(`UI resource URI ${candidate.uri} has conflicting presenter or tool contracts.`);
-  }
-  for (const inventory of candidate.releaseProvenance.inventories) {
-    if (!existing.releaseProvenance.inventories.includes(inventory)) {
-      existing.releaseProvenance.inventories.push(inventory);
-    }
-  }
-  for (const sourceId of candidate.releaseProvenance.sourceIds) {
-    if (!existing.releaseProvenance.sourceIds.includes(sourceId)) {
-      existing.releaseProvenance.sourceIds.push(sourceId);
-    }
-  }
-}
-
 export function syncUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadReleaseManifest(repoRoot)) {
   const rendered = renderUiResources(repoRoot);
   const catalog = loadUiReleaseCatalog(repoRoot);
   const lockFile = path.join(repoRoot, UI_LOCK_FILENAME);
-  const previous = existsSync(lockFile) ? readJson(lockFile) : undefined;
-  const next = deriveUiResourceManifest(manifest, rendered, previous, catalog);
+  const next = deriveUiResourceManifest(manifest, rendered, catalog);
 
   for (const name of manifest.uiResources.resources) {
-    const entry = next.resources[name];
-    const directory = path.join(repoRoot, UI_SNAPSHOT_DIRECTORY, name);
-    mkdirSync(directory, { recursive: true });
-    writeTextAtomically(path.join(directory, `${entry.digest}.html`), rendered.resources[name].html);
-    for (const retained of entry.previous) {
-      if (!uiSnapshotFile(repoRoot, name, retained.digest)) {
-        throw new Error(
-          `Cannot retain previous ${name} UI revision ${retained.digest}: its immutable HTML snapshot is missing.`
-        );
-      }
-    }
+    writeTextAtomically(uiResourceSourceFile(repoRoot, name), rendered.resources[name].html);
   }
+  cleanupLegacyUiResourceSnapshots(repoRoot);
   writeJsonAtomically(lockFile, next);
   writeTextAtomically(path.join(repoRoot, UI_GENERATED_SOURCE), generatedUiManifestSource(next));
-  mkdirSync(path.join(repoRoot, "dist"), { recursive: true });
-  writeJsonAtomically(path.join(repoRoot, "dist/ui-manifest.json"), next);
+  copyUiResourcesToDist(repoRoot, next);
   return next;
+}
+
+export function copyUiResourcesToDist(
+  repoRoot = DEFAULT_REPO_ROOT,
+  resourceManifest = undefined
+) {
+  const selected = resourceManifest ?? readJson(path.join(repoRoot, UI_LOCK_FILENAME));
+  if (selected?.manifestVersion !== 3 || selected?.strategy !== "versioned-uri") {
+    throw new Error(`${UI_LOCK_FILENAME} does not use the current versioned-URI policy.`);
+  }
+  const resourceNames = Object.keys(selected.resources || {});
+  if (!sameJson(resourceNames, UI_ACTIVE_RESOURCE_NAMES)) {
+    throw new Error(`${UI_LOCK_FILENAME} must contain only ${UI_ACTIVE_RESOURCE_NAMES.join(", ")}.`);
+  }
+  const expectedFiles = expectedUiResourceFiles();
+  const actualFiles = listUiResourceFiles(repoRoot);
+  if (!sameJson(actualFiles, expectedFiles)) {
+    throw new Error(
+      `${UI_RESOURCE_DIRECTORY} must contain only ${expectedFiles.join(", ")}; found ${actualFiles.join(", ") || "nothing"}.`
+    );
+  }
+
+  const targetRoot = path.join(repoRoot, "dist", "ui");
+  rmSync(targetRoot, { recursive: true, force: true });
+  mkdirSync(targetRoot, { recursive: true });
+  for (const name of UI_ACTIVE_RESOURCE_NAMES) {
+    const revision = selected.resources[name];
+    const html = readFileSync(uiResourceSourceFile(repoRoot, name), "utf8");
+    if (uiResourceDigest(selected.hashAlgorithm, html, revision.metadata) !== revision.digest) {
+      throw new Error(`Current UI resource digest does not match: ${name}.`);
+    }
+    writeTextAtomically(path.join(targetRoot, `${name}.html`), html);
+  }
+  writeJsonAtomically(path.join(repoRoot, "dist", "ui-manifest.json"), selected);
+  return selected;
 }
 
 export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadReleaseManifest(repoRoot)) {
@@ -1146,7 +1121,7 @@ export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRe
     );
   }
   const rendered = renderUiResources(repoRoot);
-  const expected = deriveUiResourceManifest(manifest, rendered, lock, catalog);
+  const expected = deriveUiResourceManifest(manifest, rendered, catalog);
   const drift = [];
   if (!sameJson(lock, expected)) drift.push(UI_LOCK_FILENAME);
   const generatedFile = path.join(repoRoot, UI_GENERATED_SOURCE);
@@ -1155,25 +1130,27 @@ export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRe
   }
 
   const descriptorSource = readFileSync(path.join(repoRoot, "src/tools.ts"), "utf8");
+  const expectedFiles = expectedUiResourceFiles();
+  const actualFiles = listUiResourceFiles(repoRoot);
+  if (!sameJson(actualFiles, expectedFiles)) drift.push(`${UI_RESOURCE_DIRECTORY} file inventory`);
   for (const name of manifest.uiResources.resources) {
     const entry = expected.resources[name];
     if (rendered.resources[name].uri !== entry.uri) drift.push(`runtime ${name} resource URI`);
-    for (const revision of [entry, ...entry.previous]) {
-      const snapshotFile = uiSnapshotFile(repoRoot, name, revision.digest);
-      if (!snapshotFile) {
-        drift.push(`${name} snapshot ${revision.digest}`);
-        continue;
-      }
-      const html = readUiSnapshot(snapshotFile);
-      if (uiResourceDigest(expected.hashAlgorithm, html, revision.metadata) !== revision.digest) {
-        drift.push(`${name} snapshot digest ${revision.digest}`);
-      }
-      if (revision.digest === entry.digest && html !== rendered.resources[name].html) {
-        drift.push(`${name} current HTML snapshot`);
-      }
+    const sourceFile = uiResourceSourceFile(repoRoot, name);
+    if (!existsSync(sourceFile)) {
+      drift.push(`${name} current HTML file`);
+      continue;
+    }
+    const html = readFileSync(sourceFile, "utf8");
+    if (uiResourceDigest(expected.hashAlgorithm, html, entry.metadata) !== entry.digest) {
+      drift.push(`${name} current HTML digest`);
+    }
+    if (html !== rendered.resources[name].html) {
+      drift.push(`${name} current HTML file`);
     }
   }
-  for (const constant of ["SETTINGS_CARD_URI", "ACTIVITY_CARD_URI", "DASHBOARD_CARD_URI"]) {
+  for (const name of manifest.uiResources.resources) {
+    const constant = `${name.toUpperCase()}_CARD_URI`;
     const escaped = constant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (!new RegExp(`ui:\\s*\\{[\\s\\S]{0,120}?resourceUri:\\s*${escaped}\\b`).test(descriptorSource)) {
       drift.push(`${constant} _meta.ui.resourceUri`);
@@ -1422,24 +1399,43 @@ function renderUiResources(repoRoot) {
   return rendered;
 }
 
-function uiSnapshotFile(repoRoot, name, digest) {
-  for (const suffix of [".html", ".html.base64"]) {
-    const file = path.join(repoRoot, UI_SNAPSHOT_DIRECTORY, name, `${digest}${suffix}`);
-    if (existsSync(file)) return file;
+function uiResourceSourceFile(repoRoot, name) {
+  return path.join(repoRoot, UI_RESOURCE_DIRECTORY, `${name}.html`);
+}
+
+function expectedUiResourceFiles() {
+  return UI_ACTIVE_RESOURCE_NAMES.map((name) => `${name}.html`).sort();
+}
+
+function listUiResourceFiles(repoRoot) {
+  const root = path.join(repoRoot, UI_RESOURCE_DIRECTORY);
+  if (!existsSync(root)) return [];
+  const files = [];
+  const walk = (directory, prefix) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(path.join(directory, entry.name), relative);
+      else files.push(relative);
+    }
+  };
+  walk(root, "");
+  return files.sort();
+}
+
+function cleanupLegacyUiResourceSnapshots(repoRoot) {
+  const root = path.join(repoRoot, UI_RESOURCE_DIRECTORY);
+  for (const name of LEGACY_UI_RESOURCE_DIRECTORIES) {
+    const directory = path.join(root, name);
+    if (!existsSync(directory)) continue;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isFile() && LEGACY_UI_SNAPSHOT_PATTERN.test(entry.name)) {
+        rmSync(path.join(directory, entry.name), { force: true });
+      }
+    }
+    if (readdirSync(directory).length === 0) {
+      rmSync(directory, { recursive: true, force: true });
+    }
   }
-  return undefined;
-}
-
-function readUiSnapshot(file) {
-  const value = readFileSync(file, "utf8");
-  return file.endsWith(".base64") ? Buffer.from(value.trim(), "base64").toString("utf8") : value;
-}
-
-function validUiRevision(value) {
-  return isRecord(value) &&
-    typeof value.digest === "string" && /^[0-9a-f]{64}$/.test(value.digest) &&
-    typeof value.uri === "string" && value.uri.startsWith("ui://") &&
-    (value.metadata === undefined || isRecord(value.metadata));
 }
 
 function uiContractGeneration(revision) {
@@ -1448,10 +1444,6 @@ function uiContractGeneration(revision) {
 }
 
 function uiResourceDigest(algorithm, html, metadata) {
-  if (metadata === undefined) {
-    // Compatibility with the last pre-envelope generation.
-    return createHash(algorithm).update(html).digest("hex");
-  }
   return createHash(algorithm)
     .update(stableJson({ html, metadata }))
     .digest("hex");

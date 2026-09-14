@@ -17,7 +17,7 @@ product. They never receive independent product versions.
 | Stable provenance | `release.sourceCandidate` | Exact last `X.Y.Z-rc.N` used for stable promotion |
 | Build identity | `CFBundleVersion`, `dist/build-info.json` commit/time/source hash | Identifies a build, not the product version |
 | Manifest schema | `manifestVersion` (currently 6) | Release metadata plus state and UI compatibility contracts |
-| UI resource policy | `ui-release-catalog.json`, its manifest digest, the generated release inventory, UI contract generations and immutable resource URIs | One current immutable revision per active card, independent of SemVer |
+| UI resource policy | `ui-release-catalog.json`, its manifest digest, generated release inventory, UI contract generations and explicit URI versions | One current file per active card; compatible updates keep the URI, independent of SemVer |
 | State compatibility | `stateCompatibility` plus `state-migrations.json` (currently schemas 3–18 to 19) | Local data, applied-migration provenance, state-profile, backup, and recovery axes; see the [state upgrade and recovery runbook](state-upgrade-recovery.md) |
 | Tool/runtime contracts | Task input contract 3, helper protocol 2, local companion protocol 2, remote companion protocol 1, execution-policy references, App Server schema lock and pinned Codex CLI | Independent protocol and state axes |
 | Runtime state | `.env`, authentication material, SQLite data, process locks | Never a version authority or release payload |
@@ -49,15 +49,15 @@ pre-service restore and post-service forward-repair boundary.
 ## Card resource gate at release boundaries
 
 The [UI card release policy](ui-release-compatibility.md) requires one current
-immutable resource for each active card: Settings, Activity, Dashboard, and
-Question. The catalog has no published baseline or temporary compatibility
-selection. A release contains only those current identities and their required
-presenter/tool contracts.
+file for each active card: Settings and Dashboard. Compatible card and metadata
+updates overwrite those files while preserving their explicit URI versions.
+The catalog has no published baseline or temporary compatibility selection.
 
-Finalize card selection before the final RC. A changed card or host-affecting
-metadata produces a new URI, removes the displaced URI from the package, and
-requires connector refresh and card-open verification. Activity data and
-execution logic remain durable even when a resource revision is retired.
+Finalize card contracts before the final RC. Increment only the affected
+card's URI version when a cached card cannot safely use the new server contract,
+then refresh connector discovery and reopen both cards. Activity and Question
+presentation resources remain retired while their durable state and execution
+logic remain available through current contracts.
 
 ## Stage and branch lifecycle
 

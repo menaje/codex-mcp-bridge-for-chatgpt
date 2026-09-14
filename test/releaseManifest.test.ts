@@ -323,62 +323,74 @@ describe("release manifest", () => {
     expect(() => setReleaseVersion("1.2.3-01", root)).toThrow(/Version must be/);
   });
 
-  it("keeps UI cache keys independent from SemVer and changes them for HTML or host metadata", () => {
+  it("keeps UI URIs stable across compatible changes and versions them explicitly for breaking changes", () => {
     const manifest = developmentManifest();
     const catalog = loadUiReleaseCatalog(REPO_ROOT);
     const initialLock = readJson(path.join(REPO_ROOT, "ui-manifest.lock.json"));
     const rendered = renderedFromLock(initialLock);
-    const initial = deriveUiResourceManifest(manifest, rendered, undefined, catalog);
+    const initial = deriveUiResourceManifest(manifest, rendered, catalog);
     const nextRelease = structuredClone(manifest);
     nextRelease.release.version = "0.3.1";
-    const semverOnly = deriveUiResourceManifest(nextRelease, rendered, initial, catalog);
+    const semverOnly = deriveUiResourceManifest(nextRelease, rendered, catalog);
 
     expect(semverOnly.resources.settings.uri).toBe(initial.resources.settings.uri);
-    expect(semverOnly.resources.activity.uri).toBe(initial.resources.activity.uri);
     expect(semverOnly.resources.dashboard.uri).toBe(initial.resources.dashboard.uri);
 
     const metadataChanged = structuredClone(rendered);
-    metadataChanged.resources.settings.metadata.content.prefersBorder = false;
-    const afterMetadata = deriveUiResourceManifest(manifest, metadataChanged, initial, catalog);
-    expect(afterMetadata.resources.settings.uri).not.toBe(initial.resources.settings.uri);
-    expect(afterMetadata.resources.settings.previous).toEqual(initial.resources.settings.previous);
-    expect(afterMetadata.resources.activity.uri).toBe(initial.resources.activity.uri);
+    metadataChanged.resources.settings.metadata.content["openai/widgetPrefersBorder"] = true;
+    const afterMetadata = deriveUiResourceManifest(manifest, metadataChanged, catalog);
+    expect(afterMetadata.resources.settings.uri).toBe(initial.resources.settings.uri);
+    expect(afterMetadata.resources.settings.digest).not.toBe(initial.resources.settings.digest);
+    expect(afterMetadata.resources.dashboard.digest).toBe(initial.resources.dashboard.digest);
 
     const htmlChanged = structuredClone(rendered);
-    htmlChanged.resources.activity.html += "<!-- changed -->";
-    const afterHtml = deriveUiResourceManifest(manifest, htmlChanged, initial, catalog);
-    expect(afterHtml.resources.activity.uri).not.toBe(initial.resources.activity.uri);
-    expect(afterHtml.resources.activity.previous).toEqual([]);
+    htmlChanged.resources.dashboard.html += "<!-- compatible change -->";
+    const afterHtml = deriveUiResourceManifest(manifest, htmlChanged, catalog);
+    expect(afterHtml.resources.dashboard.uri).toBe(initial.resources.dashboard.uri);
+    expect(afterHtml.resources.dashboard.digest).not.toBe(initial.resources.dashboard.digest);
+
+    const breakingCatalog = structuredClone(catalog);
+    breakingCatalog.currentContracts.settings.uriVersion += 1;
+    const afterBreakingChange = deriveUiResourceManifest(
+      manifest,
+      rendered,
+      breakingCatalog
+    );
+    expect(afterBreakingChange.resources.settings.uri).not.toBe(initial.resources.settings.uri);
+    expect(afterBreakingChange.resources.settings.digest).toBe(initial.resources.settings.digest);
+    expect(afterBreakingChange.resources.dashboard.uri).toBe(initial.resources.dashboard.uri);
   });
 
-  it("selects only the four current UI revisions without accumulating development history", () => {
+  it("selects only the two current UI files without accumulating revision history", () => {
     const manifest = loadReleaseManifest(REPO_ROOT);
     const catalog = loadUiReleaseCatalog(REPO_ROOT);
     const lock = readJson(path.join(REPO_ROOT, "ui-manifest.lock.json"));
     const rendered = renderedFromLock(lock);
-    const unrelatedHistory = structuredClone(lock);
-    unrelatedHistory.resources.settings.previous.push({
-      digest: "0".repeat(64),
-      uri: "ui://codex-mcp-bridge/settings/unclassified.html",
-      metadata: lock.resources.settings.metadata
-    });
-    const selected = deriveUiResourceManifest(manifest, rendered, unrelatedHistory, catalog);
+    const selected = deriveUiResourceManifest(manifest, rendered, catalog);
     expect(selected).toEqual(lock);
-    expect(selected.releaseInventory.selected).toHaveLength(4);
-    expect(selected.resources.settings.previous).toEqual([]);
-    expect(selected.resources.activity.previous).toEqual([]);
-    expect(selected.resources.dashboard.previous).toEqual([]);
-    expect(selected.resources.question.previous).toEqual([]);
+    expect(selected.manifestVersion).toBe(3);
+    expect(selected.strategy).toBe("versioned-uri");
+    expect(selected.releaseInventory.selected).toHaveLength(2);
+    expect(selected.resources.settings).not.toHaveProperty("previous");
+    expect(selected.resources.dashboard).not.toHaveProperty("previous");
     expect(selected.releaseInventory.retirement.activity).toMatchObject({
       lifecycle: "historical-revisions-retired",
-      newPresentations: true,
+      newPresentations: false,
+      replacement: "dashboard",
+      firstStableWithReplacement: "0.4.1",
+      minimumSupportRule: "none"
+    });
+    expect(selected.releaseInventory.retirement.question).toMatchObject({
+      lifecycle: "historical-revisions-retired",
+      newPresentations: false,
+      replacement: "host-conversation",
       firstStableWithReplacement: "0.4.1",
       minimumSupportRule: "none"
     });
 
     const missingGeneration = structuredClone(rendered);
     delete missingGeneration.resources.settings.metadata.content["codex/uiContractGeneration"];
-    expect(() => deriveUiResourceManifest(manifest, missingGeneration, lock, catalog))
+    expect(() => deriveUiResourceManifest(manifest, missingGeneration, catalog))
       .toThrow(/settings is missing codex\/uiContractGeneration/);
 
     const addedCompatibility = structuredClone(catalog);
@@ -387,9 +399,14 @@ describe("release manifest", () => {
       .toThrow(/compatibilityResources must be/);
 
     const changedRetirement = structuredClone(catalog);
-    changedRetirement.retirement.activity.newPresentations = false;
+    changedRetirement.retirement.activity.newPresentations = true;
     expect(() => validateUiReleaseCatalog(changedRetirement))
-      .toThrow(/retirement\.activity\.newPresentations must be true/);
+      .toThrow(/retirement\.activity\.newPresentations must be false/);
+
+    const missingUriVersion = structuredClone(catalog);
+    delete missingUriVersion.currentContracts.settings.uriVersion;
+    expect(() => validateUiReleaseCatalog(missingUriVersion))
+      .toThrow(/currentContracts\.settings keys must be exactly/);
 
     const driftedManifest = structuredClone(manifest);
     driftedManifest.uiResources.releaseCatalogSha256 = "0".repeat(64);
@@ -495,21 +512,15 @@ function renderedFromLock(lock: any): any {
       name,
       {
         uri: value.uri,
-        html: readUiSnapshot(name, value.digest),
+        html: readCurrentUiResource(name),
         metadata: structuredClone(value.metadata)
       }
     ]))
   };
 }
 
-function readUiSnapshot(name: string, digest: string): string {
-  const plain = path.join(REPO_ROOT, "ui-resources", name, `${digest}.html`);
-  try {
-    return readFileSync(plain, "utf8");
-  } catch {
-    const encoded = readFileSync(`${plain}.base64`, "utf8");
-    return Buffer.from(encoded.trim(), "base64").toString("utf8");
-  }
+function readCurrentUiResource(name: string): string {
+  return readFileSync(path.join(REPO_ROOT, "ui-resources", `${name}.html`), "utf8");
 }
 
 function readJson(file: string): any {

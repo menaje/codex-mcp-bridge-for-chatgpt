@@ -807,7 +807,7 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(draft.explicitSelectionKeys, [ultra.key])
     }
 
-    func testHidingActivityCardAlsoDisablesAutomaticHandoff() throws {
+    func testDashboardPresentationAndCompletionFollowUpAreIndependent() throws {
         let snapshot = try settingsSnapshot(
             policy: [
                 "mode": "automatic",
@@ -817,12 +817,11 @@ final class AppPresentationTests: XCTestCase {
             catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
         )
         var draft = SettingsDraft(snapshot: snapshot)
-        draft.completionHandoff = "auto-handoff"
+        draft.dashboardAutoOpenBackground = false
+        draft.completionFollowUp = true
 
-        draft.setActivityCardVisibility("never")
-
-        XCTAssertEqual(draft.activityCardVisibility, "never")
-        XCTAssertEqual(draft.completionHandoff, "off")
+        XCTAssertFalse(draft.dashboardAutoOpenBackground)
+        XCTAssertTrue(draft.completionFollowUp)
     }
 
     func testModelDescriptionEditKeepsCatalogTextLiveAndOnlySavesDeliberateChanges() {
@@ -1939,6 +1938,8 @@ private func settingsSnapshot(
     settingsRevision: Int = 4,
     accessStrategy: String = "adaptive",
     showBridgeThreadsInCodexApp: Bool = true,
+    dashboardAutoOpenBackground: Bool = true,
+    completionFollowUp: Bool = false,
     policy: [String: Any],
     legacyPreferredModel: String? = nil,
     modelDescriptionOverrides: [String: String]? = nil,
@@ -1957,8 +1958,8 @@ private func settingsSnapshot(
         "uiLocalePreference": "auto",
         "maxConcurrentJobs": 2,
         "showBridgeThreadsInCodexApp": showBridgeThreadsInCodexApp,
-        "activityCardVisibility": "always",
-        "completionHandoff": "off"
+        "dashboardAutoOpenBackground": dashboardAutoOpenBackground,
+        "completionFollowUp": completionFollowUp
     ]
     if let legacyPreferredModel {
         settings["legacyPreferredModel"] = legacyPreferredModel
@@ -1969,11 +1970,9 @@ private func settingsSnapshot(
     var capabilities: [String: Any] = [
         "availableAccessStrategies": ["read-only", "adaptive"],
         "availableUiLocalePreferences": ["auto", "ko", "en"],
-        "availableActivityCardVisibilities": ["always", "background-only", "never"],
-        "availableCompletionHandoffs": ["off", "auto-handoff"],
         "projectAvailability": [],
         "maxConcurrentJobs": 4,
-        "defaultBackend": "mcp-server",
+        "defaultBackend": "app-server",
         "allowWorkspaceWrite": true,
         "allowDangerFullAccess": false,
         "persistent": true

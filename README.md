@@ -25,7 +25,7 @@ On macOS, open the menu-bar icon to check the selected server without opening Ch
 
 - **Connection and Codex usage:** server/client target, Bridge health, and—when available—weekly Codex usage remaining with its reset time.
 - **Work state:** running, response-required, and issue counts, plus a conditional background-process indicator. Selecting a count filters the loaded current-work snapshot without another server read.
-- **Activity details:** filtered current-work lists or 12-row on-demand run history, with project, conversation, Agent, actual model, canonical lowercase reasoning effort, conditional next-run settings, snapshot work time, and background processes.
+- **Work details:** filtered current-work lists or 12-row on-demand run history, with project, conversation, Agent, actual model, canonical lowercase reasoning effort, conditional next-run settings, snapshot work time, and background processes.
 - **Quick actions:** refresh status, continue a conversation in Codex after verified connection release, open Settings, control the server, or quit the app. See [conversation connections and retention](docs/thread-lifecycle.md) for waiting reasons, persistence constraints and returning to the bridge.
 
 <p align="center">
@@ -152,7 +152,7 @@ Use remote management only on a private LAN or private VPN that you control. See
 - [State upgrade and recovery runbook](docs/state-upgrade-recovery.md) — release-stage profiles, migration preflight, verified restore, and post-service recovery
 - [Input contracts](docs/input-contracts.md) and [output contracts](docs/output-contracts.md) — public and app-private protocol details
 - [Release process](docs/releasing.md) and [release governance](docs/release-governance.md) — maintainer workflow and distribution gates
-- [UI release policy](docs/ui-release-compatibility.md) — immutable current card resources and release checks
+- [UI release policy](docs/ui-release-compatibility.md) — single-file cards, stable URI versions, cache limits, and release checks
 
 ## Development
 
@@ -174,6 +174,6 @@ Release identity and supported targets are defined in `release-manifest.json`. H
 
 MIT
 
-GPT handles ordinary Codex questions through `codex_status` (input query) and `codex_answer`. When the user’s opinion is needed, GPT can open a question card with `codex_ask_user` and retrieve the response with `codex_user_answer`. See [question orchestration](docs/gpt-questions.md) for the protocol, retention policy, and host validation limits.
+GPT handles ordinary Codex questions through `codex_status` (input query) and `codex_answer`. When the user’s opinion is needed, GPT asks in the current ChatGPT conversation, verifies that the original question remains valid, and sends the answer to the exact Codex turn. See [question orchestration](docs/gpt-questions.md) for the protocol, retention policy, and host validation limits.
 
-The current card and tool contract is described in [Card tools](docs/card-tools.md). Open the Dashboard for current work, Settings to manage the bridge, Activity for detailed work monitoring, or a Question card when a decision is needed.
+The current card and tool contract is described in [Card tools](docs/card-tools.md). Open the Dashboard for current work and Settings to manage the bridge.

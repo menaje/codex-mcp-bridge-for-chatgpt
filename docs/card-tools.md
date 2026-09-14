@@ -1,8 +1,9 @@
-# Card tools and current discovery contract
+# Current tool and card contract
 
-The bridge exposes 26 current tools: 12 model-visible tools and 14
-app-private card/control tools. There are no compatibility registrations,
-unadvertised aliases, or retired card presenters.
+The default MCP discovery surface has 15 tools: 10 model-visible tools and 5
+app-only tools. Recovery-only tools are opt-in and do not appear in the default
+inventory. There are no compatibility registrations, aliases, Question-card
+presenters, or Activity-card presenters.
 
 ## Model-visible tools
 
@@ -13,61 +14,62 @@ unadvertised aliases, or retired card presenters.
 | `codex_status` | Read a Job, Activity, thread, project, or bounded input wait. |
 | `codex_cancel` | Explicitly cancel an exact Job or Activity. |
 | `codex_answer` | Answer a current ordinary Codex question. |
-| `codex_ask_user` | Create a user-decision question card. |
-| `codex_user_answer` | Read a stored answer to a user-decision question. |
 | `codex_dashboard` | Open the Dashboard card. |
 | `codex_models` | Read the saved selection mode and allowed model catalog. |
 | `codex_settings` | Open the Settings card. |
 | `codex_agent` | Rename a retained Agent. |
 | `codex_activity_update` | Apply a versioned non-cancelling Activity transition. |
 
-## App-private tools
+## App-only tools
 
 | Tool | Purpose |
 | --- | --- |
-| `codex_question_action` | Submit or acknowledge a Question card action. |
-| `codex_activity` | Read Activity card data. |
-| `codex_activity_rehydrate` | Restore a mounted Activity card. |
-| `codex_activity_snapshot` | Read a compact Activity card snapshot. |
-| `codex_activity_handoff` | Complete an Activity card handoff. |
-| `codex_background_process_terminate` | Terminate a verified background process. |
-| `codex_activity_job_cancel` | Cancel a card-selected Job. |
-| `codex_interaction_respond` | Answer an original Codex approval or input request. |
-| `codex_job_steer` | Steer a card-selected Job. |
+| `codex_ui_read` | Read Dashboard, Settings, work detail, or problem-review data. |
 | `codex_update_settings` | Commit versioned settings and project changes. |
-| `codex_ui_read` | Read the current Dashboard, Settings, Question, control, history, or problem view. |
-| `codex_ui_problem` | Inspect or resolve a verified UI problem. |
-| `codex_ui_history` | Acknowledge a selected history item. |
-| `codex_ui_stop` | Stop a verified Job or process from a card. |
+| `codex_interaction_respond` | Respond to an original Codex approval or non-ordinary input request. |
+| `codex_ui_problem` | Resolve a verified UI problem and acknowledge Dashboard completion delivery. |
+| `codex_ui_stop` | Stop a Dashboard-selected Job or verified background process. |
 
-App-private does not mean unconstrained. Each tool has a closed schema and
-requires its normal card proof, scope, revision, ownership, or permission
-checks. The model-visible list intentionally excludes those proof-bearing
-operations.
+Each app-only action has a closed schema and requires its normal mounted
+Dashboard proof, scope, revision, and ownership checks. Model-visible tools do
+not receive those proof-bearing operations.
 
-## Cards
+## Cards, ordinary questions, and completion follow-up
 
-The four active resources are Settings, Activity, Dashboard, and Question.
-Their current immutable URIs are in the [UI release policy](ui-release-compatibility.md).
+Settings and Dashboard are the only current UI resources. `codex_settings` and
+`codex_dashboard` open them; both load authoritative data through
+`codex_ui_read`.
 
-`codex_settings` and `codex_dashboard` open a card. The card reads its current
-view through `codex_ui_read`; it does not treat an old opener response as
-authoritative data. `codex_activity` and the Activity-specific private tools
-serve the current Activity card. `codex_ask_user` opens the Question card, and
-`codex_question_action` preserves the card's proof and immutable answer rules.
+Ordinary Codex questions stay in the ChatGPT conversation. GPT reads a current
+question with `codex_status({query:{kind:"input", ...}})`, asks the user in the
+normal conversation if their decision is needed, then sends a valid current
+answer through `codex_answer`. The retired `codex_ask_user`,
+`codex_user_answer`, and `codex_question_action` routes have no replacement
+card API.
 
-## Contract sizing review
+`dashboardAutoOpenBackground` controls automatic Dashboard presentation. It
+opens only for a newly admitted background task in its originating conversation;
+foreground work never opens it automatically. Manual Dashboard opening remains
+available.
 
-The offline current-protocol audit on 2026-09-14 measured 26 descriptors:
+`completionFollowUp` uses the durable completion outbox independently of card
+state. A verified host conversation-resume event takes priority when one is
+implemented and verified. Until then, an automatically opened Dashboard can
+send one bounded `ui/message` follow-up and acknowledge the exact outbox event.
+If no route exists the event remains pending. If message delivery becomes
+uncertain, it is held out of automatic retries rather than being sent through a
+second channel.
 
-| Audience | Tools | Input schema bytes | Output schema bytes |
-| --- | ---: | ---: | ---: |
-| Model-visible | 12 | 17,240 | 54,843 |
-| App-private | 14 | 38,591 | 98,323 |
-| Total | 26 | 55,831 | 153,166 |
+## Retired public routes
 
-These are UTF-8 JSON bytes, not model-token counts. The larger private
-descriptors preserve card proof, version, pagination, and ownership validation;
-they are not sent in the model-visible tool inventory. See
-[the final tool-contract audit](audits/mcp-tool-cleanup-review-2026-09-14.md)
-for the method and remaining tradeoffs.
+The following routes are intentionally absent from discovery:
+
+`codex_ask_user`, `codex_user_answer`, `codex_question_action`,
+`codex_activity`, `codex_activity_rehydrate`, `codex_activity_snapshot`,
+`codex_activity_handoff`, `codex_activity_job_cancel`,
+`codex_background_process_terminate`, `codex_job_steer`, and
+`codex_ui_history`.
+
+Activity, Agent, Job, result, idempotency, and legacy question records remain
+in SQLite for retention and migration compatibility. Retained state does not
+reactivate a retired presenter or tool.

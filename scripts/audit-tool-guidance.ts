@@ -127,12 +127,26 @@ try {
   await probe("unknown-job-status", "codex_status", { query: { kind: "job", id: "not-an-audit-job" } });
   await probe("status-wait-without-mode", "codex_status", { query: { kind: "job", id: "not-an-audit-job", waitMs: 1 } });
   await probe("unknown-job-input", "codex_status", { query: { kind: "input", jobId: "not-an-audit-job" } });
-  await probe("unknown-user-answer", "codex_user_answer", { responseRef: randomUUID() });
-  await probe("duplicate-question-ids", "codex_ask_user", { requestId: randomUUID(), title: "Offline audit",
-    questions: [1, 2].map(() => ({ id: "duplicate", header: "Audit", question: "Offline fixture?" })) });
+  await probe("unknown-codex-answer", "codex_answer", {
+    requestId: randomUUID(), jobId: "not-an-audit-job", questionRef: "a".repeat(64),
+    answers: { audit: ["offline"] }
+  });
+  const unexpectedRetiredTools = [
+    "codex_ask_user", "codex_user_answer", "codex_question_action", "codex_activity",
+    "codex_activity_rehydrate", "codex_activity_snapshot", "codex_activity_handoff",
+    "codex_activity_job_cancel", "codex_background_process_terminate", "codex_job_steer",
+    "codex_ui_history"
+  ].filter((name) => inventory.some((tool) => tool.name === name));
+  assert.deepEqual(unexpectedRetiredTools, [], "Retired question or Activity tools are still discoverable.");
+  probes.push({
+    label: "retired-question-and-activity-tools-absent",
+    name: "tools/list",
+    isError: false,
+    unexpectedPresent: unexpectedRetiredTools
+  });
   await probe("empty-activity-policy", "codex_activity_update", { activityId: randomUUID(), expectedVersion: 1,
     operation: { kind: "set-policy", policy: {} } });
-  await probe("compact-card-without-presentation-id", "codex_activity", { mode: "compact-monitor" });
+  await probe("conversation-dashboard", "codex_dashboard", { scope: "conversation" });
   const alpha = settings.current.projects.find(p => p.name === "Alpha")!;
   await rm(path.join(root, "Alpha"), { recursive: true });
   await probe("requested-folder-unavailable", "codex_status", { query: { kind: "project", name: alpha.name } });

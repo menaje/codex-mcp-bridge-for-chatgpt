@@ -142,12 +142,11 @@ The active immutable cards are:
 | --- | --- |
 | Settings | `codex_settings`, then private `codex_ui_read` |
 | Dashboard | `codex_dashboard`, then private `codex_ui_read` |
-| Activity | private `codex_activity` and its scoped Activity operations |
-| Question | `codex_ask_user`, then private `codex_question_action` |
 
-The Dashboard shows retained work. The Activity card provides scoped work
-monitoring and controls. A Question card collects the user's decision for
-ChatGPT; it does not directly answer or approve a Codex request.
+The Dashboard shows retained and current work, including scoped monitoring and
+controls. GPT asks for ordinary user decisions directly in the current ChatGPT
+conversation; original Codex approvals and non-ordinary input remain in the
+Dashboard work detail.
 
 ## 7. Refresh after a release
 
@@ -183,12 +182,13 @@ npm test
 In a fresh ChatGPT conversation:
 
 1. Open Settings and register a project.
-2. Open Dashboard and Activity; confirm each current card loads.
+2. Open Dashboard; confirm both current cards load.
 3. Call `codex_models` and confirm its one current catalog response.
 4. Start a harmless task with contract version 3 and its exact envelope
    constant.
 5. Read its status and exact terminal result.
-6. Create and answer a user-decision question.
+6. If Codex asks an ordinary question, answer it through the current ChatGPT
+   conversation and verify that it reaches the exact active Job.
 7. Restart the bridge, reconnect, and confirm retained work is still visible.
 
 For release acceptance, also record a real current-protocol discovery, tool
