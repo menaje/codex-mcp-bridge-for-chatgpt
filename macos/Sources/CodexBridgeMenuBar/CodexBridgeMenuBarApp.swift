@@ -213,12 +213,35 @@ final class BridgeMenuBarController: NSObject, NSPopoverDelegate {
             // AppKit's resize animation can briefly recenter the hosted SwiftUI
             // content before it expands the popover. Keep the menu anchor fixed
             // and apply this content-size change atomically instead.
-            let animates = self.popover.animates
+            let window = self.popover.isShown ? self.hostingController?.view.window : nil
+            let anchoredMaxY = window?.frame.maxY
             self.popover.animates = false
             self.hostingController?.preferredContentSize = next
             self.popover.contentSize = next
-            self.popover.animates = animates
+            if let window, let anchoredMaxY {
+                self.pinPopoverWindow(window, toMaxY: anchoredMaxY)
+            }
+            // NSPopover can finish its internal frame update on the following
+            // run-loop pass. Keep animations disabled through that pass and
+            // restore the top edge once more before accepting new animation.
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self else { return }
+                if let window, let anchoredMaxY,
+                   self.popover.isShown,
+                   self.hostingController?.view.window === window {
+                    self.pinPopoverWindow(window, toMaxY: anchoredMaxY)
+                }
+                self.popover.animates = true
+            }
         }
+    }
+
+    private func pinPopoverWindow(_ window: NSWindow, toMaxY anchoredMaxY: CGFloat) {
+        var frame = window.frame
+        let offset = anchoredMaxY - frame.maxY
+        guard abs(offset) >= 0.5 else { return }
+        frame.origin.y += offset
+        window.setFrame(frame, display: true)
     }
 
     private func updateStatusItem() {
