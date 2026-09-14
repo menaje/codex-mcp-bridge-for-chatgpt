@@ -15,6 +15,7 @@ const session = `activity-card-regression-${process.pid}`;
 const browserTitle = "Browser hydration activity";
 const recentTitle = "Recent browser activity";
 const idleAgentName = "Idle browser Agent";
+const cancellationReason = "사용자가 취소한 이유를 즉시 보여줍니다.";
 const execFileAsync = promisify(execFile);
 
 mkdirSync(artifactDir, { recursive: true });
@@ -35,7 +36,14 @@ const view = {
         elapsedMs: 1_000,
         counts: { total: 1, failed: 0 },
         agents: [],
-        cancellations: [],
+        cancellations: [
+          {
+            targetKind: "activity",
+            status: "requested",
+            reason: cancellationReason,
+            requestedAt: "2026-09-03T00:00:00.000Z"
+          }
+        ],
         canRequestVerification: false,
         canRetry: false
       }
@@ -340,6 +348,8 @@ type BrowserState = {
   message: string;
   messageIsError: boolean;
   refreshLabel: string;
+  cancellationReason: string;
+  cancellationDisclosureCount: number;
   toolCalls: Array<{ name: string; args: Record<string, unknown> }>;
   errors: string[];
 };
@@ -362,6 +372,8 @@ async function browserState(framed = false): Promise<BrowserState> {
       message:document.querySelector("#message").textContent,
       messageIsError:document.querySelector("#message").classList.contains("error"),
       refreshLabel:document.querySelector("#refresh").getAttribute("aria-label")||"",
+      cancellationReason:document.querySelector(".cancellation-reason")&&document.querySelector(".cancellation-reason").textContent||"",
+      cancellationDisclosureCount:document.querySelectorAll("details.cancellation").length,
       toolCalls:window.__activityToolCalls||[],
       errors:window.__activityBrowserErrors||[]
     }));${framed ? "state.toolCalls=await page.evaluate(()=>window.__activityToolCalls||[]);" : ""}return state}`
@@ -385,6 +397,8 @@ function assertRendered(name: string, state: BrowserState): void {
   assert(state.idleExecution === "모델 · 추론 확인 불가", `${name}: unavailable idle execution was omitted`);
   assert(state.idleExpanded === "false", `${name}: idle section did not start collapsed`);
   assert(state.idlePanelHidden, `${name}: idle section content was visible by default`);
+  assert(state.cancellationReason === cancellationReason, `${name}: cancellation reason was not visible immediately`);
+  assert(state.cancellationDisclosureCount === 0, `${name}: cancellation reason was hidden behind a disclosure`);
   assert(!state.messageIsError, `${name}: card rendered an error state`);
   assert(state.errors.length === 0, `${name}: browser errors: ${state.errors.join("; ")}`);
 }
@@ -398,6 +412,8 @@ function assertRestoredFullHistory(name: string, state: BrowserState): void {
   assert(state.recentTitle === recentTitle, `${name}: Activity history was not rendered`);
   assert(state.recentExecution === "GPT-5.6 Sol · max", `${name}: full-history Agent execution was not rendered`);
   assert(state.idleExecution === "모델 · 추론 확인 불가", `${name}: full-history unavailable execution was omitted`);
+  assert(state.cancellationReason === cancellationReason, `${name}: cancellation reason was not visible immediately`);
+  assert(state.cancellationDisclosureCount === 0, `${name}: cancellation reason was hidden behind a disclosure`);
   assert(state.message.includes("복구된 전체 Activity"), `${name}: restored-view status was not rendered`);
   assert(state.refreshLabel === "실시간 Activity 열기", `${name}: live promotion action was not exposed`);
   assert(!state.messageIsError, `${name}: card rendered an error state`);

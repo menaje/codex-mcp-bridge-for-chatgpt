@@ -307,6 +307,83 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoryExpansionKeepsTheNativePopoverAndHeaderAnchoredAtTheTop() async throws {
+        let f = try PopoverFixture()
+        defer { f.remove() }
+        f.state.rowCount = 24
+        f.state.delayHistory = true
+        await f.model.refreshDashboard(enrich: false)
+
+        let controller = BridgeMenuBarController()
+        controller.install(model: f.model)
+        defer {
+            controller.uninstall()
+            f.model.cancelAllPolling()
+        }
+
+        let screen = try XCTUnwrap(NSScreen.main)
+        let anchorWindow = NSPanel(contentRect: NSRect(
+            x: screen.visibleFrame.midX,
+            y: screen.visibleFrame.maxY - 80,
+            width: 40,
+            height: 80
+        ), styleMask: [.borderless], backing: .buffered, defer: false)
+        anchorWindow.isReleasedWhenClosed = false
+        let anchorContainer = NSView(frame: NSRect(x: 0, y: 0, width: 40, height: 80))
+        // A status-item popover is attached at the visible screen's top edge.
+        // Use a one-point anchor at that edge without asking AppKit to create a
+        // one-point window, which it expands to its minimum height.
+        let anchor = NSButton(frame: NSRect(x: 0, y: 79, width: 40, height: 1))
+        anchorContainer.addSubview(anchor)
+        anchorWindow.contentView = anchorContainer
+        anchorWindow.orderFrontRegardless()
+        controller.popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        defer { anchorWindow.close() }
+
+        func settle(_ iterations: Int = 8) async throws {
+            for _ in 0..<iterations {
+                controller.popover.contentViewController?.view.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+
+        func screenMetrics() throws -> (popover: NSRect, headerTop: CGFloat) {
+            let host = try XCTUnwrap(controller.popover.contentViewController?.view)
+            let window = try XCTUnwrap(host.window)
+            let hostFrame = window.convertToScreen(host.convert(host.bounds, to: nil))
+            // DashboardPopoverView places its header at the top of this root
+            // host. Tracking the host top catches the visual recentering that
+            // can happen during an AppKit popover resize.
+            return (window.frame, hostFrame.maxY)
+        }
+
+        try await settle()
+        XCTAssertTrue(controller.popover.animates)
+        let compact = try screenMetrics()
+        let transition = Task { await f.model.toggleDashboardPanel(.history) }
+        var samples: [(popover: NSRect, headerTop: CGFloat)] = []
+        for _ in 0..<36 {
+            controller.popover.contentViewController?.view.layoutSubtreeIfNeeded()
+            samples.append(try screenMetrics())
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await transition.value
+        try await settle()
+        let expanded = try screenMetrics()
+
+        XCTAssertGreaterThan(expanded.popover.height, compact.popover.height + 100)
+        XCTAssertEqual(expanded.popover.maxY, compact.popover.maxY, accuracy: 1)
+        // AppKit may adjust the bubble's arrow/chrome inset by a few points
+        // as its size changes. Anything larger is visible as the unwanted
+        // center-then-top content jump.
+        XCTAssertEqual(expanded.headerTop, compact.headerTop, accuracy: 4)
+        for sample in samples {
+            XCTAssertEqual(sample.popover.maxY, compact.popover.maxY, accuracy: 1)
+            XCTAssertEqual(sample.headerTop, compact.headerTop, accuracy: 4)
+        }
+    }
+
+    @MainActor
     func testAppLaunchSubmitsStartOnceAndLaterBootstrapDoesNotUndoAManualStop() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         async let first: Void = f.model.start()
