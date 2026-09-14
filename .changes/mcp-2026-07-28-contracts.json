@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Replace the legacy MCP transport and tool contracts with MCP 2026-07-28 only.",
+  "breaking": true,
+  "migration": "Upgrade clients to MCP 2026-07-28, reconnect and refresh ChatGPT connector discovery, and reopen the current cards; legacy initialize, session transport, tool inputs, aliases, and card URIs are no longer accepted."
+}

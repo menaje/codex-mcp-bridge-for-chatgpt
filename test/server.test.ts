@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,6 +10,34 @@ import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../sr
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
 const CURRENT_PROTOCOL = "2026-07-28";
+const CURRENT_TOOL_ORDER = [
+  "codex_answer",
+  "codex_ask_user",
+  "codex_user_answer",
+  "codex_question_action",
+  "codex_dashboard",
+  "codex_status",
+  "codex_activity",
+  "codex_activity_rehydrate",
+  "codex_activity_snapshot",
+  "codex_activity_handoff",
+  "codex_agent",
+  "codex_background_process_terminate",
+  "codex_cancel",
+  "codex_activity_job_cancel",
+  "codex_interaction_respond",
+  "codex_steer",
+  "codex_job_steer",
+  "codex_activity_update",
+  "codex_models",
+  "codex_settings",
+  "codex_update_settings",
+  "codex_task",
+  "codex_ui_read",
+  "codex_ui_problem",
+  "codex_ui_history",
+  "codex_ui_stop"
+] as const;
 
 class FixtureUpstream implements CodexUpstream {
   async listTools(): Promise<unknown> {
@@ -72,21 +101,59 @@ function currentClient(name: string): Client {
   );
 }
 
-function currentEnvelope() {
+function currentEnvelope(protocolVersion = CURRENT_PROTOCOL) {
   return {
-    "io.modelcontextprotocol/protocolVersion": CURRENT_PROTOCOL,
+    "io.modelcontextprotocol/protocolVersion": protocolVersion,
     "io.modelcontextprotocol/clientInfo": { name: "raw-current-client", version: "1.0.0" },
     "io.modelcontextprotocol/clientCapabilities": {}
   };
 }
 
-function currentRequest(method: string, params: Record<string, unknown> = {}) {
+function currentRequest(
+  method: string,
+  params: Record<string, unknown> = {},
+  protocolVersion = CURRENT_PROTOCOL
+) {
   return {
     jsonrpc: "2.0",
     id: "raw-" + method,
     method,
-    params: { ...params, _meta: currentEnvelope() }
+    params: { ...params, _meta: currentEnvelope(protocolVersion) }
   };
+}
+
+function currentHeaders(
+  method: string,
+  name?: string,
+  additional: Record<string, string> = {}
+) {
+  return {
+    accept: "application/json",
+    "content-type": "application/json",
+    "mcp-protocol-version": CURRENT_PROTOCOL,
+    "mcp-method": method,
+    ...(name ? { "mcp-name": name } : {}),
+    ...additional
+  };
+}
+
+async function postWithHost(endpoint: string, host: string): Promise<number> {
+  const body = JSON.stringify(currentRequest("server/discover"));
+  return new Promise<number>((resolve, reject) => {
+    const request = httpRequest(endpoint, {
+      method: "POST",
+      headers: {
+        ...currentHeaders("server/discover"),
+        host,
+        "content-length": String(Buffer.byteLength(body, "utf8"))
+      }
+    }, (response) => {
+      response.resume();
+      response.once("end", () => resolve(response.statusCode || 0));
+    });
+    request.once("error", reject);
+    request.end(body);
+  });
 }
 
 async function start(options: Record<string, string> = {}): Promise<RunningServer> {
@@ -113,9 +180,10 @@ describe("MCP 2026-07-28 HTTP server", () => {
     await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
     try {
       const tools = await client.listTools();
-      const names = new Set(tools.tools.map((tool) => tool.name));
+      const names = tools.tools.map((tool) => tool.name);
+      expect(names).toEqual(CURRENT_TOOL_ORDER);
       for (const current of ["codex_task", "codex_models", "codex_ui_read", "codex_question_action"]) {
-        expect(names.has(current)).toBe(true);
+        expect(names).toContain(current);
       }
       for (const retired of [
         "codex_dashboard_snapshot",
@@ -123,7 +191,7 @@ describe("MCP 2026-07-28 HTTP server", () => {
         "codex_question_card",
         "codex_question_submit",
         "codex_question_notify"
-      ]) expect(names.has(retired)).toBe(false);
+      ]) expect(names).not.toContain(retired);
 
       const task = tools.tools.find((tool) => tool.name === "codex_task");
       expect(task?.inputSchema.properties).toEqual(expect.objectContaining({
@@ -177,22 +245,43 @@ describe("MCP 2026-07-28 HTTP server", () => {
   it("uses the current request envelope and rejects protocol/header mismatches", async () => {
     const { baseUrl } = await start();
     const endpoint = baseUrl + "/mcp";
-    const headers = {
-      accept: "application/json",
-      "content-type": "application/json",
-      "mcp-protocol-version": CURRENT_PROTOCOL
-    };
     const discover = await fetch(endpoint, {
       method: "POST",
-      headers: { ...headers, "mcp-method": "server/discover" },
+      headers: currentHeaders("server/discover"),
       body: JSON.stringify(currentRequest("server/discover"))
     });
     expect(discover.status).toBe(200);
-    expect((await discover.json()).result).toBeTruthy();
+    const discoverResult = (await discover.json()).result;
+    expect(discoverResult).toEqual(expect.objectContaining({
+      resultType: "complete",
+      ttlMs: 0,
+      cacheScope: "private",
+      supportedVersions: [CURRENT_PROTOCOL],
+      capabilities: {
+        tools: { listChanged: true },
+        resources: { listChanged: true }
+      }
+    }));
+
+    const toolsList = await fetch(endpoint, {
+      method: "POST",
+      headers: currentHeaders("tools/list"),
+      body: JSON.stringify(currentRequest("tools/list"))
+    });
+    expect(toolsList.status).toBe(200);
+    const toolsListResult = (await toolsList.json()).result;
+    expect(toolsListResult).toEqual(expect.objectContaining({
+      resultType: "complete",
+      ttlMs: 0,
+      cacheScope: "private"
+    }));
+    expect(toolsListResult.tools.map((tool: { name: string }) => tool.name)).toEqual(
+      CURRENT_TOOL_ORDER
+    );
 
     const methodMismatch = await fetch(endpoint, {
       method: "POST",
-      headers: { ...headers, "mcp-method": "tools/list" },
+      headers: currentHeaders("tools/list"),
       body: JSON.stringify(currentRequest("server/discover"))
     });
     expect(methodMismatch.status).toBe(400);
@@ -200,11 +289,7 @@ describe("MCP 2026-07-28 HTTP server", () => {
 
     const nameMismatch = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        ...headers,
-        "mcp-method": "tools/call",
-        "mcp-name": "codex_status"
-      },
+      headers: currentHeaders("tools/call", "codex_status"),
       body: JSON.stringify(currentRequest("tools/call", {
         name: "codex_models",
         arguments: { refresh: true }
@@ -213,9 +298,34 @@ describe("MCP 2026-07-28 HTTP server", () => {
     expect(nameMismatch.status).toBe(400);
     expect((await nameMismatch.json()).error?.code).toBe(-32020);
 
+    const missingMethod = await fetch(endpoint, {
+      method: "POST",
+      headers: currentHeaders("tools/list", undefined, { "mcp-method": "" }),
+      body: JSON.stringify(currentRequest("tools/list"))
+    });
+    expect(missingMethod.status).toBe(400);
+    expect((await missingMethod.json()).error?.code).toBe(-32020);
+
+    const unsupportedVersion = "2026-08-01";
+    const unsupported = await fetch(endpoint, {
+      method: "POST",
+      headers: currentHeaders("tools/list", undefined, {
+        "mcp-protocol-version": unsupportedVersion
+      }),
+      body: JSON.stringify(currentRequest("tools/list", {}, unsupportedVersion))
+    });
+    expect(unsupported.status).toBe(400);
+    expect((await unsupported.json()).error).toEqual(expect.objectContaining({
+      code: -32022,
+      data: {
+        requested: unsupportedVersion,
+        supported: [CURRENT_PROTOCOL]
+      }
+    }));
+
     const missingEnvelope = await fetch(endpoint, {
       method: "POST",
-      headers: { ...headers, "mcp-method": "tools/list" },
+      headers: currentHeaders("tools/list"),
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: "raw-missing-envelope",
@@ -227,8 +337,42 @@ describe("MCP 2026-07-28 HTTP server", () => {
     expect((await missingEnvelope.json()).error?.code).toBe(-32602);
   });
 
-  it("applies the explicit origin allowlist before MCP dispatch", async () => {
-    const { baseUrl } = await start({ CODEX_MCP_BRIDGE_ALLOWED_ORIGINS: "chatgpt.com" });
+  it("opens, closes, and reopens current change subscriptions", async () => {
+    const { baseUrl } = await start();
+    const client = currentClient("current-subscription-client");
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+    try {
+      const filter = { toolsListChanged: true, resourcesListChanged: true };
+      const first = await client.listen(filter, { timeout: 2_000 });
+      expect(first.honoredFilter).toEqual(filter);
+      await first.close();
+      await expect(first.closed).resolves.toBe("local");
+
+      const reopened = await client.listen(filter, { timeout: 2_000 });
+      expect(reopened.honoredFilter).toEqual(filter);
+      await reopened.close();
+      await expect(reopened.closed).resolves.toBe("local");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("enforces host and origin allowlists before MCP dispatch", async () => {
+    const { baseUrl } = await start({
+      CODEX_MCP_BRIDGE_ALLOWED_HOSTS: "127.0.0.1",
+      CODEX_MCP_BRIDGE_ALLOWED_ORIGINS: "chatgpt.com"
+    });
+    const endpoint = `${baseUrl}/mcp`;
+
+    for (const additional of [{}, { origin: "https://chatgpt.com" }]) {
+      const allowed = await fetch(endpoint, {
+        method: "POST",
+        headers: currentHeaders("server/discover", undefined, additional),
+        body: JSON.stringify(currentRequest("server/discover"))
+      });
+      expect(allowed.status).toBe(200);
+    }
+
     const denied = await fetch(`${baseUrl}/mcp`, {
       method: "POST",
       headers: {
@@ -237,6 +381,39 @@ describe("MCP 2026-07-28 HTTP server", () => {
       },
       body: "{}"
     });
-    expect(denied.status).toBeGreaterThanOrEqual(400);
+    expect(denied.status).toBe(403);
+
+    expect(await postWithHost(endpoint, "example.test")).toBe(403);
+  });
+
+  it("requires the configured bearer token", async () => {
+    const { baseUrl } = await start({
+      CODEX_MCP_BRIDGE_NO_AUTH: "0",
+      CODEX_MCP_BRIDGE_TOKEN: "test-token"
+    });
+    const endpoint = `${baseUrl}/mcp`;
+
+    for (const authorization of [undefined, "Bearer wrong-token"]) {
+      const denied = await fetch(endpoint, {
+        method: "POST",
+        headers: currentHeaders(
+          "server/discover",
+          undefined,
+          authorization ? { authorization } : {}
+        ),
+        body: JSON.stringify(currentRequest("server/discover"))
+      });
+      expect(denied.status).toBe(401);
+      expect(await denied.json()).toEqual({ error: "unauthorized" });
+    }
+
+    const allowed = await fetch(endpoint, {
+      method: "POST",
+      headers: currentHeaders("server/discover", undefined, {
+        authorization: "Bearer test-token"
+      }),
+      body: JSON.stringify(currentRequest("server/discover"))
+    });
+    expect(allowed.status).toBe(200);
   });
 });
