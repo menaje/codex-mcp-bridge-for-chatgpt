@@ -5,6 +5,13 @@ Every current tool projects its runtime result through a validated JSON Schema
 human-readable text, and app-private metadata separate. A projection cannot
 turn private state or an unvalidated runtime object into model-visible output.
 
+The projection boundary accepts every JSON root permitted by MCP, including
+`null`, booleans, numbers, strings, arrays, and objects. The current public
+tool schemas deliberately use object roots, but the shared boundary does not
+silently narrow the protocol. Values that JSON serialization would change or
+drop, such as `NaN`, `Date`, functions, or undefined object members, are
+rejected before they cross the wire.
+
 ## Task result
 
 `codex_task` input contract version 3 returns task output contract version 2.

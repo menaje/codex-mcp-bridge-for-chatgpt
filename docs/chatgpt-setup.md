@@ -163,6 +163,13 @@ deploying a change to either:
 The bridge offers no old resource URI or old descriptor fallback. A conversation
 that cached a previous resource must refresh and use the current card.
 
+Treat the refresh as a connector-contract transition. Keep the old connection
+available until the current bridge is serving, refresh the connection, then
+start a new conversation and verify discovery before relying on a tool call or
+card. A call from an old cached descriptor may fail by design; it is not a
+reason to restore a prior tool schema or resource URI. Confirm the refreshed
+connection's enabled action permissions before testing a write-capable flow.
+
 For a source release, verify the generated manifest before deployment:
 
 ```bash

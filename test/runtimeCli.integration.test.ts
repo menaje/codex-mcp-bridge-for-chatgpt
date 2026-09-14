@@ -53,7 +53,7 @@ it.each(["cli", "stdio"])("starts native and remote app connections in the built
         name: "codex_ui_read",
         arguments: { view: "dashboard", widgetInstanceId: randomUUID(), enrich: false }
       });
-      expect(card.isError).not.toBe(true);
+      expect(card.isError, JSON.stringify(card.content)).not.toBe(true);
       expect(card.structuredContent?.counts).toEqual(native.counts);
     }
     expect(await rpc(socketPath, "runtime.beginDrain")).toMatchObject({ acceptingNewJobs: false, activeJobs: 0, pendingAdmissions: 0 });

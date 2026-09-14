@@ -4653,10 +4653,13 @@ export function registerBridgeTools(
   dispose(): void;
 } {
   jobs.attachUpstream(upstream);
-  registerSettingsCardResource(server);
+  // MCP 2026 list results must be deterministic. Register immutable card
+  // resources in URI order; question tools still register before the public
+  // bridge tools, so this does not alter the established tool surface.
   registerActivityCardResource(server);
-  const questions = registerQuestionTools(server, jobs, scopeResolver, () => userSettings.current.uiLocalePreference);
   registerDashboardCardResource(server);
+  const questions = registerQuestionTools(server, jobs, scopeResolver, () => userSettings.current.uiLocalePreference);
+  registerSettingsCardResource(server);
   const cardPerformance = sharedCardPerformance || new CardPerformanceTracker();
   const taskExecutionEnvelopeRef = () => userSettings.taskExecutionEnvelopeRef();
   // A modern HTTP request receives a fresh McpServer, while the task
@@ -5419,9 +5422,8 @@ export function registerBridgeTools(
           );
         }
         const initial = jobs.get(jobQuery.id);
-        if (!initial) throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
-        if (initial.scopeId !== scopeId) {
-          throw new Error("The requested Codex job belongs to another conversation scope.");
+        if (!initial || initial.scopeId !== scopeId) {
+          throw scopedHandleUnavailable("job");
         }
         let wait: CodexJobWaitResult | undefined;
         if (jobQuery.waitFor) {
@@ -5468,9 +5470,7 @@ export function registerBridgeTools(
           throw new Error("Activity lookup requires conversation metadata or an explicit scopeId.");
         }
         const activity = jobs.getActivity(activityQuery.id);
-        if (!activity || activity.scopeId !== scopeId) {
-          throw new Error("The requested Activity belongs to another conversation scope or does not exist.");
-        }
+        if (!activity || activity.scopeId !== scopeId) throw scopedHandleUnavailable("activity");
         const childJobs = jobs.listForActivity(activity.activityId);
         const structured = {
           kind: "activity" as const,
@@ -5501,9 +5501,7 @@ export function registerBridgeTools(
         const trackedSession = sessions.get(threadQuery.id);
         const relatedJobs = jobs.listForThread(threadQuery.id, scopeId);
         const sessionVisible = trackedSession && trackedSession.scopeId === scopeId;
-        if (!sessionVisible && relatedJobs.length === 0) {
-          throw new Error("The requested Codex thread belongs to another conversation scope or does not exist.");
-        }
+        if (!sessionVisible && relatedJobs.length === 0) throw scopedHandleUnavailable("thread");
         const activities = [...new Set(relatedJobs.map((job) => job.activityId))]
           .map((activityId) => jobs.getActivity(activityId))
           .filter((activity): activity is BridgeActivity => Boolean(activity));
@@ -6421,9 +6419,7 @@ export function registerBridgeTools(
         "Codex Agent management"
       );
       const agent = jobs.getAgent(args.agentId);
-      if (!agent || agent.scopeId !== scope.scopeId) {
-        throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
-      }
+      if (!agent || agent.scopeId !== scope.scopeId) throw scopedHandleUnavailable("agent");
       const actionHash = createHash("sha256")
         .update(JSON.stringify({
           agentId: args.agentId,
@@ -6510,9 +6506,7 @@ export function registerBridgeTools(
           return replay.result;
         }
         const agent = jobs.getAgent(args.agentId);
-        if (!agent || agent.scopeId !== scope.scopeId) {
-          throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
-        }
+        if (!agent || agent.scopeId !== scope.scopeId) throw scopedHandleUnavailable("agent");
         const detached = jobs.detachIdleAgentAssignment({
           activityId: args.activityId,
           agentId: args.agentId,
@@ -6652,12 +6646,7 @@ export function registerBridgeTools(
         actionHash,
         async () => {
           const existing = jobs.get(args.jobId);
-          if (!existing) {
-            throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
-          }
-          if (existing.scopeId !== scope.scopeId) {
-            throw new Error("The requested Codex job belongs to another conversation scope.");
-          }
+          if (!existing || existing.scopeId !== scope.scopeId) throw scopedHandleUnavailable("job");
           if (existing.version !== args.expectedVersion) {
             throw new Error(
               `Codex job version changed from ${args.expectedVersion} to ${existing.version}. Refresh authoritative status before retrying cancellation.`
@@ -7286,10 +7275,7 @@ export function registerBridgeTools(
         "Codex Activity update"
       );
       const existing = jobs.getActivity(args.activityId);
-      if (!existing) throw new Error("Unknown Activity id in this conversation scope.");
-      if (existing.scopeId !== scope.scopeId) {
-        throw new Error("The requested Activity belongs to another conversation scope.");
-      }
+      if (!existing || existing.scopeId !== scope.scopeId) throw scopedHandleUnavailable("activity");
       let activity!: BridgeActivity;
       const cancelledJobIds: string[] = [];
       jobs.activityTransaction(() => {
@@ -7368,10 +7354,7 @@ export function registerBridgeTools(
         actionHash,
         async () => {
           const existing = jobs.getActivity(args.activityId);
-          if (!existing) throw new Error("Unknown Activity id in this conversation scope.");
-          if (existing.scopeId !== scope.scopeId) {
-            throw new Error("The requested Activity belongs to another conversation scope.");
-          }
+          if (!existing || existing.scopeId !== scope.scopeId) throw scopedHandleUnavailable("activity");
           if (existing.version !== args.expectedVersion) {
             throw new Error(
               `Activity version changed from ${args.expectedVersion} to ${existing.version}. Refresh authoritative state before retrying cancellation.`
@@ -8803,6 +8786,26 @@ class AgentThreadResumeError extends Error {
   }
 }
 
+type ScopedHandleKind = "job" | "activity" | "agent" | "thread";
+
+/**
+ * Do not reveal whether a copied handle exists outside the caller's scope.
+ * The recovery instruction remains useful for a stale or retained handle that
+ * belongs to the caller, while the same response is used for foreign handles.
+ */
+function scopedHandleUnavailable(kind: ScopedHandleKind): Error {
+  const label = {
+    job: "Codex job",
+    activity: "Activity",
+    agent: "Agent",
+    thread: "Codex thread"
+  }[kind];
+  return new Error(
+    `HANDLE_UNAVAILABLE: The requested ${label} is unavailable in this conversation scope. ` +
+    "Read codex_status({}) to obtain current retained handles before retrying."
+  );
+}
+
 function validateTaskSelectionInput(
   args: CodexTaskArgs,
   preferences: BridgeUserSettings,
@@ -8881,9 +8884,7 @@ function resolveAgentForTask(
   let agent: BridgeAgent | undefined;
   if (args.agentId) {
     agent = jobs.getAgent(args.agentId);
-    if (!agent || agent.scopeId !== scopeId) {
-      throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
-    }
+    if (!agent || agent.scopeId !== scopeId) throw scopedHandleUnavailable("agent");
   } else if (!args.agentName) {
     const sourceActivityId = activityRequest.activityId || activityRequest.continuationOfActivityId;
     if (sourceActivityId) {
@@ -9201,9 +9202,7 @@ function validateActivityTaskRequest(
   if (!request.activityId) {
     if (request.continuationOfActivityId) {
       const source = jobs.getActivity(request.continuationOfActivityId);
-      if (!source || source.scopeId !== scopeId) {
-        throw new Error("The continuation Activity belongs to another conversation scope or does not exist.");
-      }
+      if (!source || source.scopeId !== scopeId) throw scopedHandleUnavailable("activity");
     }
     return request;
   }
@@ -9221,10 +9220,7 @@ function validateActivityTaskRequest(
     );
   }
   const activity = jobs.getActivity(request.activityId);
-  if (!activity) throw new Error("Unknown Activity id in this conversation scope.");
-  if (activity.scopeId !== scopeId) {
-    throw new Error("The requested Activity belongs to another conversation scope.");
-  }
+  if (!activity || activity.scopeId !== scopeId) throw scopedHandleUnavailable("activity");
   if (activity.lifecycle !== "open") {
     throw new Error("A new Codex job can be attached only to an open Activity.");
   }
@@ -10659,9 +10655,7 @@ async function terminateAgentBackgroundProcess(input: {
 }): Promise<Record<string, unknown>> {
   const requireIdleOwner = () => {
     const agent = input.jobs.getAgent(input.agentId);
-    if (!agent || agent.scopeId !== input.scopeId) {
-      throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
-    }
+    if (!agent || agent.scopeId !== input.scopeId) throw scopedHandleUnavailable("agent");
     if (input.expectedAgentVersion !== undefined && agent.version !== input.expectedAgentVersion) {
       throw new Error(
         `AGENT_VERSION_CHANGED: Agent version changed from ${input.expectedAgentVersion} to ${agent.version}. Refresh the Activity card before retrying process termination.`
@@ -11662,14 +11656,19 @@ function cachedDashboardEnrichment(
   const dates = entries.map(entry => new Date(entry.observedAt).toISOString());
   const usage = cachedCodexWeeklyUsage(upstream);
   if (usage) dates.push(usage.observedAt);
+  const oldestObservationAt = earliestObservationAt(dates);
   return {
     state: "structural", runtimeRequests: 0, cacheHits: entries.length,
     timeouts: 0, durationMs: 0, usageTimedOut: false,
     pendingReads: runtimePending + usagePending,
     runtimeUnavailable: entries.filter(entry => entry.unavailable).length,
     usageUnavailable: !!(usageCompletion && usageCompletion.revision === revision && usageCompletion.failed),
-    oldestObservationAt: dates.sort()[0]
+    ...(oldestObservationAt ? { oldestObservationAt } : {})
   };
+}
+
+function earliestObservationAt(values: ReadonlyArray<string | undefined>): string | undefined {
+  return values.filter((value): value is string => Boolean(value)).sort()[0];
 }
 
 type DashboardRuntimeResult = Awaited<ReturnType<typeof inspectDashboardRuntime>>;
@@ -12138,6 +12137,10 @@ async function buildDashboardView(
     const selectedIds = new Set(candidates.map(candidate => candidate.agentId));
     const uncheckedOutsideBatch = rankedCandidates.filter(candidate =>
       !selectedIds.has(candidate.agentId) && !observations.has(candidate.agentId)).length;
+    const oldestObservationAt = earliestObservationAt([
+      runtimeInspection.oldestObservationAt,
+      usage.value?.observedAt
+    ]);
     return buildDashboardView(
       jobs,
       upstream,
@@ -12165,7 +12168,7 @@ async function buildDashboardView(
           usageTimedOut: usage.timedOut,
           pendingReads: runtimeInspection.timeouts + (usage.timedOut ? 1 : 0),
           usageUnavailable: usage.failed,
-          oldestObservationAt: [runtimeInspection.oldestObservationAt, usage.value?.observedAt].filter((value): value is string => !!value).sort()[0]
+          ...(oldestObservationAt ? { oldestObservationAt } : {})
         }
       },
       scopeId,
@@ -13941,6 +13944,10 @@ async function buildActivityView(
         }
       }
     : legacy.structured;
+  const oldestObservationAt = earliestObservationAt([
+    legacy.enrichmentStats.oldestObservationAt,
+    usage.value?.observedAt
+  ]);
 
   return {
     scopeId,
@@ -13957,7 +13964,7 @@ async function buildActivityView(
         usageTimedOut: usage.timedOut,
         pendingReads: legacy.enrichmentStats.timeouts + (usage.timedOut ? 1 : 0),
         usageUnavailable: usage.failed,
-        oldestObservationAt: [legacy.enrichmentStats.oldestObservationAt, usage.value?.observedAt].filter((value): value is string => !!value).sort()[0]
+        ...(oldestObservationAt ? { oldestObservationAt } : {})
       },
       weeklyUsage,
       feed: {

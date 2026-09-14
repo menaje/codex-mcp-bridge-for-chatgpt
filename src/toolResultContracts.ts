@@ -1,4 +1,5 @@
 import type { CallToolResult, ContentBlock } from "@modelcontextprotocol/server";
+import { isDeepStrictEqual } from "node:util";
 import type * as z from "zod/v4";
 
 /**
@@ -143,12 +144,11 @@ export function projectToolResult<Schema extends z.ZodType, Canonical>(
     );
   }
   const content = compatibilityContent(contract, projection.compatibility);
-  const privateMeta = projection.appHydration || projection.protocolMeta
-    ? {
-        ...(projection.protocolMeta || {}),
-        ...(projection.appHydration || {})
-      }
-    : undefined;
+  const privateMeta = mergePrivateMetadata(
+    contract.toolName,
+    projection.protocolMeta,
+    projection.appHydration
+  );
   if (privateMeta) {
     if (!contract.privateMeta) {
       throw new Error(`${contract.toolName} projected private metadata without a metadata contract.`);
@@ -168,11 +168,61 @@ export function projectToolResult<Schema extends z.ZodType, Canonical>(
   };
 }
 
+/**
+ * Keep MCP transport metadata separate from bridge UI hydration metadata.
+ *
+ * `io.modelcontextprotocol/*` and the W3C trace-context keys are protocol
+ * owned. An application result must not be able to replace those values by
+ * choosing the same `_meta` key. Future protocol keys remain protected by the
+ * namespace rule rather than requiring a bridge release for each addition.
+ */
+function mergePrivateMetadata(
+  toolName: string,
+  protocolMeta: Readonly<Record<string, unknown>> | undefined,
+  appHydration: Readonly<Record<string, unknown>> | undefined
+): Record<string, unknown> | undefined {
+  if (!protocolMeta && !appHydration) return undefined;
+  const protocol = protocolMeta || {};
+  const hydration = appHydration || {};
+  for (const key of Object.keys(hydration)) {
+    if (isReservedMcpMetadataKey(key)) {
+      throw new Error(
+        `${toolName} app hydration cannot define reserved MCP metadata key ${JSON.stringify(key)}.`
+      );
+    }
+    if (Object.hasOwn(protocol, key)) {
+      throw new Error(
+        `${toolName} private metadata key ${JSON.stringify(key)} is owned by both protocol metadata and app hydration.`
+      );
+    }
+  }
+  return { ...protocol, ...hydration };
+}
+
+function isReservedMcpMetadataKey(key: string): boolean {
+  return key.startsWith("io.modelcontextprotocol/") ||
+    key === "traceparent" ||
+    key === "tracestate" ||
+    key === "baggage";
+}
+
 /** MCP 2026-07-28 permits any JSON value at the structured result root. */
 function jsonValue(value: unknown, label: string): string {
-  const encoded = JSON.stringify(value);
+  let encoded: string | undefined;
+  try {
+    encoded = JSON.stringify(value);
+  } catch {
+    throw new Error(`${label} must be JSON-serializable.`);
+  }
   if (encoded === undefined) {
     throw new Error(`${label} must be JSON-serializable.`);
+  }
+  // JSON.stringify silently changes several JavaScript values (for example
+  // NaN, Date, functions, and undefined object members). A result boundary
+  // must not publish a value whose wire representation means something else.
+  const decoded = JSON.parse(encoded) as unknown;
+  if (!isDeepStrictEqual(value, decoded)) {
+    throw new Error(`${label} must be a JSON value without lossy serialization.`);
   }
   return encoded;
 }

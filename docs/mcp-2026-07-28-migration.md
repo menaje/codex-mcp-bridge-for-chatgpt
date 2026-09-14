@@ -92,6 +92,25 @@ upstream that rejects every execution. It verifies current-protocol discovery,
 tool descriptors, and no-execution validation probes without reading operator
 credentials or changing an installed bridge.
 
+The official conformance runner is useful for wire checks, but its complete
+`--requirements 2026-07-28` server suite is a fixture suite: it calls named
+sample tools, prompts, resources, MRTR flows, and Tasks that this bridge does
+not advertise. Run the current `server-stateless` scenario against an isolated
+bridge endpoint and retain its output with the source revision:
+
+```sh
+npx -y @modelcontextprotocol/conformance@0.2.0-alpha.11 server \
+  --url http://127.0.0.1:8765/mcp \
+  --spec-version 2026-07-28 \
+  --scenario server-stateless \
+  --output-dir /tmp/mcp-conformance
+```
+
+Do not add test-only tools or advertise optional capabilities merely to improve
+that fixture score. The bridge's own HTTP and stdio integration tests cover its
+advertised tool and resource surface, headers, error codes, cache hints,
+metadata, and detached-request behavior.
+
 Before publishing, run the connector through a real ChatGPT conversation and
 Secure MCP Tunnel, record the current protocol discovery, a tool call, and a
 card open. If that host does not accept the new protocol or schema, record it

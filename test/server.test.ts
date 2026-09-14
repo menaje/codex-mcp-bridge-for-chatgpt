@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { loadConfig } from "../src/config.js";
 import { createHttpServer, type BridgeHttpServer } from "../src/server.js";
-import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
+import type {
+  CodexModelCatalogProvider,
+  CodexModelCatalogSnapshot,
+  ModelCatalogOptions
+} from "../src/modelCatalog.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
 const CURRENT_PROTOCOL = "2026-07-28";
@@ -52,6 +56,7 @@ class FixtureUpstream implements CodexUpstream {
 }
 
 class FixtureCatalog implements CodexModelCatalogProvider {
+  readonly requests: ModelCatalogOptions[] = [];
   private readonly snapshot: CodexModelCatalogSnapshot = {
     source: "codex-cli",
     fetchedAt: "2026-09-14T00:00:00.000Z",
@@ -70,7 +75,8 @@ class FixtureCatalog implements CodexModelCatalogProvider {
     }]
   };
 
-  async getCatalog(): Promise<CodexModelCatalogSnapshot> {
+  async getCatalog(options: ModelCatalogOptions = {}): Promise<CodexModelCatalogSnapshot> {
+    this.requests.push({ ...options });
     return this.snapshot;
   }
 
@@ -83,6 +89,7 @@ type RunningServer = {
   root: string;
   server: BridgeHttpServer;
   baseUrl: string;
+  catalog: FixtureCatalog;
 };
 
 const running: RunningServer[] = [];
@@ -165,10 +172,11 @@ async function start(options: Record<string, string> = {}): Promise<RunningServe
     CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: path.join(root, "models.json"),
     ...options
   });
-  const server = createHttpServer(config, new FixtureUpstream(), new FixtureCatalog());
+  const catalog = new FixtureCatalog();
+  const server = createHttpServer(config, new FixtureUpstream(), catalog);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as { port: number }).port;
-  const item = { root, server, baseUrl: `http://127.0.0.1:${port}` };
+  const item = { root, server, baseUrl: `http://127.0.0.1:${port}`, catalog };
   running.push(item);
   return item;
 }
@@ -335,6 +343,138 @@ describe("MCP 2026-07-28 HTTP server", () => {
     });
     expect(missingEnvelope.status).toBe(400);
     expect((await missingEnvelope.json()).error?.code).toBe(-32602);
+  });
+
+  it("accepts optional client identity and pins current wire-only behavior", async () => {
+    const { baseUrl, catalog } = await start();
+    const endpoint = `${baseUrl}/mcp`;
+    const optionalIdentityRequest = currentRequest("server/discover");
+    delete (optionalIdentityRequest.params._meta as Record<string, unknown>)[
+      "io.modelcontextprotocol/clientInfo"
+    ];
+    const discover = await fetch(endpoint, {
+      method: "POST",
+      headers: currentHeaders("server/discover"),
+      body: JSON.stringify(optionalIdentityRequest)
+    });
+    expect(discover.status).toBe(200);
+    const discoverResult = (await discover.json()).result;
+    expect(discoverResult._meta?.["io.modelcontextprotocol/serverInfo"])
+      .toEqual(expect.objectContaining({ name: expect.any(String), version: expect.any(String) }));
+
+    const dashboard = await fetch(endpoint, {
+      method: "POST",
+      headers: currentHeaders("tools/call", "codex_dashboard"),
+      body: JSON.stringify(currentRequest("tools/call", {
+        name: "codex_dashboard",
+        arguments: {}
+      }))
+    });
+    expect(dashboard.status).toBe(200);
+    const dashboardResult = (await dashboard.json()).result;
+    expect(dashboardResult).toEqual(expect.objectContaining({ resultType: "complete" }));
+    expect(dashboardResult._meta).toEqual(expect.objectContaining({
+      "io.modelcontextprotocol/serverInfo": expect.objectContaining({
+        name: expect.any(String), version: expect.any(String)
+      }),
+      "openai/locale": "en"
+    }));
+
+    const tracedList = currentRequest("tools/list");
+    Object.assign(tracedList.params._meta as Record<string, unknown>, {
+      traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+      tracestate: "fixture=value",
+      baggage: "fixture=value",
+      "io.modelcontextprotocol/logLevel": "debug"
+    });
+    const traced = await fetch(endpoint, {
+      method: "POST",
+      headers: currentHeaders("tools/list"),
+      body: JSON.stringify(tracedList)
+    });
+    expect(traced.status).toBe(200);
+    expect((await traced.json()).result).toEqual(expect.objectContaining({ resultType: "complete" }));
+
+    for (const method of ["ping", "logging/setLevel"]) {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: currentHeaders(method),
+        body: JSON.stringify(currentRequest(method))
+      });
+      expect(response.status).toBe(404);
+      expect((await response.json()).error?.code).toBe(-32601);
+    }
+
+    const missingResource = await fetch(endpoint, {
+      method: "POST",
+      headers: currentHeaders("resources/read", "ui://codex-mcp-bridge/not-retained.html"),
+      body: JSON.stringify(currentRequest("resources/read", {
+        uri: "ui://codex-mcp-bridge/not-retained.html"
+      }))
+    });
+    const missingResourceBody = await missingResource.json();
+    expect(missingResource.status).toBe(200);
+    expect(missingResourceBody.error?.code).toBe(-32602);
+
+    const callsBefore = catalog.requests.length;
+    const models = await fetch(endpoint, {
+      method: "POST",
+      headers: currentHeaders("tools/call", "codex_models", {
+        "mcp-param-refresh": "false"
+      }),
+      body: JSON.stringify(currentRequest("tools/call", {
+        name: "codex_models",
+        arguments: { refresh: true }
+      }))
+    });
+    expect(models.status).toBe(200);
+    expect((await models.json()).result).toEqual(expect.objectContaining({ resultType: "complete" }));
+    expect(catalog.requests.slice(callsBefore)).toContainEqual(
+      expect.objectContaining({ refresh: true })
+    );
+
+    const listedTools = await fetch(endpoint, {
+      method: "POST",
+      headers: currentHeaders("tools/list"),
+      body: JSON.stringify(currentRequest("tools/list"))
+    });
+    const listedModels = ((await listedTools.json()).result.tools as Array<Record<string, unknown>>)
+      .find((tool) => tool.name === "codex_models");
+    expect(JSON.stringify(listedModels)).not.toContain("x-mcp-header");
+  });
+
+  it("keeps discovery lists stable across conversation scopes", async () => {
+    const { baseUrl } = await start();
+    const endpoint = `${baseUrl}/mcp`;
+    const listFor = async (method: "tools/list" | "resources/list", session: string) => {
+      const request = currentRequest(method);
+      (request.params._meta as Record<string, unknown>)["openai/session"] = session;
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: currentHeaders(method),
+        body: JSON.stringify(request)
+      });
+      expect(response.status).toBe(200);
+      return (await response.json()).result as Record<string, unknown>;
+    };
+
+    const firstSession = "list-scope-a";
+    const secondSession = "list-scope-b";
+    const [firstTools, secondTools, firstResources, secondResources] = await Promise.all([
+      listFor("tools/list", firstSession),
+      listFor("tools/list", secondSession),
+      listFor("resources/list", firstSession),
+      listFor("resources/list", secondSession)
+    ]);
+
+    expect(firstTools).toEqual(secondTools);
+    expect(firstResources).toEqual(secondResources);
+    expect(firstTools).toMatchObject({ resultType: "complete", ttlMs: 0, cacheScope: "private" });
+    expect(firstResources).toMatchObject({ resultType: "complete", ttlMs: 0, cacheScope: "private" });
+    expect((firstTools.tools as Array<{ name: string }>).map((tool) => tool.name))
+      .toEqual(CURRENT_TOOL_ORDER);
+    const resourceUris = (firstResources.resources as Array<{ uri: string }>).map((resource) => resource.uri);
+    expect(resourceUris).toEqual([...resourceUris].sort());
   });
 
   it("opens, closes, and reopens current change subscriptions", async () => {

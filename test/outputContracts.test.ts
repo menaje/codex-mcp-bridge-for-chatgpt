@@ -411,6 +411,92 @@ describe("model-visible output contracts", () => {
     expect(escaped).toContain("truncated");
   });
 
+  it("allows every JSON root for structured content without lossy coercion", () => {
+    const contract = defineToolResultContract({
+      toolName: "json_root_fixture",
+      channel: "operator-diagnostic",
+      outputSchema: z.any(),
+      structured: { maxBytes: 1_024 },
+      compatibility: {
+        channel: "text-protocol-compatibility",
+        format: "plain-text",
+        maxBytes: 128,
+        completeness: "summary-only"
+      }
+    });
+    const project = (value: unknown) => projectToolResult(contract, {
+      canonical: value,
+      authoritative: { channel: "operator-diagnostic", value },
+      compatibility: { channel: "text-protocol-compatibility", text: "fixture" }
+    });
+
+    for (const value of [null, true, 42, "text", ["array", false], { object: [1, null] }]) {
+      expect(project(value).structuredContent).toEqual(value);
+    }
+    for (const value of [undefined, Number.NaN, new Date("2026-09-14T00:00:00.000Z"), {
+      retained: true,
+      droppedByJson: undefined
+    }]) {
+      expect(() => project(value)).toThrow(/JSON-(serializable|value)|lossy serialization/);
+    }
+  });
+
+  it("keeps MCP metadata protocol-owned and fails closed on private metadata collisions", () => {
+    const contract = defineToolResultContract({
+      toolName: "metadata_fixture",
+      channel: "app-hydration",
+      outputSchema: z.any(),
+      structured: { maxBytes: 128 },
+      privateMeta: { maxBytes: 1_024 },
+      compatibility: {
+        channel: "text-protocol-compatibility",
+        format: "plain-text",
+        maxBytes: 128,
+        completeness: "summary-only"
+      }
+    });
+    const projection = (metadata: {
+      protocolMeta?: Record<string, unknown>;
+      appHydration?: Record<string, unknown>;
+    }) => projectToolResult(contract, {
+      canonical: {},
+      authoritative: { channel: "app-hydration", value: null },
+      compatibility: { channel: "text-protocol-compatibility", text: "fixture" },
+      ...metadata
+    });
+
+    expect(projection({
+      protocolMeta: {
+        "io.modelcontextprotocol/serverInfo": { name: "bridge", version: "0.4.1" },
+        traceparent: "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+      },
+      appHydration: {
+        "codex/dashboardView@1": { revision: 1 },
+        "openai/locale": "ko-KR"
+      }
+    })._meta).toEqual({
+      "io.modelcontextprotocol/serverInfo": { name: "bridge", version: "0.4.1" },
+      traceparent: "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+      "codex/dashboardView@1": { revision: 1 },
+      "openai/locale": "ko-KR"
+    });
+
+    for (const key of [
+      "io.modelcontextprotocol/serverInfo",
+      "io.modelcontextprotocol/subscriptionId",
+      "traceparent",
+      "tracestate",
+      "baggage"
+    ]) {
+      expect(() => projection({ appHydration: { [key]: "forbidden" } }))
+        .toThrow(/reserved MCP metadata key/);
+    }
+    expect(() => projection({
+      protocolMeta: { "codex/dashboardView@1": { source: "protocol" } },
+      appHydration: { "codex/dashboardView@1": { source: "app" } }
+    })).toThrow(/owned by both protocol metadata and app hydration/);
+  });
+
   it("keeps compact Settings free of editor-only project identity and paths", () => {
     const settings = modelResults.codex_settings[0]!.structuredContent;
     const serialized = JSON.stringify(settings);
