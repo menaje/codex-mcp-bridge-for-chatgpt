@@ -271,6 +271,14 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
         try await call("dashboard.history", params: action, timeout: 15)
     }
 
+    public func dashboardHistoryDetail(rowKey: String) async throws -> DashboardHistoryDetail {
+        try await call(
+            "dashboard.history-detail",
+            params: DashboardHistoryDetailParameters(rowKey: rowKey),
+            timeout: 5
+        )
+    }
+
     public func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
                                       statusFilter: DashboardStatusFilter, problems: ProblemQuery) async throws -> DashboardSnapshot {
         do {

@@ -17,9 +17,9 @@ product. They never receive independent product versions.
 | Stable provenance | `release.sourceCandidate` | Exact last `X.Y.Z-rc.N` used for stable promotion |
 | Build identity | `CFBundleVersion`, `dist/build-info.json` commit/time/source hash | Identifies a build, not the product version |
 | Manifest schema | `manifestVersion` (currently 6) | Release metadata plus state and UI compatibility contracts |
-| UI compatibility | `ui-release-catalog.json`, its manifest digest, the generated release inventory, UI contract generations and immutable resource URIs | Cached-card compatibility and retirement, independent of SemVer |
+| UI resource policy | `ui-release-catalog.json`, its manifest digest, the generated release inventory, UI contract generations and immutable resource URIs | One current immutable revision per active card, independent of SemVer |
 | State compatibility | `stateCompatibility` plus `state-migrations.json` (currently schemas 3–18 to 19) | Local data, applied-migration provenance, state-profile, backup, and recovery axes; see the [state upgrade and recovery runbook](state-upgrade-recovery.md) |
-| Tool/runtime compatibility | Task input contract 2, helper protocol 2, local companion protocol 2, remote companion protocol 1, execution-policy references, App Server schema lock and pinned Codex CLI | Independent protocol and compatibility axes |
+| Tool/runtime contracts | Task input contract 3, helper protocol 2, local companion protocol 2, remote companion protocol 1, execution-policy references, App Server schema lock and pinned Codex CLI | Independent protocol and state axes |
 | Runtime state | `.env`, authentication material, SQLite data, process locks | Never a version authority or release payload |
 
 `npm run release:check` checks the version mirrors, generated plugin and UI
@@ -46,30 +46,18 @@ and are retained as private workflow evidence for 90 days. All three must belong
 to the same final RC. See the [runbook](state-upgrade-recovery.md) for the exact
 pre-service restore and post-service forward-repair boundary.
 
-## Card compatibility at release boundaries
+## Card resource gate at release boundaries
 
-The [UI card release and retirement policy](ui-release-compatibility.md) separates
-published stable baselines, development-current cards, and explicitly supported
-development/RC deployments. Ordinary UI synchronization must not turn every
-development revision into a permanent compatibility obligation. A release
-contains supported published identities, its final current cards and selected
-temporary exceptions. Preserve immutable identities and their required
-presenters/tool contracts; product SemVer does not replace UI contract checks.
+The [UI card release policy](ui-release-compatibility.md) requires one current
+immutable resource for each active card: Settings, Activity, Dashboard, and
+Question. The catalog has no published baseline or temporary compatibility
+selection. A release contains only those current identities and their required
+presenter/tool contracts.
 
-The target active cards are Settings, Dashboard and Question. Activity cards
-belong to a retirement and client-migration path, with only explicitly supported
-legacy revisions retained. Their removal must preserve shared work data and
-execution logic and resolve the existing #69 client-support conditions. Finalize
-card selection and any removal before the final RC; stable promotion must not
-prune or add UI payload files.
-
-Manifest version 6 implements this policy. The generator selects one current
-revision for each active card, the exact supported v0.3.0 baseline, and one
-explicit deployed-development exception; it does not carry unclassified lock
-history into a package. Activity remains registered only for those compatibility
-identities and rejects new presentations. #53 tracks the support window and
-eventual removal decision, #52 verifies the selection in all artifacts, and #11
-verifies the upgrade instructions against the exact candidate.
+Finalize card selection before the final RC. A changed card or host-affecting
+metadata produces a new URI, removes the displaced URI from the package, and
+requires connector refresh and card-open verification. Activity data and
+execution logic remain durable even when a resource revision is retired.
 
 ## Stage and branch lifecycle
 

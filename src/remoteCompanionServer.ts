@@ -623,6 +623,7 @@ function capabilityForMethod(method: string, payload?: unknown): string {
   switch (method) {
     case "companion.hello":
     case "dashboard.snapshot":
+    case "dashboard.history-detail":
       return "dashboard.read";
     case "settings.snapshot":
       return "settings.read";

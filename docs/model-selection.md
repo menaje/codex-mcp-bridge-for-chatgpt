@@ -2,7 +2,7 @@
 
 ## Information sources
 
-`codex_models({"contractVersion":"2"})` returns the current selection mode and
+`codex_models({"refresh":true})` requests a fresh current selection mode and
 policy-allowed model/effort choices. Model names, model descriptions, effort
 descriptions and service-tier descriptions come from the selected Codex
 installation's catalog. In automatic mode, a saved user description replaces
@@ -57,9 +57,8 @@ not a copy saved when editing began.
 Fixed mode retains user descriptions but ignores them. A model removed from the
 catalog keeps its saved text and remains visible in the editor for editing or
 restoration; that does not make the model executable. Settings reset removes all
-user descriptions. Older saved settings without the map load as an empty map,
-and a new native app hides the editor when connected to an older server that
-does not expose it.
+user descriptions. Older saved settings without the map load as an empty map.
+The current native app expects the bridge's current editor contract.
 
 Edits allow up to 2,000 UTF-16 code units per description, 100 stored entries, and
 64 KiB of serialized override data. The editors save the description separately
@@ -69,8 +68,8 @@ overwriting each other, and a failed save preserves the text for review and retr
 ## Ultra eligibility
 
 **Allow Ultra reasoning** controls eligibility for the exact `ultra` effort.
-The saved wire field is still `modelPolicy.constraints.allowDelegation` for
-compatibility. This field does not disable all agent features, prevent GPT from
+The persisted setting field is `modelPolicy.constraints.allowDelegation`.
+This field does not disable all agent features, prevent GPT from
 creating multiple bridge Agents, or configure Codex's general subagent tools.
 Ultra's upstream description includes automatic task delegation; that does not
 make this switch a general delegation permission.
@@ -93,10 +92,9 @@ still invalid.
 In fixed mode, turning Ultra off while the fixed effort is Ultra requires the
 user to select another supported effort before saving. Both editors show the
 conflict and preserve the selected value until the user resolves it. This does
-not silently lower the effort or change models. The existing fixed-mode
-compatibility fallback for a model/effort removed from the catalog is a
-different rule; its effective selection and warning remain visible in the
-execution audit.
+not silently lower the effort or change models. If a fixed model/effort is
+removed from the catalog, the bridge records the effective selection and
+warning in the execution audit; it does not make the removed choice executable.
 
 Already admitted turns keep their immutable execution decision. Changed settings
 apply to later admission and do not cancel an active turn or alter an exact

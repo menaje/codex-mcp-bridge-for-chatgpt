@@ -244,6 +244,16 @@ public struct DashboardTurn: Codable, Sendable {
     public let cancellation: CancellationDisplay?
 }
 
+public struct DashboardHistoryDetail: Codable, Sendable {
+    public let kind: String
+    public let rowKey: String
+    public let history: [DashboardTurn]
+    public let historyCount: Int
+    /// Matches the Dashboard row that selected the representative execution.
+    /// Older bridge versions omit it, so clients retain a compatibility path.
+    public var historyRevision: String? = nil
+}
+
 public struct DashboardRow: Codable, Identifiable, Sendable {
     public var historyControls: HistoryControls? = nil
     public var handoff: ThreadHandoffStatus? = nil
@@ -269,6 +279,9 @@ public struct DashboardRow: Codable, Identifiable, Sendable {
     public let latestTurn: DashboardTurn?
     public let history: [DashboardTurn]?
     public let historyCount: Int?
+    /// Stable only for the snapshot that supplied this row; used to discard a
+    /// deferred history response after the Agent begins a new execution.
+    public var historyRevision: String? = nil
 }
 
 public struct ThreadHandoffStatus: Codable, Sendable {
@@ -474,6 +487,14 @@ public struct DashboardParameters: Codable, Sendable {
         self.idleOffset = idleOffset
         self.enrich = enrich
         self.includeHistory = includeHistory
+    }
+}
+
+public struct DashboardHistoryDetailParameters: Codable, Sendable {
+    public let rowKey: String
+
+    public init(rowKey: String) {
+        self.rowKey = rowKey
     }
 }
 

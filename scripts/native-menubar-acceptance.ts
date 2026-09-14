@@ -30,7 +30,9 @@ const row = (id: number, status: string) => ({ rowKey: `fixture-${id}`, activity
   conversationKey: `conversation-${id}`, sessionAlias: `fixture-${id}`, bucket: status === "failed" ? "terminal" : "active",
   projectKey: "fixture-project", projectName: "메뉴바 검증", agentName: `작업 ${id}`,
   activityTitle: status === "running" ? `진행 중인 작업 ${id}` : status === "failed" ? "종료된 실패 작업" : "승인을 기다리는 작업",
-  status, createdAt: observed, updatedAt: observed, elapsedMs: 5000, backgroundProcessCount: 0 });
+  status, createdAt: observed, updatedAt: observed, elapsedMs: 5000, backgroundProcessCount: 0,
+  history: [], historyCount: status === "running" ? 1 : 0,
+  ...(status === "running" ? { historyRevision: "a".repeat(64) } : {}) });
 const activeRows = [row(1, "running"), row(2, "approval-required")];
 const terminalRows = [row(3, "failed")];
 const page = (total: number) => ({ offset: 0, limit: 12, returned: total, total,

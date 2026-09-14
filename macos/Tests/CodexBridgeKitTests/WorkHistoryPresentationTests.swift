@@ -26,5 +26,16 @@ final class WorkHistoryPresentationTests: XCTestCase {
         let missingText = DashboardTimePresentation.text(turn: missing, fallbackUpdatedAt: missing.updatedAt, locale: locale, now: now)
         XCTAssertTrue(missingText.contains(BridgeAppLocalization.string("작업시간 확인 불가", locale: locale)))
         XCTAssertFalse(missingText.contains(DisplayFormat.duration(0, locale: locale)))
+
+        let fallbackRunning = DashboardTimePresentation.text(
+            turn: nil,
+            fallbackUpdatedAt: "2026-09-09T01:00:00Z",
+            fallbackStatus: "running",
+            fallbackDurationMs: 60_000,
+            locale: locale,
+            now: now
+        )
+        XCTAssertTrue(fallbackRunning.contains(DisplayFormat.duration(60_000, locale: locale)))
+        XCTAssertFalse(fallbackRunning.contains(" · "))
     }
 }

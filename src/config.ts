@@ -14,7 +14,6 @@ export type CodexBackendKind = "mcp-server" | "app-server" | "codex-sdk";
 export function isCodexBackendKind(value: unknown): value is CodexBackendKind {
   return value === "mcp-server" || value === "app-server" || value === "codex-sdk";
 }
-export type McpTransportMode = "stateless" | "stateful";
 export type StateProfile = "stable" | "candidate" | "development";
 
 export const HARD_MAX_CONCURRENT_JOBS = 100;
@@ -26,9 +25,8 @@ export type BridgeConfig = {
   token?: string;
   noAuth: boolean;
   allowedHosts?: string[];
-  mcpTransportMode: McpTransportMode;
-  mcpSessionIdleTtlMs: number;
-  maxMcpSessions: number;
+  /** Browser Origin hostnames permitted to reach the MCP endpoint. */
+  allowedOrigins?: string[];
   codexCommand: string;
   codexService?: import("./codexService.js").CodexService;
   codexCommandResolver?: () => Promise<string>;
@@ -70,11 +68,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const token = normalizeOptional(read("TOKEN"));
   const noAuth = parseBool(read("NO_AUTH"));
   const allowedHosts = parseAllowedHosts(read("ALLOWED_HOSTS"));
-  const mcpTransportMode = parseMcpTransportMode(read("MCP_TRANSPORT_MODE") || "stateless");
-  const mcpSessionIdleTtlMs = parsePositiveInt(
-    read("MCP_SESSION_IDLE_TTL_MS") || String(30 * 60 * 1000)
-  );
-  const maxMcpSessions = parsePositiveInt(read("MAX_MCP_SESSIONS") || "64");
+  const allowedOrigins = parseAllowedHosts(read("ALLOWED_ORIGINS"));
   const defaultBackend = parseBackendKind(read("DEFAULT_BACKEND") || "app-server");
   // Project folders are registered in user settings. ROOTS remains only as a
   // backwards-compatible operator ceiling for existing deployments that set
@@ -142,6 +136,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
       "CODEX_MCP_BRIDGE_FAST_RETURN_MS is retired and ignored. Choose foreground or background explicitly; background returns immediately."
     );
   }
+  const retiredMcpSettings = [
+    "MCP_TRANSPORT_MODE",
+    "MCP_SESSION_IDLE_TTL_MS",
+    "MAX_MCP_SESSIONS"
+  ].filter((name) => normalizeOptional(read(name)));
+  if (retiredMcpSettings.length > 0) {
+    startupWarnings.push(
+      `CODEX_MCP_BRIDGE_${retiredMcpSettings.join(", CODEX_MCP_BRIDGE_")} ` +
+      "are retired and ignored. This bridge serves only MCP 2026-07-28 request envelopes; remove the session transport settings."
+    );
+  }
   if (normalizeOptional(read("UPSTREAM_TIMEOUT_MS"))) {
     startupWarnings.push(
       "CODEX_MCP_BRIDGE_UPSTREAM_TIMEOUT_MS is retired and ignored. Codex execution is unlimited-only; use supervised force-stop when needed."
@@ -204,9 +209,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     token,
     noAuth,
     allowedHosts,
-    mcpTransportMode,
-    mcpSessionIdleTtlMs,
-    maxMcpSessions,
+    allowedOrigins,
     codexCommand: read("CODEX") || "codex",
     defaultBackend,
     allowedRoots,
@@ -487,11 +490,6 @@ function parseAccessStrategy(raw: string): AccessStrategy {
 function parseBackendKind(raw: string): "app-server" {
   if (raw === "mcp-server" || raw === "app-server" || raw === "codex-sdk") return "app-server";
   throw new Error(`Invalid default Codex backend: ${raw}`);
-}
-
-function parseMcpTransportMode(raw: string): McpTransportMode {
-  if (raw === "stateless" || raw === "stateful") return raw;
-  throw new Error(`Invalid MCP transport mode: ${raw}`);
 }
 
 export function defaultStateProfile(): StateProfile {

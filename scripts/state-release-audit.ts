@@ -146,17 +146,15 @@ function auditUiCompatibility(): Record<string, unknown> {
   assert.deepEqual(manifest.releaseInventory.activeResources, runtimeUiCatalog.activeResources);
   assert.deepEqual(manifest.releaseInventory.compatibilityResources, runtimeUiCatalog.compatibilityResources);
   assert.deepEqual(manifest.releaseInventory.retirement, runtimeUiCatalog.retirement);
-  assert.deepEqual(runtimeUiCatalog.activeResources, ["settings", "dashboard", "question"]);
-  assert.deepEqual(runtimeUiCatalog.compatibilityResources, ["activity"]);
-  assert.equal(runtimeUiCatalog.retirement.activity.newPresentations, false);
+  assert.deepEqual(runtimeUiCatalog.activeResources, ["settings", "activity", "dashboard", "question"]);
+  assert.deepEqual(runtimeUiCatalog.compatibilityResources, []);
+  assert.equal(runtimeUiCatalog.retirement.activity.newPresentations, true);
 
   const selected = [] as Array<any>;
   const physicalFiles = new Set<string>();
   const counts = {
     selected: 0,
     developmentCurrent: 0,
-    publishedBaseline: 0,
-    temporaryException: 0,
     uniqueBytes: 0
   };
   const toolSource = walkFiles(path.join(runtimeRoot, "dist"))
@@ -196,8 +194,6 @@ function auditUiCompatibility(): Record<string, unknown> {
       counts.uniqueBytes += Buffer.byteLength(html);
       counts.selected += 1;
       if (provenance.inventories.includes("development-current")) counts.developmentCurrent += 1;
-      if (provenance.inventories.includes("published-baseline")) counts.publishedBaseline += 1;
-      if (provenance.inventories.includes("temporary-exception")) counts.temporaryException += 1;
       selected.push({
         name,
         digest: revision.digest,
@@ -219,24 +215,8 @@ function auditUiCompatibility(): Record<string, unknown> {
   );
   assert.deepEqual(packagedFiles, physicalFiles, "artifact must contain only explicitly selected UI snapshots");
 
-  const catalogRevisions = [
-    ...runtimeUiCatalog.publishedBaselines.flatMap((source: any) =>
-      source.resources.map((revision: any) => ({ sourceId: source.id, revision }))
-    ),
-    ...runtimeUiCatalog.temporaryExceptions.flatMap((source: any) =>
-      source.resources.map((revision: any) => ({ sourceId: source.id, revision }))
-    )
-  ];
-  for (const { sourceId, revision } of catalogRevisions) {
-    assert.ok(selected.some((entry) =>
-      entry.name === revision.name && entry.digest === revision.digest &&
-      entry.uri === revision.uri && entry.sourceIds.includes(sourceId)
-    ), `catalog revision was not selected: ${sourceId}/${revision.name}`);
-  }
-  assert.equal(counts.selected, 8);
-  assert.equal(counts.developmentCurrent, 3);
-  assert.equal(counts.publishedBaseline, 2);
-  assert.equal(counts.temporaryException, 4);
+  assert.equal(counts.selected, 4);
+  assert.equal(counts.developmentCurrent, 4);
   return {
     catalogVersion: runtimeUiCatalog.catalogVersion,
     activeResources: runtimeUiCatalog.activeResources,
@@ -244,20 +224,7 @@ function auditUiCompatibility(): Record<string, unknown> {
     selectionCounts: counts,
     selected,
     unclassifiedSnapshotCount: 0,
-    publishedBaseline: runtimeUiCatalog.publishedBaselines.map((entry: any) => ({
-      id: entry.id,
-      version: entry.version,
-      tag: entry.tag,
-      commit: entry.commit,
-      artifactSha256: entry.artifact.sha256
-    })),
-    temporaryExceptions: runtimeUiCatalog.temporaryExceptions.map((entry: any) => ({
-      id: entry.id,
-      kind: entry.kind,
-      commit: entry.commit,
-      buildId: entry.buildId,
-      exitCondition: entry.exitCondition
-    })),
+    historicalRevisions: [],
     activityRetirement: runtimeUiCatalog.retirement.activity
   };
 }

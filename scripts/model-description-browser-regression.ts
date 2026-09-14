@@ -5,8 +5,6 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { loadConfig } from "../src/config.js";
 import { BackendAwareModelCatalog } from "../src/modelCatalog.js";
 import { MODEL_DESCRIPTION_TRANSLATIONS } from "../src/modelDescriptionI18n.js";
@@ -15,6 +13,7 @@ import { SETTINGS_CARD_HTML } from "../src/settingsCard.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 import { cardPrelude } from "./card-browser-fixtures.js";
+import { connectCurrentMcpServer } from "./current-mcp-test-harness.js";
 
 // The browser talks to the real settings store and MCP tools. Only Codex's
 // upstream catalog is simulated; no authenticated model turn or live setting is used.
@@ -42,9 +41,8 @@ const bridge = createBridgeMcpServer(config, {
   async callTool() { throw new Error("Model execution is outside this regression"); },
   async close() {}
 }, undefined, undefined, catalog, settings);
-const client = new Client({ name: "model-description-browser", version: "1" });
-const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-await Promise.all([bridge.connect(serverTransport), client.connect(clientTransport)]);
+const connection = await connectCurrentMcpServer(bridge, { name: "model-description-browser", version: "1" });
+const { client } = connection;
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url || "/", "http://127.0.0.1");
@@ -226,7 +224,7 @@ try {
 } finally {
   await cli("close").catch(() => undefined);
   await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-  await client.close();
+  await connection.close();
   await bridge.close();
   state.close();
   rmSync(temporary, { recursive: true, force: true });

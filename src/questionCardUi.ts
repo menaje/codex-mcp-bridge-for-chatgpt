@@ -5,15 +5,17 @@ export const QUESTION_CARD_SCRIPT = String.raw`
   function refreshQuestionLocale(){if(!userQuestion||!userQuestion.status)return;document.title=userQuestion.title||t["question.title"];activityHeading.textContent=document.title;if(userQuestion.status==="pending"&&Date.now()<userQuestion.expiresAt)message.textContent=t["question.pending"];else renderUserQuestion()}
   function questionProof(){if(!userQuestion)throw new Error("QUESTION_UNAVAILABLE");return{questionId:userQuestion.questionId,revision:userQuestion.revision,presentationToken:userQuestion.presentationToken,...(userQuestion.scopeId?{scopeId:userQuestion.scopeId}:{})}}
   function questionCurrent(proof){return mounted&&userQuestion&&userQuestion.questionId===proof.questionId&&userQuestion.presentationToken===proof.presentationToken}
+  function questionFromResult(value){const metadata=hostToolResultMetadata(value),question=metadata&&metadata["codex/userQuestion@1"];if(question&&question.status)return question;const result=unwrap(value);return result&&result.question||null}
+  function questionActionResult(value){const result=normalizeHostToolResult(value);return result&&result.structuredContent||result}
   async function hydrateQuestion(proof){
     if(!proof||!proof.presentationToken)throw new Error("QUESTION_UNAVAILABLE");
     const epoch=++questionEpoch;userQuestion=Object.assign({},userQuestion&&userQuestion.questionId===proof.questionId?userQuestion:{},proof);
     invalidateWatch();snapshot=null;if(handoffTimer){clearTimeout(handoffTimer);handoffTimer=null}
     recoveryAction=null;setBusy(false);updateRefreshLabel();setCardVisible(true);activityHeading.textContent=t["question.title"];currentCount.textContent="";weeklyUsage.hidden=true;groups.replaceChildren();
-    const result=unwrap(await callTool("codex_question_card",questionProof()));
+    const result=await callTool("codex_ui_read",Object.assign({view:"question"},questionProof()));
     if(epoch!==questionEpoch||!questionCurrent(proof))return;
-    if(!result||!result.question)throw new Error("QUESTION_UNAVAILABLE");
-    userQuestion=result.question;localePreference=userQuestion.uiLocalePreference||"auto";setLocale(effectiveLocaleTag(),false);renderUserQuestion();
+    const next=questionFromResult(result);if(!next)throw new Error("QUESTION_UNAVAILABLE");
+    userQuestion=next;localePreference=userQuestion.uiLocalePreference||"auto";setLocale(effectiveLocaleTag(),false);renderUserQuestion();
   }
   function showQuestionError(error){const raw=String(error&&error.message||error||"");if(/QUESTION_(UNAVAILABLE|STALE)/.test(raw)){activeList.replaceChildren();message.textContent=t["question.expired"];scheduleSizeChanged()}else showError(error)}
   function renderUserQuestion(){
@@ -40,14 +42,14 @@ export const QUESTION_CARD_SCRIPT = String.raw`
   async function submitQuestion(response){
     if(questionBusy)return;const proof=questionProof();setQuestionBusy(true);
     try{
-      const result=unwrap(await callTool("codex_question_submit",Object.assign({},proof,{response}),TOOL_CALL_TIMEOUT_MS,false));
-      if(!questionCurrent(proof))return;userQuestion=result.question;setQuestionBusy(false);renderUserQuestion();await notifyQuestion();
+      const result=await callTool("codex_question_action",Object.assign({},proof,{operation:{kind:"submit",response}}),TOOL_CALL_TIMEOUT_MS,false);
+      if(!questionCurrent(proof))return;const next=questionFromResult(result);if(!next)throw new Error("QUESTION_UNAVAILABLE");userQuestion=next;setQuestionBusy(false);renderUserQuestion();await notifyQuestion();
     }catch(error){if(questionCurrent(proof)){showError(error);setQuestionBusy(false)}}
   }
   async function notifyQuestion(){
     if(questionBusy)return;const proof=questionProof();setQuestionBusy(true);let claim;
     try{
-      claim=unwrap(await callTool("codex_question_notify",Object.assign({},proof,{operation:{kind:"claim"}}),TOOL_CALL_TIMEOUT_MS,false));
+      const claimResult=await callTool("codex_question_action",Object.assign({},proof,{operation:{kind:"claim"}}),TOOL_CALL_TIMEOUT_MS,false);claim=questionActionResult(claimResult);const claimedQuestion=questionFromResult(claimResult);if(claimedQuestion)userQuestion=claimedQuestion;
       if(!questionCurrent(proof))return;
       if(claim.send){
         const prompt="The user's question-card response is available. Read codex_user_answer with responseRef "+claim.responseRef+", then decide the next action within the user's delegation. This notification is not approval for a Codex operation.";
@@ -56,11 +58,11 @@ export const QUESTION_CARD_SCRIPT = String.raw`
         else if(window.openai&&typeof window.openai.sendFollowUpMessage==="function")result=await withUiToolCallTimeout(()=>window.openai.sendFollowUpMessage({prompt}),10000,t["common.error"]);
         else throw new Error("FOLLOW_UP_UNAVAILABLE");
         const rejected=result&&(result.isError===true||result.error);
-        await callTool("codex_question_notify",Object.assign({},proof,{operation:{kind:"ack",attempt:claim.attempt,state:rejected?"failed":"requested"}}),TOOL_CALL_TIMEOUT_MS,false);
+        const acknowledged=await callTool("codex_question_action",Object.assign({},proof,{operation:{kind:"ack",attempt:claim.attempt,state:rejected?"failed":"requested"}}),TOOL_CALL_TIMEOUT_MS,false);const acknowledgedQuestion=questionFromResult(acknowledged);if(acknowledgedQuestion)userQuestion=acknowledgedQuestion;
       }
       if(questionCurrent(proof)){setQuestionBusy(false);await hydrateQuestion(proof)}
     }catch(error){
-      if(claim&&claim.send)await callTool("codex_question_notify",Object.assign({},proof,{operation:{kind:"ack",attempt:claim.attempt,state:"uncertain"}}),TOOL_CALL_TIMEOUT_MS,false).catch(()=>{});
+      if(claim&&claim.send)await callTool("codex_question_action",Object.assign({},proof,{operation:{kind:"ack",attempt:claim.attempt,state:"uncertain"}}),TOOL_CALL_TIMEOUT_MS,false).catch(()=>{});
       if(questionCurrent(proof)){setQuestionBusy(false);await hydrateQuestion(proof).catch(()=>showError(error));message.textContent=t["question.uncertain"]}
     }
   }

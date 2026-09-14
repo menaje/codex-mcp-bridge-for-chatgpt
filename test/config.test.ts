@@ -19,9 +19,7 @@ describe("config policy", () => {
     });
 
     expect(config.allowedRoots).toEqual([]);
-    expect(config.mcpTransportMode).toBe("stateless");
-    expect(config.mcpSessionIdleTtlMs).toBe(30 * 60 * 1000);
-    expect(config.maxMcpSessions).toBe(64);
+    expect(config.allowedOrigins).toBeUndefined();
     expect(config.defaultSandbox).toBe("read-only");
     expect(config.defaultAccessStrategy).toBe("adaptive");
     expect(config.allowWorkspaceWrite).toBe(false);
@@ -55,30 +53,22 @@ describe("config policy", () => {
     expect(config.startupWarnings).toEqual([]);
   });
 
-  it("loads and validates bounded stateful MCP transport settings", () => {
+  it("uses the single current MCP request transport and warns about retired session settings", () => {
     const config = loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_MCP_TRANSPORT_MODE: "stateful",
       CODEX_MCP_BRIDGE_MCP_SESSION_IDLE_TTL_MS: "120000",
-      CODEX_MCP_BRIDGE_MAX_MCP_SESSIONS: "12"
+      CODEX_MCP_BRIDGE_MAX_MCP_SESSIONS: "12",
+      CODEX_MCP_BRIDGE_ALLOWED_ORIGINS: "chatgpt.com,example.test"
     });
 
-    expect(config.mcpTransportMode).toBe("stateful");
-    expect(config.mcpSessionIdleTtlMs).toBe(120000);
-    expect(config.maxMcpSessions).toBe(12);
-
-    expect(() => loadConfig({
-      CODEX_MCP_BRIDGE_NO_AUTH: "1",
-      CODEX_MCP_BRIDGE_MCP_TRANSPORT_MODE: "persistent"
-    })).toThrow(/MCP transport mode/);
-    expect(() => loadConfig({
-      CODEX_MCP_BRIDGE_NO_AUTH: "1",
-      CODEX_MCP_BRIDGE_MCP_SESSION_IDLE_TTL_MS: "0"
-    })).toThrow(/positive integer/);
-    expect(() => loadConfig({
-      CODEX_MCP_BRIDGE_NO_AUTH: "1",
-      CODEX_MCP_BRIDGE_MAX_MCP_SESSIONS: "0"
-    })).toThrow(/positive integer/);
+    expect(config.allowedOrigins).toEqual(["chatgpt.com", "example.test"]);
+    expect(config).not.toHaveProperty("mcpTransportMode");
+    expect(config).not.toHaveProperty("mcpSessionIdleTtlMs");
+    expect(config).not.toHaveProperty("maxMcpSessions");
+    expect(config.startupWarnings).toHaveLength(1);
+    expect(config.startupWarnings[0]).toContain("MCP_TRANSPORT_MODE");
+    expect(config.startupWarnings[0]).toContain("retired and ignored");
   });
 
   it("ignores retired automatic-policy model and effort seeds", () => {

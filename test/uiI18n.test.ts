@@ -517,8 +517,8 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).toContain("async function loadMore(bucket)");
     expect(DASHBOARD_CARD_HTML).toContain("function mergeRows(current,incoming)");
     expect(DASHBOARD_CARD_HTML).toContain("function reconcileDashboardPageCaches(");
-    expect(DASHBOARD_CARD_HTML).toContain("next.terminalPagination.offset > 0");
-    expect(DASHBOARD_CARD_HTML).toContain("next.idlePagination.offset > 0");
+    expect(DASHBOARD_CARD_HTML).toContain("next.terminalPagination.offset>0");
+    expect(DASHBOARD_CARD_HTML).toContain("next.idlePagination.offset>0");
     expect(DASHBOARD_CARD_HTML).not.toContain("dashboardViewMode");
     expect(DASHBOARD_CARD_HTML).not.toContain("api.setWidgetState");
     expect(DASHBOARD_CARD_HTML).not.toContain("render(unwrap(message.params)");
@@ -531,8 +531,22 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).toContain("expandedHistories");
     expect(DASHBOARD_CARD_HTML).toContain('node("details","history")');
     expect(DASHBOARD_CARD_HTML).toContain(
-      "function renderHistoryTurn(turn,key,heading)"
+      "function renderHistoryTurn(turn,heading)"
     );
+    expect(DASHBOARD_CARD_HTML).toContain(
+      "function currentHistoryRevision(rowKey)"
+    );
+    expect(DASHBOARD_CARD_HTML).toContain(
+      "function cachedHistoryDetail(row)"
+    );
+    expect(DASHBOARD_CARD_HTML).toContain(
+      'detail.historyRevision!==revision){void reload(true,false);return}'
+    );
+    expect(DASHBOARD_CARD_HTML).toContain(
+      'callTool("codex_ui_read",{view:"dashboard-history"'
+    );
+    expect(DASHBOARD_CARD_HTML).not.toContain("expandedCancellations");
+    expect(DASHBOARD_CARD_HTML).not.toContain("cancellation-toggle");
     expect(DASHBOARD_CARD_HTML).toContain(
       "dashboardHistoryActivityHeading(historicalTurn,previousTurn,enclosingActivity)"
     );

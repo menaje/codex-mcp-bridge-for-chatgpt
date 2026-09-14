@@ -356,7 +356,7 @@ export function validateReleaseManifest(value) {
   );
   const requiredContracts = {
     userSettingsSchema: 4,
-    taskInputContract: 2,
+    taskInputContract: 3,
     macosHelperProtocol: 2,
     localCompanionProtocol: 2,
     remoteCompanionProtocol: 1

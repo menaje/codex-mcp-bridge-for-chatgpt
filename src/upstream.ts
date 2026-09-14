@@ -1,4 +1,4 @@
-import type { CallToolResult, Progress } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Progress } from "@modelcontextprotocol/server";
 import type { CodexBackendKind } from "./config.js";
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import type { WorkerTerminationCorrelation } from "./cancellation.js";

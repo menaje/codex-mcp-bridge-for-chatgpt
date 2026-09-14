@@ -34,6 +34,10 @@ describe("remote native companion", () => {
     const endpoint = `https://127.0.0.1:${port}`;
     const applicationService = fakeApplicationService();
     applicationService.historyAction = vi.fn(async () => ({ok:true as const}));
+    applicationService.dashboardHistoryDetail = vi.fn(async ({ rowKey }) => ({
+      kind: "dashboard-history" as const, rowKey, history: [], historyCount: 0,
+      historyRevision: "b".repeat(64)
+    }));
     applicationService.problemAction = vi.fn(async () => ({ok:true as const,changed:1}));
     const manager = new RemoteCompanionManager({ stateFile, applicationService });
     managers.push(manager);
@@ -171,6 +175,14 @@ describe("remote native companion", () => {
       includeHistory: false
     });
     expect(manager.status().devices[0]?.lastSeenAt).not.toBeNull();
+
+    const deferredHistory = await jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST",
+      { jsonrpc: "2.0", id: "history-detail", method: "dashboard.history-detail", params: { rowKey: "a".repeat(32) } },
+      { authorization: `Bearer ${credential}`, "x-codex-bridge-server-id": enabled.serverId });
+    expect(deferredHistory).toMatchObject({ status: 200, body: { result: {
+      kind: "dashboard-history", historyCount: 0, historyRevision: "b".repeat(64)
+    } } });
+    expect(applicationService.dashboardHistoryDetail).toHaveBeenCalledWith({ rowKey: "a".repeat(32) });
 
     const historyParams = {rowKey:"a".repeat(32),expectedRevision:"b".repeat(64),action:"acknowledge",requestId:"11111111-1111-4111-8111-111111111111"};
     const history = await jsonRequest(`${endpoint}/remote-companion/v1/rpc`,"POST",

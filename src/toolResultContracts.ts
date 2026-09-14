@@ -1,4 +1,4 @@
-import type { CallToolResult, ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, ContentBlock } from "@modelcontextprotocol/server";
 import type * as z from "zod/v4";
 
 /**
@@ -128,17 +128,15 @@ export function projectToolResult<Schema extends z.ZodType, Canonical>(
   ) {
     throw new Error(`${contract.toolName} used an invalid compatibility projection channel.`);
   }
-  let structuredContent: Record<string, unknown>;
+  let structuredContent: unknown;
   try {
-    structuredContent = contract.outputSchema.parse(projection.authoritative.value) as Record<
-      string,
-      unknown
-    >;
+    structuredContent = contract.outputSchema.parse(projection.authoritative.value);
   } catch (error) {
     const detail = error instanceof Error ? error.stack || error.message : String(error);
     throw new Error(`${contract.toolName} output contract rejected its runtime projection: ${detail}`);
   }
-  const structuredBytes = Buffer.byteLength(JSON.stringify(structuredContent), "utf8");
+  const structuredJson = jsonValue(structuredContent, `${contract.toolName} structured content`);
+  const structuredBytes = Buffer.byteLength(structuredJson, "utf8");
   if (structuredBytes > contract.structured.maxBytes) {
     throw new Error(
       `${contract.toolName} structured content is ${structuredBytes} bytes, above its ${contract.structured.maxBytes}-byte contract.`
@@ -155,7 +153,7 @@ export function projectToolResult<Schema extends z.ZodType, Canonical>(
     if (!contract.privateMeta) {
       throw new Error(`${contract.toolName} projected private metadata without a metadata contract.`);
     }
-    const privateMetaBytes = Buffer.byteLength(JSON.stringify(privateMeta), "utf8");
+    const privateMetaBytes = Buffer.byteLength(jsonValue(privateMeta, `${contract.toolName} private metadata`), "utf8");
     if (privateMetaBytes > contract.privateMeta.maxBytes) {
       throw new Error(
         `${contract.toolName} private metadata is ${privateMetaBytes} bytes, above its ${contract.privateMeta.maxBytes}-byte contract.`
@@ -168,6 +166,15 @@ export function projectToolResult<Schema extends z.ZodType, Canonical>(
     structuredContent,
     ...(privateMeta ? { _meta: privateMeta } : {})
   };
+}
+
+/** MCP 2026-07-28 permits any JSON value at the structured result root. */
+function jsonValue(value: unknown, label: string): string {
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined) {
+    throw new Error(`${label} must be JSON-serializable.`);
+  }
+  return encoded;
 }
 
 export function boundedUtf8Text(text: string, maxBytes: number): string {

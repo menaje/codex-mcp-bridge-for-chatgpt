@@ -118,8 +118,9 @@ Refresh the ChatGPT connection after installing a Bridge release that changes it
 
 The status card switches between **This conversation** and **All work**, with
 running work, response requests and problems summarized in the selected scope.
-New tasks do not open Activity cards. Settings and independent question cards
-cover configuration and questions that need your input.
+New tasks remain execution-only. Open the current Activity card for scoped work
+monitoring, Settings for configuration, and a Question card when user input is
+needed.
 
 <p align="center">
   <img src="images/chatgpt-dashboard-light-en.png" alt="English ChatGPT status card showing conversation scope, three current work-state counts, Run History, and background processes" width="645">
@@ -303,10 +304,10 @@ later use; a model temporarily missing from the list also keeps its saved text.
 - **Keep new Agent tasks in the Codex app** preserves eligible new App Server threads in Codex. It does not change older tasks.
 - **Run history retention** keeps display history for 7, 30 (default), or 90 days, or indefinitely. Full result retention and connection idle time are separate policies; see [work history](work-history.md).
 
-Current settings hide the old Activity visibility and completion-handoff controls.
-Their saved values remain available to existing compatible cards; they do not
-create new Activity cards. New work uses bounded input waits and exact result
-retrieval in the current GPT response. See [card compatibility](card-tools.md#existing-cards-and-settings).
+Current settings do not expose Activity auto-presentation or completion-handoff
+controls. New work uses bounded input waits and exact result retrieval in the
+current GPT response; open the current Activity card explicitly when detailed
+monitoring is useful. See [Card tools](card-tools.md).
 
 Values above the normal concurrency range can increase CPU, memory, and API usage substantially.
 

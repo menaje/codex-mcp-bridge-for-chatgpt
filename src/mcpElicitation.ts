@@ -1,4 +1,4 @@
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/server/validators/ajv";
 import type { CodexInteractionInput, CodexInteractionResponse } from "./upstream.js";
 
 export function readElicitationInput(params: Record<string, unknown>): CodexInteractionInput {

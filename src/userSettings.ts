@@ -179,10 +179,10 @@ export class UserSettingsStore {
 
   /**
    * Stable installation-bound reference to the maximum authority and static
-   * wire shape advertised by codex_task contract v2.
+   * wire shape advertised by codex_task contract v3.
    *
    * User settings, projects, and the live model catalog are deliberately not
-   * included: contract v2 declares their runtime-authoritative behavior in a
+   * included: contract v3 declares their runtime-authoritative behavior in a
    * stable schema. A process/operator change can alter the maximum authority
    * or the schema itself and therefore still requires a connection Refresh.
    */
@@ -193,7 +193,7 @@ export class UserSettingsStore {
       )
       .update(canonicalJsonValue({
         contract: TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION,
-        taskInputContract: 2,
+        taskInputContract: 3,
         maxPromptChars: this.config.maxPromptChars,
         operator: canonicalExecutionOperatorEnvelope(this.config)
       }))

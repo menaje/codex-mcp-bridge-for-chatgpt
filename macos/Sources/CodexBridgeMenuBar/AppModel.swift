@@ -294,6 +294,10 @@ final class AppModel: ObservableObject {
     private var codexRuntimeReads: [String: Int] = [:]
     private var codexRuntimeReadRevision: [String: Int] = [:]
     @Published var dashboard: DashboardSnapshot?
+    @Published private(set) var dashboardHistoryDetails: [String: DashboardHistoryDetail] = [:]
+    @Published private(set) var dashboardHistoryLoading = Set<String>()
+    @Published private(set) var dashboardHistoryErrors: [String: String] = [:]
+    private var dashboardHistoryRequestIDs: [String: UUID] = [:]
     @Published var threadHandoffs: [String: ThreadHandoffStatus] = [:]
     private var threadHandoffTasks: [String: Task<Void, Never>] = [:]
     @Published private(set) var dashboardPanel: DashboardPanel?
@@ -1487,6 +1491,79 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func dashboardHistory(for row: DashboardRow) -> DashboardHistoryDetail? {
+        guard row.history?.isEmpty != false else { return nil }
+        guard let detail = dashboardHistoryDetails[row.rowKey],
+              dashboardHistoryMatches(detail, row: row) else { return nil }
+        return detail
+    }
+
+    func dashboardHistoryError(for row: DashboardRow) -> String? {
+        dashboardHistoryErrors[row.rowKey]
+    }
+
+    func loadDashboardHistory(_ row: DashboardRow) async {
+        let historyCount = max(row.historyCount ?? 0, row.history?.count ?? 0)
+        if let cached = dashboardHistoryDetails[row.rowKey],
+           !dashboardHistoryMatches(cached, row: row) {
+            dashboardHistoryDetails.removeValue(forKey: row.rowKey)
+            dashboardHistoryErrors.removeValue(forKey: row.rowKey)
+        }
+        guard historyCount > 0, row.history?.isEmpty != false,
+              dashboardHistoryDetails[row.rowKey] == nil,
+              !dashboardHistoryLoading.contains(row.rowKey) else { return }
+        let rowKey = row.rowKey
+        let connection = connectionGeneration
+        let dashboardRequest = dashboardRequestGeneration
+        let requestID = UUID()
+        dashboardHistoryRequestIDs[rowKey] = requestID
+        dashboardHistoryLoading.insert(rowKey)
+        dashboardHistoryErrors.removeValue(forKey: rowKey)
+        defer {
+            if dashboardHistoryRequestIDs[rowKey] == requestID {
+                dashboardHistoryRequestIDs.removeValue(forKey: rowKey)
+                dashboardHistoryLoading.remove(rowKey)
+            }
+        }
+        do {
+            let client = try await bridgeClient()
+            let detail = try await client.dashboardHistoryDetail(rowKey: rowKey)
+            guard connection == connectionGeneration,
+                  dashboardRequest == dashboardRequestGeneration,
+                  detail.kind == "dashboard-history", detail.rowKey == rowKey else { return }
+            if let expectedRevision = row.historyRevision,
+               let receivedRevision = detail.historyRevision,
+               expectedRevision != receivedRevision {
+                // The row identifies an Agent, so it can retain its row key
+                // while a new execution replaces the visible one. Refresh the
+                // summary instead of briefly attaching old history to it.
+                await refreshDashboard(enrich: false)
+                return
+            }
+            dashboardHistoryDetails[rowKey] = detail
+        } catch {
+            guard connection == connectionGeneration,
+                  dashboardRequest == dashboardRequestGeneration else { return }
+            dashboardHistoryErrors[rowKey] = localizedErrorDescription(error)
+        }
+    }
+
+    private func clearDashboardHistoryDetails() {
+        dashboardHistoryRequestIDs.removeAll()
+        dashboardHistoryDetails.removeAll()
+        dashboardHistoryLoading.removeAll()
+        dashboardHistoryErrors.removeAll()
+    }
+
+    private func dashboardHistoryMatches(
+        _ detail: DashboardHistoryDetail,
+        row: DashboardRow
+    ) -> Bool {
+        guard let expectedRevision = row.historyRevision,
+              let receivedRevision = detail.historyRevision else { return true }
+        return expectedRevision == receivedRevision
+    }
+
     func refreshDashboard(enrich: Bool = true, applyCachedEnrichment: Bool = false) async {
         refreshEventTasks.removeValue(forKey: "dashboard")?.cancel()
         refreshEventTaskIDs.removeValue(forKey: "dashboard")
@@ -1502,6 +1579,7 @@ final class AppModel: ObservableObject {
             deferredDashboardRead = dashboardVisible ? (enrich, applyCachedEnrichment) : nil
             if isBridgeConnectionChecking { return }
             dashboard = nil
+            clearDashboardHistoryDetails()
             dashboardErrorMessage = nil
             return
         }
@@ -1523,6 +1601,7 @@ final class AppModel: ObservableObject {
             guard !Task.isCancelled, connection == connectionGeneration,
                   generation == dashboardRequestGeneration else { return }
             dashboard = next
+            clearDashboardHistoryDetails()
             dashboardLoadedFilter = filter
             if let problems = next.problems { dashboardProblemQuery.offset = problems.query.offset }
             if settings == nil && !interfaceLocalePreviewActive {
@@ -2637,6 +2716,7 @@ final class AppModel: ObservableObject {
         settingsAutosaveInProgress = false
         generalSettingsSaveState = .idle
         dashboard = nil
+        clearDashboardHistoryDetails()
         dashboardPanel = nil
         dashboardLoadedFilter = nil
         settings = nil

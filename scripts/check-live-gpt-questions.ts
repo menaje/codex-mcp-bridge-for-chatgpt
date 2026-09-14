@@ -4,8 +4,6 @@ import { randomUUID } from "node:crypto";
 import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CodexAppServerUpstreamPool } from "../src/appServerUpstream.js";
 import { loadConfig } from "../src/config.js";
 import { parseAppServerModelCatalog, modelCatalogFingerprint } from "../src/modelCatalog.js";
@@ -16,6 +14,7 @@ import { SessionRegistry } from "../src/sessionRegistry.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 import { questionReference } from "../src/codexInputs.js";
 import { existsSync } from "node:fs";
+import { connectCurrentMcpServer, type CurrentMcpConnection } from "./current-mcp-test-harness.js";
 
 // Opt-in: real authenticated CLI/model, production MCP tools, synthetic answer.
 // This is not evidence of a parent ChatGPT model or live ChatGPT card wake.
@@ -42,8 +41,8 @@ for (const arg of process.argv.slice(3).filter(value => !["--native-input", "--a
   const jobs = new CodexJobRegistry({ stateStore: store, allowedRoots: [project] });
   const settings = new UserSettingsStore(config, { stateStore: store });
   settings.updateWithProjectOperations({}, [{ kind: "add", project: { name: "Question canary", cwd: project } }], undefined, 0);
-  const client = new Client({ name: "question-canary", version: "1" });
   let server: ReturnType<typeof createBridgeMcpServer> | undefined;
+  let connection: CurrentMcpConnection | undefined;
   const report: Record<string, unknown> = { source, cli: execFileSync(command, ["--version"], { encoding: "utf8" }).trim(), model: "gpt-6-astra", nativeInput, approvalProbe, productionMcp: true, parentChatGpt: false };
   reports.push(report);
   const started = Date.now();
@@ -55,14 +54,15 @@ for (const arg of process.argv.slice(3).filter(value => !["--native-input", "--a
     assert.ok(models.some(model => model.id === "gpt-6-astra"));
     server = createBridgeMcpServer(config, pool, new SessionRegistry({ stateStore: store }), jobs,
       { getCatalog: async () => catalog, getCachedCatalog: () => catalog }, settings);
-    const [a, b] = InMemoryTransport.createLinkedPair(); await Promise.all([client.connect(a), server.connect(b)]);
+    connection = await connectCurrentMcpServer(server, { name: "question-canary", version: "1" });
+    const { client } = connection;
     const meta = { "openai/session": "isolated-live-question-" + randomUUID() };
     const call = async (name: string, args: Record<string, unknown>) => {
       const result = await client.callTool({ name, arguments: args, _meta: meta }) as any;
       assert.notEqual(result.isError, true, JSON.stringify(result)); return result.structuredContent;
     };
     const selected = settings.current.projects[0];
-    const task = await call("codex_task", { requestId: randomUUID(), taskContractVersion: "2", executionEnvelopeRef: settings.taskExecutionEnvelopeRef(),
+    const task = await call("codex_task", { requestId: randomUUID(), taskContractVersion: "3", executionEnvelopeRef: settings.taskExecutionEnvelopeRef(),
       project: { name: selected.name, projectRef: selected.projectRef, projectRevision: selected.projectRevision },
       selection: { model: "gpt-6-astra", reasoningEffort: "low" }, executionMode: "background",
       prompt: approvalProbe
@@ -73,7 +73,7 @@ for (const arg of process.argv.slice(3).filter(value => !["--native-input", "--a
     const jobId = task.jobId;
     let cursor: string | undefined;
     while (Date.now() - started < 50_000) {
-      const input = await call("codex_input", { jobId, ...(cursor ? { afterCursor: cursor } : {}), waitMs: 5000 });
+      const input = await call("codex_status", { query: { kind: "input", jobId, ...(cursor ? { afterCursor: cursor } : {}), waitMs: 5000 } });
       cursor = input.cursor;
       if (approvalProbe && input.approvals.length) {
         assert.equal(input.questions.length, 0);
@@ -116,7 +116,7 @@ for (const arg of process.argv.slice(3).filter(value => !["--native-input", "--a
   } finally {
     clearTimeout(deadline); await pool.close();
     await Promise.all(jobs.list(100).map(job => job.promise));
-    await client.close().catch(() => {}); await server?.close(); store.close();
+    await connection?.close().catch(() => {}); await server?.close(); store.close();
     await rm(root, { recursive: true, force: true }); report.temporaryHomeRemoved = true; report.elapsedMs = Date.now() - started;
   }
   console.log(JSON.stringify(report));

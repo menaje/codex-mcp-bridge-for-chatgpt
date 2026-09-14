@@ -1,4 +1,4 @@
-import { dashboardHistoryRuntimeInput } from "./workHistory.js";
+import { dashboardHistoryActionInput } from "./workHistory.js";
 import { problemActionSchema, problemQuerySchema } from "./problemReview.js";
 import {
   chmodSync,
@@ -44,6 +44,7 @@ const requestSchema = z.strictObject({
     "companion.hello",
     "changes.wait",
     "dashboard.snapshot",
+    "dashboard.history-detail",
     "dashboard.history",
     "dashboard.problem",
     "thread.handoff",
@@ -70,6 +71,9 @@ const dashboardParamsSchema = z.strictObject({
   idleOffset: z.number().int().min(0).max(1_000_000_000).optional(),
   enrich: z.boolean().optional(),
   includeHistory: z.boolean().optional()
+});
+const dashboardHistoryDetailParamsSchema = z.strictObject({
+  rowKey: z.string().regex(/^[0-9a-f]{32}$/)
 });
 const settingsSnapshotParamsSchema = z.strictObject({
   refreshModels: z.boolean().optional(),
@@ -149,6 +153,7 @@ export type RemoteCompanionControl = {
 export const REMOTE_COMPANION_APPLICATION_METHODS = new Set([
   "companion.hello",
   "dashboard.snapshot",
+  "dashboard.history-detail",
   "dashboard.history",
   "dashboard.problem",
   "settings.snapshot",
@@ -342,7 +347,15 @@ async function dispatchRequest(
       };
     case "dashboard.history": {
       if (!applicationService.historyAction) throw new Error("HISTORY_UNSUPPORTED");
-      return applicationService.historyAction(dashboardHistoryRuntimeInput.parse(request.params));
+      return applicationService.historyAction(dashboardHistoryActionInput.parse(request.params));
+    }
+    case "dashboard.history-detail": {
+      if (!applicationService.dashboardHistoryDetail) {
+        throw new Error("DASHBOARD_HISTORY_DETAIL_UNSUPPORTED");
+      }
+      return applicationService.dashboardHistoryDetail(
+        dashboardHistoryDetailParamsSchema.parse(request.params)
+      );
     }
     case "dashboard.problem": {
       if (!applicationService.problemAction) throw new Error("PROBLEMS_UNSUPPORTED");

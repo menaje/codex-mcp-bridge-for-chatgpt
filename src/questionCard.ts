@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { serializedUiTranslations } from "./uiI18n.js";
 import { CARD_BROWSER_RUNTIME } from "./cardBrowserRuntime.js";
 import { QUESTION_DRAFT_SCRIPT } from "./questionDraft.js";

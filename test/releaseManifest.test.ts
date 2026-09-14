@@ -103,7 +103,7 @@ describe("release manifest", () => {
       rollbackPolicy: "verified-original-before-service-open-v1",
       persistentContracts: {
         userSettingsSchema: 4,
-        taskInputContract: 2,
+        taskInputContract: 3,
         macosHelperProtocol: 2,
         localCompanionProtocol: 2,
         remoteCompanionProtocol: 1
@@ -346,11 +346,12 @@ describe("release manifest", () => {
 
     const htmlChanged = structuredClone(rendered);
     htmlChanged.resources.activity.html += "<!-- changed -->";
-    expect(() => deriveUiResourceManifest(manifest, htmlChanged, initial, catalog))
-      .toThrow(/Compatibility-only activity renderer changed/);
+    const afterHtml = deriveUiResourceManifest(manifest, htmlChanged, initial, catalog);
+    expect(afterHtml.resources.activity.uri).not.toBe(initial.resources.activity.uri);
+    expect(afterHtml.resources.activity.previous).toEqual([]);
   });
 
-  it("selects only current, published, and deployed UI revisions without accumulating development history", () => {
+  it("selects only the four current UI revisions without accumulating development history", () => {
     const manifest = loadReleaseManifest(REPO_ROOT);
     const catalog = loadUiReleaseCatalog(REPO_ROOT);
     const lock = readJson(path.join(REPO_ROOT, "ui-manifest.lock.json"));
@@ -363,18 +364,16 @@ describe("release manifest", () => {
     });
     const selected = deriveUiResourceManifest(manifest, rendered, unrelatedHistory, catalog);
     expect(selected).toEqual(lock);
-    expect(selected.releaseInventory.selected).toHaveLength(8);
-    expect(selected.resources.settings.previous.map((entry: any) => entry.uri)).toEqual([
-      "ui://codex-mcp-bridge/settings/fc59cc3d4ed0.html",
-      "ui://codex-mcp-bridge/settings-v6.html"
-    ]);
-    expect(selected.resources.activity.previous.map((entry: any) => entry.uri)).toEqual([
-      "ui://codex-mcp-bridge/activity-v1.html"
-    ]);
+    expect(selected.releaseInventory.selected).toHaveLength(4);
+    expect(selected.resources.settings.previous).toEqual([]);
+    expect(selected.resources.activity.previous).toEqual([]);
+    expect(selected.resources.dashboard.previous).toEqual([]);
+    expect(selected.resources.question.previous).toEqual([]);
     expect(selected.releaseInventory.retirement.activity).toMatchObject({
-      lifecycle: "compatibility-only",
-      newPresentations: false,
-      firstStableWithReplacement: "0.4.0"
+      lifecycle: "historical-revisions-retired",
+      newPresentations: true,
+      firstStableWithReplacement: "0.4.1",
+      minimumSupportRule: "none"
     });
 
     const missingGeneration = structuredClone(rendered);
@@ -382,18 +381,15 @@ describe("release manifest", () => {
     expect(() => deriveUiResourceManifest(manifest, missingGeneration, lock, catalog))
       .toThrow(/settings is missing codex\/uiContractGeneration/);
 
-    const missingCompatibility = structuredClone(catalog);
-    missingCompatibility.publishedBaselines[0].resources = missingCompatibility.publishedBaselines[0].resources
-      .filter((entry: any) => entry.name !== "activity");
-    missingCompatibility.temporaryExceptions[0].resources = missingCompatibility.temporaryExceptions[0].resources
-      .filter((entry: any) => entry.name !== "activity");
-    expect(() => validateUiReleaseCatalog(missingCompatibility))
-      .toThrow(/compatibility resource activity has no selected/);
+    const addedCompatibility = structuredClone(catalog);
+    addedCompatibility.compatibilityResources = ["activity"];
+    expect(() => validateUiReleaseCatalog(addedCompatibility))
+      .toThrow(/compatibilityResources must be/);
 
     const changedRetirement = structuredClone(catalog);
-    changedRetirement.retirement.activity.newPresentations = true;
+    changedRetirement.retirement.activity.newPresentations = false;
     expect(() => validateUiReleaseCatalog(changedRetirement))
-      .toThrow(/retirement\.activity\.newPresentations must be false/);
+      .toThrow(/retirement\.activity\.newPresentations must be true/);
 
     const driftedManifest = structuredClone(manifest);
     driftedManifest.uiResources.releaseCatalogSha256 = "0".repeat(64);

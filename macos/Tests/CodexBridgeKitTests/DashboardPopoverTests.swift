@@ -76,6 +76,59 @@ final class DashboardPopoverTests: XCTestCase {
     }
 
     @MainActor
+    func testStatusRowLoadsItsEarlierExecutionsOnlyWhenExpanded() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.rowCount = 1
+        await f.model.refreshDashboard(enrich: false)
+        let row = try XCTUnwrap(f.model.dashboard?.statusRows?.first)
+        XCTAssertEqual(row.history?.count, 0)
+        XCTAssertEqual(row.historyCount, 1)
+        XCTAssertNil(f.model.dashboardHistory(for: row))
+
+        await f.model.loadDashboardHistory(row)
+
+        XCTAssertEqual(f.model.dashboardHistory(for: row)?.historyCount, 1)
+        XCTAssertEqual(f.model.dashboardHistory(for: row)?.history.first?.activityTitle, "Earlier task")
+    }
+
+    @MainActor
+    func testStaleDeferredHistoryRefreshesInsteadOfAttachingToANewExecution() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.rowCount = 1
+        await f.model.refreshDashboard(enrich: false)
+        let row = try XCTUnwrap(f.model.dashboard?.statusRows?.first)
+        let readsBefore = f.state.dashboardReadCount
+        f.state.detailHistoryRevision = String(repeating: "b", count: 64)
+
+        await f.model.loadDashboardHistory(row)
+
+        XCTAssertNil(f.model.dashboardHistory(for: row))
+        XCTAssertNil(f.model.dashboardHistoryError(for: row))
+        XCTAssertEqual(f.state.dashboardReadCount, readsBefore + 1)
+    }
+
+    @MainActor
+    func testCachedHistoryIsDiscardedWhenTheSameAgentRowRepresentsANewExecution() async throws {
+        let f = try PopoverFixture(); defer { f.remove() }
+        f.state.rowCount = 1
+        await f.model.refreshDashboard(enrich: false)
+        let row = try XCTUnwrap(f.model.dashboard?.statusRows?.first)
+        await f.model.loadDashboardHistory(row)
+        XCTAssertNotNil(f.model.dashboardHistory(for: row))
+
+        var replacement = row
+        replacement.historyRevision = String(repeating: "b", count: 64)
+        f.state.detailHistoryRevision = replacement.historyRevision!
+        XCTAssertNil(f.model.dashboardHistory(for: replacement))
+
+        await f.model.loadDashboardHistory(replacement)
+        XCTAssertEqual(
+            f.model.dashboardHistory(for: replacement)?.historyRevision,
+            replacement.historyRevision
+        )
+    }
+
+    @MainActor
     func testLateHistoryResultCannotChangeTheLocallySelectedPanel() async throws {
         let f = try PopoverFixture(); defer { f.remove() }
         let model = f.model
@@ -356,6 +409,7 @@ private final class PopoverReplyState: @unchecked Sendable {
     private var dashboardReads = 0
     private var slowHistory = false
     private var runningRowCount = 0
+    private var deferredHistoryRevision = String(repeating: "a", count: 64)
     var rowCount: Int { get { lock.withLock { runningRowCount } } set { lock.withLock { runningRowCount = newValue } } }
     var holdEnrichment: Bool { get { lock.withLock { pausedEnrichment } } set { lock.withLock { pausedEnrichment = newValue } } }
     var enrichmentReadCount: Int { lock.withLock { enrichmentReads } }
@@ -367,6 +421,7 @@ private final class PopoverReplyState: @unchecked Sendable {
         for _ in 0..<active { enrichmentGate.signal() }
     }
     var delayHistory: Bool { get { lock.withLock { slowHistory } } set { lock.withLock { slowHistory = newValue } } }
+    var detailHistoryRevision: String { get { lock.withLock { deferredHistoryRevision } } set { lock.withLock { deferredHistoryRevision = newValue } } }
     var failStart: Bool { get { lock.withLock { fail } } set { lock.withLock { fail = newValue } } }
     var coalesceStart: Bool { get { lock.withLock { coalesce } } set { lock.withLock { coalesce = newValue } } }
     var launchRequests: [[String: Any]] { lock.withLock { requests.filter { $0["applicationLaunchAt"] != nil } } }
@@ -413,6 +468,7 @@ private final class PopoverReplyState: @unchecked Sendable {
                 "approvalRequired", "terminating", "needsAttention", "backgroundProcesses", "backgroundProcessAgents",
                 "runtimeUnknownAgents", "runtimeProbeSkippedAgents", "completed", "failed", "interrupted", "cancelled", "idleAgents", "orphanedAgents"]
             let rowCount = self.rowCount
+            let rowHistoryRevision = String(repeating: "a", count: 64)
             let rows: [[String: Any]] = (0..<rowCount).map { index in [
                 "rowKey": "window-row-\(index)", "activityKey": "window-activity-\(index)",
                 "conversationKey": "window-conversation-\(index)", "bucket": "active",
@@ -420,7 +476,8 @@ private final class PopoverReplyState: @unchecked Sendable {
                 "projectName": "Window fixture", "agentName": "Task \(index)",
                 "activityTitle": "Running task \(index)", "status": "running",
                 "createdAt": "2026-09-10T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z",
-                "elapsedMs": 5000, "backgroundProcessCount": 0
+                "elapsedMs": 5000, "backgroundProcessCount": 0,
+                "history": [], "historyCount": 1, "historyRevision": rowHistoryRevision
             ] }
             var counts = Dictionary(uniqueKeysWithValues: names.map { ($0, 0) })
             counts["running"] = rowCount == 0 ? 3 : rowCount
@@ -436,6 +493,18 @@ private final class PopoverReplyState: @unchecked Sendable {
                     "cacheHits": lock.withLock { completedEnrichments }, "timeouts": 0,
                     "durationMs": 0, "usageTimedOut": false, "pendingReads": 0],
                 "uiLocalePreference": "ko"]
+        case "dashboard.history-detail":
+            let rowKey = params["rowKey"] as? String ?? ""
+            let historyRevision = lock.withLock { deferredHistoryRevision }
+            result = [
+                "kind": "dashboard-history", "rowKey": rowKey, "historyCount": 1,
+                "historyRevision": historyRevision,
+                "history": [[
+                    "activityKey": "earlier-activity", "activityTitle": "Earlier task", "status": "completed",
+                    "startedAt": "2026-09-09T23:59:55Z", "updatedAt": "2026-09-10T00:00:00Z",
+                    "endedAt": "2026-09-10T00:00:00Z", "durationMs": 5000
+                ]]
+            ]
         default: return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"Fixture method unavailable"}}"#)
         }
         let data = try! JSONSerialization.data(withJSONObject: ["result": result])

@@ -173,10 +173,11 @@
         },
         "activeResources": {
           "type": "array",
-          "minItems": 3,
-          "maxItems": 3,
+          "minItems": 4,
+          "maxItems": 4,
           "prefixItems": [
             { "const": "settings" },
+            { "const": "activity" },
             { "const": "dashboard" },
             { "const": "question" }
           ],
@@ -184,9 +185,7 @@
         },
         "compatibilityResources": {
           "type": "array",
-          "minItems": 1,
-          "maxItems": 1,
-          "prefixItems": [{ "const": "activity" }],
+          "maxItems": 0,
           "items": false
         },
         "releaseCatalog": { "const": "ui-release-catalog.json" },
@@ -258,7 +257,7 @@
           ],
           "properties": {
             "userSettingsSchema": { "const": 4 },
-            "taskInputContract": { "const": 2 },
+            "taskInputContract": { "const": 3 },
             "macosHelperProtocol": { "const": 2 },
             "localCompanionProtocol": { "const": 2 },
             "remoteCompanionProtocol": { "const": 1 }

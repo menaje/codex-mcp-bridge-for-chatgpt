@@ -18,6 +18,8 @@ public protocol BridgeApplicationClient: Sendable {
 
     func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult
 
+    func dashboardHistoryDetail(rowKey: String) async throws -> DashboardHistoryDetail
+
     func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
                                statusFilter: DashboardStatusFilter, problems: ProblemQuery) async throws -> DashboardSnapshot
     func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
@@ -51,6 +53,10 @@ public extension BridgeApplicationClient {
 
     func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {
         throw NSError(domain: "HISTORY_UNSUPPORTED", code: 1)
+    }
+
+    func dashboardHistoryDetail(rowKey: String) async throws -> DashboardHistoryDetail {
+        throw NSError(domain: "DASHBOARD_HISTORY_DETAIL_UNSUPPORTED", code: 1)
     }
 }
 

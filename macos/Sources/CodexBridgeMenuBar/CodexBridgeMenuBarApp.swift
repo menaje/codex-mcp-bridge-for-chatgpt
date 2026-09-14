@@ -202,16 +202,22 @@ final class BridgeMenuBarController: NSObject, NSPopoverDelegate {
         popoverSizeUpdateScheduled = true
         // SwiftUI can publish several geometry preferences while replacing a
         // loading view with a scroll view. Apply only the final measurement for
-        // this run-loop pass so NSPopover performs one anchored transition.
+        // this run-loop pass, without animating an intermediate content frame.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.popoverSizeUpdateScheduled = false
             guard let next = self.pendingPopoverSize else { return }
             self.pendingPopoverSize = nil
-            self.hostingController?.preferredContentSize = next
             guard abs(self.popover.contentSize.width - next.width) >= 0.5 ||
                     abs(self.popover.contentSize.height - next.height) >= 0.5 else { return }
+            // AppKit's resize animation can briefly recenter the hosted SwiftUI
+            // content before it expands the popover. Keep the menu anchor fixed
+            // and apply this content-size change atomically instead.
+            let animates = self.popover.animates
+            self.popover.animates = false
+            self.hostingController?.preferredContentSize = next
             self.popover.contentSize = next
+            self.popover.animates = animates
         }
     }
 
@@ -405,11 +411,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                 "일반",
                 locale: model.interfaceLocale
             )
-            settingsWindow.subtitle = "Codex MCP Bridge for ChatGPT"
             settingsWindow.isReleasedWhenClosed = false
             settingsWindow.delegate = self
             PrimaryAppWindowPresentation.configure(settingsWindow)
-            settingsWindow.toolbarStyle = .preference
+            settingsWindow.toolbarStyle = .unifiedCompact
             settingsWindow.setFrameAutosaveName("CodexBridgeSettingsWindow")
             settingsWindow.contentViewController = NSHostingController(
                 rootView: NativeSettingsView(onSelectedPaneChange: { [weak settingsWindow] title in

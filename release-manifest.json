@@ -93,14 +93,13 @@
     ],
     "activeResources": [
       "settings",
+      "activity",
       "dashboard",
       "question"
     ],
-    "compatibilityResources": [
-      "activity"
-    ],
+    "compatibilityResources": [],
     "releaseCatalog": "ui-release-catalog.json",
-    "releaseCatalogSha256": "fcb76cea1b7f3a955f88ef47fe59d96dc44197576dc955d8bf2226148af9a9eb"
+    "releaseCatalogSha256": "8e2031a2489994ab5702c5e3f94d5439c7fa78e164fe1e8774b979c71af3fd11"
   },
   "stateCompatibility": {
     "currentSchema": 19,
@@ -137,7 +136,7 @@
     "rollbackPolicy": "verified-original-before-service-open-v1",
     "persistentContracts": {
       "userSettingsSchema": 4,
-      "taskInputContract": 2,
+      "taskInputContract": 3,
       "macosHelperProtocol": 2,
       "localCompanionProtocol": 2,
       "remoteCompanionProtocol": 1

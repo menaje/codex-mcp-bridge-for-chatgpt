@@ -4,14 +4,14 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { Client } from "@modelcontextprotocol/client";
 import { loadConfig } from "../src/config.js";
 import { createBridgeMcpServer } from "../src/server.js";
 import { SessionRegistry } from "../src/sessionRegistry.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { CodexJobRegistry } from "../src/tools.js";
 import { UserSettingsStore } from "../src/userSettings.js";
+import { connectCurrentMcpServer, type CurrentMcpConnection } from "./current-mcp-test-harness.js";
 
 // Open an explicit source read-only, make a consistent private SQLite backup,
 // and exercise migration plus two initializations only on that disposable copy.
@@ -64,6 +64,7 @@ let source: Database.Database | undefined;
 let state: BridgeStateStore | undefined;
 let server: ReturnType<typeof createBridgeMcpServer> | undefined;
 let client: Client | undefined;
+let connection: CurrentMcpConnection | undefined;
 
 try {
   source = new Database(sourceFile, { readonly: true, fileMustExist: true });
@@ -193,9 +194,8 @@ try {
       },
       settings
     );
-    client = new Client({ name: "card-state-restart-audit", version: "1" });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+    connection = await connectCurrentMcpServer(server, { name: "card-state-restart-audit", version: "1" });
+    client = connection.client;
 
     const discovered = (await client.listTools()).tools.map((tool) => tool.name).sort();
     for (const required of ["codex_task", "codex_ui_read"]) {
@@ -214,7 +214,8 @@ try {
       report.appReads = Number(report.appReads) + 1;
     }
 
-    await client.close();
+    await connection.close();
+    connection = undefined;
     client = undefined;
     await server.close();
     server = undefined;
@@ -249,7 +250,7 @@ try {
   report.errorType = error instanceof Error ? error.name : "unknown";
 } finally {
   if (source?.open) source.close();
-  await client?.close().catch(() => {});
+  await connection?.close().catch(() => {});
   await server?.close().catch(() => {});
   state?.close();
   await rm(root, { recursive: true, force: true });
@@ -650,11 +651,11 @@ function sessionContextDigest(
       threadId: row.thread_id,
       scopeId: row.scope_id,
       projectId: row.project_id,
-      backendKind: row.backend_kind,
-      cwd: row.cwd,
-      sandbox: row.sandbox,
-      sessionId: row.session_id,
-      forkedFromThreadId: row.forked_from_thread_id,
+      backendKind: String(row.backend_kind),
+      cwd: String(row.cwd),
+      sandbox: String(row.sandbox),
+      sessionId: row.session_id === null || row.session_id === undefined ? null : String(row.session_id),
+      forkedFromThreadId: row.forked_from_thread_id === null || row.forked_from_thread_id === undefined ? null : String(row.forked_from_thread_id),
       persistence: row.persistence,
       visibleInCodexApp: sqliteBoolean(row.visible_in_codex_app),
       selection: parseNullableJson(row.selection),
@@ -745,11 +746,11 @@ function sessionContextDigest(
       threadId: row.thread_id,
       scopeId: row.scope_id,
       projectId,
-      backendKind: row.backend_kind,
-      cwd: row.cwd,
-      sandbox: row.sandbox,
-      sessionId: row.session_id,
-      forkedFromThreadId: row.forked_from_thread_id,
+      backendKind: String(row.backend_kind),
+      cwd: String(row.cwd),
+      sandbox: String(row.sandbox),
+      sessionId: row.session_id === null || row.session_id === undefined ? null : String(row.session_id),
+      forkedFromThreadId: row.forked_from_thread_id === null || row.forked_from_thread_id === undefined ? null : String(row.forked_from_thread_id),
       persistence: nonempty(connection?.persistence) || "unknown",
       visibleInCodexApp: null,
       selection: null,

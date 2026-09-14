@@ -102,11 +102,30 @@ describe("native companion server", () => {
     const socketPath = temporarySocketPath(), applicationService = fakeApplicationService();
     applicationService.historyAction = vi.fn(async () => ({ok:true as const}));
     servers.push(await startBridgeCompanionServer({socketPath,applicationService}));
-    const params = {rowKey:"a".repeat(32),expectedRevision:"b".repeat(64),action:"archive",requestId:"11111111-1111-4111-8111-111111111111"};
+    const params = {rowKey:"a".repeat(32),expectedRevision:"b".repeat(64),action:"acknowledge",requestId:"11111111-1111-4111-8111-111111111111"};
     expect(await request(socketPath,{jsonrpc:"2.0",id:1,method:"dashboard.history",params})).toMatchObject({result:{ok:true}});
     expect(applicationService.historyAction).toHaveBeenCalledWith(params);
     expect(await request(socketPath,{jsonrpc:"2.0",id:2,method:"dashboard.history",params:{...params,force:true}})).toHaveProperty("error");
     expect(applicationService.historyAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads one Agent's deferred Dashboard history through the private socket", async () => {
+    const socketPath = temporarySocketPath(), applicationService = fakeApplicationService();
+    applicationService.dashboardHistoryDetail = vi.fn(async ({ rowKey }) => ({
+      kind: "dashboard-history" as const, rowKey, history: [], historyCount: 0,
+      historyRevision: "b".repeat(64)
+    }));
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService }));
+    const params = { rowKey: "a".repeat(32) };
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "history-detail", method: "dashboard.history-detail", params
+    })).toMatchObject({ result: {
+      kind: "dashboard-history", rowKey: params.rowKey, historyRevision: "b".repeat(64)
+    } });
+    expect(applicationService.dashboardHistoryDetail).toHaveBeenCalledWith(params);
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "invalid-history-detail", method: "dashboard.history-detail", params: { rowKey: "bad" }
+    })).toHaveProperty("error");
   });
 
   it("routes Dashboard and Settings through the shared application service", async () => {

@@ -4,8 +4,7 @@ import { existsSync, lstatSync, mkdtempSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
 it.each(["cli", "stdio"])("starts native and remote app connections in the built %s entrypoint", async (entrypoint) => {
@@ -31,7 +30,10 @@ it.each(["cli", "stdio"])("starts native and remote app connections in the built
   child.stdout.on("data", chunk => { output += chunk; });
   child.stderr.on("data", chunk => { output += chunk; });
   const exited = new Promise<number | null>(resolve => child.once("exit", resolve));
-  const client = new Client({ name: "built-http-native", version: "0.0.0" });
+  const client = new Client(
+    { name: "built-http-native", version: "0.0.0" },
+    { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+  );
   try {
     for (let count = 0; count < 100; count++) {
       const ready = entrypoint === "cli" ? output.includes("listening on http://") : output.includes("persistent stdio ready");
@@ -47,7 +49,10 @@ it.each(["cli", "stdio"])("starts native and remote app connections in the built
     expect(native).toMatchObject({ enrichment: { state: "structural" }, counts: { trackedConversations: 0 } });
     if (entrypoint === "cli") {
       await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`)));
-      const card = await client.callTool({ name: "codex_dashboard_snapshot", arguments: { widgetInstanceId: randomUUID(), enrich: false } });
+      const card = await client.callTool({
+        name: "codex_ui_read",
+        arguments: { view: "dashboard", widgetInstanceId: randomUUID(), enrich: false }
+      });
       expect(card.isError).not.toBe(true);
       expect(card.structuredContent?.counts).toEqual(native.counts);
     }

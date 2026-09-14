@@ -3,9 +3,17 @@ import SwiftUI
 
 @MainActor
 enum DashboardTimePresentation {
-    static func text(turn: DashboardTurn?, fallbackUpdatedAt: String, locale: Locale, now: Date = Date()) -> String {
-        let live = turn.map { $0.endedAt == nil && ["running", "input-required", "approval-required", "terminating", "liveness-unknown"].contains($0.status) } ?? false
-        let duration = turn?.durationMs
+    static func text(
+        turn: DashboardTurn?,
+        fallbackUpdatedAt: String,
+        fallbackStatus: String? = nil,
+        fallbackDurationMs: Int? = nil,
+        locale: Locale,
+        now: Date = Date()
+    ) -> String {
+        let status = turn?.status ?? fallbackStatus
+        let live = turn?.endedAt == nil && ["running", "input-required", "approval-required", "terminating", "liveness-unknown"].contains(status ?? "")
+        let duration = turn?.durationMs ?? fallbackDurationMs
         let workTime = duration.map {
             BridgeAppLocalization.format("작업시간 %@", locale: locale, DisplayFormat.duration($0, locale: locale))
         } ?? BridgeAppLocalization.string("작업시간 확인 불가", locale: locale)

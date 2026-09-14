@@ -94,14 +94,6 @@ describe("model-visible output contracts", () => {
     }
   });
 
-  it("continues validating retired cached-call fixtures outside current discovery", () => {
-    const fixtures = readFixture<Record<ModelVisibleOutputToolName, StructuredFixture[]>>("legacy-model-results.json");
-    for (const [name, results] of Object.entries(fixtures)) {
-      expect(MODEL_VISIBLE_OUTPUT_SCHEMAS).not.toHaveProperty(name);
-      for (const result of results) expect(() => validateModelVisibleStructuredOutput(name as ModelVisibleOutputToolName, result.structuredContent)).not.toThrow();
-    }
-  });
-
   it("rejects automatic default disclosure from model-visible outputs", () => {
     const models = structuredClone(
       modelResults.codex_models[0]!.structuredContent
@@ -221,17 +213,17 @@ describe("model-visible output contracts", () => {
     expect(
       (z.toJSONSchema(MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_task) as any)
         .properties.contractVersion
-    ).toEqual({ type: "string", enum: ["1"] });
+    ).toEqual({ type: "string", const: "2" });
   });
 
   it("publishes codex_task as a strict all-required schema with nullable absence", () => {
     const schema = z.toJSONSchema(MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_task) as any;
     expect(schema.required.sort()).toEqual(Object.keys(schema.properties).sort());
-    expect(schema.properties.jobId.type).toEqual(["string", "null"]);
-    expect(schema.properties.answer.type).toEqual(["string", "null"]);
-    expect(schema.properties.error.type).toEqual(["object", "null"]);
-    expect(schema.properties.error.required.sort())
-      .toEqual(Object.keys(schema.properties.error.properties).sort());
+    expect(schema.properties.jobId.anyOf.map((entry: any) => entry.type)).toEqual(["string", "null"]);
+    expect(schema.properties.answer.anyOf.map((entry: any) => entry.type)).toEqual(["string", "null"]);
+    const errorBranch = schema.properties.error.anyOf.find((entry: any) => entry.type === "object");
+    expect(errorBranch.required.sort())
+      .toEqual(Object.keys(errorBranch.properties).sort());
 
     const missingDeliveredAnswer = structuredClone(
       taskForms.find(({ fixture }) => fixture === "completed")!.structuredContent
@@ -271,12 +263,14 @@ describe("model-visible output contracts", () => {
       JSON.stringify(z.toJSONSchema(MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_steer)),
       "utf8"
     );
-    expect(steeringBytes).toBe(1_360);
-    // Question tools, bounded summaries, and original-wait recovery receipts.
-    expect(bytes).toBeLessThanOrEqual(24_000);
+    // Closed action branches make the steering descriptor larger than the
+    // historical string guidance field, while keeping it bounded.
+    expect(steeringBytes).toBeLessThanOrEqual(5_000);
+    // Question tools, bounded summaries, and structured recovery receipts.
+    expect(bytes).toBeLessThanOrEqual(56_000);
   });
 
-  it("retires public Activity hydration while retaining private generation 11 contracts", () => {
+  it("keeps retired Activity hydration out of current task outputs", () => {
     for (const fixture of taskForms) {
       expect(fixture.structuredContent).not.toHaveProperty("bridgeSession");
       expect(fixture.structuredContent).not.toHaveProperty("bridgeActivity");
@@ -293,15 +287,8 @@ describe("model-visible output contracts", () => {
         expect(error).not.toHaveProperty("nextActions");
       }
     }
-    const activity = readFixture<Record<string, StructuredFixture[]>>("legacy-model-results.json").codex_activity[0]!.structuredContent;
-    for (const retiredLeaf of [
-      "feed",
-      "activities",
-      "agents",
-      "mountedActivity",
-      "mountedPresentation",
-      "watcherPolicy"
-    ]) expect(activity).not.toHaveProperty(retiredLeaf);
+    expect(MODEL_VISIBLE_OUTPUT_SCHEMAS).not.toHaveProperty("codex_activity");
+    expect(MODEL_VISIBLE_OUTPUT_SCHEMAS).not.toHaveProperty("codex_input");
   });
 
   it("keeps documented text compatibility bounded and explicitly incomplete", () => {

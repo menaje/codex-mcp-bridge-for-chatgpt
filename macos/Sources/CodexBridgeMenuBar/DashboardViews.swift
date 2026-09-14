@@ -1100,7 +1100,7 @@ private struct DashboardActivityGroupView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 if let cancellation = activityCancellation {
-                    CancellationDisclosure(cancellation: cancellation)
+                    CancellationReason(cancellation: cancellation)
                 }
                 ForEach(group.rows) { row in
                     DashboardRowView(
@@ -1151,21 +1151,21 @@ enum DashboardRowPresentation {
     }
 }
 
-private struct CancellationDisclosure: View {
+private struct CancellationReason: View {
     @Environment(\.locale) private var locale
     let cancellation: CancellationDisplay
-    @State private var isExpanded = false
 
     var body: some View {
-        FullRowDisclosure("취소 사유", isExpanded: $isExpanded) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(cancellation.reason).textSelection(.enabled)
-                Text("\(cancellationTargetLabel(cancellation.targetKind, locale: locale)) · \(cancellationStatusLabel(cancellation.status, locale: locale)) · \(DisplayFormat.dateTime(cancellation.requestedAt, locale: locale))")
-                    .foregroundStyle(.secondary)
-            }
-            .font(.caption)
+        VStack(alignment: .leading, spacing: 3) {
+            Text("취소 사유")
+                .font(.caption.weight(.semibold))
+            Text(cancellation.reason)
+                .textSelection(.enabled)
+            Text("\(cancellationTargetLabel(cancellation.targetKind, locale: locale)) · \(cancellationStatusLabel(cancellation.status, locale: locale)) · \(DisplayFormat.dateTime(cancellation.requestedAt, locale: locale))")
+                .foregroundStyle(.secondary)
         }
         .font(.caption)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1310,12 +1310,16 @@ struct DashboardRowView: View {
             }
             if let cancellation = row.latestTurn?.cancellation,
                presentation == .idle || cancellation.targetKind != "activity" {
-                CancellationDisclosure(cancellation: cancellation)
+                CancellationReason(cancellation: cancellation)
             }
-            if let history = row.history, !history.isEmpty {
+            if historyTotal > 0 {
                 Button {
+                    let shouldLoad = !historyExpanded && displayedHistory.isEmpty
                     withAnimation(.easeInOut(duration: 0.15)) {
                         historyExpanded.toggle()
+                    }
+                    if shouldLoad {
+                        Task { await model.loadDashboardHistory(row) }
                     }
                 } label: {
                     HStack(spacing: 6) {
@@ -1323,7 +1327,7 @@ struct DashboardRowView: View {
                             .font(.caption2.weight(.semibold))
                             .rotationEffect(.degrees(historyExpanded ? 90 : 0))
                             .accessibilityHidden(true)
-                        Text("최근 실행 기록 \(row.historyCount ?? history.count)")
+                        Text("최근 실행 기록 \(historyTotal)")
                         Spacer(minLength: 0)
                     }
                     .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
@@ -1338,42 +1342,62 @@ struct DashboardRowView: View {
 
                 if historyExpanded {
                     VStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(historyItems.enumerated()), id: \.offset) { _, item in
-                            HStack(alignment: .top, spacing: 7) {
-                                Image(systemName: StatusPresentation.symbol(item.turn.status))
-                                    .foregroundStyle(StatusPresentation.color(item.turn.status))
-                                    .accessibilityHidden(true)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    switch item.heading {
-                                    case .none:
-                                        EmptyView()
-                                    case .boundary:
-                                        Text("이전 Activity")
-                                            .font(.caption2.weight(.medium))
-                                            .foregroundStyle(.secondary)
-                                    case .title(let title):
-                                        Text(title)
-                                            .fontWeight(.semibold)
-                                    }
-                                    Text(turnTimeText(item.turn))
-                                        .foregroundStyle(.secondary)
-                                    DashboardExecutionLabel(text: DashboardExecutionPresentation.turnText(
-                                        item.turn.execution,
-                                        locale: model.interfaceLocale
-                                    ), execution: item.turn.execution)
-                                        .font(.caption2.monospaced())
-                                        .foregroundStyle(.secondary)
-                                    if let cancellation = item.turn.cancellation {
-                                        Text(cancellation.reason)
-                                            .foregroundStyle(.secondary)
-                                        Text("\(cancellationTargetLabel(cancellation.targetKind, locale: model.interfaceLocale)) · \(cancellationStatusLabel(cancellation.status, locale: model.interfaceLocale))")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
+                        if displayedHistory.isEmpty {
+                            if let error = model.dashboardHistoryError(for: row) {
+                                Text(error)
+                                    .foregroundStyle(.secondary)
+                                Button("새로고침") {
+                                    Task { await model.loadDashboardHistory(row) }
                                 }
-                                Spacer(minLength: 0)
+                                .buttonStyle(.link)
+                            } else if model.dashboardHistory(for: row) != nil {
+                                Text("보존된 최근 실행이 없습니다.")
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                        .controlSize(.mini)
+                                    Text("현황을 불러오는 중…")
+                                }
+                                .foregroundStyle(.secondary)
+                                .task(id: row.rowKey) {
+                                    await model.loadDashboardHistory(row)
+                                }
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            ForEach(Array(historyItems.enumerated()), id: \.offset) { _, item in
+                                HStack(alignment: .top, spacing: 7) {
+                                    Image(systemName: StatusPresentation.symbol(item.turn.status))
+                                        .foregroundStyle(StatusPresentation.color(item.turn.status))
+                                        .accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        switch item.heading {
+                                        case .none:
+                                            EmptyView()
+                                        case .boundary:
+                                            Text("이전 Activity")
+                                                .font(.caption2.weight(.medium))
+                                                .foregroundStyle(.secondary)
+                                        case .title(let title):
+                                            Text(title)
+                                                .fontWeight(.semibold)
+                                        }
+                                        Text(turnTimeText(item.turn))
+                                            .foregroundStyle(.secondary)
+                                        DashboardExecutionLabel(text: DashboardExecutionPresentation.turnText(
+                                            item.turn.execution,
+                                            locale: model.interfaceLocale
+                                        ), execution: item.turn.execution)
+                                            .font(.caption2.monospaced())
+                                            .foregroundStyle(.secondary)
+                                        if let cancellation = item.turn.cancellation {
+                                            CancellationReason(cancellation: cancellation)
+                                        }
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                     }
                     .font(.caption)
@@ -1413,9 +1437,23 @@ struct DashboardRowView: View {
         )
     }
 
+    private var displayedHistory: [DashboardTurn] {
+        if let history = row.history, !history.isEmpty {
+            return history
+        }
+        return model.dashboardHistory(for: row)?.history ?? []
+    }
+
+    private var historyTotal: Int {
+        max(
+            row.historyCount ?? 0,
+            max(displayedHistory.count, model.dashboardHistory(for: row)?.historyCount ?? 0)
+        )
+    }
+
     private var historyItems: [DashboardHistoryItem] {
         DashboardHistoryPresentation.items(
-            history: row.history ?? [],
+            history: displayedHistory,
             latestTurn: row.latestTurn,
             enclosingActivityKey: row.activityKey,
             enclosingActivityTitle: enclosingActivityTitle ?? row.activityTitle
@@ -1427,7 +1465,13 @@ struct DashboardRowView: View {
     }
 
     private var rowTimeText: String {
-        DashboardTimePresentation.text(turn: row.latestTurn, fallbackUpdatedAt: row.updatedAt, locale: model.interfaceLocale)
+        DashboardTimePresentation.text(
+            turn: row.latestTurn,
+            fallbackUpdatedAt: row.updatedAt,
+            fallbackStatus: row.status,
+            fallbackDurationMs: row.elapsedMs,
+            locale: model.interfaceLocale
+        )
     }
 
     private func turnTimeText(_ turn: DashboardTurn) -> String {

@@ -52,7 +52,10 @@
           "Force-stop does not roll back filesystem changes."
         ],
         "nextActions": [
-          "codex_cancel(job-running)"
+          {
+            "kind": "guidance",
+            "message": "Inspect the current target before deciding whether an explicit stop is still authorized."
+          }
         ]
       }
     }
@@ -92,6 +95,8 @@
     {
       "fixture": "current-model-catalog",
       "structuredContent": {
+        "contractVersion": "2",
+        "selectionMode": "automatic",
         "source": "codex-cli",
         "stale": false,
         "warning": null,
@@ -326,7 +331,10 @@
         "historyLimited": true,
         "hasMoreQuestions": false,
         "nextActions": [
-          "Judge the message and answer within delegation."
+          {
+            "kind": "guidance",
+            "message": "Judge the message and answer within delegation."
+          }
         ],
         "waitedMs": 0,
         "timedOut": false
@@ -376,7 +384,10 @@
           "The bridge does not claim distributed exactly-once delivery across this crash boundary."
         ],
         "nextActions": [
-          "Inspect the exact Job with codex_status and do not automatically retry this steering request."
+          {
+            "kind": "guidance",
+            "message": "Inspect the exact Job with codex_status and do not automatically retry this steering request."
+          }
         ]
       }
     }
@@ -392,7 +403,10 @@
         "delivery": "delivered",
         "answersPersisted": false,
         "nextActions": [
-          "Read Codex input or result."
+          {
+            "kind": "guidance",
+            "message": "Read Codex input or result."
+          }
         ]
       }
     }
@@ -406,7 +420,10 @@
         "status": "pending",
         "expiresAt": 1780000000000,
         "nextActions": [
-          "Read the user answer."
+          {
+            "kind": "guidance",
+            "message": "Read the user answer."
+          }
         ]
       }
     }

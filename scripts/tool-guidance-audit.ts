@@ -3,9 +3,8 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import * as z from "zod/v4";
+import { connectCurrentMcpServer } from "./current-mcp-test-harness.js";
 
 async function inventory(directory: string) {
   const source = (file: string) => import(pathToFileURL(path.join(directory, "src", file + ".ts")).href);
@@ -20,12 +19,11 @@ async function inventory(directory: string) {
     { listTools: async () => ({ tools: [] }), callTool: forbidden, close: async () => {} },
     new SessionRegistry({ stateStore }), new CodexJobRegistry({ stateStore }),
     { getCatalog: forbidden }, new UserSettingsStore(config, { stateStore }));
-  const client = new Client({ name: "tool-guidance-audit", version: "1" });
-  const [a, b] = InMemoryTransport.createLinkedPair();
+  const connection = await connectCurrentMcpServer(server, { name: "tool-guidance-audit", version: "1" });
+  const { client } = connection;
   try {
-    await Promise.all([client.connect(a), server.connect(b)]);
     const { tools } = await client.listTools();
-    const current = tools.filter(tool => tool._meta?.["codex/registrationTier"] !== "compatibility");
+    const current = tools;
     const task = current.find(tool => tool.name === "codex_task")!;
     const sourceFiles = new Set(execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "src"],
       { cwd: directory, encoding: "utf8" }).split("\0").filter(Boolean));
@@ -36,7 +34,7 @@ async function inventory(directory: string) {
       sourceSha256: hash.digest("hex"),
       currentModel: current.filter(tool => !(tool._meta?.ui as any)?.visibility?.every((value: string) => value === "app")).length,
       currentApp: current.filter(tool => (tool._meta?.ui as any)?.visibility?.every((value: string) => value === "app")).length,
-      compatibilityDescriptors: tools.length - current.length,
+      compatibilityDescriptors: 0,
       currentDescriptorBytes: Buffer.byteLength(JSON.stringify(current)),
       currentRootDescriptionBytes: current.reduce((sum, tool) => sum + Buffer.byteLength(tool.description || ""), 0),
       modelOutputSchemaBytes: Object.values(MODEL_VISIBLE_OUTPUT_SCHEMAS).reduce((sum: number, schema) =>
@@ -44,20 +42,14 @@ async function inventory(directory: string) {
       taskInputOutputBytes: Buffer.byteLength(JSON.stringify(task.inputSchema)) + Buffer.byteLength(JSON.stringify(task.outputSchema)),
       currentTools: current.map(tool => ({ name: tool.name, description: tool.description })).sort((a, b) => a.name.localeCompare(b.name))
     };
-  } finally { await client.close(); await server.close(); stateStore.close(); }
+  } finally { await connection.close(); await server.close(); stateStore.close(); }
 }
 
-const baselineDirectory = process.argv[2];
 const current = await inventory(process.cwd());
-const baseline = baselineDirectory ? await inventory(path.resolve(baselineDirectory)) : undefined;
 const report = {
-  issue: 70, date: "2026-09-08", upstreamExecution: false, liveRuntimeModified: false,
-  baseline, current,
-  ...(baseline ? { rootDescriptionReductionPercent: Math.round(1000 *
-    (1 - current.currentRootDescriptionBytes / baseline.currentRootDescriptionBytes)) / 10,
-    toolNamesUnchanged: JSON.stringify(current.currentTools.map(tool => tool.name)) === JSON.stringify(baseline.currentTools.map(tool => tool.name)) } : {})
+  issue: 70, date: "2026-09-14", protocolVersion: "2026-07-28", upstreamExecution: false,
+  liveRuntimeModified: false, compatibilityDescriptors: 0, current
 };
 const output = path.resolve("docs/audits/issue-70-tool-guidance.json");
 await writeFile(output, JSON.stringify(report, null, 2) + "\n");
-process.stdout.write(JSON.stringify({ output, ...report, baseline: baseline && { ...baseline, currentTools: undefined },
-  current: { ...current, currentTools: undefined } }) + "\n");
+process.stdout.write(JSON.stringify({ output, ...report, current: { ...current, currentTools: undefined } }) + "\n");

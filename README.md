@@ -1,5 +1,4 @@
 # Codex MCP Bridge for ChatGPT
-
 Use ChatGPT to run Codex against projects on your own computer, keep work organized, and check progress without repeatedly copying commands and results between apps.
 
 [Download releases](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/releases) · [Detailed setup guide](docs/setup.md) · [Security model](docs/security.md)
@@ -146,13 +145,14 @@ Use remote management only on a private LAN or private VPN that you control. See
 - [Setup and settings](docs/setup.md) — macOS server/client setup, Windows/Linux Node.js setup, ChatGPT connection, and every user-facing setting
 - [Native macOS app](docs/macos-app.md) — app architecture, lifecycle, local files, recovery, and build details
 - [Remote client mode](docs/remote-client.md) — pairing, server switching, network scope, and credential handling
-- [ChatGPT integration](docs/chatgpt-setup.md) — advanced plugin contracts, refresh behavior, orchestration, and smoke checks
+- [ChatGPT integration](docs/chatgpt-setup.md) — connection, refresh, current tool use, and smoke checks
+- [MCP 2026-07-28 migration](docs/mcp-2026-07-28-migration.md) — breaking protocol, tool-contract, and card-resource changes
 - [Security model](docs/security.md) — trust boundaries, authentication, access policy, and remaining risks
 - [Database schema and lifecycle](docs/database-schema.md) — state ownership, every table, upgrades, retention, capacity, backups, and offline compaction
 - [State upgrade and recovery runbook](docs/state-upgrade-recovery.md) — release-stage profiles, migration preflight, verified restore, and post-service recovery
 - [Input contracts](docs/input-contracts.md) and [output contracts](docs/output-contracts.md) — public and app-private protocol details
 - [Release process](docs/releasing.md) and [release governance](docs/release-governance.md) — maintainer workflow and distribution gates
-- [UI release compatibility](docs/ui-release-compatibility.md) — published card baselines, development revisions and Activity retirement
+- [UI release policy](docs/ui-release-compatibility.md) — immutable current card resources and release checks
 
 ## Development
 
@@ -176,4 +176,4 @@ MIT
 
 GPT handles ordinary Codex questions through `codex_status` (input query) and `codex_answer`. When the user’s opinion is needed, GPT can open a question card with `codex_ask_user` and retrieve the response with `codex_user_answer`. See [question orchestration](docs/gpt-questions.md) for the protocol, retention policy, and host validation limits.
 
-The current card/tool consolidation and retained-card migration are described in [Card tools](docs/card-tools.md). Activity screens are retired for new work; open the status card for this conversation or all work and work details.
+The current card and tool contract is described in [Card tools](docs/card-tools.md). Open the Dashboard for current work, Settings to manage the bridge, Activity for detailed work monitoring, or a Question card when a decision is needed.

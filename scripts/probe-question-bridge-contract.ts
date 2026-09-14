@@ -3,8 +3,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
 import { loadConfig } from "../src/config.js";
 import { createBridgeMcpServer } from "../src/server.js";
@@ -14,6 +12,7 @@ import { UserSettingsStore } from "../src/userSettings.js";
 import { CodexJobRegistry } from "../src/tools.js";
 import type { CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import type { CodexPendingInteraction, CodexProgress, CodexUpstream, ToolResult, UpstreamWorkerAssignment } from "../src/upstream.js";
+import { connectCurrentMcpServer, type CurrentMcpConnection } from "./current-mcp-test-harness.js";
 
 // In-memory technical proof only. probe_answer is registered on this isolated
 // test server, never on the production bridge. No model or real CLI is used.
@@ -51,9 +50,9 @@ const catalog: CodexModelCatalogSnapshot = { source: "codex-cli", fetchedAt: new
     serviceTiers: [], inputModalities: ["text"], supportedInApi: true }] };
 const server = createBridgeMcpServer(config, upstream, sessions, jobs,
   { getCachedCatalog: () => catalog, getCatalog: async () => catalog }, settings);
-const client = new Client({ name: "question-feasibility", version: "0.0.0" });
 const checks: Record<string, boolean> = {};
 const measurements: Record<string, unknown> = {};
+let connection: CurrentMcpConnection | undefined;
 const token = (jobId: string, question: CodexPendingInteraction) => createHash("sha256")
   .update(JSON.stringify({ scopeId, jobId, worker: jobs.get(jobId)?.workerGeneration, question })).digest("hex");
 const replies = new Map<string, { hash: string; result: { delivered: boolean } }>();
@@ -83,17 +82,17 @@ server.registerTool("probe_answer", {
 });
 
 try {
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  connection = await connectCurrentMcpServer(server, { name: "question-feasibility", version: "0.0.0" });
+  const { client } = connection;
   const tool = (await client.listTools()).tools.find(item => item.name === "codex_interaction_respond")!;
   checks.currentResponderIsAppOnly = JSON.stringify(tool._meta).includes('"visibility":["app"]');
   const started = await client.callTool({ name: "codex_task", arguments: {
-    scopeId, requestId: randomUUID(), taskContractVersion: "2", executionEnvelopeRef: settings.taskExecutionEnvelopeRef(),
+    scopeId, requestId: randomUUID(), taskContractVersion: "3", executionEnvelopeRef: settings.taskExecutionEnvelopeRef(),
     prompt: "Synthetic question feasibility", executionMode: "background", selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
     project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision }
   } });
   assert.notEqual(started.isError, true, JSON.stringify(started));
-  const jobId = started.structuredContent!.jobId as string;
+  const jobId = (started.structuredContent as { jobId: string }).jobId;
   const question: CodexPendingInteraction = { interactionId: "synthetic-question", kind: "user-input", isBlocking: false,
     threadId: "synthetic-thread", turnId: "synthetic-turn", itemId: "synthetic-item", summary: "Synthetic color question",
     questions: [{ id: "color", header: "Color", question: "Choose the synthetic color", isSecret: false, isOther: false,
@@ -106,7 +105,7 @@ try {
   const waited = await pendingWait;
   clearTimeout(timer);
   assert.notEqual(waited.isError, true, JSON.stringify(waited));
-  const detail = (waited.structuredContent?.items as Array<Record<string, any>>)[0];
+  const detail = ((waited.structuredContent as { items: Array<Record<string, any>> }).items)[0];
   checks.terminalWaitDoesNotReturnForPendingQuestion = detail.wait?.timedOut === true && detail.wait?.changed === true;
   checks.pendingQuestionRetainedInternally = jobs.get(jobId)!.pendingInteractions.length === 1;
   checks.publicStatusOmitsPendingQuestion = !JSON.stringify(waited.structuredContent).includes("synthetic-question") &&
@@ -121,7 +120,7 @@ try {
     phase: "updated", createdAt: Date.now(), summary: "Synthetic independent work continues" } }), 15);
   const changed = await changedWait;
   clearTimeout(progressTimer);
-  checks.changeWaitReturnsForProgress = (changed.structuredContent?.items as Array<Record<string, any>>)[0].wait?.timedOut === false;
+  checks.changeWaitReturnsForProgress = ((changed.structuredContent as { items: Array<Record<string, any>> }).items)[0].wait?.timedOut === false;
   checks.progressChangesJobButNotQuestion = jobs.get(jobId)!.version > versionBeforeProgress &&
     token(jobId, jobs.get(jobId)!.pendingInteractions[0]) === questionToken;
   measurements.jobVersions = [versionBeforeProgress, jobs.get(jobId)!.version];
@@ -141,7 +140,7 @@ try {
   assert.ok(Object.values(checks).every(Boolean), JSON.stringify(checks));
 } finally {
   finish?.({ content: [{ type: "text", text: "Synthetic cleanup" }], structuredContent: { threadId: "synthetic-thread" } });
-  await client.close();
+  await connection?.close();
   await server.close();
   store.close();
   await rm(root, { recursive: true, force: true });

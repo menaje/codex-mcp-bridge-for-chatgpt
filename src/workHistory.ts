@@ -13,12 +13,7 @@ export const dashboardHistoryActionInput = z.strictObject({
   ...dashboardHistoryActionBase,
   action: z.literal("acknowledge")
 });
-/** Runtime compatibility parser for already-mounted cards and older native clients. */
-export const dashboardHistoryRuntimeInput = z.strictObject({
-  ...dashboardHistoryActionBase,
-  action: z.enum(["acknowledge", "archive", "restore"])
-});
-export type DashboardHistoryActionInput = z.infer<typeof dashboardHistoryRuntimeInput>;
+export type DashboardHistoryActionInput = z.infer<typeof dashboardHistoryActionInput>;
 export type HistoryJobIdentity = {jobId:string;activityId:string;status:string;updatedAt:number};
 export const DEFAULT_HISTORY_RETENTION_DAYS: HistoryRetentionDays = 30;
 export const ISSUE_ATTENTION_DAYS = 7;

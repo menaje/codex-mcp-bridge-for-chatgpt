@@ -13,7 +13,7 @@ import { TOKEN_KEYS, tokenCounts, TurnUsageMeter, type TokenCounts } from "./tok
 import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import type { Progress } from "@modelcontextprotocol/sdk/types.js";
+import type { Progress } from "@modelcontextprotocol/server";
 import {
   DEFAULT_CODEX_VERSION_CHECK_TIMEOUT_MS,
   probeCodexCliVersion,

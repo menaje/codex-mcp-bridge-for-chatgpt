@@ -1,8 +1,9 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { resolveHostUiLocaleTag, serializedUiTranslations } from "./uiI18n.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import { hostToolResultMetadata, normalizeHostToolResult } from "./uiHostToolResult.js";
 import { withUiToolCallTimeout } from "./uiToolCallFallback.js";
+import { serializeUiFunction } from "./uiFunctionSerialization.js";
 import { MODEL_DESCRIPTION_EDITOR_SCRIPT } from "./modelDescriptionCard.js";
 import {
   currentUiResourceUri,
@@ -260,11 +261,11 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
   </main>
   <script>
     const BUNDLES = ${serializedUiTranslations(["common", "settings", "effort", "history", "problem.historyNotice", "problem.automaticHistoryNotice"])};
-    ${uiBridgeErrorMessage.toString()}
-    ${resolveHostUiLocaleTag.toString()}
-    ${normalizeHostToolResult.toString()}
-    ${hostToolResultMetadata.toString()}
-    ${withUiToolCallTimeout.toString()}
+    ${serializeUiFunction(uiBridgeErrorMessage)}
+    ${serializeUiFunction(resolveHostUiLocaleTag)}
+    ${serializeUiFunction(normalizeHostToolResult)}
+    ${serializeUiFunction(hostToolResultMetadata)}
+    ${serializeUiFunction(withUiToolCallTimeout)}
     const pendingRequests = new Map();
     const REQUEST_TIMEOUT_MS = 90000;
     let nextRequestId = 1;
@@ -450,4 +451,5 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     standardBridgeReady=initializeStandardBridge();setLocale(localeTag);void loadSettings();
   </script>
 </body>
-</html>`;
+</html>
+`;

@@ -46,9 +46,9 @@ signal. It therefore does not transfer recovery authority between MCP calls.
 Background task results, task replays, all `codex_status` Job/input waits, overview,
 card, audit and historical reads contain ordinary state/results only, with no
 recovery directive. They never acquire a lease even when they run concurrently
-with the original foreground callback. No continuation token is issued;
-`codex_task.waitContext` remains `null` for compatibility. Legacy `waitToken`
-arguments are accepted and ignored, and are omitted from current public discovery.
+with the original foreground callback. No continuation token is issued.
+`codex_task` output has no `waitContext`, and `waitToken` is not an accepted
+current input.
 
 There is no queued GPT recovery, generic future-session handoff, or wake mechanism.
 Once the original callback has ended, safe bridge maintenance continues and
