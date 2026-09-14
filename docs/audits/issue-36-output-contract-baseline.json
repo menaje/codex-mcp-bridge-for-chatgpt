@@ -116,32 +116,32 @@
     "schemaBytes": {
       "modelVisible": {
         "byTool": {
-          "codex_activity_update": 887,
-          "codex_agent": 641,
-          "codex_answer": 511,
-          "codex_ask_user": 422,
-          "codex_cancel": 1495,
+          "codex_activity_update": 4081,
+          "codex_agent": 3835,
+          "codex_answer": 3666,
+          "codex_ask_user": 3577,
+          "codex_cancel": 7872,
           "codex_dashboard": 408,
-          "codex_models": 2963,
+          "codex_models": 1587,
           "codex_settings": 232,
-          "codex_status": 6423,
-          "codex_steer": 1360,
-          "codex_task": 3522,
+          "codex_status": 16529,
+          "codex_steer": 4587,
+          "codex_task": 7080,
           "codex_user_answer": 1357
         },
-        "totalBytes": 20221
+        "totalBytes": 54811
       },
       "appOnly": {
         "byTool": {
           "codex_interaction_respond": 2218,
-          "codex_question_action": 552,
+          "codex_question_action": 541,
           "codex_ui_history": 173,
           "codex_ui_problem": 251,
-          "codex_ui_read": 70962,
+          "codex_ui_read": 62140,
           "codex_ui_stop": 2218,
-          "codex_update_settings": 12450
+          "codex_update_settings": 12382
         },
-        "totalBytes": 88824
+        "totalBytes": 79923
       }
     },
     "resultBytes": {
@@ -155,25 +155,25 @@
         },
         "codex_agent": {
           "byFixture": {
-            "agent-busy": 234,
+            "agent-busy": 327,
             "agent-renamed": 137
           },
-          "maxBytes": 234,
+          "maxBytes": 327,
           "minBytes": 137
         },
         "codex_answer": {
           "byFixture": {
-            "gpt-question-flow": 220
+            "gpt-question-flow": 250
           },
-          "maxBytes": 220,
-          "minBytes": 220
+          "maxBytes": 250,
+          "minBytes": 250
         },
         "codex_ask_user": {
           "byFixture": {
-            "gpt-question-flow": 141
+            "gpt-question-flow": 171
           },
-          "maxBytes": 141,
-          "minBytes": 141
+          "maxBytes": 171,
+          "minBytes": 171
         },
         "codex_cancel": {
           "byFixture": {
@@ -191,10 +191,10 @@
         },
         "codex_models": {
           "byFixture": {
-            "current-model-catalog": 238
+            "current-model-catalog": 288
           },
-          "maxBytes": 238,
-          "minBytes": 238
+          "maxBytes": 288,
+          "minBytes": 288
         },
         "codex_settings": {
           "byFixture": {
@@ -207,32 +207,32 @@
           "byFixture": {
             "completed-job": 755,
             "failed-job": 636,
-            "gpt-question-flow": 416,
+            "gpt-question-flow": 446,
             "overview": 455,
             "running-job": 532
           },
           "maxBytes": 755,
-          "minBytes": 416
+          "minBytes": 446
         },
         "codex_steer": {
           "byFixture": {
             "active-turn-delivered": 421,
-            "dispatch-uncertain": 485
+            "dispatch-uncertain": 515
           },
-          "maxBytes": 485,
+          "maxBytes": 515,
           "minBytes": 421
         },
         "codex_task": {
           "byFixture": {
-            "cancelled": 863,
-            "completed": 766,
-            "failed": 838,
-            "replay": 669,
-            "running": 635,
-            "setup": 768
+            "cancelled": 878,
+            "completed": 781,
+            "failed": 880,
+            "replay": 746,
+            "running": 660,
+            "setup": 833
           },
-          "maxBytes": 863,
-          "minBytes": 635
+          "maxBytes": 880,
+          "minBytes": 660
         },
         "codex_user_answer": {
           "byFixture": {
@@ -283,7 +283,7 @@
       "privateMeta": {
         "deterministicFixtures": {
           "codex/activityBootstrap@11": 478,
-          "codex/activityView@11": 1703
+          "codex/activityView@11": 1620
         },
         "realHostCapture": {
           "measured": false,
@@ -329,17 +329,21 @@
   },
   "finalGenerationBudget": {
     "historicalIssue36ReductionTargetPercent": 40,
-    "targetModelVisibleSchemaBytes": 24000,
-    "actualModelVisibleSchemaBytes": 20221,
+    "targetModelVisibleSchemaBytes": 56000,
+    "targetSingleModelVisibleSchemaBytes": 18000,
+    "actualModelVisibleSchemaBytes": 54811,
+    "largestModelVisibleSchemaTool": "codex_status",
+    "largestModelVisibleSchemaBytes": 16529,
     "dedicatedQuestionTools": [
       "codex_answer",
       "codex_ask_user",
       "codex_user_answer"
     ],
-    "dedicatedQuestionToolsSchemaBytes": 2290,
+    "dedicatedQuestionToolsSchemaBytes": 8600,
     "sharedQuestionInputSchema": "codex_status",
-    "headroomBytes": 3779,
-    "enforcedAt": "original-wait-automatic-recovery",
+    "headroomBytes": 1189,
+    "singleSchemaHeadroomBytes": 1471,
+    "enforcedAt": "mcp-2026-current-output-contracts",
     "liveHostEvidenceProducedByThisAudit": false,
     "separateLiveQuestionEvidence": "docs/audits/issue-70-unlocked-host.json",
     "passed": true

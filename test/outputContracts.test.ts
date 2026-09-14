@@ -6,6 +6,8 @@ import {
   ACTIVITY_BOOTSTRAP_PRIVATE_MAX_BYTES,
   ACTIVITY_VIEW_PRIVATE_MAX_BYTES,
   MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES,
+  MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET,
+  MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET,
   MODEL_VISIBLE_OUTPUT_SCHEMAS,
   validateActivityBootstrapPrivateMetadata,
   validateActivityViewPrivateMetadata,
@@ -255,10 +257,13 @@ describe("model-visible output contracts", () => {
   });
 
   it("enforces the final model-visible schema budget", () => {
-    const bytes = Object.values(MODEL_VISIBLE_OUTPUT_SCHEMAS).reduce(
-      (total, schema) => total + Buffer.byteLength(JSON.stringify(z.toJSONSchema(schema)), "utf8"),
-      0
+    const schemaBytes = Object.fromEntries(
+      Object.entries(MODEL_VISIBLE_OUTPUT_SCHEMAS).map(([toolName, schema]) => [
+        toolName,
+        Buffer.byteLength(JSON.stringify(z.toJSONSchema(schema)), "utf8")
+      ])
     );
+    const bytes = Object.values(schemaBytes).reduce((total, value) => total + value, 0);
     const steeringBytes = Buffer.byteLength(
       JSON.stringify(z.toJSONSchema(MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_steer)),
       "utf8"
@@ -267,7 +272,9 @@ describe("model-visible output contracts", () => {
     // historical string guidance field, while keeping it bounded.
     expect(steeringBytes).toBeLessThanOrEqual(5_000);
     // Question tools, bounded summaries, and structured recovery receipts.
-    expect(bytes).toBeLessThanOrEqual(56_000);
+    expect(bytes).toBeLessThanOrEqual(MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET);
+    expect(Math.max(...Object.values(schemaBytes)))
+      .toBeLessThanOrEqual(MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET);
   });
 
   it("keeps retired Activity hydration out of current task outputs", () => {

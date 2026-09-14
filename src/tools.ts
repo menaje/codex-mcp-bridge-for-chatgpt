@@ -1739,6 +1739,11 @@ const diagnosticsResultContract = toolOutputContract(
   TOOL_CONTENT_BYTE_CAPS.codex_diagnostics
 );
 
+// These are JSON descriptor byte limits, measured after Zod emits JSON Schema
+// 2020-12. They are intentionally separate from result payload byte caps.
+export const MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET = 56_000;
+export const MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET = 18_000;
+
 export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
   codex_answer: QUESTION_MODEL_OUTPUT_SCHEMAS.codex_answer,
   codex_ask_user: QUESTION_MODEL_OUTPUT_SCHEMAS.codex_ask_user,
