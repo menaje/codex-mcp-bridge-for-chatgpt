@@ -71,6 +71,7 @@
     "test:progressive-browser": "tsx scripts/progressive-card-browser-regression.ts",
     "test:card-resilience-browser": "tsx scripts/card-resilience-browser-regression.ts",
     "test:model-descriptions-browser": "tsx scripts/model-description-browser-regression.ts",
+    "mcp:conformance": "npm run build && node scripts/mcp-conformance.mjs",
     "check": "npm run build && npm run test",
     "macos:remote:check": "tsx scripts/check-native-remote.ts",
     "test:continuity": "node scripts/check-thread-continuity.mjs",

@@ -22,7 +22,8 @@ const server = createHttpServer(config, upstream, undefined, {
   stateStore,
   healthDiagnostics: () => ({
     appServerLateResponses: appServerLateResponses.status()
-  })
+  }),
+  conformanceFixtures: process.argv.slice(2).includes("--conformance-fixtures")
 });
 let shuttingDown = false;
 let companions: Awaited<ReturnType<typeof startRuntimeCompanions>> | undefined;
