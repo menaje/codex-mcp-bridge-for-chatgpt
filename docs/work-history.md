@@ -127,9 +127,9 @@ keeps orphan evidence, and otherwise makes the Agent idle. It performs no work
 replay, thread resume, or Codex conversation load.
 
 Current native and card interfaces have no Agent archive/restore controls, list,
-filter or API schema. `dashboard.history` and app-private `codex_ui_history` now
-support execution acknowledgement only. Their runtime compatibility parsers
-recognize archive/restore requests from retained cards and return
+filter or API schema. Dashboard history is read through `codex_ui_read`; targeted
+review and recovery mutations use `codex_ui_problem` with an exact execution
+proof. Retained archive/restore inputs are rejected with
 `AGENT_ARCHIVE_REMOVED` without changing the Agent. Snapshots without the optional
 `problems` query retain the prior seven-day/latest-Agent problem projection for
 compatibility. Clients that send `problems` without `view` retain the earlier
@@ -185,6 +185,7 @@ links to macOS notification settings. Repeated requests do not prompt again afte
 authorization. The official model-description disclosure uses the shared full-row
 button and leading-aligned, selectable text.
 
-Current resource generations are Dashboard 29, Settings 21, and Activity 30. Prior published
-resource snapshots remain immutable. The Dashboard HTML budget is 200 KiB, including
-problem review, history actions and policy copy in all nine supported languages.
+Current resource generations are recorded in the generated UI manifest. Only
+Dashboard and Settings are current resources; each has one current HTML file and
+an explicit URI version. The Dashboard HTML budget is 200 KiB, including problem review,
+history actions and policy copy in all nine supported languages.

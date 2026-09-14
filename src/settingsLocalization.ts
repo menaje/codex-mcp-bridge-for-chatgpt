@@ -25,7 +25,7 @@ export function localizeSettingsView(
     view.settings.uiLocalePreference,
     requestedLocale
   );
-  return {
+  const localized = {
     ...view,
     warnings: view.warnings.map((warning) =>
       localizeSettingsWarning(warning, locale)
@@ -57,4 +57,19 @@ export function localizeSettingsView(
       }))
     }
   };
+  // App Server catalog descriptors may retain explicit `undefined` optional
+  // fields. Settings is sent through both MCP and the native JSON transport,
+  // so omit those fields in this presentation copy rather than letting a
+  // JSON boundary silently alter the response.
+  return omitUndefinedJsonMembers(localized) as SettingsView;
+}
+
+function omitUndefinedJsonMembers(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(omitUndefinedJsonMembers);
+  if (!value || typeof value !== "object") return value;
+  const output: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) output[key] = omitUndefinedJsonMembers(entry);
+  }
+  return output;
 }

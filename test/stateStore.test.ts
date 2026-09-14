@@ -3,9 +3,89 @@ import { mkdtempSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { BridgeStateStore } from "../src/stateStore.js";
+import {
+  BridgeStateStore,
+  COMPLETION_OUTBOX_UNCERTAIN_HOLD_AT
+} from "../src/stateStore.js";
 
 describe("BridgeStateStore", () => {
+  it("holds an uncertain Dashboard completion dispatch out of automatic retries", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const activityId = "12121212-1212-4212-8212-121212121212";
+    try {
+      store.createActivity({
+        activityId,
+        scopeId: SCOPE_A,
+        handoffPolicy: "notify",
+        completionTrigger: "sealed-jobs-terminal",
+        now: 1
+      });
+      store.upsertJob({ ...job("completion-job", "completion-request"), activityId, updatedAt: 2 });
+      store.sealActivity(activityId, 3);
+
+      const [event] = store.listPendingCompletionOutbox(SCOPE_A);
+      expect(event).toMatchObject({ activityId, scopeId: SCOPE_A, attemptCount: 0 });
+      const leaseOwner = "dashboard-widget";
+      expect(store.claimCompletionOutbox(event!.outboxId, SCOPE_A, leaseOwner, 1_000, 3))
+        .toMatchObject({ outboxId: event!.outboxId, leaseOwner, attemptCount: 1 });
+      const uncertain = store.markCompletionOutboxUncertain(event!.outboxId, SCOPE_A, leaseOwner);
+      expect(uncertain).toMatchObject({
+        outboxId: event!.outboxId,
+        nextAttemptAt: COMPLETION_OUTBOX_UNCERTAIN_HOLD_AT,
+        leaseOwner: undefined,
+        leaseExpiresAt: undefined
+      });
+      expect(store.listPendingCompletionOutbox(SCOPE_A)).toEqual([]);
+      expect(store.claimCompletionOutbox(event!.outboxId, SCOPE_A, "another-widget", 1_000, 4))
+        .toBeUndefined();
+    } finally {
+      store.close();
+    }
+  });
+
+  it("keeps a claimed completion outbox event durable across a bridge restart", () => {
+    const file = stateFile();
+    const activityId = "13131313-1313-4313-8313-131313131313";
+    const first = new BridgeStateStore({ file });
+    try {
+      first.createActivity({
+        activityId,
+        scopeId: SCOPE_A,
+        handoffPolicy: "notify",
+        completionTrigger: "sealed-jobs-terminal",
+        now: 1
+      });
+      first.upsertJob({ ...job("restart-completion-job", "restart-completion-request"), activityId, updatedAt: 2 });
+      first.sealActivity(activityId, 3);
+      const [event] = first.listPendingCompletionOutbox(SCOPE_A);
+      expect(event).toMatchObject({ activityId, attemptCount: 0 });
+      first.close();
+
+      const restarted = new BridgeStateStore({ file });
+      try {
+        const [restored] = restarted.listPendingCompletionOutbox(SCOPE_A);
+        expect(restored).toMatchObject({ outboxId: event!.outboxId, activityId, attemptCount: 0 });
+        const claimed = restarted.claimCompletionOutbox(restored!.outboxId, SCOPE_A, "restarted-widget", 1_000, 4);
+        expect(claimed).toMatchObject({ leaseOwner: "restarted-widget", attemptCount: 1 });
+        restarted.markCompletionOutboxDelivered(restored!.outboxId, SCOPE_A, "restarted-widget", 5);
+      } finally {
+        restarted.close();
+      }
+
+      const verified = new BridgeStateStore({ file });
+      try {
+        expect(verified.listPendingCompletionOutbox(SCOPE_A)).toEqual([]);
+        expect(verified.listCompletionOutbox(activityId)).toMatchObject([
+          { outboxId: event!.outboxId, deliveredAt: 5, attemptCount: 1, leaseOwner: undefined }
+        ]);
+      } finally {
+        verified.close();
+      }
+    } finally {
+      try { first.close(); } catch {}
+    }
+  });
+
   it("finds retained status-card work and filters archived jobs before applying its limit", () => {
     const store = new BridgeStateStore({ file: ":memory:" });
     const otherScope = "22222222-2222-4222-8222-222222222222";
@@ -332,8 +412,8 @@ describe("BridgeStateStore", () => {
       requestId,
       actionHash: "f".repeat(64),
       source: "widget-control",
-      toolName: "codex_activity_job_cancel",
-      actionName: "cancel-card-job",
+      toolName: "codex_ui_stop",
+      actionName: "cancel-dashboard-job",
       target: {
         kind: "job",
         jobId: activeJob.jobId,
@@ -350,7 +430,7 @@ describe("BridgeStateStore", () => {
         cardGeneration: 7
       },
       callerRequestDigest: "2".repeat(64),
-      reasonCode: "widget-force-stop",
+      reasonCode: "dashboard-force-stop",
       now: 4
     });
     expect(operation.rootIntentId).toBe(intent.intentId);

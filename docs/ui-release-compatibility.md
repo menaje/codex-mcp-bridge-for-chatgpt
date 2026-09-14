@@ -1,43 +1,72 @@
 # UI card release policy
 
-The bridge ships one current immutable revision for each active card. It does
-not provide a compatibility window for previously advertised card resources.
+The bridge maintains one current HTML file for each active card. A card keeps
+the same versioned URI across compatible HTML, CSS, copy, localization, and
+host-metadata changes. SHA-256 records the exact current bytes and metadata for
+integrity checks; it is not part of the file name or URI.
 
 ## Active catalog
 
-`ui-release-catalog.json` is version 3 and selects these four resources:
+`ui-release-catalog.json` is version 4 and selects these resources:
 
-| Card | URI |
-| --- | --- |
-| Settings | `ui://codex-mcp-bridge/settings/52c19aebb4e9.html` |
-| Activity | `ui://codex-mcp-bridge/activity/bc75a45e4875.html` |
-| Dashboard | `ui://codex-mcp-bridge/dashboard/86e53748068a.html` |
-| Question | `ui://codex-mcp-bridge/question/a93cf2f84a75.html` |
+| Card | Source file | Packaged file | Resource URI |
+| --- | --- | --- | --- |
+| Settings | `ui-resources/settings.html` | `dist/ui/settings.html` | `ui://codex-mcp-bridge/settings/v1.html` |
+| Dashboard | `ui-resources/dashboard.html` | `dist/ui/dashboard.html` | `ui://codex-mcp-bridge/dashboard/v1.html` |
 
-The catalog's `publishedBaselines` and `temporaryExceptions` arrays must stay
-empty. A source file in `ui-resources/` is not a supported resource unless it
-is selected by this catalog and the generated manifest.
+Activity and Question are retired presentation resources. Their work,
+question, result, settings, authorization, and idempotency state remains in the
+bridge; no historical card HTML is selected or packaged.
+
+## URI versions
+
+Each active card has an explicit `currentContracts.<card>.uriVersion` in the
+release catalog. Keep that number unchanged when a cached copy of the old card
+can still use the newly deployed server and tool contracts correctly. Running
+`npm run release:sync` then overwrites the card's single HTML file, updates its
+digest, and leaves its URI unchanged.
+
+Increase only the affected card's `uriVersion` before a cache-incompatible
+change. Examples include removing or renaming a tool that cached JavaScript can
+call, changing an app-only request or response shape in a way the cached card
+cannot handle, or changing initialization behavior so the old card cannot mount
+safely. The increment creates a new URI such as `v2.html`; it does not create a
+second source or package file.
+
+Product SemVer and card URI versions are independent. A product release does
+not change a card URI by itself, and the two cards can advance their URI
+versions separately.
 
 ## Release rules
 
-1. Change a card's source and regenerate its content-addressed HTML.
-2. Update `src/uiManifest.generated.ts`, `ui-manifest.lock.json`, and the
-   release manifest with the new digest and URI.
-3. Remove the displaced revision from the active catalog and package selection.
-4. Run `npm run release:check`, then open every active resource with the
-   current MCP client.
+1. Update the card source, shared localization, or host metadata.
+2. Decide whether the previous cached card remains compatible with the new
+   server contract. If it does not, increment that card's `uriVersion`.
+3. Run `npm run release:sync` and review the stable URI, new SHA-256 digest, and
+   generated manifest.
+4. Run `npm run release:check`, build the package, and open both active cards
+   with the current MCP client.
 
-The release check verifies that the selected asset bytes match their SHA-256
-identities and that the release manifest names the same catalog. It rejects a
-historical selection or a temporary exception.
+Synchronization removes legacy digest-named files. Release validation rejects
+extra files under `ui-resources/`, a missing current file, mismatched HTML or
+metadata digests, URI drift, and package output other than the two current
+files.
 
-## Client behavior
+## ChatGPT cache behavior
 
-A deployed card URI identifies its exact HTML. The bridge never serves changed
-HTML under an old URI. After a UI change, reconnect and refresh the ChatGPT
-connector, then reopen the card. A conversation that cached an earlier URI
-must use the current resource; the old URI is not a fallback path.
+ChatGPT treats a resource URI as a cache key. OpenAI's guidance is to publish a
+new URI when an HTML, JavaScript, or CSS change would break a cached component:
+[Build your ChatGPT UI](https://developers.openai.com/plugins/build/chatgpt-ui#embed-the-component-in-the-server-response)
+and [Plan for updates](https://developers.openai.com/plugins/build/mcp-server#plan-for-updates).
 
-Activity, Agent, Job, question, and settings data remain durable bridge state.
-Retiring a resource revision removes only that presentation identity, not the
-underlying work records or their authorization checks.
+Serving new bytes at the same URI does not guarantee that an already mounted or
+cached ChatGPT card immediately fetches them. The bridge has no remote cache
+invalidation mechanism. Compatible changes may therefore coexist briefly with
+an older mounted card. If the new behavior is required immediately, refresh or
+reconnect the connector and reopen the card; a new conversation may be needed
+for a host that retains the old mount.
+
+For an incompatible change, increment the URI version before deployment and
+refresh connector discovery. The old URI is no longer advertised or served by
+the new release, while durable bridge state remains available through the
+current tools and cards.

@@ -91,7 +91,7 @@ export class QuestionStore {
   requireCard(scopeId: string, proof: { questionId: string; revision: number; presentationToken: string }): UserQuestionRecord {
     const record = this.get(scopeId, proof.questionId);
     if (record.revision !== proof.revision || record.presentationToken !== proof.presentationToken) {
-      throw new Error("QUESTION_STALE: This question card is no longer valid.");
+      throw new Error("QUESTION_STALE: This question is no longer valid.");
     }
     return record;
   }

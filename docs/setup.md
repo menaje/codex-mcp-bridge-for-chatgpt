@@ -116,11 +116,11 @@ Once the server reports that the Bridge and Tunnel are connected:
 
 Refresh the ChatGPT connection after installing a Bridge release that changes its tools or cards. A normal app, server, Tunnel, or computer restart with the same build does not require Refresh.
 
-The status card switches between **This conversation** and **All work**, with
+The Dashboard switches between **This conversation** and **All work**, with
 running work, response requests and problems summarized in the selected scope.
-New tasks remain execution-only. Open the current Activity card for scoped work
-monitoring, Settings for configuration, and a Question card when user input is
-needed.
+Open Dashboard for scoped work monitoring and Settings for configuration. GPT
+asks for ordinary user input directly in the current ChatGPT conversation and
+delivers a valid answer to the exact Codex question.
 
 <p align="center">
   <img src="images/chatgpt-dashboard-light-en.png" alt="English ChatGPT status card showing conversation scope, three current work-state counts, Run History, and background processes" width="645">
@@ -304,10 +304,12 @@ later use; a model temporarily missing from the list also keeps its saved text.
 - **Keep new Agent tasks in the Codex app** preserves eligible new App Server threads in Codex. It does not change older tasks.
 - **Run history retention** keeps display history for 7, 30 (default), or 90 days, or indefinitely. Full result retention and connection idle time are separate policies; see [work history](work-history.md).
 
-Current settings do not expose Activity auto-presentation or completion-handoff
-controls. New work uses bounded input waits and exact result retrieval in the
-current GPT response; open the current Activity card explicitly when detailed
-monitoring is useful. See [Card tools](card-tools.md).
+Settings expose **Automatically show Dashboard for background work** and
+**Automatically follow up after completion**. The first applies only to newly
+admitted background work in its originating conversation; foreground work never
+opens Dashboard automatically. Completion follow-up is tracked by the durable
+outbox independently of a card. New work uses bounded input waits and exact
+result retrieval in the current GPT response. See [Card tools](card-tools.md).
 
 Values above the normal concurrency range can increase CPU, memory, and API usage substantially.
 

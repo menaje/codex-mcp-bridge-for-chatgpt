@@ -65,27 +65,28 @@ setup, replay, running, completed, failed, and cancelled states.
 
 ## UI resource gate
 
-The release catalog is version 3 and selects exactly one immutable revision of
-Settings, Activity, Dashboard, and Question. Its compatibility arrays are
-empty. The current resource identities are documented in
+The release catalog is version 4 and selects one current file for Settings and
+one for Dashboard. Its compatibility arrays are empty. The current resource
+identities and URI-version rules are documented in
 [UI card release policy](ui-release-compatibility.md).
 
 When card source or host-affecting metadata changes:
 
-1. render and synchronize the generated manifest/lock/snapshot artifacts;
-2. review the new SHA-256 resource identity;
-3. ensure the displaced identity is absent from the active catalog and package
-   selection;
+1. render and synchronize the generated manifest, lock, and two current files;
+2. review the new SHA-256 integrity digest while keeping the URI version stable
+   for compatible changes;
+3. increment only the affected card's URI version if a cached card cannot use
+   the new server contract safely;
 4. run `npm run release:check`;
 5. deploy the build, refresh the ChatGPT connection, and reopen every card.
 
-Never serve changed HTML at a previous resource URI. The catalog and package
-must not include a published-baseline or temporary compatibility revision.
+The catalog and package must not include digest-named history, a
+published-baseline, or a temporary compatibility revision.
 
 ## Package and state gate
 
 `release-manifest.json` is the source of release metadata. The release check
-verifies its generated plugin files, card manifest, catalog digest, snapshots,
+verifies its generated plugin files, card manifest, catalog digest, current card files,
 and release-policy data. Do not hand-edit generated manifest outputs as a
 substitute for the release process.
 

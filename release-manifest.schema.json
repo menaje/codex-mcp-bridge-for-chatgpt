@@ -135,7 +135,6 @@
       "required": [
         "strategy",
         "hashAlgorithm",
-        "hashLength",
         "minimumContractGeneration",
         "resources",
         "activeResources",
@@ -144,42 +143,35 @@
         "releaseCatalogSha256"
       ],
       "properties": {
-        "strategy": { "const": "content-hash" },
+        "strategy": { "const": "versioned-uri" },
         "hashAlgorithm": { "const": "sha256" },
-        "hashLength": { "type": "integer", "minimum": 12, "maximum": 64 },
         "minimumContractGeneration": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["settings", "activity", "dashboard", "question"],
+          "required": ["settings", "dashboard"],
           "properties": {
             "settings": { "type": "integer", "minimum": 1 },
-            "activity": { "type": "integer", "minimum": 1 },
-            "dashboard": { "type": "integer", "minimum": 1 },
-            "question": { "type": "integer", "minimum": 1 }
+            "dashboard": { "type": "integer", "minimum": 1 }
           }
         },
         "resources": {
           "type": "array",
-          "minItems": 4,
-          "maxItems": 4,
+          "minItems": 2,
+          "maxItems": 2,
           "uniqueItems": true,
-          "items": { "enum": ["settings", "activity", "dashboard", "question"] },
+          "items": { "enum": ["settings", "dashboard"] },
           "allOf": [
             { "contains": { "const": "settings" } },
-            { "contains": { "const": "activity" } },
-            { "contains": { "const": "dashboard" } },
-            { "contains": { "const": "question" } }
+            { "contains": { "const": "dashboard" } }
           ]
         },
         "activeResources": {
           "type": "array",
-          "minItems": 4,
-          "maxItems": 4,
+          "minItems": 2,
+          "maxItems": 2,
           "prefixItems": [
             { "const": "settings" },
-            { "const": "activity" },
-            { "const": "dashboard" },
-            { "const": "question" }
+            { "const": "dashboard" }
           ],
           "items": false
         },

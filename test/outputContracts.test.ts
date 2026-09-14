@@ -3,12 +3,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
-  ACTIVITY_BOOTSTRAP_PRIVATE_MAX_BYTES,
-  ACTIVITY_VIEW_PRIVATE_MAX_BYTES,
   MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES,
   MODEL_VISIBLE_OUTPUT_SCHEMAS,
-  validateActivityBootstrapPrivateMetadata,
-  validateActivityViewPrivateMetadata,
   validateModelVisibleStructuredOutput,
   type ModelVisibleOutputToolName
 } from "../src/tools.js";
@@ -45,11 +41,6 @@ const modelResults = readFixture<Record<ModelVisibleOutputToolName, StructuredFi
   "model-results.json"
 );
 const compatibilityFixtures = readFixture<ContentFixture[]>("content-only-compatibility.json");
-const activityPrivateMetadata = readFixture<{
-  bootstrap: Record<string, unknown>;
-  view: Record<string, any>;
-}>("activity-private-metadata.json");
-
 describe("model-visible output contracts", () => {
   it("validates every documented task state, including replay and structured errors", () => {
     expect(taskForms.map(({ fixture }) => fixture)).toEqual([
@@ -411,6 +402,94 @@ describe("model-visible output contracts", () => {
     expect(escaped).toContain("truncated");
   });
 
+  it("allows every JSON root for structured content without lossy coercion", () => {
+    const contract = defineToolResultContract({
+      toolName: "json_root_fixture",
+      channel: "operator-diagnostic",
+      outputSchema: z.any(),
+      structured: { maxBytes: 1_024 },
+      compatibility: {
+        channel: "text-protocol-compatibility",
+        format: "plain-text",
+        maxBytes: 128,
+        completeness: "summary-only"
+      }
+    });
+    const project = (value: unknown) => projectToolResult(contract, {
+      canonical: value,
+      authoritative: { channel: "operator-diagnostic", value },
+      compatibility: { channel: "text-protocol-compatibility", text: "fixture" }
+    });
+
+    for (const value of [null, true, 42, "text", ["array", false], { object: [1, null] }]) {
+      expect(project(value).structuredContent).toEqual(value);
+    }
+    for (const value of [undefined, Number.NaN, new Date("2026-09-14T00:00:00.000Z"), {
+      retained: true,
+      droppedByJson: undefined
+    }]) {
+      expect(() => project(value)).toThrow(/JSON-(serializable|value)|lossy serialization/);
+    }
+    expect(() => project({ retained: true, droppedByJson: undefined }))
+      .toThrow(/\$\.droppedByJson: property was omitted/);
+  });
+
+  it("keeps MCP metadata protocol-owned and fails closed on private metadata collisions", () => {
+    const contract = defineToolResultContract({
+      toolName: "metadata_fixture",
+      channel: "app-hydration",
+      outputSchema: z.any(),
+      structured: { maxBytes: 128 },
+      privateMeta: { maxBytes: 1_024 },
+      compatibility: {
+        channel: "text-protocol-compatibility",
+        format: "plain-text",
+        maxBytes: 128,
+        completeness: "summary-only"
+      }
+    });
+    const projection = (metadata: {
+      protocolMeta?: Record<string, unknown>;
+      appHydration?: Record<string, unknown>;
+    }) => projectToolResult(contract, {
+      canonical: {},
+      authoritative: { channel: "app-hydration", value: null },
+      compatibility: { channel: "text-protocol-compatibility", text: "fixture" },
+      ...metadata
+    });
+
+    expect(projection({
+      protocolMeta: {
+        "io.modelcontextprotocol/serverInfo": { name: "bridge", version: "0.4.1" },
+        traceparent: "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+      },
+      appHydration: {
+        "codex/dashboardView@1": { revision: 1 },
+        "openai/locale": "ko-KR"
+      }
+    })._meta).toEqual({
+      "io.modelcontextprotocol/serverInfo": { name: "bridge", version: "0.4.1" },
+      traceparent: "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+      "codex/dashboardView@1": { revision: 1 },
+      "openai/locale": "ko-KR"
+    });
+
+    for (const key of [
+      "io.modelcontextprotocol/serverInfo",
+      "io.modelcontextprotocol/subscriptionId",
+      "traceparent",
+      "tracestate",
+      "baggage"
+    ]) {
+      expect(() => projection({ appHydration: { [key]: "forbidden" } }))
+        .toThrow(/reserved MCP metadata key/);
+    }
+    expect(() => projection({
+      protocolMeta: { "codex/dashboardView@1": { source: "protocol" } },
+      appHydration: { "codex/dashboardView@1": { source: "app" } }
+    })).toThrow(/owned by both protocol metadata and app hydration/);
+  });
+
   it("keeps compact Settings free of editor-only project identity and paths", () => {
     const settings = modelResults.codex_settings[0]!.structuredContent;
     const serialized = JSON.stringify(settings);
@@ -429,67 +508,4 @@ describe("model-visible output contracts", () => {
     });
   });
 
-  it("validates bounded generation 11 private Activity metadata exactly", () => {
-    expect(validateActivityBootstrapPrivateMetadata(activityPrivateMetadata.bootstrap))
-      .toEqual(activityPrivateMetadata.bootstrap);
-    expect(validateActivityViewPrivateMetadata(activityPrivateMetadata.view))
-      .toEqual(activityPrivateMetadata.view);
-    expect(Buffer.byteLength(JSON.stringify(activityPrivateMetadata.bootstrap), "utf8"))
-      .toBeLessThanOrEqual(ACTIVITY_BOOTSTRAP_PRIVATE_MAX_BYTES);
-    expect(Buffer.byteLength(JSON.stringify(activityPrivateMetadata.view), "utf8"))
-      .toBeLessThanOrEqual(ACTIVITY_VIEW_PRIVATE_MAX_BYTES);
-
-    expect(() => validateActivityBootstrapPrivateMetadata({
-      ...activityPrivateMetadata.bootstrap,
-      version: 10
-    })).toThrow();
-    expect(() => validateActivityBootstrapPrivateMetadata({
-      ...activityPrivateMetadata.bootstrap,
-      authority: true
-    })).toThrow();
-    const mismatchedBootstrap = structuredClone(activityPrivateMetadata.bootstrap) as Record<string, any>;
-    mismatchedBootstrap.presentation.reservationOwnerId = "another-job";
-    expect(() => validateActivityBootstrapPrivateMetadata(mismatchedBootstrap))
-      .toThrow(/correlated Job/);
-
-    const mismatchedView = structuredClone(activityPrivateMetadata.view);
-    mismatchedView.correlation.scopeVersion += 1;
-    expect(() => validateActivityViewPrivateMetadata(mismatchedView))
-      .toThrow(/scope versions/);
-
-    const historicalView = structuredClone(activityPrivateMetadata.view) as Record<string, any>;
-    historicalView.source = "codex_activity_rehydrate";
-    historicalView.correlation.presentation = {
-      kind: "historical",
-      jobId: "37373737-3737-4737-8737-373737373737",
-      requestId: "37373737-3737-4737-8737-373737373738"
-    };
-    historicalView.view.mountedPresentation = historicalView.correlation.presentation;
-    historicalView.view.watcherPolicy = {
-      presentationKind: "historical",
-      mode: "one-shot",
-      live: false,
-      stopped: false,
-      ownsCompletionHandoff: false
-    };
-    expect(validateActivityViewPrivateMetadata(historicalView)).toEqual(historicalView);
-    const owningHistoricalView = structuredClone(historicalView);
-    owningHistoricalView.view.watcherPolicy.live = true;
-    expect(() => validateActivityViewPrivateMetadata(owningHistoricalView))
-      .toThrow(/one-shot, read-only, and non-owning/);
-    const wrongHistoricalSource = structuredClone(historicalView);
-    wrongHistoricalSource.source = "codex_activity_snapshot";
-    expect(() => validateActivityViewPrivateMetadata(wrongHistoricalSource))
-      .toThrow(/exclusive to the rehydrate source/);
-    historicalView.view.mountedPresentation = {
-      ...historicalView.view.mountedPresentation,
-      jobId: "37373737-3737-4737-8737-373737373739"
-    };
-    expect(() => validateActivityViewPrivateMetadata(historicalView))
-      .toThrow(/mounted presentation/);
-
-    const oversized = structuredClone(activityPrivateMetadata.view);
-    oversized.view.feed = { padding: "x".repeat(ACTIVITY_VIEW_PRIVATE_MAX_BYTES) };
-    expect(() => validateActivityViewPrivateMetadata(oversized)).toThrow(/above its/);
-  });
 });

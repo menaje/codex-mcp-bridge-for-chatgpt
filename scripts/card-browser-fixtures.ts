@@ -8,68 +8,6 @@ export const enrichment = (state: "structural" | "enriched") => ({
   usageTimedOut: false
 });
 
-export const activityView = (state: "structural" | "enriched") => ({
-  scopeVersion: 7,
-  generatedAt: state === "structural"
-    ? "2026-09-03T00:00:00.000Z"
-    : "2026-09-03T00:00:01.000Z",
-  enrichment: enrichment(state),
-  weeklyUsage: null,
-  uiLocalePreference: "ko",
-  completionHandoff: "off",
-  pendingHandoffs: [],
-  mountedActivity: { activityId: "progressive-activity", cardGeneration: 1 },
-  mountedPresentation: { kind: "explicit" },
-  watcherPolicy: {
-    mode: "scope-version-long-poll",
-    live: true,
-    stopped: false,
-    ownsCompletionHandoff: false
-  },
-  feed: {
-    mode: "full",
-    active: [{
-      rowType: "activity",
-      activityId: "progressive-activity",
-      title: state === "structural" ? "구조 활동" : "보강 활동",
-      lifecycle: "open",
-      kind: "implementation",
-      displayState: "running",
-      elapsedMs: 1_000,
-      counts: { total: 1, failed: 0 },
-      agents: [],
-      cancellations: [],
-      canRequestVerification: false,
-      canRetry: false,
-      workspaceLabels: [],
-      projectName: null
-    }],
-    activeCount: 1,
-    activityTotal: 1,
-    activeHasMore: false,
-    showWorkspaceLabels: false,
-    historySummary: { completedActivities: 0, endedActivities: 0, idleAgents: 0 },
-    history: { rows: [], pagination: {} },
-    idleAgents: { rows: [], pagination: {} }
-  }
-});
-
-export const activityFixture = (
-  state: "structural" | "enriched",
-  scopeVersion: number,
-  title: string
-) => {
-  const fixture = activityView(state);
-  return {
-    ...fixture,
-    scopeVersion,
-    feed: {
-      ...fixture.feed,
-      active: [{ ...fixture.feed.active[0], title }]
-    }
-  };
-};
-
 const dashboardPage = (total = 0) => ({
   offset: 0,
   limit: 12,
@@ -197,8 +135,8 @@ const settingsView = {
     showBridgeThreadsInCodexApp: true,
     uiLocalePreference: "ko",
     maxConcurrentJobs: 2,
-    activityCardVisibility: "always",
-    completionHandoff: "off",
+    dashboardAutoOpenBackground: true,
+    completionFollowUp: false,
     projects: []
   },
   capabilities: {
@@ -230,35 +168,20 @@ const settingsView = {
   }
 };
 
-export function cardPrelude(kind: "activity" | "dashboard" | "settings"): string {
-  const initialActivityMetadata = {
-    "codex/activityView@11": {
-      kind: "codex/activityView",
-      version: 11,
-      purpose: "presentation-hydration-only",
-      correlation: { scopeVersion: 7 },
-      view: activityView("structural")
-    }
-  };
+export function cardPrelude(kind: "dashboard" | "settings"): string {
   return `<script>
     window.__fixtureStartedAt=performance.now();
     window.__structuralPaintElapsed=null;
     window.__cardErrors=[];
     window.__cardCalls=[];
-    window.__activityTitles=[];
-    window.__activityEnrichmentCalls=0;
-    window.__activityWatchAdvanced=false;
     window.addEventListener("error",event=>window.__cardErrors.push(String(event.error&&event.error.message||event.message)));
     window.addEventListener("unhandledrejection",event=>window.__cardErrors.push(String(event.reason&&event.reason.message||event.reason)));
     document.addEventListener("DOMContentLoaded",()=>{
       const mark=()=>{
-        const activityTitle=${JSON.stringify(kind)}==="activity"&&document.querySelector(".row .name")?.textContent||"";
-        if(activityTitle&&window.__activityTitles.at(-1)!==activityTitle)window.__activityTitles.push(activityTitle);
         if(window.__structuralPaintElapsed!==null)return;
-        const activityReady=${JSON.stringify(kind)}==="activity"&&document.querySelector(".row .name")?.textContent==="구조 활동";
         const dashboardReady=${JSON.stringify(kind)}==="dashboard"&&document.querySelector("#dashboard-content")?.hidden===false;
         const settingsReady=${JSON.stringify(kind)}==="settings"&&document.querySelector("#settings-form")?.hidden===false;
-        if(activityReady||dashboardReady||settingsReady)window.__structuralPaintElapsed=performance.now()-window.__fixtureStartedAt;
+        if(dashboardReady||settingsReady)window.__structuralPaintElapsed=performance.now()-window.__fixtureStartedAt;
       };
       new MutationObserver(mark).observe(document.documentElement,{subtree:true,childList:true,attributes:true,characterData:true});
       mark();
@@ -266,17 +189,8 @@ export function cardPrelude(kind: "activity" | "dashboard" | "settings"): string
     window.openai={
       locale:"ko-KR",
       notifyIntrinsicHeight:()=>{},
-      ${kind === "activity" ? `toolResponseMetadata:${JSON.stringify(initialActivityMetadata)},` : ""}
       callTool:async(name,args)=>{
         window.__cardCalls.push({name,args,at:performance.now()-window.__fixtureStartedAt});
-        if(${JSON.stringify(kind)}==="activity"){
-          if(args&&args.afterVersion!==undefined){
-            if(args.afterVersion===7&&!window.__activityWatchAdvanced){window.__activityWatchAdvanced=true;await new Promise(resolve=>setTimeout(resolve,100));return{structuredContent:Object.assign(${JSON.stringify(activityFixture("structural", 8, "새 구조 활동"))},{generatedAt:new Date().toISOString()})};}
-            return new Promise(()=>{});
-          }
-          if(args&&args.enrich===true){const call=++window.__activityEnrichmentCalls;await new Promise(resolve=>setTimeout(resolve,call===1?650:50));return{structuredContent:Object.assign(call===1?${JSON.stringify(activityFixture("enriched", 7, "오래된 보강 활동"))}:${JSON.stringify(activityFixture("enriched", 8, "최신 보강 활동"))},{generatedAt:new Date().toISOString()})};}
-          await new Promise(resolve=>setTimeout(resolve,20));return{structuredContent:Object.assign(${JSON.stringify(activityFixture("structural", 8, "새 구조 활동"))},{generatedAt:new Date().toISOString()})};
-        }
         if(${JSON.stringify(kind)}==="dashboard"){
           await new Promise(resolve=>setTimeout(resolve,args&&args.enrich===true?650:20));
           return{structuredContent:args&&args.enrich===true?${JSON.stringify(dashboardView("enriched"))}:${JSON.stringify(dashboardView("structural"))}};

@@ -119,7 +119,7 @@ distinct same-title Activities retain a neutral previous-Activity boundary, and
 every historical turn keeps its own model/reasoning line or an unavailable label.
 
 **Fast mode** uses the localized name **빠른 처리 (Fast)** in Korean Settings.
-The menu bar and Activity/Dashboard cards show a localized lightning badge beside
+The menu bar and Dashboard card show a localized lightning badge beside
 the model and reasoning level when that execution captured `priority` or `fast`.
 Changing the preference updates supported next-run settings without relabelling
 running or historical work. Settings explains that the model and reasoning level

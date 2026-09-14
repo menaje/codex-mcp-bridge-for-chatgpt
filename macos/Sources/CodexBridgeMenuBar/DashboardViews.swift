@@ -195,7 +195,7 @@ struct DashboardPopoverView: View {
             .disabled(isRefreshingOverview)
             .help("새로고침")
             .accessibilityLabel("현황 새로고침")
-            .accessibilityValue(isRefreshingOverview ? Text("현황을 불러오는 중…") : Text(""))
+            .accessibilityValue(isRefreshingOverview ? Text("현황을 불러오는 중…") : Text(verbatim: ""))
         }
         .padding(14)
     }

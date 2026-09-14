@@ -70,6 +70,53 @@ describe("user settings and project registry", () => {
     restored.stateStore.close();
   });
 
+  it("migrates legacy card preferences into independent Dashboard and follow-up settings", () => {
+    const databaseFile = path.join(temporaryDirectory("settings-completion-delivery-"), "state.sqlite");
+    const config = configFor();
+    const first = persistentSettings(config, databaseFile);
+    expect(first.settings.current).toMatchObject({
+      dashboardAutoOpenBackground: true,
+      completionFollowUp: false
+    });
+    first.settings.update({ dashboardAutoOpenBackground: false, completionFollowUp: true }, 0);
+    first.stateStore.close();
+
+    const persisted = persistentSettings(config, databaseFile);
+    expect(persisted.settings.current).toMatchObject({
+      dashboardAutoOpenBackground: false,
+      completionFollowUp: true
+    });
+    const legacy = persisted.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    delete legacy.dashboardAutoOpenBackground;
+    delete legacy.completionFollowUp;
+    legacy.activityCardVisibility = "never";
+    legacy.completionHandoff = "auto-handoff";
+    persisted.stateStore.close();
+    replaceStoredSettingsPayloadForTest(databaseFile, legacy);
+
+    const migrated = persistentSettings(config, databaseFile);
+    expect(migrated.settings.current).toMatchObject({
+      dashboardAutoOpenBackground: false,
+      completionFollowUp: true
+    });
+    const rewritten = migrated.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    expect(rewritten).not.toHaveProperty("activityCardVisibility");
+    expect(rewritten).not.toHaveProperty("completionHandoff");
+    rewritten.dashboardAutoOpenBackground = true;
+    rewritten.completionFollowUp = false;
+    rewritten.activityCardVisibility = "never";
+    rewritten.completionHandoff = "auto-handoff";
+    migrated.stateStore.close();
+    replaceStoredSettingsPayloadForTest(databaseFile, rewritten);
+
+    const explicit = persistentSettings(config, databaseFile);
+    expect(explicit.settings.current).toMatchObject({
+      dashboardAutoOpenBackground: true,
+      completionFollowUp: false
+    });
+    explicit.stateStore.close();
+  });
+
   it("persists inactive Ultra selections through restart and restores them when enabled", () => {
     const databaseFile = path.join(temporaryDirectory("settings-ultra-"), "state.sqlite");
     const config = configFor();

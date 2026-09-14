@@ -1,14 +1,13 @@
 {
-  "catalogVersion": 3,
+  "catalogVersion": 4,
   "activeResources": [
     "settings",
-    "activity",
-    "dashboard",
-    "question"
+    "dashboard"
   ],
   "compatibilityResources": [],
   "currentContracts": {
     "settings": {
+      "uriVersion": 1,
       "presenterTool": "codex_settings",
       "requiredTools": [
         "codex_settings",
@@ -16,34 +15,15 @@
         "codex_update_settings"
       ]
     },
-    "activity": {
-      "presenterTool": "codex_activity",
-      "requiredTools": [
-        "codex_activity",
-        "codex_activity_rehydrate",
-        "codex_activity_snapshot",
-        "codex_activity_handoff",
-        "codex_activity_job_cancel",
-        "codex_background_process_terminate",
-        "codex_interaction_respond",
-        "codex_job_steer"
-      ]
-    },
     "dashboard": {
+      "uriVersion": 1,
       "presenterTool": "codex_dashboard",
       "requiredTools": [
         "codex_dashboard",
-        "codex_ui_history",
         "codex_ui_problem",
-        "codex_ui_read"
-      ]
-    },
-    "question": {
-      "presenterTool": "codex_ask_user",
-      "requiredTools": [
-        "codex_ask_user",
-        "codex_question_action",
-        "codex_ui_read"
+        "codex_ui_read",
+        "codex_interaction_respond",
+        "codex_ui_stop"
       ]
     }
   },
@@ -52,16 +32,26 @@
   "retirement": {
     "activity": {
       "lifecycle": "historical-revisions-retired",
-      "newPresentations": true,
-      "replacement": "current-resource",
+      "newPresentations": false,
+      "replacement": "dashboard",
       "firstStableWithReplacement": "0.4.1",
       "minimumSupportRule": "none",
       "statePreserved": [
         "activities",
         "agents",
         "jobs",
-        "questions",
         "results",
+        "idempotency"
+      ]
+    },
+    "question": {
+      "lifecycle": "historical-revisions-retired",
+      "newPresentations": false,
+      "replacement": "host-conversation",
+      "firstStableWithReplacement": "0.4.1",
+      "minimumSupportRule": "none",
+      "statePreserved": [
+        "questions",
         "idempotency"
       ]
     }

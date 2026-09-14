@@ -1,4 +1,5 @@
 import type { CallToolResult, ContentBlock } from "@modelcontextprotocol/server";
+import { isDeepStrictEqual } from "node:util";
 import type * as z from "zod/v4";
 
 /**
@@ -60,7 +61,6 @@ export const TOOL_CONTENT_BYTE_CAPS = Object.freeze({
   codex_status: 1_024,
   codex_models: 512,
   codex_settings: 768,
-  codex_activity: 1_024,
   codex_agent: 512,
   codex_cancel: 768,
   codex_activity_update: 512,
@@ -78,7 +78,6 @@ export const TOOL_STRUCTURED_BYTE_CAPS = Object.freeze({
   codex_status: 512 * 1_024,
   codex_models: 256 * 1_024,
   codex_settings: 32 * 1_024,
-  codex_activity: 512 * 1_024,
   codex_agent: 128 * 1_024,
   codex_cancel: 128 * 1_024,
   codex_activity_update: 128 * 1_024,
@@ -143,12 +142,11 @@ export function projectToolResult<Schema extends z.ZodType, Canonical>(
     );
   }
   const content = compatibilityContent(contract, projection.compatibility);
-  const privateMeta = projection.appHydration || projection.protocolMeta
-    ? {
-        ...(projection.protocolMeta || {}),
-        ...(projection.appHydration || {})
-      }
-    : undefined;
+  const privateMeta = mergePrivateMetadata(
+    contract.toolName,
+    projection.protocolMeta,
+    projection.appHydration
+  );
   if (privateMeta) {
     if (!contract.privateMeta) {
       throw new Error(`${contract.toolName} projected private metadata without a metadata contract.`);
@@ -168,13 +166,98 @@ export function projectToolResult<Schema extends z.ZodType, Canonical>(
   };
 }
 
+/**
+ * Keep MCP transport metadata separate from bridge UI hydration metadata.
+ *
+ * `io.modelcontextprotocol/*` and the W3C trace-context keys are protocol
+ * owned. An application result must not be able to replace those values by
+ * choosing the same `_meta` key. Future protocol keys remain protected by the
+ * namespace rule rather than requiring a bridge release for each addition.
+ */
+function mergePrivateMetadata(
+  toolName: string,
+  protocolMeta: Readonly<Record<string, unknown>> | undefined,
+  appHydration: Readonly<Record<string, unknown>> | undefined
+): Record<string, unknown> | undefined {
+  if (!protocolMeta && !appHydration) return undefined;
+  const protocol = protocolMeta || {};
+  const hydration = appHydration || {};
+  for (const key of Object.keys(hydration)) {
+    if (isReservedMcpMetadataKey(key)) {
+      throw new Error(
+        `${toolName} app hydration cannot define reserved MCP metadata key ${JSON.stringify(key)}.`
+      );
+    }
+    if (Object.hasOwn(protocol, key)) {
+      throw new Error(
+        `${toolName} private metadata key ${JSON.stringify(key)} is owned by both protocol metadata and app hydration.`
+      );
+    }
+  }
+  return { ...protocol, ...hydration };
+}
+
+function isReservedMcpMetadataKey(key: string): boolean {
+  return key.startsWith("io.modelcontextprotocol/") ||
+    key === "traceparent" ||
+    key === "tracestate" ||
+    key === "baggage";
+}
+
 /** MCP 2026-07-28 permits any JSON value at the structured result root. */
 function jsonValue(value: unknown, label: string): string {
-  const encoded = JSON.stringify(value);
+  let encoded: string | undefined;
+  try {
+    encoded = JSON.stringify(value);
+  } catch {
+    throw new Error(`${label} must be JSON-serializable.`);
+  }
   if (encoded === undefined) {
     throw new Error(`${label} must be JSON-serializable.`);
   }
+  // JSON.stringify silently changes several JavaScript values (for example
+  // NaN, Date, functions, and undefined object members). A result boundary
+  // must not publish a value whose wire representation means something else.
+  const decoded = JSON.parse(encoded) as unknown;
+  if (!isDeepStrictEqual(value, decoded)) {
+    throw new Error(
+      `${label} must be a JSON value without lossy serialization (${firstJsonDifference(value, decoded)}).`
+    );
+  }
   return encoded;
+}
+
+function firstJsonDifference(value: unknown, decoded: unknown, path = "$"): string {
+  if (isDeepStrictEqual(value, decoded)) return path;
+  if (typeof value !== typeof decoded) {
+    return `${path}: ${typeof value} became ${typeof decoded}`;
+  }
+  if (value === null || decoded === null || typeof value !== "object") {
+    return `${path}: ${String(value)} became ${String(decoded)}`;
+  }
+  if (Array.isArray(value) || Array.isArray(decoded)) {
+    if (!Array.isArray(value) || !Array.isArray(decoded)) return `${path}: array shape changed`;
+    if (value.length !== decoded.length) return `${path}: array length changed`;
+    for (let index = 0; index < value.length; index += 1) {
+      if (!isDeepStrictEqual(value[index], decoded[index])) {
+        return firstJsonDifference(value[index], decoded[index], `${path}[${index}]`);
+      }
+    }
+    return `${path}: array representation changed`;
+  }
+  const original = value as Record<string, unknown>;
+  const roundTripped = decoded as Record<string, unknown>;
+  for (const key of Object.keys(original)) {
+    const childPath = `${path}.${key}`;
+    if (!Object.hasOwn(roundTripped, key)) return `${childPath}: property was omitted`;
+    if (!isDeepStrictEqual(original[key], roundTripped[key])) {
+      return firstJsonDifference(original[key], roundTripped[key], childPath);
+    }
+  }
+  for (const key of Object.keys(roundTripped)) {
+    if (!Object.hasOwn(original, key)) return `${path}.${key}: property was added`;
+  }
+  return `${path}: object representation changed`;
 }
 
 export function boundedUtf8Text(text: string, maxBytes: number): string {

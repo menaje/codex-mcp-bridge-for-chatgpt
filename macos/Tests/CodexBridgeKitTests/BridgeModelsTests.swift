@@ -54,10 +54,8 @@ final class BridgeModelsTests: XCTestCase {
                     constraints: ModelPolicyConstraints(allowDelegation: true)
                 ),
                 usePriorityServiceTier: true,
-                activityCard: ActivityCardPatch(
-                    visibility: "background-only",
-                    completionHandoff: "auto-handoff"
-                )
+                dashboardAutoOpenBackground: true,
+                completionFollowUp: true
             ))
         )
 
@@ -71,6 +69,9 @@ final class BridgeModelsTests: XCTestCase {
         let settings = try XCTUnwrap(operation["settings"] as? [String: Any])
         XCTAssertEqual(settings["accessStrategy"] as? String, "adaptive")
         XCTAssertEqual(settings["usePriorityServiceTier"] as? Bool, true)
+        XCTAssertEqual(settings["dashboardAutoOpenBackground"] as? Bool, true)
+        XCTAssertEqual(settings["completionFollowUp"] as? Bool, true)
+        XCTAssertNil(settings["activityCard"])
         let policy = try XCTUnwrap(settings["modelPolicy"] as? [String: Any])
         XCTAssertEqual(policy["mode"] as? String, "fixed")
         XCTAssertNil(policy["fallbackSelection"])

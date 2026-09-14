@@ -261,6 +261,10 @@ async function runLauncher(paths: {
   delete environment.CONTROL_PLANE_API_KEY;
   delete environment.CONTROL_PLANE_TUNNEL_ID;
   delete environment.OPENAI_API_KEY;
+  // The launcher acquires a canonical ownership lock before reading the
+  // supplied dotenv. Keep that lock inside this fixture so a user's running
+  // bridge cannot make the integration test fail before it publishes status.
+  environment.XDG_CONFIG_HOME = path.join(path.dirname(paths.envFile), "xdg-config");
   environment.CODEX_MCP_BRIDGE_CODEX = paths.fakeCodex;
   environment.CODEX_MCP_BRIDGE_MANAGED_BY_APP = "1";
   const child = spawn(process.execPath, [

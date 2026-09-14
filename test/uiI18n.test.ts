@@ -3,12 +3,6 @@ import { readFileSync } from "node:fs";
 import { usesFastProcessing } from "../src/executionPresentation.js";
 import { ULTRA_POLICY_TRANSLATIONS } from "../src/ultraPolicyI18n.js";
 import {
-  ACTIVITY_CARD_HTML,
-  ACTIVITY_CARD_HTML_MAX_BYTES,
-  groupActivityIdleAgentsByActivity,
-  shouldShowHistoricalActivityTitle
-} from "../src/activityCard.js";
-import {
   dashboardHistoryActivityHeading,
   dashboardHistoryActivityIdentity,
   dashboardExecutionsEqual,
@@ -111,20 +105,13 @@ describe("human-facing UI localization", () => {
       expect(UI_TRANSLATIONS[locale]["common.loading"]).not.toBe(UI_TRANSLATIONS.en["common.loading"]);
       expect(UI_TRANSLATIONS[locale]["activity.forceStop"]).not.toBe(UI_TRANSLATIONS.en["activity.forceStop"]);
       expect(UI_TRANSLATIONS[locale]["settings.language"]).not.toBe(UI_TRANSLATIONS.en["settings.language"]);
-      expect(UI_TRANSLATIONS[locale]["settings.cardVisibility"]).not.toBe(
-        UI_TRANSLATIONS.en["settings.cardVisibility"]
-      );
       for (const key of [
         "settings.codexAppThreads",
-        "settings.codexAppThreadsHint"
-      ] as const) {
-        expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
-      }
-      for (const key of [
-        "settings.cardVisibility.always",
-        "settings.cardVisibility.background",
-        "settings.cardVisibility.never",
-        "activity.superseded"
+        "settings.codexAppThreadsHint",
+        "settings.dashboardAutoOpenBackground",
+        "settings.dashboardAutoOpenBackgroundHint",
+        "settings.completionFollowUp",
+        "settings.completionFollowUpHint"
       ] as const) {
         expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
       }
@@ -207,12 +194,10 @@ describe("human-facing UI localization", () => {
     );
     expect(UI_TRANSLATIONS.ko["settings.preferredModel"]).toBe("GPT 미지정 시 기본 모델");
     expect(UI_TRANSLATIONS.ko["settings.preferredEffort"]).toBe("GPT 미지정 시 기본 추론 수준");
-    expect(UI_TRANSLATIONS.ko["settings.cardVisibility.always"]).toBe(
-      "모든 Codex 작업에 자동 표시"
+    expect(UI_TRANSLATIONS.ko["settings.dashboardAutoOpenBackground"]).toBe(
+      "백그라운드 작업 시 현황 카드 자동 표시"
     );
-    expect(UI_TRANSLATIONS.ko["settings.cardVisibility.background"]).toBe(
-      "백그라운드 Codex 작업에만 자동 표시"
-    );
+    expect(UI_TRANSLATIONS.ko["settings.completionFollowUp"]).toBe("완료 후 자동 응답");
     expect(UI_TRANSLATIONS.ko["settings.codexAppThreads"]).toBe(
       "브리지 스레드를 Codex 앱에 표시"
     );
@@ -354,20 +339,18 @@ describe("human-facing UI localization", () => {
       .toEqual(["breakthrough", "novel"]);
   });
 
-  it("serializes only each self-contained card's translation namespaces within byte budgets", () => {
+  it("serializes only the current Settings and Dashboard cards within their byte budgets", () => {
     const serialized = serializedUiTranslations();
     expect(serialized).not.toContain("<");
-    expect(JSON.parse(serialized)).toEqual(UI_TRANSLATIONS);
+    const serializedBundles = JSON.parse(serialized) as Record<string, Record<string, string>>;
+    for (const bundle of Object.values(serializedBundles)) {
+      expect(bundle).not.toHaveProperty("settings.cardVisibility");
+      expect(bundle).not.toHaveProperty("settings.handoff");
+      expect(bundle).not.toHaveProperty("activity.prompt.handoff");
+    }
     expect(SETTINGS_CARD_HTML).toContain(
       serializedUiTranslations(["common", "settings", "effort", "history", "problem.historyNotice", "problem.automaticHistoryNotice"])
     );
-    const activityBundles = JSON.parse(ACTIVITY_CARD_HTML.match(/const BUNDLES=(.*);/)![1]);
-    const referencedActivityKeys = [...ACTIVITY_CARD_HTML.matchAll(/t\["([a-zA-Z0-9.-]+)"\]/g)].map(match => match[1]);
-    for (const bundle of Object.values(activityBundles) as Record<string, string>[]) {
-      for (const key of referencedActivityKeys) expect(bundle[key], key).toBeTruthy();
-      expect(bundle).not.toHaveProperty("settings.title");
-    }
-
     const dashboardBundles = JSON.parse(DASHBOARD_CARD_HTML.match(/const BUNDLES=(.*);/)![1]);
     const dashboardKeys = [...DASHBOARD_CARD_HTML.matchAll(/t\["([a-zA-Z0-9.-]+)"\]/g)].map(match => match[1]);
     for (const bundle of Object.values(dashboardBundles) as Record<string, string>[]) {
@@ -375,63 +358,26 @@ describe("human-facing UI localization", () => {
       expect(bundle).not.toHaveProperty("settings.title");
     }
     expect(SETTINGS_CARD_HTML).not.toContain('"activity.title"');
-    expect(ACTIVITY_CARD_HTML).not.toContain('"settings.title"');
     expect(DASHBOARD_CARD_HTML).not.toContain('"settings.title"');
     expect(Buffer.byteLength(SETTINGS_CARD_HTML, "utf8")).toBeLessThanOrEqual(
       SETTINGS_CARD_HTML_MAX_BYTES
-    );
-    expect(Buffer.byteLength(ACTIVITY_CARD_HTML, "utf8")).toBeLessThanOrEqual(
-      ACTIVITY_CARD_HTML_MAX_BYTES
     );
     expect(Buffer.byteLength(DASHBOARD_CARD_HTML, "utf8")).toBeLessThanOrEqual(
       DASHBOARD_CARD_HTML_MAX_BYTES
     );
     expect(SETTINGS_CARD_HTML).toContain(PRODUCT_INFO.displayName);
     expect(SETTINGS_CARD_HTML).toContain('document.title=t["settings.title"]');
-    expect(ACTIVITY_CARD_HTML).toContain('document.title=t["activity.title"]');
     expect(DASHBOARD_CARD_HTML).toContain('document.title=t["dashboard.title"]');
-    expect(DASHBOARD_CARD_HTML).not.toContain('aria-label="Overview counts"');
-    expect(DASHBOARD_CARD_HTML).toContain('t["dashboard.countsLabel"]');
-    expect(ACTIVITY_CARD_HTML).toContain('localizedText("activity.prompt.handoff"');
-    expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.sessionManaged"');
-    expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.unlimited"');
-    expect(SETTINGS_CARD_HTML).not.toContain('id="revision"');
+    expect(SETTINGS_CARD_HTML).toContain('id="dashboard-auto-open-background" type="checkbox"');
+    expect(SETTINGS_CARD_HTML).toContain('id="completion-follow-up" type="checkbox"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-visibility"');
-    expect(SETTINGS_CARD_HTML).toContain('id="use-priority-service-tier" type="checkbox"');
-    expect(SETTINGS_CARD_HTML).toContain(
-      'id="show-bridge-threads-in-codex-app" type="checkbox"'
-    );
-    expect(SETTINGS_CARD_HTML).toContain(
-      "showBridgeThreadsInCodexApp:elements.codexAppThreads.checked"
-    );
-    expect(SETTINGS_CARD_HTML).toContain(
-      "elements.codexAppThreads.checked=settings.showBridgeThreadsInCodexApp===true"
-    );
-    expect(SETTINGS_CARD_HTML).toContain(
-      't["settings.codexAppThreadsHint"]'
-    );
-    expect(SETTINGS_CARD_HTML).not.toContain('id="policy-service-tier"');
-    expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-view"');
-    expect(SETTINGS_CARD_HTML).not.toContain("activityCardView");
-    expect(ACTIVITY_CARD_HTML).not.toContain("let viewMode=");
-    expect(serialized).not.toContain("settings.cardView");
     expect(SETTINGS_CARD_HTML).not.toContain('id="completion-handoff"');
-    expect(SETTINGS_CARD_HTML).toContain('id="projects-title"');
-    expect(SETTINGS_CARD_HTML).toContain('id="project-list"');
-    expect(SETTINGS_CARD_HTML).toContain('id="add-project" type="button"');
-    expect(SETTINGS_CARD_HTML).not.toContain('id="default-project"');
-    expect(SETTINGS_CARD_HTML).not.toContain('id="allowed-root-list"');
-    expect(SETTINGS_CARD_HTML).not.toContain('id="allowed-roots"');
-    expect(SETTINGS_CARD_HTML).toContain('data-i18n="settings.resetHint"');
-    expect(SETTINGS_CARD_HTML).not.toContain('id="default-cwd"');
-    expect(SETTINGS_CARD_HTML).not.toContain('className="project-id-input"');
-    expect(SETTINGS_CARD_HTML).not.toContain('projectField("settings.projectId"');
-    expect(serialized).not.toContain('settings.projectId');
-    expect(serialized).not.toContain('settings.defaultProject');
-    expect(serialized).not.toContain('settings.cwd');
-    expect(SETTINGS_CARD_HTML).toContain("SETTINGS_REVISION_CONFLICT");
-    expect(`${SETTINGS_CARD_HTML}${ACTIVITY_CARD_HTML}${DASHBOARD_CARD_HTML}${serialized}`)
-      .not.toContain("MacBook Air");
+    expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_read"');
+    expect(DASHBOARD_CARD_HTML).toContain('controlAction("codex_ui_stop"');
+    expect(DASHBOARD_CARD_HTML).toContain('controlAction("codex_interaction_respond"');
+    expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_problem"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('callTool("codex_activity"');
+    expect(`${SETTINGS_CARD_HTML}${DASHBOARD_CARD_HTML}${serialized}`).not.toContain("MacBook Air");
   });
 
   it("localizes the stale-card recovery page from the browser locale", () => {
@@ -447,498 +393,23 @@ describe("human-facing UI localization", () => {
     expect(staleHtml).not.toContain("<title>Plugin refresh required</title>");
   });
 
-  it("supports host locale updates, accessible controls, and standard/fallback app messaging", () => {
-    for (const html of [SETTINGS_CARD_HTML, ACTIVITY_CARD_HTML, DASHBOARD_CARD_HTML]) {
+  it("uses the current card bridge and Dashboard completion delivery contract", () => {
+    for (const html of [SETTINGS_CARD_HTML, DASHBOARD_CARD_HTML]) {
       expect(html).toContain('dir="auto"');
       expect(html).toContain('"openai/locale"');
       expect(html).toContain('"webplus/i18n"');
       expect(html).toContain('window.openai.locale');
       expect(html).toContain("resolveHostUiLocaleTag(");
-      expect(html).toContain('openai:set_globals');
       expect(html).not.toContain("openai/userLocation");
       expect(html).not.toMatch(/geolocation|navigator\.geolocation/i);
     }
-    for (const html of [SETTINGS_CARD_HTML, ACTIVITY_CARD_HTML, DASHBOARD_CARD_HTML]) {
-      expect(html).toContain("initialMetadata,navigator.language)");
-    }
-    expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_read"');
-    expect(DASHBOARD_CARD_HTML).toContain('id="dashboard-content" hidden');
-    expect(DASHBOARD_CARD_HTML).toContain('data-i18n="common.loading"');
-    expect(DASHBOARD_CARD_HTML).toContain("function normalizeHostToolResult");
-    expect(DASHBOARD_CARD_HTML).toContain("mcp_tool_result");
-    expect(DASHBOARD_CARD_HTML).toContain("standardBridgeReady=");
-    expect(DASHBOARD_CARD_HTML).toContain("standardBridgeReady=beginStandardBridge()");
-    expect(DASHBOARD_CARD_HTML).toContain("function standardToolCall(name,args)");
-    expect(DASHBOARD_CARD_HTML).toContain("function callUiToolWithFallback");
-    expect(DASHBOARD_CARD_HTML).toContain("STANDARD_CALL_BUDGET_MS");
-    expect(DASHBOARD_CARD_HTML).toContain("compatibilityTimeoutMs:STANDARD_CALL_BUDGET_MS");
-    expect(DASHBOARD_CARD_HTML).toContain("if(compatibility)return callUiToolWithFallback");
-    expect(DASHBOARD_CARD_HTML).not.toContain('typeof window.openai.callTool==="function"?Promise.resolve(false)');
-    expect(DASHBOARD_CARD_HTML).not.toContain("__name");
-    expect(DASHBOARD_CARD_HTML).not.toContain('message.method==="ui/notifications/tool-result"');
-    expect(DASHBOARD_CARD_HTML).not.toContain("function consumeHostResult(");
-    expect(DASHBOARD_CARD_HTML).toContain("function render(next,localeReady=false,pageRequest=appendRequest)");
-    expect(DASHBOARD_CARD_HTML).toContain("function queueEnrichment(");
-    expect(DASHBOARD_CARD_HTML).toContain("function drainEnrichment(");
-    expect(DASHBOARD_CARD_HTML).toContain("enrich:inspect");
-    expect(DASHBOARD_CARD_HTML).toContain("enrich:false");
-    expect(DASHBOARD_CARD_HTML).toContain("async function reload(manual=false,enrichAfter=true)");
-    expect(DASHBOARD_CARD_HTML).not.toContain("projectOffset");
-    expect(DASHBOARD_CARD_HTML).not.toContain("conversationOffset");
-    expect(DASHBOARD_CARD_HTML).toContain("dashboard.refreshFailedRetained");
+    expect(DASHBOARD_CARD_HTML).toContain('rpcRequest("ui/message"');
+    expect(DASHBOARD_CARD_HTML).toContain('completion-claim');
+    expect(DASHBOARD_CARD_HTML).toContain('completion-uncertain');
+    expect(DASHBOARD_CARD_HTML).toContain('presentationToken');
+    expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/resource-teardown"');
     expect(SETTINGS_CARD_HTML).toContain('callTool("codex_ui_read"');
     expect(SETTINGS_CARD_HTML).not.toContain('callTool("codex_settings",');
-    expect(SETTINGS_CARD_HTML).not.toContain('message.method==="ui/notifications/tool-result"');
-    expect(SETTINGS_CARD_HTML).toContain('id="settings-form" hidden');
-    expect(SETTINGS_CARD_HTML).toContain('id="settings-loading"');
-    expect(DASHBOARD_CARD_HTML).toContain("MCP_TOOL_CALL_DISPATCH_TIMEOUT");
-    expect(DASHBOARD_CARD_HTML).not.toContain('id="view-project"');
-    expect(DASHBOARD_CARD_HTML).not.toContain('id="view-conversation"');
-    expect(DASHBOARD_CARD_HTML).not.toContain('id="view-status"');
-    expect(DASHBOARD_CARD_HTML).not.toContain('id="project-view"');
-    expect(DASHBOARD_CARD_HTML).not.toContain('id="conversation-view"');
-    expect(DASHBOARD_CARD_HTML).not.toContain('id="status-view"');
-    expect(DASHBOARD_CARD_HTML).not.toContain('id="status-idle-panel"');
-    expect(DASHBOARD_CARD_HTML).toContain('selectedStatus="all"');
-    expect(DASHBOARD_CARD_HTML).not.toContain('id="status-idle-toggle"');
-    expect(DASHBOARD_CARD_HTML).toContain('aria-pressed="false"');
-    expect(DASHBOARD_CARD_HTML).toContain('id="terminal-more"');
-    expect(DASHBOARD_CARD_HTML).not.toContain('id="idle-more"');
-    expect(DASHBOARD_CARD_HTML).toContain('data-status-filter="response-required"');
-    expect(DASHBOARD_CARD_HTML).toContain('data-status-filter="problems"');
-    expect(DASHBOARD_CARD_HTML).toContain('id="history-filter"');
-    expect(DASHBOARD_CARD_HTML).not.toContain('id="status-all"');
-    expect(DASHBOARD_CARD_HTML).toContain('.count[aria-pressed="true"],#history-filter[aria-pressed="true"]');
-    expect(DASHBOARD_CARD_HTML).toContain('id="active-section" hidden');
-    expect(DASHBOARD_CARD_HTML).toContain('id="terminal-section" hidden');
-    expect(DASHBOARD_CARD_HTML).toContain('data-i18n="dashboard.loadMore"');
-    expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.previous"');
-    expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.next"');
-    expect(DASHBOARD_CARD_HTML).toContain("async function loadMore(bucket)");
-    expect(DASHBOARD_CARD_HTML).toContain("function mergeRows(current,incoming)");
-    expect(DASHBOARD_CARD_HTML).toContain("function reconcileDashboardPageCaches(");
-    expect(DASHBOARD_CARD_HTML).toContain("next.terminalPagination.offset>0");
-    expect(DASHBOARD_CARD_HTML).toContain("next.idlePagination.offset>0");
-    expect(DASHBOARD_CARD_HTML).not.toContain("dashboardViewMode");
-    expect(DASHBOARD_CARD_HTML).not.toContain("api.setWidgetState");
-    expect(DASHBOARD_CARD_HTML).not.toContain("render(unwrap(message.params)");
-    expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/resource-teardown"');
-    expect(DASHBOARD_CARD_HTML).toContain('window.addEventListener("pagehide"');
-    expect(DASHBOARD_CARD_HTML).toContain('rpcNotification("ui/notifications/size-changed"');
-    expect(DASHBOARD_CARD_HTML).toContain("notifyIntrinsicHeight");
-    expect(DASHBOARD_CARD_HTML).toContain("new ResizeObserver");
-    expect(DASHBOARD_CARD_HTML).toContain("new Intl.RelativeTimeFormat");
-    expect(DASHBOARD_CARD_HTML).toContain("expandedHistories");
-    expect(DASHBOARD_CARD_HTML).toContain('node("details","history")');
-    expect(DASHBOARD_CARD_HTML).toContain(
-      "function renderHistoryTurn(turn,heading)"
-    );
-    expect(DASHBOARD_CARD_HTML).toContain(
-      "function currentHistoryRevision(rowKey)"
-    );
-    expect(DASHBOARD_CARD_HTML).toContain(
-      "function cachedHistoryDetail(row)"
-    );
-    expect(DASHBOARD_CARD_HTML).toContain(
-      'detail.historyRevision!==revision){void reload(true,false);return}'
-    );
-    expect(DASHBOARD_CARD_HTML).toContain(
-      'callTool("codex_ui_read",{view:"dashboard-history"'
-    );
-    expect(DASHBOARD_CARD_HTML).not.toContain("expandedCancellations");
-    expect(DASHBOARD_CARD_HTML).not.toContain("cancellation-toggle");
-    expect(DASHBOARD_CARD_HTML).toContain(
-      "dashboardHistoryActivityHeading(historicalTurn,previousTurn,enclosingActivity)"
-    );
-    expect(DASHBOARD_CARD_HTML).toContain(
-      'elapsed==null?t["dashboard.time.durationUnknown"]'
-    );
-    expect(DASHBOARD_CARD_HTML).not.toContain(
-      'updated=t["dashboard.time.updated"].replace'
-    );
-    expect(DASHBOARD_CARD_HTML).toContain('else if(row.bucket!=="active")');
-    expect(DASHBOARD_CARD_HTML).toContain(
-      "function renderActivityRows(parent,rows,recentActivity=false)"
-    );
-    expect(DASHBOARD_CARD_HTML).not.toContain("function renderAgentRows(parent,rows)");
-    expect(DASHBOARD_CARD_HTML).toContain('function appendRowContext(parent,row,mode="row")');
-    expect(DASHBOARD_CARD_HTML).toContain(
-      "groupDashboardRowsByActivity(rows)"
-    );
-    expect(DASHBOARD_CARD_HTML).toContain(
-      'function renderActivityGroup(parent,group,recentActivity=false){const representative=group.rows[0]'
-    );
-    expect(DASHBOARD_CARD_HTML).toContain("identity.appendChild(title)");
-    expect(DASHBOARD_CARD_HTML).not.toContain("aggregateDashboardActivityStatus");
-    expect(DASHBOARD_CARD_HTML).toContain("head.appendChild(title)");
-    expect(DASHBOARD_CARD_HTML).toContain(
-      'if(!suppressIdleStatus||row.status!=="idle")head.appendChild(state)'
-    );
-    expect(DASHBOARD_CARD_HTML).toContain(
-      "appendAgentBody(agent,row,true,recentActivity,group.activityTitle)"
-    );
-    expect(DASHBOARD_CARD_HTML).not.toContain("commonDashboardExecution");
-    expect(DASHBOARD_CARD_HTML).not.toContain("commonDashboardNextExecution");
-    expect(DASHBOARD_CARD_HTML).not.toContain("head.append(title,state)");
-    expect(DASHBOARD_CARD_HTML).not.toContain(
-      "shouldShowDashboardNextExecution(row.execution,turn&&turn.execution)"
-    );
-    expect(DASHBOARD_CARD_HTML).not.toContain("__name");
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "function summaryText(row,includeUpdatedAt=false)"
-    );
-    expect(ACTIVITY_CARD_HTML).toContain(
-      'const parts=[activityLifecycleLabel(row)]'
-    );
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "box.appendChild(activityLifecycleIcon(row))"
-    );
-    expect(ACTIVITY_CARD_HTML).not.toContain(
-      'node("span","sr-only",stateLabel(row.displayState))'
-    );
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "renderActivityRow(row,showWorkspace,true)"
-    );
-    expect(ACTIVITY_CARD_HTML).not.toContain(
-      "shouldShowHistoricalActivityTitle(activityTitle,item.latestActivityId,visibleActivityIds)"
-    );
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "item.appendChild(renderInteraction(row,agent,control,interaction))"
-    );
-    expect(ACTIVITY_CARD_HTML).not.toContain(
-      "content.appendChild(renderInteraction(row,agent,control,interaction))"
-    );
-    expect(ACTIVITY_CARD_HTML).toContain(
-      'entry.targetKind==="job"&&entry.agentName'
-    );
-    expect(ACTIVITY_CARD_HTML).toContain(
-      'rows.map((row)=>String(row&&row.activityId||"").trim())'
-    );
-    expect(DASHBOARD_CARD_HTML).not.toContain("function conversationGroups(rows)");
-    expect(DASHBOARD_CARD_HTML).not.toContain("function projectGroups(rows)");
-    expect(DASHBOARD_CARD_HTML).not.toContain("function renderConversationGroups");
-    expect(DASHBOARD_CARD_HTML).not.toContain("function renderProjectGroups");
-    expect(DASHBOARD_CARD_HTML).not.toContain('node("section","conversation-group")');
-    expect(DASHBOARD_CARD_HTML).toContain('node("a","conversation-link"');
-    expect(DASHBOARD_CARD_HTML).not.toContain(
-      'node("a","conversation-link codex-session-link"'
-    );
-    expect(DASHBOARD_CARD_HTML).toContain('link.rel="noopener noreferrer"');
-    expect(DASHBOARD_CARD_HTML).toContain("function dispatchDashboardExternalUrl(");
-    expect(DASHBOARD_CARD_HTML).toContain(
-      "dispatchDashboardExternalUrl(event,url,window.openai,openConversationFallback)"
-    );
-    expect(DASHBOARD_CARD_HTML).toContain("safeConversationUrl(row.conversationUrl)");
-    expect(DASHBOARD_CARD_HTML).not.toContain("safeCodexThreadUrl");
-    expect(DASHBOARD_CARD_HTML).not.toContain("row.codexThreadUrl");
-    expect(DASHBOARD_CARD_HTML).not.toContain("const values=[row.sessionAlias,row.projectName]");
-    expect(DASHBOARD_CARD_HTML).toContain("turn.durationMs");
-    expect(DASHBOARD_CARD_HTML).toContain('if(active)return duration');
-    expect(DASHBOARD_CARD_HTML).toContain("lastRenderedAt");
-    expect(DASHBOARD_CARD_HTML).not.toContain("lastRenderPriority");
-    expect(DASHBOARD_CARD_HTML).toContain(
-      'standardBridgeReady=beginStandardBridge();setLocale(localeTag,false);if(typeof ResizeObserver'
-    );
-    expect(DASHBOARD_CARD_HTML).toContain('window.addEventListener("pageshow"');
-    expect(DASHBOARD_CARD_HTML).not.toContain("invalidateDashboardView");
-    expect(DASHBOARD_CARD_HTML).not.toContain("if(requiresFresh){automaticRefreshDisabled=false;void reload()}");
-    expect(DASHBOARD_CARD_HTML).not.toContain("Date.now()-lastRefreshAt<=30000");
-    expect(DASHBOARD_CARD_HTML).toContain('document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&view){mounted=true;paint(view)}})');
-    expect(DASHBOARD_CARD_HTML).toContain('window.addEventListener("online",()=>{if(mounted&&!standardBridgeInitialized)void beginStandardBridge()})');
-    expect(DASHBOARD_CARD_HTML).toContain('statusFilter:"all"');
-    expect(DASHBOARD_CARD_HTML).toContain("dashboardRowMatchesStatus(row,selectedStatus)");
-    expect(DASHBOARD_CARD_HTML).toContain('includeHistory:selectedStatus==="history"');
-    expect(DASHBOARD_CARD_HTML).toContain('role="status" aria-live="polite"');
-    expect(DASHBOARD_CARD_HTML).not.toContain("setInterval(");
-    expect(DASHBOARD_CARD_HTML).not.toContain("localStorage");
-    expect(DASHBOARD_CARD_CONTENT_METADATA["openai/widgetCSP"].redirect_domains)
-      .toEqual(["https://chatgpt.com"]);
-    expect(DASHBOARD_CARD_CONTENT_METADATA.ui.prefersBorder).toBe(false);
-    expect(DASHBOARD_CARD_CONTENT_METADATA["openai/widgetPrefersBorder"]).toBe(false);
-    expect(SETTINGS_CARD_CONTENT_METADATA.ui.prefersBorder).toBe(false);
-    expect(SETTINGS_CARD_CONTENT_METADATA["openai/widgetPrefersBorder"]).toBe(false);
-    expect(DASHBOARD_CARD_HTML.indexOf('id="active-section"'))
-      .toBeLessThan(DASHBOARD_CARD_HTML.indexOf('id="terminal-section"'));
-    expect(DASHBOARD_CARD_HTML).not.toContain('data-i18n="dashboard.idle"');
-    expect(SETTINGS_CARD_HTML).toContain('role="status"');
-    expect(SETTINGS_CARD_HTML).toContain('id="ui-language"');
-    expect(SETTINGS_CARD_HTML).not.toContain(
-      'class="notice experimental-notice" data-i18n="settings.appServerExperimental"'
-    );
-    expect(SETTINGS_CARD_HTML).toContain("uiLocalePreference");
-    expect(SETTINGS_CARD_HTML).toContain("Settings card unmounted");
-    expect(SETTINGS_CARD_HTML).toContain('rpcRequest("ui/initialize"');
-    expect(SETTINGS_CARD_HTML).toContain('rpcNotification("ui/notifications/initialized"');
-    expect(SETTINGS_CARD_HTML).toContain('message.method==="ui/notifications/host-context-changed"');
-    expect(SETTINGS_CARD_HTML).toContain("new Error(uiBridgeErrorMessage(message.error");
-    expect(SETTINGS_CARD_HTML).not.toContain("new Error(message.error.message");
-    expect(SETTINGS_CARD_HTML).toContain(
-      'id="policy-effort" required aria-describedby="effort-description effort-compatibility"'
-    );
-    expect(SETTINGS_CARD_HTML).toContain('id="effort-description" aria-live="polite"');
-    expect(SETTINGS_CARD_HTML).toContain('aria-describedby="ultra-hint ultra-policy-warning"');
-    expect(SETTINGS_CARD_HTML).toContain('id="allowed-models"');
-    expect(SETTINGS_CARD_HTML).toContain('id="effort-groups"');
-    expect(SETTINGS_CARD_HTML).not.toContain('id="preferred-model"');
-    expect(SETTINGS_CARD_HTML).not.toContain('id="preferred-effort"');
-    expect(SETTINGS_CARD_HTML).not.toContain('id="preferred-selection"');
-    expect(SETTINGS_CARD_HTML).not.toContain("currentPreferredSelection()");
-    expect(SETTINGS_CARD_HTML).not.toContain("fallbackSelection");
-    expect(SETTINGS_CARD_HTML).toContain('return{mode:"automatic",allowedSelections');
-    expect(SETTINGS_CARD_HTML).not.toContain('preferredModel.replaceChildren(option(""');
-    expect(SETTINGS_CARD_HTML).toContain("modelDisplayName(modelId)");
-    expect(SETTINGS_CARD_HTML).not.toContain('selection.model+"]"');
-    expect(SETTINGS_CARD_HTML).toContain("usePriorityServiceTier:elements.priority.checked");
-    expect(SETTINGS_CARD_HTML).toContain("projectOperations=buildProjectOperations(projectSettings.projects)");
-    expect(SETTINGS_CARD_HTML).not.toContain("defaultProjectId");
-    expect(SETTINGS_CARD_HTML).toContain('operation:{kind:"patch",settings}');
-    expect(SETTINGS_CARD_HTML).toContain("limits.projectAvailability");
-    expect(SETTINGS_CARD_HTML).not.toContain("allocateProjectId");
-    expect(SETTINGS_CARD_HTML).toContain("if(project.id)row.dataset.projectId=project.id");
-    expect(SETTINGS_CARD_HTML).toContain('row.querySelector(".project-label-input").focus()');
-    expect(SETTINGS_CARD_HTML).not.toContain("PROJECT_DUPLICATE_ID");
-    expect(SETTINGS_CARD_HTML).toContain("PROJECT_CWD_CONFLICT");
-    expect(SETTINGS_CARD_HTML).toContain('{kind:"archive",projectId:project.id}');
-    expect(SETTINGS_CARD_HTML).toContain('{kind:"restore",projectId:project.id');
-    expect(SETTINGS_CARD_HTML).toContain('{kind:"delete",projectId:project.id}');
-    expect(SETTINGS_CARD_HTML).not.toContain('confirm(t["settings.deleteProjectConfirm"])');
-    expect(SETTINGS_CARD_HTML).toContain('className="project-delete-confirm"');
-    expect(SETTINGS_CARD_HTML).toContain('className="project-pending-message"');
-    expect(SETTINGS_CARD_HTML).toContain('row.dataset.confirmDelete="true"');
-    expect(SETTINGS_CARD_HTML).toContain('classList.toggle("project-changes-pending",count>0)');
-    expect(SETTINGS_CARD_HTML).toContain('t["settings.removeProject"]');
-    expect(SETTINGS_CARD_HTML).toContain("normalizedPathKey");
-    expect(SETTINGS_CARD_HTML).not.toContain('document.createElement("details")');
-    expect(SETTINGS_CARD_HTML).toContain('<fieldset class="choice-group"><legend');
-    expect(SETTINGS_CARD_HTML).toContain('document.createElement("fieldset")');
-    expect(SETTINGS_CARD_HTML).toContain('document.createElement("legend")');
-    expect(SETTINGS_CARD_HTML).toContain('all.dataset.action="all-efforts"');
-    expect(SETTINGS_CARD_HTML).toContain("all.indeterminate=");
-    expect(SETTINGS_CARD_HTML).toContain('all.indeterminate?"mixed"');
-    expect(SETTINGS_CARD_HTML).toContain('id="selection-count" aria-live="polite"');
-    expect(SETTINGS_CARD_HTML).toContain('id="retry-models" type="button"');
-    expect(SETTINGS_CARD_HTML).toContain('id="catalog-status" role="status"');
-    expect(SETTINGS_CARD_HTML).toContain('id="catalog-status-label"');
-    expect(SETTINGS_CARD_HTML).not.toContain('catalog-status-source');
-    expect(SETTINGS_CARD_HTML).not.toContain('settings.catalogSource');
-    expect(SETTINGS_CARD_HTML).toContain('elements.catalogStatus.dataset.state=catalogState');
-    expect(UI_TRANSLATIONS.en["settings.catalogStatus.valid"]).toBe("Model catalog valid");
-    expect(UI_TRANSLATIONS.ko["settings.catalogStatus.valid"]).toBe("모델 카탈로그 정상");
-    expect(SETTINGS_CARD_HTML).not.toContain('id="refresh"');
-    expect(SETTINGS_CARD_HTML).toContain('aria-describedby="access-hint full-warning"');
-    expect(SETTINGS_CARD_HTML).toContain('elements.fullWarning.classList.toggle("show",value==="always-full")');
-    expect(SETTINGS_CARD_HTML.indexOf('id="full-warning"')).toBeLessThan(
-      SETTINGS_CARD_HTML.indexOf('id="model-policy-mode"')
-    );
-    expect(SETTINGS_CARD_HTML).toContain('elements.retryModels.hidden=!catalogProblem');
-    expect(SETTINGS_CARD_HTML).toContain(
-      "next.policyActivation.developerModeRefreshRequired"
-    );
-    expect(SETTINGS_CARD_HTML).toContain('t["settings.developerModeRefreshRequired"]');
-    expect(SETTINGS_CARD_HTML).not.toContain("setInterval(");
-    expect(ACTIVITY_CARD_HTML).toContain("function displayAgentName(value)");
-    expect(ACTIVITY_CARD_HTML).toContain('t["activity.defaultAgent"]:name');
-    for (const html of [DASHBOARD_CARD_HTML, ACTIVITY_CARD_HTML]) {
-      expect(html).toContain(
-        'effort=String(execution.reasoningEffort||"").trim().toLowerCase()'
-      );
-      expect(html).toContain('return model+" · "+effort');
-    }
-    expect(ACTIVITY_CARD_HTML).toContain(
-      'text=prefix+(execution?executionText(execution):t["dashboard.execution.unavailable"])'
-    );
-    expect(ACTIVITY_CARD_HTML).not.toContain(
-      't["activity.reasoningEffort"]+" "+execution.reasoningEffort'
-    );
-    expect(ACTIVITY_CARD_HTML).not.toContain('prefix+label+" · "+executionText(execution)');
-    expect(ACTIVITY_CARD_HTML).toContain('aria-live="polite"');
-    expect(ACTIVITY_CARD_HTML).not.toContain('document.createElement("datalist")');
-    expect(ACTIVITY_CARD_HTML).not.toContain("<details");
-    expect(ACTIVITY_CARD_HTML).toContain("<body hidden>");
-    expect(ACTIVITY_CARD_HTML).toContain(".card{border:0;border-radius:0;background:transparent}");
-    expect(ACTIVITY_CARD_HTML).toContain("next.feed");
-    expect(ACTIVITY_CARD_HTML).toContain("renderActivityHistory(next.feed,showWorkspace)");
-    expect(ACTIVITY_CARD_HTML).toContain("renderHistorySummary(next.feed)");
-    expect(ACTIVITY_CARD_HTML.indexOf("renderActivityHistory(next.feed,showWorkspace)"))
-      .toBeLessThan(ACTIVITY_CARD_HTML.indexOf("renderHistorySummary(next.feed)"));
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "renderIdleActivityGroups(feed.idleAgents,showWorkspace,visibleActivityIds)"
-    );
-    expect(ACTIVITY_CARD_HTML).not.toContain('renderGroup("completed",next.feed.completed');
-    expect(ACTIVITY_CARD_HTML).not.toContain('renderGroup("ended",next.feed.ended');
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "groupActivityIdleAgentsByActivity(group.rows,visibleActivityIds)"
-    );
-    expect(ACTIVITY_CARD_HTML).toContain("Boolean(next.feed.showWorkspaceLabels)");
-    expect(ACTIVITY_CARD_HTML).toContain("summary.push(...workspaces)");
-    expect(ACTIVITY_CARD_HTML).toContain("appendActivityAgents(content,row,readOnly)");
-    expect(ACTIVITY_CARD_HTML).toContain('node("div","activity-agent-list")');
-    expect(ACTIVITY_CARD_HTML).toContain("appendExecutions(identity,[agent],false)");
-    expect(ACTIVITY_CARD_HTML).not.toContain("commonActivityAgentExecution");
-    expect(ACTIVITY_CARD_HTML).toContain('t["dashboard.execution.unavailable"]');
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "agentSummary=[agent.role,agentWorkTime(agent)]"
-    );
-    expect(ACTIVITY_CARD_HTML).not.toContain(
-      'agentSummary=[agent.role,codeLabel("agent","idle"),agentWorkTime(agent)]'
-    );
-    expect(ACTIVITY_CARD_HTML).toContain(
-      'if(value==="waiting-gpt"||value==="verification")return t["activity.workComplete"]'
-    );
-    expect(ACTIVITY_CARD_HTML).toContain(
-      '["completed","waiting-gpt","verification"].includes(state))return"completed"'
-    );
-    expect(ACTIVITY_CARD_HTML).not.toContain(
-      'row.displayState==="waiting-gpt")parts.push(t["waiting.orchestrator"]'
-    );
-    expect(ACTIVITY_CARD_HTML).not.toContain('parts.push(t["activity.gptVerificationNeeded"])');
-    expect(ACTIVITY_CARD_HTML).toContain("execution.modelDisplayName||execution.model");
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "execution.reroutedModelDisplayName||execution.reroutedModel"
-    );
-    expect(ACTIVITY_CARD_HTML).not.toContain('t["activity.reasoningEffort"]');
-    expect(ACTIVITY_CARD_HTML).toContain(".execution-list{");
-    expect(ACTIVITY_CARD_HTML).toContain('aria-expanded');
-    expect(ACTIVITY_CARD_HTML).toContain("activity.currentActivities");
-    expect(ACTIVITY_CARD_HTML).toContain("activity.allActivities");
-    expect(ACTIVITY_CARD_HTML).toContain("activity.previousPage");
-    expect(ACTIVITY_CARD_HTML).toContain("activity.nextPage");
-    expect(ACTIVITY_CARD_HTML).toContain("function previousFailureText(row)");
-    expect(ACTIVITY_CARD_HTML).toContain('count>0&&row.displayState!=="failed"');
-    expect(UI_TRANSLATIONS.ko["activity.previousFailures"]).toBe("이전 실패 {count}건");
-    expect(UI_TRANSLATIONS.ko["activity.forceStop"]).toBe("에이전트 강제 종료…");
-    expect(UI_TRANSLATIONS.ko["activity.stopBackground"]).toBe("백그라운드 프로세스 종료…");
-    for (const locale of SUPPORTED_UI_LOCALES) {
-      expect(UI_TRANSLATIONS[locale]["activity.previousFailures"]).toContain("{count}");
-    }
-    expect(UI_TRANSLATIONS.ko["activity.pastRecords"]).toBe("지난 기록");
-    expect(UI_TRANSLATIONS.ko["activity.completedActivities"]).toBe("완료 작업");
-    expect(UI_TRANSLATIONS.ko["activity.history"]).toBe("최근 활동");
-    expect(ACTIVITY_CARD_HTML).not.toContain('next.viewMode==="activity-summary"');
-    expect(ACTIVITY_CARD_HTML).not.toContain("renderActivities(next)");
-    expect(ACTIVITY_CARD_HTML).not.toContain("renderAgents(next)");
-    expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_agent"');
-    expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_background_process_terminate"');
-    expect(ACTIVITY_CARD_HTML).toContain("expectedAgentVersion:control.agentVersion");
-    expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/message"');
-    expect(ACTIVITY_CARD_HTML).toContain("sendFollowUpMessage");
-    expect(ACTIVITY_CARD_HTML).toContain(
-      'async function reload(retry=true){const epoch=beginOperation(),card=cardProof(),args={card,limit:viewLimit,enrich:false}'
-    );
-    expect(ACTIVITY_CARD_HTML).toContain(
-      'afterVersion:snapshot.scopeVersion,waitMs:55000,enrich:false'
-    );
-    expect(ACTIVITY_CARD_HTML).toContain('if(card.presentation.kind==="explicit"&&historyCursor)args.cursor=historyCursor');
-    expect(ACTIVITY_CARD_HTML).toContain(
-      'readActivityView("codex_activity_rehydrate",rehydrateArgs(correlation,false)'
-    );
-    expect(ACTIVITY_CARD_HTML).toContain("function callUiToolWithFallback");
-    expect(ACTIVITY_CARD_HTML).toContain("function withUiToolCallTimeout");
-    expect(ACTIVITY_CARD_HTML).toContain("STANDARD_CALL_BUDGET_MS");
-    expect(ACTIVITY_CARD_HTML).toContain("WATCH_CALL_TIMEOUT_MS");
-    expect(ACTIVITY_CARD_HTML).toContain("function setBusy(value)");
-    expect(ACTIVITY_CARD_HTML).toContain("operationEpoch");
-    expect(ACTIVITY_CARD_HTML).toContain("watchEpoch");
-    expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_interaction_respond"');
-    expect(ACTIVITY_CARD_HTML).toContain('callTool("codex_activity_handoff",{action:"claim-batch"');
-    expect(ACTIVITY_CARD_HTML).toContain("For every listed Job ID");
-    expect(ACTIVITY_CARD_HTML).toContain("Activity and overview queries never contain Job answers");
-    expect(ACTIVITY_CARD_HTML).toContain("Do not start another codex_task merely to reconstruct");
-    expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_status",Object.assign({activityView:true');
-    expect(ACTIVITY_CARD_HTML).toContain("consumeToolOutput");
-    expect(ACTIVITY_CARD_HTML).toContain("codex/activityBootstrap@11");
-    expect(ACTIVITY_CARD_HTML).toContain("codex/activityView@11");
-    expect(ACTIVITY_CARD_HTML).toContain('bootstrap.kind!=="codex/activityBootstrap"');
-    expect(ACTIVITY_CARD_HTML).toContain('view.kind==="codex/activityView"');
-    expect(ACTIVITY_CARD_HTML).toContain("return{requestId:correlation.requestId,bridgeActivity:");
-    expect(ACTIVITY_CARD_HTML).toContain("normalizeHostToolResult(value)");
-    expect(ACTIVITY_CARD_HTML).toContain("hostToolResultMetadata(value)");
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "privateActivityOutput(metadata)||result&&result.structuredContent||parsedToolText(result)||result"
-    );
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "if(!window.openai||!applyHostGlobals(window.openai))showHydrationError"
-    );
-    expect(ACTIVITY_CARD_HTML).toContain('rpcRequest("ui/initialize"');
-    expect(ACTIVITY_CARD_HTML).toContain('rpcNotification("ui/notifications/initialized"');
-    expect(ACTIVITY_CARD_HTML).toContain('rpcNotification("ui/notifications/size-changed",{width,height})');
-    expect(ACTIVITY_CARD_HTML).toContain("widgetInstanceId=crypto.randomUUID()");
-    expect(ACTIVITY_CARD_HTML).toContain("Object.assign({},args,{widgetInstanceId})");
-    expect(ACTIVITY_CARD_HTML).toContain('dataset.collapsed=visible?"false":"true"');
-    expect(ACTIVITY_CARD_HTML).toContain('dataset.collapsed==="true")return 1');
-    expect(ACTIVITY_CARD_HTML).toContain('value.method==="ui/notifications/tool-input"');
-    expect(ACTIVITY_CARD_HTML).toContain("rememberToolInput");
-    expect(ACTIVITY_CARD_HTML).toContain("taskInputRequestId!==outputRequestId");
-    expect(ACTIVITY_CARD_HTML).toContain('next.kind==="task"');
-    expect(ACTIVITY_CARD_HTML).toContain('next.kind==="activity"');
-    expect(ACTIVITY_CARD_HTML).toContain('next.mode==="full-history"');
-    expect(ACTIVITY_CARD_HTML).toContain('const key="historical\\u0000"+next.jobId');
-    expect(ACTIVITY_CARD_HTML).toContain(
-      'rehydrationCorrelation={kind:"historical",jobId:next.jobId,requestId:next.requestId}'
-    );
-    expect(ACTIVITY_CARD_HTML).toContain("next.bridgeSession.requestId");
-    expect(ACTIVITY_CARD_HTML).toContain("next.bridgeActivity||next.activityTracking");
-    expect(ACTIVITY_CARD_HTML).toContain("presentation.shouldRenderActivityCard");
-    expect(ACTIVITY_CARD_HTML).toContain("AUTOMATIC_BOOTSTRAP_REASONS.has(presentation.renderReason)");
-    expect(ACTIVITY_CARD_HTML).toContain('"render-reserved","render-confirmed","active-lease"');
-    expect(ACTIVITY_CARD_HTML).toContain('"render-retry","render-latest"');
-    expect(ACTIVITY_CARD_HTML).toContain("activityPresentationId+\"\\u0000\"");
-    expect(ACTIVITY_CARD_HTML).toContain("if(taskBootstrapKey===key)return true");
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "void hydrateWithRetry(reload,key)"
-    );
-    expect(ACTIVITY_CARD_HTML).toContain('presentation.presentationKind!=="automatic"');
-    expect(ACTIVITY_CARD_HTML).toContain("activityPresentationId");
-    expect(ACTIVITY_CARD_HTML).toContain("reservationOwnerId");
-    expect(ACTIVITY_CARD_HTML).toContain("next.watcherPolicy.live===false");
-    expect(ACTIVITY_CARD_HTML).toContain(
-      'next.watcherPolicy.stopReason==="presentation-duplicate"'
-    );
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "snapshot=null;rehydrationCorrelation=null;historyCursor=null;lastRenderedAt=0;invalidateWatch();setBusy(false);setCardVisible(false);return false"
-    );
-    expect(ACTIVITY_CARD_HTML).toContain('presentation.kind==="historical"');
-    expect(ACTIVITY_CARD_HTML).toContain('presentation.kind==="restored-explicit"');
-    expect(ACTIVITY_CARD_HTML).toContain('readOnly=rehydratedView()');
-    expect(ACTIVITY_CARD_HTML).toContain('"activity.restoredSnapshot":"activity.historicalSnapshot"');
-    expect(ACTIVITY_CARD_HTML).toContain(
-      "const recovery=recoveryAction;if(recovery)"
-    );
-    expect(ACTIVITY_CARD_HTML).toContain(
-      'action=rehydratedView()?(mountedActivity?promoteRehydrated():reloadRehydrated()):reload()'
-    );
-    expect(ACTIVITY_CARD_HTML).toContain('t["activity.loadFailed"]');
-    expect(ACTIVITY_CARD_HTML).toContain("setCardVisible(true)");
-    expect(ACTIVITY_CARD_HTML).toContain('presentation:{kind:"explicit"}');
-    expect(ACTIVITY_CARD_HTML).toContain("snapshot.watcherPolicy.ownsCompletionHandoff===false");
-    expect(ACTIVITY_CARD_HTML).not.toContain('callTool("codex_activity"');
-    expect(ACTIVITY_CARD_HTML).toContain("Activity card unmounted");
-    expect(ACTIVITY_CARD_HTML).toContain("next.uiLocalePreference");
-    expect(UI_TRANSLATIONS.en["activity.historicalSnapshot"]).toContain("Historical snapshot");
-    expect(UI_TRANSLATIONS.ko["activity.restoredSnapshot"]).toContain("복구된 전체 Activity");
-    expect(UI_TRANSLATIONS.ko["activity.refreshFailedRetained"]).toContain("마지막으로 불러온 Activity");
-    expect(UI_TRANSLATIONS.ko["activity.openLive"]).toBe("실시간 Activity 열기");
-  });
-
-  it("deduplicates historical Activity titles by Activity identity, not title text", () => {
-    const visibleActivityIds = new Set(["activity-visible"]);
-    expect(shouldShowHistoricalActivityTitle(
-      "Repeated title",
-      "activity-visible",
-      visibleActivityIds
-    )).toBe(false);
-    expect(shouldShowHistoricalActivityTitle(
-      "Repeated title",
-      "different-activity",
-      visibleActivityIds
-    )).toBe(true);
-    expect(shouldShowHistoricalActivityTitle(
-      "Repeated title",
-      undefined,
-      visibleActivityIds
-    )).toBe(true);
-    expect(shouldShowHistoricalActivityTitle("", "different-activity", visibleActivityIds))
-      .toBe(false);
   });
 
   it("groups Dashboard rows by Activity identity while preserving nested Agent order", () => {
@@ -958,34 +429,6 @@ describe("human-facing UI localization", () => {
         activityKey: "activity-b",
         activityTitle: "Shared title",
         rows: [rows[2]]
-      }
-    ]);
-  });
-
-  it("groups idle Activity-card Agents by their latest Activity and omits visible duplicates", () => {
-    const rows = [
-      { agentId: "agent-a", latestActivityId: "activity-a", latestActivityTitle: "Shared" },
-      { agentId: "agent-b", latestActivityId: "activity-a", latestActivityTitle: "Shared" },
-      { agentId: "agent-c", latestActivityId: "activity-visible", latestActivityTitle: "Visible" },
-      { agentId: "agent-d", latestActivityId: null, latestActivityTitle: null },
-      { agentId: "agent-e", latestActivityId: null, latestActivityTitle: null }
-    ];
-
-    expect(groupActivityIdleAgentsByActivity(
-      rows,
-      new Set(["activity-visible"])
-    )).toEqual([
-      {
-        activityKey: "activity:activity-a",
-        activityId: "activity-a",
-        activityTitle: "Shared",
-        rows: [rows[0], rows[1]]
-      },
-      {
-        activityKey: "no-recent-activity",
-        activityId: null,
-        activityTitle: null,
-        rows: [rows[3], rows[4]]
       }
     ]);
   });

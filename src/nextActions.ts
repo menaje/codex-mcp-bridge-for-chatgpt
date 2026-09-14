@@ -49,12 +49,6 @@ export const modelNextActionOutputSchema = z.union([
     arguments: emptyArguments,
     message: message.optional()
   }),
-  z.strictObject({
-    kind: z.literal("tool"),
-    tool: z.literal("codex_user_answer"),
-    arguments: z.strictObject({ responseRef: z.string().uuid().optional() }),
-    message: message.optional()
-  }),
   z.strictObject({ kind: z.literal("guidance"), message })
 ]);
 

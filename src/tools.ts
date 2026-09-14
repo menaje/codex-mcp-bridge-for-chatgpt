@@ -19,10 +19,17 @@ import {
 } from "./nextActions.js";
 import { DisplayReadPool, waitForDisplay } from "./displayReadPool.js";
 import { uiControlProofs, type UiControlClaims } from "./uiControlProofs.js";
+import {
+  completionDeliveryEventId,
+  dashboardAutoPresentationProofs,
+  selectCompletionDeliveryRoute,
+  type CompletionDeliveryRoute,
+  type DashboardAutoPresentation
+} from "./completionDelivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ThreadConnectionController, type ThreadConnectionRecord } from "./threadConnections.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
-import { registerQuestionTools, QUESTION_MODEL_OUTPUT_SCHEMAS, QUESTION_APP_OUTPUT_SCHEMAS } from "./questionTools.js";
+import { registerCodexInputTools, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS } from "./questionTools.js";
 import path from "node:path";
 import * as z from "zod/v4";
 import { type McpServer, type Progress, type ToolCallback } from "@modelcontextprotocol/server";
@@ -108,17 +115,6 @@ import {
   SETTINGS_CARD_URI
 } from "./settingsCard.js";
 import {
-  ACTIVITY_BOOTSTRAP_METADATA_KEY,
-  ACTIVITY_CARD_CONTRACT_GENERATION,
-  ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION,
-  ACTIVITY_SCOPE_METADATA_KEY,
-  ACTIVITY_VIEW_METADATA_KEY,
-  registerActivityCardResource,
-  ACTIVITY_CARD_HTML,
-  ACTIVITY_CARD_HTML_MAX_BYTES,
-  ACTIVITY_CARD_URI
-} from "./activityCard.js";
-import {
   DASHBOARD_CARD_CONTRACT_GENERATION,
   DASHBOARD_CARD_URI,
   DASHBOARD_PRIVATE_METADATA_CONTRACT_VERSION,
@@ -169,12 +165,8 @@ import {
 } from "./upstream.js";
 import { backendRoutingArgument } from "./upstreamRouter.js";
 import {
-  ACTIVITY_CARD_VISIBILITIES,
-  COMPLETION_HANDOFF_MODES,
-  type ActivityCardVisibility,
   type BridgeUserSettings,
   type BridgeUserSettingsPatch,
-  type CompletionHandoffMode,
   type ProjectRegistryOperation,
   UserSettingsStore
 } from "./userSettings.js";
@@ -332,21 +324,6 @@ export const MAX_CODEX_STATUS_WAIT_MS = 60_000;
 export const DEFAULT_CODEX_STATUS_WAIT_MS = 55_000;
 const JOB_PROGRESS_PERSIST_INTERVAL_MS = 30_000;
 
-const ACTIVITY_CARD_RENDER_REASONS = [
-  "explicit",
-  "visibility-disabled",
-  "presentation-unavailable",
-  "active-lease",
-  "render-reserved",
-  "render-retry",
-  "render-latest",
-  "render-confirmed",
-  "new-presentation"
-] as const;
-
-type ActivityCardRenderReason = (typeof ACTIVITY_CARD_RENDER_REASONS)[number];
-type ActivityCardLeaseStopReason = "presentation-superseded" | "presentation-duplicate";
-
 /**
  * Explicit escape hatch for protocol-owned or upstream-owned JSON leaves. The
  * containing result envelope is always strict; see docs/output-contracts.md.
@@ -436,25 +413,16 @@ const bridgeSessionOutputSchema = z.strictObject({
   handoff: backendHandoffAuditOutputSchema.optional(),
   scopeId: z.string(),
   requestId: z.string(),
-  projectName: z.string().nullable(),
-  activityPresentationId: z.string().nullable()
+  projectName: z.string().nullable()
 });
 
-const activityCardTrackingOutputSchema = z.strictObject({
+const dashboardPresentationOutputSchema = z.strictObject({
   statusTool: z.literal("codex_status"),
-  automaticRenderTool: z.literal("codex_activity"),
-  explicitRenderTool: z.literal("codex_activity"),
-  followUpRenderRequired: z.boolean(),
-  renderToolAvailable: z.boolean(),
-  explicitRenderAllowed: z.boolean(),
-  activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
-  activityId: z.string(),
-  cardGeneration: z.number().int().min(1),
-  presentationKind: z.enum(["automatic", "explicit"]),
-  activityPresentationId: z.string().optional(),
-  shouldRenderActivityCard: z.boolean(),
-  renderReason: z.enum(ACTIVITY_CARD_RENDER_REASONS),
-  renderTiming: z.enum(["immediate", "after-result-or-existing-mounted-card"])
+  openTool: z.literal("codex_dashboard"),
+  scope: z.literal("conversation"),
+  automatic: z.boolean(),
+  reason: z.enum(["background-enabled", "foreground", "setting-disabled"]),
+  completionDeliveryRoute: z.enum(["disabled", "host-event", "dashboard", "pending"])
 });
 
 const codexTaskOutputSchema = z.strictObject({
@@ -515,7 +483,11 @@ const codexTaskOutputSchema = z.strictObject({
     }
     return;
   }
-  for (const field of ["activityId", "agentId", "threadId", "requestId", "jobVersion", "executionMode", "backend", "sandbox"] as const) {
+  // A background admission can return before App Server assigns its first
+  // thread. The Job and Agent are already durable and scoped, while threadId
+  // stays null until the assignment callback records it. Do not invent a
+  // thread identity merely to satisfy the task envelope.
+  for (const field of ["activityId", "agentId", "requestId", "jobVersion", "executionMode", "backend", "sandbox"] as const) {
     if (value[field] === null) issue([field], "An admitted Job result requires its current identity and execution fields.");
   }
   if (active) {
@@ -544,20 +516,6 @@ const codexTaskOutputSchema = z.strictObject({
   if (terminalFailure && (value.delivery !== "none" || value.resultAvailability !== "unavailable" || value.answer !== null || value.error === null)) {
     issue(["state"], "A failed, interrupted, or cancelled Job must expose only a terminal structured error.");
   }
-});
-
-const activityModelOutputSchema = z.strictObject({
-  kind: z.literal("activity"),
-  mode: z.enum(["compact-monitor", "full-history"]),
-  scopeVersion: z.number().int().min(0),
-  activityId: z.string().optional(),
-  activityVersion: z.number().int().min(1).optional(),
-  counts: z.strictObject({
-    activities: z.number().int().min(0),
-    agents: z.number().int().min(0),
-    active: z.number().int().min(0),
-    needsAttention: z.number().int().min(0)
-  })
 });
 
 export const DASHBOARD_STATUSES = [
@@ -628,12 +586,7 @@ const workHistoryPolicyOutputSchema = z.strictObject({
   automaticRecovery: z.boolean().optional(),
   lastCleanupAt: z.string().nullable(), lastCleanupCount: z.number().int().min(0), totalRemoved: z.number().int().min(0)
 });
-const dashboardHistoryControlsSchema = z.strictObject({
-  revision: z.string().regex(/^[a-f0-9]{64}$/),
-  canAcknowledge: z.boolean()
-});
 const dashboardRowOutputSchema = z.strictObject({
-  historyControls: dashboardHistoryControlsSchema.optional(),
   handoff: z.object({ phase: z.string(), reason: z.string().optional(), requested: z.boolean(), canOpen: z.boolean() }).optional(),
   rowKey: z.string().regex(/^[0-9a-f]{32}$/),
   activityKey: z.string().regex(/^[0-9a-f]{32}$/),
@@ -653,7 +606,7 @@ const dashboardRowOutputSchema = z.strictObject({
   updatedAt: z.string(),
   elapsedMs: z.number().int().min(0),
   backgroundProcessCount: z.number().int().min(0),
-  controlKind: z.literal("request").nullable().optional(),
+  controlKind: z.enum(["request", "execution"]).nullable().optional(),
   latestTurn: dashboardTurnOutputSchema.nullable().optional(),
   history: z.array(dashboardTurnOutputSchema).optional(),
   historyCount: z.number().int().min(0).optional(),
@@ -752,6 +705,32 @@ const cardEnrichmentOutputSchema = z.strictObject({
   oldestObservationAt: z.iso.datetime().optional()
 });
 
+const dashboardCompletionEventOutputSchema = z.strictObject({
+  eventId: z.string().regex(/^completion-[a-f0-9]{64}$/),
+  outboxId: z.number().int().positive(),
+  activityId: z.string().uuid(),
+  completionVersion: z.number().int().positive(),
+  channel: z.enum(["notify", "verify"])
+});
+
+/** Present only to an automatically opened, conversation-scoped Dashboard. */
+const dashboardCompletionDeliveryOutputSchema = z.strictObject({
+  route: z.literal("dashboard"),
+  events: z.array(dashboardCompletionEventOutputSchema).max(20)
+});
+
+const completionDeliveryMutationOutputSchema = z.strictObject({
+  kind: z.literal("completion-delivery"),
+  action: z.enum([
+    "completion-claim",
+    "completion-delivered",
+    "completion-release",
+    "completion-uncertain"
+  ]),
+  state: z.enum(["claimed", "delivered", "released", "uncertain"]),
+  events: z.array(dashboardCompletionEventOutputSchema).max(20)
+});
+
 const dashboardViewOutputSchema = z.strictObject({
   problems: dashboardProblemsOutputSchema.optional(),
   historyPolicy: workHistoryPolicyOutputSchema.optional(),
@@ -781,6 +760,7 @@ const dashboardViewOutputSchema = z.strictObject({
     terminal: dashboardPageOutputSchema,
     idle: dashboardPageOutputSchema
   }),
+  completionDelivery: dashboardCompletionDeliveryOutputSchema.optional(),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES)
 });
 
@@ -819,274 +799,6 @@ export function validateDashboardViewPrivateMetadata(
   return parsed;
 }
 
-const activityViewOutputSchema = z.strictObject({
-  scopeVersion: z.number().int().min(0),
-  generatedAt: z.string(),
-  enrichment: cardEnrichmentOutputSchema,
-  weeklyUsage: codexWeeklyUsageOutputSchema.nullable().optional(),
-  aggregates: opaqueJsonObjectOutputSchema,
-  agents: z.array(opaqueJsonObjectOutputSchema),
-  agentPagination: z.strictObject({
-    limit: z.number().int().positive(),
-    returned: z.number().int().min(0),
-    total: z.number().int().min(0),
-    hasMore: z.boolean()
-  }),
-  unassignedJobs: z.array(opaqueJsonObjectOutputSchema),
-  activities: z.array(opaqueJsonObjectOutputSchema),
-  activityPagination: z.strictObject({
-    limit: z.number().int().positive(),
-    returned: z.number().int().min(0),
-    total: z.number().int().min(0),
-    hasMore: z.boolean()
-  }),
-  pendingHandoffs: z.array(opaqueJsonObjectOutputSchema),
-  completionHandoff: z.enum(COMPLETION_HANDOFF_MODES),
-  activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
-  mountedActivity: opaqueJsonObjectOutputSchema.nullable(),
-  mountedPresentation: opaqueJsonObjectOutputSchema,
-  uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
-  watcherPolicy: opaqueJsonObjectOutputSchema,
-  feed: opaqueJsonObjectOutputSchema,
-  presentation: opaqueJsonObjectOutputSchema.optional(),
-  wait: opaqueJsonObjectOutputSchema.optional()
-});
-
-const activityRehydrateOutputSchema = activityViewOutputSchema.superRefine((value, context) => {
-  const presentation = value.mountedPresentation;
-  const watcher = value.watcherPolicy;
-  const historical = presentation.kind === "historical" &&
-    typeof presentation.jobId === "string" &&
-    typeof presentation.requestId === "string";
-  const restored = presentation.kind === "restored-explicit" &&
-    presentation.mode === "full-history";
-  if (!historical && !restored) {
-    context.addIssue({
-      code: "custom",
-      path: ["mountedPresentation"],
-      message:
-        "Activity rehydration requires exact historical Job/request correlation or a restored full-history presentation."
-    });
-  }
-  if (
-    watcher.presentationKind !== presentation.kind ||
-    watcher.mode !== "one-shot" ||
-    watcher.live !== false ||
-    watcher.stopped !== false ||
-    watcher.ownsCompletionHandoff !== false
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["watcherPolicy"],
-      message: "Rehydrated Activity views must be one-shot and non-owning."
-    });
-  }
-  if (value.pendingHandoffs.length !== 0) {
-    context.addIssue({
-      code: "custom",
-      path: ["pendingHandoffs"],
-      message: "Activity rehydration cannot expose completion handoffs."
-    });
-  }
-});
-
-export const ACTIVITY_BOOTSTRAP_PRIVATE_MAX_BYTES = 8 * 1_024;
-export const ACTIVITY_VIEW_PRIVATE_MAX_BYTES = 768 * 1_024;
-const privateActivityIdentitySchema = z.string().trim().min(1).max(200);
-const activityPrivatePresentationSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("automatic"),
-    activityPresentationId: privateActivityIdentitySchema,
-    reservationOwnerId: privateActivityIdentitySchema.optional()
-  }),
-  z.strictObject({ kind: z.literal("explicit") }),
-  z.strictObject({
-    kind: z.literal("historical"),
-    jobId: privateActivityIdentitySchema,
-    requestId: privateActivityIdentitySchema
-  }),
-  z.strictObject({
-    kind: z.literal("restored-explicit"),
-    mode: z.literal("full-history"),
-    activityId: privateActivityIdentitySchema.optional(),
-    activityVersion: z.number().int().min(1).optional()
-  })
-]);
-
-export const activityBootstrapPrivateMetadataSchema = z.strictObject({
-  kind: z.literal("codex/activityBootstrap"),
-  version: z.literal(ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION),
-  purpose: z.literal("presentation-hydration-only"),
-  correlation: z.strictObject({
-    requestId: privateActivityIdentitySchema,
-    activityPresentationId: privateActivityIdentitySchema,
-    jobId: privateActivityIdentitySchema
-  }),
-  activity: z.strictObject({
-    activityId: privateActivityIdentitySchema,
-    cardGeneration: z.number().int().min(1)
-  }),
-  presentation: z.strictObject({
-    kind: z.literal("automatic"),
-    reservationOwnerId: privateActivityIdentitySchema.optional()
-  }),
-  render: z.strictObject({
-    eligible: z.boolean(),
-    reason: z.enum(ACTIVITY_CARD_RENDER_REASONS),
-    timing: z.enum(["immediate", "after-result-or-existing-mounted-card"])
-  })
-}).superRefine((value, context) => {
-  if (
-    value.presentation.reservationOwnerId !== undefined &&
-    value.presentation.reservationOwnerId !== value.correlation.jobId
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["presentation", "reservationOwnerId"],
-      message: "Activity bootstrap reservation owner must match its correlated Job."
-    });
-  }
-});
-
-export const activityViewPrivateMetadataSchema = z.strictObject({
-  kind: z.literal("codex/activityView"),
-  version: z.literal(ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION),
-  purpose: z.literal("presentation-hydration-only"),
-  source: z.enum(["codex_activity", "codex_activity_snapshot", "codex_activity_rehydrate"]),
-  correlation: z.strictObject({
-    scopeVersion: z.number().int().min(0),
-    activity: z.strictObject({
-      activityId: privateActivityIdentitySchema,
-      cardGeneration: z.number().int().min(1)
-    }).nullable(),
-    presentation: activityPrivatePresentationSchema
-  }),
-  view: activityViewOutputSchema
-}).superRefine((value, context) => {
-  const rehydratedPresentation =
-    value.correlation.presentation.kind === "historical" ||
-    value.correlation.presentation.kind === "restored-explicit";
-  const emptyHistoryPresentation = value.source === "codex_activity" &&
-    value.correlation.activity === null &&
-    value.correlation.presentation.kind === "restored-explicit" &&
-    value.view.feed.mode === "full" && value.view.feed.activityTotal === 0;
-  if ((value.source === "codex_activity_rehydrate" || emptyHistoryPresentation) !== rehydratedPresentation) {
-    context.addIssue({
-      code: "custom",
-      path: ["source"],
-      message: "Rehydrated Activity presentations are exclusive to the rehydrate source, except empty full-history openings."
-    });
-  }
-  if (
-    rehydratedPresentation &&
-    !activityRehydrateOutputSchema.safeParse(value.view).success
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["view"],
-      message: "Rehydrated Activity view must remain one-shot, read-only, and non-owning."
-    });
-  }
-  if (value.correlation.scopeVersion !== value.view.scopeVersion) {
-    context.addIssue({
-      code: "custom",
-      path: ["correlation", "scopeVersion"],
-      message: "Activity view scope versions must match."
-    });
-  }
-  const mountedActivity = isRecord(value.view.mountedActivity)
-    ? value.view.mountedActivity
-    : null;
-  if (
-    (value.correlation.activity === null) !== (mountedActivity === null) ||
-    (
-      value.correlation.activity !== null &&
-      mountedActivity !== null &&
-      (
-        mountedActivity.activityId !== value.correlation.activity.activityId ||
-        mountedActivity.cardGeneration !== value.correlation.activity.cardGeneration
-      )
-    )
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["correlation", "activity"],
-      message: "Activity view mounted Activity identity must match its correlation envelope."
-    });
-  }
-  const mountedPresentation = value.view.mountedPresentation;
-  if (
-    !isRecord(mountedPresentation) ||
-    mountedPresentation.kind !== value.correlation.presentation.kind ||
-    (
-      value.correlation.presentation.kind === "automatic" &&
-      (
-        mountedPresentation.activityPresentationId !==
-          value.correlation.presentation.activityPresentationId ||
-        mountedPresentation.reservationOwnerId !==
-          value.correlation.presentation.reservationOwnerId
-      )
-    ) ||
-    (
-      value.correlation.presentation.kind === "historical" &&
-      (
-        mountedPresentation.jobId !== value.correlation.presentation.jobId ||
-        mountedPresentation.requestId !== value.correlation.presentation.requestId
-      )
-    ) ||
-    (
-      value.correlation.presentation.kind === "restored-explicit" &&
-      (
-        mountedPresentation.mode !== value.correlation.presentation.mode ||
-        mountedPresentation.activityId !== value.correlation.presentation.activityId ||
-        mountedPresentation.activityVersion !== value.correlation.presentation.activityVersion
-      )
-    )
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["correlation", "presentation"],
-      message: "Activity view mounted presentation must match its correlation envelope."
-    });
-  }
-});
-
-export function validateActivityBootstrapPrivateMetadata(
-  value: unknown
-): z.infer<typeof activityBootstrapPrivateMetadataSchema> {
-  return validateBoundedPrivateActivityMetadata(
-    activityBootstrapPrivateMetadataSchema,
-    value,
-    ACTIVITY_BOOTSTRAP_PRIVATE_MAX_BYTES,
-    ACTIVITY_BOOTSTRAP_METADATA_KEY
-  );
-}
-
-export function validateActivityViewPrivateMetadata(
-  value: unknown
-): z.infer<typeof activityViewPrivateMetadataSchema> {
-  return validateBoundedPrivateActivityMetadata(
-    activityViewPrivateMetadataSchema,
-    value,
-    ACTIVITY_VIEW_PRIVATE_MAX_BYTES,
-    ACTIVITY_VIEW_METADATA_KEY
-  );
-}
-
-function validateBoundedPrivateActivityMetadata<Schema extends z.ZodType>(
-  schema: Schema,
-  value: unknown,
-  maxBytes: number,
-  contractName: string
-): z.output<Schema> {
-  const parsed = schema.parse(value);
-  const bytes = Buffer.byteLength(JSON.stringify(parsed), "utf8");
-  if (bytes > maxBytes) {
-    throw new Error(`${contractName} is ${bytes} bytes, above its ${maxBytes}-byte contract.`);
-  }
-  return parsed;
-}
-
 const bridgeUserSettingsOutputSchema = z.strictObject({
   schemaVersion: z.literal(MODEL_POLICY_SCHEMA_VERSION),
   settingsRevision: z.number().int().min(0),
@@ -1113,8 +825,8 @@ const bridgeUserSettingsOutputSchema = z.strictObject({
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
   showBridgeThreadsInCodexApp: z.boolean(),
-  activityCardVisibility: z.enum(ACTIVITY_CARD_VISIBILITIES),
-  completionHandoff: z.enum(COMPLETION_HANDOFF_MODES)
+  dashboardAutoOpenBackground: z.boolean(),
+  completionFollowUp: z.boolean()
 });
 
 const catalogModelOutputSchema = z.strictObject({
@@ -1155,8 +867,6 @@ const settingsViewOutputSchema = z.strictObject({
   capabilities: z.strictObject({
     availableAccessStrategies: z.array(z.enum(["read-only", "adaptive", "always-full"])),
     availableUiLocalePreferences: z.array(z.enum(UI_LOCALE_PREFERENCES)),
-    availableActivityCardVisibilities: z.array(z.enum(ACTIVITY_CARD_VISIBILITIES)),
-    availableCompletionHandoffs: z.array(z.enum(COMPLETION_HANDOFF_MODES)),
     projectAvailability: z.array(z.strictObject({
       projectId: z.string(),
       name: z.string(),
@@ -1227,14 +937,15 @@ const jobSemanticOutputSchema = z.strictObject({
   executionAudit: compactExecutionAuditOutputSchema.nullable(),
   scopeId: z.string(),
   requestId: z.string(),
-  activityPresentationId: z.string().nullable(),
   bridgeSession: bridgeSessionOutputSchema,
-  bridgeActivity: activityCardTrackingOutputSchema.extend({
+  bridgeActivity: z.strictObject({
+    activityId: z.string(),
     jobId: z.string(),
     agentId: z.string().nullable(),
     projectName: z.string().nullable(),
-    executionMode: z.enum(ACTIVITY_EXECUTION_MODES)
-  }).strict(),
+    executionMode: z.enum(ACTIVITY_EXECUTION_MODES),
+    dashboard: dashboardPresentationOutputSchema
+  }),
   createdAt: z.string(),
   updatedAt: z.string(),
   cancelRequestedAt: z.string().nullable(),
@@ -1439,24 +1150,6 @@ const codexSteerOutputSchema = z.strictObject({
   nextActions: z.array(modelNextActionOutputSchema)
 });
 
-const handoffOutputSchema = z.strictObject({
-  kind: z.literal("handoff"),
-  action: z.enum(["claim-batch", "delivered-batch", "release-batch"]),
-  claimed: z.boolean().optional(),
-  delivered: z.boolean().optional(),
-  released: z.boolean().optional(),
-  handoffBatchId: z.string().nullable().optional(),
-  origin: z.literal("activity-handoff").optional(),
-  handoffDepth: z.number().int().min(0).optional(),
-  events: z.array(opaqueJsonObjectOutputSchema).optional(),
-  outboxIds: z.array(z.number().int().positive()).optional(),
-  stopped: z.boolean().optional(),
-  stopReason: z.enum([
-    "explicit-presentation-does-not-own-handoff",
-    "presentation-superseded"
-  ]).optional()
-});
-
 const compactCatalogEffortOutputSchema = z.strictObject({
   id: z.string(),
   description: z.string().optional()
@@ -1552,8 +1245,6 @@ const diagnosticsOutputSchema = z.strictObject({
     html: z.strictObject({
       dashboardBytes: z.number().int().min(0),
       dashboardBudgetBytes: z.number().int().positive(),
-      activityBytes: z.number().int().min(0),
-      activityBudgetBytes: z.number().int().positive(),
       settingsBytes: z.number().int().min(0),
       settingsBudgetBytes: z.number().int().positive()
     })
@@ -1594,14 +1285,10 @@ function structuredByteCapFor(toolName: string): number {
       toolName as keyof typeof TOOL_STRUCTURED_BYTE_CAPS
     ];
   }
+  if (toolName === "mutation" || toolName === "app-only-mutation") {
+    return TOOL_STRUCTURED_BYTE_CAPS.app_only_mutation;
+  }
   if (
-    toolName === "mutation" ||
-    toolName === "app-only-mutation" ||
-    toolName === "codex_activity_handoff"
-  ) return TOOL_STRUCTURED_BYTE_CAPS.app_only_mutation;
-  if (
-    toolName === "codex_activity_snapshot" ||
-    toolName === "codex_activity_rehydrate" ||
     toolName === "codex_ui_read" ||
     toolName === "codex_update_settings"
   ) {
@@ -1651,24 +1338,6 @@ const settingsEditorResultContract = toolOutputContract(
   settingsViewOutputSchema,
   TOOL_CONTENT_BYTE_CAPS.app_only_hydration
 );
-const activityModelResultContract = toolOutputContract(
-  "codex_activity",
-  "model-orchestrator-semantic",
-  activityModelOutputSchema,
-  TOOL_CONTENT_BYTE_CAPS.codex_activity
-);
-const activityAppResultContract = toolOutputContract(
-  "codex_activity_snapshot",
-  "app-hydration",
-  activityViewOutputSchema,
-  TOOL_CONTENT_BYTE_CAPS.app_only_hydration
-);
-const activityRehydrateResultContract = toolOutputContract(
-  "codex_activity_rehydrate",
-  "app-hydration",
-  activityRehydrateOutputSchema,
-  TOOL_CONTENT_BYTE_CAPS.app_only_hydration
-);
 const modelMutationResultContracts = Object.freeze({
   codex_agent: toolOutputContract(
     "codex_agent",
@@ -1712,12 +1381,6 @@ const appMutationResultContract = toolOutputContract(
   mutationOutputSchema,
   TOOL_CONTENT_BYTE_CAPS.app_only_mutation
 );
-const handoffResultContract = toolOutputContract(
-  "codex_activity_handoff",
-  "app-hydration",
-  handoffOutputSchema,
-  TOOL_CONTENT_BYTE_CAPS.app_only_mutation
-);
 const taskStateResultContract = toolOutputContract(
   "codex_task",
   "model-orchestrator-semantic",
@@ -1740,37 +1403,26 @@ const diagnosticsResultContract = toolOutputContract(
 );
 
 export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
-  codex_answer: QUESTION_MODEL_OUTPUT_SCHEMAS.codex_answer,
-  codex_ask_user: QUESTION_MODEL_OUTPUT_SCHEMAS.codex_ask_user,
-  codex_user_answer: QUESTION_MODEL_OUTPUT_SCHEMAS.codex_user_answer,
+  codex_answer: CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.codex_answer,
   codex_activity_update: activityUpdateMutationOutputSchema,
   codex_agent: agentMutationOutputSchema,
   codex_cancel: z.union([cancelMutationOutputSchema, activityCancelMutationOutputSchema]),
   codex_dashboard: dashboardModelOutputSchema,
   codex_models: codexModelsOutputSchema,
   codex_settings: z.strictObject({ kind: z.literal("settings"), opened: z.literal(true) }),
-  codex_status: z.union([codexStatusOutputSchema, QUESTION_MODEL_OUTPUT_SCHEMAS.status_input, projectStatusOutputSchema]),
+  codex_status: z.union([codexStatusOutputSchema, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.status_input, projectStatusOutputSchema]),
   codex_steer: codexSteerOutputSchema,
   codex_task: codexTaskOutputSchema
 });
 const uiControlSummaryOutputSchema = z.strictObject({ kind: z.literal("control"), ready: z.literal(true) });
-export const APP_PRIVATE_OUTPUT_SCHEMAS = Object.freeze({
-  codex_activity_handoff: handoffOutputSchema,
-  codex_activity_job_cancel: mutationOutputSchema,
-  codex_activity_rehydrate: activityRehydrateOutputSchema,
-  codex_activity_snapshot: activityViewOutputSchema,
-  codex_background_process_terminate: mutationOutputSchema,
-  codex_job_steer: mutationOutputSchema
-});
+export const APP_PRIVATE_OUTPUT_SCHEMAS = Object.freeze({});
 export const OPERATOR_OUTPUT_SCHEMAS = Object.freeze({
   codex_agent_recovery_detach: mutationOutputSchema, codex_diagnostics: diagnosticsOutputSchema
 });
 export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
-  codex_ui_read: z.union([dashboardViewOutputSchema, dashboardHistoryDetailOutputSchema, settingsViewOutputSchema, QUESTION_APP_OUTPUT_SCHEMAS.card, uiControlSummaryOutputSchema]),
-  codex_question_action: z.union([QUESTION_APP_OUTPUT_SCHEMAS.card, QUESTION_APP_OUTPUT_SCHEMAS.notification]),
+  codex_ui_read: z.union([dashboardViewOutputSchema, dashboardHistoryDetailOutputSchema, settingsViewOutputSchema, uiControlSummaryOutputSchema]),
   codex_ui_stop: mutationOutputSchema,
-  codex_ui_history: z.strictObject({ok:z.literal(true)}),
-  codex_ui_problem: problemActionResultSchema,
+  codex_ui_problem: z.union([problemActionResultSchema, completionDeliveryMutationOutputSchema]),
   codex_interaction_respond: mutationOutputSchema,
   codex_update_settings: settingsViewOutputSchema
 });
@@ -1784,7 +1436,7 @@ export function validateModelVisibleStructuredOutput(
 ): unknown {
   if (toolName === "codex_task") return validateTaskOutput(value);
   if (toolName === "codex_status") {
-    if ((value as { kind?: unknown })?.kind === "codex-input") return QUESTION_MODEL_OUTPUT_SCHEMAS.status_input.parse(value);
+    if ((value as { kind?: unknown })?.kind === "codex-input") return CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.status_input.parse(value);
     if ((value as { kind?: unknown })?.kind === "project") return projectStatusOutputSchema.parse(value);
     return validateStatusOutput(value);
   }
@@ -1914,12 +1566,9 @@ type BackendHandoff = BackendHandoffAudit & {
 type CodexRouting = {
   scopeId: string;
   requestId: string;
-  activityPresentationId?: string;
   requestHash: string;
   requestHashVersion: 2 | 3 | 4 | 5 | 6 | 7;
 };
-
-type CodexActivityViewMode = "compact-monitor" | "full-history";
 
 const CURRENT_TASK_REQUEST_HASH_VERSION = 7 as const;
 
@@ -1929,102 +1578,27 @@ type TaskProjectAdmission = {
   cwd: string;
 };
 
-type ActivityCardPresentationContext =
-  | { kind: "automatic"; activityPresentationId: string; reservationOwnerId?: string }
-  | { kind: "explicit" };
-
-type ActivityViewPresentationContext =
-  | ActivityCardPresentationContext
-  | { kind: "historical"; jobId: string; requestId: string }
-  | {
-      kind: "restored-explicit";
-      mode: "full-history";
-      activityId?: string;
-      activityVersion?: number;
-    };
-
-const activityCardPresentationInputSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("automatic"),
-    activityPresentationId: scopeIdSchema(),
-    reservationOwnerId: scopeIdSchema().optional()
-  }),
-  z.strictObject({ kind: z.literal("explicit") })
-]);
-
 const widgetInstanceIdSchema = scopeIdSchema().describe(
-  "UUID generated once by this mounted Activity iframe. It is correlation-only; app visibility and exact card/version checks remain authoritative."
+  "UUID generated once by the mounted Dashboard iframe. It is correlation-only; app visibility and exact control checks remain authoritative."
 );
 
-const activityCardProofInputSchema = z.strictObject({
-  activityId: scopeIdSchema(),
-  generation: z.number().int().min(1),
-  presentation: activityCardPresentationInputSchema
+/** Dashboard controls carry only an opaque proof. */
+const dashboardControlProofInputSchema = z.strictObject({
+  kind: z.literal("dashboard"),
+  token: z.string().min(1).max(32_768)
 });
-
-const dashboardControlProofInputSchema = activityCardProofInputSchema.extend({
-  kind: z.literal("dashboard"), token: z.string().min(1).max(32_768)
-});
-const userControlProofInputSchema = z.union([dashboardControlProofInputSchema, activityCardProofInputSchema]);
-
-const automaticActivityCardProofInputSchema = z.strictObject({
-  activityId: scopeIdSchema(),
-  generation: z.number().int().min(1),
-  presentation: z.strictObject({
-    kind: z.literal("automatic"),
-    activityPresentationId: scopeIdSchema(),
-    reservationOwnerId: scopeIdSchema().optional()
-  })
-});
-
-type ActivityCardProofInput = z.infer<typeof activityCardProofInputSchema>;
+const userControlProofInputSchema = dashboardControlProofInputSchema;
 
 function mountedWidgetInstanceId(
   args: { widgetInstanceId?: string },
   meta: unknown
 ): string | undefined {
   // MCP Apps does not normatively forward a host-side widget session id on
-  // app-initiated tools/call requests. Current cards therefore provide their
-  // own per-iframe correlation id; the host metadata fallback keeps retained
-  // OpenAI-compatible cards working where that metadata is available.
+  // app-initiated tools/call requests. The Dashboard therefore provides its
+  // own per-iframe correlation id; host metadata remains a compatibility
+  // fallback where available.
   return args.widgetInstanceId || metadataString(meta, "openai/widgetSessionId");
 }
-
-function presentationFromActivityCardProof(
-  card: ActivityCardProofInput
-): ActivityCardPresentationContext {
-  return card.presentation.kind === "automatic"
-    ? {
-        kind: "automatic",
-        activityPresentationId: card.presentation.activityPresentationId,
-        ...(card.presentation.reservationOwnerId
-          ? { reservationOwnerId: card.presentation.reservationOwnerId }
-          : {})
-      }
-    : { kind: "explicit" };
-}
-
-type ActivityScopeWatchResult = {
-  scopeVersion: number;
-  changed: boolean;
-  timedOut: boolean;
-  waitedMs: number;
-  stopped: boolean;
-  stopReason?: ActivityCardLeaseStopReason;
-};
-
-type ActivityCardLeaseTouchResult = {
-  stopped: boolean;
-  stopReason?: ActivityCardLeaseStopReason;
-};
-
-type ActivityCardReservation = {
-  ownerId: string;
-  sequence: number;
-  state: "reserved" | "confirmed";
-  expiresAt: number;
-  widgetSessionId?: string;
-};
 
 type CodexJob = {
   threadPersistence?: UpstreamWorkerAssignment["threadPersistence"];
@@ -2057,7 +1631,6 @@ type CodexJob = {
   sandbox: SandboxMode;
   scopeId: string;
   requestId: string;
-  activityPresentationId?: string;
   requestHash: string;
   requestHashVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   sourceThreadId?: string;
@@ -2128,8 +1701,6 @@ type CodexJobStartInput = Omit<
 export type CodexJobRegistryOptions = {
   maxConcurrentJobs?: number;
   ttlMs?: number;
-  activityPresentationTtlMs?: number;
-  activityMountReservationTtlMs?: number;
   maxJobs?: number;
   maxResultBytes?: number;
   staleAfterMs?: number;
@@ -2166,22 +1737,6 @@ export class CodexJobRegistry {
   private readonly jobs = new Map<string, CodexJob>();
   private readonly waiters = new Map<string, Set<() => void>>();
   private readonly scopeWaiters = new Map<string, Set<() => void>>();
-  private readonly watcherLeases = new Set<string>();
-  private readonly activityCardLeases = new Map<string, number>();
-  private readonly activityCardReservations = new Map<string, ActivityCardReservation>();
-  private readonly latestAutomaticPresentationByScope = new Map<
-    string,
-    { activityPresentationId: string; reservationOwnerId: string; sequence: number; expiresAt: number }
-  >();
-  private readonly activityCardLeaseTtlMs = 75_000;
-  // A short unconfirmed reservation elects the newest sibling result while
-  // allowing bounded recovery when the host never mounts that candidate.
-  private readonly activityCardMountReservationTtlMs: number;
-  // A confirmed presentation outlives widget suspension and exact retries.
-  // Both states are intentionally in-memory: after a bridge restart, retained
-  // cards safely re-establish ownership from their exact card proof.
-  private readonly activityCardPresentationTtlMs: number;
-  private activityCardPresentationSequence = 0;
   private readonly maxConcurrentJobs: number;
   private readonly ttlMs: number;
   private readonly maxJobs: number;
@@ -2190,15 +1745,8 @@ export class CodexJobRegistry {
   private readonly stateStore?: BridgeStateStore;
   private readonly activityStore: BridgeStateStore;
   private readonly allowedRoots: string[];
-  private readonly maxConcurrentWatchers = 8;
-  private readonly maxConcurrentWatchersPerScope = 4;
-  private readonly maxConcurrentExplicitWatchersPerScope = 3;
-  private activeWatchers = 0;
   // HTTP requests and the native companion share one runtime admission gate.
   readonly runtimeAdmission = { acceptingNewJobs: true, pendingAdmissions: 0 };
-  private readonly activeWatchersByScope = new Map<string, number>();
-  private readonly activeAutomaticWatchersByScope = new Map<string, number>();
-  private readonly activeExplicitWatchersByScope = new Map<string, number>();
   private upstream?: CodexUpstream;
   private readonly terminations = new Map<
     string,
@@ -2293,10 +1841,6 @@ export class CodexJobRegistry {
     this.maxJobs = options.maxJobs ?? 100;
     this.maxResultBytes = options.maxResultBytes ?? 1024 * 1024;
     this.staleAfterMs = options.staleAfterMs ?? 10 * 60 * 1000;
-    this.activityCardPresentationTtlMs =
-      options.activityPresentationTtlMs ?? 6 * 60 * 60 * 1000;
-    this.activityCardMountReservationTtlMs =
-      options.activityMountReservationTtlMs ?? 15_000;
     this.stateStore = options.stateStore;
     this.activityStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
     this.allowedRoots = options.allowedRoots || [];
@@ -2330,435 +1874,6 @@ export class CodexJobRegistry {
 
   get staleThresholdMs(): number {
     return this.staleAfterMs;
-  }
-
-  activityCardRenderHint(
-    activityId: string,
-    executionMode: ActivityExecutionMode,
-    preferences?: Pick<BridgeUserSettings, "activityCardVisibility">,
-    options: {
-      explicit?: boolean;
-      reserve?: boolean;
-      activityPresentationId?: string;
-      presentationKind?: "automatic" | "explicit";
-      reservationOwnerId?: string;
-    } = {}
-  ) {
-    this.pruneActivityCardLeases();
-    const activity = this.getActivity(activityId);
-    const generation = activity?.cardGeneration || 1;
-    const scopeId = activity?.scopeId || "unknown";
-    const visibility = preferences?.activityCardVisibility || "always";
-    const visible =
-      visibility === "always" ||
-      (visibility === "background-only" && executionMode === "background");
-    const presentationKind = options.presentationKind || "automatic";
-    const activityPresentationId = options.activityPresentationId;
-    const reservationOwnerId = options.reservationOwnerId || activityId;
-    const reservationKey = activityPresentationId
-      ? this.activityPresentationKey(scopeId, activityPresentationId)
-      : undefined;
-    let reservation = reservationKey
-      ? this.activityCardReservations.get(reservationKey)
-      : undefined;
-    const hasActiveLease = activityPresentationId
-      ? this.hasActiveAutomaticPresentationLease(scopeId, activityPresentationId)
-      : false;
-    const latestPresentation = this.latestAutomaticPresentationByScope.get(scopeId);
-    let newestSibling = false;
-    if (
-      visible &&
-      presentationKind === "automatic" &&
-      reservationKey &&
-      (
-        (reservation && reservation.ownerId !== reservationOwnerId) ||
-        (
-          !reservation &&
-          hasActiveLease &&
-          latestPresentation?.activityPresentationId === activityPresentationId &&
-          latestPresentation?.reservationOwnerId !== reservationOwnerId
-        )
-      ) &&
-      options.reserve !== false
-    ) {
-      reservation = {
-        ownerId: reservationOwnerId,
-        sequence: ++this.activityCardPresentationSequence,
-        state: "reserved",
-        expiresAt: Date.now() + this.activityCardMountReservationTtlMs
-      };
-      this.activityCardReservations.set(reservationKey, reservation);
-      newestSibling = true;
-    }
-    let shouldRenderActivityCard = false;
-    let renderReason: ActivityCardRenderReason;
-    if (presentationKind === "explicit") {
-      shouldRenderActivityCard = true;
-      renderReason = "explicit";
-    } else if (!visible) {
-      renderReason = "visibility-disabled";
-    } else if (!activityPresentationId) {
-      renderReason = "presentation-unavailable";
-    } else if (newestSibling) {
-      shouldRenderActivityCard = true;
-      renderReason = "render-latest";
-    } else if (hasActiveLease) {
-      renderReason = "active-lease";
-    } else if (reservation?.state === "confirmed") {
-      renderReason = "render-confirmed";
-    } else if (reservation?.ownerId === reservationOwnerId) {
-      shouldRenderActivityCard = true;
-      renderReason = "render-retry";
-      if (options.reserve !== false) {
-        reservation.expiresAt = Date.now() + this.activityCardMountReservationTtlMs;
-      }
-    } else if (reservation) {
-      renderReason = "render-reserved";
-    } else {
-      shouldRenderActivityCard = true;
-      renderReason = "new-presentation";
-      if (options.reserve !== false && reservationKey) {
-        this.activityCardReservations.set(reservationKey, {
-          ownerId: reservationOwnerId,
-          sequence: ++this.activityCardPresentationSequence,
-          state: "reserved",
-          expiresAt: Date.now() + this.activityCardMountReservationTtlMs
-        });
-      }
-    }
-    return {
-      statusTool: "codex_status",
-      automaticRenderTool: "codex_activity",
-      explicitRenderTool: "codex_activity",
-      followUpRenderRequired: false,
-      renderToolAvailable: true,
-      explicitRenderAllowed: true,
-      activityCardVisibility: visibility,
-      activityId,
-      cardGeneration: generation,
-      presentationKind,
-      ...(activityPresentationId ? { activityPresentationId } : {}),
-      shouldRenderActivityCard,
-      renderReason,
-      renderTiming: executionMode === "background" ? "immediate" : "after-result-or-existing-mounted-card"
-    };
-  }
-
-  touchActivityCardLease(
-    scopeId: string,
-    activityId: string,
-    cardGeneration: number,
-    widgetSessionId: string,
-    presentation: ActivityCardPresentationContext
-  ): ActivityCardLeaseTouchResult {
-    const activity = this.getActivity(activityId);
-    if (!activity || activity.scopeId !== scopeId || activity.cardGeneration !== cardGeneration) {
-      throw new Error("The mounted Activity card generation is no longer valid in this scope.");
-    }
-    this.pruneActivityCardLeases();
-    if (presentation.kind === "automatic") {
-      const now = Date.now();
-      const reservationKey = this.activityPresentationKey(
-        scopeId,
-        presentation.activityPresentationId
-      );
-      let reservation = this.activityCardReservations.get(reservationKey);
-      const latest = this.latestAutomaticPresentationByScope.get(scopeId);
-      const leaseKey = this.activityCardLeaseKey(
-        scopeId,
-        activityId,
-        cardGeneration,
-        widgetSessionId,
-        presentation
-      );
-      const hasExistingWidgetLease = (this.activityCardLeases.get(leaseKey) || 0) > now;
-      if (
-        latest &&
-        latest.activityPresentationId !== presentation.activityPresentationId &&
-        (!reservation || reservation.sequence < latest.sequence)
-      ) {
-        this.releaseActivityCardLease(
-          scopeId,
-          activityId,
-          cardGeneration,
-          widgetSessionId,
-          presentation
-        );
-        return { stopped: true, stopReason: "presentation-superseded" };
-      }
-
-      const ownerMismatch = Boolean(
-        reservation &&
-        presentation.reservationOwnerId &&
-        reservation.ownerId !== presentation.reservationOwnerId
-      );
-      if (ownerMismatch && !hasExistingWidgetLease) {
-        return { stopped: true, stopReason: "presentation-superseded" };
-      }
-
-      // A previously mounted card remains live while a newer sibling is only
-      // reserved. The newer result takes ownership only after its matching
-      // iframe establishes a lease, so a failed mount cannot blank the feed.
-      if (!ownerMismatch) {
-        if (
-          reservation?.state === "confirmed" &&
-          this.hasActiveAutomaticPresentationLease(
-            scopeId,
-            presentation.activityPresentationId,
-            widgetSessionId
-          )
-        ) {
-          return { stopped: true, stopReason: "presentation-duplicate" };
-        }
-
-        if (!reservation) {
-          const retainedSequence =
-            latest?.activityPresentationId === presentation.activityPresentationId &&
-            latest.reservationOwnerId === presentation.reservationOwnerId
-              ? latest.sequence
-              : undefined;
-          reservation = {
-            ownerId: presentation.reservationOwnerId || `widget:${widgetSessionId}`,
-            sequence: retainedSequence ?? ++this.activityCardPresentationSequence,
-            state: "confirmed",
-            expiresAt: now + this.activityCardPresentationTtlMs,
-            widgetSessionId
-          };
-          this.activityCardReservations.set(reservationKey, reservation);
-        } else {
-          reservation.state = "confirmed";
-          reservation.expiresAt = now + this.activityCardPresentationTtlMs;
-          reservation.widgetSessionId = widgetSessionId;
-        }
-
-        if (
-          !latest ||
-          latest.activityPresentationId !== presentation.activityPresentationId ||
-          latest.sequence !== reservation.sequence
-        ) {
-          this.activateAutomaticPresentation(
-            scopeId,
-            presentation.activityPresentationId,
-            reservation.ownerId,
-            reservation.sequence
-          );
-        } else {
-          latest.expiresAt = now + this.activityCardPresentationTtlMs;
-        }
-      }
-    } else if (this.isPresentationSuperseded(scopeId, presentation)) {
-      this.releaseActivityCardLease(scopeId, activityId, cardGeneration, widgetSessionId, presentation);
-      return { stopped: true, stopReason: "presentation-superseded" };
-    }
-    this.activityCardLeases.set(
-      this.activityCardLeaseKey(
-        scopeId,
-        activityId,
-        cardGeneration,
-        widgetSessionId,
-        presentation
-      ),
-      Date.now() + this.activityCardLeaseTtlMs
-    );
-    return { stopped: false };
-  }
-
-  releaseActivityCardLease(
-    scopeId: string,
-    activityId: string,
-    cardGeneration: number,
-    widgetSessionId: string,
-    presentation: ActivityCardPresentationContext
-  ): void {
-    this.activityCardLeases.delete(
-      this.activityCardLeaseKey(
-        scopeId,
-        activityId,
-        cardGeneration,
-        widgetSessionId,
-        presentation
-      )
-    );
-  }
-
-  requireActivityCardLease(
-    scopeId: string,
-    activityId: string,
-    cardGeneration: number,
-    widgetSessionId: string,
-    presentation: ActivityCardPresentationContext
-  ): void {
-    const activity = this.getActivity(activityId);
-    if (!activity || activity.scopeId !== scopeId || activity.cardGeneration !== cardGeneration) {
-      throw new Error("CARD_VERSION_UNSUPPORTED: The mounted Activity card generation is no longer valid.");
-    }
-    this.pruneActivityCardLeases();
-    if (this.isPresentationSuperseded(scopeId, presentation)) {
-      throw new Error("CARD_VERSION_UNSUPPORTED: The mounted Activity presentation has been superseded.");
-    }
-    const key = this.activityCardLeaseKey(
-      scopeId,
-      activityId,
-      cardGeneration,
-      widgetSessionId,
-      presentation
-    );
-    if ((this.activityCardLeases.get(key) || 0) <= Date.now()) {
-      throw new Error("CARD_LEASE_REQUIRED: Refresh the mounted Activity card before retrying this control action.");
-    }
-  }
-
-  activityPresentationWatcherPolicy(
-    scopeId: string,
-    presentation: ActivityViewPresentationContext
-  ) {
-    if (
-      presentation.kind === "historical" ||
-      presentation.kind === "restored-explicit"
-    ) {
-      return {
-        presentationKind: presentation.kind,
-        ...(presentation.kind === "historical"
-          ? {
-              jobId: presentation.jobId,
-              requestId: presentation.requestId
-            }
-          : {
-              ...(presentation.activityId ? { activityId: presentation.activityId } : {}),
-              ...(presentation.activityVersion
-                ? { activityVersion: presentation.activityVersion }
-                : {})
-            }),
-        mode: "one-shot" as const,
-        live: false,
-        stopped: false,
-        ownsCompletionHandoff: false,
-        maxAutomaticPerScope: 1,
-        maxExplicitPerScope: this.maxConcurrentExplicitWatchersPerScope
-      };
-    }
-    const stopped = this.isPresentationSuperseded(scopeId, presentation);
-    return {
-      presentationKind: presentation.kind,
-      ...(presentation.kind === "automatic"
-        ? {
-            activityPresentationId: presentation.activityPresentationId,
-            ...(presentation.reservationOwnerId
-              ? { reservationOwnerId: presentation.reservationOwnerId }
-              : {})
-          }
-        : {}),
-      live: !stopped,
-      stopped,
-      ...(stopped ? { stopReason: "presentation-superseded" as const } : {}),
-      ownsCompletionHandoff:
-        !stopped && presentation.kind !== "explicit",
-      maxAutomaticPerScope: 1,
-      maxExplicitPerScope: this.maxConcurrentExplicitWatchersPerScope
-    };
-  }
-
-  canClaimCompletionHandoff(
-    scopeId: string,
-    presentation: ActivityCardPresentationContext
-  ): boolean {
-    return this.activityPresentationWatcherPolicy(scopeId, presentation).ownsCompletionHandoff;
-  }
-
-  private activityPresentationKey(scopeId: string, activityPresentationId: string): string {
-    return `${scopeId}\0${activityPresentationId}`;
-  }
-
-  private activityCardLeaseKey(
-    scopeId: string,
-    activityId: string,
-    cardGeneration: number,
-    widgetSessionId: string,
-    presentation: ActivityCardPresentationContext
-  ): string {
-    if (presentation.kind === "automatic") {
-      return `${scopeId}\0automatic\0${presentation.activityPresentationId}\0${widgetSessionId}`;
-    }
-    return `${scopeId}\0${presentation.kind}\0${activityId}\0${cardGeneration}\0${widgetSessionId}`;
-  }
-
-  private hasActiveAutomaticPresentationLease(
-    scopeId: string,
-    activityPresentationId: string,
-    excludingWidgetSessionId?: string
-  ): boolean {
-    const prefix = `${scopeId}\0automatic\0${activityPresentationId}\0`;
-    const excludedKey = excludingWidgetSessionId
-      ? `${prefix}${excludingWidgetSessionId}`
-      : undefined;
-    return [...this.activityCardLeases.keys()].some((key) =>
-      key.startsWith(prefix) && key !== excludedKey
-    );
-  }
-
-  private isPresentationSuperseded(
-    scopeId: string,
-    presentation: ActivityCardPresentationContext
-  ): boolean {
-    this.pruneActivityCardLeases();
-    const latest = this.latestAutomaticPresentationByScope.get(scopeId);
-    if (presentation.kind === "explicit") return false;
-    if (!latest) {
-      return false;
-    }
-    if (latest.activityPresentationId === presentation.activityPresentationId) {
-      return Boolean(
-        presentation.reservationOwnerId &&
-        latest.reservationOwnerId !== presentation.reservationOwnerId
-      );
-    }
-    const reservation = this.activityCardReservations.get(
-      this.activityPresentationKey(scopeId, presentation.activityPresentationId)
-    );
-    return !reservation || reservation.sequence < latest.sequence;
-  }
-
-  private activateAutomaticPresentation(
-    scopeId: string,
-    activityPresentationId: string,
-    reservationOwnerId: string,
-    sequence: number
-  ): void {
-    const now = Date.now();
-    const previous = this.latestAutomaticPresentationByScope.get(scopeId);
-    this.latestAutomaticPresentationByScope.set(scopeId, {
-      activityPresentationId,
-      reservationOwnerId,
-      sequence,
-      expiresAt: now + this.activityCardPresentationTtlMs
-    });
-    if (
-      previous &&
-      previous.activityPresentationId === activityPresentationId &&
-      previous.sequence === sequence
-    ) return;
-    for (const key of [...this.activityCardLeases.keys()]) {
-      if (key.startsWith(`${scopeId}\0automatic\0`)) {
-        this.activityCardLeases.delete(key);
-      }
-    }
-    // Scope waiters re-check presentation ownership as well as persisted scope
-    // version, so this releases a superseded long poll without fabricating a
-    // domain-state version change.
-    this.notifyScope(scopeId);
-  }
-
-  private pruneActivityCardLeases(): void {
-    const now = Date.now();
-    for (const [key, expiresAt] of this.activityCardLeases) {
-      if (expiresAt <= now) this.activityCardLeases.delete(key);
-    }
-    for (const [key, reservation] of this.activityCardReservations) {
-      if (reservation.expiresAt <= now) this.activityCardReservations.delete(key);
-    }
-    for (const [scopeId, latest] of this.latestAutomaticPresentationByScope) {
-      if (latest.expiresAt <= now) this.latestAutomaticPresentationByScope.delete(scopeId);
-    }
   }
 
   get size(): number {
@@ -3345,129 +2460,14 @@ export class CodexJobRegistry {
     });
   }
 
-  async waitForScopeVersion(
-    scopeId: string,
-    afterVersion: number,
-    waitMs: number,
-    watcherId: string | undefined,
-    signal: AbortSignal | undefined,
-    presentation: ActivityCardPresentationContext
-  ): Promise<ActivityScopeWatchResult> {
-    const startedAt = Date.now();
-    const initialPolicy = this.activityPresentationWatcherPolicy(scopeId, presentation);
-    if (initialPolicy.stopped) {
-      return {
-        scopeVersion: this.getScopeVersion(scopeId),
-        changed: false,
-        timedOut: false,
-        waitedMs: 0,
-        stopped: true,
-        stopReason: "presentation-superseded"
-      };
-    }
-    const current = this.getScopeVersion(scopeId);
-    if (current > afterVersion) {
-      return {
-        scopeVersion: current,
-        changed: true,
-        timedOut: false,
-        waitedMs: 0,
-        stopped: false
-      };
-    }
-    if (this.activeWatchers >= this.maxConcurrentWatchers) {
-      throw new Error(`Too many Activity watchers are open. The watcher limit is ${this.maxConcurrentWatchers}.`);
-    }
-    const scopeWatcherCount = this.activeWatchersByScope.get(scopeId) || 0;
-    if (scopeWatcherCount >= this.maxConcurrentWatchersPerScope) {
-      throw new Error(
-        `Too many Activity watchers are open for this conversation. The per-scope watcher limit is ${this.maxConcurrentWatchersPerScope}.`
-      );
-    }
-    const explicitWatcherCount = this.activeExplicitWatchersByScope.get(scopeId) || 0;
-    const automaticWatcherCount = this.activeAutomaticWatchersByScope.get(scopeId) || 0;
-    if (presentation.kind === "automatic" && automaticWatcherCount >= 1) {
-      throw new Error(
-        "The latest automatic Activity presentation already has its one live watcher."
-      );
-    }
-    if (
-      presentation.kind === "explicit" &&
-      explicitWatcherCount >= this.maxConcurrentExplicitWatchersPerScope
-    ) {
-      throw new Error(
-        `Too many explicit Activity cards are watching this conversation. The explicit-card watcher limit is ${this.maxConcurrentExplicitWatchersPerScope}.`
-      );
-    }
-    const leaseKey = watcherId ? `${scopeId}\0${watcherId}` : undefined;
-    if (leaseKey && this.watcherLeases.has(leaseKey)) {
-      throw new Error("This mounted Activity widget already has an active watch request.");
-    }
-    if (signal?.aborted) throw new Error("The Activity watch was cancelled before it started.");
-    this.activeWatchers += 1;
-    this.activeWatchersByScope.set(scopeId, scopeWatcherCount + 1);
-    if (presentation.kind === "automatic") {
-      this.activeAutomaticWatchersByScope.set(scopeId, automaticWatcherCount + 1);
-    }
-    if (presentation.kind === "explicit") {
-      this.activeExplicitWatchersByScope.set(scopeId, explicitWatcherCount + 1);
-    }
-    if (leaseKey) this.watcherLeases.add(leaseKey);
-    try {
-      const changed = await new Promise<boolean>((resolve, reject) => {
-        let settled = false;
-        const listeners = this.scopeWaiters.get(scopeId) || new Set<() => void>();
-        this.scopeWaiters.set(scopeId, listeners);
-        const finish = (value: boolean, error?: Error) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          listeners.delete(onChange);
-          if (listeners.size === 0) this.scopeWaiters.delete(scopeId);
-          signal?.removeEventListener("abort", onAbort);
-          if (error) reject(error);
-          else resolve(value);
-        };
-        const onChange = () => finish(this.getScopeVersion(scopeId) > afterVersion);
-        const onAbort = () => finish(false, new Error("The Activity watch was cancelled by the host."));
-        const timer = setTimeout(() => finish(false), waitMs);
-        listeners.add(onChange);
-        signal?.addEventListener("abort", onAbort, { once: true });
-        if (this.getScopeVersion(scopeId) > afterVersion) finish(true);
-        else if (signal?.aborted) onAbort();
-      });
-      const stopped = this.isPresentationSuperseded(scopeId, presentation);
-      return {
-        scopeVersion: this.getScopeVersion(scopeId),
-        changed,
-        timedOut: !changed && !stopped,
-        waitedMs: Date.now() - startedAt,
-        stopped,
-        ...(stopped ? { stopReason: "presentation-superseded" as const } : {})
-      };
-    } finally {
-      this.activeWatchers -= 1;
-      const remainingForScope = (this.activeWatchersByScope.get(scopeId) || 1) - 1;
-      if (remainingForScope > 0) this.activeWatchersByScope.set(scopeId, remainingForScope);
-      else this.activeWatchersByScope.delete(scopeId);
-      if (presentation.kind === "automatic") {
-        const remainingAutomatic = (this.activeAutomaticWatchersByScope.get(scopeId) || 1) - 1;
-        if (remainingAutomatic > 0) {
-          this.activeAutomaticWatchersByScope.set(scopeId, remainingAutomatic);
-        } else {
-          this.activeAutomaticWatchersByScope.delete(scopeId);
-        }
-      }
-      if (presentation.kind === "explicit") {
-        const remainingExplicit = (this.activeExplicitWatchersByScope.get(scopeId) || 1) - 1;
-        if (remainingExplicit > 0) {
-          this.activeExplicitWatchersByScope.set(scopeId, remainingExplicit);
-        } else {
-          this.activeExplicitWatchersByScope.delete(scopeId);
-        }
-      }
-      if (leaseKey) this.watcherLeases.delete(leaseKey);
-    }
+  markCompletionOutboxBatchUncertain(outboxIds: number[], scopeId: string, leaseOwner: string) {
+    const records = this.activityTransaction(() =>
+      [...new Set(outboxIds)].sort((a, b) => a - b).map((outboxId) =>
+        this.activityStore.markCompletionOutboxUncertain(outboxId, scopeId, leaseOwner)
+      )
+    );
+    this.notifyScope(scopeId);
+    return records;
   }
 
   setActivityPolicy(
@@ -4622,8 +3622,6 @@ export class CardPerformanceTracker {
       html: {
         dashboardBytes: Buffer.byteLength(DASHBOARD_CARD_HTML, "utf8"),
         dashboardBudgetBytes: DASHBOARD_CARD_HTML_MAX_BYTES,
-        activityBytes: Buffer.byteLength(ACTIVITY_CARD_HTML, "utf8"),
-        activityBudgetBytes: ACTIVITY_CARD_HTML_MAX_BYTES,
         settingsBytes: Buffer.byteLength(SETTINGS_CARD_HTML, "utf8"),
         settingsBudgetBytes: SETTINGS_CARD_HTML_MAX_BYTES
       }
@@ -4653,10 +3651,12 @@ export function registerBridgeTools(
   dispose(): void;
 } {
   jobs.attachUpstream(upstream);
-  registerSettingsCardResource(server);
-  registerActivityCardResource(server);
-  const questions = registerQuestionTools(server, jobs, scopeResolver, () => userSettings.current.uiLocalePreference);
+  // MCP 2026 list results must be deterministic. Register immutable card
+  // resources in URI order; input tools do not add a resource.
   registerDashboardCardResource(server);
+  const codexInputs = registerCodexInputTools(server, jobs, scopeResolver);
+  registerSettingsCardResource(server);
+  const dashboardPresentations = dashboardAutoPresentationProofs(jobs);
   const cardPerformance = sharedCardPerformance || new CardPerformanceTracker();
   const taskExecutionEnvelopeRef = () => userSettings.taskExecutionEnvelopeRef();
   // A modern HTTP request receives a fresh McpServer, while the task
@@ -4707,26 +3707,6 @@ export function registerBridgeTools(
       released = true;
       runtimeAdmission.pendingAdmissions = Math.max(0, runtimeAdmission.pendingAdmissions - 1);
     };
-  };
-  const recordActivityPerformance = (
-    view: { structured: z.infer<typeof activityViewOutputSchema> },
-    startedAt: number
-  ): void => {
-    const enrichment = view.structured.enrichment;
-    cardPerformance.record(
-      enrichment.state === "enriched"
-        ? "activity.enriched.total"
-        : "activity.structural.db-projection",
-      Date.now() - startedAt,
-      {
-        requests: enrichment.runtimeRequests,
-        timeouts: enrichment.timeouts + (enrichment.usageTimedOut ? 1 : 0),
-        cacheHits: enrichment.cacheHits
-      }
-    );
-    const serializationStartedAt = Date.now();
-    JSON.stringify(view.structured);
-    cardPerformance.record("activity.serialization", Date.now() - serializationStartedAt);
   };
   type AccountObservation = {
     value: Awaited<ReturnType<NonNullable<BridgeConfig["codexService"]>["readAccount"]>>;
@@ -4880,7 +3860,7 @@ export function registerBridgeTools(
         throw new Error("THREAD_HANDOFF_TARGET_CHANGED: Refresh this Agent before continuing in Codex.");
       }
       const record = jobs.threadHandoff(thread.threadId, input.action);
-      return { phase: record.phase, reason: record.reason, requested: record.handoffRequested,
+      return { phase: record.phase, ...(record.reason !== undefined ? { reason: record.reason } : {}), requested: record.handoffRequested,
         canOpen: record.phase === "released" && Boolean(record.evidence) };
     },
     subscribeChanges(listener) {
@@ -4948,7 +3928,8 @@ export function registerBridgeTools(
       for (const row of [...view.activeRows, ...view.terminalRows, ...view.idleRows, ...(view.statusRows || [])]) {
         const threadId = row.codexThreadUrl?.replace("codex://threads/", "");
         const connection = threadId ? jobs.admissionStateStore.threadConnections.get(threadId) : undefined;
-        if (connection) row.handoff = { phase: connection.phase, reason: connection.reason,
+        if (connection) row.handoff = { phase: connection.phase,
+          ...(connection.reason !== undefined ? { reason: connection.reason } : {}),
           requested: connection.handoffRequested, canOpen: connection.phase === "released" && Boolean(connection.evidence) };
       }
       JSON.stringify(view);
@@ -5078,27 +4059,21 @@ export function registerBridgeTools(
     meta: unknown
   ) => {
     const widgetSessionId = mountedWidgetInstanceId(args, meta);
-    if (!widgetSessionId) throw new Error("CARD_LEASE_REQUIRED: Open the work details before using a control.");
-    if ("token" in args.card) {
-      const host = scopeResolver.resolve(meta as ToolCallMetadata, args.scopeId);
-      const claims = controlProofs.require(args.card.token, widgetSessionId, host?.scopeId);
-      if (claims.purpose === "history") throw new Error("UI_CONTROL_STALE: Open the work details before controlling execution.");
-      const agent = jobs.getAgent(claims.agentId), activity = jobs.getActivity(claims.activityId);
-      if (!agent || !activity || agent.scopeId !== claims.scopeId || activity.scopeId !== claims.scopeId ||
-        claims.activityId !== args.card.activityId || claims.generation !== args.card.generation || activity.cardGeneration !== claims.generation ||
-        (args.jobId !== undefined && args.jobId !== claims.jobId) ||
-        (args.agentId !== undefined && args.agentId !== claims.agentId) ||
-        (args.processId !== undefined && !claims.processIds.includes(args.processId))) {
-        throw new Error("UI_CONTROL_TARGET_CHANGED: Refresh the selected work details.");
-      }
-      // Domain handlers still check the exact current Job/Agent version and state
-      // immediately before dispatch. Proof identity never grants model scope.
-      return { scope: { scopeId: claims.scopeId }, widgetSessionId, presentation: { kind: "explicit" } as ActivityCardPresentationContext, claims };
+    if (!widgetSessionId) throw new Error("MOUNTED_DASHBOARD_REQUIRED: Open the Dashboard work details before using a control.");
+    const host = scopeResolver.resolve(meta as ToolCallMetadata, args.scopeId);
+    const claims = controlProofs.require(args.card.token, widgetSessionId, host?.scopeId);
+    if (claims.purpose === "history") throw new Error("UI_CONTROL_STALE: Open the work details before controlling execution.");
+    const agent = jobs.getAgent(claims.agentId), activity = jobs.getActivity(claims.activityId);
+    if (!agent || !activity || agent.scopeId !== claims.scopeId || activity.scopeId !== claims.scopeId ||
+      activity.cardGeneration !== claims.generation ||
+      (args.jobId !== undefined && args.jobId !== claims.jobId) ||
+      (args.agentId !== undefined && args.agentId !== claims.agentId) ||
+      (args.processId !== undefined && !claims.processIds.includes(args.processId))) {
+      throw new Error("UI_CONTROL_TARGET_CHANGED: Refresh the selected work details.");
     }
-    const scope = scopeResolver.require(meta as ToolCallMetadata, args.scopeId, "Retained Activity card control");
-    const presentation = presentationFromActivityCardProof(args.card);
-    jobs.requireActivityCardLease(scope.scopeId, args.card.activityId, args.card.generation, widgetSessionId, presentation);
-    return { scope, widgetSessionId, presentation, claims: undefined };
+    // Domain handlers still check the exact current Job/Agent version and state
+    // immediately before dispatch. Proof identity never grants model scope.
+    return { scope: { scopeId: claims.scopeId }, widgetSessionId, claims };
   };
   const controlDetailInput = z.strictObject({ view: z.literal("control"), rowKey: z.string().regex(/^[a-f0-9]{32}$/),
     widgetInstanceId: widgetInstanceIdSchema, scopeId: scopeIdSchema().optional() });
@@ -5115,8 +4090,11 @@ export function registerBridgeTools(
     const pendingInteractions = job.pendingInteractions
       .filter((interaction) => !ordinaryCodexQuestion(interaction))
       .slice(0, MAX_CODEX_INTERACTION_QUESTIONS);
-    if (pendingInteractions.length === 0) {
-      throw new Error("UI_CONTROL_UNAVAILABLE: This Agent has no review request.");
+    const canStop = isActiveActivityJobStatus(job.status);
+    const affectedJobIds = canStop ? jobs.terminationImpact(job.jobId).affectedJobIds : [];
+    const processIds = dashboardControllableBackgroundProcessIds(jobs, upstream, agent);
+    if (pendingInteractions.length === 0 && !canStop && processIds.length === 0) {
+      throw new Error("UI_CONTROL_UNAVAILABLE: This Agent has no controllable work.");
     }
     const initialVersion = agent.version, initialJobVersion = job.version;
     if (jobs.getAgent(agent.agentId)?.version !== initialVersion || jobs.get(job.jobId)?.version !== initialJobVersion) {
@@ -5125,14 +4103,14 @@ export function registerBridgeTools(
     const claims: Omit<UiControlClaims, "version" | "expiresAt"> = {
       widgetInstanceId: args.widgetInstanceId, hostScopeId: host?.scopeId || null, scopeId: agent.scopeId,
       activityId: activity.activityId, generation: activity.cardGeneration, agentId: agent.agentId,
-      agentVersion: agent.version, jobId: job.jobId, jobVersion: job.version, processIds: []
+      agentVersion: agent.version, jobId: job.jobId, jobVersion: job.version, processIds
     };
-    const card = { kind: "dashboard", token: controlProofs.issue(claims), activityId: activity.activityId,
-      generation: activity.cardGeneration, presentation: { kind: "explicit" } };
+    const card = { kind: "dashboard", token: controlProofs.issue(claims) };
     const detail = { kind: "control", rowKey: args.rowKey, agentId: agent.agentId, agentName: agent.agentName,
       agentVersion: agent.version, activityTitle: activity.title, projectName: job.projectName || null,
       conversationUrl: scopeResolver.conversationUrl(agent.scopeId), card,
       jobId: job.jobId, jobVersion: job.version, status: job.status,
+      canStop, affectedJobIds, backgroundProcesses: processIds.map(processId => ({ processId })),
       pendingInteractions: pendingInteractions.map(interaction => ({ ...interaction,
         ordinary: ordinaryCodexQuestion(interaction),
         ...(interaction.elicitation ? { elicitation: { ...interaction.elicitation, ...jobs.interactionInput(interaction.interactionId) } } : {}) })) };
@@ -5141,24 +4119,34 @@ export function registerBridgeTools(
       _meta: { "codex/uiControl@1": detail } };
   };
 
-  const historyDetailInput = controlDetailInput.extend({view:z.literal("history"),expectedRevision:z.string().regex(/^[a-f0-9]{64}$/)});
-  const readHistoryControl: ToolCallback<typeof historyDetailInput> = async (args,extra) => {
-    const host = scopeResolver.resolve(extra.mcpReq._meta as ToolCallMetadata,args.scopeId);
-    const target = historyTarget(args.rowKey);
-    if (target.revision !== args.expectedRevision || !target.job) throw new Error("HISTORY_TARGET_CHANGED: Refresh the selected execution.");
-    const activity = jobs.getActivity(target.job.activityId);
-    if (!activity || activity.scopeId !== target.agent.scopeId) throw new Error("HISTORY_TARGET_CHANGED: Refresh the selected execution.");
-    const token = controlProofs.issue({purpose:"history",historyRevision:target.revision,
-      widgetInstanceId:args.widgetInstanceId,hostScopeId:host?.scopeId || null,scopeId:target.agent.scopeId,
-      agentId:target.agent.agentId,agentVersion:target.agent.version,activityId:activity.activityId,generation:activity.cardGeneration,
-      jobId:target.job.jobId,jobVersion:null,processIds:[]});
-    return {content:[{type:"text",text:"History action ready."}],structuredContent:{kind:"control",ready:true},
-      _meta:{"codex/historyControl@1":{rowKey:args.rowKey,revision:target.revision,token}}};
-  };
-
   const reviewProofs = problemReviewProofs(jobs);
   const problemControlDetailInput = z.strictObject({view:z.literal("problem-control"),operation:problemOperationSchema,
     widgetInstanceId:widgetInstanceIdSchema,scopeId:scopeIdSchema().optional(),scope:z.enum(["conversation","all"])});
+  const completionDeliveryActionInput = z.strictObject({
+    action: z.enum([
+      "completion-claim",
+      "completion-delivered",
+      "completion-release",
+      "completion-uncertain"
+    ]),
+    outboxIds: z.array(z.number().int().positive()).min(1).max(20),
+    presentationToken: z.string().uuid(),
+    widgetInstanceId: widgetInstanceIdSchema,
+    scopeId: scopeIdSchema().optional()
+  });
+  const completionEvent = (record: {
+    outboxId: number;
+    scopeId: string;
+    activityId: string;
+    completionVersion: number;
+    channel: "notify" | "verify";
+  }) => ({
+    eventId: completionDeliveryEventId(record),
+    outboxId: record.outboxId,
+    activityId: record.activityId,
+    completionVersion: record.completionVersion,
+    channel: record.channel
+  });
   const readProblemControl: ToolCallback<typeof problemControlDetailInput> = async (args,extra) => {
     const host = scopeResolver.resolve(extra.mcpReq._meta as ToolCallMetadata,args.scopeId);
     const widget = mountedWidgetInstanceId(args,extra.mcpReq._meta);
@@ -5196,7 +4184,10 @@ export function registerBridgeTools(
   const codexDashboardInput = z.strictObject({
     scopeId: scopeIdSchema()
       .optional()
-      .describe("Conversation UUID for hosts that do not supply scoped MCP metadata.")
+      .describe("Conversation UUID for hosts that do not supply scoped MCP metadata."),
+    scope: z.enum(["conversation", "all"]).optional().describe(
+      "Open a conversation-scoped Dashboard when the host identifies this conversation, or open all retained work."
+    )
   });
   const dashboardSnapshotInput = z.strictObject({
     problems: problemQuerySchema.optional(),
@@ -5205,6 +4196,9 @@ export function registerBridgeTools(
       "Select the current three-category overview and filter its rows. Counts cover the full selected conversation scope before filtering and pagination."
     ),
     widgetInstanceId: widgetInstanceIdSchema.optional(),
+    presentationToken: z.string().uuid().optional().describe(
+      "Private capability supplied only when a background task automatically opened this Dashboard."
+    ),
     scope: z.enum(["auto", "conversation", "all"]).optional().describe(
       "Initial auto selects this conversation when it has Activity or Job records; conversation and all retain an explicit selection."
     ),
@@ -5246,21 +4240,31 @@ export function registerBridgeTools(
       const _meta = extra.mcpReq._meta;
       // The card can open without host identity and start in the all-work view.
       // Supplied metadata must still be validated before returning the opener.
-      scopeResolver.resolve(_meta as ToolCallMetadata, args.scopeId);
-      const summary = "The Codex status card is open. The card loads current retained work, starting with this conversation when it has records and otherwise showing all conversations.";
+      const scope = scopeResolver.resolve(_meta as ToolCallMetadata, args.scopeId);
+      if (args.scope === "conversation" && !scope) {
+        throw new Error("DASHBOARD_CONVERSATION_UNAVAILABLE: Reopen the Dashboard in its conversation.");
+      }
+      const summary = args.scope === "conversation"
+        ? "The Codex status card is open for this conversation."
+        : "The Codex status card is open. The card loads current retained work, starting with this conversation when it has records and otherwise showing all conversations.";
       return contractedToolResult(dashboardModelResultContract, {}, {
         kind: "dashboard", scope: "bridge-wide", readOnly: true,
         statusSource: "codex-runtime-only", summary
       }, { text: summary }, { appHydration: {
         "openai/locale": resolvePreferredUiLocale(userSettings.current.uiLocalePreference,
-          metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"))
+          metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")),
+        "codex/dashboardOpen@1": {
+          scope: args.scope || "auto",
+          automatic: false
+        }
       } });
     }
   );
 
     const readDashboard: ToolCallback<typeof dashboardSnapshotInput> = async (args, extra) => {
       const _meta = extra.mcpReq._meta;
-      if (!mountedWidgetInstanceId(args, _meta)) {
+      const widgetInstanceId = mountedWidgetInstanceId(args, _meta);
+      if (!widgetInstanceId) {
         throw new Error(
           "MOUNTED_WIDGET_REQUIRED: Refresh the mounted Codex status card before retrying."
         );
@@ -5276,6 +4280,24 @@ export function registerBridgeTools(
       if (mode === "conversation" && !openingScope) {
         throw new Error("DASHBOARD_CONVERSATION_UNAVAILABLE: This host did not identify the opening conversation. Select all work or reopen the status card.");
       }
+      const automaticPresentation = args.presentationToken
+        ? (() => {
+            if (mode !== "conversation" || !openingScope) {
+              throw new Error("DASHBOARD_AUTOMATIC_PRESENTATION_STALE: Reopen the Dashboard in the originating conversation.");
+            }
+            const presentation = dashboardPresentations.require({
+              token: args.presentationToken,
+              scopeId: openingScope.scopeId,
+              hostScopeId: openingScope.scopeId,
+              widgetInstanceId
+            });
+            const job = jobs.get(presentation.jobId);
+            if (!job || job.scopeId !== openingScope.scopeId) {
+              throw new Error("DASHBOARD_AUTOMATIC_PRESENTATION_STALE: The originating background task is no longer available.");
+            }
+            return presentation;
+          })()
+        : undefined;
       const view = await applicationService.dashboardSnapshot({
         problems: args.problems,
         scopeId: mode === "conversation" ? openingScope!.scopeId : undefined,
@@ -5288,6 +4310,27 @@ export function registerBridgeTools(
       });
       if (args.scope !== undefined) {
         view.filter = { mode, conversationAvailable: Boolean(openingScope), conversationHasWork };
+      }
+      if (automaticPresentation && userSettings.current.completionFollowUp) {
+        const route = selectCompletionDeliveryRoute({
+          // No ChatGPT conversation-resume API has passed the product's
+          // end-to-end verification. Do not infer support from transport
+          // notifications or product identity.
+          verifiedHostEvent: false,
+          automaticDashboard: true
+        });
+        if (route === "dashboard") {
+          view.completionDelivery = {
+            route,
+            events: jobs.listPendingCompletionOutbox(openingScope!.scopeId, 20).map((record) => ({
+              eventId: completionDeliveryEventId(record),
+              outboxId: record.outboxId,
+              activityId: record.activityId,
+              completionVersion: record.completionVersion,
+              channel: record.channel
+            }))
+          };
+        }
       }
       return dashboardViewResult(
         view,
@@ -5350,7 +4393,7 @@ export function registerBridgeTools(
   ).describe("Read one exact Job, optionally waiting for a change or terminal state.");
   const statusInputQueryInput = z.strictObject({
     kind: z.literal("input"),
-    ...questions.questionInputSchema.shape
+    ...codexInputs.questionInputSchema.shape
   });
   const statusProjectQueryInput = z.strictObject({
     kind: z.literal("project"),
@@ -5392,7 +4435,7 @@ export function registerBridgeTools(
       const query = args.query;
       if (query?.kind === "input") {
         const { kind, ...input } = query;
-        return questions.readInput(input, extra);
+        return codexInputs.readInput(input, extra);
       }
       const jobQuery = query?.kind === "job" ? query : undefined;
       const activityQuery = query?.kind === "activity" ? query : undefined;
@@ -5419,10 +4462,7 @@ export function registerBridgeTools(
           );
         }
         const initial = jobs.get(jobQuery.id);
-        if (!initial) throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
-        if (initial.scopeId !== scopeId) {
-          throw new Error("The requested Codex job belongs to another conversation scope.");
-        }
+        if (!initial || initial.scopeId !== scopeId) throw scopedHandleUnavailable("job");
         let wait: CodexJobWaitResult | undefined;
         if (jobQuery.waitFor) {
           let observedAbort = false;
@@ -5468,9 +4508,7 @@ export function registerBridgeTools(
           throw new Error("Activity lookup requires conversation metadata or an explicit scopeId.");
         }
         const activity = jobs.getActivity(activityQuery.id);
-        if (!activity || activity.scopeId !== scopeId) {
-          throw new Error("The requested Activity belongs to another conversation scope or does not exist.");
-        }
+        if (!activity || activity.scopeId !== scopeId) throw scopedHandleUnavailable("activity");
         const childJobs = jobs.listForActivity(activity.activityId);
         const structured = {
           kind: "activity" as const,
@@ -5501,9 +4539,7 @@ export function registerBridgeTools(
         const trackedSession = sessions.get(threadQuery.id);
         const relatedJobs = jobs.listForThread(threadQuery.id, scopeId);
         const sessionVisible = trackedSession && trackedSession.scopeId === scopeId;
-        if (!sessionVisible && relatedJobs.length === 0) {
-          throw new Error("The requested Codex thread belongs to another conversation scope or does not exist.");
-        }
+        if (!sessionVisible && relatedJobs.length === 0) throw scopedHandleUnavailable("thread");
         const activities = [...new Set(relatedJobs.map((job) => job.activityId))]
           .map((activityId) => jobs.getActivity(activityId))
           .filter((activity): activity is BridgeActivity => Boolean(activity));
@@ -5765,616 +4801,6 @@ export function registerBridgeTools(
     }
   );
 
-  const codexActivityInput = z.strictObject({
-    scopeId: scopeIdSchema()
-      .optional()
-      .describe("Conversation UUID for hosts that do not supply scoped MCP metadata."),
-    mode: z.enum(["compact-monitor", "full-history"]).optional()
-      .describe("Presentation mode. Omit for the full history view."),
-    presentationId: scopeIdSchema().optional()
-      .describe("Required only for one compact monitor presentation; reuse it only for an exact retry of that presentation call."),
-    activityId: scopeIdSchema().optional()
-      .describe("Optional exact Activity to validate and mount in the card.")
-  });
-  server.registerTool(
-    "codex_activity",
-    {
-      title: `${PRODUCT_INFO.displayName} Activity Card`,
-      description:
-        "Open the scoped Activity card. The card shows current work and full history using its exact presentation and ownership checks.",
-      inputSchema: codexActivityInput,
-      outputSchema: activityModelOutputSchema,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        ...activityCardToolMetadata(),
-        ui: { resourceUri: ACTIVITY_CARD_URI, visibility: ["app"] },
-        "openai/visibility": "private"
-      }
-    },
-    async (args, extra) => {
-      const _meta = extra.mcpReq._meta;
-      const scope = scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Codex Activity view"
-      );
-      const mode: CodexActivityViewMode = args.mode || "full-history";
-      if (mode === "compact-monitor" && !args.presentationId) {
-        throw new Error(
-          "ACTIVITY_PRESENTATION_ID_REQUIRED: compact-monitor requires one UUID presentationId for this logical card presentation."
-        );
-      }
-      if (mode === "full-history" && args.presentationId) {
-        throw new Error(
-          "ACTIVITY_PRESENTATION_ID_UNEXPECTED: full-history does not accept presentationId."
-        );
-      }
-      const visibility = userSettings.current.activityCardVisibility;
-      if (mode === "compact-monitor" && visibility === "never") {
-        throw new Error(
-          "ACTIVITY_CARD_VISIBILITY_DISABLED: The saved policy disables automatic Activity-card presentation."
-        );
-      }
-      const availableActivities = jobs.listActivities(
-        scope.scopeId,
-        Math.max(1, jobs.activityCount(scope.scopeId)),
-        0
-      );
-      const selected = args.activityId
-        ? jobs.getActivity(args.activityId)
-        : mode === "compact-monitor" && visibility === "background-only"
-          ? availableActivities.find((activity) => activity.executionMode === "background")
-          : availableActivities[0];
-      if (args.activityId && (!selected || selected.scopeId !== scope.scopeId)) {
-        throw new Error("The requested Activity is unavailable in this conversation scope.");
-      }
-      if (!selected && mode === "compact-monitor") {
-        throw new Error(
-          "ACTIVITY_CARD_EMPTY: No Activity is available for a compact monitor presentation in this conversation."
-        );
-      }
-      if (
-        selected &&
-        mode === "compact-monitor" &&
-        visibility === "background-only" &&
-        selected.executionMode !== "background"
-      ) {
-        throw new Error(
-          "ACTIVITY_CARD_VISIBILITY_DISABLED: The saved policy permits automatic cards only for background work."
-        );
-      }
-      const presentation: ActivityViewPresentationContext = mode === "compact-monitor"
-        ? {
-            kind: "automatic",
-            activityPresentationId: args.presentationId as string,
-            reservationOwnerId: args.presentationId as string
-          }
-        : selected
-          ? { kind: "explicit" }
-          // An empty history has no Activity proof to lease or refresh. Use
-          // the scoped, non-owning rehydration path until work is available.
-          : { kind: "restored-explicit", mode: "full-history" };
-      const renderHint = selected
-        ? jobs.activityCardRenderHint(
-            selected.activityId,
-            selected.executionMode,
-            userSettings.current,
-            mode === "compact-monitor"
-              ? {
-                  reserve: true,
-                  presentationKind: "automatic",
-                  activityPresentationId: args.presentationId,
-                  reservationOwnerId: args.presentationId
-                }
-              : { reserve: false, presentationKind: "explicit" }
-          )
-        : undefined;
-      const activityStartedAt = Date.now();
-      const view = await buildActivityView(
-        jobs,
-        upstream,
-        modelCatalog,
-        config,
-        userSettings.current,
-        scope.scopeId,
-        30,
-        selected?.activityId,
-        undefined,
-        presentation,
-        undefined,
-        undefined,
-        mode === "full-history" && Boolean(args.activityId)
-      );
-      recordActivityPerformance(view, activityStartedAt);
-      if (renderHint) {
-        (view.structured as Record<string, unknown>).presentation = renderHint;
-      }
-      return activityViewResult(
-        view,
-        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
-        activityModelResultContract
-      );
-    }
-  );
-
-  const activityRehydrateInputSchema = z.strictObject({
-    scopeId: scopeIdSchema().optional(),
-    widgetInstanceId: widgetInstanceIdSchema.optional(),
-    jobId: scopeIdSchema().optional().describe(
-      "Exact Job UUID retained in a historical codex_task result."
-    ),
-    requestId: scopeIdSchema().optional().describe(
-      "Exact logical-request UUID retained in that same historical result."
-    ),
-    mode: z.literal("full-history").optional().describe(
-      "Restore an explicit conversation Activity view when its private hydration metadata is unavailable."
-    ),
-    activityId: scopeIdSchema().optional().describe(
-      "Optional Activity identity retained in the public full-history result."
-    ),
-    activityVersion: z.number().int().min(1).optional().describe(
-      "Optional last-observed Activity version paired with activityId."
-    ),
-    limit: z.number().int().min(1).max(100).optional(),
-    cursor: z.string().trim().min(1).max(256).optional().describe(
-      "Opaque full-history page cursor returned by an earlier rehydrated view."
-    ),
-    enrich: z.boolean().optional().describe(
-      "Request bounded runtime and weekly-usage evidence for this one-shot rehydrated view."
-    )
-  }).superRefine((value, context) => {
-    const historical = value.jobId !== undefined || value.requestId !== undefined;
-    const fullHistory = value.mode === "full-history";
-    if (historical === fullHistory) {
-      context.addIssue({
-        code: "custom",
-        message:
-          "Choose exactly one Activity rehydration correlation: historical Job/request or full-history mode."
-      });
-    }
-    if (historical && (!value.jobId || !value.requestId)) {
-      context.addIssue({
-        code: "custom",
-        message: "Historical Activity rehydration requires both jobId and requestId."
-      });
-    }
-    if (!fullHistory && (value.activityId !== undefined || value.activityVersion !== undefined)) {
-      context.addIssue({
-        code: "custom",
-        message: "Activity identity hints are valid only for full-history rehydration."
-      });
-    }
-    if (!fullHistory && value.cursor !== undefined) {
-      context.addIssue({
-        code: "custom",
-        message: "Activity history pagination is valid only for full-history rehydration."
-      });
-    }
-    if (value.activityVersion !== undefined && !value.activityId) {
-      context.addIssue({
-        code: "custom",
-        message: "activityVersion requires activityId."
-      });
-    }
-  });
-
-  server.registerTool(
-    "codex_activity_rehydrate",
-    {
-      title: "Rehydrate Codex Activity Card",
-      description:
-        "App-only one-shot reconstruction when a cold-remounted Activity card no longer has its private hydration metadata. A historical codex_task shell supplies exact public Job/request lookup hints; an explicit full-history result supplies its public mode and optional Activity identity/version. The server derives conversation scope, validates every supplied hint, and returns a read-only non-owning snapshot. Optional bounded runtime and weekly-usage enrichment never acquires ownership. This tool never creates a live watcher, completion-handoff owner, automatic presentation reservation, or control lease.",
-      inputSchema: activityRehydrateInputSchema,
-      outputSchema: activityRehydrateOutputSchema,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    async (args, extra) => {
-      const _meta = extra.mcpReq._meta;
-      const scope = scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Rehydrated Codex Activity card"
-      );
-      if (!mountedWidgetInstanceId(args, _meta)) {
-        throw new Error(
-          "CARD_REHYDRATE_WIDGET_REQUIRED: Activity rehydration requires a mounted widget session."
-        );
-      }
-      let selected: BridgeActivity | undefined;
-      let presentation: ActivityViewPresentationContext;
-      let focusSelectedActivityPage = true;
-      if (args.mode === "full-history") {
-        const availableActivities = jobs.listActivities(
-          scope.scopeId,
-          Math.max(1, jobs.activityCount(scope.scopeId)),
-          0
-        );
-        selected = args.activityId
-          ? jobs.getActivity(args.activityId)
-          : availableActivities[0];
-        if (args.activityId && (!selected || selected.scopeId !== scope.scopeId)) {
-          throw new Error(
-            "ACTIVITY_REHYDRATE_UNAVAILABLE: The full-history Activity is unavailable in this conversation."
-          );
-        }
-        if (
-          selected &&
-          args.activityVersion !== undefined &&
-          selected.version < args.activityVersion
-        ) {
-          throw new Error(
-            "ACTIVITY_REHYDRATE_VERSION_INVALID: The supplied Activity version is newer than authoritative retained state."
-          );
-        }
-        presentation = {
-          kind: "restored-explicit",
-          mode: "full-history",
-          ...(args.activityId ? { activityId: args.activityId } : {}),
-          ...(args.activityVersion !== undefined
-            ? { activityVersion: args.activityVersion }
-            : {})
-        };
-        focusSelectedActivityPage = Boolean(args.activityId);
-      } else {
-        const job = jobs.get(args.jobId as string);
-        if (
-          !job ||
-          job.scopeId !== scope.scopeId ||
-          job.requestId !== args.requestId ||
-          !job.activityPresentationId
-        ) {
-          throw new Error(
-            "ACTIVITY_REHYDRATE_UNAVAILABLE: The historical Job correlation is unavailable in this conversation."
-          );
-        }
-        const visibility = userSettings.current.activityCardVisibility;
-        const eligible = visibility === "always" ||
-          (visibility === "background-only" && job.executionMode === "background");
-        if (!eligible) {
-          throw new Error(
-            "ACTIVITY_REHYDRATE_VISIBILITY_DISABLED: The saved Activity-card visibility policy does not allow this historical Job."
-          );
-        }
-        selected = jobs.getActivity(job.activityId);
-        if (!selected || selected.scopeId !== scope.scopeId) {
-          throw new Error(
-            "ACTIVITY_REHYDRATE_UNAVAILABLE: The historical Activity is unavailable in this conversation."
-          );
-        }
-        const latestEligibleSibling = jobs
-          .listForScope(scope.scopeId, config.maxRetainedJobs, 0)
-          .filter((candidate) =>
-            candidate.activityPresentationId === job.activityPresentationId &&
-            (
-              visibility === "always" ||
-              (visibility === "background-only" && candidate.executionMode === "background")
-            )
-          )
-          .sort((left, right) =>
-            right.createdAt - left.createdAt ||
-            right.jobId.localeCompare(left.jobId)
-          )[0];
-        if (!latestEligibleSibling || latestEligibleSibling.jobId !== job.jobId) {
-          throw new Error(
-            "ACTIVITY_REHYDRATE_DUPLICATE: Another Job was elected for this assistant-response historical shell."
-          );
-        }
-        presentation = {
-          kind: "historical",
-          jobId: job.jobId,
-          requestId: job.requestId
-        };
-      }
-      const activityStartedAt = Date.now();
-      const view = await buildActivityView(
-        jobs,
-        upstream,
-        modelCatalog,
-        config,
-        userSettings.current,
-        scope.scopeId,
-        args.limit || 30,
-        selected?.activityId,
-        undefined,
-        presentation,
-        undefined,
-        args.cursor,
-        focusSelectedActivityPage,
-        args.enrich === true
-      );
-      recordActivityPerformance(view, activityStartedAt);
-      return activityViewResult(
-        view,
-        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
-        activityRehydrateResultContract
-      );
-    }
-  );
-
-  server.registerTool(
-    "codex_activity_snapshot",
-    {
-      title: "Refresh Codex Activity Card",
-      description:
-        "App-only localized Activity-feed snapshot and bounded scope-version watch. Current cards use enrich=false for structural reads and a separate enrich=true for bounded runtime and usage evidence. The exact mounted card proof establishes or renews a widget-session lease; superseded automatic presentations stop normally.",
-      inputSchema: z.strictObject({
-        scopeId: scopeIdSchema().optional(),
-        widgetInstanceId: widgetInstanceIdSchema.optional(),
-        card: activityCardProofInputSchema,
-        afterVersion: z.number().int().min(0).optional(),
-        waitMs: z.number().int().min(1).max(MAX_CODEX_STATUS_WAIT_MS).optional(),
-        limit: z.number().int().min(1).max(100).optional(),
-        cursor: z.string().trim().min(1).max(256).optional(),
-        enrich: z.boolean().optional().describe(
-          "Request bounded runtime and weekly-usage enrichment after the default structural Activity snapshot."
-        )
-      }),
-      outputSchema: activityViewOutputSchema,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    async (args, extra) => {
-      const _meta = extra.mcpReq._meta;
-      const signal = extra.mcpReq.signal;
-      const scope = scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Codex Activity card snapshot"
-      );
-      if (args.waitMs !== undefined && args.afterVersion === undefined) {
-        throw new Error("waitMs requires afterVersion from a previous Activity snapshot.");
-      }
-      const widgetSessionId = mountedWidgetInstanceId(args, _meta);
-      if (!widgetSessionId) {
-        throw new Error("CARD_LEASE_REQUIRED: Activity snapshots require a mounted widget session.");
-      }
-      const presentation = presentationFromActivityCardProof(args.card);
-      if (args.cursor && presentation.kind !== "explicit") {
-        throw new Error("Activity history pagination is available only in an explicit full view.");
-      }
-      const lease = jobs.touchActivityCardLease(
-        scope.scopeId,
-        args.card.activityId,
-        args.card.generation,
-        widgetSessionId,
-        presentation
-      );
-      let presentationObservationRecorded = false;
-      const recordPresentationSuperseded = () => {
-        if (presentationObservationRecorded) return;
-        presentationObservationRecorded = true;
-        jobs.recordTransportObservation({
-          kind: "presentation-superseded",
-          scopeId: scope.scopeId,
-          activityId: args.card.activityId,
-          toolName: "codex_activity_snapshot",
-          callerRequestDigest: correlationDigest("mcp-request", extra.mcpReq.id),
-          reasonCode: "presentation-superseded"
-        });
-      };
-      if (lease.stopReason === "presentation-superseded") recordPresentationSuperseded();
-      const onAbort = () => {
-        jobs.releaseActivityCardLease(
-          scope.scopeId,
-          args.card.activityId,
-          args.card.generation,
-          widgetSessionId,
-          presentation
-        );
-        jobs.recordTransportObservation({
-          kind: "activity-watch-aborted",
-          scopeId: scope.scopeId,
-          activityId: args.card.activityId,
-          toolName: "codex_activity_snapshot",
-          callerRequestDigest: correlationDigest("mcp-request", extra.mcpReq.id),
-          reasonCode: "host-aborted-activity-watch"
-        });
-      };
-      if (!lease.stopped) {
-        signal?.addEventListener("abort", onAbort, { once: true });
-      }
-      const wait: ActivityScopeWatchResult | undefined = lease.stopped
-        ? {
-            scopeVersion: jobs.getScopeVersion(scope.scopeId),
-            changed: false,
-            timedOut: false,
-            waitedMs: 0,
-            stopped: true,
-            stopReason: lease.stopReason
-          }
-        : args.afterVersion !== undefined
-        ? await jobs.waitForScopeVersion(
-            scope.scopeId,
-            args.afterVersion,
-            args.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS,
-            widgetSessionId,
-            signal,
-            presentation
-          )
-        : undefined;
-      signal?.removeEventListener("abort", onAbort);
-      if (wait?.stopReason === "presentation-superseded") recordPresentationSuperseded();
-      const activityStartedAt = Date.now();
-      const view = await buildActivityView(
-        jobs,
-        upstream,
-        modelCatalog,
-        config,
-        userSettings.current,
-        scope.scopeId,
-        args.limit || 30,
-        args.card.activityId,
-        wait,
-        presentation,
-        lease,
-        args.cursor,
-        true,
-        args.enrich !== false
-      );
-      recordActivityPerformance(view, activityStartedAt);
-      return activityViewResult(
-        view,
-        metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n"),
-        activityAppResultContract
-      );
-    }
-  );
-
-  const codexActivityHandoffInput = z.strictObject({
-    scopeId: scopeIdSchema().optional(),
-    widgetInstanceId: widgetInstanceIdSchema.optional(),
-    action: z.enum(["claim-batch", "delivered-batch", "release-batch"]),
-    outboxIds: z.array(z.number().int().positive()).min(1).max(20),
-    card: automaticActivityCardProofInputSchema
-  });
-  server.registerTool(
-    "codex_activity_handoff",
-    {
-      title: "Deliver Codex Activity Handoff",
-      description: "App-only transactional outbox lease owned by the latest automatic Activity presentation.",
-      inputSchema: codexActivityHandoffInput,
-      outputSchema: handoffOutputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    async (args, extra) => {
-      const _meta = extra.mcpReq._meta;
-      const scope = scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Codex Activity handoff"
-      );
-      const leaseOwner = mountedWidgetInstanceId(args, _meta);
-      if (!leaseOwner) throw new Error("Completion handoff requires a mounted widget session id.");
-      const presentation = presentationFromActivityCardProof(args.card);
-      jobs.requireActivityCardLease(
-        scope.scopeId,
-        args.card.activityId,
-        args.card.generation,
-        leaseOwner,
-        presentation
-      );
-      const claimAction = args.action === "claim-batch";
-      if (claimAction && !jobs.canClaimCompletionHandoff(scope.scopeId, presentation)) {
-        const structured = {
-          kind: "handoff" as const,
-          action: args.action,
-          claimed: false,
-          handoffBatchId: null,
-          handoffDepth: 0,
-          events: [],
-          stopped: true,
-          stopReason: presentation.kind === "explicit"
-            ? "explicit-presentation-does-not-own-handoff"
-            : "presentation-superseded"
-        };
-        return contractedToolResult(
-          handoffResultContract,
-          structured,
-          structured,
-          { text: "Completion handoff was not claimed because this presentation does not own it." }
-        );
-      }
-      if (args.action === "delivered-batch") {
-        const records = jobs.markCompletionOutboxBatchDelivered(
-          args.outboxIds,
-          scope.scopeId,
-          leaseOwner
-        );
-        const structured = {
-          kind: "handoff" as const,
-          action: args.action,
-          delivered: true,
-          outboxIds: records.map((record) => record.outboxId)
-        };
-        return contractedToolResult(
-          handoffResultContract,
-          records,
-          structured,
-          { text: `Delivered ${records.length} completion handoff record(s).` }
-        );
-      }
-      if (args.action === "release-batch") {
-        jobs.releaseCompletionOutboxBatch(args.outboxIds, scope.scopeId, leaseOwner);
-        const structured = {
-          kind: "handoff" as const,
-          action: args.action,
-          released: true,
-          outboxIds: [...new Set(args.outboxIds)].sort((a, b) => a - b)
-        };
-        return contractedToolResult(
-          handoffResultContract,
-          structured,
-          structured,
-          { text: `Released ${structured.outboxIds.length} completion handoff record(s).` }
-        );
-      }
-      const records = jobs.claimCompletionOutboxBatch(args.outboxIds, scope.scopeId, leaseOwner);
-      const batchMaterial = records
-        .map((record) => `${record.outboxId}:${record.activityId}:${record.completionVersion}:${record.channel}`)
-        .join("|");
-      const handoffBatchId = batchMaterial
-        ? `handoff-${createHash("sha256").update(scope.scopeId).update("\0").update(batchMaterial).digest("hex").slice(0, 24)}`
-        : null;
-      const structured = {
-        kind: "handoff" as const,
-        action: args.action,
-        claimed: records.length > 0,
-        handoffBatchId,
-        origin: "activity-handoff",
-        handoffDepth: records.length > 0 ? 1 : 0,
-        events: records.map((record) => ({
-          outboxId: record.outboxId,
-          activityId: record.activityId,
-          completionVersion: record.completionVersion,
-          channel: record.channel
-        }))
-      };
-      return contractedToolResult(
-        handoffResultContract,
-        records,
-        structured,
-        { text: `Claimed ${records.length} completion handoff record(s).` }
-      );
-    }
-  );
-
   const codexAgentRuntimeOperationInput = z.discriminatedUnion("kind", [
     z.strictObject({ kind: z.literal("archive") }),
     z.strictObject({ kind: z.literal("restore") }),
@@ -6421,9 +4847,7 @@ export function registerBridgeTools(
         "Codex Agent management"
       );
       const agent = jobs.getAgent(args.agentId);
-      if (!agent || agent.scopeId !== scope.scopeId) {
-        throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
-      }
+      if (!agent || agent.scopeId !== scope.scopeId) throw scopedHandleUnavailable("agent");
       const actionHash = createHash("sha256")
         .update(JSON.stringify({
           agentId: args.agentId,
@@ -6510,9 +4934,7 @@ export function registerBridgeTools(
           return replay.result;
         }
         const agent = jobs.getAgent(args.agentId);
-        if (!agent || agent.scopeId !== scope.scopeId) {
-          throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
-        }
+        if (!agent || agent.scopeId !== scope.scopeId) throw scopedHandleUnavailable("agent");
         const detached = jobs.detachIdleAgentAssignment({
           activityId: args.activityId,
           agentId: args.agentId,
@@ -6546,7 +4968,7 @@ export function registerBridgeTools(
       });
   const stopBackgroundProcess: ToolCallback<typeof backgroundProcessStopInput> = async (args, extra) => {
     const _meta = extra.mcpReq._meta;
-      const { scope, widgetSessionId, presentation, claims } = requireControlCard(args, _meta);
+      const { scope, widgetSessionId, claims } = requireControlCard(args, _meta);
       if (claims && claims.agentVersion !== args.expectedAgentVersion) {
         throw new Error("UI_CONTROL_TARGET_CHANGED: The requested version differs from the displayed work.");
       }
@@ -6570,29 +4992,6 @@ export function registerBridgeTools(
       return mutationToolResult(mutationResult, "app");
     };
 
-  server.registerTool(
-    "codex_background_process_terminate",
-    {
-      title: "Stop Codex Background Process",
-      description:
-        "Stop one exact App Server background terminal selected from a currently mounted Activity card. The server revalidates the card lease, Agent version, current thread, process ownership, and idle turn state immediately before termination. Partial filesystem changes are not rolled back.",
-      inputSchema: backgroundProcessStopInput,
-      outputSchema: mutationOutputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    stopBackgroundProcess
-  );
 
   const codexCancelTargetInput = z.strictObject({
     requestId: scopeIdSchema(),
@@ -6652,12 +5051,7 @@ export function registerBridgeTools(
         actionHash,
         async () => {
           const existing = jobs.get(args.jobId);
-          if (!existing) {
-            throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
-          }
-          if (existing.scopeId !== scope.scopeId) {
-            throw new Error("The requested Codex job belongs to another conversation scope.");
-          }
+          if (!existing || existing.scopeId !== scope.scopeId) throw scopedHandleUnavailable("job");
           if (existing.version !== args.expectedVersion) {
             throw new Error(
               `Codex job version changed from ${args.expectedVersion} to ${existing.version}. Refresh authoritative status before retrying cancellation.`
@@ -6672,7 +5066,6 @@ export function registerBridgeTools(
             actionName: "cancel-job",
             target: cancellationTargetForJob(existing),
             expectedVersion: args.expectedVersion,
-            callerPresentation: callerPresentationFromMetadata(_meta),
             callerRequestDigest: correlationDigest("mcp-request", extra.mcpReq.id),
             reasonCode: "public-job-cancel",
             reason: args.reason
@@ -6702,7 +5095,7 @@ export function registerBridgeTools(
     const cardJobStopInput = z.strictObject({
         scopeId: scopeIdSchema().optional(),
         widgetInstanceId: widgetInstanceIdSchema.optional(),
-        requestId: scopeIdSchema().describe("Unique UUID for this exact card cancellation and its retries."),
+        requestId: scopeIdSchema().describe("Unique UUID for this exact Dashboard cancellation and its retries."),
         jobId: z.string().trim().min(1).max(200),
         expectedJobVersion: z.number().int().min(1),
         card: userControlProofInputSchema,
@@ -6713,14 +5106,14 @@ export function registerBridgeTools(
       });
   const stopCardJob: ToolCallback<typeof cardJobStopInput> = async (args, extra) => {
       const _meta = extra.mcpReq._meta;
-      const { scope, widgetSessionId, presentation, claims } = requireControlCard(args, _meta);
+      const { scope, widgetSessionId, claims } = requireControlCard(args, _meta);
       if (claims && claims.jobVersion !== args.expectedJobVersion) {
         throw new Error("UI_CONTROL_TARGET_CHANGED: The requested version differs from the displayed work.");
       }
-      const widgetInstanceDigest = correlationDigest("activity-widget", widgetSessionId) as string;
+      const widgetInstanceDigest = correlationDigest("dashboard-widget", widgetSessionId) as string;
       const actionHash = createHash("sha256")
         .update(JSON.stringify({
-          action: "cancel-card-job",
+          action: "cancel-dashboard-job",
           jobId: args.jobId,
           expectedJobVersion: args.expectedJobVersion,
           card: args.card,
@@ -6737,13 +5130,13 @@ export function registerBridgeTools(
           if (
             !job ||
             job.scopeId !== scope.scopeId ||
-            job.activityId !== args.card.activityId
+            job.activityId !== claims.activityId
           ) {
-            throw new Error("The requested Codex job is unavailable in this card's exact Activity scope.");
+            throw new Error("The requested Codex job is unavailable in this Dashboard selection.");
           }
           if (job.version !== args.expectedJobVersion) {
             throw new Error(
-              `Codex job version changed from ${args.expectedJobVersion} to ${job.version}. Refresh the Activity card before retrying cancellation.`
+              `Codex job version changed from ${args.expectedJobVersion} to ${job.version}. Refresh the Dashboard before retrying cancellation.`
             );
           }
           const { intent } = jobs.beginCancellationOperation({
@@ -6751,17 +5144,16 @@ export function registerBridgeTools(
             requestId: args.requestId,
             actionHash,
             source: "widget-control",
-            toolName: claims ? "codex_ui_stop" : "codex_activity_job_cancel",
-            actionName: "cancel-card-job",
-            target: cancellationTargetForJob(job, presentation),
+            toolName: "codex_ui_stop",
+            actionName: "cancel-dashboard-job",
+            target: cancellationTargetForJob(job),
             expectedVersion: args.expectedJobVersion,
-            callerPresentation: presentation,
             widgetProof: {
               instanceDigest: widgetInstanceDigest,
-              cardGeneration: args.card.generation
+              cardGeneration: claims.generation
             },
             callerRequestDigest: correlationDigest("mcp-request", extra.mcpReq.id),
-            reasonCode: "widget-force-stop"
+            reasonCode: "dashboard-force-stop"
           });
           const cancelled = await jobs.cancel(job.jobId, intent, {
             acknowledgeAffectedJobIds: args.acknowledgeAffectedJobIds
@@ -6777,32 +5169,9 @@ export function registerBridgeTools(
           return formatted;
         }
       );
-      return mutationToolResult({ ok: true, action: "cancel-card-job", job: result }, "app");
+      return mutationToolResult({ ok: true, action: "cancel-dashboard-job", job: result }, "app");
     };
 
-  server.registerTool(
-    "codex_activity_job_cancel",
-    {
-      title: "Force-stop Activity Card Job",
-      description:
-        "App-private destructive control for one exact job shown by a live, current Activity card. The bridge validates the widget instance, exact card generation and presentation lease, exact job version, and idempotency request before recording durable provenance and dispatching cancellation.",
-      inputSchema: cardJobStopInput,
-      outputSchema: mutationOutputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    stopCardJob
-  );
 
   const interactionAnswersBaseInput = z.record(
     z.string().trim().min(1).max(200),
@@ -6850,7 +5219,7 @@ export function registerBridgeTools(
           `At most ${MAX_CODEX_INTERACTION_QUESTIONS} interaction questions can be answered at once.`
         );
       }
-      const { scope, widgetSessionId, presentation, claims } = requireControlCard(args, _meta);
+      const { scope, widgetSessionId, claims } = requireControlCard(args, _meta);
       if (claims && claims.jobVersion !== args.expectedJobVersion) {
         throw new Error("UI_CONTROL_TARGET_CHANGED: The requested version differs from the displayed work.");
       }
@@ -6889,7 +5258,7 @@ export function registerBridgeTools(
           }
           if (job.version !== args.expectedJobVersion) {
             throw new Error(
-              `Codex job version changed from ${args.expectedJobVersion} to ${job.version}. Refresh the Activity card before retrying the response.`
+              `Codex job version changed from ${args.expectedJobVersion} to ${job.version}. Refresh the Dashboard before retrying the response.`
             );
           }
           const interaction = job.pendingInteractions.find(
@@ -6959,7 +5328,7 @@ export function registerBridgeTools(
         ui: { visibility: ["app"] },
         "openai/visibility": "private",
         "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
+        "codex/uiContractGeneration": DASHBOARD_CARD_CONTRACT_GENERATION
       }
     },
     respondInteraction
@@ -7079,108 +5448,6 @@ export function registerBridgeTools(
     }
   );
 
-  server.registerTool(
-    "codex_job_steer",
-    {
-      title: "Steer Active Codex Job",
-      description:
-        "App-only additional guidance for one exact active App Server turn selected from a currently leased Activity card. The server revalidates card ownership, Job/Activity/Agent scope, and optimistic Job version immediately before sending the prompt.",
-      inputSchema: z.strictObject({
-        scopeId: scopeIdSchema().optional(),
-        widgetInstanceId: widgetInstanceIdSchema.optional(),
-        requestId: scopeIdSchema().describe("Unique UUID for this exact steering request and its retries."),
-        jobId: z.string().trim().min(1).max(200),
-        expectedJobVersion: z.number().int().min(1),
-        prompt: z.string().trim().min(1).max(config.maxPromptChars),
-        card: activityCardProofInputSchema
-      }),
-      outputSchema: mutationOutputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false
-      },
-      _meta: {
-        ui: { visibility: ["app"] },
-        "openai/visibility": "private",
-        "openai/widgetAccessible": true,
-        "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-      }
-    },
-    async (args, extra) => {
-      const _meta = extra.mcpReq._meta;
-      const scope = scopeResolver.require(
-        _meta as ToolCallMetadata,
-        args.scopeId,
-        "Codex Job steering"
-      );
-      const widgetSessionId = mountedWidgetInstanceId(args, _meta);
-      if (!widgetSessionId) {
-        throw new Error("CARD_LEASE_REQUIRED: Job steering requires a mounted Activity card.");
-      }
-      const presentation = presentationFromActivityCardProof(args.card);
-      jobs.requireActivityCardLease(
-        scope.scopeId,
-        args.card.activityId,
-        args.card.generation,
-        widgetSessionId,
-        presentation
-      );
-      const promptHash = createHash("sha256").update(args.prompt).digest("hex");
-      const actionHash = createHash("sha256")
-        .update(JSON.stringify({
-          action: "steer",
-          jobId: args.jobId,
-          expectedJobVersion: args.expectedJobVersion,
-          promptHash,
-          card: args.card
-        }))
-        .digest("hex");
-      const result = await runIdempotentMutation(
-        scope.scopeId,
-        args.requestId,
-        actionHash,
-        async () => {
-          const job = jobs.get(args.jobId);
-          const activity = job ? jobs.getActivity(job.activityId) : undefined;
-          const agent = job?.agentId ? jobs.getAgent(job.agentId) : undefined;
-          if (
-            !job ||
-            job.scopeId !== scope.scopeId ||
-            !activity ||
-            activity.scopeId !== scope.scopeId ||
-            !agent ||
-            agent.scopeId !== scope.scopeId
-          ) {
-            throw new Error("The requested Codex job is unavailable in this card's conversation scope.");
-          }
-          if (job.version !== args.expectedJobVersion) {
-            throw new Error(
-              `Codex job version changed from ${args.expectedJobVersion} to ${job.version}. Refresh the Activity card before retrying steering.`
-            );
-          }
-          const updated = await jobs.steer(job.jobId, args.prompt);
-          return {
-            ok: true,
-            action: "steer",
-            activityId: activity.activityId,
-            agentId: agent.agentId,
-            job: formatJobStatus(
-              updated,
-              jobs.staleThresholdMs,
-              undefined,
-              userSettings.current,
-              jobs
-            ),
-            promptPersistedByBridge: false,
-            steeringScope: "active-codex-turn-only"
-          };
-        }
-      );
-      return mutationToolResult(result, "app");
-    }
-  );
 
   const activityVerificationEvidenceInput = z.strictObject({
     summary: z.string().trim().min(1).max(1_000),
@@ -7286,17 +5553,12 @@ export function registerBridgeTools(
         "Codex Activity update"
       );
       const existing = jobs.getActivity(args.activityId);
-      if (!existing) throw new Error("Unknown Activity id in this conversation scope.");
-      if (existing.scopeId !== scope.scopeId) {
-        throw new Error("The requested Activity belongs to another conversation scope.");
-      }
+      if (!existing || existing.scopeId !== scope.scopeId) throw scopedHandleUnavailable("activity");
       let activity!: BridgeActivity;
       const cancelledJobIds: string[] = [];
       jobs.activityTransaction(() => {
         const current = jobs.getActivity(args.activityId);
-        if (!current || current.scopeId !== scope.scopeId) {
-          throw new Error("The requested Activity is no longer available in this conversation scope.");
-        }
+        if (!current || current.scopeId !== scope.scopeId) throw scopedHandleUnavailable("activity");
         if (current.version !== args.expectedVersion) {
           throw new Error(
             `Activity version changed from ${args.expectedVersion} to ${current.version}. Refresh authoritative state before retrying the transition.`
@@ -7368,10 +5630,7 @@ export function registerBridgeTools(
         actionHash,
         async () => {
           const existing = jobs.getActivity(args.activityId);
-          if (!existing) throw new Error("Unknown Activity id in this conversation scope.");
-          if (existing.scopeId !== scope.scopeId) {
-            throw new Error("The requested Activity belongs to another conversation scope.");
-          }
+          if (!existing || existing.scopeId !== scope.scopeId) throw scopedHandleUnavailable("activity");
           if (existing.version !== args.expectedVersion) {
             throw new Error(
               `Activity version changed from ${args.expectedVersion} to ${existing.version}. Refresh authoritative state before retrying cancellation.`
@@ -7393,7 +5652,6 @@ export function registerBridgeTools(
               );
             }
           }
-          const callerPresentation = callerPresentationFromMetadata(_meta);
           const { intent: parentIntent } = jobs.beginCancellationOperation({
             scopeId: scope.scopeId,
             requestId: args.requestId,
@@ -7406,7 +5664,6 @@ export function registerBridgeTools(
               activityId: existing.activityId
             },
             expectedVersion: args.expectedVersion,
-            callerPresentation,
             callerRequestDigest: correlationDigest("mcp-request", extra.mcpReq.id),
             reasonCode: "activity-cancel",
             reason: args.reason
@@ -7427,7 +5684,6 @@ export function registerBridgeTools(
               actionName: "cancel-child-job",
               target: cancellationTargetForJob(job),
               expectedVersion: job.version,
-              callerPresentation,
               callerRequestDigest: parentIntent.callerRequestDigest,
               reasonCode: "activity-child-cancel"
             });
@@ -7698,14 +5954,6 @@ export function registerBridgeTools(
       projectId: scopeIdSchema()
     })
   ]);
-  const activityCardSettingsPatchBase = z.strictObject({
-    visibility: z.enum(ACTIVITY_CARD_VISIBILITIES).optional(),
-    completionHandoff: z.enum(COMPLETION_HANDOFF_MODES).optional()
-  });
-  const activityCardSettingsPatchInput = activityCardSettingsPatchBase.refine(
-    (patch) => Object.keys(patch).length > 0,
-    "Provide at least one Activity-card setting."
-  );
   const nestedSettingsPatchBase = z.strictObject({
     accessStrategy: settingsAccessStrategyInput.optional(),
     modelPolicy: editableModelPolicyZod().optional(),
@@ -7715,7 +5963,8 @@ export function registerBridgeTools(
     uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
     maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
     showBridgeThreadsInCodexApp: z.boolean().optional(),
-    activityCard: activityCardSettingsPatchInput.optional(),
+    dashboardAutoOpenBackground: z.boolean().optional(),
+    completionFollowUp: z.boolean().optional(),
     projectOperations: z.array(projectRegistryOperationInput)
       .min(1)
       .max(MAX_REGISTERED_PROJECTS * 2)
@@ -7761,7 +6010,8 @@ export function registerBridgeTools(
         "uiLocalePreference",
         "maxConcurrentJobs",
         "showBridgeThreadsInCodexApp",
-        "activityCard",
+        "dashboardAutoOpenBackground",
+        "completionFollowUp",
         "projectOperations"
       ] as const;
       if (!nestedKeys.some((key) => Object.prototype.hasOwnProperty.call(settings, key))) {
@@ -7775,26 +6025,12 @@ export function registerBridgeTools(
         "historyRetentionDays",
         "uiLocalePreference",
         "maxConcurrentJobs",
-        "showBridgeThreadsInCodexApp"
+        "showBridgeThreadsInCodexApp",
+        "dashboardAutoOpenBackground",
+        "completionFollowUp"
       ] as const) {
         if (settings[key] !== undefined) {
           (patch as Record<string, unknown>)[key] = settings[key];
-        }
-      }
-      if (settings.activityCard !== undefined) {
-        if (
-          !Object.prototype.hasOwnProperty.call(settings.activityCard, "visibility") &&
-          !Object.prototype.hasOwnProperty.call(settings.activityCard, "completionHandoff")
-        ) {
-          throw new Error(
-            "SETTINGS_ACTIVITY_CARD_PATCH_EMPTY: Provide at least one Activity-card setting."
-          );
-        }
-        if (settings.activityCard.visibility !== undefined) {
-          patch.activityCardVisibility = settings.activityCard.visibility;
-        }
-        if (settings.activityCard.completionHandoff !== undefined) {
-          patch.completionHandoff = settings.activityCard.completionHandoff;
         }
       }
       projectOperations = (settings.projectOperations || []) as ProjectRegistryOperation[];
@@ -8356,14 +6592,12 @@ export function registerBridgeTools(
     }
   );
   server.registerTool("codex_ui_read", {
-    title: "Read Card Data", description: "App-only data reads for overview, settings, question cards, and selected work details. Each view retains its own scope and proof checks.",
+    title: "Read Card Data", description: "App-only data reads for Dashboard, Settings, and selected work details. Each view retains its own scope and proof checks.",
     inputSchema: z.union([
       dashboardSnapshotInput.extend({ view: z.literal("dashboard") }),
       dashboardHistoryDetailInput,
       settingsSnapshotInput.extend({ view: z.literal("settings") }),
-      questions.questionCardInputSchema.extend({ view: z.literal("question") }),
       controlDetailInput,
-      historyDetailInput,
       problemControlDetailInput
     ]),
     outputSchema: APP_ONLY_OUTPUT_SCHEMAS.codex_ui_read,
@@ -8371,48 +6605,93 @@ export function registerBridgeTools(
     _meta: { ui: { visibility: ["app"] }, "openai/visibility": "private", "openai/widgetAccessible": true }
   }, async (args, extra) => {
     if (args.view === "problem-control") return readProblemControl(args,extra);
-    if (args.view === "history") return readHistoryControl(args, extra);
     if (args.view === "control") return readControl(args, extra);
     if (args.view === "dashboard-history") return readDashboardHistoryDetail(args, extra);
     if (args.view === "dashboard") { const { view, ...input } = args; return readDashboard(input, extra); }
     if (args.view === "settings") { const { view, ...input } = args; return readSettings(input, extra); }
-    const { view, ...input } = args; return questions.readCard(input, extra);
+    throw new Error("UI_VIEW_UNSUPPORTED: Refresh the card and choose a supported view.");
   });
   server.registerTool("codex_ui_problem", {
-    title:"Review Problems",description:"App-only execution review, undo, non-loading status recheck, or an explicitly confirmed retry of failed termination. The complete selection and action require a fresh mounted-card proof.",
-    inputSchema:problemActionSchema.safeExtend({token:z.string().max(32768),widgetInstanceId:widgetInstanceIdSchema,scopeId:scopeIdSchema().optional()}),
-    outputSchema:problemActionResultSchema,
+    title:"Review Problems and Completion Delivery",description:"App-only execution review, undo, non-loading status recheck, confirmed retry of failed termination, and durable completion-delivery acknowledgement. Every mutation requires a fresh mounted-card proof.",
+    inputSchema:z.union([
+      problemActionSchema.safeExtend({token:z.string().max(32768),widgetInstanceId:widgetInstanceIdSchema,scopeId:scopeIdSchema().optional()}),
+      completionDeliveryActionInput
+    ]),
+    outputSchema:APP_ONLY_OUTPUT_SCHEMAS.codex_ui_problem,
     annotations:{readOnlyHint:false,destructiveHint:true,idempotentHint:true,openWorldHint:false},
     _meta:{ui:{visibility:["app"]},"openai/visibility":"private","openai/widgetAccessible":true}
   },async (args,extra) => {
-    const host = scopeResolver.resolve(extra.mcpReq._meta as ToolCallMetadata,args.scopeId);
-    const widget = mountedWidgetInstanceId(args,extra.mcpReq._meta);
+    if (["completion-claim", "completion-delivered", "completion-release", "completion-uncertain"].includes(args.action)) {
+      const deliveryArgs = completionDeliveryActionInput.parse(args);
+      const host = scopeResolver.require(
+        extra.mcpReq._meta as ToolCallMetadata,
+        deliveryArgs.scopeId,
+        "Dashboard completion delivery"
+      );
+      if (!userSettings.current.completionFollowUp) {
+        throw new Error("COMPLETION_FOLLOW_UP_DISABLED: Enable completion follow-up before delivering queued events.");
+      }
+      const presentation = dashboardPresentations.require({
+        token: deliveryArgs.presentationToken,
+        scopeId: host.scopeId,
+        hostScopeId: host.scopeId,
+        widgetInstanceId: deliveryArgs.widgetInstanceId
+      });
+      const job = jobs.get(presentation.jobId);
+      if (!job || job.scopeId !== host.scopeId) {
+        throw new Error("DASHBOARD_AUTOMATIC_PRESENTATION_STALE: The originating background task is no longer available.");
+      }
+      const route = selectCompletionDeliveryRoute({
+        verifiedHostEvent: false,
+        automaticDashboard: true
+      });
+      if (route !== "dashboard") {
+        throw new Error("COMPLETION_DELIVERY_ROUTE_UNAVAILABLE: No verified completion route is available.");
+      }
+      const leaseOwner = `dashboard:${deliveryArgs.widgetInstanceId}`;
+      const records = deliveryArgs.action === "completion-claim"
+        ? jobs.claimCompletionOutboxBatch(deliveryArgs.outboxIds, host.scopeId, leaseOwner)
+        : deliveryArgs.action === "completion-delivered"
+          ? jobs.markCompletionOutboxBatchDelivered(deliveryArgs.outboxIds, host.scopeId, leaseOwner)
+          : deliveryArgs.action === "completion-uncertain"
+            ? jobs.markCompletionOutboxBatchUncertain(deliveryArgs.outboxIds, host.scopeId, leaseOwner)
+            : (() => {
+                jobs.releaseCompletionOutboxBatch(deliveryArgs.outboxIds, host.scopeId, leaseOwner);
+                return [];
+              })();
+      const state = deliveryArgs.action === "completion-claim"
+        ? "claimed" as const
+        : deliveryArgs.action === "completion-delivered"
+          ? "delivered" as const
+          : deliveryArgs.action === "completion-uncertain"
+            ? "uncertain" as const
+            : "released" as const;
+      const structured = completionDeliveryMutationOutputSchema.parse({
+        kind: "completion-delivery",
+        action: deliveryArgs.action,
+        state,
+        events: records.map(completionEvent)
+      });
+      return {
+        content: [{ type: "text", text: `Completion delivery ${state}.` }],
+        structuredContent: structured
+      };
+    }
+    const problemArgs = problemActionSchema.safeExtend({
+      token:z.string().max(32768),
+      widgetInstanceId:widgetInstanceIdSchema,
+      scopeId:scopeIdSchema().optional()
+    }).parse(args);
+    const host = scopeResolver.resolve(extra.mcpReq._meta as ToolCallMetadata,problemArgs.scopeId);
+    const widget = mountedWidgetInstanceId(problemArgs,extra.mcpReq._meta);
     if (!widget) throw new Error("MOUNTED_WIDGET_REQUIRED: Refresh the problem list.");
-    const claims = reviewProofs.require(args.token,widget,host?.scopeId,args);
-    const {token,widgetInstanceId,scopeId,...input} = args;
+    const claims = reviewProofs.require(problemArgs.token,widget,host?.scopeId,problemArgs);
+    const {token,widgetInstanceId,scopeId,...input} = problemArgs;
     const result = await applicationService.problemAction!(input,claims.selectedScopeId || undefined,"widget-control");
     return {content:[{type:"text",text:"Problem action completed."}],structuredContent:result};
   });
-  server.registerTool("codex_ui_history", {
-    title:"Acknowledge Execution History",description:"App-only acknowledgement of a selected failed or interrupted execution.",
-    inputSchema:dashboardHistoryActionInput.extend({token:z.string().max(32768),widgetInstanceId:widgetInstanceIdSchema,scopeId:scopeIdSchema().optional()}),
-    outputSchema:z.strictObject({ok:z.literal(true)}),
-    annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false},
-    _meta:{ui:{visibility:["app"]},"openai/visibility":"private","openai/widgetAccessible":true}
-  },async (args,extra) => {
-    const host = scopeResolver.resolve(extra.mcpReq._meta as ToolCallMetadata,args.scopeId);
-    const widget = mountedWidgetInstanceId(args,extra.mcpReq._meta);
-    if (!widget) throw new Error("CARD_LEASE_REQUIRED: Refresh this history row.");
-    const claims = controlProofs.require(args.token,widget,host?.scopeId);
-    if (claims.purpose !== "history" || claims.historyRevision !== args.expectedRevision || dashboardRowKey(claims.agentId) !== args.rowKey) {
-      throw new Error("HISTORY_TARGET_CHANGED: Refresh the selected execution.");
-    }
-    const {token,widgetInstanceId,scopeId,...input} = args;
-    const result = await applicationService.historyAction!(input);
-    return {content:[{type:"text",text:"History updated."}],structuredContent:result};
-  });
   server.registerTool("codex_ui_stop", {
-    title: "Stop Work from a Card", description: "App-only cancellation of an active Job or termination of idle background processes. Target-specific ownership, version, state, and proof checks apply.",
+    title: "Stop Work from Dashboard", description: "App-only cancellation of an active Job or termination of idle background processes. Target-specific ownership, version, state, and mounted Dashboard proof checks apply.",
     inputSchema: z.union([
       cardJobStopInput.extend({ kind: z.literal("job") }),
       backgroundProcessStopInput.extend({ kind: z.literal("process") })
@@ -8803,6 +7082,26 @@ class AgentThreadResumeError extends Error {
   }
 }
 
+type ScopedHandleKind = "job" | "activity" | "agent" | "thread";
+
+/**
+ * Do not reveal whether a copied handle exists outside the caller's scope.
+ * The recovery instruction remains useful for a stale or retained handle that
+ * belongs to the caller, while the same response is used for foreign handles.
+ */
+function scopedHandleUnavailable(kind: ScopedHandleKind): Error {
+  const label = {
+    job: "Codex job",
+    activity: "Activity",
+    agent: "Agent",
+    thread: "Codex thread"
+  }[kind];
+  return new Error(
+    `HANDLE_UNAVAILABLE: The requested ${label} is unavailable in this conversation scope. ` +
+    "Read codex_status({}) to obtain current retained handles before retrying."
+  );
+}
+
 function validateTaskSelectionInput(
   args: CodexTaskArgs,
   preferences: BridgeUserSettings,
@@ -8881,9 +7180,7 @@ function resolveAgentForTask(
   let agent: BridgeAgent | undefined;
   if (args.agentId) {
     agent = jobs.getAgent(args.agentId);
-    if (!agent || agent.scopeId !== scopeId) {
-      throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
-    }
+    if (!agent || agent.scopeId !== scopeId) throw scopedHandleUnavailable("agent");
   } else if (!args.agentName) {
     const sourceActivityId = activityRequest.activityId || activityRequest.continuationOfActivityId;
     if (sourceActivityId) {
@@ -9201,9 +7498,7 @@ function validateActivityTaskRequest(
   if (!request.activityId) {
     if (request.continuationOfActivityId) {
       const source = jobs.getActivity(request.continuationOfActivityId);
-      if (!source || source.scopeId !== scopeId) {
-        throw new Error("The continuation Activity belongs to another conversation scope or does not exist.");
-      }
+      if (!source || source.scopeId !== scopeId) throw scopedHandleUnavailable("activity");
     }
     return request;
   }
@@ -9221,10 +7516,7 @@ function validateActivityTaskRequest(
     );
   }
   const activity = jobs.getActivity(request.activityId);
-  if (!activity) throw new Error("Unknown Activity id in this conversation scope.");
-  if (activity.scopeId !== scopeId) {
-    throw new Error("The requested Activity belongs to another conversation scope.");
-  }
+  if (!activity || activity.scopeId !== scopeId) throw scopedHandleUnavailable("activity");
   if (activity.lifecycle !== "open") {
     throw new Error("A new Codex job can be attached only to an open Activity.");
   }
@@ -9816,6 +8108,7 @@ async function runCodex(input: {
     throw new Error("Codex task admission requires an existing Agent or a new Agent name.");
   }
   let job!: CodexJob;
+  let replayed = false;
   const admit = () => input.jobs.activityTransaction(() => {
     const replay = input.jobs.findRequest(
       input.routing.scopeId,
@@ -9824,6 +8117,7 @@ async function runCodex(input: {
     );
     if (replay) {
       job = replay;
+      replayed = true;
       return;
     }
     if (input.userSettings) {
@@ -9884,7 +8178,6 @@ async function runCodex(input: {
         sandbox: input.sandbox,
         scopeId: input.routing.scopeId,
         requestId: input.routing.requestId,
-        activityPresentationId: input.routing.activityPresentationId,
         requestHash: input.routing.requestHash,
         requestHashVersion: input.routing.requestHashVersion,
         sourceThreadId: input.sourceThreadId,
@@ -9934,7 +8227,12 @@ async function runCodex(input: {
       input.config.jobStaleAfterMs,
       input.preferences,
       input.jobs,
-      false
+      false,
+      replayed ? undefined : automaticDashboardPresentationForJob(
+        job,
+        input.preferences,
+        input.jobs
+      )
     );
   }
   await job.promise;
@@ -10062,18 +8360,11 @@ function validatePublicSteeringTarget(
   expectedJobVersion: number
 ): PublicSteeringValidation {
   const job = jobs.get(jobId);
-  if (!job) {
+  if (!job || job.scopeId !== scopeId) {
     return {
       ok: false,
       code: "JOB_NOT_ACTIVE",
       message: "The exact Job does not exist or is no longer retained; no future Agent turn was queued."
-    };
-  }
-  if (job.scopeId !== scopeId) {
-    return {
-      ok: false,
-      code: "JOB_SCOPE_MISMATCH",
-      message: "The exact Job is not owned by this ChatGPT conversation scope."
     };
   }
 
@@ -10261,24 +8552,12 @@ function formatJobStatus(
   job: CodexJob,
   staleAfterMs: number,
   wait?: CodexJobWaitResult,
-  preferences?: Pick<BridgeUserSettings, "activityCardVisibility">,
+  preferences?: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">,
   registry?: CodexJobRegistry,
-  reserveActivityCard = false,
   replay = false
 ): Record<string, unknown> {
   const activity = formatJobActivity(job, staleAfterMs);
-  const activityTracking = registry
-    ? registry.activityCardRenderHint(
-      job.activityId,
-      job.executionMode,
-      preferences,
-      {
-        reserve: reserveActivityCard,
-        activityPresentationId: job.activityPresentationId,
-        reservationOwnerId: job.jobId
-      }
-    )
-    : activityCardRenderHint(job.executionMode, preferences, job.activityPresentationId);
+  const dashboard = dashboardPresentationHint(job.executionMode, preferences);
   const active = isActiveActivityJobStatus(job.status);
   const terminal = isTerminalActivityJobStatus(job.status);
   const resultOmitted = job.resultOmitted || false;
@@ -10326,10 +8605,18 @@ function formatJobStatus(
       : []),
     ...(job.status === "cancelled"
       ? ["Cancellation does not roll back partial filesystem changes."]
+      : []),
+    ...(dashboard.completionDeliveryRoute === "pending"
+      ? ["Completion follow-up is queued because no verified host event or automatic Dashboard presentation is available."]
       : [])
   ];
   const nextActions = active
-    ? [{ tool: "codex_status", arguments: { query: { kind: "input", jobId: job.jobId, waitMs: DEFAULT_CODEX_STATUS_WAIT_MS } } }]
+    ? [
+        { tool: "codex_status", arguments: { query: { kind: "input", jobId: job.jobId, waitMs: DEFAULT_CODEX_STATUS_WAIT_MS } } },
+        ...(dashboard.automatic
+          ? [{ tool: "codex_dashboard", arguments: { scope: "conversation" } }]
+          : [])
+      ]
     : [];
   return {
     status: job.status,
@@ -10356,13 +8643,11 @@ function formatJobStatus(
     executionAudit: formatExecutionAudit(job),
     scopeId: job.scopeId,
     requestId: job.requestId,
-    activityPresentationId: job.activityPresentationId || null,
     bridgeSession: {
       ...job.sessionDecision,
       scopeId: job.scopeId,
       requestId: job.requestId,
-      projectName: job.projectName || null,
-      activityPresentationId: job.activityPresentationId || null
+      projectName: job.projectName || null
     },
     bridgeActivity: {
       activityId: job.activityId,
@@ -10370,7 +8655,7 @@ function formatJobStatus(
       agentId: job.agentId || null,
       projectName: job.projectName || null,
       executionMode: job.executionMode,
-      ...activityTracking
+      dashboard
     },
     createdAt: new Date(job.createdAt).toISOString(),
     updatedAt: new Date(job.updatedAt).toISOString(),
@@ -10411,34 +8696,26 @@ function formatJobStatus(
   };
 }
 
-function activityCardRenderHint(
+function dashboardPresentationHint(
   executionMode: ActivityExecutionMode,
-  preferences?: Pick<BridgeUserSettings, "activityCardVisibility">,
-  activityPresentationId?: string
+  preferences?: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">
 ) {
-  const visibility = preferences?.activityCardVisibility || "always";
-  const shouldRenderActivityCard =
-    Boolean(activityPresentationId) &&
-    (visibility === "always" || (visibility === "background-only" && executionMode === "background"));
+  const automatic = executionMode === "background" &&
+    preferences?.dashboardAutoOpenBackground !== false;
+  const completionDeliveryRoute = executionMode === "background" && preferences?.completionFollowUp === true
+    ? selectCompletionDeliveryRoute({ verifiedHostEvent: false, automaticDashboard: automatic })
+    : "disabled" as const;
   return {
     statusTool: "codex_status",
-    automaticRenderTool: "codex_activity",
-    explicitRenderTool: "codex_activity",
-    followUpRenderRequired: false,
-    renderToolAvailable: true,
-    explicitRenderAllowed: true,
-    activityCardVisibility: visibility,
-    cardGeneration: 1,
-    presentationKind: "automatic",
-    ...(activityPresentationId ? { activityPresentationId } : {}),
-    shouldRenderActivityCard,
-    renderReason: shouldRenderActivityCard
-      ? "new-presentation"
-      : visibility === "never" ||
-          (visibility === "background-only" && executionMode !== "background")
-        ? "visibility-disabled"
-        : "presentation-unavailable",
-    renderTiming: executionMode === "background" ? "immediate" : "after-result-or-existing-mounted-card"
+    openTool: "codex_dashboard",
+    scope: "conversation",
+    automatic,
+    reason: automatic
+      ? "background-enabled" as const
+      : executionMode === "foreground"
+        ? "foreground" as const
+        : "setting-disabled" as const,
+    completionDeliveryRoute
   };
 }
 
@@ -10462,7 +8739,6 @@ function formatJobSummary(job: CodexJob, staleAfterMs: number): Record<string, u
     upstreamError: retainedStructuredError(job.result) || null,
     scopeId: job.scopeId,
     requestId: job.requestId,
-    activityPresentationId: job.activityPresentationId || null,
     session: job.sessionDecision,
     createdAt: new Date(job.createdAt).toISOString(),
     updatedAt: new Date(job.updatedAt).toISOString(),
@@ -10659,12 +8935,10 @@ async function terminateAgentBackgroundProcess(input: {
 }): Promise<Record<string, unknown>> {
   const requireIdleOwner = () => {
     const agent = input.jobs.getAgent(input.agentId);
-    if (!agent || agent.scopeId !== input.scopeId) {
-      throw new Error("The selected Agent belongs to another conversation scope or does not exist.");
-    }
+    if (!agent || agent.scopeId !== input.scopeId) throw scopedHandleUnavailable("agent");
     if (input.expectedAgentVersion !== undefined && agent.version !== input.expectedAgentVersion) {
       throw new Error(
-        `AGENT_VERSION_CHANGED: Agent version changed from ${input.expectedAgentVersion} to ${agent.version}. Refresh the Activity card before retrying process termination.`
+        `AGENT_VERSION_CHANGED: Agent version changed from ${input.expectedAgentVersion} to ${agent.version}. Refresh the Dashboard before retrying process termination.`
       );
     }
     if (agent.lifecycle === "active" || agent.lifecycle === "waiting-input" || agent.currentJobId) {
@@ -10789,10 +9063,8 @@ export type BridgeSettingsPatchInput = {
   uiLocalePreference?: UiLocalePreference;
   maxConcurrentJobs?: number;
   showBridgeThreadsInCodexApp?: boolean;
-  activityCard?: {
-    visibility?: ActivityCardVisibility;
-    completionHandoff?: CompletionHandoffMode;
-  };
+  dashboardAutoOpenBackground?: boolean;
+  completionFollowUp?: boolean;
   projectOperations?: ProjectRegistryOperation[];
 };
 
@@ -11644,6 +9916,34 @@ function cachedDashboardRuntimes(
   return observations;
 }
 
+/**
+ * A process stop is offered only from a fresh, confirmed Dashboard runtime
+ * read. The signed ids are still re-read by the mutation handler immediately
+ * before termination, so a stale process can never be targeted by the card.
+ */
+function dashboardControllableBackgroundProcessIds(
+  jobs: CodexJobRegistry,
+  upstream: CodexUpstream,
+  agent: BridgeAgent
+): string[] {
+  if (agent.lifecycle === "active" || agent.lifecycle === "waiting-input" || agent.currentJobId) return [];
+  const thread = jobs.listAgentThreads(agent.agentId).find(entry => entry.isCurrent);
+  if (!thread || !backendSupports(thread.backendKind, "supportsBackgroundTerminals")) return [];
+  const entry = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
+  const now = Date.now();
+  if (
+    !entry ||
+    entry.stamp !== dashboardRuntimeStamp(agent, jobs.observedLatestJobForAgent(agent.agentId)) ||
+    entry.freshUntil <= now ||
+    entry.retainUntil <= now ||
+    entry.unavailable ||
+    entry.observation.backgroundProcessState !== "confirmed"
+  ) return [];
+  return [...new Set(entry.observation.backgroundProcessIds || [])]
+    .filter(processId => typeof processId === "string" && processId.trim().length > 0)
+    .slice(0, 100);
+}
+
 function cachedDashboardEnrichment(
   upstream: CodexUpstream,
   candidates: ReadonlyArray<DashboardRuntimeCandidate>
@@ -11662,14 +9962,19 @@ function cachedDashboardEnrichment(
   const dates = entries.map(entry => new Date(entry.observedAt).toISOString());
   const usage = cachedCodexWeeklyUsage(upstream);
   if (usage) dates.push(usage.observedAt);
+  const oldestObservationAt = earliestObservationAt(dates);
   return {
     state: "structural", runtimeRequests: 0, cacheHits: entries.length,
     timeouts: 0, durationMs: 0, usageTimedOut: false,
     pendingReads: runtimePending + usagePending,
     runtimeUnavailable: entries.filter(entry => entry.unavailable).length,
     usageUnavailable: !!(usageCompletion && usageCompletion.revision === revision && usageCompletion.failed),
-    oldestObservationAt: dates.sort()[0]
+    ...(oldestObservationAt ? { oldestObservationAt } : {})
   };
+}
+
+function earliestObservationAt(values: ReadonlyArray<string | undefined>): string | undefined {
+  return values.filter((value): value is string => Boolean(value)).sort()[0];
 }
 
 type DashboardRuntimeResult = Awaited<ReturnType<typeof inspectDashboardRuntime>>;
@@ -11942,7 +10247,7 @@ function buildDashboardHistoryDetail(
   const cancellations = buildCancellationDisplayIndex(jobs, agent.scopeId).byJobId;
   const activityTitle = (activityId: string): string | null => jobs.getActivity(activityId)?.title || null;
   const turnForJob = (job: CodexJob): DashboardTurn => {
-    const execution = activityCardExecution(job, catalog);
+    const execution = dashboardExecutionForJob(job, catalog);
     const cancellation = cancellations.get(job.jobId);
     const terminal = isTerminalActivityJobStatus(job.status);
     return {
@@ -12138,6 +10443,10 @@ async function buildDashboardView(
     const selectedIds = new Set(candidates.map(candidate => candidate.agentId));
     const uncheckedOutsideBatch = rankedCandidates.filter(candidate =>
       !selectedIds.has(candidate.agentId) && !observations.has(candidate.agentId)).length;
+    const oldestObservationAt = earliestObservationAt([
+      runtimeInspection.oldestObservationAt,
+      usage.value?.observedAt
+    ]);
     return buildDashboardView(
       jobs,
       upstream,
@@ -12165,7 +10474,7 @@ async function buildDashboardView(
           usageTimedOut: usage.timedOut,
           pendingReads: runtimeInspection.timeouts + (usage.timedOut ? 1 : 0),
           usageUnavailable: usage.failed,
-          oldestObservationAt: [runtimeInspection.oldestObservationAt, usage.value?.observedAt].filter((value): value is string => !!value).sort()[0]
+          ...(oldestObservationAt ? { oldestObservationAt } : {})
         }
       },
       scopeId,
@@ -12320,7 +10629,7 @@ async function buildDashboardView(
 
   const turnForJob = (job: CodexJob): DashboardTurn => {
     const terminal = isTerminalActivityJobStatus(job.status);
-    const execution = activityCardExecution(job, modelCatalog);
+    const execution = dashboardExecutionForJob(job, modelCatalog);
     const cancellation = cancellationForDashboardJob(job.jobId);
     return {
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
@@ -12365,7 +10674,7 @@ async function buildDashboardView(
 
   const currentExecutionForAgent = (
     agentId: string | undefined
-  ): ActivityCardExecution | undefined => {
+  ): DashboardExecution | undefined => {
     const session = currentSessionFor(agentId);
     if (!session?.selection) return undefined;
     let selection = session.selection;
@@ -12423,7 +10732,7 @@ async function buildDashboardView(
 
   const agentIdByRowKey = new Map<string, string>();
 
-  // Advertise only actionable review requests that readControl can open.
+  // Advertise only controls that the current Dashboard detail read can sign.
   const controlKindForAgent = (
     agentId: string | undefined
   ): DashboardRow["controlKind"] => {
@@ -12434,6 +10743,9 @@ async function buildDashboardView(
       : latestJobByAgent.get(agent.agentId);
     if (!job || !activityFor(job.activityId)) return null;
     if (job.pendingInteractions.some(interaction => !ordinaryCodexQuestion(interaction))) return "request";
+    if (isActiveActivityJobStatus(job.status) || dashboardControllableBackgroundProcessIds(jobs, upstream, agent).length > 0) {
+      return "execution";
+    }
     return null;
   };
 
@@ -12770,7 +11082,7 @@ async function buildDashboardView(
         automatic:automaticSummary(automaticRecords.find(automatic => automatic.jobId === record.jobId)),
         canAcknowledge:!acknowledgedAt,canUnacknowledge:Boolean(acknowledgedAt),canRecheck:false,canRetryStop:false,
         projectRow:() => {
-          if (job) return {...jobRow(job,"recent"),controlKind:null,history:[],historyCount:0,historyControls:undefined};
+          if (job) return {...jobRow(job,"recent"),controlKind:null,history:[],historyCount:0};
           const retained: DashboardRetainedJobSummary = archivedById.get(record.jobId) || {
             jobId:record.jobId,scopeId:record.scopeId,activityId:record.activityId,agentId:record.agentId || undefined,
             status:record.status,updatedAt:record.updatedAt
@@ -12807,7 +11119,7 @@ async function buildDashboardView(
       const currentJob = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
       const observed = inspectionFailed ? cachedRuntime?.attemptedAt : cachedRuntime?.observedAt;
       const runtimeRow = {...row,controlKind:null,status:kind === "unknown" ? "liveness-unknown" as const : row.status,
-        history:[],historyCount:0,historyControls:undefined};
+        history:[],historyCount:0};
       entries.push({problemKey:problemKey("runtime",agent.agentId),revision:identity.revision,kind,source:"runtime",
         review:resolvedAt ? "acknowledged" : "pending",acknowledgedAt:resolvedAt ? new Date(resolvedAt).toISOString() : null,
         observedAt:new Date(observed || agent.updatedAt).toISOString(),
@@ -12831,8 +11143,8 @@ async function buildDashboardView(
         kind:record.kind === "retry-stop" ? "termination-failed" : record.kind === "recheck" ? "unknown" : "failed",
         source:"recovery",review:"automatic",acknowledgedAt:null,observedAt:new Date(record.updatedAt).toISOString(),reason:null,
         automatic:automaticSummary(record),canAcknowledge:false,canUnacknowledge:false,canRecheck:false,canRetryStop:false,
-        projectRow:()=>job ? {...jobRow(job,"recent"),controlKind:null,history:[],historyCount:0,historyControls:undefined}
-          : retained ? retainedProblemRow(retained) : {...fallback!,controlKind:null,history:[],historyCount:0,historyControls:undefined}});
+        projectRow:()=>job ? {...jobRow(job,"recent"),controlKind:null,history:[],historyCount:0}
+          : retained ? retainedProblemRow(retained) : {...fallback!,controlKind:null,history:[],historyCount:0}});
     }
     entries.sort((a,b) => Date.parse(b.observedAt)-Date.parse(a.observedAt) || a.problemKey.localeCompare(b.problemKey));
     const filtered = entries.filter(entry => (problemQuery.view === "actionable" ? entry.source === "runtime" && entry.review === "pending"
@@ -12909,23 +11221,6 @@ async function buildDashboardView(
   for (const row of [...activePage.rows, ...terminalPage.rows, ...idlePage.rows, ...statusRows]) {
     const agentId = agentIdByRowKey.get(row.rowKey);
     if (agentId) visibleAgentIdsOut?.add(agentId);
-    const agent = agentId ? agentById.get(agentId) : undefined;
-    if (statusFilter !== undefined && agent) {
-      const latest = jobs.admissionStateStore.workHistory.latestJob(agent.agentId);
-      const canAcknowledge = Boolean(
-        !problemQuery && latest &&
-        ["failed", "interrupted"].includes(row.status) &&
-        ["failed", "interrupted"].includes(latest.status) &&
-        !acknowledgedJobs.has(latest.jobId) &&
-        latest.updatedAt >= now - ISSUE_ATTENTION_DAYS * 86400_000
-      );
-      if (canAcknowledge) {
-        row.historyControls = {
-          revision: dashboardHistoryRevision(agent, latest),
-          canAcknowledge: true
-        };
-      }
-    }
   }
   const weeklyUsage = enrichment?.weeklyUsage || cachedCodexWeeklyUsage(upstream);
   const scopedProjectIds = scopeId ? new Set([
@@ -13066,317 +11361,7 @@ function listAllScopedActivities(jobs: CodexJobRegistry, scopeId: string): Bridg
   return activities;
 }
 
-function listAllScopedAgents(jobs: CodexJobRegistry, scopeId: string): BridgeAgent[] {
-  const total = jobs.agentCount(scopeId);
-  const agents: BridgeAgent[] = [];
-  while (agents.length < total) {
-    const page = jobs.listAgents(scopeId, 1_000, agents.length);
-    if (page.length === 0) break;
-    agents.push(...page);
-  }
-  return agents;
-}
-
-async function buildLegacyActivityView(
-  jobs: CodexJobRegistry,
-  upstream: CodexUpstream,
-  modelCatalog: CodexModelCatalogProvider,
-  _config: BridgeConfig,
-  preferences: BridgeUserSettings,
-  scopeId: string,
-  limit: number,
-  selectedActivityId?: string,
-  wait?: ActivityScopeWatchResult,
-  presentation: ActivityViewPresentationContext = { kind: "explicit" },
-  lease?: ActivityCardLeaseTouchResult,
-  inspectRuntime = false
-) {
-  const now = Date.now();
-  const allAgents = listAllScopedAgents(jobs, scopeId);
-  const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
-  const latestJobByAgent = new Map<string, CodexJob>();
-  const controlRows: Array<Record<string, unknown>> = [];
-  const currentThreads = new Map<string, BridgeAgentThread>();
-  const agentRows = allAgents.map((agent) => {
-    const agentJobs = jobs.listForAgent(agent.agentId);
-    const latestJob = agentJobs.at(-1);
-    if (latestJob) latestJobByAgent.set(agent.agentId, latestJob);
-    const activeJob = agent.currentJobId
-      ? jobs.get(agent.currentJobId)
-      : [...agentJobs].reverse().find((job) => isActiveActivityJobStatus(job.status));
-    const assignments = jobs.listActivityAgentAssignments(undefined, agent.agentId);
-    const currentThread = jobs.listAgentThreads(agent.agentId).find((thread) => thread.isCurrent);
-    if (currentThread) currentThreads.set(agent.agentId, currentThread);
-    const assignment = [...assignments].reverse().find((entry) => entry.releasedAt === undefined) || assignments.at(-1);
-    const activityId = activeJob?.activityId || assignment?.activityId || latestJob?.activityId;
-    const activity = activityId ? jobs.getActivity(activityId) : undefined;
-    const pending = activeJob?.pendingInteractions || [];
-    const hasInput = pending.some((entry) => entry.isBlocking !== false && isInputInteraction(entry));
-    const hasApproval = pending.some((entry) => entry.isBlocking !== false && !isInputInteraction(entry));
-    const displayState = hasInput
-      ? "input-required"
-      : hasApproval
-        ? "approval-required"
-        : activeJob?.status === "termination-failed"
-          ? "termination-failed"
-          : activeJob?.status === "terminating"
-            ? "terminating"
-            : activeJob && isActiveActivityJobStatus(activeJob.status)
-              ? "running"
-              : latestJob?.status === "failed"
-                ? "failed"
-                : latestJob?.status === "interrupted" || latestJob?.status === "cancelled"
-                  ? "interrupted"
-                  : agent.lifecycle === "orphaned"
-                    ? "orphaned"
-                    : activity?.verification === "pending" || activity?.verification === "verifying"
-                      ? "verification"
-                      : latestJob?.status === "completed"
-                        ? "completed"
-                        : "idle";
-    if (activeJob || pending.length > 0) {
-      controlRows.push({
-        agentId: agent.agentId,
-        agentVersion: agent.version,
-        jobId: activeJob?.jobId || null,
-        jobVersion: activeJob?.version || null,
-        canForceStop: Boolean(activeJob && isActiveActivityJobStatus(activeJob.status)),
-        affectedJobIds: activeJob && isActiveActivityJobStatus(activeJob.status)
-          ? jobs.terminationImpact(activeJob.jobId).affectedJobIds
-          : [],
-        pendingInteractions: pending.map(interaction => ({
-          ...interaction,
-          ...(interaction.elicitation ? { elicitation: {
-            ...interaction.elicitation, ...jobs.interactionInput(interaction.interactionId)
-          } } : {})
-        }))
-      });
-    }
-    const changedAt = Math.max(agent.updatedAt, latestJob?.updatedAt || 0, activity?.updatedAt || 0);
-    const execution = activityCardExecution(activeJob || latestJob, modelCatalog);
-    return {
-      agentId: agent.agentId,
-      shortAgentId: agent.agentId.slice(0, 8),
-      agentName: agent.agentName,
-      lifecycle: agent.lifecycle,
-      displayState,
-      activityId: activity?.activityId || null,
-      activityTitle: activity?.title || null,
-      activityLifecycle: activity?.lifecycle || null,
-      verification: activity?.verification || null,
-      updatedAt: new Date(changedAt).toISOString(),
-      elapsedMs: Math.max(0, now - (activeJob?.createdAt || latestJob?.createdAt || agent.createdAt)),
-      canForceStop: Boolean(activeJob && isActiveActivityJobStatus(activeJob.status)),
-      backgroundProcessState: "none" as "none" | "running" | "unavailable",
-      backgroundProcessCount: 0,
-      orphanedReason: agent.orphanedReason || null,
-      ...(execution ? { execution } : {})
-    };
-  });
-  const agentPriority = (row: (typeof agentRows)[number]): number => {
-    if (row.displayState === "input-required" || row.displayState === "approval-required") return 0;
-    if (row.backgroundProcessState !== "none") return 1;
-    if (["failed", "interrupted", "termination-failed", "orphaned"].includes(row.displayState)) return 1;
-    if (row.displayState === "running" || row.displayState === "terminating") return 2;
-    if (row.displayState === "verification") return 3;
-    if (row.displayState === "completed") return 4;
-    if (row.displayState === "idle") return 5;
-    return 6;
-  };
-  agentRows.sort((left, right) =>
-    agentPriority(left) - agentPriority(right) || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
-  );
-  const runtimeCandidates = agentRows
-    .flatMap((row) => {
-      const thread = currentThreads.get(row.agentId);
-      const agent = agentById.get(row.agentId);
-      if (!thread || !backendSupports(thread.backendKind, "supportsThreadInspection") || !agent) return [];
-      return [{
-        agentId: row.agentId,
-        thread,
-        stamp: dashboardRuntimeStamp(agent, latestJobByAgent.get(row.agentId)),
-        inspectLiveness: false
-      }];
-    })
-    .slice(0, CARD_RUNTIME_PROBE_LIMIT);
-  const runtimeInspection = inspectRuntime
-    ? await inspectDashboardRuntimes(jobs, upstream, runtimeCandidates)
-    : {
-        unavailable: 0,
-        observations: cachedDashboardRuntimes(upstream, runtimeCandidates),
-        skipped: 0,
-        requests: 0,
-        cacheHits: 0,
-        timeouts: 0
-      };
-  if (!inspectRuntime) {
-    runtimeInspection.cacheHits = runtimeInspection.observations.size;
-    runtimeInspection.skipped = Math.max(
-      0,
-      agentRows.length - runtimeInspection.observations.size
-    );
-  }
-  for (const row of agentRows) {
-    const observation = runtimeInspection.observations.get(row.agentId);
-    if (!observation) continue;
-    if (observation.backgroundProcessState === "unknown") {
-      row.backgroundProcessState = "unavailable";
-      continue;
-    }
-    if (observation.backgroundProcessCount === 0) continue;
-    row.backgroundProcessState = "running";
-    row.backgroundProcessCount = observation.backgroundProcessCount;
-    const agent = agentById.get(row.agentId);
-    let control = controlRows.find((entry) => entry.agentId === row.agentId);
-    if (!control) {
-      control = {
-        agentId: row.agentId,
-        agentVersion: agent?.version || null
-      };
-      controlRows.push(control);
-    }
-    control.agentVersion ??= agent?.version || null;
-    const agentBusy = agent?.lifecycle === "active" ||
-      agent?.lifecycle === "waiting-input" ||
-      Boolean(agent?.currentJobId);
-    if (!agentBusy && observation.backgroundProcessIds) {
-      control.backgroundProcesses = observation.backgroundProcessIds.map(
-        (processId) => ({ processId })
-      );
-    }
-  }
-  agentRows.sort((left, right) =>
-    agentPriority(left) - agentPriority(right) || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
-  );
-  const visibleAgents = agentRows.slice(0, limit);
-  const visibleAgentTotal = agentRows.length;
-  const allActivities = jobs.listActivities(scopeId, limit + 1, 0);
-  const activities = allActivities.slice(0, limit).map((activity) => ({
-    activityId: activity.activityId,
-    continuationOfActivityId: activity.continuationOfActivityId || null,
-    cardGeneration: activity.cardGeneration,
-    title: activity.title,
-    lifecycle: activity.lifecycle,
-    waitingOn: activity.waitingOn,
-    verification: activity.verification,
-    counts: activity.counts,
-    agentIds: [...new Set(
-      jobs.listActivityAgentAssignments(activity.activityId).map((assignment) => assignment.agentId)
-    )],
-    updatedAt: new Date(activity.updatedAt).toISOString()
-  }));
-  const unassignedJobs = jobs.listForScope(scopeId, limit, 0)
-    .filter((job) => !job.agentId)
-    .map((job) => ({
-      temporaryId: job.jobId.slice(0, 8),
-      activityId: job.activityId,
-      activityTitle: jobs.getActivity(job.activityId)?.title || null,
-      displayState: isActiveActivityJobStatus(job.status) ? "running" : job.status,
-      updatedAt: new Date(job.updatedAt).toISOString()
-    }));
-  const aggregates = {
-    running: agentRows.filter((row) => row.displayState === "running" || row.displayState === "terminating").length,
-    needsAttention: agentRows.filter((row) => agentPriority(row) <= 1).length,
-    readyForVerification: agentRows.filter((row) => row.displayState === "verification").length,
-    failed: agentRows.filter((row) => row.displayState === "failed").length,
-    idle: agentRows.filter((row) => row.displayState === "idle").length
-  };
-  const basePresentationPolicy = jobs.activityPresentationWatcherPolicy(scopeId, presentation);
-  const presentationPolicy = lease?.stopped
-    ? {
-        ...basePresentationPolicy,
-        live: false,
-        stopped: true,
-        stopReason: lease.stopReason,
-        ownsCompletionHandoff: false
-      }
-    : basePresentationPolicy;
-  const pendingHandoffs =
-    preferences.completionHandoff !== "auto-handoff" ||
-    !presentationPolicy.ownsCompletionHandoff
-    ? []
-    : jobs.listPendingCompletionOutbox(scopeId, 20).map((record) => ({
-        outboxId: record.outboxId,
-        activityId: record.activityId,
-        completionVersion: record.completionVersion,
-        channel: record.channel,
-        createdAt: new Date(record.createdAt).toISOString(),
-        jobIds: jobs.listForActivity(record.activityId).map((job) => job.jobId)
-      }));
-  const selectedActivity = selectedActivityId ? jobs.getActivity(selectedActivityId) : undefined;
-  return {
-    structured: {
-      scopeVersion: jobs.getScopeVersion(scopeId),
-      generatedAt: new Date().toISOString(),
-      aggregates,
-      agents: visibleAgents,
-      agentPagination: {
-        limit,
-        returned: visibleAgents.length,
-        total: visibleAgentTotal,
-        hasMore: visibleAgents.length < visibleAgentTotal
-      },
-      unassignedJobs,
-      activities,
-      activityPagination: {
-        limit,
-        returned: activities.length,
-        total: jobs.activityCount(scopeId),
-        hasMore: allActivities.length > limit
-      },
-      pendingHandoffs,
-      completionHandoff: preferences.completionHandoff,
-      activityCardVisibility: preferences.activityCardVisibility,
-      mountedActivity: selectedActivity
-        ? {
-            activityId: selectedActivity.activityId,
-            cardGeneration: selectedActivity.cardGeneration,
-            version: selectedActivity.version
-          }
-        : null,
-      mountedPresentation: {
-        kind: presentation.kind,
-        ...(presentation.kind === "automatic"
-          ? {
-              activityPresentationId: presentation.activityPresentationId,
-              ...(presentation.reservationOwnerId
-                ? { reservationOwnerId: presentation.reservationOwnerId }
-                : {})
-            }
-          : presentation.kind === "historical"
-            ? {
-                jobId: presentation.jobId,
-                requestId: presentation.requestId
-              }
-            : presentation.kind === "restored-explicit"
-              ? {
-                  mode: presentation.mode,
-                  ...(presentation.activityId ? { activityId: presentation.activityId } : {}),
-                  ...(presentation.activityVersion
-                    ? { activityVersion: presentation.activityVersion }
-                    : {})
-                }
-          : {})
-      },
-      uiLocalePreference: preferences.uiLocalePreference,
-      watcherPolicy: {
-        mode: "scope-version-long-poll",
-        maxWaitMs: MAX_CODEX_STATUS_WAIT_MS,
-        suggestedWaitMs: DEFAULT_CODEX_STATUS_WAIT_MS,
-        separateFromJobLimit: true,
-        ...presentationPolicy
-      },
-      ...(wait ? { wait } : {})
-    },
-    interactionControls: {
-      agents: controlRows
-    },
-    allAgentRows: agentRows,
-    enrichmentStats: runtimeInspection
-  };
-}
-
-type ActivityCardExecution = {
+type DashboardExecution = {
   model: string;
   modelDisplayName?: string;
   reasoningEffort: string;
@@ -13386,10 +11371,10 @@ type ActivityCardExecution = {
   isCurrent: boolean;
 };
 
-function activityCardExecution(
+function dashboardExecutionForJob(
   job: CodexJob | undefined,
   modelCatalog: CodexModelCatalogProvider
-): ActivityCardExecution | undefined {
+): DashboardExecution | undefined {
   const selection = job?.executionDecision?.effectiveSelection;
   if (!job || !selection) return undefined;
   const reroutedModel = [...job.publicEvents].reverse().find((event) =>
@@ -13413,7 +11398,7 @@ function dashboardExecutionForSelection(
   modelCatalog: CodexModelCatalogProvider,
   isCurrent: boolean,
   reroutedModel?: string
-): ActivityCardExecution {
+): DashboardExecution {
   const catalog = modelCatalog.getCachedCatalog?.({
     backendKind: isCodexBackendKind(backendKind) ? backendKind : "mcp-server"
   });
@@ -13441,759 +11426,18 @@ function dashboardExecutionForSelection(
   };
 }
 
-async function buildActivityView(
-  jobs: CodexJobRegistry,
-  upstream: CodexUpstream,
-  modelCatalog: CodexModelCatalogProvider,
-  config: BridgeConfig,
-  preferences: BridgeUserSettings,
-  scopeId: string,
-  limit: number,
-  selectedActivityId?: string,
-  wait?: ActivityScopeWatchResult,
-  presentation: ActivityViewPresentationContext = { kind: "explicit" },
-  lease?: ActivityCardLeaseTouchResult,
-  historyCursor?: string,
-  focusSelectedActivityPage = true,
-  inspectRuntime = false
-) {
-  const compactHistoryLimit = 3;
-  const feedMode =
-    presentation.kind === "explicit" || presentation.kind === "restored-explicit"
-      ? "full" as const
-      : "compact" as const;
-  const enrichmentStartedAt = Date.now();
-  const [legacy, usage] = await Promise.all([
-    buildLegacyActivityView(
-      jobs,
-      upstream,
-      modelCatalog,
-      config,
-      preferences,
-      scopeId,
-      limit,
-      selectedActivityId,
-      wait,
-      presentation,
-      lease,
-      inspectRuntime
-    ),
-    inspectRuntime
-      ? readCodexWeeklyUsageBounded(upstream)
-      : Promise.resolve({ value: cachedCodexWeeklyUsage(upstream), timedOut: false, failed: false })
-  ]);
-  modelCatalog = projectionModelCatalog(modelCatalog);
-  const weeklyUsage = usage.value;
-  const now = Date.now();
-  const scopeVersion = jobs.getScopeVersion(scopeId);
-  const allActivities = listAllScopedActivities(jobs, scopeId);
-  const allAgents = listAllScopedAgents(jobs, scopeId);
-  const cancellationDisplays = buildCancellationDisplayIndex(jobs, scopeId);
-  const activityById = new Map(allActivities.map((activity) => [activity.activityId, activity]));
-  const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
-  const scopeJobs = jobs.listForScope(scopeId, config.maxRetainedJobs, 0);
-  const jobsByActivity = new Map<string, CodexJob[]>();
-  for (const job of scopeJobs) {
-    const entries = jobsByActivity.get(job.activityId) || [];
-    entries.push(job);
-    jobsByActivity.set(job.activityId, entries);
-  }
-  for (const entries of jobsByActivity.values()) {
-    entries.sort((left, right) => left.createdAt - right.createdAt);
-  }
-
-  const assignments = jobs
-    .listScopeActivityAgentAssignments(scopeId)
-    .filter((assignment) => activityById.has(assignment.activityId) && agentById.has(assignment.agentId));
-  const assignmentsByActivity = new Map<string, ActivityAgentAssignment[]>();
-  const assignmentsByAgent = new Map<string, ActivityAgentAssignment[]>();
-  for (const assignment of assignments) {
-    const activityEntries = assignmentsByActivity.get(assignment.activityId) || [];
-    activityEntries.push(assignment);
-    assignmentsByActivity.set(assignment.activityId, activityEntries);
-    const agentEntries = assignmentsByAgent.get(assignment.agentId) || [];
-    agentEntries.push(assignment);
-    assignmentsByAgent.set(assignment.agentId, agentEntries);
-  }
-
-  const legacyAgents = legacy.allAgentRows;
-  const legacyAgentById = new Map(legacyAgents.map((agent) => [agent.agentId, agent]));
-  const pendingHandoffActivityIds = new Set(jobs.listPendingCompletionActivityIds(scopeId));
-
-  const assignmentFor = (activityId: string, agentId: string): ActivityAgentAssignment | undefined =>
-    [...(assignmentsByActivity.get(activityId) || [])]
-      .reverse()
-      .find((assignment) => assignment.agentId === agentId);
-  const workspacesFor = (activityId: string): string[] => {
-    const activity = activityById.get(activityId);
-    if (activity?.projectName) return [activity.projectName];
-    return [...new Set((jobsByActivity.get(activityId) || []).map((job) =>
-      path.basename(job.cwd)
-    ))];
-  };
-
-  const activityRows = allActivities.map((activity) => {
-    const activityJobs = jobsByActivity.get(activity.activityId) || [];
-    const activeJobs = activityJobs.filter((job) => isActiveActivityJobStatus(job.status));
-    const latestJob = activityJobs.at(-1);
-    const activityAssignments = assignmentsByActivity.get(activity.activityId) || [];
-    const hasOpenAssignment = activityAssignments.some(
-      (assignment) => assignment.releasedAt === undefined
-    );
-    const participantIds = [...new Set(activityAssignments.map((assignment) => assignment.agentId))];
-    const relevantAgentRows = participantIds
-      .map((agentId) => legacyAgentById.get(agentId))
-      .filter((agent): agent is NonNullable<typeof agent> =>
-        Boolean(agent && agent.activityId === activity.activityId)
-      );
-    const activeInteractions = activeJobs.flatMap((job) => job.pendingInteractions || []);
-    const hasInput = activeInteractions.some((interaction) => interaction.isBlocking !== false && isInputInteraction(interaction));
-    const hasApproval = activeInteractions.some((interaction) => interaction.isBlocking !== false && !isInputInteraction(interaction));
-    const relevantStates = new Set(relevantAgentRows.map((agent) => agent.displayState));
-    const hasBackgroundProcesses = relevantAgentRows.some(
-      (agent) => agent.backgroundProcessState === "running"
-    );
-    const hasUnknownBackgroundProcesses = relevantAgentRows.some(
-      (agent) => agent.backgroundProcessState === "unavailable"
-    );
-    const pendingHandoff = pendingHandoffActivityIds.has(activity.activityId);
-    const hasTerminatingJob = activeJobs.some((job) => job.status === "terminating");
-    const hasFailedWork =
-      activity.verification === "failed" ||
-      activity.counts.failed > 0 ||
-      relevantStates.has("failed");
-    const hasInterruptedWork =
-      activity.counts.interrupted + activity.counts.cancelled > 0 ||
-      relevantStates.has("interrupted");
-    const verificationComplete =
-      activity.verification === "verified" || activity.verification === "not-required";
-    const canFoldCompletedActivity =
-      activity.lifecycle === "completed" &&
-      activeJobs.length === 0 &&
-      activeInteractions.length === 0 &&
-      verificationComplete &&
-      !pendingHandoff &&
-      !hasOpenAssignment &&
-      !hasBackgroundProcesses &&
-      !hasUnknownBackgroundProcesses;
-    const canFoldEndedActivity =
-      (activity.lifecycle === "cancelled" || activity.lifecycle === "abandoned") &&
-      activeJobs.length === 0 &&
-      activeInteractions.length === 0 &&
-      !pendingHandoff &&
-      !hasOpenAssignment &&
-      !hasBackgroundProcesses &&
-      !hasUnknownBackgroundProcesses;
-    let displayState: string;
-    if (hasInput) displayState = "input-required";
-    else if (hasApproval) displayState = "approval-required";
-    else if (activity.waitingOn === "user") displayState = "input-required";
-    else if (relevantStates.has("termination-failed")) displayState = "termination-failed";
-    else if (relevantStates.has("orphaned")) displayState = "orphaned";
-    else if (hasUnknownBackgroundProcesses) displayState = "background-unavailable";
-    else if (canFoldCompletedActivity) displayState = "completed";
-    else if (canFoldEndedActivity) displayState = "ended";
-    else if (
-      activity.verification === "pending" ||
-      activity.verification === "verifying" ||
-      activity.waitingOn === "verification"
-    ) displayState = "verification";
-    else if (pendingHandoff) displayState = "waiting-gpt";
-    else if (hasTerminatingJob) displayState = "terminating";
-    else if (activeJobs.length > 0 || hasBackgroundProcesses || activity.waitingOn === "codex") {
-      displayState = "running";
-    }
-    else if (hasFailedWork) displayState = "failed";
-    else if (hasInterruptedWork) displayState = "interrupted";
-    else if (hasOpenAssignment || activity.waitingOn === "orchestrator") {
-      displayState = "waiting-gpt";
-    }
-    else displayState = "idle";
-
-    const participants = participantIds.map((agentId) => {
-      const agent = agentById.get(agentId) as BridgeAgent;
-      const current = legacyAgentById.get(agentId);
-      const assignment = assignmentFor(activity.activityId, agentId);
-      const currentForActivity = current?.activityId === activity.activityId;
-      const agentActivityJobs = activityJobs.filter((job) => job.agentId === agentId);
-      const activeAgentJob = [...agentActivityJobs]
-        .reverse()
-        .find((job) => isActiveActivityJobStatus(job.status));
-      const representativeJob = activeAgentJob || agentActivityJobs.at(-1);
-      const execution = activityCardExecution(representativeJob, modelCatalog);
-      const participantDisplayState = activityParticipantDisplayState(
-        activity,
-        assignment,
-        agentActivityJobs
-      );
-      const terminal = representativeJob
-        ? isTerminalActivityJobStatus(representativeJob.status)
-        : false;
-      return {
-        agentId,
-        agentName: agent.agentName,
-        role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
-        contextMode: assignment?.contextMode || null,
-        displayState: participantDisplayState,
-        canForceStop: Boolean(currentForActivity && current.canForceStop),
-        backgroundProcessState: currentForActivity ? current.backgroundProcessState : "none",
-        backgroundProcessCount: currentForActivity ? current.backgroundProcessCount : 0,
-        ...(representativeJob
-          ? {
-              durationMs: Math.max(
-                0,
-                (terminal ? representativeJob.updatedAt : now) - representativeJob.createdAt
-              ),
-              updatedAt: new Date(representativeJob.updatedAt).toISOString(),
-              endedAt: terminal ? new Date(representativeJob.updatedAt).toISOString() : null
-            }
-          : {}),
-        ...(execution ? { execution } : {})
-      };
-    });
-    const activeStartedAt = activeJobs.length > 0
-      ? Math.min(...activeJobs.map((job) => job.createdAt))
-      : latestJob?.createdAt || activity.createdAt;
-    return {
-      rowType: "activity" as const,
-      activityId: activity.activityId,
-      projectName: activity.projectName || null,
-      title: activity.title,
-      kind: activity.kind,
-      lifecycle: activity.lifecycle,
-      waitingOn: activity.waitingOn,
-      verification: activity.verification,
-      displayState,
-      counts: activity.counts,
-      agents: participants,
-      cancellations: cancellationDisplays.byActivityId.get(activity.activityId) || [],
-      workspaceLabels: workspacesFor(activity.activityId),
-      continued: Boolean(activity.continuationOfActivityId),
-      pendingHandoff,
-      canRequestVerification: displayState === "verification",
-      canRetry: displayState === "failed" || displayState === "interrupted" || displayState === "termination-failed",
-      elapsedMs: Math.max(0, now - activeStartedAt),
-      createdAt: new Date(activity.createdAt).toISOString(),
-      updatedAt: new Date(activity.updatedAt).toISOString(),
-      completedAt: activity.completedAt ? new Date(activity.completedAt).toISOString() : null
-    };
-  });
-  const hasMultipleWorkspaces = new Set(
-    activityRows.flatMap((row) => row.projectName
-      ? [`project-name:${row.projectName}`]
-      : row.workspaceLabels.map((label) => `legacy:${label}`))
-  ).size > 1;
-  if (!hasMultipleWorkspaces) {
-    for (const row of activityRows) {
-      row.projectName = null;
-      row.workspaceLabels = [];
-    }
-  }
-
-  const activityPriority = (row: (typeof activityRows)[number]): number => {
-    if (["input-required", "approval-required"].includes(row.displayState)) return 0;
-    if (["failed", "interrupted", "termination-failed", "orphaned", "background-unavailable"].includes(row.displayState)) return 1;
-    if (["verification", "waiting-gpt"].includes(row.displayState)) return 2;
-    if (["terminating", "running"].includes(row.displayState)) return 3;
-    if (row.displayState === "idle") return 4;
-    return 5;
-  };
-  const activeRows = activityRows
-    .filter((row) => !["completed", "ended", "idle"].includes(row.displayState))
-    .sort((left, right) =>
-      activityPriority(left) - activityPriority(right) ||
-      Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
-      left.activityId.localeCompare(right.activityId)
-    );
-  const historyRows = activityRows
-    .filter((row) => ["completed", "ended", "idle"].includes(row.displayState))
-    .sort((left, right) =>
-      Date.parse(right.completedAt || right.updatedAt) - Date.parse(left.completedAt || left.updatedAt) ||
-      left.activityId.localeCompare(right.activityId)
-    );
-  const activeAgentIds = new Set(activeRows.flatMap((row) => row.agents.map((agent) => agent.agentId)));
-  for (const agent of legacyAgents) {
-    if ([
-      "input-required",
-      "approval-required",
-      "termination-failed",
-      "failed",
-      "interrupted",
-      "orphaned",
-      "terminating",
-      "running",
-      "verification"
-    ].includes(agent.displayState) || agent.backgroundProcessState !== "none") {
-      activeAgentIds.add(agent.agentId);
-    }
-  }
-
-  const completedActivityRows = new Map(
-    activityRows
-      .filter((row) => row.displayState === "completed" && !row.pendingHandoff)
-      .map((row) => [row.activityId, row])
-  );
-  const endedActivityRows = new Map(
-    activityRows.filter((row) => row.displayState === "ended").map((row) => [row.activityId, row])
-  );
-  const completedAgentRows: Array<{
-    agentId: string;
-    agentName: string;
-    role: string | null;
-    latestActivityId: string;
-    latestActivityTitle: string;
-    latestActivityKind: ActivityKind;
-    activityCount: number;
-    activityIds: string[];
-    workspaceLabels: string[];
-    verification: string;
-    execution?: ActivityCardExecution;
-    updatedAt: string;
-  }> = [];
-  const idleAgentRows: Array<Record<string, unknown>> = [];
-  const legacyIdleAgentRows: Array<Record<string, unknown>> = [];
-  const endedAgentRows: Array<Record<string, unknown>> = [];
-
-  for (const agent of allAgents) {
-    if (activeAgentIds.has(agent.agentId)) continue;
-    const agentAssignments = assignmentsByAgent.get(agent.agentId) || [];
-    const assignedActivities = [...new Set(agentAssignments.map((assignment) => assignment.activityId))]
-      .map((activityId) => activityById.get(activityId))
-      .filter((activity): activity is BridgeActivity => Boolean(activity))
-      .sort((left, right) => right.updatedAt - left.updatedAt);
-    const latestActivity = assignedActivities[0];
-    const completedActivities = assignedActivities.filter((activity) =>
-      completedActivityRows.has(activity.activityId)
-    );
-    const latestActivityJob = latestActivity
-      ? [...(jobsByActivity.get(latestActivity.activityId) || [])]
-          .reverse()
-          .find((job) => job.agentId === agent.agentId)
-      : jobs.listForAgent(agent.agentId).at(-1);
-    const execution = activityCardExecution(latestActivityJob, modelCatalog);
-    const assignment = latestActivity
-      ? assignmentFor(latestActivity.activityId, agent.agentId)
-      : undefined;
-    const idleAgentRow = {
-      agentId: agent.agentId,
-      agentName: agent.agentName,
-      role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
-      latestActivityId: latestActivity?.activityId || null,
-      latestActivityTitle: latestActivity?.title || null,
-      workspaceLabels: hasMultipleWorkspaces && latestActivity
-        ? workspacesFor(latestActivity.activityId)
-        : [],
-      ...(latestActivityJob
-        ? {
-            durationMs: Math.max(0, latestActivityJob.updatedAt - latestActivityJob.createdAt),
-            endedAt: isTerminalActivityJobStatus(latestActivityJob.status)
-              ? new Date(latestActivityJob.updatedAt).toISOString()
-              : null
-          }
-        : {}),
-      ...(execution ? { execution } : {}),
-      updatedAt: new Date(latestActivity?.updatedAt || agent.updatedAt).toISOString()
-    };
-    if (agent.lifecycle === "idle") idleAgentRows.push(idleAgentRow);
-    if (latestActivity && completedActivityRows.has(latestActivity.activityId)) {
-      completedAgentRows.push({
-        agentId: agent.agentId,
-        agentName: agent.agentName,
-        role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
-        latestActivityId: latestActivity.activityId,
-        latestActivityTitle: latestActivity.title,
-        latestActivityKind: latestActivity.kind,
-        activityCount: completedActivities.length,
-        activityIds: completedActivities.map((activity) => activity.activityId),
-        workspaceLabels: hasMultipleWorkspaces ? workspacesFor(latestActivity.activityId) : [],
-        verification: latestActivity.verification,
-        ...(execution ? { execution } : {}),
-        updatedAt: new Date(latestActivity.completedAt || latestActivity.updatedAt).toISOString()
-      });
-      continue;
-    }
-    if (latestActivity && endedActivityRows.has(latestActivity.activityId)) {
-      endedAgentRows.push({
-        agentId: agent.agentId,
-        agentName: agent.agentName,
-        role: assignment?.role && assignment.role !== "primary" ? assignment.role : null,
-        latestActivityId: latestActivity?.activityId || null,
-        latestActivityTitle: latestActivity?.title || null,
-        workspaceLabels: hasMultipleWorkspaces && latestActivity
-          ? workspacesFor(latestActivity.activityId)
-          : [],
-        displayState: latestActivity.lifecycle,
-        ...(execution ? { execution } : {}),
-        updatedAt: new Date(latestActivity?.updatedAt || agent.updatedAt).toISOString()
-      });
-      continue;
-    }
-    if (agent.lifecycle === "idle") legacyIdleAgentRows.push(idleAgentRow);
-  }
-
-  completedAgentRows.sort((left, right) =>
-    Date.parse(right.updatedAt) - Date.parse(left.updatedAt) || left.agentId.localeCompare(right.agentId)
-  );
-  idleAgentRows.sort((left, right) =>
-    Date.parse(String(right.updatedAt)) - Date.parse(String(left.updatedAt)) ||
-    String(left.agentId).localeCompare(String(right.agentId))
-  );
-  endedAgentRows.sort((left, right) =>
-    Date.parse(String(right.updatedAt)) - Date.parse(String(left.updatedAt)) ||
-    String(left.agentId).localeCompare(String(right.agentId))
-  );
-  const completedActivityCount = completedActivityRows.size;
-  const endedActivityCount = endedActivityRows.size;
-  const visibleCompletedAgents = feedMode === "full"
-    ? completedAgentRows.slice(0, limit).map(({ activityIds: _ids, ...row }) => row)
-    : [];
-  const fullActivityRows = [...activeRows, ...historyRows];
-  const visibleLegacyIdleAgents = feedMode === "full"
-    ? legacyIdleAgentRows.slice(0, limit)
-    : [];
-  const visibleEndedAgents = feedMode === "full" ? endedAgentRows.slice(0, limit) : [];
-
-  let pageOffset = 0;
-  let pageReset = false;
-  if (feedMode === "full" && historyCursor) {
-    const decoded = decodeActivityHistoryCursor(historyCursor);
-    if (decoded.scopeVersion === scopeVersion) {
-      pageOffset = decoded.offset;
-    } else {
-      pageReset = true;
-    }
-  } else if (feedMode === "full" && focusSelectedActivityPage && selectedActivityId) {
-    const selectedActivityIndex = fullActivityRows.findIndex(
-      (row) => row.activityId === selectedActivityId
-    );
-    if (selectedActivityIndex >= 0) {
-      pageOffset = Math.floor(selectedActivityIndex / limit) * limit;
-    }
-  }
-  const maximumPageRowCount = Math.max(fullActivityRows.length, idleAgentRows.length);
-  const maximumPageOffset = maximumPageRowCount > 0
-    ? Math.floor((maximumPageRowCount - 1) / limit) * limit
-    : 0;
-  if (pageOffset > maximumPageOffset) {
-    pageOffset = maximumPageOffset;
-    pageReset = true;
-  }
-  const visibleFullActivityRows = feedMode === "full"
-    ? fullActivityRows.slice(pageOffset, pageOffset + limit)
-    : [];
-  const compactHistoryRows = (() => {
-    const recent = historyRows.slice(0, compactHistoryLimit);
-    if (!selectedActivityId) return recent;
-    const selected = historyRows.find((row) => row.activityId === selectedActivityId);
-    if (!selected || recent.some((row) => row.activityId === selected.activityId)) return recent;
-    return [selected, ...recent].slice(0, compactHistoryLimit);
-  })();
-  const visibleActiveRows = feedMode === "full"
-    ? visibleFullActivityRows.filter((row) => !["completed", "ended", "idle"].includes(row.displayState))
-    : activeRows.slice(0, limit);
-  const visibleHistoryRows = feedMode === "full"
-    ? visibleFullActivityRows.filter((row) => ["completed", "ended", "idle"].includes(row.displayState))
-    : compactHistoryRows;
-  const compactVisibleActivityIds = new Set(
-    compactHistoryRows.map((row) => row.activityId)
-  );
-  const compactIdleAgentRows = idleAgentRows.filter(
-    (row) => !compactVisibleActivityIds.has(String(row.latestActivityId || ""))
-  );
-  const visibleIdleAgents = feedMode === "full"
-    ? idleAgentRows.slice(pageOffset, pageOffset + limit)
-    : compactIdleAgentRows.slice(0, compactHistoryLimit);
-  const nextPageOffset = feedMode === "full" && pageOffset + limit < maximumPageRowCount
-    ? pageOffset + limit
-    : null;
-  const currentHistoryCursor = feedMode === "full"
-    ? encodeActivityHistoryCursor(scopeVersion, pageOffset)
-    : null;
-  const previousHistoryCursor = feedMode === "full" && pageOffset > 0
-    ? encodeActivityHistoryCursor(scopeVersion, Math.max(0, pageOffset - limit))
-    : null;
-  const nextHistoryCursor = feedMode === "full" && nextPageOffset !== null
-    ? encodeActivityHistoryCursor(scopeVersion, nextPageOffset)
-    : null;
-  const hasMore =
-    activeRows.length > visibleActiveRows.length ||
-    (feedMode === "full" && (
-      nextHistoryCursor !== null ||
-      completedAgentRows.length > visibleCompletedAgents.length ||
-      idleAgentRows.length > visibleIdleAgents.length ||
-      endedAgentRows.length > visibleEndedAgents.length
-    ));
-
-  const projectedLegacy = feedMode === "compact"
-    ? {
-        ...legacy.structured,
-        agents: [],
-        agentPagination: {
-          ...legacy.structured.agentPagination,
-          returned: 0
-        },
-        unassignedJobs: [],
-        activities: [],
-        activityPagination: {
-          ...legacy.structured.activityPagination,
-          returned: 0,
-          hasMore: legacy.structured.activityPagination.total > 0
-        }
-      }
-    : legacy.structured;
-
-  return {
-    scopeId,
-    interactionControls: legacy.interactionControls,
-    structured: {
-      ...projectedLegacy,
-      enrichment: {
-        state: inspectRuntime ? "enriched" as const : "structural" as const,
-        runtimeRequests: legacy.enrichmentStats.requests,
-        cacheHits: legacy.enrichmentStats.cacheHits,
-        timeouts: legacy.enrichmentStats.timeouts,
-        ...((legacy.enrichmentStats.unavailable || 0) > 0 ? { runtimeUnavailable: legacy.enrichmentStats.unavailable } : {}),
-        durationMs: inspectRuntime ? Math.max(0, Date.now() - enrichmentStartedAt) : 0,
-        usageTimedOut: usage.timedOut,
-        pendingReads: legacy.enrichmentStats.timeouts + (usage.timedOut ? 1 : 0),
-        usageUnavailable: usage.failed,
-        oldestObservationAt: [legacy.enrichmentStats.oldestObservationAt, usage.value?.observedAt].filter((value): value is string => !!value).sort()[0]
-      },
-      weeklyUsage,
-      feed: {
-        mode: feedMode,
-        showWorkspaceLabels: hasMultipleWorkspaces,
-        activityTotal: activityRows.length,
-        activeCount: activeRows.length,
-        active: visibleActiveRows,
-        activeHasMore: activeRows.length > visibleActiveRows.length,
-        historySummary: {
-          completedActivities: completedActivityCount,
-          endedActivities: endedActivityCount,
-          idleAgents: idleAgentRows.length
-        },
-        history: {
-          rows: visibleHistoryRows,
-          pagination: {
-            offset: feedMode === "full" ? pageOffset : 0,
-            limit: feedMode === "full" ? limit : compactHistoryLimit,
-            returned: feedMode === "full" ? visibleFullActivityRows.length : visibleHistoryRows.length,
-            total: feedMode === "full" ? fullActivityRows.length : historyRows.length,
-            hasPrevious: feedMode === "full" && pageOffset > 0,
-            hasMore: feedMode === "full"
-              ? nextHistoryCursor !== null
-              : historyRows.length > visibleHistoryRows.length,
-            currentCursor: currentHistoryCursor,
-            previousCursor: previousHistoryCursor,
-            nextCursor: nextHistoryCursor,
-            reset: pageReset
-          }
-        },
-        idleAgents: {
-          agentCount: idleAgentRows.length,
-          rows: visibleIdleAgents,
-          hasMore: feedMode === "full"
-            ? pageOffset + visibleIdleAgents.length < idleAgentRows.length
-            : compactIdleAgentRows.length > visibleIdleAgents.length,
-          pagination: {
-            offset: feedMode === "full" ? pageOffset : 0,
-            limit: feedMode === "full" ? limit : compactHistoryLimit,
-            returned: visibleIdleAgents.length,
-            total: feedMode === "full" ? idleAgentRows.length : compactIdleAgentRows.length,
-            hasPrevious: feedMode === "full" && pageOffset > 0,
-            hasMore: feedMode === "full"
-              ? pageOffset + visibleIdleAgents.length < idleAgentRows.length
-              : compactIdleAgentRows.length > visibleIdleAgents.length
-          }
-        },
-        completed: {
-          agentCount: feedMode === "full" ? completedAgentRows.length : 0,
-          activityCount: completedActivityCount,
-          rows: visibleCompletedAgents,
-          hasMore: feedMode === "full" && completedAgentRows.length > visibleCompletedAgents.length
-        },
-        idle: {
-          agentCount: feedMode === "full" ? legacyIdleAgentRows.length : 0,
-          rows: visibleLegacyIdleAgents,
-          hasMore: feedMode === "full" &&
-            legacyIdleAgentRows.length > visibleLegacyIdleAgents.length
-        },
-        ended: {
-          agentCount: feedMode === "full" ? endedAgentRows.length : 0,
-          activityCount: endedActivityCount,
-          rows: visibleEndedAgents,
-          hasMore: feedMode === "full" && endedAgentRows.length > visibleEndedAgents.length
-        },
-        pagination: {
-          limit,
-          hasMore
-        }
-      }
-    }
-  };
-}
-
-function activityViewResult(
-  view: Awaited<ReturnType<typeof buildActivityView>>,
-  locale: string | undefined,
-  contract:
-    | typeof activityModelResultContract
-    | typeof activityAppResultContract
-    | typeof activityRehydrateResultContract
-): ToolResult {
-  const effectiveLocale = resolvePreferredUiLocale(view.structured.uiLocalePreference, locale);
-  const mountedActivityRecord = isRecord(view.structured.mountedActivity)
-    ? view.structured.mountedActivity
-    : null;
-  const mountedActivity = mountedActivityRecord
-    ? {
-        activityId: mountedActivityRecord.activityId,
-        cardGeneration: mountedActivityRecord.cardGeneration
-      }
-    : null;
-  const mountedPresentationRecord: Record<string, unknown> = isRecord(
-    view.structured.mountedPresentation
-  )
-    ? view.structured.mountedPresentation
-    : {};
-  const mountedPresentation = mountedPresentationRecord.kind === "automatic"
-    ? {
-        kind: "automatic" as const,
-        activityPresentationId: mountedPresentationRecord.activityPresentationId,
-        ...(typeof mountedPresentationRecord.reservationOwnerId === "string"
-          ? { reservationOwnerId: mountedPresentationRecord.reservationOwnerId }
-          : {})
-      }
-    : mountedPresentationRecord.kind === "historical"
-      ? {
-          kind: "historical" as const,
-          jobId: mountedPresentationRecord.jobId,
-          requestId: mountedPresentationRecord.requestId
-        }
-      : mountedPresentationRecord.kind === "restored-explicit"
-        ? {
-            kind: "restored-explicit" as const,
-            mode: "full-history" as const,
-            ...(typeof mountedPresentationRecord.activityId === "string"
-              ? { activityId: mountedPresentationRecord.activityId }
-              : {}),
-            ...(Number.isInteger(mountedPresentationRecord.activityVersion)
-              ? { activityVersion: mountedPresentationRecord.activityVersion as number }
-              : {})
-          }
-      : { kind: "explicit" as const };
-  const source = contract === activityModelResultContract
-    ? "codex_activity" as const
-    : contract === activityRehydrateResultContract
-      ? "codex_activity_rehydrate" as const
-      : "codex_activity_snapshot" as const;
-  const privateView = validateActivityViewPrivateMetadata({
-    kind: "codex/activityView",
-    version: ACTIVITY_PRIVATE_METADATA_CONTRACT_VERSION,
-    purpose: "presentation-hydration-only",
-    source,
-    correlation: {
-      scopeVersion: view.structured.scopeVersion,
-      activity: mountedActivity,
-      presentation: mountedPresentation
-    },
-    view: view.structured
-  });
-  const summary = {
-    scopeVersion: view.structured.scopeVersion,
-    mode: view.structured.feed.mode,
-    active: view.structured.feed.activeCount,
-    completedActivities: view.structured.feed.historySummary.completedActivities,
-    endedActivities: view.structured.feed.historySummary.endedActivities,
-    idleAgents: view.structured.feed.historySummary.idleAgents,
-    attention: view.structured.aggregates.needsAttention
-  };
-  const appHydration = {
-    // Keep compatibility routing out of the closed public and app output
-    // schemas so immutable cards can continue using their cached descriptors.
-    [ACTIVITY_SCOPE_METADATA_KEY]: view.scopeId,
-    [ACTIVITY_VIEW_METADATA_KEY]: privateView,
-    interactionControls: contract === activityRehydrateResultContract
-      ? { agents: [] }
-      : view.interactionControls,
-    "openai/locale": effectiveLocale,
-    hostLocale: locale || null
-  };
-  if (contract === activityModelResultContract) {
-    const selected = mountedActivity
-      ? view.structured.activities.find((entry) =>
-          isRecord(entry) && entry.activityId === mountedActivity.activityId
-        )
-      : undefined;
-    const selectedRecord: Record<string, unknown> | undefined = selected
-      ? { ...selected }
-      : undefined;
-    const structured = activityModelOutputSchema.parse({
-      kind: "activity",
-      mode: view.structured.feed.mode === "full" ? "full-history" : "compact-monitor",
-      scopeVersion: view.structured.scopeVersion,
-      ...(mountedActivity ? { activityId: mountedActivity.activityId } : {}),
-      ...(mountedActivityRecord && Number.isInteger(mountedActivityRecord.version)
-        ? { activityVersion: mountedActivityRecord.version }
-        : selectedRecord && Number.isInteger(selectedRecord.version)
-          ? { activityVersion: selectedRecord.version }
-        : {}),
-      counts: {
-        activities: view.structured.feed.activityTotal,
-        agents: view.structured.agentPagination.total,
-        active: view.structured.feed.activeCount,
-        needsAttention: view.structured.aggregates.needsAttention
-      }
-    });
-    return contractedToolResult(
-      activityModelResultContract,
-      view,
-      structured,
-      {
-        text:
-          `Activity view opened at scope version ${structured.scopeVersion}: ` +
-          `${structured.counts.active} active, ${structured.counts.needsAttention} needing attention.`
-      },
-      { appHydration }
-    );
-  }
-  if (contract === activityRehydrateResultContract) {
-    return contractedToolResult(
-      activityRehydrateResultContract,
-      view,
-      view.structured,
-      { text: JSON.stringify(summary) },
-      { appHydration }
-    );
-  }
-  return contractedToolResult(
-    activityAppResultContract,
-    view,
-    view.structured,
-    { text: JSON.stringify(summary) },
-    { appHydration }
-  );
-}
-
 function appServerTurnId(job: CodexJob): string | undefined {
   return backendSupports(job.backendKind, "supportsPreciseCancellation") ? job.upstreamRequestId : undefined;
 }
 
-function cancellationTargetForJob(
-  job: CodexJob,
-  presentation?: ActivityCardPresentationContext
-): BeginCancellationOperationInput["target"] {
-  const presentationId = presentation?.kind === "automatic"
-    ? presentation.activityPresentationId
-    : job.activityPresentationId;
+function cancellationTargetForJob(job: CodexJob): BeginCancellationOperationInput["target"] {
   return {
     kind: "job",
     jobId: job.jobId,
     activityId: job.activityId,
     ...(job.agentId ? { agentId: job.agentId } : {}),
     ...(job.threadId ? { threadId: job.threadId } : {}),
-    ...(appServerTurnId(job) ? { turnId: appServerTurnId(job) } : {}),
-    ...(presentationId ? { presentationId } : {})
+    ...(appServerTurnId(job) ? { turnId: appServerTurnId(job) } : {})
   };
 }
 
@@ -14201,18 +11445,6 @@ function metadataString(meta: unknown, key: string): string | undefined {
   if (!isRecord(meta)) return undefined;
   const value = meta[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function callerPresentationFromMetadata(meta: unknown): ActivityCardPresentationContext | undefined {
-  const presentationId = metadataString(meta, "codex/activityPresentationId");
-  if (!presentationId) return undefined;
-  if (!SCOPE_ID_PATTERN.test(presentationId.toLowerCase())) {
-    throw new Error("Host Activity presentation metadata must be UUID-formatted.");
-  }
-  return {
-    kind: "automatic",
-    activityPresentationId: presentationId.toLowerCase()
-  };
 }
 
 function correlationDigest(domain: string, value: unknown): string | undefined {
@@ -14415,7 +11647,7 @@ function codexTaskInputSchema(
   );
   const prompt = z.string().min(1).max(config.maxPromptChars).describe("Instruction for Codex.");
   const executionMode = z.enum(ACTIVITY_EXECUTION_MODES).optional()
-    .describe("Controls Codex execution timing, not Activity-card visibility. Use background for an immediate tracked job or foreground to wait for the terminal result. Omit it to retain an existing Activity mode or default a new Activity to background.");
+    .describe("Controls Codex execution timing. Use background for an immediate tracked job or foreground to wait for the terminal result. Omit it to retain an existing Activity mode or default a new Activity to background.");
   const project = currentProjectSelectionZod().optional().describe(
     "Exact current selector for new/fresh work. Omit for continue/fork; never send a path or private project ID."
   );
@@ -14720,8 +11952,6 @@ async function buildSettingsView(
     capabilities: {
       availableAccessStrategies,
       availableUiLocalePreferences: [...UI_LOCALE_PREFERENCES],
-      availableActivityCardVisibilities: [...ACTIVITY_CARD_VISIBILITIES],
-      availableCompletionHandoffs: [...COMPLETION_HANDOFF_MODES],
       projectAvailability: userSettings.projectRegistry.availability.map(
         ({ project, available }) => ({
           projectId: project.id,
@@ -15411,11 +12641,6 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
   const requestId = value.requestId;
   const requestHash = value.requestHash;
   const requestHashVersion = value.requestHashVersion;
-  const activityPresentationId =
-    typeof value.activityPresentationId === "string" &&
-    SCOPE_ID_PATTERN.test(value.activityPresentationId)
-      ? value.activityPresentationId.toLowerCase()
-      : undefined;
   const activityId =
     typeof value.activityId === "string" && SCOPE_ID_PATTERN.test(value.activityId)
       ? value.activityId.toLowerCase()
@@ -15522,7 +12747,6 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     !SCOPE_ID_PATTERN.test(scopeId) ||
     typeof requestId !== "string" ||
     !requestId ||
-    (value.activityPresentationId !== undefined && !activityPresentationId) ||
     typeof requestHash !== "string" ||
     !/^[0-9a-f]{64}$/i.test(requestHash) ||
     (requestHashVersion !== 1 &&
@@ -15596,7 +12820,6 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     sandbox,
     scopeId: scopeId.toLowerCase(),
     requestId,
-    activityPresentationId,
     requestHash,
     requestHashVersion,
     sourceThreadId: value.sourceThreadId,
@@ -15967,15 +13190,6 @@ function redactSteeringPromptText(
   return redacted;
 }
 
-function activityCardToolMetadata(): Record<string, unknown> {
-  return {
-    ui: { resourceUri: ACTIVITY_CARD_URI, visibility: ["model", "app"] },
-    "openai/outputTemplate": ACTIVITY_CARD_URI,
-    "openai/widgetAccessible": true,
-    "codex/uiContractGeneration": ACTIVITY_CARD_CONTRACT_GENERATION
-  };
-}
-
 function dashboardCardToolMetadata(): Record<string, unknown> {
   return {
     ui: { resourceUri: DASHBOARD_CARD_URI, visibility: ["model", "app"] },
@@ -16002,7 +13216,7 @@ function codexTaskEnvelopeAnnotations(config: BridgeConfig) {
 function forwardResult(
   result: ToolResult,
   job: CodexJob,
-  preferences: Pick<BridgeUserSettings, "activityCardVisibility">,
+  preferences: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">,
   registry?: CodexJobRegistry,
   replay = false
 ): ToolResult {
@@ -16071,9 +13285,10 @@ function forwardResult(
 function taskResultForJob(
   job: CodexJob,
   staleAfterMs: number,
-  preferences: Pick<BridgeUserSettings, "activityCardVisibility">,
+  preferences: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">,
   registry: CodexJobRegistry | undefined,
-  replay: boolean
+  replay: boolean,
+  automaticDashboard?: DashboardAutomaticPresentation
 ): ToolResult {
   const projection = taskProjectionForJob(
     job,
@@ -16088,13 +13303,16 @@ function taskResultForJob(
     job,
     structured,
     { text: taskCompatibilityText(structured) },
-    structured.error ? { isError: true } : {}
+    {
+      ...(structured.error ? { isError: true } : {}),
+      ...(automaticDashboard ? { appHydration: dashboardAutoOpenHydration(automaticDashboard) } : {})
+    }
   );
 }
 
 function taskProjectionForJob(
   job: CodexJob,
-  preferences: Pick<BridgeUserSettings, "activityCardVisibility">,
+  preferences: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">,
   registry: CodexJobRegistry | undefined,
   replay: boolean,
   staleAfterMs = registry?.staleThresholdMs || 1
@@ -16108,7 +13326,6 @@ function taskProjectionForJob(
       undefined,
       preferences,
       registry,
-      false,
       replay
     )
   );
@@ -16154,6 +13371,57 @@ function taskProjectionForJob(
     ]
   });
   return { structured };
+}
+
+type DashboardAutomaticPresentation = {
+  route: CompletionDeliveryRoute | "disabled";
+  presentation?: DashboardAutoPresentation;
+};
+
+/**
+ * Admission has already fixed executionMode when this runs. Only a newly
+ * admitted background Job can request an automatic Dashboard presentation;
+ * replays and foreground results keep their original response surface.
+ */
+function automaticDashboardPresentationForJob(
+  job: CodexJob,
+  preferences: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">,
+  registry: CodexJobRegistry
+): DashboardAutomaticPresentation | undefined {
+  if (job.executionMode !== "background" || preferences.dashboardAutoOpenBackground === false) {
+    return undefined;
+  }
+  if (preferences.completionFollowUp !== true) return { route: "disabled" };
+  const presentation = dashboardAutoPresentationProofs(registry).issue({
+    scopeId: job.scopeId,
+    jobId: job.jobId
+  });
+  return {
+    route: selectCompletionDeliveryRoute({
+      // The bridge has no verified original-conversation resume integration.
+      verifiedHostEvent: false,
+      automaticDashboard: true
+    }),
+    presentation
+  };
+}
+
+function dashboardAutoOpenHydration(
+  presentation: DashboardAutomaticPresentation
+): Record<string, unknown> {
+  return {
+    ui: { resourceUri: DASHBOARD_CARD_URI, visibility: ["app"] },
+    "openai/outputTemplate": DASHBOARD_CARD_URI,
+    "openai/widgetAccessible": true,
+    "codex/dashboardOpen@1": {
+      scope: "conversation",
+      automatic: true,
+      completionDeliveryRoute: presentation.route,
+      ...(presentation.presentation
+        ? { presentationToken: presentation.presentation.token }
+        : {})
+    }
+  };
 }
 
 function statusToolResult(

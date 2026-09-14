@@ -28,8 +28,8 @@ It remains inside the cards and is not an external MCP compatibility path.
 
 Reconnect the ChatGPT connector after deploying this release, then use
 **Refresh** in its details page so it fetches the current descriptors and
-immutable resource URIs. Reopen any card that was mounted from a previous
-build. Old tool definitions and old card URIs are intentionally unavailable.
+versioned resource URIs. Reopen any card that was mounted from a previous
+build. Old tool definitions and retired card URIs are intentionally unavailable.
 
 For an HTTP client, send the 2026-07-28 protocol version and the current
 per-request metadata and headers. Do not send a legacy initialization request
@@ -60,19 +60,19 @@ replacement for a logical `requestId`.
 
 ## Cards
 
-The release catalog contains exactly four active immutable resources:
+The release catalog contains exactly two active resources, each backed by one
+current HTML file:
 
 | Card | Current resource |
 | --- | --- |
-| Settings | `ui://codex-mcp-bridge/settings/52c19aebb4e9.html` |
-| Activity | `ui://codex-mcp-bridge/activity/bc75a45e4875.html` |
-| Dashboard | `ui://codex-mcp-bridge/dashboard/86e53748068a.html` |
-| Question | `ui://codex-mcp-bridge/question/a93cf2f84a75.html` |
+| Settings | `ui://codex-mcp-bridge/settings/v1.html` |
+| Dashboard | `ui://codex-mcp-bridge/dashboard/v1.html` |
 
-`ui-release-catalog.json` version 3 has no published-baseline or temporary
-compatibility entries. The package selector emits only these resources. Earlier
-files may remain in Git history or the working tree, but the bridge does not
-advertise, select, or serve them.
+`ui-release-catalog.json` has no published-baseline or temporary compatibility
+entries. The package selector emits only these resources. Earlier files may
+remain in Git history, but the working tree and package contain only
+`settings.html` and `dashboard.html`. Compatible changes preserve these URIs;
+cache-incompatible changes increment the affected card's explicit URI version.
 
 ## Verification and deployment evidence
 
@@ -91,6 +91,25 @@ The isolated audit uses a temporary project root, in-memory state, and an
 upstream that rejects every execution. It verifies current-protocol discovery,
 tool descriptors, and no-execution validation probes without reading operator
 credentials or changing an installed bridge.
+
+The official conformance runner is useful for wire checks, but its complete
+`--requirements 2026-07-28` server suite is a fixture suite: it calls named
+sample tools, prompts, resources, MRTR flows, and Tasks that this bridge does
+not advertise. Run the current `server-stateless` scenario against an isolated
+bridge endpoint and retain its output with the source revision:
+
+```sh
+npx -y @modelcontextprotocol/conformance@0.2.0-alpha.11 server \
+  --url http://127.0.0.1:8765/mcp \
+  --spec-version 2026-07-28 \
+  --scenario server-stateless \
+  --output-dir /tmp/mcp-conformance
+```
+
+Do not add test-only tools or advertise optional capabilities merely to improve
+that fixture score. The bridge's own HTTP and stdio integration tests cover its
+advertised tool and resource surface, headers, error codes, cache hints,
+metadata, and detached-request behavior.
 
 Before publishing, run the connector through a real ChatGPT conversation and
 Secure MCP Tunnel, record the current protocol discovery, a tool call, and a

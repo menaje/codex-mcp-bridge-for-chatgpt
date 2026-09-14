@@ -1,0 +1,133 @@
+{
+  "date": "2026-09-14T03:47:10.404Z",
+  "protocol": "2026-07-28",
+  "upstream": "manually resolved mock; no Codex/model calls",
+  "sourceSnapshot": {
+    "head": "a33ffd2baae636c597da66dc858815ff88c3c100"
+  },
+  "cardsOpened": 0,
+  "realChatGptTested": false,
+  "checks": [
+    {
+      "name": "foreground_without_cards",
+      "passed": true,
+      "remainedPendingUntilMockFinished": true,
+      "output": {
+        "state": "completed",
+        "answer": "mock_result_1"
+      }
+    },
+    {
+      "name": "background_and_bounded_status_without_cards",
+      "passed": true,
+      "returnedBeforeCompletion": true,
+      "statusWaitReturnedFinalResult": true,
+      "output": {
+        "kind": "job",
+        "scope": {
+          "mode": "scoped"
+        },
+        "counts": {
+          "sessions": 1,
+          "jobs": 1,
+          "runningJobs": 0,
+          "activities": 1,
+          "agents": 1,
+          "orphanedAgents": 0
+        },
+        "items": [
+          {
+            "inputs": {
+              "cursor": "5908c3a914ceb61fea6dd444f1f7da2bacbee44255d2a0b8eed33ee2e6aa3842",
+              "ordinaryQuestions": 0,
+              "approvalRequests": 0,
+              "readTool": "codex_status",
+              "queryKind": "input"
+            },
+            "type": "job",
+            "id": "20b4fd55-2246-419a-813c-0dd742fcf3e3",
+            "label": "Mock",
+            "state": "completed",
+            "activityId": "8202cc1a-0a1f-4da4-ab24-4399ce5eaa51",
+            "agentId": "eaee36d1-3013-4649-8375-d131f89e5e9c",
+            "threadId": "mock-thread-1",
+            "terminal": true,
+            "delivery": "primary-content",
+            "replay": false,
+            "versions": {
+              "job": 2,
+              "activity": 3
+            },
+            "execution": {
+              "mode": "background",
+              "backend": "app-server",
+              "sandbox": "read-only"
+            },
+            "result": {
+              "availability": "delivered",
+              "omitted": false
+            },
+            "answer": "mock_result_3",
+            "wait": {
+              "waitFor": "terminal",
+              "waitedMs": 44,
+              "timedOut": false,
+              "changed": true
+            },
+            "message": "Codex completed; the bounded model-authoritative answer is in this exact Job item. Tool content is a compatibility copy."
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "background_result_retained_after_task_return",
+      "passed": true,
+      "retrievedByLaterExactJobRead": true,
+      "automaticHandoffEventsForDefaultActivity": 0
+    },
+    {
+      "name": "sdk_cardless_subscription_transport",
+      "passed": true,
+      "matchingResourceNotifications": 1,
+      "unrelatedUriFiltered": true,
+      "resultReadSucceeded": true,
+      "chatGptWakeTested": false,
+      "note": "SDK client received a resource update; this does not prove ChatGPT resumes a conversation."
+    }
+  ],
+  "observedProblems": [
+    {
+      "name": "fresh_background_before_thread_assignment",
+      "outputValidationRejected": true,
+      "executionStillAdmitted": true,
+      "error": [
+        {
+          "type": "text",
+          "text": "[\n  {\n    \"code\": \"custom\",\n    \"path\": [\n      \"threadId\"\n    ],\n    \"message\": \"An admitted Job result requires its current identity and execution fields.\"\n  }\n]"
+        }
+      ],
+      "note": "Mock delays upstream assignment; code creates a running Job with no threadId and immediately projects it. Must fix startup contract before relying on new background Jobs."
+    }
+  ],
+  "currentBridge": {
+    "capabilities": {
+      "resources": {
+        "listChanged": true
+      },
+      "tools": {
+        "listChanged": true
+      }
+    },
+    "honoredCompletionResourceFilter": {}
+  },
+  "bridgeToolCalls": [
+    "codex_task",
+    "codex_task",
+    "codex_task",
+    "codex_status",
+    "codex_task",
+    "codex_status"
+  ],
+  "probeAssertionsPassed": true
+}
