@@ -197,9 +197,10 @@ describe("SkillLibrary", () => {
     const root = await temporaryRoot();
     const directory = path.join(root, "bridge-skills");
     const library = new SkillLibrary({ directory });
-    const first = await library.createBridgeSkill({
+    const createRequest = {
       requestId: randomUUID(), name: "Release review", document: "# Review\n\nVerify the release."
-    });
+    };
+    const first = await library.createBridgeSkill(createRequest);
     const archived = await library.setBridgeSkillEnabled({
       requestId: randomUUID(), skillId: first.skillId, expectedVersion: "1", enabled: false
     });
@@ -219,19 +220,26 @@ describe("SkillLibrary", () => {
     });
     await expect(stat(path.join(directory, first.skillId))).rejects.toMatchObject({ code: "ENOENT" });
     expect(await library.deleteBridgeSkill(deleteRequest)).toEqual(deleted);
+    await expect(library.createBridgeSkill(createRequest)).rejects.toThrow("SKILL_MUTATION_INVALIDATED");
     expect((await library.search({ includeDisabled: true })).skills).toEqual([]);
     await expect(library.read({ reference: first })).rejects.toThrow("SKILL_NOT_FOUND");
     const index = await readFile(path.join(directory, "index.json"), "utf8");
     expect(index).not.toContain("Release review");
     expect(index).not.toContain("Verify the release");
     expect(JSON.parse(index)).toMatchObject({
-      schemaVersion: 4,
-      mutationReceipts: [expect.objectContaining({
+      schemaVersion: 5,
+      mutationReceipts: expect.arrayContaining([expect.objectContaining({
+        requestId: createRequest.requestId,
+        outcome: expect.objectContaining({
+          kind: "invalidated",
+          invalidation: expect.objectContaining({ skillId: first.skillId })
+        })
+      }), expect.objectContaining({
         outcome: expect.objectContaining({
           kind: "deleted",
           deletion: expect.objectContaining({ skillId: first.skillId, source: "bridge" })
         })
-      })]
+      })])
     });
   });
 
@@ -242,11 +250,12 @@ describe("SkillLibrary", () => {
     const staleName = "Deleted historical review";
     const staleDescription = "This deleted description must not remain in index.json.";
     await mkdir(directory, { recursive: true });
+    const staleRequestId = randomUUID();
     await writeFile(path.join(directory, "index.json"), JSON.stringify({
       schemaVersion: 3,
       skills: [],
       mutationReceipts: [{
-        requestId: randomUUID(),
+        requestId: staleRequestId,
         actionHash: sha256("historical-delete"),
         skill: {
           skillId: deletedSkillId,
@@ -270,8 +279,16 @@ describe("SkillLibrary", () => {
     const index = await readFile(path.join(directory, "index.json"), "utf8");
     expect(index).not.toContain(staleName);
     expect(index).not.toContain(staleDescription);
-    expect(JSON.parse(index)).toMatchObject({ schemaVersion: 4, mutationReceipts: [expect.any(Object)] });
-    expect(JSON.parse(index).mutationReceipts).toHaveLength(1);
+    const parsed = JSON.parse(index);
+    expect(parsed.schemaVersion).toBe(5);
+    expect(parsed.mutationReceipts).toHaveLength(2);
+    expect(parsed.mutationReceipts).toEqual(expect.arrayContaining([expect.objectContaining({
+      requestId: staleRequestId,
+      outcome: {
+        kind: "invalidated",
+        invalidation: { skillId: deletedSkillId, invalidatedAt: "2026-01-01T00:00:00.000Z" }
+      }
+    })]));
   });
 
   it("requires the current name for deletion and rejects NUL source text", async () => {
@@ -289,9 +306,15 @@ describe("SkillLibrary", () => {
 
   it("keeps the documented 3 MiB Markdown source capacity without a lower prompt cap", async () => {
     const library = await createLibrary();
-    const document = "m".repeat(BRIDGE_SKILL_LIMITS.documentMaxBytes);
+    // U+0001 is accepted source text but serializes as six ASCII bytes in
+    // JSON, exercising the documented worst-case transport envelope.
+    const document = "\u0001".repeat(BRIDGE_SKILL_LIMITS.documentMaxBytes);
+    const requestId = randomUUID();
+    const serializedRequest = JSON.stringify({ requestId, name: "Large document", document });
+    expect(Buffer.byteLength(serializedRequest, "utf8")).toBeGreaterThan(8 * 1_024 * 1_024);
+    expect(Buffer.byteLength(serializedRequest, "utf8")).toBeLessThanOrEqual(BRIDGE_SKILL_LIMITS.mutationWireMaxBytes);
     const created = await library.createBridgeSkill({
-      requestId: randomUUID(), name: "Large document", document
+      requestId, name: "Large document", document
     });
     expect((await library.read({ reference: created })).document).toHaveLength(document.length);
     await expect(library.updateBridgeSkill({

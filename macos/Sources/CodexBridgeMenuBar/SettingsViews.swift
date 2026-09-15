@@ -2439,12 +2439,12 @@ private struct MarkdownLivePreviewEditor: View {
                 Text("렌더된 블록을 클릭하면 해당 부분만 Markdown 원문으로 편집합니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                ForEach(document.blocks) { block in
+                if document.blocks.isEmpty {
                     Button {
-                        beginEditing(block)
+                        beginEditing(MarkdownLivePreviewBlock(location: 0, length: 0))
                     } label: {
-                        MarkdownRenderedText(markdown: document.source(for: block))
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Label("Markdown 원문 편집", systemImage: "pencil.line")
+                            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                             .contentShape(Rectangle())
                             .padding(8)
                             .background(Color(nsColor: .textBackgroundColor).opacity(0.35))
@@ -2453,6 +2453,30 @@ private struct MarkdownLivePreviewEditor: View {
                     .buttonStyle(.plain)
                     .help("이 Markdown 블록 편집")
                     .accessibilityLabel("Markdown 블록 편집")
+                } else {
+                    ForEach(document.blocks) { block in
+                        Button {
+                            beginEditing(block)
+                        } label: {
+                            if document.isWhitespaceOnly(block) {
+                                Label("Markdown 원문 편집", systemImage: "text.insert")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            } else {
+                                MarkdownRenderedText(markdown: document.source(for: block))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                        }
+                        .padding(8)
+                        .background(Color(nsColor: .textBackgroundColor).opacity(0.35))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .buttonStyle(.plain)
+                        .help("이 Markdown 블록 편집")
+                        .accessibilityLabel("Markdown 블록 편집")
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2546,6 +2570,7 @@ struct MarkdownLivePreviewDocument {
         var result: [MarkdownLivePreviewBlock] = []
         var cursor = 0
         var blockStart: Int?
+        var separatorStart: Int?
         var fence: String?
 
         while cursor < sourceLength {
@@ -2559,7 +2584,12 @@ struct MarkdownLivePreviewDocument {
                     result.append(MarkdownLivePreviewBlock(location: blockStart, length: cursor - blockStart))
                 }
                 blockStart = nil
+                if separatorStart == nil { separatorStart = cursor }
             } else {
+                if let separatorStart, cursor > separatorStart {
+                    result.append(MarkdownLivePreviewBlock(location: separatorStart, length: cursor - separatorStart))
+                }
+                separatorStart = nil
                 if blockStart == nil { blockStart = cursor }
                 if let delimiter = markdownFenceDelimiter(trimmed) { fence = delimiter }
             }
@@ -2567,6 +2597,8 @@ struct MarkdownLivePreviewDocument {
         }
         if let blockStart, sourceLength > blockStart {
             result.append(MarkdownLivePreviewBlock(location: blockStart, length: sourceLength - blockStart))
+        } else if let separatorStart, sourceLength > separatorStart {
+            result.append(MarkdownLivePreviewBlock(location: separatorStart, length: sourceLength - separatorStart))
         }
         return result
     }
@@ -2574,6 +2606,10 @@ struct MarkdownLivePreviewDocument {
     func source(for block: MarkdownLivePreviewBlock) -> String {
         guard contains(block) else { return "" }
         return (markdown as NSString).substring(with: block.range)
+    }
+
+    func isWhitespaceOnly(_ block: MarkdownLivePreviewBlock) -> Bool {
+        source(for: block).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     func replacing(_ block: MarkdownLivePreviewBlock, with replacement: String) -> String {

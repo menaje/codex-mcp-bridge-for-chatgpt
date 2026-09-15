@@ -27,10 +27,10 @@ import type {
 import { localizeSettingsView } from "./settingsLocalization.js";
 
 export const COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-companion";
-/** v6 returns privacy-preserving native skill deletion tombstones. */
-export const COMPANION_PROTOCOL_VERSION = 6;
+/** v7 carries the full worst-case JSON envelope for a 3 MiB Bridge document. */
+export const COMPANION_PROTOCOL_VERSION = 7;
 export const COMPANION_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
-// A source-preserved 3 MiB Markdown document may double when JSON-escaped.
+// A source-preserved 3 MiB Markdown document can JSON-escape sixfold.
 export const COMPANION_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 const COMPANION_MAX_CLIENTS = 8;
 const MAX_UNIX_SOCKET_PATH_BYTES = 100;
@@ -318,13 +318,15 @@ export async function startPrivateJsonLineServer(
 function serveClient(socket: Socket, options: PrivateJsonLineServerOptions): void {
   socket.setEncoding("utf8");
   let buffer = "";
+  let bufferedBytes = 0;
   let requestQueue = Promise.resolve();
   const cancellation = new AbortController();
   socket.once("close", () => cancellation.abort());
 
   socket.on("data", (chunk: string) => {
     buffer += chunk;
-    if (Buffer.byteLength(buffer, "utf8") > options.maxRequestBytes) {
+    bufferedBytes += Buffer.byteLength(chunk, "utf8");
+    if (bufferedBytes > options.maxRequestBytes) {
       writeResponse(socket, options.requestTooLarge(), options.maxResponseBytes);
       socket.destroy();
       return;
@@ -334,6 +336,7 @@ function serveClient(socket: Socket, options: PrivateJsonLineServerOptions): voi
       if (newline < 0) break;
       const line = buffer.slice(0, newline);
       buffer = buffer.slice(newline + 1);
+      bufferedBytes -= Buffer.byteLength(line, "utf8") + 1;
       if (!line.trim()) continue;
       requestQueue = requestQueue
         .then(() => {

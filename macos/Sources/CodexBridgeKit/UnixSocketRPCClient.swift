@@ -216,11 +216,16 @@ private func transact(
         if count < 0 && errno == EINTR { continue }
         if count < 0 { throw LocalRPCError.connectionFailed(posixMessage()) }
         if count == 0 { throw LocalRPCError.emptyResponse }
+        // Each prior chunk was known not to contain a line terminator. Scan
+        // only this chunk, rather than rescanning the full accumulated 20 MiB
+        // response after every 16 KiB read.
+        if let newline = buffer[..<count].firstIndex(of: 0x0A) {
+            response.append(buffer, count: newline)
+            if response.count > maximumResponseBytes { throw LocalRPCError.responseTooLarge }
+            return response
+        }
         response.append(buffer, count: count)
         if response.count > maximumResponseBytes { throw LocalRPCError.responseTooLarge }
-        if let newline = response.firstIndex(of: 0x0A) {
-            return response.prefix(upTo: newline)
-        }
     }
 }
 

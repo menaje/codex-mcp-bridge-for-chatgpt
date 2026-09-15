@@ -1,8 +1,8 @@
 import Foundation
 
 /// Matches the Bridge companion envelope. A 3 MiB Markdown source can grow
-/// while JSON-encoded, so app transports must not keep a smaller hidden cap.
-public let bridgeSkillTransportEnvelopeMaxBytes = 8 * 1_024 * 1_024
+/// sixfold while JSON-encoded, so app transports must not keep a smaller cap.
+public let bridgeSkillTransportEnvelopeMaxBytes = 20 * 1_024 * 1_024
 
 public protocol BridgeApplicationClient: Sendable {
     func dashboard(

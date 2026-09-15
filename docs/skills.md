@@ -56,8 +56,8 @@ version. The original immutable version remains available in history.
 ## Bounds and safety
 
 `document` accepts up to 3 MiB of UTF-8 text. Bridge transports, local native
-IPC, remote native HTTPS, and model result envelopes allow up to 8 MiB so JSON
-escaping cannot silently reduce that source capacity. This is not a prompt-size
-promise and does not bypass normal MCP host limits. NUL-containing text is
-rejected. The native renderer displays Markdown as text and does not execute
-embedded HTML or scripts.
+IPC, remote native HTTPS, and model result envelopes allow up to 20 MiB. This
+covers JSON's worst-case sixfold expansion for C0 control characters without
+silently reducing source capacity. This is not a prompt-size promise and does
+not bypass normal MCP host limits. NUL-containing text is rejected. The native
+renderer displays Markdown as text and does not execute embedded HTML or scripts.

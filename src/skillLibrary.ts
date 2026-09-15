@@ -17,8 +17,8 @@ export const BRIDGE_SKILL_LIMITS = Object.freeze({
   descriptionMaxCharacters: 2_000,
   documentMaxBytes: 3 * 1_024 * 1_024,
   searchQueryMaxBytes: 1_000,
-  /** 3 MiB source can expand to almost 6 MiB when JSON escapes every byte. */
-  mutationWireMaxBytes: 8 * 1_024 * 1_024,
+  /** A 3 MiB source can expand sixfold when JSON escapes every C0 byte. */
+  mutationWireMaxBytes: 20 * 1_024 * 1_024,
   legacyInstructionsMaxBytes: 512 * 1_024,
   legacyReferenceMaxBytes: 512 * 1_024,
   legacyReferenceTotalMaxBytes: 2 * 1_024 * 1_024,
@@ -186,7 +186,9 @@ type BridgeSkillRecord = {
 
 type BridgeSkillMutationOutcome =
   | { kind: "skill"; skill: SkillSummary }
-  | { kind: "deleted"; deletion: DeletedBridgeSkill };
+  | { kind: "deleted"; deletion: DeletedBridgeSkill }
+  /** A permanent delete invalidates older create/update retries without retaining their content metadata. */
+  | { kind: "invalidated"; invalidation: { skillId: string; invalidatedAt: string } };
 
 type BridgeSkillMutationValue = SkillSummary | DeletedBridgeSkill;
 
@@ -194,8 +196,9 @@ type BridgeSkillMutationReceipt = {
   requestId: string;
   actionHash: string;
   /**
-   * A delete keeps only a non-content tombstone so an exact retry stays
-   * idempotent without retaining deleted library metadata.
+   * Deletes keep a non-content tombstone. Older receipts are reduced to a
+   * minimal invalidation tombstone, so an exact retry cannot recreate a
+   * permanently deleted skill or retain its name, description, or document.
    */
   outcome: BridgeSkillMutationOutcome;
   createdAt: string;
@@ -204,7 +207,7 @@ type BridgeSkillMutationReceipt = {
 type BridgeSkillMutationLockOwner = { token: string; pid: number; host: string };
 
 type BridgeSkillIndex = {
-  schemaVersion: 4;
+  schemaVersion: 5;
   skills: BridgeSkillRecord[];
   mutationReceipts: BridgeSkillMutationReceipt[];
 };
@@ -423,12 +426,22 @@ class BridgeSkillStore {
         }
         staged = { source, target };
         index.skills.splice(index.skills.indexOf(record), 1);
-        // Prior create/update/archive receipts contain the old summary. They
-        // are no longer needed once the skill is gone, and retaining them
-        // would leave deleted names or descriptions in index.json.
-        index.mutationReceipts = index.mutationReceipts.filter(
-          (receipt) => mutationOutcomeSkillId(receipt.outcome) !== record.skillId
-        );
+        // Retain only a minimal invalidation tombstone for earlier mutations.
+        // Dropping them would let a delayed exact create retry recreate this
+        // permanently deleted skill; retaining their summaries would leave
+        // deleted names or descriptions in index.json.
+        const invalidatedAt = isoNow(this.now);
+        index.mutationReceipts = index.mutationReceipts.map((receipt) => (
+          mutationOutcomeSkillId(receipt.outcome) === record.skillId
+            ? {
+              ...receipt,
+              outcome: {
+                kind: "invalidated",
+                invalidation: { skillId: record.skillId, invalidatedAt }
+              }
+            }
+            : receipt
+        ));
         return {
           skillId: record.skillId,
           source: BRIDGE_SKILL_SOURCE,
@@ -436,7 +449,18 @@ class BridgeSkillStore {
         };
       });
       committed = true;
-      if (staged) await rm(staged.target, { recursive: true, force: true }).catch(() => undefined);
+      if (staged) {
+        try {
+          await rm(staged.target, { recursive: true, force: true });
+        } catch {
+          // The index commit already made deletion durable. Do not claim
+          // success while the staged directory might still retain a document;
+          // recovery and an exact requestId retry will attempt cleanup again.
+          throw new Error(
+            "SKILL_DELETE_CLEANUP_PENDING: Bridge skill deletion committed but secure cleanup is pending. Retry the same requestId."
+          );
+        }
+      }
       return deleted;
     } catch (error) {
       if (!committed && staged) await rename(staged.target, staged.source).catch(() => undefined);
@@ -538,7 +562,7 @@ class BridgeSkillStore {
     try {
       raw = await readFile(path.join(this.directory, BRIDGE_SKILL_INDEX), "utf8");
     } catch (error) {
-      if (isErrno(error, "ENOENT")) return { schemaVersion: 4, skills: [], mutationReceipts: [] };
+      if (isErrno(error, "ENOENT")) return { schemaVersion: 5, skills: [], mutationReceipts: [] };
       throw error;
     }
     let parsed: unknown;
@@ -586,6 +610,11 @@ class BridgeSkillStore {
         if (receipt) {
           if (receipt.actionHash !== actionHash) {
             throw new Error("SKILL_MUTATION_REQUEST_REUSED: requestId was already used for a different bridge skill mutation.");
+          }
+          if (receipt.outcome.kind === "invalidated") {
+            throw new Error(
+              "SKILL_MUTATION_INVALIDATED: This exact bridge skill mutation was invalidated by permanent deletion. Do not retry it."
+            );
           }
           return cloneMutationValue(receipt.outcome) as T;
         }
@@ -1004,10 +1033,10 @@ function assertBridgeVersion(value: string, label: string): void {
 }
 
 function validateIndex(value: unknown): BridgeSkillIndex {
-  if (!isRecord(value) || ![1, 2, 3, 4].includes(value.schemaVersion as number) || !Array.isArray(value.skills)) {
+  if (!isRecord(value) || ![1, 2, 3, 4, 5].includes(value.schemaVersion as number) || !Array.isArray(value.skills)) {
     throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill index has an unsupported shape.");
   }
-  const indexVersion = value.schemaVersion as 1 | 2 | 3 | 4;
+  const indexVersion = value.schemaVersion as 1 | 2 | 3 | 4 | 5;
   const ids = new Set<string>();
   const names = new Set<string>();
   const skills = value.skills.map((entry) => validateBridgeRecord(entry, ids, names, indexVersion));
@@ -1015,11 +1044,11 @@ function validateIndex(value: unknown): BridgeSkillIndex {
     value.mutationReceipts,
     new Set(skills.map((skill) => skill.skillId))
   );
-  return { schemaVersion: 4, skills, mutationReceipts };
+  return { schemaVersion: 5, skills, mutationReceipts };
 }
 
 function validateBridgeRecord(
-  value: unknown, ids: Set<string>, names: Set<string>, indexVersion: 1 | 2 | 3 | 4
+  value: unknown, ids: Set<string>, names: Set<string>, indexVersion: 1 | 2 | 3 | 4 | 5
 ): BridgeSkillRecord {
   if (!isRecord(value) || !BRIDGE_SKILL_ID.test(stringValue(value.skillId)) || typeof value.name !== "string" ||
     typeof value.nameKey !== "string" || typeof value.description !== "string" || typeof value.createdAt !== "string" ||
@@ -1047,7 +1076,7 @@ function validateBridgeRecord(
   };
 }
 
-function validateBridgeVersion(value: unknown, indexVersion: 1 | 2 | 3 | 4): BridgeSkillVersionRecord {
+function validateBridgeVersion(value: unknown, indexVersion: 1 | 2 | 3 | 4 | 5): BridgeSkillVersionRecord {
   if (isRecord(value) && value.kind === "document") return validateMarkdownVersion(value);
   return validateLegacyVersion(value, indexVersion);
 }
@@ -1065,7 +1094,7 @@ function validateMarkdownVersion(value: Record<string, unknown>): MarkdownBridge
   };
 }
 
-function validateLegacyVersion(value: unknown, indexVersion: 1 | 2 | 3 | 4): LegacyBridgeSkillVersionRecord {
+function validateLegacyVersion(value: unknown, indexVersion: 1 | 2 | 3 | 4 | 5): LegacyBridgeSkillVersionRecord {
   if (!isRecord(value) || !/^[1-9]\d*$/.test(stringValue(value.version)) || typeof value.createdAt !== "string" ||
     typeof value.name !== "string" || typeof value.description !== "string" || !SHA256.test(stringValue(value.contentDigest)) ||
     !Array.isArray(value.references) || (indexVersion !== 1 && value.contentDigestVersion !== 2 && value.contentDigestVersion !== 1) ||
@@ -1124,12 +1153,8 @@ function validateMutationReceipts(value: unknown, activeSkillIds: ReadonlySet<st
     if (requestIds.has(entry.requestId)) throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill mutation receipts have duplicate request ids.");
     requestIds.add(entry.requestId);
     const outcome = entry.outcome === undefined
-      ? legacyMutationReceiptOutcome(entry.skill, activeSkillIds)
-      : validateMutationOutcome(entry.outcome);
-    // v3 receipts saved full summaries for deleted skills. Once this code writes
-    // the index, discard those stale records instead of carrying deleted names
-    // and descriptions into the v4 receipt format.
-    if (!outcome) continue;
+      ? legacyMutationReceiptOutcome(entry.skill, activeSkillIds, entry.createdAt)
+      : validateMutationOutcome(entry.outcome, activeSkillIds, entry.createdAt);
     receipts.push({
       requestId: entry.requestId, actionHash: stringValue(entry.actionHash),
       outcome, createdAt: entry.createdAt
@@ -1140,17 +1165,29 @@ function validateMutationReceipts(value: unknown, activeSkillIds: ReadonlySet<st
 
 function legacyMutationReceiptOutcome(
   value: unknown,
-  activeSkillIds: ReadonlySet<string>
-): BridgeSkillMutationOutcome | undefined {
+  activeSkillIds: ReadonlySet<string>,
+  invalidatedAt: string
+): BridgeSkillMutationOutcome {
   const skill = validateStoredSkillSummary(value);
-  return activeSkillIds.has(skill.skillId) ? { kind: "skill", skill } : undefined;
+  return activeSkillIds.has(skill.skillId)
+    ? { kind: "skill", skill }
+    : invalidatedMutationOutcome(skill.skillId, invalidatedAt);
 }
 
-function validateMutationOutcome(value: unknown): BridgeSkillMutationOutcome {
+function validateMutationOutcome(
+  value: unknown,
+  activeSkillIds: ReadonlySet<string>,
+  invalidatedAt: string
+): BridgeSkillMutationOutcome {
   if (!isRecord(value) || typeof value.kind !== "string") {
     throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill mutation receipt has an invalid outcome.");
   }
-  if (value.kind === "skill") return { kind: "skill", skill: validateStoredSkillSummary(value.skill) };
+  if (value.kind === "skill") {
+    const skill = validateStoredSkillSummary(value.skill);
+    return activeSkillIds.has(skill.skillId)
+      ? { kind: "skill", skill }
+      : invalidatedMutationOutcome(skill.skillId, invalidatedAt);
+  }
   if (value.kind === "deleted") {
     const deletion = value.deletion;
     if (!isRecord(deletion) || !BRIDGE_SKILL_ID.test(stringValue(deletion.skillId)) ||
@@ -1165,6 +1202,14 @@ function validateMutationOutcome(value: unknown): BridgeSkillMutationOutcome {
         deletedAt: deletion.deletedAt
       }
     };
+  }
+  if (value.kind === "invalidated") {
+    const invalidation = value.invalidation;
+    if (!isRecord(invalidation) || !BRIDGE_SKILL_ID.test(stringValue(invalidation.skillId)) ||
+      typeof invalidation.invalidatedAt !== "string") {
+      throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill mutation invalidation receipt is invalid.");
+    }
+    return invalidatedMutationOutcome(stringValue(invalidation.skillId), invalidation.invalidatedAt);
   }
   throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill mutation receipt has an unknown outcome.");
 }
@@ -1215,14 +1260,26 @@ function mutationOutcome(value: BridgeSkillMutationValue): BridgeSkillMutationOu
     : { kind: "skill", skill: cloneSkillSummary(value) };
 }
 
+function invalidatedMutationOutcome(skillId: string, invalidatedAt: string): BridgeSkillMutationOutcome {
+  return { kind: "invalidated", invalidation: { skillId, invalidatedAt } };
+}
+
 function cloneMutationOutcome(outcome: BridgeSkillMutationOutcome): BridgeSkillMutationOutcome {
-  return outcome.kind === "deleted"
-    ? { kind: "deleted", deletion: { ...outcome.deletion } }
-    : { kind: "skill", skill: cloneSkillSummary(outcome.skill) };
+  if (outcome.kind === "deleted") return { kind: "deleted", deletion: { ...outcome.deletion } };
+  if (outcome.kind === "invalidated") return invalidatedMutationOutcome(
+    outcome.invalidation.skillId, outcome.invalidation.invalidatedAt
+  );
+  return { kind: "skill", skill: cloneSkillSummary(outcome.skill) };
 }
 
 function cloneMutationValue(outcome: BridgeSkillMutationOutcome): BridgeSkillMutationValue {
-  return outcome.kind === "deleted" ? { ...outcome.deletion } : cloneSkillSummary(outcome.skill);
+  if (outcome.kind === "deleted") return { ...outcome.deletion };
+  if (outcome.kind === "invalidated") {
+    throw new Error(
+      "SKILL_MUTATION_INVALIDATED: This exact bridge skill mutation was invalidated by permanent deletion. Do not retry it."
+    );
+  }
+  return cloneSkillSummary(outcome.skill);
 }
 
 function isDeletedBridgeSkill(value: BridgeSkillMutationValue): value is DeletedBridgeSkill {
@@ -1230,7 +1287,9 @@ function isDeletedBridgeSkill(value: BridgeSkillMutationValue): value is Deleted
 }
 
 function mutationOutcomeSkillId(outcome: BridgeSkillMutationOutcome): string {
-  return outcome.kind === "deleted" ? outcome.deletion.skillId : outcome.skill.skillId;
+  if (outcome.kind === "deleted") return outcome.deletion.skillId;
+  if (outcome.kind === "invalidated") return outcome.invalidation.skillId;
+  return outcome.skill.skillId;
 }
 
 function normalizeMutationRequestId(value: string): string {

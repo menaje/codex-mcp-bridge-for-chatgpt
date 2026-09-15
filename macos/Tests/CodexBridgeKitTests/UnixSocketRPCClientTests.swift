@@ -6,14 +6,17 @@ import XCTest
 final class UnixSocketRPCClientTests: XCTestCase {
     func testDefaultTransportReadsMaximumBridgeSkillDocumentEnvelope() async throws {
         struct DocumentResult: Decodable { let document: String }
-        let document = String(repeating: "m", count: 3 * 1_024 * 1_024)
+        // C0 control characters are valid source text (except NUL) but use
+        // JSON's six-byte escape form, exercising the true transport bound.
+        let document = String(repeating: "\u{0001}", count: 3 * 1_024 * 1_024)
         let body = String(
             decoding: try JSONSerialization.data(withJSONObject: [
                 "result": ["document": document]
             ]),
             as: UTF8.self
         )
-        XCTAssertGreaterThan(body.lengthOfBytes(using: .utf8), 2 * 1_024 * 1_024)
+        XCTAssertGreaterThan(body.lengthOfBytes(using: .utf8), 8 * 1_024 * 1_024)
+        XCTAssertLessThanOrEqual(body.lengthOfBytes(using: .utf8), bridgeSkillTransportEnvelopeMaxBytes)
         let path = "/tmp/cb-rpc-large-skill-\(UUID().uuidString.prefix(8)).sock"
         let server = try NativeRPCFixture(path: path) { _ in NativeFixtureReply(body: body) }
         defer { server.stop() }

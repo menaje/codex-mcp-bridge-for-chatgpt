@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  COMPANION_MAX_REQUEST_BYTES,
+  COMPANION_MAX_RESPONSE_BYTES,
   COMPANION_PROTOCOL_NAME,
   COMPANION_PROTOCOL_VERSION,
   REMOTE_COMPANION_APPLICATION_METHODS,
@@ -12,6 +14,7 @@ import {
   type BridgeCompanionServer,
   type RemoteCompanionControl
 } from "../src/companionServer.js";
+import { BRIDGE_SKILL_LIMITS } from "../src/skillLibrary.js";
 import type {
   BridgeApplicationService,
   DashboardView,
@@ -172,6 +175,64 @@ describe("native companion server", () => {
     });
     expect(wrongSource).toHaveProperty("error");
   });
+
+  it("carries the full worst-case JSON-escaped Bridge document over the native socket", async () => {
+    const socketPath = temporarySocketPath();
+    const service = fakeApplicationService();
+    const document = "\u0001".repeat(BRIDGE_SKILL_LIMITS.documentMaxBytes);
+    const skill = {
+      skillId: `bridge_${"c".repeat(32)}`,
+      source: "bridge" as const,
+      version: "1",
+      name: "Maximum document",
+      description: "",
+      contentDigest: "d".repeat(64),
+      enabled: true,
+      availability: "available" as const
+    };
+    service.skillLibrarySnapshot = vi.fn(async () => ({ skills: [skill] }));
+    service.createBridgeSkill = vi.fn(async () => skill);
+    service.readBridgeSkill = vi.fn(async () => ({
+      skill,
+      document,
+      format: "markdown" as const,
+      legacy: false,
+      sourceSnapshot: "versioned-bridge-record" as const,
+      warnings: []
+    }));
+    service.listBridgeSkillVersions = vi.fn(async () => ({
+      skillId: skill.skillId,
+      source: "bridge" as const,
+      currentVersion: skill.version,
+      enabled: true,
+      versions: []
+    }));
+    service.updateBridgeSkill = vi.fn(async () => skill);
+    service.restoreBridgeSkill = vi.fn(async () => skill);
+    service.setBridgeSkillEnabled = vi.fn(async () => skill);
+    service.deleteBridgeSkill = vi.fn(async () => ({
+      skillId: skill.skillId,
+      source: "bridge" as const,
+      deletedAt: "2026-09-15T00:00:00.000Z"
+    }));
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService: service }));
+
+    expect(COMPANION_MAX_REQUEST_BYTES).toBe(BRIDGE_SKILL_LIMITS.mutationWireMaxBytes);
+    expect(COMPANION_MAX_RESPONSE_BYTES).toBe(BRIDGE_SKILL_LIMITS.mutationWireMaxBytes);
+    const create = await request(socketPath, {
+      jsonrpc: "2.0", id: "max-document-create", method: "skills.create",
+      params: { requestId: randomUUID(), name: skill.name, document }
+    });
+    expect(create).toMatchObject({ result: { skillId: skill.skillId } });
+    expect(service.createBridgeSkill).toHaveBeenCalledWith(expect.objectContaining({ document }));
+
+    const read = await request(socketPath, {
+      jsonrpc: "2.0", id: "max-document-read", method: "skills.read",
+      params: { skillId: skill.skillId, source: "bridge", version: "1" }
+    });
+    expect(read).toMatchObject({ result: { format: "markdown" } });
+    expect(read.result.document).toBe(document);
+  }, 20_000);
   it("serves lightweight health independently of a stalled admission snapshot", async () => {
     const socketPath = temporarySocketPath();
     const service = fakeApplicationService();

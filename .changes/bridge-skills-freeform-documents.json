@@ -4,5 +4,5 @@
   "bump": "minor",
   "summary": "BREAKING: Replace structured Bridge skills with free-form versioned Markdown documents.",
   "breaking": true,
-  "migration": "Deploy the current bridge and matching macOS app (local companion protocol 6 and remote companion protocol 4), refresh ChatGPT connector discovery, then read or edit existing Bridge skills through bridge_skill and bridge_skill_manage using document instead of instructions, references, executionMode, or requirements."
+  "migration": "Deploy the current bridge and matching macOS app (local companion protocol 7 and remote companion protocol 5), refresh ChatGPT connector discovery, then read or edit existing Bridge skills through bridge_skill and bridge_skill_manage using document instead of instructions, references, executionMode, or requirements."
 }
