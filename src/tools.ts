@@ -20,11 +20,9 @@ import {
 import { DisplayReadPool, waitForDisplay } from "./displayReadPool.js";
 import { uiControlProofs, type UiControlClaims } from "./uiControlProofs.js";
 import {
-  completionDeliveryEventId,
-  dashboardAutoPresentationProofs,
+  nativeCompletionNotification,
   selectCompletionDeliveryRoute,
-  type CompletionDeliveryRoute,
-  type DashboardAutoPresentation
+  type NativeCompletionNotification
 } from "./completionDelivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ThreadConnectionController, type ThreadConnectionRecord } from "./threadConnections.js";
@@ -204,6 +202,22 @@ import {
   type AuthoritativeProjectionChannel,
   type ToolResultContract
 } from "./toolResultContracts.js";
+import {
+  BRIDGE_SKILL_LIMITS,
+  BRIDGE_SKILL_SOURCE,
+  SkillLibrary,
+  type CreateBridgeSkillInput,
+  type PreparedSkillDelivery,
+  type SkillDocument,
+  type SkillReferenceDocument,
+  type SkillReference,
+  type SkillSearchResult,
+  type SkillSummary,
+  type SkillVersionList,
+  type RestoreBridgeSkillInput,
+  type SetBridgeSkillEnabledInput,
+  type UpdateBridgeSkillInput
+} from "./skillLibrary.js";
 
 type CodexJobStatus =
   | "running"
@@ -221,7 +235,7 @@ export const MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES = 24 * 1024;
 /** Complete serialized codex_task descriptor ceiling at maximum bounded choices. */
 export const CODEX_TASK_DESCRIPTOR_MAX_JSON_BYTES = 128 * 1024;
 /** Stable task envelope adopted once; settings/catalog/project values stay runtime-authoritative. */
-export const CODEX_TASK_INPUT_CONTRACT_VERSION = "3" as const;
+export const CODEX_TASK_INPUT_CONTRACT_VERSION = "4" as const;
 const MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING =
   "The model-authoritative primary answer was truncated by the structured-output byte limit. Request a narrower report only if the missing sections are required.";
 
@@ -396,6 +410,15 @@ const backendHandoffAuditOutputSchema = z.strictObject({
   summarySha256: z.string()
 });
 
+const requiredSkillDeliveryAuditOutputSchema = z.strictObject({
+  skillId: z.string().min(1),
+  source: z.literal(BRIDGE_SKILL_SOURCE),
+  version: z.string().min(1),
+  name: z.string().min(1),
+  contentDigest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  delivery: z.literal("bridge-instruction-bundle")
+});
+
 const bridgeSessionOutputSchema = z.strictObject({
   requestedMode: z.enum(["auto", "new", "continue"]),
   action: z.enum(["start", "continue"]),
@@ -411,6 +434,7 @@ const bridgeSessionOutputSchema = z.strictObject({
   ]),
   threadId: z.string().optional(),
   handoff: backendHandoffAuditOutputSchema.optional(),
+  requiredSkills: z.array(requiredSkillDeliveryAuditOutputSchema).optional(),
   scopeId: z.string(),
   requestId: z.string(),
   projectName: z.string().nullable()
@@ -422,7 +446,7 @@ const dashboardPresentationOutputSchema = z.strictObject({
   scope: z.literal("conversation"),
   automatic: z.boolean(),
   reason: z.enum(["background-enabled", "foreground", "setting-disabled"]),
-  completionDeliveryRoute: z.enum(["disabled", "host-event", "dashboard", "pending"])
+  completionDeliveryRoute: z.enum(["disabled", "native-notification", "pending"])
 });
 
 const codexTaskOutputSchema = z.strictObject({
@@ -705,32 +729,6 @@ const cardEnrichmentOutputSchema = z.strictObject({
   oldestObservationAt: z.iso.datetime().optional()
 });
 
-const dashboardCompletionEventOutputSchema = z.strictObject({
-  eventId: z.string().regex(/^completion-[a-f0-9]{64}$/),
-  outboxId: z.number().int().positive(),
-  activityId: z.string().uuid(),
-  completionVersion: z.number().int().positive(),
-  channel: z.enum(["notify", "verify"])
-});
-
-/** Present only to an automatically opened, conversation-scoped Dashboard. */
-const dashboardCompletionDeliveryOutputSchema = z.strictObject({
-  route: z.literal("dashboard"),
-  events: z.array(dashboardCompletionEventOutputSchema).max(20)
-});
-
-const completionDeliveryMutationOutputSchema = z.strictObject({
-  kind: z.literal("completion-delivery"),
-  action: z.enum([
-    "completion-claim",
-    "completion-delivered",
-    "completion-release",
-    "completion-uncertain"
-  ]),
-  state: z.enum(["claimed", "delivered", "released", "uncertain"]),
-  events: z.array(dashboardCompletionEventOutputSchema).max(20)
-});
-
 const dashboardViewOutputSchema = z.strictObject({
   problems: dashboardProblemsOutputSchema.optional(),
   historyPolicy: workHistoryPolicyOutputSchema.optional(),
@@ -760,7 +758,6 @@ const dashboardViewOutputSchema = z.strictObject({
     terminal: dashboardPageOutputSchema,
     idle: dashboardPageOutputSchema
   }),
-  completionDelivery: dashboardCompletionDeliveryOutputSchema.optional(),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES)
 });
 
@@ -1180,6 +1177,97 @@ const codexModelsOutputSchema = z.strictObject({
   models: z.array(compactCatalogModelOutputSchema)
 });
 
+const skillReferenceOutputSchema = z.strictObject({
+  skillId: z.string().min(1),
+  source: z.literal(BRIDGE_SKILL_SOURCE),
+  version: z.string().min(1)
+});
+
+const skillMaterialOutputSchema = z.strictObject({
+  referenceId: z.string().min(1),
+  name: z.string().min(1),
+  mediaType: z.string().min(1),
+  contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  bytes: z.number().int().positive()
+});
+
+const skillRequirementOutputSchema = z.strictObject({
+  kind: z.enum(["bridge-capability", "environment"]),
+  id: z.string().min(1),
+  description: z.string().min(1).nullable(),
+  availability: z.enum(["available", "external-environment", "unsupported"])
+});
+
+const skillExecutionOutputSchema = z.strictObject({
+  mode: z.enum(["conversation", "codex", "conversation-or-codex"]),
+  note: z.string().min(1),
+  requirements: z.array(skillRequirementOutputSchema)
+});
+
+const skillSummaryOutputSchema = skillReferenceOutputSchema.extend({
+  name: z.string().min(1),
+  description: z.string().min(1),
+  contentDigest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  enabled: z.boolean(),
+  availability: z.enum(["available", "metadata-only", "disabled"]),
+  execution: skillExecutionOutputSchema
+});
+
+const bridgeSkillSearchOutputSchema = z.strictObject({
+  kind: z.literal("skill-search"),
+  skills: z.array(skillSummaryOutputSchema)
+});
+
+const bridgeSkillReadOutputSchema = z.strictObject({
+  kind: z.literal("skill"),
+  skill: skillSummaryOutputSchema,
+  instructions: z.string().min(1),
+  references: z.array(skillMaterialOutputSchema),
+  sourceSnapshot: z.literal("versioned-bridge-record"),
+  warnings: z.array(z.string())
+});
+
+const bridgeSkillReferenceOutputSchema = z.strictObject({
+  kind: z.literal("skill-reference"),
+  skill: skillReferenceOutputSchema,
+  execution: skillExecutionOutputSchema,
+  reference: skillMaterialOutputSchema,
+  content: z.string().min(1),
+  sourceSnapshot: z.literal("versioned-bridge-record"),
+  warnings: z.array(z.string())
+});
+
+const bridgeSkillVersionsOutputSchema = z.strictObject({
+  kind: z.literal("skill-versions"),
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+  source: z.literal(BRIDGE_SKILL_SOURCE),
+  currentVersion: z.string().regex(/^[1-9]\d*$/),
+  enabled: z.boolean(),
+  versions: z.array(skillReferenceOutputSchema.extend({
+    name: z.string().min(1),
+    description: z.string().min(1),
+    contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    createdAt: z.string().min(1),
+    referenceCount: z.number().int().min(0),
+    execution: skillExecutionOutputSchema
+  }))
+});
+
+const bridgeSkillOutputSchema = z.union([
+  bridgeSkillSearchOutputSchema,
+  bridgeSkillReadOutputSchema,
+  bridgeSkillReferenceOutputSchema,
+  bridgeSkillVersionsOutputSchema
+]);
+
+const bridgeSkillManageOutputSchema = z.strictObject({
+  kind: z.literal("skill-mutation"),
+  action: z.enum(["create", "update", "restore", "set-enabled"]),
+  requestId: z.string().uuid(),
+  skill: skillSummaryOutputSchema,
+  message: z.string().min(1)
+});
+
 const diagnosticsOutputSchema = z.strictObject({
   kind: z.literal("diagnostics"),
   bridge: z.strictObject({
@@ -1261,7 +1349,8 @@ function toolOutputContract<Schema extends z.ZodType>(
   channel: AuthoritativeProjectionChannel,
   outputSchema: Schema,
   maxBytes: number,
-  completeness: "summary-only" | "documented-support-level" | "primary-payload" = "summary-only"
+  completeness: "summary-only" | "documented-support-level" | "primary-payload" = "summary-only",
+  format: "plain-text" | "compact-json" = "plain-text"
 ): ToolResultContract<Schema> {
   const structuredMaxBytes = structuredByteCapFor(toolName);
   return defineToolResultContract({
@@ -1272,7 +1361,7 @@ function toolOutputContract<Schema extends z.ZodType>(
     privateMeta: { maxBytes: TOOL_STRUCTURED_BYTE_CAPS.app_only_hydration },
     compatibility: {
       channel: "text-protocol-compatibility",
-      format: "plain-text",
+      format,
       maxBytes,
       completeness
     }
@@ -1325,6 +1414,21 @@ const modelsResultContract = toolOutputContract(
   "model-orchestrator-semantic",
   codexModelsOutputSchema,
   TOOL_CONTENT_BYTE_CAPS.codex_models
+);
+const skillResultContract = toolOutputContract(
+  "bridge_skill",
+  "model-orchestrator-semantic",
+  bridgeSkillOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.bridge_skill,
+  "primary-payload",
+  "compact-json"
+);
+const skillManageResultContract = toolOutputContract(
+  "bridge_skill_manage",
+  "model-orchestrator-semantic",
+  bridgeSkillManageOutputSchema,
+  TOOL_CONTENT_BYTE_CAPS.bridge_skill_manage,
+  "documented-support-level"
 );
 const settingsSnapshotResultContract = toolOutputContract(
   "codex_ui_read",
@@ -1409,6 +1513,8 @@ export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
   codex_cancel: z.union([cancelMutationOutputSchema, activityCancelMutationOutputSchema]),
   codex_dashboard: dashboardModelOutputSchema,
   codex_models: codexModelsOutputSchema,
+  bridge_skill: bridgeSkillOutputSchema,
+  bridge_skill_manage: bridgeSkillManageOutputSchema,
   codex_settings: z.strictObject({ kind: z.literal("settings"), opened: z.literal(true) }),
   codex_status: z.union([codexStatusOutputSchema, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.status_input, projectStatusOutputSchema]),
   codex_steer: codexSteerOutputSchema,
@@ -1422,7 +1528,7 @@ export const OPERATOR_OUTPUT_SCHEMAS = Object.freeze({
 export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
   codex_ui_read: z.union([dashboardViewOutputSchema, dashboardHistoryDetailOutputSchema, settingsViewOutputSchema, uiControlSummaryOutputSchema]),
   codex_ui_stop: mutationOutputSchema,
-  codex_ui_problem: z.union([problemActionResultSchema, completionDeliveryMutationOutputSchema]),
+  codex_ui_problem: problemActionResultSchema,
   codex_interaction_respond: mutationOutputSchema,
   codex_update_settings: settingsViewOutputSchema
 });
@@ -1549,6 +1655,14 @@ type SessionDecision = {
     | "no-compatible-session";
   threadId?: string;
   handoff?: BackendHandoffAudit;
+  /** Required selections delivered by the bridge; extra Codex skill use is not constrained by this list. */
+  requiredSkills?: RequiredSkillDeliveryAudit[];
+};
+
+type RequiredSkillDeliveryAudit = SkillReference & {
+  name: string;
+  contentDigest: string | null;
+  delivery: "bridge-instruction-bundle";
 };
 
 type BackendHandoffAudit = {
@@ -1567,10 +1681,11 @@ type CodexRouting = {
   scopeId: string;
   requestId: string;
   requestHash: string;
-  requestHashVersion: 2 | 3 | 4 | 5 | 6 | 7;
+  requestHashVersion: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 };
 
-const CURRENT_TASK_REQUEST_HASH_VERSION = 7 as const;
+// Version 9 binds bridge-only skill references into task idempotency.
+const CURRENT_TASK_REQUEST_HASH_VERSION = 9 as const;
 
 type TaskProjectAdmission = {
   projectId: string;
@@ -1632,7 +1747,7 @@ type CodexJob = {
   scopeId: string;
   requestId: string;
   requestHash: string;
-  requestHashVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  requestHashVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
   sourceThreadId?: string;
   selectionKey?: string;
   executionDecision?: ExecutionDecision;
@@ -2433,41 +2548,51 @@ export class CodexJobRegistry {
     return this.activityStore.listPendingCompletionActivityIds(scopeId);
   }
 
-  claimCompletionOutboxBatch(outboxIds: number[], scopeId: string, leaseOwner: string) {
+  claimNativeCompletionNotifications(limit: number, leaseOwner: string) {
     return this.activityTransaction(() =>
-      [...new Set(outboxIds)].sort((a, b) => a - b).flatMap((outboxId) => {
-        const record = this.activityStore.claimCompletionOutbox(outboxId, scopeId, leaseOwner);
-        return record ? [record] : [];
+      this.activityStore.listPendingNotifyCompletionOutbox(limit).flatMap((candidate) => {
+        const record = this.activityStore.claimCompletionOutbox(
+          candidate.outboxId,
+          candidate.scopeId,
+          leaseOwner
+        );
+        return record?.channel === "notify" ? [record] : [];
       })
     );
   }
 
-  markCompletionOutboxBatchDelivered(outboxIds: number[], scopeId: string, leaseOwner: string) {
+  markNativeCompletionNotificationsDelivered(outboxIds: number[], leaseOwner: string) {
     const records = this.activityTransaction(() =>
-      [...new Set(outboxIds)].sort((a, b) => a - b).map((outboxId) =>
-        this.activityStore.markCompletionOutboxDelivered(outboxId, scopeId, leaseOwner)
-      )
+      [...new Set(outboxIds)].sort((a, b) => a - b).map((outboxId) => {
+        const record = this.activityStore.getCompletionOutbox(outboxId);
+        if (!record || record.channel !== "notify") {
+          throw new Error("Unknown native completion notification.");
+        }
+        return this.activityStore.markCompletionOutboxDelivered(
+          record.outboxId,
+          record.scopeId,
+          leaseOwner
+        );
+      })
     );
-    this.notifyScope(scopeId);
+    for (const scopeId of new Set(records.map((record) => record.scopeId))) {
+      this.notifyScope(scopeId);
+    }
     return records;
   }
 
-  releaseCompletionOutboxBatch(outboxIds: number[], scopeId: string, leaseOwner: string): void {
-    this.activityTransaction(() => {
-      for (const outboxId of [...new Set(outboxIds)]) {
-        this.activityStore.releaseCompletionOutbox(outboxId, scopeId, leaseOwner);
+  releaseNativeCompletionNotifications(outboxIds: number[], leaseOwner: string): void {
+    const scopes = this.activityTransaction(() => {
+      const affected = new Set<string>();
+      for (const outboxId of [...new Set(outboxIds)].sort((a, b) => a - b)) {
+        const record = this.activityStore.getCompletionOutbox(outboxId);
+        if (!record || record.channel !== "notify") continue;
+        this.activityStore.releaseCompletionOutbox(record.outboxId, record.scopeId, leaseOwner);
+        affected.add(record.scopeId);
       }
+      return affected;
     });
-  }
-
-  markCompletionOutboxBatchUncertain(outboxIds: number[], scopeId: string, leaseOwner: string) {
-    const records = this.activityTransaction(() =>
-      [...new Set(outboxIds)].sort((a, b) => a - b).map((outboxId) =>
-        this.activityStore.markCompletionOutboxUncertain(outboxId, scopeId, leaseOwner)
-      )
-    );
-    this.notifyScope(scopeId);
-    return records;
+    for (const scopeId of scopes) this.notifyScope(scopeId);
   }
 
   setActivityPolicy(
@@ -3645,7 +3770,8 @@ export function registerBridgeTools(
   userSettings: UserSettingsStore,
   scopeResolver: ScopeResolver,
   projectAvailability?: TaskProjectAvailabilityProjection,
-  sharedCardPerformance?: CardPerformanceTracker
+  sharedCardPerformance?: CardPerformanceTracker,
+  skillLibrary?: SkillLibrary
 ): {
   applicationService: BridgeApplicationService;
   dispose(): void;
@@ -3656,8 +3782,10 @@ export function registerBridgeTools(
   registerDashboardCardResource(server);
   const codexInputs = registerCodexInputTools(server, jobs, scopeResolver);
   registerSettingsCardResource(server);
-  const dashboardPresentations = dashboardAutoPresentationProofs(jobs);
   const cardPerformance = sharedCardPerformance || new CardPerformanceTracker();
+  const effectiveSkillLibrary = skillLibrary || new SkillLibrary({
+    directory: config.bridgeSkillsDirectory
+  });
   const taskExecutionEnvelopeRef = () => userSettings.taskExecutionEnvelopeRef();
   // A modern HTTP request receives a fresh McpServer, while the task
   // descriptor itself is stable across mutable user settings. There is no
@@ -3741,6 +3869,37 @@ export function registerBridgeTools(
     return {agent,job,revision:dashboardHistoryRevision(agent,job)};
   };
   const applicationService: BridgeApplicationService = {
+    async skillLibrarySnapshot() {
+      // The native library screen manages the same bridge-owned store as MCP.
+      return effectiveSkillLibrary.search({ includeDisabled: true });
+    },
+    async readBridgeSkill(reference) {
+      if (reference.source !== BRIDGE_SKILL_SOURCE) {
+        throw new Error("SKILL_SOURCE_UNSUPPORTED: The native library can manage bridge-owned skills only.");
+      }
+      return effectiveSkillLibrary.read({ reference });
+    },
+    async readBridgeSkillReference(input) {
+      if (input.reference.source !== BRIDGE_SKILL_SOURCE) {
+        throw new Error("SKILL_SOURCE_UNSUPPORTED: The native library can manage bridge-owned skills only.");
+      }
+      return effectiveSkillLibrary.readReference(input);
+    },
+    listBridgeSkillVersions(input) {
+      return effectiveSkillLibrary.listBridgeSkillVersions(input);
+    },
+    createBridgeSkill(input) {
+      return effectiveSkillLibrary.createBridgeSkill(input);
+    },
+    updateBridgeSkill(input) {
+      return effectiveSkillLibrary.updateBridgeSkill(input);
+    },
+    restoreBridgeSkill(input) {
+      return effectiveSkillLibrary.restoreBridgeSkill(input);
+    },
+    setBridgeSkillEnabled(input) {
+      return effectiveSkillLibrary.setBridgeSkillEnabled(input);
+    },
     async problemAction(rawInput, scopeId, source = "operator") {
       const input = problemActionSchema.parse(rawInput);
       const firstKey = input.targets[0]!.problemKey;
@@ -3862,6 +4021,28 @@ export function registerBridgeTools(
       const record = jobs.threadHandoff(thread.threadId, input.action);
       return { phase: record.phase, ...(record.reason !== undefined ? { reason: record.reason } : {}), requested: record.handoffRequested,
         canOpen: record.phase === "released" && Boolean(record.evidence) };
+    },
+    async claimNativeCompletionNotifications(input) {
+      // The preference is checked at claim time so a disabled Mac never
+      // consumes durable events. The local app can resume delivery later
+      // without any ChatGPT card or conversation-resume capability.
+      if (!userSettings.current.completionFollowUp) return [];
+      return jobs.claimNativeCompletionNotifications(input.limit ?? 10, input.leaseOwner)
+        .flatMap((record) => record.channel === "notify"
+          ? [nativeCompletionNotification({
+              outboxId: record.outboxId,
+              scopeId: record.scopeId,
+              activityId: record.activityId,
+              completionVersion: record.completionVersion,
+              channel: "notify"
+            })]
+          : []);
+    },
+    async markNativeCompletionNotificationsDelivered(input) {
+      jobs.markNativeCompletionNotificationsDelivered(input.outboxIds, input.leaseOwner);
+    },
+    async releaseNativeCompletionNotifications(input) {
+      jobs.releaseNativeCompletionNotifications(input.outboxIds, input.leaseOwner);
     },
     subscribeChanges(listener) {
       const subscriptions = [
@@ -4122,31 +4303,6 @@ export function registerBridgeTools(
   const reviewProofs = problemReviewProofs(jobs);
   const problemControlDetailInput = z.strictObject({view:z.literal("problem-control"),operation:problemOperationSchema,
     widgetInstanceId:widgetInstanceIdSchema,scopeId:scopeIdSchema().optional(),scope:z.enum(["conversation","all"])});
-  const completionDeliveryActionInput = z.strictObject({
-    action: z.enum([
-      "completion-claim",
-      "completion-delivered",
-      "completion-release",
-      "completion-uncertain"
-    ]),
-    outboxIds: z.array(z.number().int().positive()).min(1).max(20),
-    presentationToken: z.string().uuid(),
-    widgetInstanceId: widgetInstanceIdSchema,
-    scopeId: scopeIdSchema().optional()
-  });
-  const completionEvent = (record: {
-    outboxId: number;
-    scopeId: string;
-    activityId: string;
-    completionVersion: number;
-    channel: "notify" | "verify";
-  }) => ({
-    eventId: completionDeliveryEventId(record),
-    outboxId: record.outboxId,
-    activityId: record.activityId,
-    completionVersion: record.completionVersion,
-    channel: record.channel
-  });
   const readProblemControl: ToolCallback<typeof problemControlDetailInput> = async (args,extra) => {
     const host = scopeResolver.resolve(extra.mcpReq._meta as ToolCallMetadata,args.scopeId);
     const widget = mountedWidgetInstanceId(args,extra.mcpReq._meta);
@@ -4181,12 +4337,261 @@ export function registerBridgeTools(
       _meta:{"codex/problemControl@1":{token,operationDigest}}};
   };
 
+  const skillReferenceInput = z.strictObject({
+    skillId: z.string().trim().min(1).max(200).describe("Exact skill id returned by bridge_skill search."),
+    source: z.literal(BRIDGE_SKILL_SOURCE).describe("Bridge-owned skill source returned by bridge_skill search."),
+    version: z.string().trim().min(1).max(100).describe("Exact bridge skill version returned by bridge_skill search.")
+  });
+  const skillReferenceMaterialInput = z.strictObject({
+    name: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters),
+    content: z.string().min(1).max(BRIDGE_SKILL_LIMITS.referenceMaxBytes)
+      .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.referenceMaxBytes, {
+        message: `Reference material must be at most ${BRIDGE_SKILL_LIMITS.referenceMaxBytes} UTF-8 bytes.`
+      })
+      .refine((value) => !value.includes("\u0000"), {
+        message: "Reference material cannot contain NUL characters."
+      }),
+    mediaType: z.string().trim().min(3).max(BRIDGE_SKILL_LIMITS.mediaTypeMaxCharacters).optional()
+  });
+  const skillReferenceMaterialsInput = z.array(skillReferenceMaterialInput)
+    .max(BRIDGE_SKILL_LIMITS.referenceMaxCount)
+    .refine((references) => references.reduce(
+      (total, reference) => total + Buffer.byteLength(reference.content, "utf8"),
+      0
+    ) <= BRIDGE_SKILL_LIMITS.referenceTotalMaxBytes, {
+      message: `Reference materials must total at most ${BRIDGE_SKILL_LIMITS.referenceTotalMaxBytes} UTF-8 bytes.`
+    });
+  const skillRequirementInput = z.strictObject({
+    kind: z.enum(["bridge-capability", "environment"]),
+    id: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.requirementIdMaxCharacters),
+    description: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.requirementDescriptionMaxCharacters).optional()
+  });
+  const bridgeSkillExecutionModeInput = z.enum(["conversation", "codex", "conversation-or-codex"]);
+  const bridgeSkillInput = z.discriminatedUnion("operation", [
+    z.strictObject({
+      operation: z.literal("search"),
+      query: z.string().max(BRIDGE_SKILL_LIMITS.searchQueryMaxBytes)
+        .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.searchQueryMaxBytes, {
+          message: `Search text must be at most ${BRIDGE_SKILL_LIMITS.searchQueryMaxBytes} UTF-8 bytes.`
+        })
+        .optional()
+        .describe("Task, goal, or procedure to search for. Omit to list available skills."),
+      limit: z.number().int().min(1).max(100).optional()
+    }),
+    z.strictObject({
+      operation: z.literal("read"),
+      skill: skillReferenceInput
+    }),
+    z.strictObject({
+      operation: z.literal("reference"),
+      skill: skillReferenceInput,
+      referenceId: z.string().trim().min(1).max(200).describe("Exact referenceId returned by a bridge_skill read operation.")
+    }),
+    z.strictObject({
+      operation: z.literal("versions"),
+      skillId: z.string().trim().regex(/^bridge_[a-f0-9]{32}$/).describe("Bridge skill id whose immutable version history should be listed.")
+    })
+  ]);
+  const bridgeSkillManageInput = z.discriminatedUnion("operation", [
+    z.strictObject({
+      operation: z.literal("create"),
+      requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
+      name: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters),
+      description: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).describe("Brief trigger-oriented description used for skill discovery."),
+      instructions: z.string().min(1).max(BRIDGE_SKILL_LIMITS.instructionsMaxBytes)
+        .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.instructionsMaxBytes, {
+          message: `Instructions must be at most ${BRIDGE_SKILL_LIMITS.instructionsMaxBytes} UTF-8 bytes.`
+        }),
+      references: skillReferenceMaterialsInput.optional(),
+      executionMode: bridgeSkillExecutionModeInput.optional(),
+      requirements: z.array(skillRequirementInput).max(BRIDGE_SKILL_LIMITS.requirementMaxCount).optional()
+    }),
+    z.strictObject({
+      operation: z.literal("update"),
+      requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
+      skillId: z.string().trim().regex(/^bridge_[a-f0-9]{32}$/).describe("Exact bridge-origin skill id."),
+      expectedVersion: z.string().trim().regex(/^[1-9]\d*$/).describe("Current version read before this mutation. A successful update creates the next immutable version."),
+      name: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters).optional(),
+      description: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).optional(),
+      instructions: z.string().min(1).max(BRIDGE_SKILL_LIMITS.instructionsMaxBytes)
+        .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.instructionsMaxBytes, {
+          message: `Instructions must be at most ${BRIDGE_SKILL_LIMITS.instructionsMaxBytes} UTF-8 bytes.`
+        })
+        .optional(),
+      references: skillReferenceMaterialsInput.optional().describe("When supplied, replaces the complete reference-material list for the new version."),
+      executionMode: bridgeSkillExecutionModeInput.optional(),
+      requirements: z.array(skillRequirementInput).max(BRIDGE_SKILL_LIMITS.requirementMaxCount).optional()
+    }).refine((value) => value.name !== undefined || value.description !== undefined ||
+      value.instructions !== undefined || value.references !== undefined || value.executionMode !== undefined || value.requirements !== undefined, {
+      message: "Provide at least one field to update."
+    }),
+    z.strictObject({
+      operation: z.literal("restore"),
+      requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
+      skillId: z.string().trim().regex(/^bridge_[a-f0-9]{32}$/),
+      expectedVersion: z.string().trim().regex(/^[1-9]\d*$/).describe("Current version read before this mutation."),
+      sourceVersion: z.string().trim().regex(/^[1-9]\d*$/).describe("Historical immutable version to copy into a new current version.")
+    }),
+    z.strictObject({
+      operation: z.literal("set-enabled"),
+      requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
+      skillId: z.string().trim().regex(/^bridge_[a-f0-9]{32}$/),
+      expectedVersion: z.string().trim().regex(/^[1-9]\d*$/).describe("Current version read before this mutation."),
+      enabled: z.boolean().describe("False archives the skill from discovery and new Codex delivery while preserving immutable history.")
+    })
+  ]);
+  server.registerTool(
+    "bridge_skill",
+    {
+      title: "Find and Read Bridge Skills",
+      description:
+        "Find a reusable bridge-owned procedure before applying one to a conversation task. Search by the user's goal when no exact skill name is known, then read the selected exact version. Read reference materials only when needed. Reading never starts Codex, executes a script, or changes permissions.",
+      inputSchema: bridgeSkillInput,
+      outputSchema: bridgeSkillOutputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async (args) => {
+      if (args.operation === "search") {
+        const result = await effectiveSkillLibrary.search({
+          query: args.query,
+          limit: args.limit
+        });
+        const structured = bridgeSkillSearchOutputSchema.parse({ kind: "skill-search", ...result });
+        return contractedToolResult(
+          skillResultContract,
+          result,
+          structured,
+          { content: bridgeSkillPrimaryContent(structured) }
+        );
+      }
+
+      if (args.operation === "versions") {
+        const result = await effectiveSkillLibrary.listBridgeSkillVersions({ skillId: args.skillId });
+        const structured = bridgeSkillVersionsOutputSchema.parse({ kind: "skill-versions", ...result });
+        return contractedToolResult(
+          skillResultContract,
+          result,
+          structured,
+          { content: bridgeSkillPrimaryContent(structured) }
+        );
+      }
+
+      const reference = args.skill as SkillReference;
+      if (args.operation === "read") {
+        const result = await effectiveSkillLibrary.read({ reference });
+        const structured = bridgeSkillReadOutputSchema.parse({ kind: "skill", ...result });
+        return contractedToolResult(
+          skillResultContract,
+          result,
+          structured,
+          { content: bridgeSkillPrimaryContent(structured) }
+        );
+      }
+
+      const result = await effectiveSkillLibrary.readReference({
+        reference,
+        referenceId: args.referenceId
+      });
+      const structured = bridgeSkillReferenceOutputSchema.parse({ kind: "skill-reference", ...result });
+      return contractedToolResult(
+        skillResultContract,
+        result,
+        structured,
+        { content: bridgeSkillPrimaryContent(structured) }
+      );
+    }
+  );
+
+  server.registerTool(
+    "bridge_skill_manage",
+    {
+      title: "Manage a Bridge Skill",
+      description:
+        "Create, version, restore, or archive a bridge-owned skill. Every mutation requires a requestId for exact retries. Content updates and restores are append-only: the bridge preserves prior instructions, materials, and declared prerequisites.",
+      inputSchema: bridgeSkillManageInput,
+      outputSchema: bridgeSkillManageOutputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async (args) => {
+      const skill = args.operation === "create"
+        ? await effectiveSkillLibrary.createBridgeSkill({
+            requestId: args.requestId,
+            name: args.name,
+            description: args.description,
+            instructions: args.instructions,
+            references: args.references,
+            executionMode: args.executionMode,
+            requirements: args.requirements
+          })
+        : args.operation === "update"
+          ? await effectiveSkillLibrary.updateBridgeSkill({
+              requestId: args.requestId,
+              skillId: args.skillId,
+              expectedVersion: args.expectedVersion,
+              ...(args.name === undefined ? {} : { name: args.name }),
+              ...(args.description === undefined ? {} : { description: args.description }),
+              ...(args.instructions === undefined ? {} : { instructions: args.instructions }),
+              ...(args.references === undefined ? {} : { references: args.references }),
+              ...(args.executionMode === undefined ? {} : { executionMode: args.executionMode }),
+              ...(args.requirements === undefined ? {} : { requirements: args.requirements })
+            })
+          : args.operation === "restore"
+            ? await effectiveSkillLibrary.restoreBridgeSkill({
+                requestId: args.requestId,
+                skillId: args.skillId,
+                expectedVersion: args.expectedVersion,
+                sourceVersion: args.sourceVersion
+              })
+            : await effectiveSkillLibrary.setBridgeSkillEnabled({
+                requestId: args.requestId,
+                skillId: args.skillId,
+                expectedVersion: args.expectedVersion,
+                enabled: args.enabled
+              });
+      const action = args.operation;
+      const structured = bridgeSkillManageOutputSchema.parse({
+        kind: "skill-mutation",
+        action,
+        requestId: args.requestId,
+        skill,
+        message: action === "create"
+          ? `Created bridge skill ${JSON.stringify(skill.name)} at version ${skill.version}.`
+          : action === "update"
+            ? `Created version ${skill.version} of bridge skill ${JSON.stringify(skill.name)}.`
+            : action === "restore"
+              ? `Restored historical content as version ${skill.version} of bridge skill ${JSON.stringify(skill.name)}.`
+              : skill.enabled
+                ? `Enabled bridge skill ${JSON.stringify(skill.name)}.`
+                : `Archived bridge skill ${JSON.stringify(skill.name)}; immutable history remains readable.`
+      });
+      return contractedToolResult(
+        skillManageResultContract,
+        structured,
+        structured,
+        { text: structured.message }
+      );
+    }
+  );
+
   const codexDashboardInput = z.strictObject({
     scopeId: scopeIdSchema()
       .optional()
       .describe("Conversation UUID for hosts that do not supply scoped MCP metadata."),
     scope: z.enum(["conversation", "all"]).optional().describe(
       "Open a conversation-scoped Dashboard when the host identifies this conversation, or open all retained work."
+    ),
+    backgroundJobId: z.string().uuid().optional().describe(
+      "Exact background Job from a codex_task Dashboard render action. It may be used only with scope='conversation'."
     )
   });
   const dashboardSnapshotInput = z.strictObject({
@@ -4196,9 +4601,6 @@ export function registerBridgeTools(
       "Select the current three-category overview and filter its rows. Counts cover the full selected conversation scope before filtering and pagination."
     ),
     widgetInstanceId: widgetInstanceIdSchema.optional(),
-    presentationToken: z.string().uuid().optional().describe(
-      "Private capability supplied only when a background task automatically opened this Dashboard."
-    ),
     scope: z.enum(["auto", "conversation", "all"]).optional().describe(
       "Initial auto selects this conversation when it has Activity or Job records; conversation and all retain an explicit selection."
     ),
@@ -4225,7 +4627,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Codex Status`,
       description:
-        "Open the Codex status card. It starts with this conversation when it has Activity or Job records, including completed history; otherwise it shows all conversations. The user can switch between this conversation and all work in the card.",
+        "Open the Codex status card. It starts with this conversation when it has Activity or Job records, including completed history; otherwise it shows all conversations. For a background codex_task result that supplies a Dashboard render action, call this tool immediately with its scope and backgroundJobId before replying; that scoped render mounts the automatic Dashboard in that conversation. The user can switch between this conversation and all work in the card.",
       inputSchema: codexDashboardInput,
       outputSchema: dashboardModelOutputSchema,
       annotations: {
@@ -4244,7 +4646,48 @@ export function registerBridgeTools(
       if (args.scope === "conversation" && !scope) {
         throw new Error("DASHBOARD_CONVERSATION_UNAVAILABLE: Reopen the Dashboard in its conversation.");
       }
-      const summary = args.scope === "conversation"
+      const automaticPresentation = args.backgroundJobId
+        ? (() => {
+            if (args.scope !== "conversation" || !scope) {
+              throw new Error(
+                "DASHBOARD_AUTOMATIC_PRESENTATION_UNAVAILABLE: Render the Dashboard in the originating conversation."
+              );
+            }
+            if (!userSettings.current.dashboardAutoOpenBackground) {
+              throw new Error(
+                "DASHBOARD_AUTO_OPEN_DISABLED: Enable background Dashboard auto-open before rendering this presentation."
+              );
+            }
+            const job = jobs.get(args.backgroundJobId);
+            if (
+              !job ||
+              job.scopeId !== scope.scopeId ||
+              job.executionMode !== "background"
+            ) {
+              throw new Error(
+                "DASHBOARD_AUTOMATIC_PRESENTATION_UNAVAILABLE: The requested background work is unavailable in this conversation."
+              );
+            }
+            return true;
+          })()
+        : false;
+      const completionJob = args.backgroundJobId
+        ? jobs.get(args.backgroundJobId)
+        : undefined;
+      const completionActivity = completionJob
+        ? jobs.getActivity(completionJob.activityId)
+        : undefined;
+      const completionDeliveryRoute = automaticPresentation &&
+        userSettings.current.completionFollowUp &&
+        completionActivity?.handoffPolicy === "notify" &&
+        completionActivity.completionTrigger === "sealed-jobs-terminal"
+        ? selectCompletionDeliveryRoute({
+            nativeNotificationDispatcher: true
+          })
+        : "disabled" as const;
+      const summary = automaticPresentation
+        ? "The originating conversation Dashboard is open for this background Codex job."
+        : args.scope === "conversation"
         ? "The Codex status card is open for this conversation."
         : "The Codex status card is open. The card loads current retained work, starting with this conversation when it has records and otherwise showing all conversations.";
       return contractedToolResult(dashboardModelResultContract, {}, {
@@ -4254,8 +4697,13 @@ export function registerBridgeTools(
         "openai/locale": resolvePreferredUiLocale(userSettings.current.uiLocalePreference,
           metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")),
         "codex/dashboardOpen@1": {
-          scope: args.scope || "auto",
-          automatic: false
+          scope: automaticPresentation ? "conversation" : args.scope || "auto",
+          automatic: automaticPresentation,
+          ...(automaticPresentation
+            ? {
+                completionDeliveryRoute
+              }
+            : {})
         }
       } });
     }
@@ -4280,24 +4728,6 @@ export function registerBridgeTools(
       if (mode === "conversation" && !openingScope) {
         throw new Error("DASHBOARD_CONVERSATION_UNAVAILABLE: This host did not identify the opening conversation. Select all work or reopen the status card.");
       }
-      const automaticPresentation = args.presentationToken
-        ? (() => {
-            if (mode !== "conversation" || !openingScope) {
-              throw new Error("DASHBOARD_AUTOMATIC_PRESENTATION_STALE: Reopen the Dashboard in the originating conversation.");
-            }
-            const presentation = dashboardPresentations.require({
-              token: args.presentationToken,
-              scopeId: openingScope.scopeId,
-              hostScopeId: openingScope.scopeId,
-              widgetInstanceId
-            });
-            const job = jobs.get(presentation.jobId);
-            if (!job || job.scopeId !== openingScope.scopeId) {
-              throw new Error("DASHBOARD_AUTOMATIC_PRESENTATION_STALE: The originating background task is no longer available.");
-            }
-            return presentation;
-          })()
-        : undefined;
       const view = await applicationService.dashboardSnapshot({
         problems: args.problems,
         scopeId: mode === "conversation" ? openingScope!.scopeId : undefined,
@@ -4310,27 +4740,6 @@ export function registerBridgeTools(
       });
       if (args.scope !== undefined) {
         view.filter = { mode, conversationAvailable: Boolean(openingScope), conversationHasWork };
-      }
-      if (automaticPresentation && userSettings.current.completionFollowUp) {
-        const route = selectCompletionDeliveryRoute({
-          // No ChatGPT conversation-resume API has passed the product's
-          // end-to-end verification. Do not infer support from transport
-          // notifications or product identity.
-          verifiedHostEvent: false,
-          automaticDashboard: true
-        });
-        if (route === "dashboard") {
-          view.completionDelivery = {
-            route,
-            events: jobs.listPendingCompletionOutbox(openingScope!.scopeId, 20).map((record) => ({
-              eventId: completionDeliveryEventId(record),
-              outboxId: record.outboxId,
-              activityId: record.activityId,
-              completionVersion: record.completionVersion,
-              channel: record.channel
-            }))
-          };
-        }
       }
       return dashboardViewResult(
         view,
@@ -6192,7 +6601,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run or continue one Codex turn in the current conversation using the selected project and saved bridge settings.",
+        "Run or continue one Codex turn in the current conversation using the selected project and saved bridge settings. When a background start returns a codex_dashboard next action, call that render tool immediately before any prose response so the originating conversation Dashboard mounts. When macOS background-completion notifications are enabled, a new one-job background Activity automatically queues its native notification after successful terminal completion. Multi-job or explicit Activity policies remain under the caller's control.",
       inputSchema: codexTaskInputSchema(config, taskExecutionEnvelopeRef()),
       outputSchema: codexTaskOutputSchema,
       annotations: codexTaskEnvelopeAnnotations(config)
@@ -6262,12 +6671,12 @@ export function registerBridgeTools(
           executionEnvelopeRef: taskExecutionEnvelopeRef(),
           executionPolicyRef: currentTaskAdmissionRef(preferences)
         });
-        const activityRequest = validateActivityTaskRequest(args, jobs, scope.scopeId);
-        const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, activityRequest);
-        validateTaskSelectionInput(args, preferences, activityRequest, agentResolution);
+        const requestedActivity = validateActivityTaskRequest(args, jobs, scope.scopeId);
+        const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, requestedActivity);
+        validateTaskSelectionInput(args, preferences, requestedActivity, agentResolution);
         if (
           args.project === undefined &&
-          (activityRequest.activityId === undefined || agentResolution.contextMode === "fresh")
+          (requestedActivity.activityId === undefined || agentResolution.contextMode === "fresh")
         ) {
           // Distinguish an empty registry (setup required) from an omitted
           // selection (project required), without ever choosing a fallback.
@@ -6284,10 +6693,15 @@ export function registerBridgeTools(
           jobs,
           sessions,
           userSettings,
-          activityRequest,
+          activityRequest: requestedActivity,
           agentResolution
         });
-        const executionMode = resolveTaskExecutionMode(activityRequest, jobs);
+        const executionMode = resolveTaskExecutionMode(requestedActivity, jobs);
+        const activityRequest = applyBackgroundCompletionNotificationPolicy(
+          requestedActivity,
+          executionMode,
+          preferences
+        );
 
         if (scope.scopeId === LEGACY_SCOPE_ID && agentResolution.contextMode === "fresh") {
           throw new Error("The legacy scope cannot create a fresh bridge Agent thread.");
@@ -6354,8 +6768,13 @@ export function registerBridgeTools(
             requireSameCwd: true
           });
           await enforceSensitiveFilePreflight(config, cwd, "run Codex");
+          const skillDelivery = await prepareTaskSkills(
+            effectiveSkillLibrary,
+            args.requiredSkills
+          );
           const routing = resolveTaskRouting({
             args,
+            activityRequest,
             scopeId: scope.scopeId,
             projectRequest: args.project,
             projectId: projectAdmission?.projectId,
@@ -6397,6 +6816,7 @@ export function registerBridgeTools(
             agentRole: agentResolution.role,
             projectAdmission,
             backendHandoff,
+            skillDelivery,
             resolved: {
               cwd,
               sandbox,
@@ -6472,8 +6892,13 @@ export function registerBridgeTools(
           userSettings,
           requireSameCwd: false
         });
+        const skillDelivery = await prepareTaskSkills(
+          effectiveSkillLibrary,
+          args.requiredSkills
+        );
         const routing = resolveTaskRouting({
           args,
+          activityRequest,
           scopeId: scope.scopeId,
           projectRequest: args.project,
           projectId: projectAdmission?.projectId,
@@ -6515,6 +6940,7 @@ export function registerBridgeTools(
             executionPolicyRef: taskAdmissionPolicyRef(args),
             executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
             projectRequest: args.project,
+            skillDelivery,
             onAdmitted: onTaskAdmitted
           }));
         }
@@ -6540,6 +6966,7 @@ export function registerBridgeTools(
           executionPolicyRef: taskAdmissionPolicyRef(args),
           executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
           projectRequest: args.project,
+          skillDelivery,
           onAdmitted: onTaskAdmitted
         }));
       } catch (error) {
@@ -6612,71 +7039,12 @@ export function registerBridgeTools(
     throw new Error("UI_VIEW_UNSUPPORTED: Refresh the card and choose a supported view.");
   });
   server.registerTool("codex_ui_problem", {
-    title:"Review Problems and Completion Delivery",description:"App-only execution review, undo, non-loading status recheck, confirmed retry of failed termination, and durable completion-delivery acknowledgement. Every mutation requires a fresh mounted-card proof.",
-    inputSchema:z.union([
-      problemActionSchema.safeExtend({token:z.string().max(32768),widgetInstanceId:widgetInstanceIdSchema,scopeId:scopeIdSchema().optional()}),
-      completionDeliveryActionInput
-    ]),
+    title:"Review Problems",description:"App-only execution review, undo, non-loading status recheck, and confirmed retry of failed termination. Every mutation requires a fresh mounted-card proof.",
+    inputSchema:problemActionSchema.safeExtend({token:z.string().max(32768),widgetInstanceId:widgetInstanceIdSchema,scopeId:scopeIdSchema().optional()}),
     outputSchema:APP_ONLY_OUTPUT_SCHEMAS.codex_ui_problem,
     annotations:{readOnlyHint:false,destructiveHint:true,idempotentHint:true,openWorldHint:false},
     _meta:{ui:{visibility:["app"]},"openai/visibility":"private","openai/widgetAccessible":true}
   },async (args,extra) => {
-    if (["completion-claim", "completion-delivered", "completion-release", "completion-uncertain"].includes(args.action)) {
-      const deliveryArgs = completionDeliveryActionInput.parse(args);
-      const host = scopeResolver.require(
-        extra.mcpReq._meta as ToolCallMetadata,
-        deliveryArgs.scopeId,
-        "Dashboard completion delivery"
-      );
-      if (!userSettings.current.completionFollowUp) {
-        throw new Error("COMPLETION_FOLLOW_UP_DISABLED: Enable completion follow-up before delivering queued events.");
-      }
-      const presentation = dashboardPresentations.require({
-        token: deliveryArgs.presentationToken,
-        scopeId: host.scopeId,
-        hostScopeId: host.scopeId,
-        widgetInstanceId: deliveryArgs.widgetInstanceId
-      });
-      const job = jobs.get(presentation.jobId);
-      if (!job || job.scopeId !== host.scopeId) {
-        throw new Error("DASHBOARD_AUTOMATIC_PRESENTATION_STALE: The originating background task is no longer available.");
-      }
-      const route = selectCompletionDeliveryRoute({
-        verifiedHostEvent: false,
-        automaticDashboard: true
-      });
-      if (route !== "dashboard") {
-        throw new Error("COMPLETION_DELIVERY_ROUTE_UNAVAILABLE: No verified completion route is available.");
-      }
-      const leaseOwner = `dashboard:${deliveryArgs.widgetInstanceId}`;
-      const records = deliveryArgs.action === "completion-claim"
-        ? jobs.claimCompletionOutboxBatch(deliveryArgs.outboxIds, host.scopeId, leaseOwner)
-        : deliveryArgs.action === "completion-delivered"
-          ? jobs.markCompletionOutboxBatchDelivered(deliveryArgs.outboxIds, host.scopeId, leaseOwner)
-          : deliveryArgs.action === "completion-uncertain"
-            ? jobs.markCompletionOutboxBatchUncertain(deliveryArgs.outboxIds, host.scopeId, leaseOwner)
-            : (() => {
-                jobs.releaseCompletionOutboxBatch(deliveryArgs.outboxIds, host.scopeId, leaseOwner);
-                return [];
-              })();
-      const state = deliveryArgs.action === "completion-claim"
-        ? "claimed" as const
-        : deliveryArgs.action === "completion-delivered"
-          ? "delivered" as const
-          : deliveryArgs.action === "completion-uncertain"
-            ? "uncertain" as const
-            : "released" as const;
-      const structured = completionDeliveryMutationOutputSchema.parse({
-        kind: "completion-delivery",
-        action: deliveryArgs.action,
-        state,
-        events: records.map(completionEvent)
-      });
-      return {
-        content: [{ type: "text", text: `Completion delivery ${state}.` }],
-        structuredContent: structured
-      };
-    }
     const problemArgs = problemActionSchema.safeExtend({
       token:z.string().max(32768),
       widgetInstanceId:widgetInstanceIdSchema,
@@ -6869,6 +7237,8 @@ type CodexTaskArgs = {
   agent?: CodexTaskAgentInput;
   executionMode?: ActivityExecutionMode;
   selection?: ModelChoice;
+  /** Exact library selections required for this one Codex turn. */
+  requiredSkills?: SkillReference[];
   /** Normalized private fields derived solely from the current nested input. */
   activityId?: string;
   continuationOfActivityId?: string;
@@ -7061,6 +7431,27 @@ function backendHandoffPrompt(handoff: BackendHandoff, prompt: string): string {
   ].join("\n");
 }
 
+function promptWithRequiredSkills(prompt: string, delivery?: PreparedSkillDelivery): string {
+  return delivery?.promptPreamble
+    ? `${delivery.promptPreamble}\n\n[Requested work]\n${prompt}`
+    : prompt;
+}
+
+function requiredSkillDeliveryAudit(
+  delivery: PreparedSkillDelivery | undefined
+): RequiredSkillDeliveryAudit[] | undefined {
+  if (!delivery || delivery.requiredSkills.length === 0) return undefined;
+  return delivery.requiredSkills.map((skill) => ({ ...skill }));
+}
+
+async function prepareTaskSkills(
+  library: SkillLibrary,
+  references: readonly SkillReference[] | undefined
+): Promise<PreparedSkillDelivery | undefined> {
+  if (!references || references.length === 0) return undefined;
+  return library.prepareForExecution({ references });
+}
+
 type AgentThreadResumeErrorCode =
   | "AGENT_ORPHANED"
   | "AGENT_THREAD_BUSY"
@@ -7152,6 +7543,33 @@ function resolveTaskExecutionMode(
   if (request.executionMode) return request.executionMode;
   if (!request.activityId) return "background";
   return jobs.getActivity(request.activityId)?.executionMode || "background";
+}
+
+/**
+ * A new one-job background Activity is the unit a native completion alert can
+ * safely represent. Existing and linked Activities retain their explicit
+ * lifecycle policy; multi-job callers still choose their own barrier.
+ */
+function applyBackgroundCompletionNotificationPolicy(
+  request: ActivityTaskRequest,
+  executionMode: ActivityExecutionMode,
+  preferences: Pick<BridgeUserSettings, "completionFollowUp">
+): ActivityTaskRequest {
+  if (
+    request.activityId !== undefined ||
+    request.continuationOfActivityId !== undefined ||
+    executionMode !== "background" ||
+    preferences.completionFollowUp !== true ||
+    request.handoffPolicy !== undefined ||
+    request.completionTrigger !== undefined
+  ) {
+    return request;
+  }
+  return {
+    ...request,
+    handoffPolicy: "notify",
+    completionTrigger: "sealed-jobs-terminal"
+  };
 }
 
 type AgentTaskResolution =
@@ -7638,6 +8056,7 @@ async function startNewSession(input: {
   agentRole?: string;
   projectAdmission?: TaskProjectAdmission;
   backendHandoff?: BackendHandoff;
+  skillDelivery?: PreparedSkillDelivery;
   resolved: {
     cwd: string;
     sandbox: SandboxMode;
@@ -7652,9 +8071,10 @@ async function startNewSession(input: {
   const access = resolveExecutionPolicy(input.config, input.preferences, cwd, sandbox);
   if (!input.preflightDone) await enforceSensitiveFilePreflight(input.config, cwd, "run Codex");
 
-  const prompt = input.backendHandoff
+  const basePrompt = input.backendHandoff
     ? backendHandoffPrompt(input.backendHandoff, input.args.prompt)
     : input.args.prompt;
+  const prompt = promptWithRequiredSkills(basePrompt, input.skillDelivery);
   const payload: Record<string, unknown> = {
     prompt,
     ...executionAccessArguments(access)
@@ -7671,7 +8091,10 @@ async function startNewSession(input: {
     requestedMode: input.requestedMode,
     action: "start",
     reason: input.reason,
-    ...(input.backendHandoff ? { handoff: backendHandoffAudit(input.backendHandoff) } : {})
+    ...(input.backendHandoff ? { handoff: backendHandoffAudit(input.backendHandoff) } : {}),
+    ...(requiredSkillDeliveryAudit(input.skillDelivery)
+      ? { requiredSkills: requiredSkillDeliveryAudit(input.skillDelivery) }
+      : {})
   };
   return runCodex({
     jobs: input.jobs,
@@ -7816,6 +8239,7 @@ async function continueTrackedSession(input: {
   executionPolicyRef?: string;
   executionPolicyCatalogFingerprint: string | null;
   projectRequest?: RuntimeProjectSelection;
+  skillDelivery?: PreparedSkillDelivery;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
   const access = resolveExecutionPolicy(input.config, input.preferences, input.session.cwd, input.session.sandbox);
@@ -7823,11 +8247,15 @@ async function continueTrackedSession(input: {
   if (!input.preflightDone) {
     await enforceSensitiveFilePreflight(input.config, currentCwd, "continue Codex");
   }
+  const prompt = promptWithRequiredSkills(input.prompt, input.skillDelivery);
   const decision: SessionDecision = {
     requestedMode: input.requestedMode,
     action: "continue",
     reason: input.reason,
-    threadId: input.session.threadId
+    threadId: input.session.threadId,
+    ...(requiredSkillDeliveryAudit(input.skillDelivery)
+      ? { requiredSkills: requiredSkillDeliveryAudit(input.skillDelivery) }
+      : {})
   };
   let executionStateApplied = false;
   return runCodex({
@@ -7880,7 +8308,7 @@ async function continueTrackedSession(input: {
           {
             backendKind: input.session.backendKind,
             threadId: input.session.threadId,
-            prompt: input.prompt,
+            prompt,
             ...access,
             ...(backendSupports(input.session.backendKind, "supportsTurnSelection")
               ? { selection: input.executionDecision.effectiveSelection }
@@ -7892,7 +8320,7 @@ async function continueTrackedSession(input: {
       }
       const payload: Record<string, unknown> = {
         threadId: input.session.threadId,
-        prompt: input.prompt,
+        prompt,
         ...executionAccessArguments(access),
         ...backendRoutingArgument(input.session.backendKind)
       };
@@ -7960,6 +8388,7 @@ async function forkTrackedSession(input: {
   executionPolicyRef?: string;
   executionPolicyCatalogFingerprint: string | null;
   projectRequest?: RuntimeProjectSelection;
+  skillDelivery?: PreparedSkillDelivery;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
   const access = resolveExecutionPolicy(input.config, input.preferences, input.session.cwd, input.session.sandbox);
@@ -7971,11 +8400,15 @@ async function forkTrackedSession(input: {
   const storage = await input.config.codexService?.sessionPolicy(input.session.backendKind, input.preferences.showBridgeThreadsInCodexApp, input.session.threadId);
   const currentCwd = resolvePinnedAgentCwd(input);
   await enforceSensitiveFilePreflight(input.config, currentCwd, "fork Codex context");
+  const prompt = promptWithRequiredSkills(input.prompt, input.skillDelivery);
   const sessionDecision: SessionDecision = {
     requestedMode: "new",
     action: "start",
     reason: "explicit-new",
-    threadId: input.session.threadId
+    threadId: input.session.threadId,
+    ...(requiredSkillDeliveryAudit(input.skillDelivery)
+      ? { requiredSkills: requiredSkillDeliveryAudit(input.skillDelivery) }
+      : {})
   };
   return runCodex({
     jobs: input.jobs,
@@ -8012,7 +8445,7 @@ async function forkTrackedSession(input: {
         backendKind: input.session.backendKind,
         ...access,
         threadId: input.session.threadId,
-        prompt: input.prompt,
+        prompt,
         selection: input.executionDecision.effectiveSelection,
         ephemeral: !input.preferences.showBridgeThreadsInCodexApp
       },
@@ -8108,7 +8541,6 @@ async function runCodex(input: {
     throw new Error("Codex task admission requires an existing Agent or a new Agent name.");
   }
   let job!: CodexJob;
-  let replayed = false;
   const admit = () => input.jobs.activityTransaction(() => {
     const replay = input.jobs.findRequest(
       input.routing.scopeId,
@@ -8117,7 +8549,6 @@ async function runCodex(input: {
     );
     if (replay) {
       job = replay;
-      replayed = true;
       return;
     }
     if (input.userSettings) {
@@ -8214,6 +8645,12 @@ async function runCodex(input: {
         ? (assignment) => input.onAssigned?.(assignment, agent)
         : undefined
     );
+    if (shouldSealOneJobCompletionActivity(input.activityRequest, activity, job.executionMode)) {
+      // A newly declared notify/sealed Activity represents one admitted
+      // background Job. Seal it after the Job exists so terminal settlement
+      // can atomically create the durable completion outbox record.
+      input.jobs.sealActivity(activity.activityId);
+    }
   });
   if (input.userSettings && input.projectRequest) {
     input.userSettings.admissionTransaction(admit);
@@ -8227,12 +8664,7 @@ async function runCodex(input: {
       input.config.jobStaleAfterMs,
       input.preferences,
       input.jobs,
-      false,
-      replayed ? undefined : automaticDashboardPresentationForJob(
-        job,
-        input.preferences,
-        input.jobs
-      )
+      false
     );
   }
   await job.promise;
@@ -8243,6 +8675,20 @@ async function runCodex(input: {
     return forwardResult(job.result, job, input.preferences, input.jobs, false);
   }
   throw new Error(job.error || "Codex job failed.");
+}
+
+function shouldSealOneJobCompletionActivity(
+  request: ActivityTaskRequest,
+  activity: BridgeActivity,
+  executionMode: ActivityExecutionMode
+): boolean {
+  return (
+    request.activityId === undefined &&
+    request.continuationOfActivityId === undefined &&
+    executionMode === "background" &&
+    activity.handoffPolicy === "notify" &&
+    activity.completionTrigger === "sealed-jobs-terminal"
+  );
 }
 
 function resultForJob(
@@ -8557,7 +9003,7 @@ function formatJobStatus(
   replay = false
 ): Record<string, unknown> {
   const activity = formatJobActivity(job, staleAfterMs);
-  const dashboard = dashboardPresentationHint(job.executionMode, preferences);
+  const dashboard = dashboardPresentationHint(job, preferences, registry);
   const active = isActiveActivityJobStatus(job.status);
   const terminal = isTerminalActivityJobStatus(job.status);
   const resultOmitted = job.resultOmitted || false;
@@ -8605,16 +9051,18 @@ function formatJobStatus(
       : []),
     ...(job.status === "cancelled"
       ? ["Cancellation does not roll back partial filesystem changes."]
-      : []),
-    ...(dashboard.completionDeliveryRoute === "pending"
-      ? ["Completion follow-up is queued because no verified host event or automatic Dashboard presentation is available."]
       : [])
   ];
   const nextActions = active
     ? [
         { tool: "codex_status", arguments: { query: { kind: "input", jobId: job.jobId, waitMs: DEFAULT_CODEX_STATUS_WAIT_MS } } },
         ...(dashboard.automatic
-          ? [{ tool: "codex_dashboard", arguments: { scope: "conversation" } }]
+          ? [{
+              tool: "codex_dashboard",
+              arguments: { scope: "conversation", backgroundJobId: job.jobId },
+              userPrompt:
+                "Call this render tool before replying so the originating background Dashboard is mounted."
+            }]
           : [])
       ]
     : [];
@@ -8697,13 +9145,18 @@ function formatJobStatus(
 }
 
 function dashboardPresentationHint(
-  executionMode: ActivityExecutionMode,
-  preferences?: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">
+  job: Pick<CodexJob, "activityId" | "executionMode">,
+  preferences?: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">,
+  registry?: CodexJobRegistry
 ) {
-  const automatic = executionMode === "background" &&
+  const automatic = job.executionMode === "background" &&
     preferences?.dashboardAutoOpenBackground !== false;
-  const completionDeliveryRoute = executionMode === "background" && preferences?.completionFollowUp === true
-    ? selectCompletionDeliveryRoute({ verifiedHostEvent: false, automaticDashboard: automatic })
+  const activity = registry?.getActivity(job.activityId);
+  const completionDeliveryRoute = job.executionMode === "background" &&
+    preferences?.completionFollowUp === true &&
+    activity?.handoffPolicy === "notify" &&
+    activity.completionTrigger === "sealed-jobs-terminal"
+    ? selectCompletionDeliveryRoute({ nativeNotificationDispatcher: true })
     : "disabled" as const;
   return {
     statusTool: "codex_status",
@@ -8712,7 +9165,7 @@ function dashboardPresentationHint(
     automatic,
     reason: automatic
       ? "background-enabled" as const
-      : executionMode === "foreground"
+      : job.executionMode === "foreground"
         ? "foreground" as const
         : "setting-disabled" as const,
     completionDeliveryRoute
@@ -9092,6 +9545,16 @@ export type BridgeRuntimeSnapshotOptions = {
   inspectBackgroundProcesses?: boolean;
 };
 
+export type BridgeNativeCompletionNotificationClaim = {
+  leaseOwner: string;
+  limit?: number;
+};
+
+export type BridgeNativeCompletionNotificationMutation = {
+  leaseOwner: string;
+  outboxIds: number[];
+};
+
 /**
  * Native companion and MCP card adapters share this application boundary.
  * It contains no mounted-widget authority and never exposes the SQLite store.
@@ -9109,6 +9572,19 @@ export type BridgeApplicationService = {
   runtimeHealth?(): BridgeRuntimeAdmissionSnapshot;
   beginDrain(options?: BridgeRuntimeSnapshotOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
   cancelDrain(): Promise<BridgeRuntimeAdmissionSnapshot>;
+  /** Local native app only: opaque completion events, never task content. */
+  claimNativeCompletionNotifications?(input: BridgeNativeCompletionNotificationClaim): Promise<NativeCompletionNotification[]>;
+  markNativeCompletionNotificationsDelivered?(input: BridgeNativeCompletionNotificationMutation): Promise<void>;
+  releaseNativeCompletionNotifications?(input: BridgeNativeCompletionNotificationMutation): Promise<void>;
+  /** Native app access to the same bridge-owned, versioned source as MCP. */
+  skillLibrarySnapshot?(): Promise<SkillSearchResult>;
+  readBridgeSkill?(reference: SkillReference): Promise<SkillDocument>;
+  readBridgeSkillReference?(input: { reference: SkillReference; referenceId: string }): Promise<SkillReferenceDocument>;
+  listBridgeSkillVersions?(input: { skillId: string }): Promise<SkillVersionList>;
+  createBridgeSkill?(input: CreateBridgeSkillInput): Promise<SkillSummary>;
+  updateBridgeSkill?(input: UpdateBridgeSkillInput): Promise<SkillSummary>;
+  restoreBridgeSkill?(input: RestoreBridgeSkillInput): Promise<SkillSummary>;
+  setBridgeSkillEnabled?(input: SetBridgeSkillEnabledInput): Promise<SkillSummary>;
 };
 type CodexWeeklyUsageView = z.infer<typeof codexWeeklyUsageOutputSchema>;
 type CancellationDisplay = z.infer<typeof cancellationDisplayOutputSchema>;
@@ -11651,6 +12127,13 @@ function codexTaskInputSchema(
   const project = currentProjectSelectionZod().optional().describe(
     "Exact current selector for new/fresh work. Omit for continue/fork; never send a path or private project ID."
   );
+  const requiredSkills = z.array(z.strictObject({
+    skillId: z.string().trim().min(1).max(200),
+    source: z.literal(BRIDGE_SKILL_SOURCE),
+    version: z.string().trim().min(1).max(100)
+  })).max(32).optional().describe(
+    "Exact bridge skills selected through bridge_skill for this one Codex turn. The bridge verifies each immutable reference immediately before dispatch. This fixed input shape does not change when skills are added or revised."
+  );
   const publicCommon = {
     scopeId: scopeIdSchema()
       .optional()
@@ -11667,6 +12150,7 @@ function codexTaskInputSchema(
     activity: activity.optional(),
     agent: agent.optional(),
     executionMode,
+    requiredSkills,
     selection: modelChoiceZod().optional().describe(
       "Exact model/reasoning choice discovered through codex_models. Required at runtime for automatic-policy new Activity, new Agent, and fresh context; automatic continue/fork may omit it to inherit the thread selection. Fixed policy must omit it."
     )
@@ -11726,6 +12210,7 @@ function jsonSchemaBody(
 
 type TaskRequestHashInput = {
   args: CodexTaskArgs;
+  activityRequest: ActivityTaskRequest;
   scopeId: string;
   projectRequest?: ProjectSelection;
   projectId?: string;
@@ -11741,18 +12226,18 @@ type TaskRequestHashInput = {
   backendHandoff?: BackendHandoff | BackendHandoffAudit;
 };
 
-/** Current request identity commits the public v3 envelope and admission-time
- * execution semantics. It deliberately excludes card presentation and other
- * mutable UI state. */
+/** Current request identity commits the public v3 envelope, exact required
+ * skill references, and admission-time execution semantics. It deliberately
+ * excludes card presentation and other mutable UI state. */
 function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
   const activityCreation = input.args.activityId
     ? null
     : {
-        title: normalizeActivityTitle(input.args.activityTitle || "Codex activity"),
-        kind: input.args.activityKind || "other",
+        title: normalizeActivityTitle(input.activityRequest.activityTitle || "Codex activity"),
+        kind: input.activityRequest.activityKind || "other",
         executionMode: input.executionMode,
-        handoffPolicy: input.args.handoffPolicy || "none",
-        completionTrigger: input.args.completionTrigger || "manual"
+        handoffPolicy: input.activityRequest.handoffPolicy || "none",
+        completionTrigger: input.activityRequest.completionTrigger || "manual"
       };
   const agentCreation = input.args.agentName
     ? { name: normalizeAgentName(input.args.agentName).agentName }
@@ -11765,6 +12250,11 @@ function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
         prompt: input.args.prompt,
         taskContractVersion: CODEX_TASK_INPUT_CONTRACT_VERSION,
         executionEnvelopeRef: input.args.executionEnvelopeRef,
+        requiredSkills: (input.args.requiredSkills || []).map((skill) => ({
+          skillId: skill.skillId,
+          source: skill.source,
+          version: skill.version
+        })),
         backendHandoff: input.backendHandoff
           ? backendHandoffAuditForHash(input.backendHandoff, input.args.handoffSummary)
           : input.args.handoffSummary
@@ -12755,7 +13245,9 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
       requestHashVersion !== 4 &&
       requestHashVersion !== 5 &&
       requestHashVersion !== 6 &&
-      requestHashVersion !== 7) ||
+      requestHashVersion !== 7 &&
+      requestHashVersion !== 8 &&
+      requestHashVersion !== 9) ||
     !isOptionalString(value.selectionKey) ||
     !Array.isArray(value.exclusiveKeys) ||
     !value.exclusiveKeys.every((entry) => typeof entry === "string") ||
@@ -13287,8 +13779,7 @@ function taskResultForJob(
   staleAfterMs: number,
   preferences: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">,
   registry: CodexJobRegistry | undefined,
-  replay: boolean,
-  automaticDashboard?: DashboardAutomaticPresentation
+  replay: boolean
 ): ToolResult {
   const projection = taskProjectionForJob(
     job,
@@ -13303,10 +13794,7 @@ function taskResultForJob(
     job,
     structured,
     { text: taskCompatibilityText(structured) },
-    {
-      ...(structured.error ? { isError: true } : {}),
-      ...(automaticDashboard ? { appHydration: dashboardAutoOpenHydration(automaticDashboard) } : {})
-    }
+    structured.error ? { isError: true } : {}
   );
 }
 
@@ -13371,57 +13859,6 @@ function taskProjectionForJob(
     ]
   });
   return { structured };
-}
-
-type DashboardAutomaticPresentation = {
-  route: CompletionDeliveryRoute | "disabled";
-  presentation?: DashboardAutoPresentation;
-};
-
-/**
- * Admission has already fixed executionMode when this runs. Only a newly
- * admitted background Job can request an automatic Dashboard presentation;
- * replays and foreground results keep their original response surface.
- */
-function automaticDashboardPresentationForJob(
-  job: CodexJob,
-  preferences: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">,
-  registry: CodexJobRegistry
-): DashboardAutomaticPresentation | undefined {
-  if (job.executionMode !== "background" || preferences.dashboardAutoOpenBackground === false) {
-    return undefined;
-  }
-  if (preferences.completionFollowUp !== true) return { route: "disabled" };
-  const presentation = dashboardAutoPresentationProofs(registry).issue({
-    scopeId: job.scopeId,
-    jobId: job.jobId
-  });
-  return {
-    route: selectCompletionDeliveryRoute({
-      // The bridge has no verified original-conversation resume integration.
-      verifiedHostEvent: false,
-      automaticDashboard: true
-    }),
-    presentation
-  };
-}
-
-function dashboardAutoOpenHydration(
-  presentation: DashboardAutomaticPresentation
-): Record<string, unknown> {
-  return {
-    ui: { resourceUri: DASHBOARD_CARD_URI, visibility: ["app"] },
-    "openai/outputTemplate": DASHBOARD_CARD_URI,
-    "openai/widgetAccessible": true,
-    "codex/dashboardOpen@1": {
-      scope: "conversation",
-      automatic: true,
-      completionDeliveryRoute: presentation.route,
-      ...(presentation.presentation
-        ? { presentationToken: presentation.presentation.token }
-        : {})
-    }
-  };
 }
 
 function statusToolResult(
@@ -13783,6 +14220,15 @@ function taskCompatibilityText(value: z.infer<typeof codexTaskOutputSchema>): st
   if (value.state === "cancelled") {
     return "Codex was cancelled. Partial filesystem changes may remain.";
   }
+  const dashboardAction = value.nextActions.find(
+    (action) => action.kind === "tool" && action.tool === "codex_dashboard"
+  );
+  if (dashboardAction) {
+    return (
+      `Codex job ${value.jobId || "unassigned"} is ${value.state}. ` +
+      `Required before replying: ${nextActionSummary(dashboardAction)}`
+    );
+  }
   return `Codex job ${value.jobId || "unassigned"} is ${value.state}.`;
 }
 
@@ -14022,6 +14468,20 @@ function contractedToolResult<Schema extends z.ZodType>(
     ...(options.appHydration ? { appHydration: options.appHydration } : {}),
     ...(options.protocolMeta ? { protocolMeta: options.protocolMeta } : {})
   });
+}
+
+/**
+ * `bridge_skill` is a model-facing read surface. Its compatibility channel is
+ * intentionally a complete compact JSON mirror of the validated structured
+ * result, so MCP hosts that consume `content` rather than `structuredContent`
+ * receive the exact instructions, materials, requirements, and warnings.
+ */
+function bridgeSkillPrimaryContent(value: unknown): ToolResult["content"] {
+  const text = JSON.stringify(value);
+  if (text === undefined) {
+    throw new Error("bridge_skill cannot serialize its primary compatibility payload.");
+  }
+  return [{ type: "text", text }];
 }
 
 function stripInternalProjectData(value: unknown, depth = 0): unknown {

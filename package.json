@@ -67,7 +67,6 @@
     "test": "vitest run --maxWorkers=4",
     "test:dashboard-scope-browser": "tsx scripts/dashboard-scope-browser-regression.ts",
     "test:dashboard-summary-browser": "tsx scripts/dashboard-summary-browser-regression.ts",
-    "test:dashboard-completion-delivery-browser": "tsx scripts/dashboard-completion-delivery-browser-regression.ts",
     "test:model-descriptions-browser": "tsx scripts/model-description-browser-regression.ts",
     "check": "npm run build && npm run test",
     "macos:remote:check": "tsx scripts/check-native-remote.ts",

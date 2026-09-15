@@ -1597,7 +1597,9 @@ class AppServerConnection {
       {
         threadId,
         ...turnAccessParams(executionAccess),
-        input: [{ type: "text", text: prompt, text_elements: [] }],
+        input: [
+          { type: "text", text: prompt, text_elements: [] }
+        ],
         model: optionalString(args.model) || null,
         effort: modelReasoningEffort(args.config) || null,
         serviceTier: optionalString(args.serviceTier) || null

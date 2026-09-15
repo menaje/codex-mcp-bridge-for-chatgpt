@@ -2618,6 +2618,33 @@ export class BridgeStateStore {
     return (rows as Array<Record<string, unknown>>).map(readCompletionOutboxRow);
   }
 
+  /**
+   * Native completion alerts have no conversation-card capability. Limit this
+   * cross-scope read to terminal notify records and expose only an opaque
+   * projection through the private companion service.
+   */
+  listPendingNotifyCompletionOutbox(limit = 20): CompletionOutboxRecord[] {
+    const now = Date.now();
+    const rows = this.database
+      .prepare(`
+          SELECT * FROM completion_outbox
+           WHERE channel = 'notify' AND delivered_at IS NULL AND acknowledged_at IS NULL
+             AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+             AND (lease_owner IS NULL OR lease_expires_at <= ?)
+           ORDER BY created_at ASC LIMIT ?
+      `)
+      .all(now, now, Math.max(0, Math.min(100, limit)));
+    return (rows as Array<Record<string, unknown>>).map(readCompletionOutboxRow);
+  }
+
+  getCompletionOutbox(outboxId: number): CompletionOutboxRecord | undefined {
+    if (!Number.isSafeInteger(outboxId) || outboxId < 1) return undefined;
+    const row = this.database
+      .prepare("SELECT * FROM completion_outbox WHERE outbox_id = ?")
+      .get(outboxId) as Record<string, unknown> | undefined;
+    return row ? readCompletionOutboxRow(row) : undefined;
+  }
+
   listPendingCompletionActivityIds(scopeId: string): string[] {
     const rows = this.database
       .prepare(`

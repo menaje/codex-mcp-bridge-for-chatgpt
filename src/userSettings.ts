@@ -27,7 +27,7 @@ export type { ProjectRegistryOperation } from "./projectRegistry.js";
 export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
 const EXECUTION_POLICY_HMAC_SECRET_META_KEY = "execution_policy_hmac_secret_v1";
 const EXECUTION_POLICY_REF_CONTRACT_VERSION = 5;
-const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 2;
+const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 4;
 
 export type BridgeUserSettings = {
   schemaVersion: typeof MODEL_POLICY_SCHEMA_VERSION;
@@ -47,7 +47,10 @@ export type BridgeUserSettings = {
   showBridgeThreadsInCodexApp: boolean;
   /** Automatically open Dashboard only for background work in its origin conversation. */
   dashboardAutoOpenBackground: boolean;
-  /** Request a completion follow-up through the durable delivery dispatcher. */
+  /**
+   * Enables local macOS delivery for eligible background completion events.
+   * The wire key is retained so saved settings migrate without ambiguity.
+   */
   completionFollowUp: boolean;
   historyRetentionDays: HistoryRetentionDays;
 };
@@ -175,10 +178,10 @@ export class UserSettingsStore {
 
   /**
    * Stable installation-bound reference to the maximum authority and static
-   * wire shape advertised by codex_task contract v3.
+   * wire shape advertised by codex_task contract v4.
    *
    * User settings, projects, and the live model catalog are deliberately not
-   * included: contract v3 declares their runtime-authoritative behavior in a
+   * included: contract v4 declares their runtime-authoritative behavior in a
    * stable schema. A process/operator change can alter the maximum authority
    * or the schema itself and therefore still requires a connection Refresh.
    */
@@ -189,7 +192,8 @@ export class UserSettingsStore {
       )
       .update(canonicalJsonValue({
         contract: TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION,
-        taskInputContract: 3,
+        taskInputContract: 4,
+        requiredSkillReferences: "bridge-versioned-v2",
         maxPromptChars: this.config.maxPromptChars,
         operator: canonicalExecutionOperatorEnvelope(this.config)
       }))

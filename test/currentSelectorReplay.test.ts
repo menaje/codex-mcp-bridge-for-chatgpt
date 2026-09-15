@@ -87,7 +87,7 @@ async function connect(
 }
 
 describe("current task selector contract", () => {
-  it("preserves the admitted v3 record but rejects a stale project selector after restart", async () => {
+  it("preserves the admitted v4 record but rejects a stale project selector after restart", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "task-v3-replay-"));
     const originalCwd = path.join(root, "original");
     const replacementCwd = path.join(root, "replacement");
@@ -132,11 +132,11 @@ describe("current task selector contract", () => {
         projectRef: selected.projectRef,
         projectRevision: selected.projectRevision
       },
-      activity: { mode: "new", title: "Current v3 replay" },
+      activity: { mode: "new", title: "Current v4 replay" },
       agent: { mode: "new", name: "Replay Agent" },
       executionMode: "foreground"
     };
-    expect(request.taskContractVersion).toBe("3");
+    expect(request.taskContractVersion).toBe("4");
 
     const admitted = await connection.client.callTool({ name: "codex_task", arguments: request });
     expect(admitted.isError).not.toBe(true);

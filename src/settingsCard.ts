@@ -29,7 +29,7 @@ export const SETTINGS_CARD_CONTENT_METADATA = {
     domain: "https://web-sandbox.oaiusercontent.com"
   },
   "openai/widgetDescription":
-    `Configure named projects, saved access, model/effort policy, Codex-app thread visibility, background Dashboard display, completion follow-up, interface-language, and concurrency for ${PRODUCT_INFO.displayName}.`,
+    `Configure named projects, saved access, model/effort policy, Codex-app thread visibility, background Dashboard display, macOS completion notifications, interface-language, and concurrency for ${PRODUCT_INFO.displayName}.`,
   "openai/widgetPrefersBorder": false,
   "openai/widgetCSP": { connect_domains: [] as string[], resource_domains: [] as string[] },
   "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",

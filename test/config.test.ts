@@ -39,6 +39,7 @@ describe("config policy", () => {
         ? /\.codex-mcp-bridge\/state\.sqlite$/
         : new RegExp(`\\.codex-mcp-bridge/profiles/${defaultStateProfile()}/state\\.sqlite$`)
     );
+    expect(config.bridgeSkillsDirectory).toBe(path.join(path.dirname(config.stateDatabaseFile), "skills"));
     expect(config).not.toHaveProperty("settingsStateFile");
     expect(config).not.toHaveProperty("sessionStateFile");
     expect(config).not.toHaveProperty("jobStateFile");
@@ -152,6 +153,19 @@ describe("config policy", () => {
         CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: "relative/state.sqlite"
       })
     ).toThrow(/absolute path/);
+  });
+
+  it("keeps bridge-owned skills in an explicit private directory when configured", () => {
+    const config = loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: "/tmp/codex-mcp-bridge-test-state.sqlite",
+      CODEX_MCP_BRIDGE_SKILLS_DIRECTORY: "/tmp/codex-mcp-bridge-test-skills"
+    });
+    expect(config.bridgeSkillsDirectory).toBe("/tmp/codex-mcp-bridge-test-skills");
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_SKILLS_DIRECTORY: "relative/skills"
+    })).toThrow(/bridge skills directory.*absolute path/);
   });
 
   it("selects the build-stage profile by default and keeps explicit profiles isolated", () => {

@@ -140,8 +140,8 @@ const ENGLISH = {
   "settings.codexAppThreadsHint": "Applies to new and forked App Server threads. Turning this off keeps them in memory only: they will not appear in the Codex app and cannot be resumed after the App Server worker or bridge restarts. Existing threads are unchanged.",
   "settings.dashboardAutoOpenBackground": "Automatically show Dashboard for background work",
   "settings.dashboardAutoOpenBackgroundHint": "Opens Dashboard only in the conversation that started a background task. Foreground results remain in the original tool response.",
-  "settings.completionFollowUp": "Automatically send a completion follow-up",
-  "settings.completionFollowUpHint": "A durable dispatcher sends completion notices through a verified host event when available, or through an open Dashboard card. Pending notices stay queued until a route is available.",
+  "settings.completionFollowUp": "Notify this Mac when background work completes",
+  "settings.completionFollowUpHint": "The local macOS menu-bar app sends a generic completion notification and opens Dashboard when clicked. It never adds a ChatGPT message.",
   // Historical labels remain so retained UI snapshots can be read, but no
   // current Settings or Dashboard UI references them.
   "settings.cardVisibility": "Activity card",
@@ -156,7 +156,7 @@ const ENGLISH = {
   "settings.save": "Save settings",
   "settings.refreshModels": "Retry model lookup",
   "settings.reset": "Restore general defaults",
-  "settings.resetHint": "Restores access, model, Codex-app thread visibility, background Dashboard display, completion follow-up, interface, and concurrency settings. Projects and their order are kept.",
+  "settings.resetHint": "Restores access, model, Codex-app thread visibility, background Dashboard display, completion notifications, interface, and concurrency settings. Projects and their order are kept.",
   "settings.saving": "Saving…",
   "settings.saved": "Saved.",
   "settings.developerModeRefreshRequired": "Saved and active. This deployment also changed the static tool contract; refresh the ChatGPT developer-mode connection once to adopt it.",
@@ -1760,73 +1760,73 @@ const CODEX_APP_THREAD_OVERRIDES: Record<
     "settings.codexAppThreadsHint": "새로 만들거나 포크하는 App Server 스레드에 적용됩니다. 끄면 메모리에만 유지되어 Codex 앱 목록에 나타나지 않으며, App Server worker 또는 브리지를 재시작한 뒤에는 이어갈 수 없습니다. 기존 스레드는 바뀌지 않습니다.",
     "settings.dashboardAutoOpenBackground": "백그라운드 작업 시 현황 카드 자동 표시",
     "settings.dashboardAutoOpenBackgroundHint": "백그라운드 작업을 시작한 이 대화세션에서만 현황 카드를 자동으로 엽니다. 포그라운드 결과는 기존 도구 응답으로 반환됩니다.",
-    "settings.completionFollowUp": "완료 후 자동 응답",
-    "settings.completionFollowUpHint": "검증된 호스트 이벤트가 있으면 그것을 사용하고, 없으면 열려 있는 현황 카드를 통해 완료 알림을 전달합니다. 전달 경로가 없으면 대기 상태를 보존합니다.",
+    "settings.completionFollowUp": "백그라운드 작업 완료 시 이 Mac에 알림",
+    "settings.completionFollowUpHint": "로컬 macOS 메뉴 막대 앱이 일반 완료 알림을 보내고, 클릭하면 현황을 엽니다. ChatGPT 대화에 메시지를 추가하지 않습니다.",
 
-    "settings.resetHint": "접근, 모델, Codex 앱 목록 표시, 백그라운드 현황 카드, 완료 후 자동 응답, 인터페이스와 동시 작업 수 설정만 복원합니다. 프로젝트와 순서는 유지됩니다."
+    "settings.resetHint": "접근, 모델, Codex 앱 목록 표시, 백그라운드 현황 카드, 완료 알림, 인터페이스와 동시 작업 수 설정만 복원합니다. 프로젝트와 순서는 유지됩니다."
   },
   ja: {
     "settings.codexAppThreads": "ブリッジのスレッドを Codex アプリに表示",
     "settings.codexAppThreadsHint": "新規およびフォークした App Server スレッドに適用されます。オフにするとメモリ内だけに保持され、Codex アプリには表示されず、App Server ワーカーまたはブリッジの再起動後は再開できません。既存のスレッドは変わりません。",
     "settings.dashboardAutoOpenBackground": "バックグラウンド作業でダッシュボードを自動表示",
     "settings.dashboardAutoOpenBackgroundHint": "バックグラウンド作業を開始した会話でのみダッシュボードを開きます。フォアグラウンドの結果は元のツール応答に残ります。",
-    "settings.completionFollowUp": "完了後にフォローアップを自動送信",
-    "settings.completionFollowUpHint": "確認済みのホストイベントが利用可能な場合はそれを使い、利用できない場合は開いているダッシュボードカードで完了通知を送信します。経路が利用できない間は通知をキューに保持します。",
-    "settings.resetHint": "アクセス、モデル、Codex アプリでのスレッド表示、バックグラウンドのダッシュボード表示、完了後のフォローアップ、表示言語、同時実行数だけを戻します。プロジェクトと順序は保持されます。"
+    "settings.completionFollowUp": "バックグラウンド作業の完了をこの Mac に通知",
+    "settings.completionFollowUpHint": "ローカル macOS メニューバーアプリが一般的な完了通知を送り、クリックするとダッシュボードを開きます。ChatGPT 会話にはメッセージを追加しません。",
+    "settings.resetHint": "アクセス、モデル、Codex アプリでのスレッド表示、バックグラウンドのダッシュボード表示、完了通知、表示言語、同時実行数だけを戻します。プロジェクトと順序は保持されます。"
   },
   "zh-Hans": {
     "settings.codexAppThreads": "在 Codex 应用中显示桥接线程",
     "settings.codexAppThreadsHint": "适用于新建和分叉的 App Server 线程。关闭后，线程只保留在内存中，不会出现在 Codex 应用里，并且在 App Server 工作进程或桥接重启后无法继续。现有线程不会改变。",
     "settings.dashboardAutoOpenBackground": "后台工作时自动显示概览卡片",
     "settings.dashboardAutoOpenBackgroundHint": "仅在启动后台任务的对话中打开概览卡片。前台结果仍保留在原始工具响应中。",
-    "settings.completionFollowUp": "完成后自动发送后续消息",
-    "settings.completionFollowUpHint": "有已验证的主机事件时会使用它；否则，打开的概览卡片会发送完成通知。没有可用路径时，通知会保留在队列中。",
-    "settings.resetHint": "仅恢复访问、模型、Codex 应用线程显示、后台概览卡片显示、完成后续消息、界面和并发数。项目和顺序会保留。"
+    "settings.completionFollowUp": "后台工作完成时通知此 Mac",
+    "settings.completionFollowUpHint": "本地 macOS 菜单栏应用会发送通用完成通知；点击可打开概览，且不会向 ChatGPT 对话添加消息。",
+    "settings.resetHint": "仅恢复访问、模型、Codex 应用线程显示、后台概览卡片显示、完成通知、界面和并发数。项目和顺序会保留。"
   },
   "zh-Hant": {
     "settings.codexAppThreads": "在 Codex 應用程式中顯示橋接執行緒",
     "settings.codexAppThreadsHint": "適用於新建與分支的 App Server 執行緒。關閉後，執行緒只保留在記憶體中，不會出現在 Codex 應用程式，且 App Server 工作程序或橋接重新啟動後無法繼續。現有執行緒不會改變。",
     "settings.dashboardAutoOpenBackground": "背景工作時自動顯示總覽卡片",
     "settings.dashboardAutoOpenBackgroundHint": "僅在啟動背景任務的對話中開啟總覽卡片。前景結果仍保留在原始工具回應中。",
-    "settings.completionFollowUp": "完成後自動傳送後續訊息",
-    "settings.completionFollowUpHint": "有已驗證的主機事件時會使用它；否則，開啟的總覽卡片會傳送完成通知。沒有可用路徑時，通知會保留在佇列中。",
-    "settings.resetHint": "只還原存取、模型、Codex 應用程式執行緒顯示、背景總覽卡片顯示、完成後續訊息、介面與並行數。專案與順序會保留。"
+    "settings.completionFollowUp": "背景工作完成時通知此 Mac",
+    "settings.completionFollowUpHint": "本機 macOS 選單列 App 會傳送一般完成通知；點按會開啟總覽，且不會在 ChatGPT 對話中新增訊息。",
+    "settings.resetHint": "只還原存取、模型、Codex 應用程式執行緒顯示、背景總覽卡片顯示、完成通知、介面與並行數。專案與順序會保留。"
   },
   es: {
     "settings.codexAppThreads": "Mostrar los hilos del puente en la app Codex",
     "settings.codexAppThreadsHint": "Se aplica a los hilos nuevos y bifurcados de App Server. Al desactivarlo, solo se conservan en memoria: no aparecen en la app Codex y no pueden reanudarse tras reiniciar el worker de App Server o el puente. Los hilos existentes no cambian.",
     "settings.dashboardAutoOpenBackground": "Mostrar automáticamente el panel para el trabajo en segundo plano",
     "settings.dashboardAutoOpenBackgroundHint": "Abre el panel solo en la conversación que inició una tarea en segundo plano. Los resultados en primer plano permanecen en la respuesta original de la herramienta.",
-    "settings.completionFollowUp": "Enviar automáticamente un seguimiento al finalizar",
-    "settings.completionFollowUpHint": "Usa un evento de host verificado cuando está disponible; de lo contrario, la tarjeta de panel abierta envía el aviso de finalización. Los avisos permanecen en cola mientras no haya una ruta disponible.",
-    "settings.resetHint": "Restaura solo acceso, modelo, visibilidad de hilos en la app Codex, panel para trabajo en segundo plano, seguimiento al finalizar, interfaz y concurrencia. Se conservan los proyectos y su orden."
+    "settings.completionFollowUp": "Notificar a este Mac al terminar el trabajo en segundo plano",
+    "settings.completionFollowUpHint": "La app local de la barra de menús de macOS envía una notificación de finalización genérica y abre el panel al hacer clic. No añade mensajes a ChatGPT.",
+    "settings.resetHint": "Restaura solo acceso, modelo, visibilidad de hilos en la app Codex, panel para trabajo en segundo plano, notificaciones de finalización, interfaz y concurrencia. Se conservan los proyectos y su orden."
   },
   fr: {
     "settings.codexAppThreads": "Afficher les fils du pont dans l’app Codex",
     "settings.codexAppThreadsHint": "S’applique aux fils App Server nouveaux et dérivés. Si cette option est désactivée, ils restent uniquement en mémoire : ils n’apparaissent pas dans l’app Codex et ne peuvent pas être repris après le redémarrage du worker App Server ou du pont. Les fils existants ne changent pas.",
     "settings.dashboardAutoOpenBackground": "Afficher automatiquement le tableau de bord pour le travail en arrière-plan",
     "settings.dashboardAutoOpenBackgroundHint": "Ouvre le tableau de bord uniquement dans la conversation qui a lancé une tâche en arrière-plan. Les résultats au premier plan restent dans la réponse d’outil d’origine.",
-    "settings.completionFollowUp": "Envoyer automatiquement un suivi à la fin",
-    "settings.completionFollowUpHint": "Utilise un événement hôte vérifié lorsqu’il est disponible ; sinon, la carte du tableau de bord ouverte envoie l’avis de fin. Les avis restent en file d’attente tant qu’aucune voie n’est disponible.",
-    "settings.resetHint": "Rétablit uniquement l’accès, le modèle, la visibilité des fils dans l’app Codex, le tableau de bord en arrière-plan, le suivi de fin, l’interface et la simultanéité. Les projets et leur ordre sont conservés."
+    "settings.completionFollowUp": "Notifier ce Mac quand le travail en arrière-plan se termine",
+    "settings.completionFollowUpHint": "L’app locale de la barre des menus macOS envoie une notification générique et ouvre le tableau de bord au clic. Elle n’ajoute aucun message à ChatGPT.",
+    "settings.resetHint": "Rétablit uniquement l’accès, le modèle, la visibilité des fils dans l’app Codex, le tableau de bord en arrière-plan, les notifications de fin, l’interface et la simultanéité. Les projets et leur ordre sont conservés."
   },
   de: {
     "settings.codexAppThreads": "Bridge-Threads in der Codex-App anzeigen",
     "settings.codexAppThreadsHint": "Gilt für neue und geforkte App-Server-Threads. Wenn dies deaktiviert ist, bleiben sie nur im Arbeitsspeicher: Sie erscheinen nicht in der Codex-App und können nach einem Neustart des App-Server-Workers oder der Bridge nicht fortgesetzt werden. Bestehende Threads bleiben unverändert.",
     "settings.dashboardAutoOpenBackground": "Dashboard bei Hintergrundarbeit automatisch anzeigen",
     "settings.dashboardAutoOpenBackgroundHint": "Öffnet das Dashboard nur in der Unterhaltung, die eine Hintergrundaufgabe gestartet hat. Vordergrundergebnisse bleiben in der ursprünglichen Werkzeugantwort.",
-    "settings.completionFollowUp": "Nach Abschluss automatisch eine Folgenachricht senden",
-    "settings.completionFollowUpHint": "Verwendet ein verifiziertes Hostereignis, wenn es verfügbar ist; andernfalls sendet die geöffnete Dashboard-Karte die Abschlussbenachrichtigung. Benachrichtigungen bleiben in der Warteschlange, solange kein Weg verfügbar ist.",
-    "settings.resetHint": "Setzt nur Zugriff, Modell, Thread-Sichtbarkeit in der Codex-App, Dashboard für Hintergrundarbeit, Folgenachricht nach Abschluss, Oberfläche und Parallelität zurück. Projekte und Reihenfolge bleiben erhalten."
+    "settings.completionFollowUp": "Diesen Mac nach Abschluss von Hintergrundarbeit benachrichtigen",
+    "settings.completionFollowUpHint": "Die lokale macOS-Menüleisten-App sendet eine allgemeine Abschlussmitteilung und öffnet beim Anklicken das Dashboard. Sie fügt keine ChatGPT-Nachricht hinzu.",
+    "settings.resetHint": "Setzt nur Zugriff, Modell, Thread-Sichtbarkeit in der Codex-App, Dashboard für Hintergrundarbeit, Abschlussbenachrichtigungen, Oberfläche und Parallelität zurück. Projekte und Reihenfolge bleiben erhalten."
   },
   pt: {
     "settings.codexAppThreads": "Mostrar threads da ponte no app Codex",
     "settings.codexAppThreadsHint": "Aplica-se a threads novos e bifurcados do App Server. Ao desativar, eles ficam apenas na memória: não aparecem no app Codex e não podem ser retomados após reiniciar o worker do App Server ou a ponte. Threads existentes não mudam.",
     "settings.dashboardAutoOpenBackground": "Mostrar automaticamente o painel para trabalho em segundo plano",
     "settings.dashboardAutoOpenBackgroundHint": "Abre o painel somente na conversa que iniciou uma tarefa em segundo plano. Os resultados em primeiro plano permanecem na resposta original da ferramenta.",
-    "settings.completionFollowUp": "Enviar automaticamente uma mensagem de acompanhamento ao concluir",
-    "settings.completionFollowUpHint": "Usa um evento de host verificado quando disponível; caso contrário, o cartão de painel aberto envia o aviso de conclusão. Os avisos permanecem na fila enquanto não houver uma rota disponível.",
-    "settings.resetHint": "Restaura apenas acesso, modelo, visibilidade de threads no app Codex, painel para trabalho em segundo plano, acompanhamento ao concluir, interface e concorrência. Projetos e ordem são mantidos."
+    "settings.completionFollowUp": "Notificar este Mac quando o trabalho em segundo plano terminar",
+    "settings.completionFollowUpHint": "O app local da barra de menus do macOS envia uma notificação genérica e abre o painel ao clicar. Ele não adiciona uma mensagem ao ChatGPT.",
+    "settings.resetHint": "Restaura apenas acesso, modelo, visibilidade de threads no app Codex, painel para trabalho em segundo plano, notificações de conclusão, interface e concorrência. Projetos e ordem são mantidos."
   }
 };
 

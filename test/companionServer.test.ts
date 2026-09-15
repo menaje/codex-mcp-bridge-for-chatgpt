@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, mkdtempSync } from "node:fs";
 import { createConnection } from "node:net";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -24,6 +25,51 @@ afterEach(async () => {
 });
 
 describe("native companion server", () => {
+  it("keeps opaque completion notification delivery on the local socket", async () => {
+    const socketPath = temporarySocketPath();
+    const service = fakeApplicationService();
+    const leaseOwner = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    service.claimNativeCompletionNotifications = vi.fn(async () => [{
+      eventId: "completion-" + "a".repeat(64),
+      outboxId: 7
+    }]);
+    service.markNativeCompletionNotificationsDelivered = vi.fn(async () => undefined);
+    service.releaseNativeCompletionNotifications = vi.fn(async () => undefined);
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService: service }));
+
+    const hello = await request(socketPath, {
+      jsonrpc: "2.0", id: "completion-hello", method: "companion.hello", params: {}
+    });
+    expect(hello.result.capabilities).toContain("completion-notifications.local-delivery");
+
+    const claimed = await request(socketPath, {
+      jsonrpc: "2.0", id: "completion-claim", method: "completion.claim",
+      params: { leaseOwner, limit: 2 }
+    });
+    expect(claimed).toMatchObject({
+      result: { events: [{ eventId: "completion-" + "a".repeat(64), outboxId: 7 }] }
+    });
+    expect(Object.keys(claimed.result.events[0]).sort()).toEqual(["eventId", "outboxId"]);
+    expect(service.claimNativeCompletionNotifications).toHaveBeenCalledWith({ leaseOwner, limit: 2 });
+
+    const mutation = { leaseOwner, outboxIds: [7] };
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "completion-delivered", method: "completion.delivered", params: mutation
+    })).toMatchObject({ result: { ok: true } });
+    expect(service.markNativeCompletionNotificationsDelivered).toHaveBeenCalledWith(mutation);
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "completion-release", method: "completion.release", params: mutation
+    })).toMatchObject({ result: { ok: true } });
+    expect(service.releaseNativeCompletionNotifications).toHaveBeenCalledWith(mutation);
+    expect(REMOTE_COMPANION_APPLICATION_METHODS.has("completion.claim")).toBe(false);
+
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "completion-invalid", method: "completion.claim",
+      params: { leaseOwner: "not-a-uuid" }
+    })).toHaveProperty("error");
+    expect(service.claimNativeCompletionNotifications).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps exact-target conversation handoff on the private local socket", async () => {
     const socketPath=temporarySocketPath(),service=fakeApplicationService();
     service.threadHandoff=vi.fn(async () => ({phase:"unsubscribed",reason:"upstream-unload-grace",requested:true,canOpen:false}));
@@ -34,6 +80,146 @@ describe("native companion server", () => {
     expect(REMOTE_COMPANION_APPLICATION_METHODS.has("thread.handoff")).toBe(false);
     expect(await request(socketPath,{jsonrpc:"2.0",id:2,method:"thread.handoff",params:{...params,codexThreadUrl:"https://example.com"}})).toHaveProperty("error");
     expect(service.threadHandoff).toHaveBeenCalledTimes(1);
+  });
+  it("uses the same bridge skill source and immutable versions as MCP", async () => {
+    const socketPath = temporarySocketPath();
+    const service = fakeApplicationService();
+    const first = {
+      skillId: `bridge_${"a".repeat(32)}`,
+      source: "bridge" as const,
+      version: "1",
+      name: "Report review",
+      description: "Review reports.",
+      contentDigest: "b".repeat(64),
+      enabled: true,
+      availability: "available",
+      execution: { mode: "conversation-or-codex", note: "Apply directly.", requirements: [] }
+    };
+    service.skillLibrarySnapshot = vi.fn(async () => ({
+      skills: [first]
+    }));
+    service.readBridgeSkill = vi.fn(async () => ({
+      skill: first,
+      instructions: "Check every claim.",
+      references: [],
+      sourceSnapshot: "versioned-bridge-record" as const,
+      warnings: []
+    }));
+    service.readBridgeSkillReference = vi.fn(async ({ reference, referenceId }) => ({
+      skill: reference,
+      execution: first.execution,
+      reference: {
+        referenceId,
+        name: "Checklist",
+        mediaType: "text/plain",
+        contentDigest: "c".repeat(64),
+        bytes: 11
+      },
+      content: "- verify\n",
+      sourceSnapshot: "versioned-bridge-record" as const,
+      warnings: []
+    }));
+    service.listBridgeSkillVersions = vi.fn(async () => ({
+      skillId: first.skillId,
+      source: "bridge" as const,
+      currentVersion: "1",
+      enabled: true,
+      versions: [{
+        skillId: first.skillId,
+        source: "bridge" as const,
+        version: "1",
+        name: first.name,
+        description: first.description,
+        contentDigest: first.contentDigest,
+        createdAt: "2026-09-15T00:00:00.000Z",
+        referenceCount: 1,
+        execution: first.execution
+      }]
+    }));
+    service.createBridgeSkill = vi.fn(async () => first);
+    service.updateBridgeSkill = vi.fn(async () => ({ ...first, version: "2" }));
+    service.restoreBridgeSkill = vi.fn(async () => ({ ...first, version: "3" }));
+    service.setBridgeSkillEnabled = vi.fn(async () => ({ ...first, enabled: false, availability: "disabled" as const }));
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService: service }));
+
+    const hello = await request(socketPath, {
+      jsonrpc: "2.0", id: "skills-hello", method: "companion.hello", params: {}
+    });
+    expect(hello.result.capabilities).toEqual(expect.arrayContaining(["skills.read", "skills.write"]));
+
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-snapshot", method: "skills.snapshot", params: {}
+    })).resolves.toMatchObject({ result: { skills: [first] } });
+    expect(service.skillLibrarySnapshot).toHaveBeenCalledTimes(1);
+
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-read", method: "skills.read",
+      params: { skillId: first.skillId, source: "bridge", version: "1" }
+    })).resolves.toMatchObject({ result: { instructions: "Check every claim." } });
+
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-reference", method: "skills.reference",
+      params: { reference: { skillId: first.skillId, source: "bridge", version: "1" }, referenceId: "ref_" + "c".repeat(32) }
+    })).resolves.toMatchObject({ result: { content: "- verify\n" } });
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-versions", method: "skills.versions", params: { skillId: first.skillId }
+    })).resolves.toMatchObject({ result: { currentVersion: "1" } });
+
+    const create = {
+      requestId: randomUUID(),
+      name: "Report review",
+      description: "Review reports.",
+      instructions: "Check every claim."
+    };
+    await request(socketPath, {
+      jsonrpc: "2.0", id: "skills-create", method: "skills.create", params: create
+    });
+    expect(service.createBridgeSkill).toHaveBeenCalledWith(create);
+
+    // Quotes force JSON escaping. This is a valid maximum-size skill mutation
+    // whose serialized wire form exceeds the old 3 MiB transport cap.
+    const maxEscapedText = "\"".repeat(512 * 1_024);
+    const largeCreate = {
+      requestId: randomUUID(),
+      name: "Large bridge skill",
+      description: "Exercises the declared bridge skill material boundary.",
+      instructions: maxEscapedText,
+      references: [
+        { name: "Part one", content: maxEscapedText },
+        { name: "Part two", content: maxEscapedText },
+        { name: "Part three", content: maxEscapedText },
+        { name: "Part four", content: maxEscapedText }
+      ]
+    };
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-create-large", method: "skills.create", params: largeCreate
+    })).resolves.toMatchObject({ result: { skillId: first.skillId } });
+    expect(service.createBridgeSkill).toHaveBeenLastCalledWith(largeCreate);
+
+    const update = { requestId: randomUUID(), skillId: first.skillId, expectedVersion: "1", instructions: "Check evidence too." };
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-update", method: "skills.update", params: update
+    })).resolves.toMatchObject({ result: { version: "2" } });
+    expect(service.updateBridgeSkill).toHaveBeenCalledWith(update);
+
+    const restore = { requestId: randomUUID(), skillId: first.skillId, expectedVersion: "2", sourceVersion: "1" };
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-restore", method: "skills.restore", params: restore
+    })).resolves.toMatchObject({ result: { version: "3" } });
+    expect(service.restoreBridgeSkill).toHaveBeenCalledWith(restore);
+
+    const setEnabled = { requestId: randomUUID(), skillId: first.skillId, expectedVersion: "3", enabled: false };
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-disable", method: "skills.set-enabled", params: setEnabled
+    })).resolves.toMatchObject({ result: { enabled: false } });
+    expect(service.setBridgeSkillEnabled).toHaveBeenCalledWith(setEnabled);
+
+    const wrongSource = await request(socketPath, {
+      jsonrpc: "2.0", id: "skills-wrong-source", method: "skills.read",
+      params: { skillId: first.skillId, source: "codex", version: "1" }
+    });
+    expect(wrongSource).toHaveProperty("error");
+    expect(service.readBridgeSkill).toHaveBeenCalledTimes(1);
   });
   it("serves lightweight health independently of a stalled admission snapshot", async () => {
     const socketPath = temporarySocketPath();

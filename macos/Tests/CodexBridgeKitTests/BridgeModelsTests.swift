@@ -25,6 +25,99 @@ final class BridgeModelsTests: XCTestCase {
         XCTAssertNil(project.archivedAt)
     }
 
+    func testBridgeSkillMutationAndVersionContractsPreserveRequirements() throws {
+        let create = BridgeSkillCreateRequest(
+            requestId: "00000000-0000-4000-8000-000000000114",
+            name: "Report review",
+            description: "Review a report with evidence.",
+            instructions: "Check each claim against its source.",
+            references: [BridgeSkillMaterialInput(name: "Checklist", content: "- verify evidence", mediaType: "text/markdown")],
+            executionMode: "conversation-or-codex",
+            requirements: [BridgeSkillRequirementInput(
+                kind: "bridge-capability",
+                id: "conversation",
+                description: "Apply the procedure in the current conversation."
+            )]
+        )
+        let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(create)) as? [String: Any])
+        XCTAssertEqual(encoded["requestId"] as? String, "00000000-0000-4000-8000-000000000114")
+        XCTAssertEqual(encoded["executionMode"] as? String, "conversation-or-codex")
+        let requirement = try XCTUnwrap((encoded["requirements"] as? [[String: Any]])?.first)
+        XCTAssertEqual(requirement["kind"] as? String, "bridge-capability")
+        XCTAssertEqual(requirement["id"] as? String, "conversation")
+
+        let history = try JSONDecoder().decode(
+            BridgeSkillVersionList.self,
+            from: Data(#"""
+            {
+              "skillId":"bridge_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "source":"bridge",
+              "currentVersion":"2",
+              "enabled":true,
+              "versions":[{
+                "skillId":"bridge_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "source":"bridge",
+                "version":"2",
+                "name":"Report review",
+                "description":"Review a report with evidence.",
+                "contentDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "createdAt":"2026-09-15T00:00:00.000Z",
+                "referenceCount":1,
+                "execution":{
+                  "mode":"conversation-or-codex",
+                  "note":"Apply this version directly in the conversation.",
+                  "requirements":[{
+                    "kind":"bridge-capability",
+                    "id":"conversation",
+                    "description":"Apply the procedure in the current conversation.",
+                    "availability":"available"
+                  }]
+                }
+              }]
+            }
+            """#.utf8)
+        )
+        XCTAssertEqual(history.currentVersion, "2")
+        XCTAssertEqual(history.versions.first?.reference.version, "2")
+        XCTAssertEqual(history.versions.first?.execution.requirements.first?.requirementId, "conversation")
+        XCTAssertEqual(history.versions.first?.execution.requirements.first?.availability, "available")
+
+        let material = try JSONDecoder().decode(
+            BridgeSkillReferenceDocument.self,
+            from: Data(#"""
+            {
+              "skill":{
+                "skillId":"bridge_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "source":"bridge",
+                "version":"2"
+              },
+              "reference":{
+                "referenceId":"ref_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "name":"Checklist",
+                "mediaType":"text/markdown",
+                "contentDigest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "bytes":17
+              },
+              "content":"- verify evidence",
+              "sourceSnapshot":"versioned-bridge-record",
+              "warnings":[],
+              "execution":{
+                "mode":"conversation-or-codex",
+                "note":"Apply this version directly in the conversation.",
+                "requirements":[{
+                  "kind":"bridge-capability",
+                  "id":"conversation",
+                  "description":"Apply the procedure in the current conversation.",
+                  "availability":"available"
+                }]
+              }
+            }
+            """#.utf8)
+        )
+        XCTAssertEqual(material.execution.mode, "conversation-or-codex")
+        XCTAssertEqual(material.execution.requirements.first?.requirementId, "conversation")
+    }
+
     @MainActor
     func testDisplayFormatParsesBackendTimestampsWithAndWithoutFractions() {
         XCTAssertNotNil(DisplayFormat.parseDate("2026-09-02T00:00:00.000Z"))
@@ -93,6 +186,19 @@ final class BridgeModelsTests: XCTestCase {
         let operation = try XCTUnwrap(object["operation"] as? [String: Any])
         let settings = try XCTUnwrap(operation["settings"] as? [String: Any])
         XCTAssertFalse(settings.keys.contains("modelPolicy"))
+    }
+
+    func testNativeCompletionNotificationDecodesOnlyItsOpaqueReceipt() throws {
+        let notification = try JSONDecoder().decode(
+            NativeCompletionNotification.self,
+            from: Data(#"{"eventId":"completion-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","outboxId":7}"#.utf8)
+        )
+        XCTAssertEqual(notification.id, notification.eventId)
+        XCTAssertEqual(notification.outboxId, 7)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(notification)) as? [String: Any]
+        )
+        XCTAssertEqual(Set(object.keys), ["eventId", "outboxId"])
     }
 
     func testProjectOperationsUseExplicitDeltaShapes() throws {

@@ -49,7 +49,7 @@ export const UI_RESOURCE_MANIFEST = {
       {
         "name": "settings",
         "uriVersion": 1,
-        "digest": "212baba4fe61348dfbc697a592564dfd25b58ffb62515c30195119f81b5fc4ec",
+        "digest": "757d1ee7b1d5ea115a8f2bc491450b7a66d31308378c1e25078badaf4b6eae55",
         "uri": "ui://codex-mcp-bridge/settings/v1.html",
         "inventories": [
           "development-current"
@@ -67,7 +67,7 @@ export const UI_RESOURCE_MANIFEST = {
       {
         "name": "dashboard",
         "uriVersion": 1,
-        "digest": "e7ccf24bf24edd1786c4e28a660e8ce92797ffea5b2f9075f0d1fc277c733253",
+        "digest": "3ee39218df2dda6269a195ba103b3e4a6a08b8037f6186016f7a7e40968261f5",
         "uri": "ui://codex-mcp-bridge/dashboard/v1.html",
         "inventories": [
           "development-current"
@@ -89,7 +89,7 @@ export const UI_RESOURCE_MANIFEST = {
   "resources": {
     "settings": {
       "uriVersion": 1,
-      "digest": "212baba4fe61348dfbc697a592564dfd25b58ffb62515c30195119f81b5fc4ec",
+      "digest": "757d1ee7b1d5ea115a8f2bc491450b7a66d31308378c1e25078badaf4b6eae55",
       "uri": "ui://codex-mcp-bridge/settings/v1.html",
       "metadata": {
         "descriptor": {
@@ -106,7 +106,7 @@ export const UI_RESOURCE_MANIFEST = {
             },
             "domain": "https://web-sandbox.oaiusercontent.com"
           },
-          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Codex-app thread visibility, background Dashboard display, completion follow-up, interface-language, and concurrency for Codex MCP Bridge for ChatGPT.",
+          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Codex-app thread visibility, background Dashboard display, macOS completion notifications, interface-language, and concurrency for Codex MCP Bridge for ChatGPT.",
           "openai/widgetPrefersBorder": false,
           "openai/widgetCSP": {
             "connect_domains": [],
@@ -133,7 +133,7 @@ export const UI_RESOURCE_MANIFEST = {
     },
     "dashboard": {
       "uriVersion": 1,
-      "digest": "e7ccf24bf24edd1786c4e28a660e8ce92797ffea5b2f9075f0d1fc277c733253",
+      "digest": "3ee39218df2dda6269a195ba103b3e4a6a08b8037f6186016f7a7e40968261f5",
       "uri": "ui://codex-mcp-bridge/dashboard/v1.html",
       "metadata": {
         "descriptor": {

@@ -14,7 +14,7 @@ rejected before they cross the wire.
 
 ## Task result
 
-`codex_task` input contract version 3 returns task output contract version 2.
+`codex_task` input contract version 4 returns task output contract version 2.
 The different numbers are intentional: input and output evolve independently.
 
 Task output has a strict root with explicitly nullable fields where a state

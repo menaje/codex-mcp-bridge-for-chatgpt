@@ -9,6 +9,65 @@ import {
 } from "../src/stateStore.js";
 
 describe("BridgeStateStore", () => {
+  it("lists only retryable notify events for the local native delivery path", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const notifyActivityId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const verifyActivityId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const otherScope = "22222222-2222-4222-8222-222222222222";
+    try {
+      store.createActivity({
+        activityId: notifyActivityId,
+        scopeId: SCOPE_A,
+        handoffPolicy: "notify",
+        completionTrigger: "sealed-jobs-terminal",
+        now: 1
+      });
+      store.upsertJob({ ...job("native-notify", "native-notify-request"), activityId: notifyActivityId, updatedAt: 2 });
+      store.sealActivity(notifyActivityId, 3);
+
+      store.createActivity({
+        activityId: verifyActivityId,
+        scopeId: otherScope,
+        handoffPolicy: "verify",
+        completionTrigger: "sealed-jobs-terminal",
+        now: 1
+      });
+      store.upsertJob({
+        ...job("native-verify", "native-verify-request"),
+        scopeId: otherScope,
+        activityId: verifyActivityId,
+        updatedAt: 2
+      });
+      store.sealActivity(verifyActivityId, 3);
+
+      const events = store.listPendingNotifyCompletionOutbox();
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        activityId: notifyActivityId,
+        scopeId: SCOPE_A,
+        channel: "notify"
+      });
+
+      const claimedAt = Date.now();
+      const claimed = store.claimCompletionOutbox(
+        events[0]!.outboxId,
+        SCOPE_A,
+        "native-menu-bar",
+        1_000,
+        claimedAt
+      );
+      expect(claimed).toMatchObject({ attemptCount: 1, leaseOwner: "native-menu-bar" });
+      expect(store.listPendingNotifyCompletionOutbox()).toEqual([]);
+      store.markCompletionOutboxDelivered(events[0]!.outboxId, SCOPE_A, "native-menu-bar", claimedAt + 1);
+      expect(store.getCompletionOutbox(events[0]!.outboxId)).toMatchObject({ deliveredAt: claimedAt + 1 });
+      expect(store.listCompletionOutbox(verifyActivityId)).toMatchObject([
+        { channel: "verify", deliveredAt: undefined }
+      ]);
+    } finally {
+      store.close();
+    }
+  });
+
   it("holds an uncertain Dashboard completion dispatch out of automatic retries", () => {
     const store = new BridgeStateStore({ file: ":memory:" });
     const activityId = "12121212-1212-4212-8212-121212121212";

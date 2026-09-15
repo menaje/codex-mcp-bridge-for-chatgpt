@@ -114,6 +114,14 @@ protocol OperationalNotificationDelivering: AnyObject {
     func deliver(identifier: String, problem: OperationalProblem, scope: String, locale: Locale) async throws
 }
 
+/// Shares the one system notification-center delegate with operational alerts.
+/// Completion notifications intentionally carry no task, project, or result text.
+@MainActor
+protocol CompletionNotificationDelivering: AnyObject {
+    func isAuthorized() async -> Bool
+    func deliverCompletion(identifier: String, locale: Locale) async throws
+}
+
 @MainActor
 extension OperationalNotificationDelivering {
     func permission() async -> OperationalNotificationPermission {
@@ -122,9 +130,10 @@ extension OperationalNotificationDelivering {
 }
 
 @MainActor
-final class SystemOperationalNotificationDelivery: NSObject, OperationalNotificationDelivering, UNUserNotificationCenterDelegate {
+final class SystemOperationalNotificationDelivery: NSObject, OperationalNotificationDelivering, CompletionNotificationDelivering, UNUserNotificationCenterDelegate {
     private let center = UNUserNotificationCenter.current()
     var onOpen: (@MainActor (OperationalProblem, String) -> Void)?
+    var onCompletionOpen: (@MainActor () -> Void)?
 
     override init() {
         super.init()
@@ -172,6 +181,20 @@ final class SystemOperationalNotificationDelivery: NSObject, OperationalNotifica
         }
     }
 
+    func deliverCompletion(identifier: String, locale: Locale) async throws {
+        let request = UNNotificationRequest(
+            identifier: identifier,
+            content: Self.completionContent(locale: locale),
+            trigger: nil
+        )
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            center.add(request) { error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            }
+        }
+    }
+
     static func content(problem: OperationalProblem, scope: String, locale: Locale) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = "Codex MCP Bridge for ChatGPT"
@@ -183,6 +206,18 @@ final class SystemOperationalNotificationDelivery: NSObject, OperationalNotifica
         return content
     }
 
+    static func completionContent(locale: Locale) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = BridgeAppLocalization.string("Codex 작업이 완료되었습니다.", locale: locale)
+        content.body = BridgeAppLocalization.string("메뉴 막대 앱에서 현황과 결과를 확인하세요.", locale: locale)
+        // Keep the system notification free of task prompts, paths, result
+        // text, activity IDs, and ChatGPT conversation identifiers.
+        content.userInfo = ["notificationKind": "completion"]
+        content.threadIdentifier = "bridge-completions"
+        content.sound = .default
+        return content
+    }
+
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
         willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .list, .sound])
@@ -191,6 +226,11 @@ final class SystemOperationalNotificationDelivery: NSObject, OperationalNotifica
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
+        if info["notificationKind"] as? String == "completion" {
+            Task { @MainActor [weak self] in self?.onCompletionOpen?() }
+            completionHandler()
+            return
+        }
         if let raw = info["problem"] as? String, let problem = OperationalProblem(rawValue: raw),
            let scope = info["scope"] as? String {
             Task { @MainActor [weak self] in self?.onOpen?(problem, scope) }

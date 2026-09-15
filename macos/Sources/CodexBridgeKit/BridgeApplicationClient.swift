@@ -16,6 +16,18 @@ public protocol BridgeApplicationClient: Sendable {
 
     func updateSettings(_ mutation: SettingsMutation) async throws -> SettingsSnapshot
 
+    func skillLibrary() async throws -> BridgeSkillLibrarySnapshot
+    func readBridgeSkill(_ reference: BridgeSkillReference) async throws -> BridgeSkillDocument
+    func readBridgeSkillReference(
+        reference: BridgeSkillReference,
+        referenceId: String
+    ) async throws -> BridgeSkillReferenceDocument
+    func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList
+    func createBridgeSkill(_ request: BridgeSkillCreateRequest) async throws -> BridgeSkillSummary
+    func updateBridgeSkill(_ request: BridgeSkillUpdateRequest) async throws -> BridgeSkillSummary
+    func restoreBridgeSkill(_ request: BridgeSkillRestoreRequest) async throws -> BridgeSkillSummary
+    func setBridgeSkillEnabled(_ request: BridgeSkillSetEnabledRequest) async throws -> BridgeSkillSummary
+
     func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult
 
     func dashboardHistoryDetail(rowKey: String) async throws -> DashboardHistoryDetail
@@ -57,6 +69,41 @@ public extension BridgeApplicationClient {
 
     func dashboardHistoryDetail(rowKey: String) async throws -> DashboardHistoryDetail {
         throw NSError(domain: "DASHBOARD_HISTORY_DETAIL_UNSUPPORTED", code: 1)
+    }
+
+    func skillLibrary() async throws -> BridgeSkillLibrarySnapshot {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func readBridgeSkill(_ reference: BridgeSkillReference) async throws -> BridgeSkillDocument {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func readBridgeSkillReference(
+        reference: BridgeSkillReference,
+        referenceId: String
+    ) async throws -> BridgeSkillReferenceDocument {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func createBridgeSkill(_ request: BridgeSkillCreateRequest) async throws -> BridgeSkillSummary {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func updateBridgeSkill(_ request: BridgeSkillUpdateRequest) async throws -> BridgeSkillSummary {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func restoreBridgeSkill(_ request: BridgeSkillRestoreRequest) async throws -> BridgeSkillSummary {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func setBridgeSkillEnabled(_ request: BridgeSkillSetEnabledRequest) async throws -> BridgeSkillSummary {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
     }
 }
 

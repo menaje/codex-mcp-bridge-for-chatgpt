@@ -230,6 +230,20 @@ The channel carries only topic names and revision identifiers, accepts at most
 four pending watchers, and releases a watcher when its socket closes. It is not
 exposed through the remote HTTPS application method allowlist.
 
+When **Notify this Mac when background work completes** is enabled on the Bridge
+host, the local menu-bar app also watches Dashboard invalidations while its
+popover and Settings window are closed. It claims retryable `notify` completion
+records through the private `completion.claim`/`completion.delivered`/
+`completion.release` socket methods, which are deliberately absent from the
+remote HTTPS allowlist. The bridge sends only an opaque event ID and outbox ID;
+the macOS banner has generic text and opens the local Dashboard when clicked.
+It never sends a ChatGPT message or exposes a task prompt, result, project path,
+Activity ID, or conversation ID. The app must be running and macOS notifications
+must be allowed. A failed presentation releases the durable lease; a crash after
+presentation and before acknowledgement can produce a retry, so visible
+delivery is at-least-once rather than exactly once. A remote client cannot enable
+or receive this local-host notification from its General settings form.
+
 | Information | Refresh policy |
 | --- | --- |
 | Local connection | Change notices and an independent ten-second watchdog |
@@ -240,6 +254,7 @@ exposed through the remote HTTPS application method allowlist.
 | Authentication | Login completion/auth changes and opening a window; five-minute fallback, two-second bounded browser-login checks |
 | CLI/SDK details | Installation changes and window entry; five-minute background fallback; visible settings reconcile each minute with change support, otherwise thirty seconds or two seconds during installation |
 | Operational notifications | Reevaluate on observed state changes and watchdog observations; existing sixty-second grace/deduplication remains |
+| Completion notifications | Local host only: coalesced on bridge Dashboard invalidations, settings refresh, connection recovery, and the ten-second watchdog; no Dashboard snapshot is loaded solely to deliver one |
 
 The app coalesces bursts of automatic non-Dashboard refresh requests over 250 ms.
 System wake, display wake, session activation, app activation and network-path
@@ -255,8 +270,9 @@ policy, even after the short recovery window expires. Closing the menu or switch
 servers discards the pending read. Later connection observations do not reread an
 already loaded Dashboard. A failed probe with a running process offers
 reconnection and does not claim the server stopped. No observation failure
-restarts the server or cancels a Codex job. Closing both content windows cancels
-the companion watcher, while helper lifecycle observation remains active. Old
+restarts the server or cancels a Codex job. Closing both content windows keeps
+the local companion watcher active so it can deliver a pending completion
+notification, while helper lifecycle observation remains active. Old
 helpers that do not support the new methods use the existing status RPC and
 periodic fallback. Watch failures retry with bounded exponential backoff and do
 not themselves mark a healthy runtime as disconnected.

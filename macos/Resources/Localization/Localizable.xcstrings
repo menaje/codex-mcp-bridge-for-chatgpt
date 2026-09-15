@@ -1,6 +1,180 @@
 {
   "sourceLanguage" : "ko",
   "strings" : {
+    "브리지가 인식하는 기능" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Von der Bridge erkannte Funktion"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Capability recognized by the Bridge"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Capacidad reconocida por el Bridge"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Capacité reconnue par le Bridge"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge が認識する機能"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "브리지가 인식하는 기능"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Capacidade reconhecida pelo Bridge"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge 识别的功能"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge 識別的功能"
+      }
+    }
+  }
+},
+    "실행 환경에서 별도 준비 필요" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Erfordert separate Vorbereitung in der Ausführungsumgebung"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Requires separate preparation in the execution environment"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Requiere preparación por separado en el entorno de ejecución"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Nécessite une préparation distincte dans l’environnement d’exécution"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "実行環境で別途準備が必要"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "실행 환경에서 별도 준비 필요"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Requer preparação separada no ambiente de execução"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "需要在执行环境中单独准备"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "需要在執行環境中另外準備"
+      }
+    }
+  }
+},
+    "브리지가 지원하지 않는 기능" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Von der Bridge nicht unterstützte Funktion"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Capability unsupported by the Bridge"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Capacidad no compatible con el Bridge"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Capacité non prise en charge par le Bridge"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge でサポートされない機能"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "브리지가 지원하지 않는 기능"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Capacidade não compatível com o Bridge"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge 不支持的功能"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge 不支援的功能"
+      }
+    }
+  }
+},
     " (저장됨 · 현재 선택 불가)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -223,6 +397,64 @@
         }
       }
     },
+    "%@ · %@ · %lld bytes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %@ · %lld Byte"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %@ · %lld bytes"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %@ · %lld bytes"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %@ · %lld octets"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@・%@・%lld バイト"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %@ · %lld바이트"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %@ · %lld bytes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %@ · %lld 字节"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %@ · %lld 位元組"
+          }
+        }
+      }
+    },
     "%@ · %@: %@" : {
       "localizations" : {
         "de" : {
@@ -281,6 +513,64 @@
         }
       }
     },
+    "%@ · %lld bytes" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%@ · %lld Byte"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%@ · %lld bytes"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%@ · %lld bytes"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%@ · %lld octets"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%@ · %lld バイト"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%@ · %lld bytes"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%@ · %lld bytes"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%@ · %lld 字节"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%@ · %lld 位元組"
+      }
+    }
+  }
+},
     "%@ · Bridge %@ · 연결됨" : {
       "localizations" : {
         "de" : {
@@ -2643,6 +2933,117 @@
         }
       }
     },
+    "Codex 작업이 완료되었습니다." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex-Arbeit ist abgeschlossen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex work is complete."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El trabajo de Codex ha finalizado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le travail Codex est terminé."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex 作業が完了しました。"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O trabalho do Codex foi concluído."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex 工作已完成。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex 工作已完成。"
+          }
+        }
+      }
+    },
+    "Codex 전용" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Nur Codex"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Codex only"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Solo Codex"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Codex uniquement"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Codex 専用"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Codex 전용"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Somente Codex"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "仅 Codex"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "僅限 Codex"
+      }
+    }
+  }
+},
     "Codex에 로그인되어 있습니다." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2800,6 +3201,64 @@
         }
       }
     },
+    "MIME 형식" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "MIME-Typ"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "MIME type"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Tipo MIME"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Type MIME"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "MIME タイプ"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "MIME 형식"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Tipo MIME"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "MIME 类型"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "MIME 類型"
+      }
+    }
+  }
+},
     "Mac 앱" : {
       "localizations" : {
         "de" : {
@@ -5139,6 +5598,180 @@
         }
       }
     },
+    "v%@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@"
+          }
+        }
+      }
+    },
+    "v%@ · %@" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "v%@ · %@"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "v%@ · %@"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "v%@ · %@"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "v%@ · %@"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "v%@ · %@"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "v%@ · %@"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "v%@ · %@"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "v%@ · %@"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "v%@ · %@"
+      }
+    }
+  }
+},
+    "v%@의 지침과 참고 자료를 복사해 새 불변 버전을 만듭니다. 기존 버전은 바뀌지 않습니다." : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Kopiert Anweisungen und Referenzmaterialien von v%@ in eine neue unveränderliche Version. Die vorhandene Version bleibt unverändert."
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Copies v%@ instructions and reference materials into a new immutable version. The existing version does not change."
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Copia las instrucciones y los materiales de referencia de v%@ en una nueva versión inmutable. La versión existente no cambia."
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Copie les instructions et les documents de référence de v%@ dans une nouvelle version immuable. La version existante ne change pas."
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "v%@の指示と参考資料をコピーして、新しい不変バージョンを作成します。既存のバージョンは変更されません。"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "v%@의 지침과 참고 자료를 복사해 새 불변 버전을 만듭니다. 기존 버전은 바뀌지 않습니다."
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Copia as instruções e os materiais de referência de v%@ para uma nova versão imutável. A versão existente não é alterada."
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "将 v%@ 的说明和参考资料复制为新的不可变版本。现有版本不会更改。"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "將 v%@ 的指示和參考資料複製為新的不可變版本。現有版本不會變更。"
+      }
+    }
+  }
+},
     "‘%@’ 서버 자체와 다른 기기의 등록은 변경하지 않습니다." : {
       "localizations" : {
         "de" : {
@@ -6973,6 +7606,64 @@
         }
       }
     },
+    "기능 또는 환경 이름" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Name der Funktion oder Umgebung"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Capability or environment name"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Nombre de función o entorno"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Nom de la capacité ou de l’environnement"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "機能または環境の名前"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "기능 또는 환경 이름"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Nome da capacidade ou do ambiente"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "功能或环境名称"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "功能或環境名稱"
+      }
+    }
+  }
+},
     "기존 Bridge 연결 파일" : {
       "localizations" : {
         "de" : {
@@ -8635,6 +9326,64 @@
         }
       }
     },
+    "대화 또는 Codex" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Unterhaltung oder Codex"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Conversation or Codex"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Conversación o Codex"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Conversation ou Codex"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "会話または Codex"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "대화 또는 Codex"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Conversa ou Codex"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "对话或 Codex"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "對話或 Codex"
+      }
+    }
+  }
+},
     "대화 저장을 확인할 수 없어 연결을 유지합니다." : {
       "localizations" : {
         "de" : {
@@ -8693,6 +9442,64 @@
         }
       }
     },
+    "대화 전용" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Nur Unterhaltung"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Conversation only"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Solo conversación"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Conversation uniquement"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "会話専用"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "대화 전용"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Somente conversa"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "仅对话"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "僅對話"
+      }
+    }
+  }
+},
     "더 보기" : {
       "localizations" : {
         "de" : {
@@ -10352,6 +11159,65 @@
         }
       }
     },
+    "만들기" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erstellen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Crear"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Créer"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "作成"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "만들기"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Criar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "创建"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "建立"
+          }
+        }
+      }
+    },
     "먼저 ‘기존 서버에 연결’ 모드를 선택해 주세요." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10506,6 +11372,59 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "退出選單欄應用、helper、Bridge 伺服器及所有相關程序。"
+          }
+        }
+      }
+    },
+    "메뉴 막대 앱에서 현황과 결과를 확인하세요." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prüfen Sie Status und Ergebnisse in der Menüleisten-App."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check status and results in the menu-bar app."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Consulta el estado y los resultados en la app de la barra de menús."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Consultez l’état et les résultats dans l’app de barre des menus."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "メニューバーアプリで状況と結果を確認してください。"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verifique o status e os resultados no app da barra de menus."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在菜单栏应用中查看状态和结果。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請在選單列 App 中查看狀態和結果。"
           }
         }
       }
@@ -11590,6 +12509,58 @@
         }
       }
     },
+    "백그라운드 작업 완료 시 macOS 알림" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diesen Mac nach Abschluss von Hintergrundarbeit benachrichtigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notify this Mac when background work completes"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notificar a este Mac al terminar el trabajo en segundo plano"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notifier ce Mac quand le travail en arrière-plan se termine"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "バックグラウンド作業の完了をこの Mac に通知"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notificar este Mac quando o trabalho em segundo plano terminar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "后台工作完成时通知此 Mac"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "背景工作完成時通知此 Mac"
+          }
+        }
+      }
+    },
     "백그라운드 작업 종료를 확인한 뒤 인계합니다." : {
       "localizations" : {
         "de" : {
@@ -12029,6 +13000,64 @@
         }
       }
     },
+    "버전" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Versions"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Version"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Versión"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Version"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "バージョン"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "버전"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "versão"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "版本"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "版本"
+      }
+    }
+  }
+},
     "버전 관리" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -12088,6 +13117,64 @@
         }
       }
     },
+    "버전 이력" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Versionsverlauf"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Version history"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Historial de versiones"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Historique des versions"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "バージョン履歴"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "버전 이력"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Histórico de versões"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "版本历史"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "版本記錄"
+      }
+    }
+  }
+},
     "변경사항 자동 저장" : {
       "localizations" : {
         "de" : {
@@ -12465,6 +13552,64 @@
         }
       }
     },
+    "보관한 스킬 표시" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Archivierte Skills anzeigen"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Show archived skills"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Mostrar habilidades archivadas"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Afficher les compétences archivées"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "アーカイブしたスキルを表示"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "보관한 스킬 표시"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Mostrar habilidades arquivadas"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "显示已归档技能"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "顯示已封存技能"
+      }
+    }
+  }
+},
     "보안 및 연결 승인 알림" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13356,6 +14501,180 @@
         }
       }
     },
+    "브리지 · 버전 %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · Version %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · Version %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · versión %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · version %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge・バージョン %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브리지 · 버전 %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · versão %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · 版本 %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · 版本 %@"
+          }
+        }
+      }
+    },
+    "브리지 기능" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge-Funktion"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge capability"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Capacidad del Bridge"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Capacité du Bridge"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge 機能"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "브리지 기능"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Capacidade do Bridge"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge 功能"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge 功能"
+      }
+    }
+  }
+},
+    "브리지 기능은 conversation, codex-task, reference-text만 인식합니다. 환경 조건은 실행 환경에서 따로 준비해야 합니다." : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Die Bridge erkennt nur conversation, codex-task und reference-text. Bereiten Sie Umgebungsanforderungen separat in der Ausführungsumgebung vor."
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "The Bridge recognizes only conversation, codex-task, and reference-text. Prepare environment requirements separately in the execution environment."
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "El Bridge solo reconoce conversation, codex-task y reference-text. Prepare los requisitos de entorno por separado en el entorno de ejecución."
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Le Bridge ne reconnaît que conversation, codex-task et reference-text. Préparez séparément les prérequis d’environnement dans l’environnement d’exécution."
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge が認識するのは conversation、codex-task、reference-text のみです。環境要件は実行環境で別途準備してください。"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "브리지 기능은 conversation, codex-task, reference-text만 인식합니다. 환경 조건은 실행 환경에서 따로 준비해야 합니다."
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "O Bridge reconhece apenas conversation, codex-task e reference-text. Prepare os requisitos de ambiente separadamente no ambiente de execução."
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge 仅识别 conversation、codex-task 和 reference-text。请在执行环境中单独准备环境要求。"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Bridge 僅識別 conversation、codex-task 和 reference-text。請在執行環境中另外準備環境需求。"
+      }
+    }
+  }
+},
     "브리지 기본값" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13692,6 +15011,123 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "橋接設定需要檢查。請開啟連線設定，查看必填項目。"
+          }
+        }
+      }
+    },
+    "브리지 스킬" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge-Skills"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge Skills"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Habilidades de Bridge"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compétences Bridge"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridgeスキル"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브리지 스킬"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Habilidades do Bridge"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge 技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge 技能"
+          }
+        }
+      }
+    },
+    "브리지 스킬 편집" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge-Skill bearbeiten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit Bridge Skill"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Editar habilidad de Bridge"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifier la compétence Bridge"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridgeスキルを編集"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브리지 스킬 편집"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Editar habilidade do Bridge"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑 Bridge 技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯 Bridge 技能"
           }
         }
       }
@@ -14505,6 +15941,64 @@
         }
       }
     },
+    "사용 경로" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Verwendungsweg"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Use route"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Ruta de uso"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Mode d’utilisation"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "使用経路"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "사용 경로"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Caminho de uso"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "使用路径"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "使用路徑"
+      }
+    }
+  }
+},
     "사용 안 함" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15817,6 +17311,182 @@
         }
       }
     },
+    "새 버전 저장" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neue Version speichern"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save New Version"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Guardar nueva versión"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enregistrer la nouvelle version"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しいバージョンを保存"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 버전 저장"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Salvar nova versão"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存新版本"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "儲存新版本"
+          }
+        }
+      }
+    },
+    "새 버전으로 복원" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Als neue Version wiederherstellen"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Restore as new version"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Restaurar como nueva versión"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Restaurer comme nouvelle version"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "新しいバージョンとして復元"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "새 버전으로 복원"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Restaurar como nova versão"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "还原为新版本"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "還原為新版本"
+      }
+    }
+  }
+},
+    "새 브리지 스킬" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neuer Bridge-Skill"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Bridge Skill"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nueva habilidad de Bridge"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nouvelle compétence Bridge"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しいBridgeスキル"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 브리지 스킬"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nova habilidade do Bridge"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建 Bridge 技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增 Bridge 技能"
+          }
+        }
+      }
+    },
     "새 서버 페어링" : {
       "localizations" : {
         "de" : {
@@ -15923,6 +17593,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在使用新設定檢查連線。"
+          }
+        }
+      }
+    },
+    "새 스킬" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Neuer Skill"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Skill"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nueva habilidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nouvelle compétence"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しいスキル"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 스킬"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nova habilidade"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增技能"
           }
         }
       }
@@ -16085,6 +17813,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "僅在輸入新金鑰時替換"
+          }
+        }
+      }
+    },
+    "새로 고침" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktualisieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refresh"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actualizar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actualiser"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更新"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새로 고침"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Atualizar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刷新"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新整理"
           }
         }
       }
@@ -18078,6 +19864,64 @@
         }
       }
     },
+    "선택한 버전을 새 현재 버전으로 복원할까요?" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Ausgewählte Version als neue aktuelle Version wiederherstellen?"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Restore the selected version as the new current version?"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "¿Restaurar la versión seleccionada como nueva versión actual?"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Restaurer la version sélectionnée comme nouvelle version actuelle ?"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "選択したバージョンを新しい現在のバージョンとして復元しますか？"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "선택한 버전을 새 현재 버전으로 복원할까요?"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Restaurar a versão selecionada como a nova versão atual?"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "要将所选版本还原为新的当前版本吗？"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "要將所選版本還原為新的目前版本嗎？"
+      }
+    }
+  }
+},
     "선택한 서버로 연결" : {
       "localizations" : {
         "de" : {
@@ -18234,6 +20078,64 @@
         }
       }
     },
+    "선택한 스킬" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ausgewählter Skill"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Selected Skill"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Habilidad seleccionada"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compétence sélectionnée"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選択したスキル"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "선택한 스킬"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Habilidade selecionada"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所选技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已選技能"
+          }
+        }
+      }
+    },
     "선택한 실패 확인" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18345,6 +20247,64 @@
         }
       }
     },
+    "설명 (선택)" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Beschreibung (optional)"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Description (optional)"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Descripción (opcional)"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Description (facultative)"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "説明（任意）"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "설명 (선택)"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Descrição (opcional)"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "说明（可选）"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "說明（可選）"
+      }
+    }
+  }
+},
     "설명 저장" : {
       "localizations" : {
         "de" : {
@@ -19656,6 +21616,354 @@
         }
       }
     },
+    "스킬" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skills"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skills"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Habilidades"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compétences"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキル"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스킬"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Habilidades"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "技能"
+          }
+        }
+      }
+    },
+    "스킬 검색" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Skills suchen"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Search skills"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Buscar habilidades"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Rechercher des compétences"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "スキルを検索"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "스킬 검색"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Pesquisar habilidades"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "搜索技能"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "搜尋技能"
+      }
+    }
+  }
+},
+    "스킬 다시 활성화" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Skill reaktivieren"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Reactivate skill"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Reactivar habilidad"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Réactiver la compétence"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "スキルを再有効化"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "스킬 다시 활성화"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Reativar habilidade"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "重新启用技能"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "重新啟用技能"
+      }
+    }
+  }
+},
+    "스킬 라이브러리" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skill-Bibliothek"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skill Library"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Biblioteca de habilidades"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bibliothèque de compétences"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキルライブラリ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스킬 라이브러리"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Biblioteca de habilidades"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "技能库"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "技能庫"
+          }
+        }
+      }
+    },
+    "스킬 라이브러리를 불러오는 중…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skill-Bibliothek wird geladen…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loading skill library…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cargando la biblioteca de habilidades…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chargement de la bibliothèque de compétences…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキルライブラリを読み込み中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스킬 라이브러리를 불러오는 중…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Carregando a biblioteca de habilidades…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载技能库…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在載入技能庫…"
+          }
+        }
+      }
+    },
+    "스킬 보관" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Skill archivieren"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Archive skill"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Archivar habilidad"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Archiver la compétence"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "スキルをアーカイブ"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "스킬 보관"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Arquivar habilidade"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "归档技能"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "封存技能"
+      }
+    }
+  }
+},
     "승인 필요" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -20715,6 +23023,64 @@
         }
       }
     },
+    "실행 조건" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Ausführungsanforderungen"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Execution requirements"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Requisitos de ejecución"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Prérequis d’exécution"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "実行要件"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "실행 조건"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Requisitos de execução"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "执行要求"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "執行需求"
+      }
+    }
+  }
+},
     "실행 중" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -21086,6 +23452,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "執行：%@"
+          }
+        }
+      }
+    },
+    "아직 브리지 전용 스킬이 없습니다. 새 스킬을 만들어 대화와 Codex 실행에서 재사용할 수 있습니다." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Es gibt noch keine Bridge-eigenen Skills. Erstellen Sie einen neuen Skill, um ihn in Unterhaltungen und Codex-Ausführungen wiederzuverwenden."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "There are no bridge-owned skills yet. Create one to reuse it in conversations and Codex executions."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aún no hay habilidades propias de Bridge. Cree una para reutilizarla en conversaciones y ejecuciones de Codex."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il n’existe pas encore de compétences propres au Bridge. Créez-en une pour la réutiliser dans les conversations et les exécutions Codex."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge 専用スキルはまだありません。新しいスキルを作成すると、会話と Codex 実行で再利用できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "아직 브리지 전용 스킬이 없습니다. 새 스킬을 만들어 대화와 Codex 실행에서 재사용할 수 있습니다."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ainda não há habilidades próprias do Bridge. Crie uma para reutilizá-la em conversas e execuções do Codex."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚无 Bridge 专用技能。创建一个新技能后，可在对话和 Codex 执行中重复使用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目前沒有 Bridge 專用技能。建立新技能後，可在對話和 Codex 執行中重複使用。"
           }
         }
       }
@@ -24019,6 +26443,58 @@
         }
       }
     },
+    "완료 알림은 브리지를 실행하는 Mac의 메뉴 막대 앱에서 전송됩니다." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abschlussbenachrichtigungen werden von der Menüleisten-App auf dem Mac gesendet, auf dem Bridge läuft."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Completion notifications are sent by the menu-bar app on the Mac running the Bridge."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las notificaciones de finalización las envía la app de la barra de menús del Mac que ejecuta Bridge."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les notifications de fin sont envoyées par l’app de barre des menus du Mac qui exécute Bridge."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完了通知はブリッジを実行している Mac のメニューバーアプリから送信されます。"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "As notificações de conclusão são enviadas pelo app da barra de menus no Mac que executa o Bridge."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成通知由运行 Bridge 的 Mac 上的菜单栏应用发送。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成通知由執行 Bridge 的 Mac 上的選單列 App 傳送。"
+          }
+        }
+      }
+    },
     "완료 후 ChatGPT에 넘기기" : {
       "localizations" : {
         "de" : {
@@ -24123,6 +26599,116 @@
         }
       }
     },
+    "완료되면 이 Mac의 메뉴 막대 앱이 알림을 보냅니다. 알림을 클릭하면 현황을 열며 ChatGPT 대화에 자동 메시지를 추가하지 않습니다." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nach Abschluss sendet die Menüleisten-App auf diesem Mac eine Benachrichtigung. Ein Klick öffnet das Dashboard und fügt der ChatGPT-Unterhaltung nie automatisch eine Nachricht hinzu."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When work completes, the menu-bar app on this Mac sends a notification. Clicking it opens Dashboard and never adds an automatic message to the ChatGPT conversation."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Al completarse el trabajo, la app de la barra de menús de este Mac envía una notificación. Al hacer clic se abre el panel y nunca se añade un mensaje automático a la conversación de ChatGPT."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lorsque le travail est terminé, l’app de barre des menus de ce Mac envoie une notification. Un clic ouvre le tableau de bord et n’ajoute jamais de message automatique à la conversation ChatGPT."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完了すると、この Mac のメニューバーアプリが通知を送ります。クリックするとダッシュボードが開き、ChatGPT 会話に自動メッセージを追加しません。"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quando o trabalho é concluído, o app da barra de menus deste Mac envia uma notificação. Ao clicar, o painel é aberto e nenhuma mensagem automática é adicionada à conversa do ChatGPT."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作完成后，此 Mac 的菜单栏应用会发送通知。点击会打开概览，且不会向 ChatGPT 对话添加自动消息。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作完成後，此 Mac 的選單列 App 會傳送通知。點按會開啟總覽，且不會在 ChatGPT 對話中新增自動訊息。"
+          }
+        }
+      }
+    },
+    "외부 환경" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Externe Umgebung"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "External environment"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Entorno externo"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Environnement externe"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "外部環境"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "외부 환경"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Ambiente externo"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "外部环境"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "外部環境"
+      }
+    }
+  }
+},
     "요청된 종료 재시도" : {
       "localizations" : {
         "de" : {
@@ -26154,6 +28740,64 @@
         }
       }
     },
+    "이 버전을 새 현재 버전으로 복원" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Diese Version als neue aktuelle Version wiederherstellen"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Restore this version as the new current version"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Restaurar esta versión como nueva versión actual"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Restaurer cette version comme nouvelle version actuelle"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "このバージョンを新しい現在のバージョンとして復元"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "이 버전을 새 현재 버전으로 복원"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Restaurar esta versão como a nova versão atual"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "将此版本还原为新的当前版本"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "將此版本還原為新的目前版本"
+      }
+    }
+  }
+},
     "이 브리지의 작업 외 비용도 포함됩니다." : {
       "localizations" : {
         "de" : {
@@ -26470,6 +29114,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "僅退出此客戶端應用，不會更改遠端伺服器。"
+          }
+        }
+      }
+    },
+    "이름" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Name"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Name"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nombre"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nom"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名前"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이름"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nome"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名称"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名稱"
           }
         }
       }
@@ -28459,6 +31161,180 @@
         }
       }
     },
+    "자료 %lld개" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%lld Materialien"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%lld materials"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%lld materiales"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%lld documents"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "資料 %lld件"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "자료 %lld개"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%lld materiais"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%lld 份资料"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "%lld 份資料"
+      }
+    }
+  }
+},
+    "자료 불러오는 중…" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Materialien werden geladen…"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Loading materials…"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Cargando materiales…"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Chargement des documents…"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "資料を読み込み中…"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "자료 불러오는 중…"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Carregando materiais…"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "正在加载资料…"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "正在載入資料…"
+      }
+    }
+  }
+},
+    "자료 이름" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Materialname"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Material name"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Nombre del material"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Nom du document"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "資料名"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "자료 이름"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Nome do material"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "资料名称"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "資料名稱"
+      }
+    }
+  }
+},
     "작업" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -32393,6 +35269,64 @@
         }
       }
     },
+    "종류" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Typ"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Type"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Tipo"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Type"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "種類"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "종류"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Tipo"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "类型"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "類型"
+      }
+    }
+  }
+},
     "주간 사용량" : {
       "localizations" : {
         "de" : {
@@ -32932,6 +35866,64 @@
         }
       }
     },
+    "지침" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anweisungen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instructions"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instrucciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instructions"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "手順"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지침"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Instruções"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "说明"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "指示"
+          }
+        }
+      }
+    },
     "진단 로그 (민감정보 가림)" : {
       "localizations" : {
         "de" : {
@@ -33317,6 +36309,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "由於正在進行的任務未在時限內完成，應用未退出。請確認是否強制退出。"
+          }
+        }
+      }
+    },
+    "참고 자료" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Referenzmaterial"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reference Materials"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Materiales de referencia"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Documents de référence"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "参考資料"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "참고 자료"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Materiais de referência"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "参考资料"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "參考資料"
           }
         }
       }
@@ -34573,6 +37623,64 @@
         }
       }
     },
+    "추가" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Hinzufügen"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Add"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Añadir"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Ajouter"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "追加"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "추가"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Adicionar"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "添加"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "加入"
+      }
+    }
+  }
+},
     "추가 사용량" : {
       "localizations" : {
         "de" : {
@@ -35710,6 +38818,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "配對並啟用"
+          }
+        }
+      }
+    },
+    "편집" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bearbeiten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Editar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifier"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編集"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "편집"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Editar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯"
           }
         }
       }
@@ -37254,6 +40420,64 @@
         }
       }
     },
+    "현재" : {
+  "localizations" : {
+    "de" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Aktuell"
+      }
+    },
+    "en" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Current"
+      }
+    },
+    "es" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Actual"
+      }
+    },
+    "fr" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Actuelle"
+      }
+    },
+    "ja" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "現在"
+      }
+    },
+    "ko" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "현재"
+      }
+    },
+    "pt" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "Atual"
+      }
+    },
+    "zh-Hans" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "当前"
+      }
+    },
+    "zh-Hant" : {
+      "stringUnit" : {
+        "state" : "translated",
+        "value" : "目前"
+      }
+    }
+  }
+},
     "현재 Tunnel ID" : {
       "localizations" : {
         "de" : {

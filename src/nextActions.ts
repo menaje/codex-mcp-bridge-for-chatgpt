@@ -2,8 +2,6 @@ import * as z from "zod/v4";
 
 const identifier = z.string().trim().min(1).max(200);
 const message = z.string().trim().min(1).max(1_000);
-const emptyArguments = z.strictObject({});
-
 const statusQueryArguments = z.strictObject({
   query: z.discriminatedUnion("kind", [
     z.strictObject({ kind: z.literal("job"), id: identifier }),
@@ -17,6 +15,24 @@ const statusQueryArguments = z.strictObject({
     }),
     z.strictObject({ kind: z.literal("project"), name: z.string().trim().min(1).max(240) })
   ]).optional()
+});
+
+/**
+ * The Dashboard is a render tool. A background task can ask the model to
+ * render the originating conversation with a scoped Job handle, while an
+ * ordinary Dashboard opener remains argument-free.
+ */
+const dashboardArguments = z.strictObject({
+  scope: z.literal("conversation").optional(),
+  backgroundJobId: z.string().uuid().optional()
+}).superRefine((value, context) => {
+  if (value.backgroundJobId && value.scope !== "conversation") {
+    context.addIssue({
+      code: "custom",
+      path: ["scope"],
+      message: "backgroundJobId requires the originating conversation scope."
+    });
+  }
 });
 
 /**
@@ -46,7 +62,7 @@ export const modelNextActionOutputSchema = z.union([
   z.strictObject({
     kind: z.literal("tool"),
     tool: z.literal("codex_dashboard"),
-    arguments: emptyArguments,
+    arguments: dashboardArguments,
     message: message.optional()
   }),
   z.strictObject({ kind: z.literal("guidance"), message })

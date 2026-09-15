@@ -27,7 +27,7 @@ presenters, or Activity-card presenters.
 | `codex_ui_read` | Read Dashboard, Settings, work detail, or problem-review data. |
 | `codex_update_settings` | Commit versioned settings and project changes. |
 | `codex_interaction_respond` | Respond to an original Codex approval or non-ordinary input request. |
-| `codex_ui_problem` | Resolve a verified UI problem and acknowledge Dashboard completion delivery. |
+| `codex_ui_problem` | Resolve a verified UI problem. |
 | `codex_ui_stop` | Stop a Dashboard-selected Job or verified background process. |
 
 Each app-only action has a closed schema and requires its normal mounted
@@ -52,13 +52,27 @@ opens only for a newly admitted background task in its originating conversation;
 foreground work never opens it automatically. Manual Dashboard opening remains
 available.
 
-`completionFollowUp` uses the durable completion outbox independently of card
-state. A verified host conversation-resume event takes priority when one is
-implemented and verified. Until then, an automatically opened Dashboard can
-send one bounded `ui/message` follow-up and acknowledge the exact outbox event.
-If no route exists the event remains pending. If message delivery becomes
-uncertain, it is held out of automatic retries rather than being sent through a
-second channel.
+`completionFollowUp` enables a local macOS completion notification, independently
+of card state. For a new one-job background Activity without an explicit
+completion policy, the bridge uses `notify` plus `sealed-jobs-terminal`; a
+successful terminal completion enters the durable outbox. The local menu-bar
+app claims only opaque `{eventId, outboxId}` receipts over its private Unix
+socket, asks macOS to present a generic notification, then acknowledges the
+exact outbox record. A failed presentation releases its lease for retry.
+
+The notification contains no prompt, result, path, Activity ID, or ChatGPT
+conversation ID. Clicking it opens the local Dashboard. It never resumes or
+adds a ChatGPT message, and it is unavailable to remote companion clients.
+Dashboard presentation neither claims the outbox nor sends a follow-up message.
+The bridge may retry after a crash between macOS accepting the notification and
+the durable acknowledgement, so this is not an exactly-once user-visible
+delivery guarantee.
+
+`ui/message` is an MCP Apps bridge request from a mounted component to its
+host; it is not a Question-card or user-answer API. No current Bridge resource
+calls it. The old shared card helper that exposed this request was removed with
+the retired Question and Activity card paths, so ordinary user answers continue
+through the normal ChatGPT conversation only.
 
 ## Retired public routes
 

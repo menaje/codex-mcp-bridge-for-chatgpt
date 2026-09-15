@@ -245,6 +245,68 @@ final class OperationalNotificationsTests: XCTestCase {
             $0.accessibilityLabel(locale: Locale(identifier: "ko"))
         }).count, 4)
     }
+
+    func testCompletionNotificationContentIsGenericAndContainsNoTaskData() {
+        let content = SystemOperationalNotificationDelivery.completionContent(locale: Locale(identifier: "ko"))
+        XCTAssertEqual(content.title, "Codex 작업이 완료되었습니다.")
+        XCTAssertEqual(content.body, "메뉴 막대 앱에서 현황과 결과를 확인하세요.")
+        XCTAssertEqual(content.threadIdentifier, "bridge-completions")
+        XCTAssertEqual(content.userInfo["notificationKind"] as? String, "completion")
+        XCTAssertEqual(Set(content.userInfo.keys.compactMap { $0 as? String }), ["notificationKind"])
+        XCTAssertFalse("\(content.title) \(content.body) \(content.userInfo)".contains("/private/project"))
+    }
+}
+
+@MainActor
+final class CompletionNotificationsTests: XCTestCase {
+    func testSuccessfulDeliveryClaimsAndAcknowledgesOpaqueEvents() async throws {
+        let path = "/tmp/cb-completion-success-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { method in
+            switch method {
+            case "completion.claim":
+                return NativeFixtureReply(body: #"{"result":{"events":[{"eventId":"completion-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","outboxId":7}]}}"#)
+            case "completion.delivered":
+                return NativeFixtureReply(body: #"{"result":{"ok":true}}"#)
+            default:
+                return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unsupported"}}"#)
+            }
+        }
+        defer { server.stop() }
+        let delivery = CompletionNotificationDeliveryFixture()
+        let notifications = CompletionNotifications(delivery: delivery)
+
+        await notifications.refresh(client: BridgeCompanionClient(socketPath: path), locale: Locale(identifier: "ko"))
+
+        XCTAssertEqual(delivery.identifiers, ["completion-" + String(repeating: "a", count: 64)])
+        XCTAssertEqual(server.count("completion.claim"), 1)
+        XCTAssertEqual(server.count("completion.delivered"), 1)
+        XCTAssertEqual(server.count("completion.release"), 0)
+    }
+
+    func testFailedDeliveryReleasesTheClaimForRetry() async throws {
+        let path = "/tmp/cb-completion-release-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { method in
+            switch method {
+            case "completion.claim":
+                return NativeFixtureReply(body: #"{"result":{"events":[{"eventId":"completion-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","outboxId":8}]}}"#)
+            case "completion.release":
+                return NativeFixtureReply(body: #"{"result":{"ok":true}}"#)
+            default:
+                return NativeFixtureReply(body: #"{"error":{"code":-32601,"message":"unsupported"}}"#)
+            }
+        }
+        defer { server.stop() }
+        let delivery = CompletionNotificationDeliveryFixture()
+        delivery.fail = true
+        let notifications = CompletionNotifications(delivery: delivery)
+
+        await notifications.refresh(client: BridgeCompanionClient(socketPath: path), locale: Locale(identifier: "en"))
+
+        XCTAssertTrue(delivery.identifiers.isEmpty)
+        XCTAssertEqual(server.count("completion.claim"), 1)
+        XCTAssertEqual(server.count("completion.delivered"), 0)
+        XCTAssertEqual(server.count("completion.release"), 1)
+    }
 }
 
 @MainActor
@@ -261,6 +323,20 @@ private final class NotificationDeliveryFixture: OperationalNotificationDeliveri
     func deliver(identifier: String, problem: OperationalProblem, scope: String, locale: Locale) async throws {
         if fail { throw CocoaError(.fileWriteUnknown) }
         sent.append(problem)
+        identifiers.append(identifier)
+    }
+}
+
+@MainActor
+private final class CompletionNotificationDeliveryFixture: CompletionNotificationDelivering {
+    var authorized = true
+    var fail = false
+    var identifiers: [String] = []
+
+    func isAuthorized() async -> Bool { authorized }
+
+    func deliverCompletion(identifier: String, locale: Locale) async throws {
+        if fail { throw CocoaError(.fileWriteUnknown) }
         identifiers.append(identifier)
     }
 }

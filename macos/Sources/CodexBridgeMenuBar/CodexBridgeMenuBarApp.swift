@@ -184,6 +184,14 @@ final class BridgeMenuBarController: NSObject, NSPopoverDelegate {
         popover.performClose(nil)
     }
 
+    func showDashboard() {
+        guard let button = statusItem?.button else { return }
+        if !popover.isShown {
+            showPopover(relativeTo: button)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func updatePopoverSize(_ measuredSize: CGSize) {
         guard measuredSize.width.isFinite, measuredSize.height.isFinite,
               measuredSize.width > 0, measuredSize.height > 0 else { return }
@@ -292,6 +300,9 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
         if let model = Self.model {
             menuBarController.install(model: model)
             model.lifecycleTerminationHandler = { NSApp.terminate(nil) }
+            model.completionNotificationOpenHandler = { [weak self] in
+                self?.menuBarController.showDashboard()
+            }
             Task { await model.start() }
         }
         if ProcessInfo.processInfo.environment["CODEX_MCP_BRIDGE_OPEN_SETTINGS"] == "1" {
@@ -468,6 +479,68 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 }
 
 @MainActor
+final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
+    static let shared = SkillsLibraryWindowController()
+    private var window: NSWindow?
+
+    func show(model: AppModel) {
+        if window == nil {
+            let skillsWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
+                styleMask: [.titled, .closable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            skillsWindow.title = BridgeAppLocalization.string(
+                "스킬 라이브러리",
+                locale: model.interfaceLocale
+            )
+            skillsWindow.isReleasedWhenClosed = false
+            skillsWindow.delegate = self
+            PrimaryAppWindowPresentation.configure(skillsWindow)
+            skillsWindow.toolbarStyle = .unifiedCompact
+            skillsWindow.setFrameAutosaveName("CodexBridgeSkillsLibraryWindow")
+            skillsWindow.contentMinSize = NSSize(width: 720, height: 620)
+            skillsWindow.contentViewController = NSHostingController(
+                rootView: SkillsLibraryWindowRoot()
+                    .environmentObject(model)
+                    .frame(minWidth: 720, minHeight: 620)
+            )
+            skillsWindow.center()
+            window = skillsWindow
+        }
+        if let window {
+            window.title = BridgeAppLocalization.string(
+                "스킬 라이브러리",
+                locale: model.interfaceLocale
+            )
+            PrimaryAppWindowPresentation.show(window)
+        }
+        Task {
+            if model.helperStatus == nil { await model.start() }
+            await model.refreshSkillLibrary()
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if let window = notification.object as? NSWindow {
+            PrimaryAppWindowPresentation.didClose(window)
+        }
+    }
+}
+
+@MainActor
+private struct SkillsLibraryWindowRoot: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        SkillsLibraryView(showsStandaloneWindowButton: false)
+            .environmentObject(model)
+            .environment(\.locale, model.interfaceLocale)
+    }
+}
+
+@MainActor
 final class ConnectionRepairWindowController: NSObject, NSWindowDelegate {
     static let shared = ConnectionRepairWindowController()
     private var window: NSWindow?
@@ -520,10 +593,14 @@ struct CodexBridgeMenuBarApp: App {
         let notificationDelivery = SystemOperationalNotificationDelivery()
         let appModel = AppModel(
             connectionStore: UserDefaultsBridgeConnectionStore(),
-            operationalNotifications: OperationalNotifications(defaults: .standard, delivery: notificationDelivery)
+            operationalNotifications: OperationalNotifications(defaults: .standard, delivery: notificationDelivery),
+            completionNotifications: CompletionNotifications(delivery: notificationDelivery)
         )
         notificationDelivery.onOpen = { [weak appModel] problem, scope in
             appModel?.showOperationalProblem(problem, scope: scope)
+        }
+        notificationDelivery.onCompletionOpen = { [weak appModel] in
+            appModel?.showDashboardForCompletionNotification()
         }
         _model = StateObject(wrappedValue: appModel)
         BridgeAppDelegate.model = appModel

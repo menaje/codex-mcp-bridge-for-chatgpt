@@ -197,7 +197,7 @@ describe("human-facing UI localization", () => {
     expect(UI_TRANSLATIONS.ko["settings.dashboardAutoOpenBackground"]).toBe(
       "백그라운드 작업 시 현황 카드 자동 표시"
     );
-    expect(UI_TRANSLATIONS.ko["settings.completionFollowUp"]).toBe("완료 후 자동 응답");
+    expect(UI_TRANSLATIONS.ko["settings.completionFollowUp"]).toBe("백그라운드 작업 완료 시 이 Mac에 알림");
     expect(UI_TRANSLATIONS.ko["settings.codexAppThreads"]).toBe(
       "브리지 스레드를 Codex 앱에 표시"
     );
@@ -393,7 +393,7 @@ describe("human-facing UI localization", () => {
     expect(staleHtml).not.toContain("<title>Plugin refresh required</title>");
   });
 
-  it("uses the current card bridge and Dashboard completion delivery contract", () => {
+  it("uses the current card bridge without delegating completion delivery to Dashboard", () => {
     for (const html of [SETTINGS_CARD_HTML, DASHBOARD_CARD_HTML]) {
       expect(html).toContain('dir="auto"');
       expect(html).toContain('"openai/locale"');
@@ -403,10 +403,10 @@ describe("human-facing UI localization", () => {
       expect(html).not.toContain("openai/userLocation");
       expect(html).not.toMatch(/geolocation|navigator\.geolocation/i);
     }
-    expect(DASHBOARD_CARD_HTML).toContain('rpcRequest("ui/message"');
-    expect(DASHBOARD_CARD_HTML).toContain('completion-claim');
-    expect(DASHBOARD_CARD_HTML).toContain('completion-uncertain');
-    expect(DASHBOARD_CARD_HTML).toContain('presentationToken');
+    expect(DASHBOARD_CARD_HTML).not.toContain('rpcRequest("ui/message"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('completion-claim');
+    expect(DASHBOARD_CARD_HTML).not.toContain('completion-uncertain');
+    expect(DASHBOARD_CARD_HTML).not.toContain('presentationToken');
     expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/resource-teardown"');
     expect(SETTINGS_CARD_HTML).toContain('callTool("codex_ui_read"');
     expect(SETTINGS_CARD_HTML).not.toContain('callTool("codex_settings",');

@@ -10,7 +10,7 @@ There is no hidden parser for a previous tool generation.
 
 ## Task admission
 
-`codex_task` uses input contract version 3. A new logical task needs:
+`codex_task` uses input contract version 4. A new logical task needs:
 
 ```json
 {
@@ -35,6 +35,28 @@ The bridge owns access policy, the permitted execution envelope, project
 authorization, and any App Server capability checks. Callers cannot pass a
 sandbox, approval policy, working directory, raw thread ID, presentation
 identity, or other permission override.
+
+### Required skills
+
+After using `bridge_skill` to search and read a procedure, a local Codex task
+may include its exact immutable bridge reference:
+
+```json
+{
+  "requiredSkills": [
+    {
+      "skillId": "bridge_0123456789abcdef0123456789abcdef",
+      "source": "bridge",
+      "version": "3"
+    }
+  ]
+}
+```
+
+The closed reference shape remains stable as skills are added or revised. The
+Bridge resolves it again immediately before dispatch and scopes the selected
+bridge version to that turn. `requiredSkills` confirms explicit delivery, not
+result validation, and it does not restrict any additional Codex skills.
 
 ## Model selection
 

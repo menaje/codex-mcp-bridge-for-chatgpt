@@ -54,7 +54,7 @@ Verify the current contracts in [Input contracts](input-contracts.md) and
 [Output contracts](output-contracts.md):
 
 - `codex_models` has one response contract and optional `refresh` only;
-- `codex_task` requires input version 3 and the current descriptor's exact
+- `codex_task` requires input version 4 and the current descriptor's exact
   `executionEnvelopeRef`;
 - task output uses contract version 2 and structured `nextActions`;
 - old input aliases and output branches reject without mutation;

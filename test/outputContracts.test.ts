@@ -501,6 +501,7 @@ describe("model-visible output contracts", () => {
   it("publishes the documented compatibility byte caps", () => {
     expect(TOOL_CONTENT_BYTE_CAPS).toMatchObject({
       codex_status: 1024,
+      bridge_skill: 3 * 1024 * 1024,
       codex_settings: 768,
       codex_cancel: 768,
       codex_task_state: 1024,
