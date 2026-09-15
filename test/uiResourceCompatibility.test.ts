@@ -12,8 +12,10 @@ import {
 } from "../src/uiResources.js";
 
 describe("serialized card runtime compatibility", () => {
-  it("executes the current Settings error formatter without compiler helpers", () => {
-    expect(SETTINGS_CARD_HTML).not.toContain("__name(");
+  it("keeps all serialized card helpers free of compiler helpers", () => {
+    for (const html of [SETTINGS_CARD_HTML, DASHBOARD_CARD_HTML]) {
+      expect(html).not.toContain("__name(");
+    }
     const format = runInNewContext(`(${uiBridgeErrorMessage.toString()})`);
     expect(format({ error: { code: "PROJECT_UNAVAILABLE", message: "Try again" } }))
       .toBe("PROJECT_UNAVAILABLE: Try again");

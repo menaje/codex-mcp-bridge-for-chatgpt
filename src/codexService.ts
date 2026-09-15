@@ -8,6 +8,7 @@ import type { CodexBackendKind } from "./config.js";
 import { JsonRpcProcess } from "./jsonRpcProcess.js";
 import { projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
 import { validateInitializeResponse } from "./runtimeCompatibility.js";
+import { decodeUtf8Strict, parseJsonTextStrict, parseJsonUtf8Strict } from "./textIntegrity.js";
 
 export type CodexSessionPolicy = { contextId?: string; visibleInCodexApp: boolean; persistent: boolean; persistence: "persistent" | "ephemeral"; constraint?: "hidden-persistent-unsupported" };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -34,10 +35,22 @@ export class CodexService {
   authenticationIdentity(home?: string): string {
     const directory = home || this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
     try {
-      const auth = JSON.parse(readFileSync(path.join(directory, "auth.json"), "utf8"));
+      const auth = parseJsonUtf8Strict<Record<string, any>>(
+        readFileSync(path.join(directory, "auth.json")),
+        "Codex authentication state"
+      );
       let subject = auth.tokens?.account_id || null;
       if (!subject && typeof auth.tokens?.id_token === "string") {
-        try { const claims = JSON.parse(Buffer.from(auth.tokens.id_token.split(".")[1], "base64url").toString()); subject = claims.sub || claims.email || null; } catch { /* Unknown identity; never expose token content. */ }
+        try {
+          const encodedPayload = auth.tokens.id_token.split(".")[1];
+          if (!encodedPayload || !/^[A-Za-z0-9_-]+$/.test(encodedPayload)) throw new Error("invalid token payload");
+          const claims = parseJsonUtf8Strict<Record<string, unknown>>(
+            Buffer.from(encodedPayload, "base64url"),
+            "Codex identity token"
+          );
+          const candidate = claims.sub ?? claims.email;
+          subject = typeof candidate === "string" ? candidate : null;
+        } catch { /* Unknown identity; never expose token content. */ }
       }
       return digest(JSON.stringify([auth.auth_mode, auth.OPENAI_API_KEY, subject]));
     } catch { return "keyring-or-unavailable"; }
@@ -53,11 +66,14 @@ export class CodexService {
   cacheRevision(): string {
     const shared = this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
     const files = [path.join(this.cli.root, "cli-state.json"), ...["auth.json", "config.toml"].map(name => path.join(shared, name))];
-    const values = files.map(file => { try { return readFileSync(file, "utf8"); } catch { return "unavailable"; } });
-    const state = (() => { try { return JSON.parse(values[0]); } catch { return {}; } })();
+    const values = files.map(file => {
+      try { return decodeUtf8Strict(readFileSync(file), `runtime input ${path.basename(file)}`); }
+      catch { return "unavailable"; }
+    });
+    const state = (() => { try { return parseJsonTextStrict<any>(values[0], "runtime state"); } catch { return {}; } })();
     // Installation progress and update-check timestamps do not change the account.
     for (const index of [0]) {
-      try { const runtime = JSON.parse(values[index]); values[index] = JSON.stringify(runtime.selection ?? null); } catch { /* Preserve the unavailable marker. */ }
+      try { const runtime = parseJsonTextStrict<any>(values[index], "runtime state"); values[index] = JSON.stringify(runtime.selection ?? null); } catch { /* Preserve the unavailable marker. */ }
     }
     let binary = "";
     try { const info = statSync(this.environment.CODEX_MCP_BRIDGE_CODEX || state.selection?.command || ""); binary = `${info.size}:${info.mtimeMs}:${info.ctimeMs}`; } catch { /* Missing selection invalidates the next admission. */ }
@@ -116,7 +132,12 @@ export class CodexService {
     } finally { try { await rpc.close(); } finally { await release(); } }
   }
   private readRecord(group: string, id: string): Record<string, unknown> | null {
-    try { return JSON.parse(readFileSync(path.join(path.join(this.cli.root, "service"), group, `${id}.json`), "utf8")); }
+    try {
+      return parseJsonUtf8Strict<Record<string, unknown>>(
+        readFileSync(path.join(path.join(this.cli.root, "service"), group, `${id}.json`)),
+        "Codex service record"
+      );
+    }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw new Error("CODEX_CONTEXT_INVALID"); }
   }
   private writeRecord(group: string, id: string, value: unknown): void {

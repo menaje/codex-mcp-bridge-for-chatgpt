@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
 import { SETTINGS_CARD_HTML } from "../src/settingsCard.js";
-import { ULTRA_POLICY_TRANSLATIONS } from "../src/ultraPolicyI18n.js";
+import { UI_TRANSLATIONS } from "../src/uiI18n.js";
 import { cardPrelude } from "./card-browser-fixtures.js";
 
 const output = path.resolve("output/playwright/ultra-policy");
@@ -22,7 +22,7 @@ const server = createServer((request, response) => {
       if(!current){
         current=structuredClone((await originalCall(name,args)).structuredContent);
         current.settings.uiLocalePreference=${JSON.stringify(locale)};
-        current.capabilities.availableUiLocalePreferences=${JSON.stringify(["auto", ...Object.keys(ULTRA_POLICY_TRANSLATIONS)])};
+        current.capabilities.availableUiLocalePreferences=${JSON.stringify(["auto", ...Object.keys(UI_TRANSLATIONS)])};
         current.catalog.models[0].defaultReasoningEffort="max";
         current.catalog.models[0].supportedReasoningEfforts=[{effort:"max"},{effort:"ultra"}];
         const ultra={model:"gpt-5.6-sol",reasoningEffort:"ultra"};
@@ -97,7 +97,7 @@ try {
     await page.waitForFunction(()=>window.__ultraSaves.length===1);
     saved=await page.evaluate(()=>window.__ultraSaves[0].operation.settings.modelPolicy);
     check(saved.selection.reasoningEffort==='max'&&saved.constraints.allowDelegation===false,'Save the deliberate replacement');
-    const translations=${JSON.stringify(ULTRA_POLICY_TRANSLATIONS)},locales=[];
+    const translations=${JSON.stringify(UI_TRANSLATIONS)},locales=[];
     await page.goto(${JSON.stringify(origin + "/?locale=ko")});
     await page.locator('#settings-form').waitFor({state:'visible'});
     await page.locator('#allow-delegation').uncheck();

@@ -195,6 +195,20 @@ describe("native companion server", () => {
     await request(socketPath, { jsonrpc: "2.0", id: "skills-create", method: "skills.create", params: create });
     expect(service.createBridgeSkill).toHaveBeenCalledWith(create);
 
+    const scalarBoundedCreate = {
+      requestId: randomUUID(), name: "😀".repeat(BRIDGE_SKILL_LIMITS.nameMaxCharacters), document: "# Unicode"
+    };
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-create-scalar-bound", method: "skills.create", params: scalarBoundedCreate
+    })).resolves.toMatchObject({ result: { skillId: first.skillId } });
+    expect(service.createBridgeSkill).toHaveBeenLastCalledWith(scalarBoundedCreate);
+    const createCalls = vi.mocked(service.createBridgeSkill).mock.calls.length;
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-create-scalar-overflow", method: "skills.create",
+      params: { ...scalarBoundedCreate, requestId: randomUUID(), name: `${scalarBoundedCreate.name}😀` }
+    })).resolves.toHaveProperty("error");
+    expect(service.createBridgeSkill).toHaveBeenCalledTimes(createCalls);
+
     const update = {
       requestId: randomUUID(), skillId: first.skillId, expectedVersion: "1", document: "# Check evidence",
       files: { remove: ["references/evidence.md"] }
@@ -545,6 +559,40 @@ describe("native companion server", () => {
         "프로젝트 폴더를 Codex 설정에서만 관리하려면 이 값을 제거하세요."
     );
     expect(response.result.scopeNotice).not.toBe("unlocalized");
+  });
+
+  it("keeps an automatic-language settings update in the caller locale without persisting presentation metadata", async () => {
+    const socketPath = temporarySocketPath();
+    const applicationService = fakeApplicationService();
+    const rawView = {
+      settings: { settingsRevision: 4, registryRevision: 0, uiLocalePreference: "auto" },
+      catalog: { stale: false, warning: null, models: [] },
+      warnings: [
+        "CODEX_MCP_BRIDGE_ROOTS is a legacy compatibility restriction. " +
+          "Remove it to manage all project folders only from Codex settings."
+      ],
+      scopeNotice: "unlocalized"
+    } as SettingsView;
+    vi.mocked(applicationService.updateSettings).mockResolvedValue(rawView);
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService }));
+
+    const mutation = {
+      expectedSettingsRevision: 3,
+      operation: { kind: "patch", settings: { maxConcurrentJobs: 4 } }
+    };
+    const response = await request(socketPath, {
+      jsonrpc: "2.0",
+      id: "automatic-ko-update",
+      method: "settings.update",
+      params: { ...mutation, locale: "ko-KR" }
+    });
+
+    expect(applicationService.updateSettings).toHaveBeenCalledWith(mutation);
+    expect(response.result.warnings[0]).toContain("이전 버전 호환용 제한");
+    expect(response.result.presentation.warnings[0]).toEqual({
+      key: "settings.warning.legacyRoots",
+      parameters: {}
+    });
   });
 
   it("rejects malformed requests without closing the server", async () => {

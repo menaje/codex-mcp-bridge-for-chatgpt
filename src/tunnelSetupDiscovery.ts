@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { decodeUtf8Strict, parseJsonTextStrict } from "./textIntegrity.js";
 
 const TUNNEL_ID_PATTERN = /^tunnel_[a-z0-9]{32}$/;
 const API_KEY_PATTERN = /^sk-\S{16,}$/;
@@ -185,7 +186,7 @@ function resolveProfileApiKey(
     const stats = lstatSync(filePath);
     assertPrivateEntry(stats, filePath, "file", security);
     if (stats.size > MAX_SECRET_BYTES) return undefined;
-    const value = validApiKey(readFileSync(filePath, "utf8").trim());
+    const value = validApiKey(decodeUtf8Strict(readFileSync(filePath), "tunnel profile API key").trim());
     return value ? { value, source: "profile-file" } : undefined;
   } catch {
     return undefined;
@@ -221,7 +222,9 @@ function readTunnelProfiles(
           const stats = lstatSync(filePath);
           assertPrivateEntry(stats, filePath, "file", security);
           if (stats.size > MAX_PROFILE_BYTES) return [];
-          const parsed = parseControlPlaneProfile(readFileSync(filePath, "utf8"));
+          const parsed = parseControlPlaneProfile(
+            decodeUtf8Strict(readFileSync(filePath), "tunnel client profile")
+          );
           if (!parsed?.tunnelId || !TUNNEL_ID_PATTERN.test(parsed.tunnelId)) return [];
           return [{
             name: safeProfileName(entry.name.replace(/\.ya?ml$/i, "")),
@@ -279,7 +282,7 @@ function yamlScalar(rawValue: string): string {
   const value = rawValue.trim();
   if (value.startsWith('"') && value.endsWith('"')) {
     try {
-      const parsed = JSON.parse(value);
+      const parsed = parseJsonTextStrict(value, "Tunnel profile quoted value");
       return typeof parsed === "string" ? parsed : "";
     } catch {
       return "";

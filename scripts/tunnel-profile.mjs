@@ -7,6 +7,12 @@ import {
   readPrivateFile,
   writePrivateFileAtomic
 } from "./managed-file.mjs";
+import {
+  assertJsonTextIntegrity,
+  assertWellFormedUnicode,
+  decodeUtf8Strict,
+  parseJsonUtf8Strict
+} from "./text-integrity.mjs";
 
 export const TUNNEL_PROFILE_METADATA_VERSION = 1;
 
@@ -54,7 +60,7 @@ export function inspectReusableTunnelProfile({
     }
     assertPrivateFile(metadataFile);
     assertPrivateFile(profilePath);
-    const metadata = JSON.parse(readPrivateFile(metadataFile, { encoding: "utf8" }));
+    const metadata = parseJsonUtf8Strict(readPrivateFile(metadataFile), "Tunnel profile metadata");
     if (!sameIdentity(metadata.identity, expected)) {
       return { reusable: false, reason: "managed identity changed", profilePath };
     }
@@ -103,18 +109,16 @@ export function readTunnelClientVersion(tunnelClient, environment, cwd, run = sp
   const result = run(tunnelClient, ["--version"], {
     cwd,
     env: environment,
-    encoding: "utf8",
     timeout: 5_000
   });
   if (result.status !== 0) throw new Error("Could not read the tunnel-client version.");
-  return String(result.stdout || result.stderr || "").trim().slice(0, 500);
+  return processOutputText(result.stdout || result.stderr, "tunnel-client version").trim().slice(0, 500);
 }
 
 function listProfiles(tunnelClient, environment, cwd, run) {
   const result = run(tunnelClient, ["profiles", "list", "--json"], {
     cwd,
     env: environment,
-    encoding: "utf8",
     timeout: 10_000
   });
   if (result.status !== 0) {
@@ -122,7 +126,7 @@ function listProfiles(tunnelClient, environment, cwd, run) {
   }
   let parsed;
   try {
-    parsed = JSON.parse(result.stdout || "[]");
+    parsed = parseProcessJson(result.stdout, "tunnel-client profile inventory", []);
   } catch {
     throw new Error("tunnel-client returned an invalid profile inventory.");
   }
@@ -140,6 +144,25 @@ function listProfiles(tunnelClient, environment, cwd, run) {
     }
     return { name: entry.name, path: resolve(entry.path) };
   });
+}
+
+function processOutputText(value, field) {
+  if (value instanceof Uint8Array) return decodeUtf8Strict(value, field);
+  if (typeof value === "string") {
+    assertWellFormedUnicode(value, field);
+    return value;
+  }
+  return "";
+}
+
+function parseProcessJson(value, field, fallback) {
+  if (value instanceof Uint8Array) {
+    return parseJsonUtf8Strict(value.length === 0 ? Buffer.from(JSON.stringify(fallback)) : value, field);
+  }
+  const text = processOutputText(value, field) || JSON.stringify(fallback);
+  const parsed = JSON.parse(text);
+  assertJsonTextIntegrity(parsed, field);
+  return parsed;
 }
 
 function sameIdentity(actual, expected) {

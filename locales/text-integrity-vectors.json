@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "utf8": [
+    {
+      "name": "ASCII and composed Latin",
+      "hex": "636166c3a9",
+      "valid": true,
+      "text": "café"
+    },
+    {
+      "name": "Korean",
+      "hex": "eab081",
+      "valid": true,
+      "text": "각"
+    },
+    {
+      "name": "leading UTF-8 BOM is content",
+      "hex": "efbbbf61",
+      "valid": true,
+      "text": "﻿a"
+    },
+    {
+      "name": "invalid continuation byte",
+      "hex": "c328",
+      "valid": false
+    },
+    {
+      "name": "truncated sequence",
+      "hex": "eab0",
+      "valid": false
+    },
+    {
+      "name": "UTF-8 encoded surrogate",
+      "hex": "eda080",
+      "valid": false
+    }
+  ],
+  "canonicalHumanText": [
+    {
+      "input": "Café",
+      "expected": "Café"
+    },
+    {
+      "input": "각",
+      "expected": "각"
+    },
+    {
+      "input": "  Project\t\nName  ",
+      "expected": "Project Name",
+      "collapseWhitespace": true,
+      "trim": true
+    }
+  ],
+  "verbatimText": [
+    {
+      "input": "Café\r\n`./각`",
+      "expected": "Café\r\n`./각`"
+    }
+  ],
+  "searchKey": [
+    {
+      "input": "  Café  ",
+      "expected": "café"
+    },
+    {
+      "input": "Ａ",
+      "expected": "ａ"
+    }
+  ]
+}

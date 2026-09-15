@@ -3,11 +3,15 @@ import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 
 import { hostname } from "node:os";
 import path from "node:path";
 import {
-  assertVerbatimUtf8Text,
+  assertJsonTextIntegrity,
   canonicalHumanText,
-  canonicalSearchKey,
-  strictUtf8Decode
-} from "./skillTextPolicy.js";
+  decodeUtf8Strict,
+  parseJsonUtf8Strict,
+  searchKey,
+  TextIntegrityError,
+  utf8ByteLength,
+  verbatimText
+} from "./textIntegrity.js";
 import {
   BridgeSkillPackageUploads,
   deterministicBridgeSkillZip,
@@ -625,7 +629,7 @@ class BridgeSkillStore {
         const filePath = await safeDescendant(path.join(root, "files"), file.path);
         if (!filePath) throw new Error("SKILL_LIBRARY_CORRUPT: A bridge skill file escapes its version directory.");
         const content = await readBoundedText(filePath, BRIDGE_SKILL_LIMITS.fileMaxBytes, "Bridge skill file", true);
-        const bytes = Buffer.byteLength(content, "utf8");
+        const bytes = utf8ByteLength(content, `Bridge skill file ${file.path}`);
         if (bytes !== file.bytes || sha256(content) !== file.contentDigest) {
           throw new Error("SKILL_LIBRARY_CORRUPT: A bridge skill file no longer matches its recorded digest.");
         }
@@ -681,7 +685,7 @@ class BridgeSkillStore {
     const fileSummaries = normalizedFiles.map(({ path: filePath, content }) => ({
       path: filePath,
       format: "markdown" as const,
-      bytes: Buffer.byteLength(content, "utf8"),
+      bytes: utf8ByteLength(content, `Bridge skill file ${filePath}`),
       contentDigest: sha256(content)
     }));
     const version: MarkdownBridgeSkillVersionRecord = {
@@ -724,22 +728,24 @@ class BridgeSkillStore {
   }
 
   private async readIndex(): Promise<BridgeSkillIndex> {
-    let raw: string;
+    let bytes: Buffer;
     try {
-      raw = strictUtf8Decode(
-        await readFile(path.join(this.directory, BRIDGE_SKILL_INDEX)),
-        "SKILL_LIBRARY_CORRUPT: Bridge skill index"
-      );
+      bytes = await readFile(path.join(this.directory, BRIDGE_SKILL_INDEX));
     } catch (error) {
       if (isErrno(error, "ENOENT")) return { schemaVersion: 5, skills: [], mutationReceipts: [] };
       throw error;
     }
     let parsed: unknown;
-    try { parsed = JSON.parse(raw); } catch { throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill index is not valid JSON."); }
+    try {
+      parsed = parseJsonUtf8Strict(bytes, "Bridge skill index");
+    } catch (error) {
+      throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill index is not valid UTF-8 JSON.", { cause: error });
+    }
     return validateIndex(parsed);
   }
 
   private async writeIndex(index: BridgeSkillIndex): Promise<void> {
+    assertJsonTextIntegrity(index, "Bridge skill index");
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const target = path.join(this.directory, BRIDGE_SKILL_INDEX);
     const temporary = path.join(this.directory, `.${BRIDGE_SKILL_INDEX}.${randomUUID()}.tmp`);
@@ -1074,25 +1080,44 @@ function normalizeDeleteInput(input: DeleteBridgeSkillInput): DeleteBridgeSkillI
 }
 
 function normalizeSkillName(value: string): string {
-  const normalized = canonicalHumanText(value, "SKILL_NAME_INVALID: Skill name").replace(/\s+/gu, " ").trim();
-  if (!normalized || Array.from(normalized).length > BRIDGE_SKILL_LIMITS.nameMaxCharacters || CONTROL_CHARACTERS.test(normalized)) {
+  try {
+    return canonicalHumanText(value, {
+      field: "Skill name",
+      maxCharacters: BRIDGE_SKILL_LIMITS.nameMaxCharacters,
+      collapseWhitespace: true,
+      trim: true
+    });
+  } catch {
     throw new Error(`SKILL_NAME_INVALID: Use 1-${BRIDGE_SKILL_LIMITS.nameMaxCharacters} visible characters for a skill name.`);
   }
-  return normalized;
 }
 
 function normalizeDescription(value: string, allowEmpty: boolean): string {
-  const normalized = canonicalHumanText(value, "SKILL_DESCRIPTION_INVALID: Skill description").replace(/\s+/gu, " ").trim();
-  if ((!allowEmpty && !normalized) || Array.from(normalized).length > BRIDGE_SKILL_LIMITS.descriptionMaxCharacters || CONTROL_CHARACTERS.test(normalized)) {
+  try {
+    return canonicalHumanText(value, {
+      field: "Skill description",
+      allowEmpty,
+      maxCharacters: BRIDGE_SKILL_LIMITS.descriptionMaxCharacters,
+      collapseWhitespace: true,
+      trim: true
+    });
+  } catch {
     throw new Error(`SKILL_DESCRIPTION_INVALID: Use at most ${BRIDGE_SKILL_LIMITS.descriptionMaxCharacters} visible characters for a description.`);
   }
-  return normalized;
 }
 
 function normalizeDocument(value: string): string {
-  const document = assertVerbatimUtf8Text(value, "SKILL_DOCUMENT_INVALID: A bridge skill document");
-  const bytes = Buffer.byteLength(document, "utf8");
-  if (!document.trim() || bytes > BRIDGE_SKILL_LIMITS.documentMaxBytes || document.includes("\u0000")) {
+  let document: string;
+  try {
+    document = verbatimText(value, {
+      field: "Bridge skill document",
+      maxUtf8Bytes: BRIDGE_SKILL_LIMITS.documentMaxBytes,
+      rejectNul: true
+    });
+  } catch {
+    throw new Error(`SKILL_DOCUMENT_INVALID: A document must be 1-${BRIDGE_SKILL_LIMITS.documentMaxBytes} UTF-8 bytes without NUL characters.`);
+  }
+  if (!document.trim()) {
     throw new Error(`SKILL_DOCUMENT_INVALID: A document must be 1-${BRIDGE_SKILL_LIMITS.documentMaxBytes} UTF-8 bytes without NUL characters.`);
   }
   return document;
@@ -1112,14 +1137,23 @@ function normalizeSkillFiles(
       throw new Error("SKILL_FILE_INVALID: Each skill file requires a relative path and Markdown content.");
     }
     const filePath = normalizeSkillFilePath(file.path);
-    const content = assertVerbatimUtf8Text(file.content, `SKILL_FILE_INVALID: ${filePath}`);
-    if (content.includes("\u0000")) throw new Error("SKILL_FILE_INVALID: Markdown files cannot contain NUL characters.");
-    const bytes = Buffer.byteLength(content, "utf8");
-    if (bytes > BRIDGE_SKILL_LIMITS.fileMaxBytes) {
-      throw new Error(`SKILL_FILE_TOO_LARGE: ${filePath} exceeds ${BRIDGE_SKILL_LIMITS.fileMaxBytes} UTF-8 bytes.`);
+    let content: string;
+    try {
+      content = verbatimText(file.content, {
+        field: `Bridge skill file ${filePath}`,
+        allowEmpty: true,
+        maxUtf8Bytes: BRIDGE_SKILL_LIMITS.fileMaxBytes,
+        rejectNul: true
+      });
+    } catch (error) {
+      if (error instanceof TextIntegrityError && error.code === "TEXT_TOO_LARGE") {
+        throw new Error(`SKILL_FILE_TOO_LARGE: ${filePath} exceeds ${BRIDGE_SKILL_LIMITS.fileMaxBytes} UTF-8 bytes.`, { cause: error });
+      }
+      throw new Error("SKILL_FILE_INVALID: Markdown files must be well-formed UTF-8 text without NUL characters.", { cause: error });
     }
+    const bytes = utf8ByteLength(content, `Bridge skill file ${filePath}`);
     totalBytes += bytes;
-    const filesystemKey = filePath.toLocaleLowerCase("en-US");
+    const filesystemKey = skillFileCollisionKey(filePath);
     if (exact.has(filePath) || filesystemKeys.has(filesystemKey)) {
       throw new Error(`SKILL_FILE_PATH_CONFLICT: ${filePath} conflicts with another Markdown file path.`);
     }
@@ -1144,9 +1178,10 @@ function normalizeSkillFileChanges(value: SkillFileChanges): SkillFileChanges {
   const upsert = normalizeSkillFiles(value.upsert || []);
   if (!Array.isArray(value.remove || [])) throw new Error("SKILL_FILE_CHANGES_INVALID: remove must be a path list.");
   const remove = (value.remove || []).map(normalizeSkillFilePath);
-  if (new Set(remove).size !== remove.length) throw new Error("SKILL_FILE_CHANGES_INVALID: remove contains duplicate paths.");
-  const upsertPaths = new Set(upsert.map((file) => file.path));
-  if (remove.some((filePath) => upsertPaths.has(filePath))) {
+  const removeKeys = new Set(remove.map(skillFileCollisionKey));
+  if (removeKeys.size !== remove.length) throw new Error("SKILL_FILE_CHANGES_INVALID: remove contains duplicate paths.");
+  const upsertPaths = new Set(upsert.map((file) => skillFileCollisionKey(file.path)));
+  if (remove.some((filePath) => upsertPaths.has(skillFileCollisionKey(filePath)))) {
     throw new Error("SKILL_FILE_CHANGES_INVALID: A path cannot be upserted and removed in the same update.");
   }
   if (upsert.length === 0 && remove.length === 0) {
@@ -1165,8 +1200,8 @@ function applySkillFileChanges(
     if (!files.delete(filePath)) throw new Error(`SKILL_FILE_NOT_FOUND: ${filePath} is not in the current skill version.`);
   }
   for (const file of changes.upsert || []) {
-    const filesystemKey = file.path.toLocaleLowerCase("en-US");
-    const existing = [...files.keys()].find((filePath) => filePath.toLocaleLowerCase("en-US") === filesystemKey);
+    const filesystemKey = skillFileCollisionKey(file.path);
+    const existing = [...files.keys()].find((filePath) => skillFileCollisionKey(filePath) === filesystemKey);
     if (existing && existing !== file.path) files.delete(existing);
     files.set(file.path, file.content);
   }
@@ -1174,7 +1209,19 @@ function applySkillFileChanges(
 }
 
 export function normalizeSkillFilePath(value: string): string {
-  const source = canonicalHumanText(value, "SKILL_FILE_PATH_INVALID: Skill file path");
+  let source: string;
+  try {
+    // Logical paths are stored exactly as supplied. Canonicalization is only
+    // used by skillFileCollisionKey so hashes and read-file round trips retain
+    // the author's Unicode spelling byte-for-byte.
+    source = verbatimText(value, {
+      field: "Skill file path",
+      maxUtf8Bytes: BRIDGE_SKILL_LIMITS.filePathMaxBytes,
+      rejectNul: true
+    });
+  } catch (error) {
+    throw new Error("SKILL_FILE_PATH_INVALID: Use a well-formed logical relative UTF-8 path.", { cause: error });
+  }
   if (source.includes("\u0000") || source.includes("\\") || source.startsWith("/") || /^[A-Za-z]:/u.test(source)) {
     throw new Error("SKILL_FILE_PATH_INVALID: Use a logical relative path with / separators.");
   }
@@ -1182,13 +1229,23 @@ export function normalizeSkillFilePath(value: string): string {
   if (segments.some((segment) => !segment || segment === "." || segment === ".." || CONTROL_CHARACTERS.test(segment))) {
     throw new Error("SKILL_FILE_PATH_INVALID: Empty, dot, parent, and control-character path segments are not allowed.");
   }
-  if (segments.length > BRIDGE_SKILL_LIMITS.filePathMaxDepth || Buffer.byteLength(source, "utf8") > BRIDGE_SKILL_LIMITS.filePathMaxBytes) {
+  if (segments.length > BRIDGE_SKILL_LIMITS.filePathMaxDepth) {
     throw new Error("SKILL_FILE_PATH_INVALID: The Markdown file path is too deep or too long.");
   }
-  if (!/\.(?:md|markdown)$/iu.test(source) || source.toLocaleLowerCase("en-US") === "document.md") {
+  if (!/\.(?:md|markdown)$/iu.test(source) || skillFileCollisionKey(source) === "document.md") {
     throw new Error("SKILL_FILE_TYPE_UNSUPPORTED: Only .md and .markdown attachments are supported; document.md is reserved for the main document.");
   }
   return source;
+}
+
+function skillFileCollisionKey(value: string): string {
+  return searchKey(value, {
+    field: "Skill file path comparison key",
+    allowEmpty: true,
+    collapseWhitespace: false,
+    trim: false,
+    rejectControlCharacters: false
+  });
 }
 
 function normalizeLegacyRequirements(value: unknown): LegacyRequirementInput[] {
@@ -1209,15 +1266,20 @@ function normalizeLegacyRequirements(value: unknown): LegacyRequirementInput[] {
 }
 
 function normalizeLegacyHumanText(value: string, max: number, label: string): string {
-  const normalized = value.normalize("NFC").replace(/\s+/gu, " ").trim();
-  if (!normalized || Array.from(normalized).length > max || CONTROL_CHARACTERS.test(normalized)) {
+  try {
+    return canonicalHumanText(value, {
+      field: `Legacy ${label}`,
+      maxCharacters: max,
+      collapseWhitespace: true,
+      trim: true
+    });
+  } catch {
     throw new Error(`SKILL_LIBRARY_CORRUPT: Legacy ${label} is invalid.`);
   }
-  return normalized;
 }
 
 function skillNameKey(name: string): string {
-  return canonicalSearchKey(name);
+  return searchKey(name, { field: "Skill name" });
 }
 
 function markdownDocumentDigestV3(name: string, description: string, document: string): string {
@@ -1234,7 +1296,7 @@ function markdownDocumentDigest(
     name,
     description,
     document: {
-      bytes: Buffer.byteLength(document, "utf8"),
+      bytes: utf8ByteLength(document, "Bridge skill document"),
       contentDigest: sha256(document),
       format: "markdown"
     },
@@ -1394,7 +1456,7 @@ function validateSkillFileSummaries(value: unknown): SkillFileSummary[] {
       throw new Error("SKILL_LIBRARY_CORRUPT: A bridge skill file inventory entry is invalid.");
     }
     const filePath = normalizeSkillFilePath(entry.path);
-    const key = filePath.toLocaleLowerCase("en-US");
+    const key = skillFileCollisionKey(filePath);
     if (paths.has(filePath) || filesystemKeys.has(key)) {
       throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill file paths conflict.");
     }
@@ -1650,16 +1712,26 @@ function matchesSearchMetadata(skill: SkillSummary, query: string): boolean {
 }
 
 function matchesText(value: string, query: string): boolean {
-  const haystack = canonicalSearchKey(value);
+  const haystack = searchKey(value, {
+    field: "Stored bridge skill search text",
+    allowEmpty: true,
+    rejectControlCharacters: false
+  });
   return query.split(/\s+/u).every((term) => haystack.includes(term));
 }
 
 function normalizeSearchQuery(value: string | undefined): string {
   if (value === undefined) return "";
-  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > BRIDGE_SKILL_LIMITS.searchQueryMaxBytes) {
+  try {
+    return searchKey(value, {
+      field: "Search text",
+      allowEmpty: true,
+      maxUtf8Bytes: BRIDGE_SKILL_LIMITS.searchQueryMaxBytes,
+      rejectControlCharacters: false
+    });
+  } catch {
     throw new Error(`SKILL_SEARCH_INVALID: Search text must be at most ${BRIDGE_SKILL_LIMITS.searchQueryMaxBytes.toLocaleString("en-US")} UTF-8 bytes.`);
   }
-  return canonicalSearchKey(value).trim();
 }
 
 function compareSkillFilePaths(left: string, right: string): number {
@@ -1692,7 +1764,10 @@ async function safeDescendant(root: string, relative: string): Promise<string | 
 
 async function readMutationLockOwner(lockDirectory: string): Promise<BridgeSkillMutationLockOwner | undefined> {
   try {
-    const parsed: unknown = JSON.parse(await readFile(path.join(lockDirectory, BRIDGE_SKILL_MUTATION_LOCK_OWNER), "utf8"));
+    const parsed: unknown = parseJsonUtf8Strict(
+      await readFile(path.join(lockDirectory, BRIDGE_SKILL_MUTATION_LOCK_OWNER)),
+      "Bridge skill mutation lock"
+    );
     if (!isRecord(parsed) || typeof parsed.token !== "string" || !REQUEST_ID.test(parsed.token) ||
       !Number.isSafeInteger(parsed.pid) || (parsed.pid as number) <= 0 || typeof parsed.host !== "string" || !parsed.host) return undefined;
     return { token: parsed.token, pid: parsed.pid as number, host: parsed.host };
@@ -1719,8 +1794,18 @@ async function readBoundedText(file: string, maxBytes: number, label: string, al
     throw new Error(`${label} is unavailable or exceeds its ${maxBytes}-byte limit.`);
   }
   const bytes = await readFile(file);
-  const value = strictUtf8Decode(bytes, label);
-  if (Buffer.byteLength(value, "utf8") > maxBytes || value.includes("\u0000")) {
+  let value: string;
+  try {
+    value = verbatimText(decodeUtf8Strict(bytes, label), {
+      field: label,
+      allowEmpty,
+      maxUtf8Bytes: maxBytes,
+      rejectNul: true
+    });
+  } catch (error) {
+    throw new Error(`${label} is unavailable or is not supported UTF-8 text.`, { cause: error });
+  }
+  if (utf8ByteLength(value, label) > maxBytes || value.includes("\u0000")) {
     throw new Error(`${label} is unavailable or is not supported UTF-8 text.`);
   }
   return value;
@@ -1730,7 +1815,10 @@ function waitForMutationLock(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function sha256(value: string): string { return createHash("sha256").update(value, "utf8").digest("hex"); }
+function sha256(value: string): string {
+  const exact = verbatimText(value, { field: "Hashed text", allowEmpty: true, rejectNul: false });
+  return createHash("sha256").update(exact, "utf8").digest("hex");
+}
 function isoNow(now: () => number): string { return new Date(now()).toISOString(); }
 function stringValue(value: unknown): string { return typeof value === "string" ? value : ""; }
 function isErrno(error: unknown, code: string): boolean { return typeof error === "object" && error !== null && (error as { code?: unknown }).code === code; }

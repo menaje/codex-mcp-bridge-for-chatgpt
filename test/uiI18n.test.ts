@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { usesFastProcessing } from "../src/executionPresentation.js";
-import { ULTRA_POLICY_TRANSLATIONS } from "../src/ultraPolicyI18n.js";
 import {
   dashboardHistoryActivityHeading,
   dashboardHistoryActivityIdentity,
@@ -67,13 +66,32 @@ const PROJECT_TRANSLATION_KEYS = [
 ] as const;
 
 describe("human-facing UI localization", () => {
-  it("uses the same Ultra scope and inactive-state copy in the card and native app for every locale", () => {
+  it("materializes every native key in every generated language, including the source language", () => {
     const native = JSON.parse(readFileSync("macos/Resources/Localization/Localizable.xcstrings", "utf8"));
-    for (const [locale, bundle] of Object.entries(ULTRA_POLICY_TRANSLATIONS)) {
+    for (const [key, entry] of Object.entries(native.strings) as Array<[string, {
+      localizations: Record<string, { stringUnit?: { state?: string; value?: string } }>;
+    }]>) {
+      for (const locale of SUPPORTED_UI_LOCALES) {
+        const unit = entry.localizations[locale]?.stringUnit;
+        expect(unit?.state, `${locale}:${key}`).toBe("translated");
+        expect(unit?.value?.trim(), `${locale}:${key}`).toBeTruthy();
+      }
+    }
+  });
+
+  it("uses the same shared semantic-key copy in the card and native app for every locale", () => {
+    const native = JSON.parse(readFileSync("macos/Resources/Localization/Localizable.xcstrings", "utf8"));
+    const ultraKeys = ["settings.ultraNoSelection", "settings.ultraFixedConflict"] as const;
+    for (const locale of SUPPORTED_UI_LOCALES) {
+      const bundle = UI_TRANSLATIONS[locale];
       for (const [key, value] of Object.entries(bundle)) {
+        expect(native.strings[key]?.localizations[locale]?.stringUnit?.value, `${locale}:${key}`)
+          .toBe(value);
+      }
+      for (const key of ultraKeys) {
+        const value = bundle[key];
         expect(UI_TRANSLATIONS[locale as keyof typeof UI_TRANSLATIONS][key as keyof typeof bundle]).toBe(value);
-        const korean = ULTRA_POLICY_TRANSLATIONS.ko[key as keyof typeof bundle];
-        expect(native.strings[korean].localizations[locale].stringUnit.value).toBe(value);
+        expect(native.strings[key].localizations[locale].stringUnit.value).toBe(value);
       }
       expect(localizeSettingsWarning(
         "Ultra is disabled and no saved model and reasoning choice can currently run.",
@@ -305,9 +323,12 @@ describe("human-facing UI localization", () => {
   it("resolves BCP 47 language/script fallbacks without location inference", () => {
     expect(resolveUiLocale("ko-KR")).toBe("ko");
     expect(resolveUiLocale("ja_JP")).toBe("ja");
+    expect(resolveUiLocale("zh-Hant-TW")).toBe("zh-Hant");
+    expect(resolveUiLocale("zh-Hant-HK")).toBe("zh-Hant");
     expect(resolveUiLocale("zh-TW")).toBe("zh-Hant");
     expect(resolveUiLocale("zh-HK-x-private")).toBe("zh-Hant");
     expect(resolveUiLocale("zh-CN")).toBe("zh-Hans");
+    expect(resolveUiLocale("zh-Hans-CN")).toBe("zh-Hans");
     expect(resolveUiLocale("es-MX")).toBe("es");
     expect(resolveUiLocale("fr-CA")).toBe("fr");
     expect(resolveUiLocale("de-DE")).toBe("de");
@@ -479,14 +500,13 @@ describe("human-facing UI localization", () => {
 
   it("uses the same localized Fast mode names in native settings and both cards", () => {
     const native = JSON.parse(readFileSync(new URL("../macos/Resources/Localization/Localizable.xcstrings", import.meta.url), "utf8"));
-    const hint = "지원되는 모델을 더 빠르게 실행합니다. 모델과 추론 수준은 유지되며, 사용량이나 비용이 늘어날 수 있습니다.";
     for (const [locale, bundle] of Object.entries(UI_TRANSLATIONS)) {
-      for (const [webKey, nativeKey] of [
-        ["settings.usePriority", "빠른 처리 (Fast)"],
-        ["settings.usePriorityHint", hint],
-        ["dashboard.execution.fast", "빠른 처리"]
+      for (const key of [
+        "settings.usePriority",
+        "settings.usePriorityHint",
+        "dashboard.execution.fast"
       ] as const) {
-        expect(bundle[webKey], locale).toBe(native.strings[nativeKey].localizations[locale].stringUnit.value);
+        expect(bundle[key], locale).toBe(native.strings[key].localizations[locale].stringUnit.value);
       }
       expect(bundle["settings.usePriority"]).toContain("Fast");
       expect(bundle["settings.automaticNotice"]).not.toContain("Priority");

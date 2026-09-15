@@ -8,6 +8,7 @@ import {
   type ModelSelection
 } from "./modelPolicy.js";
 import { normalizeProjectId, normalizeProjectName } from "./projectRegistry.js";
+import { parseJsonTextStrict } from "./textIntegrity.js";
 
 export const LEGACY_SCOPE_ID = "00000000-0000-0000-0000-000000000000";
 export const SCOPE_ID_PATTERN =
@@ -414,7 +415,7 @@ function readThreadId(value: unknown): string | undefined {
 
 function parseJson(text: string): unknown {
   try {
-    return JSON.parse(text);
+    return parseJsonTextStrict(text, "Stored session");
   } catch {
     return undefined;
   }

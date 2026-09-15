@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import * as z from "zod/v4";
+import { parseJsonUtf8Strict } from "./textIntegrity.js";
 
 const claimsSchema = z.strictObject({
   purpose: z.enum(["work", "history"]).optional(), historyRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -29,7 +30,10 @@ export class UiControlProofs {
     const received = Buffer.from(signature, "base64url"), expected = this.sign(payload);
     if (received.length !== expected.length || !timingSafeEqual(received, expected)) throw fail();
     let claims: UiControlClaims;
-    try { claims = claimsSchema.parse(JSON.parse(Buffer.from(payload, "base64url").toString("utf8"))); } catch { throw fail(); }
+    try {
+      const parsed = parseJsonUtf8Strict(Buffer.from(payload, "base64url"), "UI control proof");
+      claims = claimsSchema.parse(parsed);
+    } catch { throw fail(); }
     if (claims.expiresAt <= this.now() || claims.widgetInstanceId !== widgetInstanceId ||
       (hostScopeId !== undefined && claims.hostScopeId !== hostScopeId)) throw fail();
     return claims;

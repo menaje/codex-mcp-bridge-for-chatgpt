@@ -62,7 +62,11 @@ const reviewDeclaration = "private struct BridgeSkillImportReviewSheet: View";
 if (skills.split(reviewDeclaration).length !== 2) {
   throw new Error("Review the changed Bridge skill import sheet declaration.");
 }
-for (const label of ["브리지 스킬 목록", "스킬 문서 파일 트리", "선택한 파일 전체 Markdown 원문"]) {
+for (const label of [
+  "macos.skills.bridgeSkillList",
+  "macos.skills.skillDocumentFileTree",
+  "macos.skills.fullMarkdownSourceOfSelectedFile"
+]) {
   if (!skills.includes(`.accessibilityLabel(\"${label}\")`)) {
     throw new Error(`Production accessibility label is missing: ${label}`);
   }

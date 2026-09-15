@@ -4,6 +4,7 @@ import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { validateModelPolicy, type ModelChoice } from "./modelPolicy.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { parseJsonTextStrict } from "./textIntegrity.js";
 
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 export type ApprovalPolicy = "untrusted" | "on-request" | "never";
@@ -256,7 +257,10 @@ function parseModelSelectionCeiling(value: string | undefined): ModelChoice[] | 
   if (!normalized) return undefined;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(normalized);
+    parsed = parseJsonTextStrict(
+      normalized,
+      "CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING"
+    );
   } catch {
     throw new Error(
       "CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING must be a JSON array of model/reasoningEffort choices."

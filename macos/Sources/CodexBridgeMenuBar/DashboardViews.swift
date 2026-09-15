@@ -78,46 +78,46 @@ struct DashboardPopoverView: View {
             }
         }
         .confirmationDialog(
-            "작업과 백그라운드 프로세스를 중단하고 서버를 강제 종료할까요?",
+            "macos.interrupttasksandbackgroundprocessesandforcestop",
             isPresented: $showForceStopConfirmation
         ) {
-            Button("강제 종료", role: .destructive) {
+            Button("macos.forcequit", role: .destructive) {
                 Task { await model.stopRuntime(force: true) }
             }
         } message: {
             Text(forceImpactMessage(restarting: false))
         }
         .confirmationDialog(
-            "작업과 백그라운드 프로세스를 중단하고 서버를 강제 재시작할까요?",
+            "macos.interrupttasksandbackgroundprocessesandforcerestart",
             isPresented: $showForceRestartConfirmation
         ) {
-            Button("강제 재시작", role: .destructive) {
+            Button("macos.forcerestart", role: .destructive) {
                 Task { await model.restartRuntime(force: true) }
             }
         } message: {
             Text(forceImpactMessage(restarting: true))
         }
         .confirmationDialog(
-            "Secure MCP Tunnel 프로필을 다시 만들까요?",
+            "macos.rebuildthesecuremcptunnelprofile",
             isPresented: $showRepairConfirmation
         ) {
-            Button("작업을 마치고 프로필 복구") {
+            Button("macos.repairprofileafterfinishingwork") {
                 Task { await model.repairTunnelProfile() }
             }
         } message: {
-            Text("private .env와 Bridge 상태는 유지하고, 현재 Tunnel ID로 로컬 프로필만 다시 만듭니다.")
+            Text("macos.keepstheprivateenvandbridgestateand")
         }
         .confirmationDialog(
-            "앱과 관련 프로세스를 모두 종료할까요?",
+            "macos.quittheappandallrelatedprocesses",
             isPresented: $showApplicationQuitConfirmation
         ) {
-            Button("작업을 마치고 종료") {
+            Button("macos.quitafterfinishingwork") {
                 shutdownAndQuit(force: false)
             }
-            Button("강제 종료", role: .destructive) {
+            Button("macos.forcequit", role: .destructive) {
                 shutdownAndQuit(force: true)
             }
-            Button("취소", role: .cancel) {}
+            Button("common.cancel", role: .cancel) {}
         } message: {
             Text(applicationQuitImpactMessage)
         }
@@ -161,9 +161,14 @@ struct DashboardPopoverView: View {
             BridgeBrandStatusIcon(health: model.health, size: 32)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Codex MCP Bridge for ChatGPT")
+                Text("macos.codexmcpbridgeforchatgpt")
                     .font(.headline)
-                Text("\(model.connectionTargetName) · \(model.health.accessibilityLabel(locale: model.interfaceLocale))")
+                Text(BridgeAppLocalization.format(
+                    "macos.format.dotSeparatedPair",
+                    locale: model.interfaceLocale,
+                    model.connectionTargetName,
+                    model.health.accessibilityLabel(locale: model.interfaceLocale)
+                ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -193,9 +198,9 @@ struct DashboardPopoverView: View {
             }
             .buttonStyle(.borderless)
             .disabled(isRefreshingOverview)
-            .help("새로고침")
-            .accessibilityLabel("현황 새로고침")
-            .accessibilityValue(isRefreshingOverview ? Text("현황을 불러오는 중…") : Text(verbatim: ""))
+            .help("macos.common.refreshAction")
+            .accessibilityLabel("macos.refreshoverview")
+            .accessibilityValue(isRefreshingOverview ? Text("macos.loadingoverview") : Text(verbatim: ""))
         }
         .padding(14)
     }
@@ -211,7 +216,7 @@ struct DashboardPopoverView: View {
                     .multilineTextAlignment(.center)
                     .textSelection(.enabled)
                 Button(BridgeAppLocalization.string(
-                    model.isRemoteClient ? "서버 다시 연결" : "helper 다시 연결",
+                    model.isRemoteClient ? "macos.reconnectserver" : "macos.reconnecthelper",
                     locale: model.interfaceLocale
                 )) {
                     Task {
@@ -225,7 +230,7 @@ struct DashboardPopoverView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
         } else if !hasStartupLifecycleNotice {
-            compactProgress("현황을 불러오는 중…")
+            compactProgress("macos.loadingoverview")
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
         }
@@ -234,7 +239,7 @@ struct DashboardPopoverView: View {
     private var connectionCheckingView: some View {
         Group {
             if !hasStartupLifecycleNotice {
-                compactProgress("브리지 연결을 확인하고 있습니다…")
+                compactProgress("macos.checkingthebridgeconnection")
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
             }
@@ -259,7 +264,7 @@ struct DashboardPopoverView: View {
     private var runtimeUnavailableView: some View {
         VStack(spacing: 14) {
             BridgeBrandStatusIcon(health: .unavailable, size: 48)
-            Text("브리지 서버에 연결할 수 없습니다")
+            Text("macos.cannotconnecttothebridgeserver")
                 .font(.headline)
             Text(model.connectionErrorMessage ?? model.helperStatusErrorMessage ??
                  model.runtimeErrorMessage ?? model.statusErrorMessage ??
@@ -270,28 +275,28 @@ struct DashboardPopoverView: View {
                 .textSelection(.enabled)
             if model.isRemoteClient {
                 HStack {
-                    Button("다시 연결") { Task { await model.refreshAll() } }
+                    Button("macos.reconnect") { Task { await model.refreshAll() } }
                         .buttonStyle(.borderedProminent)
-                    Button("연결 설정") { presentSettingsWindow() }
+                    Button("macos.connectionsettings") { presentSettingsWindow() }
                 }
                 .disabled(model.isBusy)
             } else {
                 HStack {
                     if model.helperStatus?.phase == "stopped" {
-                        Button("시작") { Task { await model.startRuntime() } }
+                        Button("macos.start") { Task { await model.startRuntime() } }
                             .buttonStyle(.borderedProminent)
                     } else {
-                        Button("다시 연결") { Task { await model.refreshAll() } }
+                        Button("macos.reconnect") { Task { await model.refreshAll() } }
                             .buttonStyle(.borderedProminent)
                     }
-                    Button("재시작") { Task { await model.restartRuntime(force: false) } }
+                    Button("macos.runtime.restartAction") { Task { await model.restartRuntime(force: false) } }
                 }
                 .disabled(model.isBusy)
-                Button("Tunnel 프로필 복구") { showRepairConfirmation = true }
+                Button("macos.repairtunnelprofile") { showRepairConfirmation = true }
                     .disabled(model.isBusy)
             }
             if !model.isRemoteClient, model.helperStatus?.phase == "safe-mode" {
-                Label("반복 충돌로 자동 재시작이 중지되었습니다.", systemImage: "exclamationmark.octagon")
+                Label("macos.automaticrestartstoppedafterrepeatedcrashes", systemImage: "exclamationmark.octagon")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -318,7 +323,11 @@ struct DashboardPopoverView: View {
                 }
                 if let error = model.dashboardErrorMessage {
                     Label(
-                        "최근 현황을 갱신하지 못했습니다: \(error)",
+                        BridgeAppLocalization.format(
+                            "macos.couldnotrefreshthelateststatus",
+                            locale: model.interfaceLocale,
+                            error
+                        ),
                         systemImage: "clock.badge.exclamationmark"
                     )
                     .font(.caption)
@@ -334,7 +343,7 @@ struct DashboardPopoverView: View {
                 if !model.isRemoteClient, model.helperStatus?.tunnel.connected != true {
                     if model.isTunnelConnectionChecking {
                         Label(
-                            "Secure MCP Tunnel 연결을 확인하고 있습니다.",
+                            "macos.checkingthesecuremcptunnelconnection",
                             systemImage: "arrow.triangle.2.circlepath"
                         )
                         .font(.caption)
@@ -364,9 +373,9 @@ struct DashboardPopoverView: View {
                         if model.dashboardDetailLoading {
                             if let error = model.dashboardErrorMessage {
                                 Text(error).font(.caption).foregroundStyle(.secondary)
-                                Button("새로고침") { Task { await model.refreshDashboard() } }
+                                Button("macos.common.refreshAction") { Task { await model.refreshDashboard() } }
                             } else {
-                                ProgressView("현황을 불러오는 중…")
+                                ProgressView("macos.loadingoverview")
                                     .frame(maxWidth: .infinity)
                             }
                         } else {
@@ -387,20 +396,20 @@ struct DashboardPopoverView: View {
     @ViewBuilder
     private func dashboardDetails(_ dashboard: DashboardSnapshot, panel: DashboardPanel) -> some View {
         if panel == .history {
-            Text("이 개인 브리지가 보존 중인 작업·Agent·대화만 표시합니다. 전체 ChatGPT 기록은 아닙니다.")
+            Text("macos.showsonlytasksagentsandconversationsretainedby")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             if shouldOfferCodexThreadPersistence {
                 VStack(alignment: .leading, spacing: 6) {
                     Label(
-                        "새 Agent 작업을 Codex 앱에서 열 수 있게 할까요?",
+                        "macos.opennewagenttasksinthecodexapp",
                         systemImage: "arrow.up.forward.app"
                     )
                     .font(.caption.weight(.semibold))
-                    Text("켜면 이후 새 작업과 새 컨텍스트를 Codex 앱에 보존하고 각 Agent의 Codex 대화를 열 수 있습니다. 기존 임시 작업에는 소급 적용되지 않습니다.")
+                    Text("macos.newtasksandfreshcontextswillbekept")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    Button("새 작업부터 켜기") {
+                    Button("macos.enablefornewtasks") {
                         model.enableCodexThreadPersistence()
                     }
                     .buttonStyle(.link)
@@ -414,7 +423,11 @@ struct DashboardPopoverView: View {
         if dashboard.counts.runtimeUnknownAgents > 0,
            !model.dashboardEnrichmentPending || model.dashboardEnrichmentFailed {
             Label(
-                "런타임 또는 프로세스 상태를 확인하지 못한 Agent가 \(dashboard.counts.runtimeUnknownAgents)개 있습니다.",
+                BridgeAppLocalization.format(
+                    "macos.runtimeorprocessstatuscouldnotbeconfirmed",
+                    locale: model.interfaceLocale,
+                    dashboard.counts.runtimeUnknownAgents
+                ),
                 systemImage: "questionmark.circle"
             )
             .font(.caption)
@@ -422,7 +435,11 @@ struct DashboardPopoverView: View {
         }
         if dashboard.counts.runtimeProbeSkippedAgents > 0 {
             Label(
-                "프로세스 상태를 아직 확인하지 않은 Agent가 \(dashboard.counts.runtimeProbeSkippedAgents)개 있습니다.",
+                BridgeAppLocalization.format(
+                    "macos.processstatushasnotyetbeencheckedfor",
+                    locale: model.interfaceLocale,
+                    dashboard.counts.runtimeProbeSkippedAgents
+                ),
                 systemImage: "ellipsis.circle"
             )
             .font(.caption)
@@ -433,7 +450,7 @@ struct DashboardPopoverView: View {
                 DashboardProblemsSection(problems: problems)
             } else {
                 let rows = panel.rows(in: dashboard)
-                DashboardSection(title: "문제", emptyText: "처리할 문제가 없습니다.",
+                DashboardSection(title: "dashboard.problems", emptyText: "problem.empty",
                     rows: rows,
                     total: rows.count,
                     groupsByActivity: true)
@@ -447,18 +464,22 @@ struct DashboardPopoverView: View {
                 ? dashboard.terminalRows
                 : rows.filter { $0.bucket != "active" }
             DashboardSection(
-                title: panel == .history ? "현재 작업" : panel.title,
-                emptyText: "표시할 현재 작업이 없습니다.",
+                title: panel == .history ? "dashboard.active" : panel.title,
+                emptyText: "dashboard.noActive",
                 rows: currentRows,
                 total: currentRows.count,
                 groupsByActivity: true
             )
             if panel == .history, dashboard.pagination.active.hasNext {
-                Label("활성 항목 중 \(dashboard.pagination.active.returned)개만 표시됩니다.", systemImage: "ellipsis.circle")
+                Label(BridgeAppLocalization.format(
+                    "macos.onlyactiveitemsareshown",
+                    locale: model.interfaceLocale,
+                    dashboard.pagination.active.returned
+                ), systemImage: "ellipsis.circle")
                     .font(.caption).foregroundStyle(.orange)
             }
             if panel == .history || !recentRows.isEmpty {
-                DashboardSection(title: "실행 기록", emptyText: "보존된 최근 실행이 없습니다.",
+                DashboardSection(title: "dashboard.recent", emptyText: "macos.therearenoretainedrecentruns",
                     rows: recentRows,
                     total: panel == .history ? dashboard.pagination.terminal.total : recentRows.count,
                     groupsByActivity: true, hasMore: panel == .history && dashboard.pagination.terminal.hasNext,
@@ -474,7 +495,11 @@ struct DashboardPopoverView: View {
             Button {
                 Task { await model.toggleDashboardPanel(.background) }
             } label: {
-                Label("백그라운드 프로세스 \(dashboard.counts.backgroundProcesses)", systemImage: "terminal.fill")
+                Label(BridgeAppLocalization.format(
+                    "macos.dashboard.backgroundProcessCount",
+                    locale: model.interfaceLocale,
+                    dashboard.counts.backgroundProcesses
+                ), systemImage: "terminal.fill")
             }
             .buttonStyle(.link)
             .font(.caption)
@@ -482,7 +507,7 @@ struct DashboardPopoverView: View {
             .accessibilityAddTraits(model.dashboardPanel == .background ? [.isSelected] : [])
             .accessibilityIdentifier("dashboard-background")
         } else if dashboard.counts.runtimeUnknownAgents > 0 || dashboard.counts.runtimeProbeSkippedAgents > 0 {
-            Label("백그라운드 프로세스 상태 확인 필요", systemImage: "questionmark.circle")
+            Label("dashboard.backgroundUnknown", systemImage: "questionmark.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -491,7 +516,7 @@ struct DashboardPopoverView: View {
     @ViewBuilder
     private func dashboardFreshness(_ dashboard: DashboardSnapshot) -> some View {
         HStack {
-            Text("마지막 확인")
+            Text("macos.lastchecked")
             Spacer()
             Text(DisplayFormat.dateTime(dashboard.generatedAt, locale: model.interfaceLocale))
         }
@@ -500,19 +525,23 @@ struct DashboardPopoverView: View {
 
         if model.dashboardEnrichmentFailed || dashboard.enrichment?.hasFailures == true {
             Label(
-                "일부 추가 정보를 갱신하지 못했습니다. 마지막 확인값이 표시될 수 있습니다.",
+                "common.detailsRefreshFailed",
                 systemImage: "clock.badge.exclamationmark"
             )
             .font(.caption)
             .foregroundStyle(.orange)
         } else if model.dashboardEnrichmentPending || dashboard.enrichment?.isUpdating == true {
-            Label("추가 정보를 갱신하고 있습니다. 확인된 정보부터 표시합니다.", systemImage: "arrow.triangle.2.circlepath")
+            Label("macos.updatingadditionaldetailsconfirmedinformationisshownas", systemImage: "arrow.triangle.2.circlepath")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         if (model.dashboardEnrichmentFailed || model.dashboardEnrichmentPending),
            let observed = model.dashboardObservationDate {
-            Text("추가 정보 기준: \(observed.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(model.interfaceLocale)))")
+            Text(BridgeAppLocalization.format(
+                "macos.detailsobserved",
+                locale: model.interfaceLocale,
+                observed.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(model.interfaceLocale))
+            ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -521,11 +550,11 @@ struct DashboardPopoverView: View {
     private var authenticationNotice: String {
         let key: String
         if model.authErrorMessage != nil {
-            key = "Codex 로그인 상태를 확인하지 못했습니다. 연결 설정을 확인하세요."
+            key = "macos.couldnotcheckthecodexloginstatuscheck"
         } else if model.authStatus?.installed == false {
-            key = "Codex CLI를 찾을 수 없습니다. 연결 설정을 확인하세요."
+            key = "macos.codexclicouldnotbefoundcheckthe"
         } else {
-            key = "Codex 로그인이 필요합니다. 첫 작업 전에 로그인하세요."
+            key = "macos.codexloginisrequiredsigninbeforethe"
         }
         return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
     }
@@ -542,25 +571,25 @@ struct DashboardPopoverView: View {
             Button {
                 presentSkillsLibraryWindow()
             } label: {
-                Label("스킬 라이브러리", systemImage: "books.vertical")
+                Label("macos.skilllibrary", systemImage: "books.vertical")
                     .labelStyle(.iconOnly)
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.borderless)
-            .help("스킬 라이브러리")
-            .accessibilityLabel("스킬 라이브러리")
+            .help("macos.skilllibrary")
+            .accessibilityLabel("macos.skilllibrary")
 
             Button {
                 Task { await model.toggleDashboardPanel(.history) }
             } label: {
-                Label("작업·실행 기록", systemImage: "clock.arrow.circlepath")
+                Label("macos.workrunhistory", systemImage: "clock.arrow.circlepath")
                     .labelStyle(.iconOnly)
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.borderless)
             .foregroundStyle(model.dashboardPanel == .history ? Color.accentColor : Color.primary)
-            .help("작업·실행 기록")
-            .accessibilityLabel("작업·실행 기록")
+            .help("macos.workrunhistory")
+            .accessibilityLabel("macos.workrunhistory")
             .accessibilityAddTraits(model.dashboardPanel == .history ? [.isSelected] : [])
             .accessibilityIdentifier("dashboard-history")
             .disabled(model.dashboard == nil || !model.bridgeConnected || model.changingProblems)
@@ -570,14 +599,14 @@ struct DashboardPopoverView: View {
             Button {
                 presentSettingsWindow()
             } label: {
-                Label("설정", systemImage: "gearshape")
+                Label("macos.settings", systemImage: "gearshape")
                     .labelStyle(.iconOnly)
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.borderless)
             .keyboardShortcut(",")
-            .help("설정")
-            .accessibilityLabel("설정")
+            .help("macos.settings")
+            .accessibilityLabel("macos.settings")
 
             if model.isRemoteClient {
                 Menu {
@@ -593,61 +622,61 @@ struct DashboardPopoverView: View {
                         }
                     }
                     Divider()
-                    Button("서버 연결 관리") { presentSettingsWindow() }
+                    Button("macos.manageserverconnections") { presentSettingsWindow() }
                 } label: {
-                    Label("서버", systemImage: "server.rack")
+                    Label("macos.server", systemImage: "server.rack")
                         .labelStyle(.iconOnly)
                         .frame(width: 28, height: 28)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
-                .help(Text("서버") + Text(verbatim: " · \(model.connectionTargetName)"))
-                .accessibilityLabel("서버")
+                .help(Text("macos.server") + Text(verbatim: " · \(model.connectionTargetName)"))
+                .accessibilityLabel("macos.server")
                 .accessibilityValue(Text(verbatim: model.connectionTargetName))
                 .disabled(model.isBusy)
             } else {
                 Menu {
                     if model.codexRuntime?.showsMenuUpdate == true {
-                        Button("코덱스 업데이트") {
+                        Button("macos.updatecodex") {
                             Task { await model.manageCodex(.init(action: "update")) }
                         }
                         Divider()
                     }
-                    Button("작업 완료 후 서버 재시작") {
+                    Button("macos.restartserveraftertasksfinish") {
                         Task { await model.restartRuntime(force: false) }
                     }
-                    Button("작업 중단 후 서버 강제 재시작", role: .destructive) {
+                    Button("macos.stoptasksandforcerestartserver", role: .destructive) {
                         Task {
                             await model.refreshRuntimeImpact()
                             showForceRestartConfirmation = true
                         }
                     }
                     Divider()
-                    Button("연결 정보 및 Codex 로그인") {
+                    Button("macos.connectioninformationandcodexsignin") {
                         presentConnectionRepairWindow()
                     }
-                    Button("Secure MCP Tunnel 프로필 복구") {
+                    Button("macos.repairsecuremcptunnelprofile") {
                         showRepairConfirmation = true
                     }
                     Divider()
-                    Button("작업 완료 후 서버 중지") {
+                    Button("macos.stopserveraftertasksfinish") {
                         Task { await model.stopRuntime(force: false) }
                     }
-                    Button("작업 중단 후 서버 강제 중지", role: .destructive) {
+                    Button("macos.stoptasksandforcestopserver", role: .destructive) {
                         Task {
                             await model.refreshRuntimeImpact()
                             showForceStopConfirmation = true
                         }
                     }
                 } label: {
-                    Label("서버", systemImage: "server.rack")
+                    Label("macos.server", systemImage: "server.rack")
                         .labelStyle(.iconOnly)
                         .frame(width: 28, height: 28)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
-                .help("서버")
-                .accessibilityLabel("서버")
+                .help("macos.server")
+                .accessibilityLabel("macos.server")
                 .disabled(model.needsSetup || model.isBusy)
             }
 
@@ -668,18 +697,18 @@ struct DashboardPopoverView: View {
                     }
                 }
             } label: {
-                Label("앱 종료", systemImage: "power")
+                Label("macos.quitapp", systemImage: "power")
                     .labelStyle(.iconOnly)
                     .frame(width: 28, height: 28)
             }
             .buttonStyle(.borderless)
             .disabled(model.isBusy)
-            .help("앱 종료")
-            .accessibilityLabel("앱 종료")
+            .help("macos.quitapp")
+            .accessibilityLabel("macos.quitapp")
             .accessibilityHint(Text(verbatim: BridgeAppLocalization.string(
                 model.isRemoteClient
-                    ? "이 클라이언트 앱만 종료하며 원격 서버는 변경하지 않습니다."
-                    : "메뉴 막대 앱과 helper, 브리지 서버 및 관련 프로세스를 모두 종료합니다.",
+                    ? "macos.quitsonlythisclientappanddoesnot"
+                    : "macos.runtime.quitAllProcessesDescription",
                 locale: model.interfaceLocale
             )))
         }
@@ -714,27 +743,27 @@ struct DashboardPopoverView: View {
 
     private func forceImpactMessage(restarting: Bool) -> String {
         var messages = [BridgeAppLocalization.format(
-            "활성 작업 %d개와 백그라운드 프로세스 %d개가 중단될 수 있습니다. 파일 변경은 되돌아가지 않습니다.",
+            "macos.activetasksandbackgroundprocessesmaybeinterrupted",
             locale: model.interfaceLocale,
             activeJobCount,
             backgroundProcessCount
         )]
         if backgroundProcessUnknownAgents > 0 {
             messages.append(BridgeAppLocalization.format(
-                "%d개 Agent의 백그라운드 상태를 확인하지 못했습니다.",
+                "macos.thebackgroundstateofagentscouldnotbe",
                 locale: model.interfaceLocale,
                 backgroundProcessUnknownAgents
             ))
         }
         if model.runtimeImpactErrorMessage != nil {
             messages.append(BridgeAppLocalization.string(
-                "최신 영향 범위를 확인하지 못했으므로 강제 종료 시 표시된 수보다 더 많은 작업이 중단될 수 있습니다.",
+                "macos.thelatestimpactcouldnotbeverifiedso",
                 locale: model.interfaceLocale
             ))
         }
         if restarting {
             messages.append(BridgeAppLocalization.string(
-                "중단된 작업은 자동으로 다시 실행하지 않습니다.",
+                "macos.interruptedtaskswillnotrestartautomatically",
                 locale: model.interfaceLocale
             ))
         }
@@ -743,12 +772,12 @@ struct DashboardPopoverView: View {
 
     private var applicationQuitImpactMessage: String {
         var messages = [BridgeAppLocalization.string(
-            "메뉴 막대 앱, helper, 브리지 서버와 Tunnel을 모두 종료합니다. 앱을 다시 열거나 다음 사용자 로그인 전까지 ChatGPT의 브리지 연결을 사용할 수 없습니다.",
+            "macos.quitsthemenubarapphelperbridgeserver",
             locale: model.interfaceLocale
         )]
         if activeJobCount > 0 || backgroundProcessCount > 0 {
             messages.append(BridgeAppLocalization.format(
-                "현재 활성 작업 %d개와 백그라운드 프로세스 %d개가 있습니다. 안전 종료는 작업이 끝날 때까지 기다리며, 강제 종료는 즉시 중단합니다.",
+                "macos.thereareactivetasksandbackgroundprocessessafe",
                 locale: model.interfaceLocale,
                 activeJobCount,
                 backgroundProcessCount
@@ -756,19 +785,19 @@ struct DashboardPopoverView: View {
         }
         if backgroundProcessUnknownAgents > 0 {
             messages.append(BridgeAppLocalization.format(
-                "%d개 Agent의 백그라운드 상태를 확인하지 못했습니다.",
+                "macos.thebackgroundstateofagentscouldnotbe",
                 locale: model.interfaceLocale,
                 backgroundProcessUnknownAgents
             ))
         }
         if model.runtimeImpactErrorMessage != nil {
             messages.append(BridgeAppLocalization.string(
-                "최신 영향 범위를 확인하지 못했으므로 강제 종료 시 표시된 수보다 더 많은 작업이 중단될 수 있습니다.",
+                "macos.thelatestimpactcouldnotbeverifiedso",
                 locale: model.interfaceLocale
             ))
         }
         messages.append(BridgeAppLocalization.string(
-            "파일 변경은 되돌아가지 않습니다.",
+            "macos.filesystemchangesarenotrolledback",
             locale: model.interfaceLocale
         ))
         return messages.joined(separator: " ")
@@ -817,15 +846,15 @@ struct DashboardPopoverView: View {
         let alert = NSAlert()
         alert.alertStyle = .warning
         let title = model.generalSettingsSaveState == .failed
-            ? "설정 변경사항을 저장하지 못했습니다"
-            : "앱을 종료하지 못했습니다"
+            ? "macos.couldnotsavesettings"
+            : "macos.couldnotquittheapp"
         alert.messageText = BridgeAppLocalization.string(title, locale: model.interfaceLocale)
         alert.informativeText = model.runtimeErrorMessage ?? BridgeAppLocalization.string(
-            "앱을 종료하지 않았습니다. 현황을 확인한 뒤 다시 시도해 주세요.",
+            "macos.theappwasnotquitreviewthestatus",
             locale: model.interfaceLocale
         )
         alert.addButton(withTitle: BridgeAppLocalization.string(
-            "확인",
+            "macos.ok",
             locale: model.interfaceLocale
         ))
         alert.runModal()
@@ -844,17 +873,29 @@ private struct WeeklyUsageView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("주간 사용량").font(.subheadline.weight(.semibold))
+                Text("macos.weeklyusage").font(.subheadline.weight(.semibold))
                 Spacer()
-                Text("\(Int(remainingPercent.rounded()))% 남음")
+                Text(BridgeAppLocalization.format(
+                    "macos.remaining",
+                    locale: locale,
+                    Int(remainingPercent.rounded())
+                ))
                     .font(.caption.monospacedDigit())
             }
             ProgressView(value: remainingPercent, total: 100)
-            Text("사용량 확인: \(DisplayFormat.dateTime(usage.observedAt, locale: locale))")
+            Text(BridgeAppLocalization.format(
+                "macos.usagelastchecked",
+                locale: locale,
+                DisplayFormat.dateTime(usage.observedAt, locale: locale)
+            ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let resetsAt = usage.resetsAt {
-                Text("초기화: \(DisplayFormat.dateTime(resetsAt, locale: locale))")
+                Text(BridgeAppLocalization.format(
+                    "macos.accountUsage.resetsAt",
+                    locale: locale,
+                    DisplayFormat.dateTime(resetsAt, locale: locale)
+                ))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -876,17 +917,17 @@ private struct CodexMenuAccountView: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 if account.authMode == "api-key" {
-                    Text("API 사용 중").font(.subheadline.weight(.semibold))
+                    Text("macos.usingapi").font(.subheadline.weight(.semibold))
                     if let costs = account.billing?.actualCosts, costs.configured {
                         if costs.status == "available", let usd = costs.usd {
-                            LabeledContent(costs.projectId == nil ? "이번 달 조직 비용 (UTC)" : "이번 달 프로젝트 비용 (UTC)",
+                            LabeledContent(costs.projectId == nil ? "macos.organizationcostthismonthutc" : "macos.projectcostthismonthutc",
                                 value: usd.formatted(.currency(code: "USD")))
-                        } else { Text("비용 정보를 확인할 수 없습니다.") }
+                        } else { Text("macos.costinformationisunavailable") }
                     }
                 } else if account.authMode == "chatgpt" {
-                    Text("사용량 정보를 확인할 수 없습니다.")
+                    Text("macos.usageinformationisunavailable")
                     CodexMenuPlanDetails(account: account)
-                } else { Text("로그인이 필요합니다") }
+                } else { Text("macos.loginrequired") }
             }
             .font(.caption)
             .padding(10)
@@ -901,15 +942,15 @@ private struct CodexMenuPlanDetails: View {
     var body: some View {
         if let balance = account.menuCreditBalance {
             HStack {
-                Text("추가 크레딧")
-                Text("잔액")
+                Text("macos.additionalcredits")
+                Text("macos.balance")
                 Spacer()
                 Text(verbatim: balance).monospacedDigit()
             }.font(.caption)
         }
         if (account.weeklyUsage?.remainingPercent ?? 0) > 0,
            account.windows.contains(where: { $0.limitId == "codex" && $0.windowDurationMins != 10080 && $0.remainingPercent <= 0 }) {
-            Label("단기 사용 한도에 도달했습니다.", systemImage: "exclamationmark.triangle")
+            Label("macos.theshorttermusagelimithasbeenreached", systemImage: "exclamationmark.triangle")
                 .font(.caption).foregroundStyle(.orange)
         }
     }
@@ -922,9 +963,9 @@ private struct DashboardSummary: View {
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 8) {
-            summaryButton("실행 중", value: counts.running, symbol: "play.fill", panel: .running)
-            summaryButton("응답 필요", value: counts.responseRequiredCount, symbol: "text.bubble.fill", panel: .responseRequired)
-            summaryButton("문제", value: counts.problemCount, symbol: "exclamationmark.triangle.fill", panel: .problems)
+            summaryButton("macos.running", value: counts.running, symbol: "play.fill", panel: .running)
+            summaryButton("dashboard.responseRequired", value: counts.responseRequiredCount, symbol: "text.bubble.fill", panel: .responseRequired)
+            summaryButton("dashboard.problems", value: counts.problemCount, symbol: "exclamationmark.triangle.fill", panel: .problems)
         }
         .disabled(model.changingProblems)
     }
@@ -998,7 +1039,7 @@ private struct DashboardSection: View {
                     }
                 }
                 if hasMore {
-                    Button("더 보기", action: { loadMore?() })
+                    Button("macos.showmore", action: { loadMore?() })
                         .buttonStyle(.link)
                         .disabled(model.isBusy)
                 }
@@ -1027,7 +1068,7 @@ private struct DashboardSection: View {
             }
             .buttonStyle(.plain)
             .accessibilityValue(BridgeAppLocalization.string(
-                disclosureExpanded.wrappedValue ? "펼침" : "접힘",
+                disclosureExpanded.wrappedValue ? "macos.expanded" : "macos.collapsed",
                 locale: locale
             ))
         } else {
@@ -1039,7 +1080,7 @@ private struct DashboardSection: View {
         HStack(spacing: 6) {
             Text(BridgeAppLocalization.string(title, locale: locale)).font(.headline)
             if let total {
-                Text("\(total)")
+                Text(BridgeAppLocalization.format("macos.format.integer", locale: locale, total))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -1080,7 +1121,7 @@ private struct DashboardActivityGroupView: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
                         if marksRecentActivity {
-                            Text("최근 Activity")
+                            Text("macos.recentactivity")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -1088,7 +1129,7 @@ private struct DashboardActivityGroupView: View {
                             .font(.subheadline.weight(.semibold))
                             .lineLimit(2)
                         Text(first.projectName ?? BridgeAppLocalization.string(
-                            "프로젝트 없음",
+                            "macos.noproject",
                             locale: locale
                         ))
                             .font(.caption)
@@ -1096,10 +1137,14 @@ private struct DashboardActivityGroupView: View {
                     }
                     Spacer()
                     if let url = DashboardLink.conversation(first.conversationUrl) {
-                        Link("대화", destination: url)
+                        Link("macos.conversations", destination: url)
                     }
                 }
-                Text("Agent \(group.rows.count)명")
+                Text(BridgeAppLocalization.format(
+                    "macos.agents",
+                    locale: locale,
+                    group.rows.count
+                ))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 if let cancellation = activityCancellation {
@@ -1133,7 +1178,7 @@ private struct DashboardActivityGroupView: View {
             }
         }
         return BridgeAppLocalization.string(
-            marksRecentActivity ? "최근 Activity 없음" : "제목 없는 Activity",
+            marksRecentActivity ? "macos.norecentactivity" : "macos.untitledactivity",
             locale: locale
         )
     }
@@ -1160,11 +1205,17 @@ private struct CancellationReason: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text("취소 사유")
+            Text("macos.cancellationreason")
                 .font(.caption.weight(.semibold))
             Text(cancellation.reason)
                 .textSelection(.enabled)
-            Text("\(cancellationTargetLabel(cancellation.targetKind, locale: locale)) · \(cancellationStatusLabel(cancellation.status, locale: locale)) · \(DisplayFormat.dateTime(cancellation.requestedAt, locale: locale))")
+            Text(BridgeAppLocalization.format(
+                "macos.format.dotSeparatedTriple",
+                locale: locale,
+                cancellationTargetLabel(cancellation.targetKind, locale: locale),
+                cancellationStatusLabel(cancellation.status, locale: locale),
+                DisplayFormat.dateTime(cancellation.requestedAt, locale: locale)
+            ))
                 .foregroundStyle(.secondary)
         }
         .font(.caption)
@@ -1181,7 +1232,7 @@ private struct DashboardExecutionLabel: View {
             Text(text)
                 .lineLimit(2)
             if DashboardExecutionPresentation.usesFastProcessing(execution) {
-                Label("빠른 처리", systemImage: "bolt.fill")
+                Label("dashboard.execution.fast", systemImage: "bolt.fill")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 5)
@@ -1230,10 +1281,10 @@ struct DashboardRowView: View {
             }
             if row.latestTurn != nil {
                 DashboardExecutionLabel(text: BridgeAppLocalization.format(
-                    "%@: %@",
+                    "macos.format.labelValue",
                     locale: model.interfaceLocale,
                     BridgeAppLocalization.string(
-                        row.bucket == "idle" ? "최근 실행" : "실행",
+                        row.bucket == "idle" ? "macos.latestrun" : "macos.run",
                         locale: model.interfaceLocale
                     ),
                     DashboardExecutionPresentation.turnText(
@@ -1247,7 +1298,7 @@ struct DashboardRowView: View {
             }
             if let next = nextExecution {
                 DashboardExecutionLabel(text: BridgeAppLocalization.format(
-                    "다음 실행 설정: %@",
+                    "macos.nextrunsettings",
                     locale: model.interfaceLocale,
                     executionText(next)
                 ), execution: next)
@@ -1260,12 +1311,16 @@ struct DashboardRowView: View {
                     .lineLimit(2)
                 HStack(spacing: 10) {
                     if row.backgroundProcessCount > 0 {
-                        Label("\(row.backgroundProcessCount)", systemImage: "terminal")
+                        Label(BridgeAppLocalization.format(
+                            "macos.format.integer",
+                            locale: model.interfaceLocale,
+                            row.backgroundProcessCount
+                        ), systemImage: "terminal")
                     }
                     Spacer()
                     if presentation == .idle {
                         if let url = DashboardLink.conversation(row.conversationUrl) {
-                            Link("대화", destination: url)
+                            Link("macos.conversations", destination: url)
                         }
                     }
                     if !model.isRemoteClient,
@@ -1273,13 +1328,13 @@ struct DashboardRowView: View {
                         Button {
                             model.continueInCodex(row)
                         } label: {
-                            Label("Codex 앱에서 이어가기", systemImage: "arrow.up.forward.app")
+                            Label("macos.continueincodex", systemImage: "arrow.up.forward.app")
                         }
                         .buttonStyle(.link)
-                        .help("진행 중인 작업이 끝나고 연결 해제를 확인하면 Codex 앱을 엽니다.")
+                        .help("macos.openscodexafteractiveworkfinishesandthe")
                         if let handoff = model.threadHandoffs[row.rowKey] ?? row.handoff,
                            handoff.requested && !handoff.canOpen {
-                            Button("인계 취소") { model.cancelThreadHandoff(row) }
+                            Button("macos.cancelhandoff") { model.cancelThreadHandoff(row) }
                                 .buttonStyle(.link)
                         }
                     }
@@ -1289,7 +1344,7 @@ struct DashboardRowView: View {
             .foregroundStyle(.secondary)
             if let controls = row.historyControls {
                 HStack {
-                    if controls.canAcknowledge { acknowledgeHistoryButton("확인함") }
+                    if controls.canAcknowledge { acknowledgeHistoryButton("history.acknowledge") }
                     if changingHistory { ProgressView().controlSize(.mini) }
                 }
                 .font(.caption2)
@@ -1300,12 +1355,12 @@ struct DashboardRowView: View {
                handoff.requested && !handoff.canOpen {
                 Group {
                     switch handoff.reason {
-                    case "active-work": Text("진행 중인 작업이 끝나기를 기다리고 있습니다.")
-                    case "ephemeral", "persistence-unknown": Text("대화 저장을 확인할 수 없어 연결을 유지합니다.")
-                    case "background-work", "background-unknown": Text("백그라운드 작업 종료를 확인한 뒤 인계합니다.")
-                    case "shared-worker-protected", "upstream-unload-grace": Text("다른 대화와 Codex의 연결 해제를 기다리고 있습니다.")
-                    case "unsupported", "ownership-unconfirmed": Text("연결 해제를 확인하지 못했습니다. 다시 시도해 주세요.")
-                    default: Text("연결 해제를 확인하고 있습니다. 확인되면 Codex 앱을 엽니다.")
+                    case "active-work": Text("macos.waitingforactiveworktofinish")
+                    case "ephemeral", "persistence-unknown": Text("macos.keepingtheconnectionbecauseconversationstoragecouldnot")
+                    case "background-work", "background-unknown": Text("macos.handoffwillproceedafterbackgroundworkisconfirmed")
+                    case "shared-worker-protected", "upstream-unload-grace": Text("macos.waitingforotherconversationsandcodextorelease")
+                    case "unsupported", "ownership-unconfirmed": Text("macos.couldnotconfirmconnectionreleasepleasetryagain")
+                    default: Text("macos.checkingthattheconnectionisreleasedcodexwill")
                     }
                 }
                 .font(.caption2)
@@ -1330,7 +1385,11 @@ struct DashboardRowView: View {
                             .font(.caption2.weight(.semibold))
                             .rotationEffect(.degrees(historyExpanded ? 90 : 0))
                             .accessibilityHidden(true)
-                        Text("최근 실행 기록 \(historyTotal)")
+                        Text(BridgeAppLocalization.format(
+                            "macos.recentruns",
+                            locale: model.interfaceLocale,
+                            historyTotal
+                        ))
                         Spacer(minLength: 0)
                     }
                     .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
@@ -1339,7 +1398,7 @@ struct DashboardRowView: View {
                 .buttonStyle(.plain)
                 .font(.caption)
                 .accessibilityValue(BridgeAppLocalization.string(
-                    historyExpanded ? "펼침" : "접힘",
+                    historyExpanded ? "macos.expanded" : "macos.collapsed",
                     locale: model.interfaceLocale
                 ))
 
@@ -1349,18 +1408,18 @@ struct DashboardRowView: View {
                             if let error = model.dashboardHistoryError(for: row) {
                                 Text(error)
                                     .foregroundStyle(.secondary)
-                                Button("새로고침") {
+                                Button("macos.common.refreshAction") {
                                     Task { await model.loadDashboardHistory(row) }
                                 }
                                 .buttonStyle(.link)
                             } else if model.dashboardHistory(for: row) != nil {
-                                Text("보존된 최근 실행이 없습니다.")
+                                Text("macos.therearenoretainedrecentruns")
                                     .foregroundStyle(.secondary)
                             } else {
                                 HStack(spacing: 6) {
                                     ProgressView()
                                         .controlSize(.mini)
-                                    Text("현황을 불러오는 중…")
+                                    Text("macos.loadingoverview")
                                 }
                                 .foregroundStyle(.secondary)
                                 .task(id: row.rowKey) {
@@ -1378,7 +1437,7 @@ struct DashboardRowView: View {
                                         case .none:
                                             EmptyView()
                                         case .boundary:
-                                            Text("이전 Activity")
+                                            Text("dashboard.history.activityBoundary")
                                                 .font(.caption2.weight(.medium))
                                                 .foregroundStyle(.secondary)
                                         case .title(let title):
@@ -1418,17 +1477,28 @@ struct DashboardRowView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
-            "\(row.agentName), \(row.activityTitle ?? "Activity"), \(StatusPresentation.label(row.status, locale: model.interfaceLocale))"
+            BridgeAppLocalization.format(
+                "macos.format.commaSeparatedTriple",
+                locale: model.interfaceLocale,
+                row.agentName,
+                row.activityTitle ?? "Activity",
+                StatusPresentation.label(row.status, locale: model.interfaceLocale)
+            )
         )
     }
 
     private var secondaryTitle: String? {
         if presentation == .idle {
             let activity = row.latestTurn?.activityTitle ?? row.activityTitle ??
-                BridgeAppLocalization.string("최근 Activity 없음", locale: model.interfaceLocale)
+                BridgeAppLocalization.string("macos.norecentactivity", locale: model.interfaceLocale)
             let project = row.projectName ??
-                BridgeAppLocalization.string("프로젝트 없음", locale: model.interfaceLocale)
-            return "\(activity) · \(project)"
+                BridgeAppLocalization.string("macos.noproject", locale: model.interfaceLocale)
+            return BridgeAppLocalization.format(
+                "macos.format.dotSeparatedPair",
+                locale: model.interfaceLocale,
+                activity,
+                project
+            )
         }
         return nil
     }
@@ -1508,41 +1578,41 @@ struct ConnectionRepairView: View {
                 HStack(spacing: 10) {
                     BridgeBrandStatusIcon(health: model.health, size: 34)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Codex MCP Bridge for ChatGPT")
+                        Text("macos.codexmcpbridgeforchatgpt")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("최초 연결 또는 복구")
+                        Text("macos.initialconnectionorrepair")
                             .font(.title3.bold())
                     }
                 }
-                Text("기존 private .env가 유효하면 그대로 사용합니다. Keychain은 사용하지 않습니다.")
+                Text("macos.anexistingvalidprivateenviskeptas")
                     .font(.callout)
                     .foregroundStyle(.secondary)
 
-                GroupBox("연결 상태") {
+                GroupBox("macos.connectionstatus") {
                     VStack(alignment: .leading, spacing: 7) {
                         LabeledContent(
-                            "Bridge",
+                            "macos.bridge",
                             value: BridgeAppLocalization.string(
-                                model.helperStatus?.bridge.connected == true ? "준비됨" :
-                                    model.isBridgeConnectionChecking ? "Codex 브리지 상태 확인 중" : "연결 안 됨",
+                                model.helperStatus?.bridge.connected == true ? "macos.ready" :
+                                    model.isBridgeConnectionChecking ? "macos.checkingcodexbridgestatus" : "macos.notconnected",
                                 locale: model.interfaceLocale
                             )
                         )
                         LabeledContent(
-                            "Secure MCP Tunnel",
+                            "macos.securemcptunnel",
                             value: BridgeAppLocalization.string(
-                                model.helperStatus?.tunnel.connected == true ? "연결됨" :
-                                    model.isTunnelConnectionChecking ? "Secure MCP Tunnel 연결을 확인하고 있습니다." : "연결 안 됨",
+                                model.helperStatus?.tunnel.connected == true ? "macos.connected" :
+                                    model.isTunnelConnectionChecking ? "macos.checkingthesecuremcptunnelconnection" : "macos.notconnected",
                                 locale: model.interfaceLocale
                             )
                         )
                         if let profile = model.helperStatus?.tunnel.profile {
-                            LabeledContent("프로필", value: profile)
+                            LabeledContent("macos.profile", value: profile)
                         }
                         if model.isTunnelConnectionChecking {
                             Label(
-                                "Secure MCP Tunnel 연결을 확인하고 있습니다.",
+                                "macos.checkingthesecuremcptunnelconnection",
                                 systemImage: "arrow.triangle.2.circlepath"
                             )
                                 .font(.caption)
@@ -1557,28 +1627,28 @@ struct ConnectionRepairView: View {
                     .padding(.top, 4)
                 }
 
-                GroupBox("Secure MCP Tunnel") {
+                GroupBox("macos.securemcptunnel") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Runtime API 키와 Tunnel을 OpenAI Platform에서 만든 뒤 연결합니다.")
+                        Text("macos.createaruntimeapikeyandtunnelin")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         VStack(alignment: .leading, spacing: 7) {
                             HStack(spacing: 12) {
                                 Link(
-                                    "Runtime API 키 만들기",
+                                    "macos.createruntimeapikey",
                                     destination: URL(
                                         string: "https://platform.openai.com/settings/organization/api-keys"
                                     )!
                                 )
                                 Link(
-                                    "Tunnel 만들기",
+                                    "macos.createtunnel",
                                     destination: URL(
                                         string: "https://platform.openai.com/settings/organization/tunnels"
                                     )!
                                 )
                                 Spacer()
                             }
-                            Button("기존 설정 다시 찾기") {
+                            Button("macos.findexistingsettingsagain") {
                                 Task { await model.refreshSetupDiscovery() }
                             }
                             .disabled(model.isBusy)
@@ -1587,7 +1657,7 @@ struct ConnectionRepairView: View {
                         if let candidates = model.setupDiscovery?.candidates,
                            !candidates.isEmpty {
                             FullRowDisclosure(
-                                "기존 설정 가져오기",
+                                "macos.importexistingsettings",
                                 isExpanded: $discoveredSettingsExpanded
                             ) {
                                 VStack(alignment: .leading, spacing: 8) {
@@ -1601,8 +1671,8 @@ struct ConnectionRepairView: View {
                                                     .textSelection(.enabled)
                                                 Text(
                                                     candidate.hasApiKey
-                                                        ? "Runtime API 키 사용 가능"
-                                                        : "Tunnel ID만 발견"
+                                                        ? "macos.runtimeapikeyavailable"
+                                                        : "macos.onlytunnelidfound"
                                                 )
                                                 .font(.caption2)
                                                 .foregroundStyle(.secondary)
@@ -1610,8 +1680,8 @@ struct ConnectionRepairView: View {
                                             Spacer()
                                             Button(
                                                 candidateCanConnect(candidate)
-                                                    ? "가져와 연결"
-                                                    : "Tunnel ID 사용"
+                                                    ? "macos.importandconnect"
+                                                    : "macos.usetunnelid"
                                             ) {
                                                 useDiscoveredCandidate(candidate)
                                             }
@@ -1632,7 +1702,7 @@ struct ConnectionRepairView: View {
                         }
 
                         if let currentTunnelID = model.helperStatus?.configuration.tunnelId {
-                            LabeledContent("현재 Tunnel ID") {
+                            LabeledContent("macos.currenttunnelid") {
                                 HStack(spacing: 8) {
                                     Text(currentTunnelID)
                                         .font(.caption.monospaced())
@@ -1644,22 +1714,22 @@ struct ConnectionRepairView: View {
                                         Image(systemName: "doc.on.doc")
                                     }
                                     .buttonStyle(.borderless)
-                                    .help("Tunnel ID 복사")
-                                    .accessibilityLabel("Tunnel ID 복사")
+                                    .help("macos.copytunnelid")
+                                    .accessibilityLabel("macos.copytunnelid")
                                 }
                             }
                         }
                         SecureField(
                             BridgeAppLocalization.string(
                                 model.helperStatus?.configuration.hasApiKey == true
-                                    ? "새 키를 입력할 때만 교체"
-                                    : "Runtime API key",
+                                    ? "macos.replaceonlywhenenteringanewkey"
+                                    : "macos.runtimeapikey",
                                 locale: model.interfaceLocale
                             ),
                             text: $apiKey
                         )
-                        TextField("tunnel_…", text: $tunnelId)
-                        Button("클립보드에서 두 값 가져오기") {
+                        TextField("macos.tunnel", text: $tunnelId)
+                        Button("macos.importbothvaluesfromclipboard") {
                             importSetupFromPasteboard()
                         }
                         .disabled(model.isBusy)
@@ -1668,10 +1738,14 @@ struct ConnectionRepairView: View {
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
-                        Text("Tunnel ID는 tunnel_ 다음에 영문 소문자 또는 숫자 32자로 입력합니다.")
+                        Text("macos.entertunnelfollowedby32lowercaselettersor")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        Text("저장 위치: \(model.helperStatus?.configuration.path ?? "~/.config/codex-mcp-bridge/.env")")
+                        Text(BridgeAppLocalization.format(
+                            "macos.storagelocation",
+                            locale: model.interfaceLocale,
+                            model.helperStatus?.configuration.path ?? "~/.config/codex-mcp-bridge/.env"
+                        ))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
@@ -1687,13 +1761,13 @@ struct ConnectionRepairView: View {
                                 model.helperStatus?.configuration.issue?.contains(
                                     "permissions are too broad"
                                 ) == true {
-                                Button("앱 전용 권한으로 복구") {
+                                Button("macos.repairwithapponlypermissions") {
                                     Task { await model.repairConfigurationPermissions() }
                                 }
                                 .disabled(model.isBusy)
                             }
                         }
-                        Button("안전하게 저장하고 연결") {
+                        Button("macos.saveandconnectsafely") {
                             Task {
                                 if await model.saveSetup(apiKey: apiKey, tunnelId: tunnelId) {
                                     apiKey = ""
@@ -1711,7 +1785,7 @@ struct ConnectionRepairView: View {
                     .padding(.top, 4)
                 }
 
-                GroupBox("Codex 로그인") {
+                GroupBox("macos.codexlogin") {
                     VStack(alignment: .leading, spacing: 8) {
                         Label(
                             codexLoginStatusText,
@@ -1721,7 +1795,7 @@ struct ConnectionRepairView: View {
                         )
                         .font(.caption)
                         HStack {
-                            Button("Codex 브라우저 로그인 시작") {
+                            Button("macos.startcodexbrowserlogin") {
                                 Task { await model.launchCodexLogin() }
                             }
                             .disabled(
@@ -1730,7 +1804,7 @@ struct ConnectionRepairView: View {
                                 model.authStatus?.authenticated == true ||
                                 (model.authStatus == nil && model.authErrorMessage == nil)
                             )
-                            Button("상태 새로고침") {
+                            Button("macos.refreshstatus") {
                                 Task { await model.refreshAuthStatus() }
                             }
                             .disabled(model.isBusy)
@@ -1744,11 +1818,11 @@ struct ConnectionRepairView: View {
                     }
                 }
 
-                GroupBox("연결 후 다음 단계") {
+                GroupBox("macos.nextstepsafterconnecting") {
                     VStack(alignment: .leading, spacing: 7) {
-                        Label("앱이 Tunnel 프로필을 확인하고 Bridge 서버를 시작합니다.", systemImage: "1.circle")
-                        Label("ChatGPT Developer mode에서 이 Tunnel을 No Auth로 연결합니다.", systemImage: "2.circle")
-                        Label("설정 창의 프로젝트 탭에서 첫 작업 폴더를 등록합니다.", systemImage: "3.circle")
+                        Label("macos.theappverifiesthetunnelprofileandstarts", systemImage: "1.circle")
+                        Label("macos.connectthistunnelwithnoauthinchatgpt", systemImage: "2.circle")
+                        Label("macos.registerthefirstworkfolderintheprojects", systemImage: "3.circle")
                     }
                     .font(.caption)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1756,20 +1830,26 @@ struct ConnectionRepairView: View {
                 }
 
                 FullRowDisclosure(
-                    "진단 로그 (민감정보 가림)",
+                    "macos.diagnosticlogssensitivedataredacted",
                     isExpanded: $diagnosticLogsExpanded
                 ) {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Button("로그 새로고침") { Task { await model.refreshLogs() } }
+                            Button("macos.refreshlogs") { Task { await model.refreshLogs() } }
                             Spacer()
                         }
                         if model.logs.isEmpty {
-                            Text("표시할 helper 또는 runtime 로그가 없습니다.")
+                            Text("macos.therearenohelperorruntimelogsto")
                                 .foregroundStyle(.secondary)
                         } else {
                             ForEach(model.logs) { entry in
-                                Text("\(DisplayFormat.dateTime(entry.at, locale: model.interfaceLocale)) · \(entry.source): \(entry.message)")
+                                Text(BridgeAppLocalization.format(
+                                    "macos.format.dotSeparatedLabelValue",
+                                    locale: model.interfaceLocale,
+                                    DisplayFormat.dateTime(entry.at, locale: model.interfaceLocale),
+                                    entry.source,
+                                    entry.message
+                                ))
                                     .textSelection(.enabled)
                             }
                         }
@@ -1800,19 +1880,19 @@ struct ConnectionRepairView: View {
     private var codexLoginStatusText: String {
         let key: String
         if model.loginInProgress {
-            key = "브라우저 로그인을 기다리고 있습니다."
+            key = "macos.waitingforbrowserlogin"
         } else if model.authErrorMessage != nil {
-            key = "Codex 로그인 상태를 확인하지 못했습니다. 연결 설정을 확인하세요."
+            key = "macos.couldnotcheckthecodexloginstatuscheck"
         } else if let status = model.authStatus {
             if !status.installed {
-                key = "Codex CLI를 찾을 수 없습니다. 연결 설정을 확인하세요."
+                key = "macos.codexclicouldnotbefoundcheckthe"
             } else if status.authenticated {
-                key = "Codex에 로그인되어 있습니다."
+                key = "macos.signedintocodex"
             } else {
-                key = "Codex 로그인이 필요합니다. 첫 작업 전에 로그인하세요."
+                key = "macos.codexloginisrequiredsigninbeforethe"
             }
         } else {
-            key = "로그인 상태를 확인하고 있습니다."
+            key = "macos.checkingloginstatus"
         }
         return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
     }
@@ -1825,17 +1905,17 @@ struct ConnectionRepairView: View {
         switch candidate.source {
         case "runtime-config":
             return BridgeAppLocalization.string(
-                "기존 Bridge 연결 파일",
+                "macos.existingbridgeconnectionfile",
                 locale: model.interfaceLocale
             )
         case "environment":
             return BridgeAppLocalization.string(
-                "환경 변수",
+                "macos.environmentvariables",
                 locale: model.interfaceLocale
             )
         default:
             return BridgeAppLocalization.format(
-                "tunnel-client 프로필 · %@",
+                "macos.tunnelclientprofile",
                 locale: model.interfaceLocale,
                 candidate.profileName ?? "tunnel-client"
             )
@@ -1846,7 +1926,7 @@ struct ConnectionRepairView: View {
         guard candidateCanConnect(candidate) else {
             tunnelId = candidate.tunnelId
             pasteMessage = BridgeAppLocalization.string(
-                "Tunnel ID를 입력했습니다. Runtime API 키를 추가해 주세요.",
+                "macos.tunnelidenteredaddaruntimeapikey",
                 locale: model.interfaceLocale
             )
             return
@@ -1863,7 +1943,7 @@ struct ConnectionRepairView: View {
     private func importSetupFromPasteboard() {
         guard let contents = NSPasteboard.general.string(forType: .string) else {
             pasteMessage = BridgeAppLocalization.string(
-                "클립보드에서 연결 정보를 찾지 못했습니다.",
+                "macos.noconnectioninformationwasfoundontheclipboard",
                 locale: model.interfaceLocale
             )
             return
@@ -1873,8 +1953,8 @@ struct ConnectionRepairView: View {
         if let discoveredTunnelID = parsed.tunnelId { tunnelId = discoveredTunnelID }
         pasteMessage = BridgeAppLocalization.string(
             parsed.isEmpty
-                ? "클립보드에서 연결 정보를 찾지 못했습니다."
-                : "찾은 연결 정보를 입력했습니다.",
+                ? "macos.noconnectioninformationwasfoundontheclipboard"
+                : "macos.thediscoveredconnectioninformationwasentered",
             locale: model.interfaceLocale
         )
     }
@@ -1895,19 +1975,19 @@ private enum StatusPresentation {
     static func label(_ status: String, locale: Locale) -> String {
         let key: String
         switch status {
-        case "running": key = "실행 중"
-        case "background-process-running": key = "백그라운드 실행"
-        case "input-required": key = "입력 필요"
-        case "approval-required": key = "승인 필요"
-        case "terminating": key = "종료 중"
-        case "termination-failed": key = "종료 실패"
-        case "liveness-unknown": key = "상태 확인 불가"
-        case "completed": key = "완료"
-        case "failed": key = "실패"
-        case "interrupted": key = "중단"
-        case "cancelled": key = "취소"
-        case "idle": key = "유휴"
-        case "orphaned": key = "연결 끊김"
+        case "running": key = "macos.running"
+        case "background-process-running": key = "macos.backgroundprocessrunning"
+        case "input-required": key = "macos.inputrequired"
+        case "approval-required": key = "macos.approvalrequired"
+        case "terminating": key = "macos.terminating"
+        case "termination-failed": key = "macos.terminationfailed"
+        case "liveness-unknown": key = "problem.kind.unknown"
+        case "completed": key = "macos.completed"
+        case "failed": key = "macos.failed"
+        case "interrupted": key = "macos.interrupted"
+        case "cancelled": key = "common.cancel"
+        case "idle": key = "macos.idle"
+        case "orphaned": key = "macos.disconnected"
         default: return status
         }
         return BridgeAppLocalization.string(key, locale: locale)
@@ -2114,7 +2194,7 @@ enum DashboardExecutionPresentation {
         locale: Locale = Locale(identifier: "ko")
     ) -> String {
         execution.map { text($0, locale: locale) } ?? BridgeAppLocalization.string(
-            "모델 · 추론 확인 불가",
+            "macos.modelreasoningunavailable",
             locale: locale
         )
     }
@@ -2128,7 +2208,7 @@ private func cancellationTargetLabel(_ value: String, locale: Locale) -> String 
     let key: String
     switch value {
     case "activity": key = "Activity"
-    case "job": key = "작업"
+    case "job": key = "macos.task"
     default: return value
     }
     return BridgeAppLocalization.string(key, locale: locale)
@@ -2137,9 +2217,9 @@ private func cancellationTargetLabel(_ value: String, locale: Locale) -> String 
 private func cancellationStatusLabel(_ value: String, locale: Locale) -> String {
     let key: String
     switch value {
-    case "requested": key = "요청됨"
-    case "succeeded": key = "처리됨"
-    case "failed": key = "실패"
+    case "requested": key = "macos.requested"
+    case "succeeded": key = "macos.processed"
+    case "failed": key = "macos.failed"
     default: return value
     }
     return BridgeAppLocalization.string(key, locale: locale)

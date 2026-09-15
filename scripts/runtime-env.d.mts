@@ -33,7 +33,6 @@ export function loadRuntimeEnvFile(
   filePath: string,
   options?: {
     required?: boolean;
-    apply?: (filePath: string) => void;
     allowedKey?: (key: string) => boolean;
     platform?: NodeJS.Platform;
     uid?: number;

@@ -37,6 +37,10 @@ describe("release manifest", () => {
       path.join(scriptsDirectory, "ui-release-catalog.mjs")
     );
     copyFileSync(
+      path.join(REPO_ROOT, "scripts/text-integrity.mjs"),
+      path.join(scriptsDirectory, "text-integrity.mjs")
+    );
+    copyFileSync(
       path.join(REPO_ROOT, "release-manifest.json"),
       path.join(root, "release-manifest.json")
     );
@@ -430,6 +434,11 @@ describe("release manifest", () => {
     manifest.package.files.push("../secret");
     writeJson(path.join(root, "release-manifest.json"), manifest);
     expect(() => loadReleaseManifest(root)).toThrow(/safe relative package path/);
+
+    manifest.package.files = manifest.package.files.filter((file: string) => file !== "../secret");
+    manifest.package.files = manifest.package.files.filter((file: string) => file !== "scripts/text-integrity.mjs");
+    writeJson(path.join(root, "release-manifest.json"), manifest);
+    expect(() => loadReleaseManifest(root)).toThrow(/package\.files must include scripts\/text-integrity\.mjs/);
   });
 
   it("fails the release check when the App Server schema lock targets another CLI", () => {

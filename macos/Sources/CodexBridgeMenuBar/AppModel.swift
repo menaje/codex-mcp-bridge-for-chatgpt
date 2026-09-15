@@ -13,10 +13,10 @@ enum MenuBarHealth: Equatable {
     func accessibilityLabel(locale: Locale) -> String {
         let key: String
         switch self {
-        case .healthy: key = "Codex 브리지 정상"
-        case .checking: key = "Codex 브리지 상태 확인 중"
-        case .attention: key = "Codex 브리지 확인 필요"
-        case .unavailable: key = "Codex 브리지 연결 불가"
+        case .healthy: key = "macos.codexbridgeishealthy"
+        case .checking: key = "macos.checkingcodexbridgestatus"
+        case .attention: key = "macos.codexbridgeneedsattention"
+        case .unavailable: key = "macos.codexbridgeisunavailable"
         }
         return BridgeAppLocalization.string(key, locale: locale)
     }
@@ -657,11 +657,11 @@ final class AppModel: ObservableObject {
     var connectionTargetName: String {
         if isRemoteClient {
             return activeRemoteProfile?.name ?? BridgeAppLocalization.string(
-                "선택된 원격 서버 없음",
+                "macos.noremoteserverselected",
                 locale: interfaceLocale
             )
         }
-        return BridgeAppLocalization.string("이 Mac", locale: interfaceLocale)
+        return BridgeAppLocalization.string("macos.thismac", locale: interfaceLocale)
     }
 
     var bridgeConnected: Bool {
@@ -803,7 +803,7 @@ final class AppModel: ObservableObject {
         guard mode != connectionPreferences.mode else { return true }
         guard await flushSettingsAutosave() else {
             connectionErrorMessage = BridgeAppLocalization.string(
-                "저장 중인 서버 설정을 완료하지 못해 연결 모드를 바꾸지 않았습니다.",
+                "macos.theconnectionmodewasnotchangedbecausepending",
                 locale: interfaceLocale
             )
             return false
@@ -864,17 +864,36 @@ final class AppModel: ObservableObject {
         profileName: String,
         deviceName: String
     ) async -> Bool {
-        let trimmedDeviceName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedDeviceName.isEmpty else {
+        let exactInvitation: String
+        let canonicalDeviceName: String
+        let canonicalProfileName: String
+        do {
+            exactInvitation = try BridgeTextIntegrity.verbatimText(
+                invitation,
+                options: .init(maxCharacters: 16_384, rejectControlCharacters: false)
+            )
+            canonicalDeviceName = try BridgeTextIntegrity.canonicalHumanText(
+                deviceName,
+                options: .init(allowEmpty: true, maxCharacters: 120, trim: true)
+            )
+            canonicalProfileName = try BridgeTextIntegrity.canonicalHumanText(
+                profileName,
+                options: .init(allowEmpty: true, maxCharacters: 120, trim: true)
+            )
+        } catch {
+            connectionErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+        guard !canonicalDeviceName.isEmpty else {
             connectionErrorMessage = BridgeAppLocalization.string(
-                "이 기기를 구분할 이름을 입력해 주세요.",
+                "macos.enteranamethatidentifiesthisdevice",
                 locale: interfaceLocale
             )
             return false
         }
         guard await flushSettingsAutosave() else {
             connectionErrorMessage = BridgeAppLocalization.string(
-                "저장 중인 서버 설정을 완료하지 못해 새 서버를 페어링하지 않았습니다.",
+                "macos.thenewserverwasnotpairedbecausepending",
                 locale: interfaceLocale
             )
             return false
@@ -885,9 +904,9 @@ final class AppModel: ObservableObject {
         let wasRemoteClient = isRemoteClient
         do {
             let result = try await remotePairingFactory(
-                invitation,
-                trimmedDeviceName,
-                profileName
+                exactInvitation,
+                canonicalDeviceName,
+                canonicalProfileName
             )
             let previousCredential = try credentialStore.credential(
                 for: result.profile.serverId
@@ -963,7 +982,7 @@ final class AppModel: ObservableObject {
         }
         guard await flushSettingsAutosave() else {
             connectionErrorMessage = BridgeAppLocalization.string(
-                "저장 중인 서버 설정을 완료하지 못해 서버를 전환하지 않았습니다.",
+                "macos.theserverwasnotswitchedbecausependingserver",
                 locale: interfaceLocale
             )
             return false
@@ -983,16 +1002,17 @@ final class AppModel: ObservableObject {
     }
 
     func renameRemoteServer(_ serverId: String, name: String) -> Bool {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              trimmed.count <= 120,
+        guard let canonicalName = try? BridgeTextIntegrity.canonicalHumanText(
+            name,
+            options: .init(maxCharacters: 120, trim: true)
+        ),
               let index = connectionPreferences.profiles.firstIndex(where: {
                   $0.serverId == serverId
               }) else {
             return false
         }
         let previous = connectionPreferences
-        connectionPreferences.profiles[index].name = trimmed
+        connectionPreferences.profiles[index].name = canonicalName
         do {
             try connectionStore?.save(connectionPreferences)
             return true
@@ -1010,7 +1030,7 @@ final class AppModel: ObservableObject {
         let wasActive = connectionPreferences.activeServerId == serverId
         if isRemoteClient, wasActive, !(await flushSettingsAutosave()) {
             connectionErrorMessage = BridgeAppLocalization.string(
-                "저장 중인 서버 설정을 완료하지 못해 서버를 삭제하지 않았습니다.",
+                "macos.theserverwasnotdeletedbecausependingserver",
                 locale: interfaceLocale
             )
             return false
@@ -1093,7 +1113,7 @@ final class AppModel: ObservableObject {
                     locale: interfaceLocale
                 ) ??
                     BridgeAppLocalization.string(
-                        "원격 관리 서버가 지정한 주소에서 시작되지 않았습니다.",
+                        "macos.theremotemanagementserverdidnotstartat",
                         locale: interfaceLocale
                     )
                 return false
@@ -1147,8 +1167,16 @@ final class AppModel: ObservableObject {
 
     func previewInterfaceLocale(_ preference: String) {
         guard BridgeAppLocalization.supportedPreferences.contains(preference) else { return }
+        guard interfaceLocalePreference != preference || !interfaceLocalePreviewActive else { return }
         interfaceLocalePreviewActive = true
         interfaceLocalePreference = preference
+        // A response localized for the previous preview must not repaint the
+        // editor after this switch. Re-read using the current display locale;
+        // this does not mutate the shared server setting.
+        settingsRequestGeneration += 1
+        Task { @MainActor [weak self] in
+            await self?.refreshSettings()
+        }
     }
 
     func restorePersistedInterfaceLocale() {
@@ -1330,10 +1358,10 @@ final class AppModel: ObservableObject {
 
     var runtimeUnavailableExplanation: String {
         let key: String
-        if isRemoteClient { key = "연결 탭에서 서버를 선택하거나 페어링해 주세요." }
-        else if helperStatus?.phase == "stopped" { key = "브리지 서버가 중지되었습니다." }
-        else if helperStatus?.pid != nil { key = "서버 프로세스는 실행 중이지만 연결 응답을 확인하지 못했습니다." }
-        else { key = "브리지 서버의 응답을 확인하지 못했습니다. 잠시 후 다시 확인해 주세요." }
+        if isRemoteClient { key = "macos.selectorpairaserverintheconnection" }
+        else if helperStatus?.phase == "stopped" { key = "macos.thebridgeserverisstopped" }
+        else if helperStatus?.pid != nil { key = "macos.theserverprocessisrunningbutitsconnection" }
+        else { key = "macos.thebridgeserverdidnotrespondpleasetry" }
         return BridgeAppLocalization.string(key, locale: interfaceLocale)
     }
 
@@ -1388,7 +1416,7 @@ final class AppModel: ObservableObject {
             guard connection == connectionGeneration else { return }
             dashboardProblemQuery.offset = 0
             if action == .recheck {
-                problemActionNotice = BridgeAppLocalization.string("상태를 다시 확인했습니다. 남아 있는 문제는 추가 조치가 필요합니다.", locale: interfaceLocale)
+                problemActionNotice = BridgeAppLocalization.string("problem.rechecked", locale: interfaceLocale)
             }
             await refreshDashboard()
         } catch {
@@ -1434,13 +1462,13 @@ final class AppModel: ObservableObject {
             guard connection == connectionGeneration else { return }
             dashboardProblemQuery.offset = 0
             await refreshDashboard()
-            problemActionNotice = BridgeAppLocalization.format("종료된 실패 %d건을 확인 처리했습니다.", locale: interfaceLocale, changed)
+            problemActionNotice = BridgeAppLocalization.format("macos.reviewedfinishedfailures", locale: interfaceLocale, changed)
         } catch {
             guard connection == connectionGeneration else { return }
             await refreshDashboard(enrich: false)
             dashboardErrorMessage = problemErrorDescription(error)
             if changed > 0 {
-                problemActionNotice = BridgeAppLocalization.format("종료된 실패 %d건을 확인 처리했습니다.", locale: interfaceLocale, changed)
+                problemActionNotice = BridgeAppLocalization.format("macos.reviewedfinishedfailures", locale: interfaceLocale, changed)
             }
         }
     }
@@ -1448,10 +1476,10 @@ final class AppModel: ObservableObject {
     private func problemErrorDescription(_ error: Error) -> String {
         let text = String(describing: error)
         if text.contains("PROBLEM_TARGET_CHANGED") || text.contains("PROBLEM_REVIEW_STALE") || text.contains("PROBLEM_STOP_IMPACT_CHANGED") {
-            return BridgeAppLocalization.string("문제 목록이나 실행 상태가 변경되었습니다. 갱신된 항목을 다시 선택해 주세요.", locale: interfaceLocale)
+            return BridgeAppLocalization.string("problem.changed", locale: interfaceLocale)
         }
         if text.contains("PROBLEM_INSPECTION_PENDING") {
-            return BridgeAppLocalization.string("상태 점검이 진행 중입니다. 잠시 후 다시 확인해 주세요.", locale: interfaceLocale)
+            return BridgeAppLocalization.string("problem.inspectPending", locale: interfaceLocale)
         }
         return localizedErrorDescription(error)
     }
@@ -2258,7 +2286,7 @@ final class AppModel: ObservableObject {
             }
         } catch {
             loginItemErrorMessage = BridgeAppLocalization.format(
-                "로그인 시 실행 설정을 변경하지 못했습니다: %@",
+                "macos.couldnotchangethelaunchatloginsetting",
                 locale: interfaceLocale,
                 localizedErrorDescription(error)
             )
@@ -2479,7 +2507,7 @@ final class AppModel: ObservableObject {
 
         guard await flushSettingsAutosave() else {
             runtimeErrorMessage = BridgeAppLocalization.string(
-                "설정 변경사항을 저장하지 못해 앱을 종료하지 않았습니다. 저장 오류를 해결한 뒤 다시 시도해 주세요.",
+                "macos.theappwasnotquitbecausesettingschanges",
                 locale: interfaceLocale
             )
             return false
@@ -2545,7 +2573,7 @@ final class AppModel: ObservableObject {
             if draft.policyMode == "fixed" {
                 if let choice = displayedChoices[draft.fixedSelectionKey], draft.isUltraDisabled(choice) {
                     settingsErrorMessage = BridgeAppLocalization.string(
-                        "Ultra가 비활성화되어 있습니다. 고정 모델에 사용할 다른 추론 수준을 선택해 주세요.",
+                        "settings.ultraFixedConflict",
                         locale: interfaceLocale
                     )
                     return false
@@ -2553,7 +2581,7 @@ final class AppModel: ObservableObject {
                 guard let choice = displayedChoices[draft.fixedSelectionKey],
                       selectableKeys.contains(choice.key) else {
                     settingsErrorMessage = BridgeAppLocalization.string(
-                        "현재 사용할 수 있는 고정 모델과 추론 수준을 선택해 주세요.",
+                        "macos.chooseacurrentlyavailablefixedmodelandreasoning",
                         locale: interfaceLocale
                     )
                     return false
@@ -2572,7 +2600,7 @@ final class AppModel: ObservableObject {
                         return draft.canRetainExplicitChoice(choice, in: snapshot)
                     }) else {
                         settingsErrorMessage = BridgeAppLocalization.string(
-                            "현재 사용할 수 없는 저장된 모델 조합을 허용 목록에서 해제해 주세요.",
+                            "macos.removeunavailablesavedmodelcombinationsfromtheallowlist",
                             locale: interfaceLocale
                         )
                         return false
@@ -2582,7 +2610,7 @@ final class AppModel: ObservableObject {
                     }
                     guard !selections.isEmpty else {
                         settingsErrorMessage = BridgeAppLocalization.string(
-                            "자동 정책의 명시적 허용 목록을 하나 이상 선택해 주세요.",
+                            "macos.selectatleastonecombinationfortheautomatic",
                             locale: interfaceLocale
                         )
                         return false
@@ -2630,16 +2658,30 @@ final class AppModel: ObservableObject {
               !isBusy, !generalSettingsSaveState.isActive else { return false }
         guard overrides[modelID] == expectedOverride else {
             settingsErrorMessage = BridgeAppLocalization.string(
-                "다른 화면에서 설정이 변경되었습니다. 입력한 내용은 유지됩니다. 저장된 설명을 확인한 뒤 다시 저장해 주세요.",
+                "settings.modelDescriptions.conflict",
                 locale: interfaceLocale
             )
             return false
         }
-        let trimmed = description?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let next = trimmed?.isEmpty == false ? trimmed : nil
-        guard (next?.utf16.count ?? 0) <= ModelDescriptionEdit.maximumLength else {
+        let next: String?
+        do {
+            if let description {
+                let canonical = try BridgeTextIntegrity.canonicalHumanText(
+                    description,
+                    options: .init(
+                        allowEmpty: true,
+                        maxCharacters: ModelDescriptionEdit.maximumLength,
+                        rejectControlCharacters: false,
+                        trim: true
+                    )
+                )
+                next = canonical.isEmpty ? nil : canonical
+            } else {
+                next = nil
+            }
+        } catch {
             settingsErrorMessage = BridgeAppLocalization.string(
-                "설명은 2,000자 이내로 입력해 주세요.", locale: interfaceLocale
+                "settings.modelDescriptions.tooLong", locale: interfaceLocale
             )
             return false
         }
@@ -2755,11 +2797,22 @@ final class AppModel: ObservableObject {
         settingsErrorMessage = nil
         // A saved response must not be replaced by a read started before save.
         settingsRequestGeneration += 1
+        let request = settingsRequestGeneration
         let generation = connectionGeneration
+        let presentationLocale = interfaceLocaleIdentifier
         do {
             let client = try await bridgeClient()
-            let updated = try await client.updateSettings(mutation)
+            let updated = try await client.updateSettings(
+                mutation.withPresentationLocale(presentationLocale)
+            )
             guard generation == connectionGeneration else { return false }
+            guard request == settingsRequestGeneration else {
+                // The mutation completed, but its presentation locale is no
+                // longer current. Keep any in-progress draft and fetch a
+                // presentation-only snapshot for the active locale instead.
+                Task { @MainActor [weak self] in await self?.refreshSettings() }
+                return true
+            }
             guard settingsSnapshotIsCurrent(updated) else { return true }
             settingsRequestGeneration += 1
             if let autosavedDraft {
@@ -2776,7 +2829,7 @@ final class AppModel: ObservableObject {
                 if autosavedDraft == nil {
                     settingsConflictMessage =
                         BridgeAppLocalization.string(
-                            "다른 화면에서 설정이 변경되었습니다. 최신 값을 확인한 뒤 다시 시도해 주세요.",
+                            "macos.settingschangedelsewherereviewthelatestvaluesand",
                             locale: interfaceLocale
                         )
                 }
@@ -2968,24 +3021,24 @@ final class AppModel: ObservableObject {
         let message = error.localizedDescription
         if message.contains("DRAIN_TIMEOUT") {
             return BridgeAppLocalization.string(
-                "진행 중인 작업이 제한 시간 안에 끝나지 않아 종료하지 않았습니다. 강제 종료 여부를 확인해 주세요.",
+                "macos.theappwasnotquitbecauseactivework",
                 locale: interfaceLocale
             )
         }
         if message.contains("BACKGROUND_PROCESS_STATE_UNKNOWN") {
             return BridgeAppLocalization.string(
-                "일부 Agent의 백그라운드 프로세스 상태를 확인할 수 없어 안전 종료하지 않았습니다. 강제 종료 여부를 확인해 주세요.",
+                "macos.theappwasnotquitsafelybecausesome",
                 locale: interfaceLocale
             )
         }
         if message.contains("BACKGROUND_PROCESSES_ACTIVE") {
             return BridgeAppLocalization.string(
-                "백그라운드 프로세스가 실행 중이어서 안전 종료하지 않았습니다. 강제 종료하면 해당 프로세스도 중단됩니다.",
+                "macos.theappwasnotquitsafelybecausebackground",
                 locale: interfaceLocale
             )
         }
         return BridgeAppLocalization.format(
-            "앱과 관련 프로세스를 모두 종료하지 못했습니다: %@",
+            "macos.couldnotstoptheappandallrelated",
             locale: interfaceLocale,
             localizedErrorDescription(error)
         )

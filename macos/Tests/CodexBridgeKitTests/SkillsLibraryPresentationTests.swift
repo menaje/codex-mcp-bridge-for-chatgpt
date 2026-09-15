@@ -137,12 +137,12 @@ final class SkillsLibraryPresentationTests: XCTestCase {
         XCTAssertEqual(
             BridgeSkillImportIssue(path: "image.png", reason: "unsupported-file")
                 .localizedReason(locale: Locale(identifier: "ko")),
-            "현재는 .md와 .markdown만 지원합니다."
+            "Only .md and .markdown are currently supported."
         )
         XCTAssertEqual(
             BridgeSkillImportIssue(path: "__MACOSX", reason: "macos-metadata")
                 .localizedReason(locale: Locale(identifier: "ko")),
-            "macOS 메타데이터 파일은 가져오지 않습니다."
+            "macOS metadata files are not imported."
         )
     }
 
@@ -207,24 +207,35 @@ final class SkillsLibraryPresentationTests: XCTestCase {
         XCTAssertTrue(dashboard.contains("guard SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown()"))
     }
 
-    func testRelativeMarkdownNavigationUsesCanonicalStoredAttachmentPath() {
-        let storedPath = "references/Caf\u{e9}.md"
-        XCTAssertEqual(
-            resolveBridgeSkillMarkdownNavigationTarget(
-                linkPath: "REFERENCES/Cafe\u{301}.MD",
-                currentFilePath: nil,
-                availableFilePaths: [storedPath]
-            ),
-            .file(storedPath)
+    func testRelativeMarkdownNavigationUsesExactStoredAttachmentPath() {
+        let storedPath = "references/Cafe\u{301}.md"
+        XCTAssertNotEqual(
+            Array(storedPath.utf8),
+            Array(storedPath.precomposedStringWithCanonicalMapping.utf8)
         )
         XCTAssertEqual(
-            resolveBridgeSkillMarkdownNavigationTarget(
-                linkPath: "../references/Cafe%CC%81.md",
-                currentFilePath: "guides/setup.md",
-                availableFilePaths: [storedPath]
-            ),
-            .file(storedPath)
+            bridgeSkillPathComparisonKey(storedPath),
+            bridgeSkillPathComparisonKey("references/Caf\u{e9}.md")
         )
+        XCTAssertNotEqual(
+            bridgeSkillPathComparisonKey("references/a b.md"),
+            bridgeSkillPathComparisonKey("references/a  b.md")
+        )
+        let direct = resolveBridgeSkillMarkdownNavigationTarget(
+            linkPath: "REFERENCES/Caf\u{e9}.MD",
+            currentFilePath: nil,
+            availableFilePaths: [storedPath]
+        )
+        guard case .file(let directPath) = direct else { return XCTFail("Expected stored file path") }
+        XCTAssertEqual(Array(directPath.utf8), Array(storedPath.utf8))
+
+        let relative = resolveBridgeSkillMarkdownNavigationTarget(
+            linkPath: "../references/Caf%C3%A9.md",
+            currentFilePath: "guides/setup.md",
+            availableFilePaths: [storedPath]
+        )
+        guard case .file(let relativePath) = relative else { return XCTFail("Expected stored file path") }
+        XCTAssertEqual(Array(relativePath.utf8), Array(storedPath.utf8))
         XCTAssertEqual(
             resolveBridgeSkillMarkdownNavigationTarget(
                 linkPath: "DOCUMENT.MD",
@@ -234,7 +245,7 @@ final class SkillsLibraryPresentationTests: XCTestCase {
             .main
         )
         XCTAssertNil(resolveBridgeSkillMarkdownNavigationTarget(
-            linkPath: "../references/Caf\u{e9}.md",
+            linkPath: "../references/Cafe\u{301}.md",
             currentFilePath: nil,
             availableFilePaths: [storedPath]
         ))

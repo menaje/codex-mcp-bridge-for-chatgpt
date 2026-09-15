@@ -12,6 +12,7 @@ import {
   loadReleaseManifest,
   setReleaseState
 } from "./release-manifest.mjs";
+import { parseJsonUtf8Strict } from "./text-integrity.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CHANGE_DIRECTORY = ".changes";
@@ -39,7 +40,7 @@ export function loadChangeFragments(repoRoot = DEFAULT_REPO_ROOT) {
     }
     let value;
     try {
-      value = JSON.parse(readFileSync(file, "utf8"));
+      value = parseJsonUtf8Strict(readFileSync(file), `Change fragment ${name}`);
     } catch (error) {
       throw new Error(`Could not read change fragment ${name}: ${errorMessage(error)}`);
     }

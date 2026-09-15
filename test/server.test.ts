@@ -158,6 +158,30 @@ async function postWithHost(endpoint: string, host: string): Promise<number> {
   });
 }
 
+async function postRawMcpRequest(
+  endpoint: string,
+  body: Buffer
+): Promise<{ status: number; body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(endpoint, {
+      method: "POST",
+      headers: {
+        ...currentHeaders("tools/list"),
+        "content-length": String(body.length)
+      }
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.once("end", () => resolve({
+        status: response.statusCode || 0,
+        body: Buffer.concat(chunks)
+      }));
+    });
+    request.once("error", reject);
+    request.end(body);
+  });
+}
+
 async function start(
   options: Record<string, string> = {},
   runtimeOptions: BridgeHttpRuntimeOptions = {}
@@ -180,6 +204,36 @@ async function start(
 }
 
 describe("MCP 2026-07-28 HTTP server", () => {
+  it("rejects malformed UTF-8 and escaped unpaired surrogates before MCP decoding", async () => {
+    const { baseUrl } = await start();
+    const prefix = Buffer.from(
+      '{"jsonrpc":"2.0","id":"invalid-utf8","method":"tools/list","params":' +
+      '{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28",' +
+      '"io.modelcontextprotocol/clientInfo":{"name":"raw","version":"1"},' +
+      '"io.modelcontextprotocol/clientCapabilities":{}},"text":"'
+    );
+    const malformed = await postRawMcpRequest(
+      `${baseUrl}/mcp`,
+      Buffer.concat([prefix, Buffer.from([0xc3, 0x28]), Buffer.from('"}}')])
+    );
+    expect(malformed.status).toBe(400);
+    expect(JSON.parse(malformed.body.toString("utf8"))).toMatchObject({
+      error: { code: -32700 }, id: null
+    });
+    expect(malformed.body.toString("utf8")).not.toContain("\uFFFD");
+
+    const escapedSurrogate = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: currentHeaders("tools/list"),
+      body: '{"jsonrpc":"2.0","id":"unpaired","method":"tools/list","params":' +
+        '{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28",' +
+        '"io.modelcontextprotocol/clientInfo":{"name":"raw","version":"1"},' +
+        '"io.modelcontextprotocol/clientCapabilities":{}},"text":"\\ud800"}}'
+    });
+    expect(escapedSurrogate.status).toBe(400);
+    expect(await escapedSurrogate.json()).toMatchObject({ error: { code: -32700 }, id: null });
+  });
+
   it("keeps conformance fixtures opt-in and checks required client capabilities", async () => {
     const normal = await start();
     const normalList = await fetch(`${normal.baseUrl}/mcp`, {

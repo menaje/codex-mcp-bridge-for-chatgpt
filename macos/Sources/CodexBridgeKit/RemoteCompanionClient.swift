@@ -133,9 +133,12 @@ public struct RemoteClientPairingInvitation: Codable, Sendable, Equatable {
     public let expiresAt: String
 
     public static func decode(_ invitation: String) throws -> Self {
-        let compact = invitation.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !compact.isEmpty,
-              let data = Data(base64URLEncoded: compact),
+        let exactInvitation = try BridgeTextIntegrity.verbatimText(
+            invitation,
+            options: .init(maxCharacters: 16_384, rejectControlCharacters: false)
+        )
+        guard let data = Data(base64URLEncoded: exactInvitation),
+              (try? BridgeTextIntegrity.validateJSONUTF8(data)) != nil,
               let decoded = try? JSONDecoder().decode(Self.self, from: data),
               decoded.version == 1,
               decoded.protocol == remoteCompanionProtocolName,
@@ -182,6 +185,16 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
         profileName: String? = nil
     ) async throws -> RemotePairingResult {
         let invitation = try RemoteClientPairingInvitation.decode(invitationText)
+        let canonicalDeviceName = try BridgeTextIntegrity.canonicalHumanText(
+            deviceName,
+            options: .init(maxCharacters: 120, trim: true)
+        )
+        let chosenName = try profileName.map {
+            try BridgeTextIntegrity.canonicalHumanText(
+                $0,
+                options: .init(allowEmpty: true, maxCharacters: 120, trim: true)
+            )
+        }.flatMap { $0.isEmpty ? nil : $0 }
         let transport = try RemoteHTTPTransport(
             endpoint: invitation.endpoint,
             certificateSha256: invitation.certificateSha256
@@ -192,7 +205,7 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
             body: PairingRequest(
                 serverId: invitation.serverId,
                 code: invitation.code,
-                deviceName: deviceName
+                deviceName: canonicalDeviceName
             ),
             headers: [:],
             timeout: 20
@@ -201,13 +214,16 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
             serverId: invitation.serverId,
             certificateSha256: invitation.certificateSha256
         )
-        let chosenName = profileName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let serverDisplayName = try BridgeTextIntegrity.canonicalHumanText(
+            response.hello.server.displayName,
+            options: .init(maxCharacters: 120, trim: true)
+        )
         let profile = RemoteServerProfile(
             serverId: invitation.serverId,
-            name: chosenName?.isEmpty == false ? chosenName! : response.hello.server.displayName,
+            name: chosenName ?? serverDisplayName,
             endpoint: invitation.endpoint,
             certificateSha256: invitation.certificateSha256.lowercased(),
-            serverDisplayName: response.hello.server.displayName,
+            serverDisplayName: serverDisplayName,
             bridgeVersion: response.hello.bridge.version,
             bridgeBuildId: response.hello.bridge.buildId,
             capabilities: response.hello.capabilities,
@@ -604,10 +620,12 @@ private final class RemoteHTTPTransport: Sendable {
         headers: [String: String],
         timeout: TimeInterval
     ) async throws -> Result {
-        try await request(
+        let encoded = try JSONEncoder().encode(body)
+        try BridgeTextIntegrity.validateJSONUTF8(encoded)
+        return try await request(
             path: path,
             method: "POST",
-            body: try JSONEncoder().encode(body),
+            body: encoded,
             headers: headers,
             timeout: timeout
         )
@@ -673,11 +691,13 @@ private final class RemoteHTTPTransport: Sendable {
         if http.statusCode == 403 { throw RemoteCompanionError.forbidden }
         if http.statusCode == 409 { throw RemoteCompanionError.serverIdentityMismatch }
         guard (200..<300).contains(http.statusCode) else {
+            try BridgeTextIntegrity.validateJSONUTF8(data)
             let message = (try? JSONDecoder().decode(RemoteHTTPError.self, from: data).message) ??
                 HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
             throw RemoteCompanionError.server(status: http.statusCode, message: message)
         }
         do {
+            try BridgeTextIntegrity.validateJSONUTF8(data)
             return try JSONDecoder().decode(Result.self, from: data)
         } catch {
             throw RemoteCompanionError.invalidResponse(error.localizedDescription)

@@ -7,6 +7,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { loadConfig } from "../src/config.js";
 import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import { createHttpServer, type BridgeHttpServer } from "../src/server.js";
+import { BRIDGE_SKILL_LIMITS } from "../src/skillLibrary.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { DASHBOARD_CARD_URI } from "../src/dashboardCard.js";
 import type { CodexProgress, CodexUpstream, ToolResult, UpstreamWorkerAssignment } from "../src/upstream.js";
@@ -264,6 +265,42 @@ describe("current bridge tool contracts", () => {
     const historical = await client.callTool({ name: "bridge_skill", arguments: { operation: "read", skill: createdReference } });
     expect(historical.structuredContent).toMatchObject({ document: originalDocument });
     expect(upstream.calls).toEqual([]);
+  });
+
+  it("uses Unicode-scalar name limits and exact opaque Bridge references", async () => {
+    const name = "😀".repeat(BRIDGE_SKILL_LIMITS.nameMaxCharacters);
+    const created = await client.callTool({
+      name: "bridge_skill_manage",
+      arguments: {
+        operation: "create",
+        requestId: randomUUID(),
+        name,
+        document: "# Unicode scalar boundary"
+      }
+    });
+    expect(created.isError, JSON.stringify(created)).not.toBe(true);
+    const skill = (created.structuredContent as any).skill;
+    expect(skill.name).toBe(name);
+
+    const overflow = await client.callTool({
+      name: "bridge_skill_manage",
+      arguments: {
+        operation: "create",
+        requestId: randomUUID(),
+        name: `${name}😀`,
+        document: "# Too long"
+      }
+    });
+    expect(overflow.isError).toBe(true);
+
+    const paddedReference = await client.callTool({
+      name: "bridge_skill",
+      arguments: {
+        operation: "read",
+        skill: { skillId: ` ${skill.skillId}`, source: "bridge", version: skill.version }
+      }
+    });
+    expect(paddedReference.isError).toBe(true);
   });
 
   it("keeps Bridge documents outside the Codex task schema and prompt", async () => {

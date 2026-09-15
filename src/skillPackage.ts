@@ -3,7 +3,7 @@ import { appendFile, mkdir, open, readdir, rm, stat, writeFile, type FileHandle 
 import path from "node:path";
 import { Readable } from "node:stream";
 import { createInflateRaw, inflateRawSync } from "node:zlib";
-import { strictUtf8Decode } from "./skillTextPolicy.js";
+import { decodeUtf8Strict, searchKey, utf8ByteLength, verbatimText } from "./textIntegrity.js";
 
 export const BRIDGE_SKILL_PACKAGE_LIMITS = Object.freeze({
   compressedMaxBytes: 16 * 1_024 * 1_024,
@@ -150,7 +150,7 @@ export class BridgeSkillPackageUploads {
         .filter((file) => selectedPaths.has(file.path))
         .filter((file) => file.path !== selected?.path)
         .map(({ path: filePath, content }) => ({ path: filePath, content }));
-      if (files.some((file) => file.path.toLocaleLowerCase("en-US") === "document.md")) {
+      if (files.some((file) => packagePathCollisionKey(file.path) === "document.md")) {
         throw new Error("SKILL_PACKAGE_MAIN_CONFLICT: document.md must be selected as the main document when present at the package root.");
       }
       const result = await operation({ ...(selected ? { document: selected.content } : {}), files });
@@ -245,7 +245,7 @@ export function inspectBridgeSkillZip(bytes: Uint8Array): {
     if (!(flags & 0x0800) && nameBytes.some((byte) => byte > 0x7f)) {
       throw new Error("SKILL_PACKAGE_PATH_ENCODING_INVALID: ZIP paths must be UTF-8.");
     }
-    const originalPath = strictUtf8Decode(nameBytes, "SKILL_PACKAGE_PATH_ENCODING_INVALID: ZIP path");
+    const originalPath = decodeUtf8Strict(nameBytes, "SKILL_PACKAGE_PATH_ENCODING_INVALID: ZIP path");
     const normalizedPath = normalizeArchiveEntryPath(originalPath, originalPath.endsWith("/"));
     const unixMode = madeBy >> 8 === 3 ? external >>> 16 : 0;
     const fileType = unixMode & 0o170000;
@@ -275,7 +275,7 @@ export function inspectBridgeSkillZip(bytes: Uint8Array): {
   const keys = new Set<string>();
   let totalExpanded = 0;
   for (const entry of entries) {
-    const rawPath = entry.path.normalize("NFC");
+    const rawPath = entry.path;
     assertEntryExpansionLimits(entry);
     totalExpanded += entry.expanded;
     if (totalExpanded > BRIDGE_SKILL_PACKAGE_LIMITS.expandedMaxBytes) {
@@ -293,14 +293,14 @@ export function inspectBridgeSkillZip(bytes: Uint8Array): {
       continue;
     }
     const filePath = normalizePackagePath(rawPath);
-    const key = filePath.toLocaleLowerCase("en-US");
+    const key = packagePathCollisionKey(filePath);
     if (keys.has(key)) throw new Error(`SKILL_PACKAGE_PATH_CONFLICT: ${filePath} conflicts with another path.`);
     keys.add(key);
     const contentBytes = extractEntry(buffer, entry, centralOffset);
     if (contentBytes.byteLength !== entry.expanded || crc32(contentBytes) !== entry.crc) {
       throw new Error("SKILL_PACKAGE_CORRUPT: A ZIP entry failed size or CRC verification.");
     }
-    const content = strictUtf8Decode(contentBytes, `SKILL_PACKAGE_TEXT_INVALID: ${filePath}`);
+    const content = decodeUtf8Strict(contentBytes, `SKILL_PACKAGE_TEXT_INVALID: ${filePath}`);
     if (content.includes("\u0000")) throw new Error("SKILL_PACKAGE_TEXT_INVALID: Markdown files cannot contain NUL characters.");
     files.push({ path: filePath, content, format: "markdown", bytes: contentBytes.byteLength, contentDigest: sha256(contentBytes) });
   }
@@ -376,7 +376,7 @@ export async function inspectBridgeSkillZipFile(file: string): Promise<{
       if (!(flags & 0x0800) && nameBytes.some((byte) => byte > 0x7f)) {
         throw new Error("SKILL_PACKAGE_PATH_ENCODING_INVALID: ZIP paths must be UTF-8.");
       }
-      const originalPath = strictUtf8Decode(nameBytes, "SKILL_PACKAGE_PATH_ENCODING_INVALID: ZIP path");
+      const originalPath = decodeUtf8Strict(nameBytes, "SKILL_PACKAGE_PATH_ENCODING_INVALID: ZIP path");
       const directory = originalPath.endsWith("/");
       const normalizedPath = normalizeArchiveEntryPath(originalPath, directory);
       const unixMode = madeBy >> 8 === 3 ? external >>> 16 : 0;
@@ -400,7 +400,7 @@ export async function inspectBridgeSkillZipFile(file: string): Promise<{
     const keys = new Set<string>();
     let totalExpanded = 0;
     for (const entry of entries) {
-      const rawPath = entry.path.normalize("NFC");
+      const rawPath = entry.path;
       assertEntryExpansionLimits(entry);
       totalExpanded += entry.expanded;
       if (totalExpanded > BRIDGE_SKILL_PACKAGE_LIMITS.expandedMaxBytes) {
@@ -418,14 +418,14 @@ export async function inspectBridgeSkillZipFile(file: string): Promise<{
         continue;
       }
       const filePath = normalizePackagePath(rawPath);
-      const key = filePath.toLocaleLowerCase("en-US");
+      const key = packagePathCollisionKey(filePath);
       if (keys.has(key)) throw new Error(`SKILL_PACKAGE_PATH_CONFLICT: ${filePath} conflicts with another path.`);
       keys.add(key);
       const contentBytes = await extractEntryFromFile(handle, entry, centralOffset);
       if (contentBytes.byteLength !== entry.expanded || crc32(contentBytes) !== entry.crc) {
         throw new Error("SKILL_PACKAGE_CORRUPT: A ZIP entry failed size or CRC verification.");
       }
-      const content = strictUtf8Decode(contentBytes, `SKILL_PACKAGE_TEXT_INVALID: ${filePath}`);
+      const content = decodeUtf8Strict(contentBytes, `SKILL_PACKAGE_TEXT_INVALID: ${filePath}`);
       if (content.includes("\u0000")) throw new Error("SKILL_PACKAGE_TEXT_INVALID: Markdown files cannot contain NUL characters.");
       files.push({ path: filePath, content, format: "markdown", bytes: contentBytes.byteLength, contentDigest: sha256(contentBytes) });
     }
@@ -445,11 +445,14 @@ export function deterministicBridgeSkillZip(
   files: ReadonlyArray<{ path: string; content: string }>
 ): Buffer {
   const entries = [{ path: "document.md", content: document }, ...files]
-    .map((entry) => ({ path: normalizeExportPath(entry.path), bytes: Buffer.from(entry.content, "utf8") }))
+    .map((entry) => {
+      const filePath = normalizeExportPath(entry.path);
+      return { path: filePath, bytes: encodePackageText(entry.content, filePath) };
+    })
     .sort((left, right) => left.path.localeCompare(right.path, "en-US", { sensitivity: "variant" }));
   const pathKeys = new Set<string>();
   for (const entry of entries) {
-    const key = entry.path.toLocaleLowerCase("en-US");
+    const key = packagePathCollisionKey(entry.path);
     if (pathKeys.has(key)) throw new Error(`SKILL_PACKAGE_PATH_CONFLICT: ${entry.path} conflicts with another path.`);
     pathKeys.add(key);
   }
@@ -644,20 +647,60 @@ function normalizePackagePath(value: string): string {
 }
 
 function normalizeArchiveEntryPath(value: string, directory = false): string {
-  const normalized = value.normalize("NFC").replaceAll("\\", "/");
+  let exact: string;
+  try {
+    exact = verbatimText(value, {
+      field: "ZIP entry path",
+      allowEmpty: true,
+      maxUtf8Bytes: BRIDGE_SKILL_PACKAGE_LIMITS.pathMaxBytes,
+      rejectNul: true
+    });
+  } catch (error) {
+    throw new Error("SKILL_PACKAGE_PATH_INVALID: ZIP contains an invalid UTF-8 path.", { cause: error });
+  }
+  // ZIP producers may use a Windows separator. Converting only the separator
+  // is transport syntax handling; Unicode spelling remains byte-for-byte.
+  const normalized = exact.replaceAll("\\", "/");
   const source = directory && normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
   const segments = source.split("/");
   if (!source || source.startsWith("/") || /^[A-Za-z]:/u.test(source) || source.includes("\u0000") ||
     segments.some((segment) => !segment || segment === "." || segment === ".." || /[\u0000-\u001f\u007f]/u.test(segment)) ||
-    segments.length > BRIDGE_SKILL_PACKAGE_LIMITS.pathMaxDepth || Buffer.byteLength(source, "utf8") > BRIDGE_SKILL_PACKAGE_LIMITS.pathMaxBytes) {
+    segments.length > BRIDGE_SKILL_PACKAGE_LIMITS.pathMaxDepth || utf8ByteLength(source, "ZIP entry path") > BRIDGE_SKILL_PACKAGE_LIMITS.pathMaxBytes) {
     throw new Error("SKILL_PACKAGE_PATH_INVALID: ZIP contains an unsafe, empty, deep, or overlong path.");
   }
   return source;
 }
 
+function packagePathCollisionKey(value: string): string {
+  return searchKey(value, {
+    field: "ZIP entry path comparison key",
+    allowEmpty: true,
+    collapseWhitespace: false,
+    trim: false,
+    rejectControlCharacters: false
+  });
+}
+
 function normalizeExportPath(value: string): string {
   const normalized = normalizePackagePath(value);
   return normalized;
+}
+
+function encodePackageText(value: string, filePath: string): Buffer {
+  try {
+    const exact = verbatimText(value, {
+      field: `Bridge skill package file ${filePath}`,
+      allowEmpty: true,
+      maxUtf8Bytes: BRIDGE_SKILL_PACKAGE_LIMITS.fileMaxBytes,
+      rejectNul: true
+    });
+    return Buffer.from(exact, "utf8");
+  } catch (error) {
+    throw new Error(
+      `SKILL_PACKAGE_TEXT_INVALID: ${filePath} must be well-formed UTF-8 text within the file limit.`,
+      { cause: error }
+    );
+  }
 }
 
 function isMacMetadata(value: string): boolean {

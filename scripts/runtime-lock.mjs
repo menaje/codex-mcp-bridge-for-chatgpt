@@ -12,6 +12,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { defaultRuntimeEnvFile } from "./runtime-env.mjs";
+import { parseJsonUtf8Strict } from "./text-integrity.mjs";
 
 export function defaultRuntimeLockDirectory(options = {}) {
   return resolve(dirname(defaultRuntimeEnvFile(options)), "run", "launcher.lock");
@@ -156,7 +157,7 @@ function assertPrivateDirectory(directory, { platform, uid }) {
 }
 
 function readOwner(ownerFile) {
-  const parsed = JSON.parse(readFileSync(ownerFile, "utf8"));
+  const parsed = parseJsonUtf8Strict(readFileSync(ownerFile), "Runtime lock owner metadata");
   if (
     !parsed ||
     typeof parsed !== "object" ||

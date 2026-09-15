@@ -143,7 +143,7 @@ Use remote management only on a private LAN or private VPN that you control. See
 ## Documentation
 
 - [Setup and settings](docs/setup.md) — macOS server/client setup, Windows/Linux Node.js setup, ChatGPT connection, and every user-facing setting
-- [Native macOS app](docs/macos-app.md) — app architecture, lifecycle, local files, recovery, and build details
+- [Native macOS app](docs/macos-app.md) — app architecture, lifecycle, local files, recovery, and build details; [localization](docs/localization.md) and [text integrity](docs/text-integrity.md) cover generated copy and Unicode policy
 - [Remote client mode](docs/remote-client.md) — pairing, server switching, network scope, and credential handling
 - [ChatGPT integration](docs/chatgpt-setup.md) — connection, refresh, current tool use, and smoke checks
 - [MCP 2026-07-28 migration](docs/mcp-2026-07-28-migration.md) — breaking protocol, tool-contract, and card-resource changes

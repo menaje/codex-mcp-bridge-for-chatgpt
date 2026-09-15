@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
+import { parseJsonTextStrict } from "./textIntegrity.js";
 
 export type UserQuestionField = {
   id: string; header: string; question: string; isOther?: boolean;
@@ -175,7 +176,9 @@ export class QuestionStore {
   }
 
   private fromRow(row: unknown): UserQuestionRecord | undefined {
-    return row ? JSON.parse((row as { payload: string }).payload) as UserQuestionRecord : undefined;
+    return row
+      ? parseJsonTextStrict((row as { payload: string }).payload, "Stored user question") as UserQuestionRecord
+      : undefined;
   }
 }
 

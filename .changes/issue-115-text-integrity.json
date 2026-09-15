@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Enforce strict UTF-8, well-formed Unicode, and explicit normalization policies across bridge text, JSON, and skill document boundaries.",
+  "breaking": false,
+  "migration": null
+}

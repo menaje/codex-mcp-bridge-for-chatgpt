@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { readPrivateFile, writePrivateFileAtomic } from "./managed-file.mjs";
+import { parseJsonUtf8Strict } from "./text-integrity.mjs";
 
 export const MANAGED_RUNTIME_STATUS_PROTOCOL = "codex-mcp-bridge-launcher-status";
 export const MANAGED_RUNTIME_STATUS_VERSION = 1;
@@ -34,7 +35,7 @@ export function readManagedRuntimeStatus(filePath, { maximumAgeMs = 20_000 } = {
   const resolved = resolve(filePath);
   if (!existsSync(resolved)) return null;
   try {
-    const parsed = JSON.parse(readPrivateFile(resolved, { encoding: "utf8" }));
+    const parsed = parseJsonUtf8Strict(readPrivateFile(resolved), "Managed runtime status");
     if (
       !parsed ||
       typeof parsed !== "object" ||

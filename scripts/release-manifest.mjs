@@ -21,6 +21,7 @@ import {
   uiReleaseCatalogSha256,
   validateUiReleaseCatalog
 } from "./ui-release-catalog.mjs";
+import { decodeUtf8Strict, parseJsonUtf8Strict } from "./text-integrity.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST_FILENAME = "release-manifest.json";
@@ -43,6 +44,8 @@ const REQUIRED_PACKAGE_FILES = new Set([
   "dist",
   "README.md",
   "LICENSE",
+  "scripts/text-integrity.mjs",
+  "scripts/text-integrity.d.mts",
   ".codex-plugin",
   ".app.json",
   "release-manifest.json",
@@ -136,7 +139,7 @@ export function loadReleaseManifest(repoRoot = DEFAULT_REPO_ROOT) {
   const file = path.join(repoRoot, MANIFEST_FILENAME);
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync(file, "utf8"));
+    parsed = parseJsonUtf8Strict(readFileSync(file), MANIFEST_FILENAME);
   } catch (error) {
     throw new Error(`Could not read ${MANIFEST_FILENAME}: ${errorMessage(error)}`);
   }
@@ -624,7 +627,7 @@ export function derivePluginManifests(manifest) {
 }
 
 export function expectedStateMigrationCatalog(repoRoot = DEFAULT_REPO_ROOT) {
-  const stateStoreSource = readFileSync(path.join(repoRoot, "src/stateStore.ts"), "utf8");
+  const stateStoreSource = readTextFile(path.join(repoRoot, "src/stateStore.ts"), "src/stateStore.ts");
   const migrations = STATE_MIGRATION_DEFINITIONS.map(
     ([fromSchema, toSchema, implementation, introducedCommit, dependencies]) => {
       const method = extractPrivateMethod(stateStoreSource, implementation);
@@ -634,7 +637,7 @@ export function expectedStateMigrationCatalog(repoRoot = DEFAULT_REPO_ROOT) {
       for (const [relative, symbol] of dependencies) {
         hash.update(`\0${relative}#${symbol}\0`);
         hash.update(extractNamedDeclaration(
-          readFileSync(path.join(repoRoot, relative), "utf8"),
+          readTextFile(path.join(repoRoot, relative), relative),
           symbol
         ));
       }
@@ -841,7 +844,7 @@ function extractNamedDeclaration(source, name) {
 }
 
 function sourceInteger(repoRoot, relative, pattern, label) {
-  const source = readFileSync(path.join(repoRoot, relative), "utf8");
+  const source = readTextFile(path.join(repoRoot, relative), relative);
   const match = pattern.exec(source);
   if (!match) throw new Error(`Could not read ${label} from ${relative}.`);
   return Number(match[1]);
@@ -891,7 +894,7 @@ function checkReleaseNotesFile(repoRoot, metadata) {
   if (!existsSync(file) || !statSync(file).isFile()) {
     throw new Error(`Release notes ${metadata.releaseNotesFile} are required for ${metadata.stage} stage.`);
   }
-  const notes = readFileSync(file, "utf8").trim();
+  const notes = readTextFile(file, metadata.releaseNotesFile).trim();
   if (notes.length < 200) {
     throw new Error(`Release notes ${metadata.releaseNotesFile} are incomplete.`);
   }
@@ -1097,7 +1100,7 @@ export function copyUiResourcesToDist(
   mkdirSync(targetRoot, { recursive: true });
   for (const name of UI_ACTIVE_RESOURCE_NAMES) {
     const revision = selected.resources[name];
-    const html = readFileSync(uiResourceSourceFile(repoRoot, name), "utf8");
+    const html = readTextFile(uiResourceSourceFile(repoRoot, name), `UI resource ${name}`);
     if (uiResourceDigest(selected.hashAlgorithm, html, revision.metadata) !== revision.digest) {
       throw new Error(`Current UI resource digest does not match: ${name}.`);
     }
@@ -1125,11 +1128,11 @@ export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRe
   const drift = [];
   if (!sameJson(lock, expected)) drift.push(UI_LOCK_FILENAME);
   const generatedFile = path.join(repoRoot, UI_GENERATED_SOURCE);
-  if (!existsSync(generatedFile) || readFileSync(generatedFile, "utf8") !== generatedUiManifestSource(expected)) {
+  if (!existsSync(generatedFile) || readTextFile(generatedFile, UI_GENERATED_SOURCE) !== generatedUiManifestSource(expected)) {
     drift.push(UI_GENERATED_SOURCE);
   }
 
-  const descriptorSource = readFileSync(path.join(repoRoot, "src/tools.ts"), "utf8");
+  const descriptorSource = readTextFile(path.join(repoRoot, "src/tools.ts"), "src/tools.ts");
   const expectedFiles = expectedUiResourceFiles();
   const actualFiles = listUiResourceFiles(repoRoot);
   if (!sameJson(actualFiles, expectedFiles)) drift.push(`${UI_RESOURCE_DIRECTORY} file inventory`);
@@ -1141,7 +1144,7 @@ export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRe
       drift.push(`${name} current HTML file`);
       continue;
     }
-    const html = readFileSync(sourceFile, "utf8");
+    const html = readTextFile(sourceFile, `UI resource ${name}`);
     if (uiResourceDigest(expected.hashAlgorithm, html, entry.metadata) !== entry.digest) {
       drift.push(`${name} current HTML digest`);
     }
@@ -1361,7 +1364,7 @@ function validateSchemaFingerprint(value, label) {
 
 function readJson(file) {
   try {
-    return JSON.parse(readFileSync(file, "utf8"));
+    return parseJsonUtf8Strict(readFileSync(file), path.basename(file));
   } catch (error) {
     throw new Error(`Could not read ${path.basename(file)}: ${errorMessage(error)}`);
   }
@@ -1374,14 +1377,14 @@ function renderUiResources(repoRoot) {
     stdout = execFileSync(
       process.execPath,
       ["--import", "tsx", script],
-      { cwd: repoRoot, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }
+      { cwd: repoRoot, maxBuffer: 10 * 1024 * 1024 }
     );
   } catch (error) {
     throw new Error(`Could not render final UI resources: ${errorMessage(error)}`);
   }
   let rendered;
   try {
-    rendered = JSON.parse(stdout);
+    rendered = parseJsonUtf8Strict(stdout, "UI resource renderer output");
   } catch (error) {
     throw new Error(`UI resource renderer returned invalid JSON: ${errorMessage(error)}`);
   }
@@ -1479,11 +1482,15 @@ function writeJsonAtomically(file, value) {
 
 function writeTextAtomically(file, value) {
   mkdirSync(path.dirname(file), { recursive: true });
-  if (existsSync(file) && readFileSync(file, "utf8") === value) return;
+  if (existsSync(file) && readTextFile(file, path.basename(file)) === value) return;
   const temporary = `${file}.tmp-${process.pid}`;
   const mode = existsSync(file) ? statSync(file).mode & 0o777 : 0o644;
   writeFileSync(temporary, value, { mode });
   renameSync(temporary, file);
+}
+
+function readTextFile(file, field = path.basename(file)) {
+  return decodeUtf8Strict(readFileSync(file), field);
 }
 
 function sameJson(left, right) {

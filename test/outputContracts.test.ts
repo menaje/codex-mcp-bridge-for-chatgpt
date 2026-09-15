@@ -439,6 +439,9 @@ describe("model-visible output contracts", () => {
     }
     expect(() => project({ retained: true, droppedByJson: undefined }))
       .toThrow(/\$\.droppedByJson: property was omitted/);
+    expect(() => project(String.fromCharCode(0xd800))).toThrow(/unpaired Unicode surrogate/i);
+    expect(() => boundedUtf8Text(String.fromCharCode(0xd800), 32))
+      .toThrow(/unpaired Unicode surrogate/i);
   });
 
   it("keeps MCP metadata protocol-owned and fails closed on private metadata collisions", () => {

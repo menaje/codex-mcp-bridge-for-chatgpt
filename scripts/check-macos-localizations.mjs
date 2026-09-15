@@ -1,32 +1,26 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { decodeUtf8Strict, parseJsonUtf8Strict } from "./text-integrity.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const catalogPath = path.join(
   repositoryRoot,
   "macos/Resources/Localization/Localizable.xcstrings"
 );
-const swiftLocalizationPath = path.join(
-  repositoryRoot,
-  "macos/Sources/CodexBridgeMenuBar/AppLocalization.swift"
-);
+const sourceCatalogPath = path.join(repositoryRoot, "locales/catalog.json");
 const swiftSourcesPath = path.join(
   repositoryRoot,
   "macos/Sources/CodexBridgeMenuBar"
 );
-const typescriptLocalizationPath = path.join(repositoryRoot, "src/uiI18n.ts");
 const infoPlistPath = path.join(repositoryRoot, "macos/Info.plist");
-const expectedLocales = ["en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"];
-const translatedLocales = expectedLocales.filter((locale) => locale !== "ko");
 const errors = [];
+const semanticKeyPattern = /^(?:[a-z][A-Za-z0-9-]*)(?:\.[a-z][A-Za-z0-9-]*)+$/;
 
 function readJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
-}
-
-function quotedStrings(source) {
-  return [...source.matchAll(/"([^"\\]*(?:\\.[^"\\]*)*)"/g)].map((match) =>
-    JSON.parse(`"${match[1]}"`)
+  return parseJsonUtf8Strict(
+    fs.readFileSync(filePath),
+    `JSON file ${path.relative(repositoryRoot, filePath)}`
   );
 }
 
@@ -34,22 +28,9 @@ function simpleQuotedStrings(source) {
   return [...source.matchAll(/"([^"\\\r\n]*)"/g)].map((match) => match[1]);
 }
 
-function arrayAfter(source, marker, terminator) {
-  const start = source.indexOf(marker);
-  if (start < 0) return [];
-  const end = source.indexOf(terminator, start + marker.length);
-  if (end < 0) return [];
-  return quotedStrings(source.slice(start + marker.length, end));
-}
-
-function sameValues(left, right) {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
 function placeholderSignature(value) {
-  const matches = value.match(/%(?:\d+\$)?(?:ll|l)?[@diuoxXfFeEgGaAcCsSp]/g) ?? [];
-  return matches
-    .map((placeholder) => placeholder.replace(/^%\d+\$/, "%"))
+  return [...value.matchAll(/%(?:(\d+)\$)?(?:ll|l)?([@diuoxXfFeEgGaAcCsSp])/g)]
+    .map((match, index) => `${match[1] || String(index + 1)}:${match[2]}`)
     .sort()
     .join(",");
 }
@@ -64,32 +45,57 @@ function walkSwiftFiles(directory) {
   return files;
 }
 
+function nativeCatalogStrings(sourceCatalog) {
+  const locales = Array.isArray(sourceCatalog.locales) ? sourceCatalog.locales : [];
+  const shared = Object.fromEntries(
+    Object.keys(sourceCatalog.ui?.translations?.[sourceCatalog.defaultLocale] || {}).map((key) => [
+      key,
+      {
+        localizations: Object.fromEntries(locales.map(({ id }) => [id, {
+          stringUnit: {
+            state: "translated",
+            value: sourceCatalog.ui.translations[id][key]
+          }
+        }]))
+      }
+    ])
+  );
+  return { ...shared, ...(sourceCatalog.macos?.strings || {}) };
+}
+
+const sourceCatalog = readJson(sourceCatalogPath);
+const expectedNativeStrings = nativeCatalogStrings(sourceCatalog);
+const expectedLocales = Array.isArray(sourceCatalog.locales)
+  ? sourceCatalog.locales.map((entry) => entry?.id).filter((entry) => typeof entry === "string")
+  : [];
+const sourceLanguage = sourceCatalog.macos?.sourceLanguage;
+const translatedLocales = expectedLocales.filter((locale) => locale !== sourceLanguage);
+if (!expectedLocales.length || new Set(expectedLocales).size !== expectedLocales.length) {
+  errors.push("locales/catalog.json must define unique supported locale identifiers.");
+}
+if (sourceCatalog.defaultLocale !== "en") {
+  errors.push(`locales/catalog.json defaultLocale must be en, found ${sourceCatalog.defaultLocale ?? "missing"}.`);
+}
+if (sourceLanguage !== "ko") {
+  errors.push(`locales/catalog.json macOS source language must be ko, found ${sourceLanguage ?? "missing"}.`);
+}
+
 const catalog = readJson(catalogPath);
-if (catalog.sourceLanguage !== "ko") {
-  errors.push(`Localizable.xcstrings sourceLanguage must be ko, found ${catalog.sourceLanguage ?? "missing"}.`);
+if (catalog.sourceLanguage !== sourceLanguage) {
+  errors.push(
+    `Localizable.xcstrings sourceLanguage differs from locales/catalog.json: ${catalog.sourceLanguage ?? "missing"}.`
+  );
+}
+const actualKeys = Object.keys(catalog.strings ?? {}).sort();
+const expectedKeys = Object.keys(expectedNativeStrings).sort();
+if (actualKeys.length !== expectedKeys.length || actualKeys.some((key, index) => key !== expectedKeys[index])) {
+  errors.push("Localizable.xcstrings keys differ from the generated union of shared UI and native-only catalog keys.");
 }
 
-const typescriptSource = fs.readFileSync(typescriptLocalizationPath, "utf8");
-const typescriptLocales = arrayAfter(
-  typescriptSource,
-  "export const SUPPORTED_UI_LOCALES = [",
-  "] as const;"
+const infoPlistSource = decodeUtf8Strict(
+  fs.readFileSync(infoPlistPath),
+  "macOS Info.plist"
 );
-if (!sameValues(typescriptLocales, expectedLocales)) {
-  errors.push(`src/uiI18n.ts locale order differs: ${typescriptLocales.join(", ")}.`);
-}
-
-const swiftLocalizationSource = fs.readFileSync(swiftLocalizationPath, "utf8");
-const swiftLocales = arrayAfter(
-  swiftLocalizationSource,
-  "static let supportedLanguageCodes = [",
-  "]"
-);
-if (!sameValues(swiftLocales, expectedLocales)) {
-  errors.push(`AppLocalization.swift locale order differs: ${swiftLocales.join(", ")}.`);
-}
-
-const infoPlistSource = fs.readFileSync(infoPlistPath, "utf8");
 const plistLocaleMatch = infoPlistSource.match(
   /<key>CFBundleLocalizations<\/key>\s*<array>([\s\S]*?)<\/array>/
 );
@@ -107,7 +113,19 @@ if (!/<key>CFBundleDevelopmentRegion<\/key>\s*<string>en<\/string>/.test(infoPli
 }
 
 for (const [key, entry] of Object.entries(catalog.strings ?? {})) {
-  const sourceSignature = placeholderSignature(key);
+  if (!semanticKeyPattern.test(key)) {
+    errors.push(`Native localization key is not semantic: ${JSON.stringify(key)}.`);
+  }
+  const sourceUnit = entry.localizations?.[sourceLanguage]?.stringUnit;
+  if (!sourceUnit || sourceUnit.state !== "translated" ||
+    typeof sourceUnit.value !== "string" || !sourceUnit.value.trim()) {
+    errors.push(`The source-language value is missing for ${JSON.stringify(key)}.`);
+  }
+  const sourceSignature = placeholderSignature(sourceUnit?.value || "");
+  const expectedEntry = expectedNativeStrings[key];
+  if (!expectedEntry) {
+    errors.push(`Generated native catalog has an unexpected key: ${JSON.stringify(key)}.`);
+  }
   for (const locale of translatedLocales) {
     const unit = entry.localizations?.[locale]?.stringUnit;
     if (!unit || unit.state !== "translated" || typeof unit.value !== "string" || !unit.value.trim()) {
@@ -124,6 +142,52 @@ for (const [key, entry] of Object.entries(catalog.strings ?? {})) {
           `${sourceSignature || "none"} != ${translatedSignature || "none"}.`
       );
     }
+    const expectedValue = expectedEntry?.localizations?.[locale]?.stringUnit?.value;
+    if (typeof expectedValue !== "string" || unit.value !== expectedValue) {
+      errors.push(`${locale} differs from locales/catalog.json for ${JSON.stringify(key)}.`);
+    }
+  }
+  const expectedSource = expectedEntry?.localizations?.[sourceLanguage]?.stringUnit?.value;
+  if (typeof expectedSource !== "string" || sourceUnit?.value !== expectedSource) {
+    errors.push(`${sourceLanguage} differs from locales/catalog.json for ${JSON.stringify(key)}.`);
+  }
+}
+
+const compiledDirectoryFlag = process.argv.indexOf("--compiled-directory");
+if (compiledDirectoryFlag >= 0) {
+  const compiledDirectoryArgument = process.argv[compiledDirectoryFlag + 1];
+  if (!compiledDirectoryArgument) {
+    errors.push("--compiled-directory requires a path.");
+  } else {
+    const compiledDirectory = path.resolve(compiledDirectoryArgument);
+    for (const locale of expectedLocales) {
+      const localizationFile = path.join(compiledDirectory, `${locale}.lproj`, "Localizable.strings");
+      if (!fs.existsSync(localizationFile)) {
+        errors.push(`Compiled localization is missing ${locale}.lproj/Localizable.strings.`);
+        continue;
+      }
+      let compiled;
+      try {
+        compiled = parseJsonUtf8Strict(execFileSync(
+          "plutil",
+          ["-convert", "json", "-o", "-", localizationFile],
+          { encoding: "buffer" }
+        ), `compiled ${locale} localization`);
+      } catch (error) {
+        errors.push(`Could not read compiled ${locale} localization: ${String(error)}.`);
+        continue;
+      }
+      for (const key of Object.keys(catalog.strings ?? {})) {
+        if (typeof compiled[key] !== "string" || !compiled[key].trim()) {
+          errors.push(`Compiled ${locale} localization is missing ${JSON.stringify(key)}.`);
+          continue;
+        }
+        const expectedValue = expectedNativeStrings[key]?.localizations?.[locale]?.stringUnit?.value;
+        if (typeof expectedValue !== "string" || compiled[key] !== expectedValue) {
+          errors.push(`Compiled ${locale} localization differs from locales/catalog.json for ${JSON.stringify(key)}.`);
+        }
+      }
+    }
   }
 }
 
@@ -135,7 +199,10 @@ const allowedUncataloguedKoreanLiterals = new Set([
   "한국어"
 ]);
 for (const swiftFile of walkSwiftFiles(swiftSourcesPath)) {
-  const source = fs.readFileSync(swiftFile, "utf8");
+  const source = decodeUtf8Strict(
+    fs.readFileSync(swiftFile),
+    `Swift source ${path.relative(repositoryRoot, swiftFile)}`
+  );
   for (const match of source.matchAll(helperPattern)) {
     let key;
     try {

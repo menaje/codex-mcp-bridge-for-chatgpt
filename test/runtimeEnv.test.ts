@@ -83,6 +83,21 @@ describe("runtime environment", () => {
     expect(process.env.CONTROL_PLANE_TUNNEL_ID).toBe("tunnel_ffffffffffffffffffffffffffffffff");
   });
 
+  it("rejects malformed UTF-8 before any dotenv value can mutate the environment", () => {
+    const root = temporaryDirectory();
+    const file = path.join(root, ".env");
+    writeFileSync(file, Buffer.concat([
+      Buffer.from("APP_ALLOWED_TEST=must-not-load\\n", "utf8"),
+      Buffer.from([0xc3, 0x28])
+    ]), { mode: 0o600 });
+    delete process.env.APP_ALLOWED_TEST;
+
+    expect(() => loadRuntimeEnvFile(file, {
+      allowedKey: (key: string) => key === "APP_ALLOWED_TEST"
+    })).toThrow(/valid UTF-8/i);
+    expect(process.env.APP_ALLOWED_TEST).toBeUndefined();
+  });
+
   it("can load only an app-managed allowlist while preserving the file", () => {
     const root = temporaryDirectory();
     const file = path.join(root, ".env");

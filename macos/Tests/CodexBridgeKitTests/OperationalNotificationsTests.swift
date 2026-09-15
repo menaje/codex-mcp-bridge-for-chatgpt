@@ -234,7 +234,11 @@ final class OperationalNotificationsTests: XCTestCase {
         XCTAssertEqual(OperationalProblem.remoteError(RemoteCompanionError.incompatibleProtocol), .compatibility)
         for problem in OperationalProblem.allCases {
             let content = SystemOperationalNotificationDelivery.content(problem: problem, scope: scope, locale: Locale(identifier: "ko"))
-            XCTAssertEqual(content.body, problem.messageKey)
+            XCTAssertEqual(
+                content.body,
+                BridgeAppLocalization.string(problem.messageKey, locale: Locale(identifier: "en"))
+            )
+            XCTAssertNotEqual(content.body, problem.messageKey)
             XCTAssertFalse(content.body.contains(secret))
             XCTAssertEqual(Set(content.userInfo.keys.compactMap { $0 as? String }), ["problem", "scope"])
             XCTAssertEqual(content.interruptionLevel, .active)
@@ -248,8 +252,8 @@ final class OperationalNotificationsTests: XCTestCase {
 
     func testCompletionNotificationContentIsGenericAndContainsNoTaskData() {
         let content = SystemOperationalNotificationDelivery.completionContent(locale: Locale(identifier: "ko"))
-        XCTAssertEqual(content.title, "Codex 작업이 완료되었습니다.")
-        XCTAssertEqual(content.body, "메뉴 막대 앱에서 현황과 결과를 확인하세요.")
+        XCTAssertEqual(content.title, "Codex work is complete.")
+        XCTAssertEqual(content.body, "Check status and results in the menu-bar app.")
         XCTAssertEqual(content.threadIdentifier, "bridge-completions")
         XCTAssertEqual(content.userInfo["notificationKind"] as? String, "completion")
         XCTAssertEqual(Set(content.userInfo.keys.compactMap { $0 as? String }), ["notificationKind"])

@@ -20,11 +20,11 @@ final class WorkHistoryPresentationTests: XCTestCase {
         let endedText = DashboardTimePresentation.text(turn: ended, fallbackUpdatedAt: ended.updatedAt, locale: locale, now: now)
         XCTAssertTrue(endedText.contains(DisplayFormat.duration(120_000, locale: locale)))
         XCTAssertTrue(endedText.contains(DisplayFormat.relative(ended.endedAt!, relativeTo: now, locale: locale)))
-        XCTAssertFalse(endedText.contains(BridgeAppLocalization.format("시작 %@", locale: locale,
+        XCTAssertFalse(endedText.contains(BridgeAppLocalization.format("macos.started", locale: locale,
             DisplayFormat.relative(ended.endedAt!, relativeTo: now, locale: locale))))
         let missing = try turn(#"{"status":"failed","updatedAt":"2026-09-01T01:00:00Z","durationMs":null}"#)
         let missingText = DashboardTimePresentation.text(turn: missing, fallbackUpdatedAt: missing.updatedAt, locale: locale, now: now)
-        XCTAssertTrue(missingText.contains(BridgeAppLocalization.string("작업시간 확인 불가", locale: locale)))
+        XCTAssertTrue(missingText.contains(BridgeAppLocalization.string("dashboard.time.durationUnknown", locale: locale)))
         XCTAssertFalse(missingText.contains(DisplayFormat.duration(0, locale: locale)))
 
         let fallbackRunning = DashboardTimePresentation.text(

@@ -280,7 +280,7 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
 
             try clickToolbarButton(
                 in: window,
-                matching: BridgeAppLocalization.string("버전과 정보", locale: Locale(identifier: "ko"))
+                matching: BridgeAppLocalization.string("macos.skills.versionsAndInfo", locale: Locale(identifier: "ko"))
             )
             try await waitUntil("visible inspector") {
                 defaults.bool(forKey: "SkillsLibraryShowsInspectorV2")
@@ -319,7 +319,7 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
             }
             try clickToolbarButton(
                 in: window,
-                matching: BridgeAppLocalization.string("버전과 정보", locale: Locale(identifier: "ko"))
+                matching: BridgeAppLocalization.string("macos.skills.versionsAndInfo", locale: Locale(identifier: "ko"))
             )
             try await waitUntil("hidden inspector") {
                 !defaults.bool(forKey: "SkillsLibraryShowsInspectorV2")
@@ -395,7 +395,7 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
                 contentRect: NSRect(x: 0, y: 0, width: 680, height: 720),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false
             )
-            reviewWindow.title = BridgeAppLocalization.string("가져오기 검토", locale: Locale(identifier: "ko"))
+            reviewWindow.title = BridgeAppLocalization.string("macos.skills.reviewImport", locale: Locale(identifier: "ko"))
             reviewWindow.appearance = NSAppearance(named: .aqua)
             reviewWindow.contentViewController = NSHostingController(
                 rootView: BridgeSkillImportReviewSheet(review: review, currentSkill: nil) { _ in }
@@ -512,7 +512,7 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
 
     private func setAppearance(_ window: NSWindow, locale: String, dark: Bool, size: NSSize) {
         model.previewInterfaceLocale(locale)
-        window.title = BridgeAppLocalization.string("스킬 라이브러리", locale: Locale(identifier: locale))
+        window.title = BridgeAppLocalization.string("macos.skilllibrary", locale: Locale(identifier: locale))
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         window.setContentSize(size)
         window.layoutIfNeeded()

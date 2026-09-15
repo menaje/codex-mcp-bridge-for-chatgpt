@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { parseJsonUtf8Strict } from "./text-integrity.mjs";
 
 export const UI_RELEASE_CATALOG_FILENAME = "ui-release-catalog.json";
 export const UI_RESOURCE_NAMES = Object.freeze(["settings", "dashboard"]);
@@ -14,7 +15,7 @@ export function loadUiReleaseCatalog(repoRoot) {
   const file = path.join(repoRoot, UI_RELEASE_CATALOG_FILENAME);
   let value;
   try {
-    value = JSON.parse(readFileSync(file, "utf8"));
+    value = parseJsonUtf8Strict(readFileSync(file), UI_RELEASE_CATALOG_FILENAME);
   } catch (error) {
     throw new Error(`Could not read ${UI_RELEASE_CATALOG_FILENAME}: ${errorMessage(error)}`);
   }

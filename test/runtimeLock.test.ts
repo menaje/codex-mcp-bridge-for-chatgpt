@@ -71,6 +71,15 @@ describe("runtime ownership lock", () => {
 
     expect(() => readRuntimeLockOwner(lockPath)).toThrow("metadata is invalid");
   });
+
+  it("rejects malformed UTF-8 lock metadata", () => {
+    const root = temporaryDirectory();
+    const lockPath = path.join(root, "run", "launcher.lock");
+    mkdirSync(lockPath, { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(lockPath, "owner.json"), Buffer.from([0xff]), { mode: 0o600 });
+
+    expect(() => readRuntimeLockOwner(lockPath)).toThrow(/valid UTF-8/i);
+  });
 });
 
 function temporaryDirectory(): string {

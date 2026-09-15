@@ -26,6 +26,12 @@ import type {
   BridgeSettingsMutationInput
 } from "./tools.js";
 import { localizeSettingsView } from "./settingsLocalization.js";
+import {
+  assertJsonTextIntegrity,
+  decodeUtf8Strict,
+  hasAtMostUnicodeScalars,
+  parseJsonTextStrict,
+} from "./textIntegrity.js";
 
 export const COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-companion";
 /** v8 adds immutable Markdown file trees and path-based file reads. */
@@ -108,6 +114,18 @@ const bridgeSkillReferenceSchema = z.strictObject({
 });
 const bridgeSkillMutationRequestIdSchema = z.string().uuid();
 const bridgeSkillFilePathSchema = z.string().min(1).max(BRIDGE_SKILL_LIMITS.filePathMaxBytes);
+// Zod's string max counts UTF-16 code units. Keep the absolute two-unit-per-
+// scalar transport ceiling, then enforce the shared Node/Swift scalar policy.
+const bridgeSkillNameSchema = z.string().min(1)
+  .max(BRIDGE_SKILL_LIMITS.nameMaxCharacters * 2)
+  .refine((value) => hasAtMostUnicodeScalars(
+    value, BRIDGE_SKILL_LIMITS.nameMaxCharacters, "Bridge skill name"
+  ));
+const bridgeSkillDescriptionSchema = z.string()
+  .max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters * 2)
+  .refine((value) => hasAtMostUnicodeScalars(
+    value, BRIDGE_SKILL_LIMITS.descriptionMaxCharacters, "Bridge skill description"
+  ));
 const bridgeSkillFileSchema = z.strictObject({
   path: bridgeSkillFilePathSchema,
   content: z.string().max(BRIDGE_SKILL_LIMITS.fileMaxBytes)
@@ -121,8 +139,8 @@ const bridgeSkillVersionsParamsSchema = z.strictObject({
 });
 const bridgeSkillCreateParamsSchema = z.strictObject({
   requestId: bridgeSkillMutationRequestIdSchema,
-  name: z.string().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters),
-  description: z.string().max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).optional(),
+  name: bridgeSkillNameSchema,
+  description: bridgeSkillDescriptionSchema.optional(),
   document: z.string().min(1).max(BRIDGE_SKILL_LIMITS.documentMaxBytes)
     .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.documentMaxBytes, {
       message: `Skill document must be at most ${BRIDGE_SKILL_LIMITS.documentMaxBytes} UTF-8 bytes.`
@@ -134,8 +152,8 @@ const bridgeSkillUpdateParamsSchema = z.strictObject({
   requestId: bridgeSkillMutationRequestIdSchema,
   skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
   expectedVersion: z.string().regex(/^[1-9]\d*$/),
-  name: z.string().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters).optional(),
-  description: z.string().max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).optional(),
+  name: bridgeSkillNameSchema.optional(),
+  description: bridgeSkillDescriptionSchema.optional(),
   document: z.string().min(1).max(BRIDGE_SKILL_LIMITS.documentMaxBytes)
     .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.documentMaxBytes, {
       message: `Skill document must be at most ${BRIDGE_SKILL_LIMITS.documentMaxBytes} UTF-8 bytes.`
@@ -165,7 +183,7 @@ const bridgeSkillDeleteParamsSchema = z.strictObject({
   requestId: bridgeSkillMutationRequestIdSchema,
   skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
   expectedVersion: z.string().regex(/^[1-9]\d*$/),
-  confirmName: z.string().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters)
+  confirmName: bridgeSkillNameSchema
 });
 const bridgeSkillPackageUploadParamsSchema = z.strictObject({ uploadId: z.string().uuid() });
 const bridgeSkillPackageChunkParamsSchema = bridgeSkillPackageUploadParamsSchema.extend({
@@ -174,8 +192,8 @@ const bridgeSkillPackageChunkParamsSchema = bridgeSkillPackageUploadParamsSchema
 });
 const bridgeSkillPackageCreateParamsSchema = z.strictObject({
   requestId: bridgeSkillMutationRequestIdSchema,
-  name: z.string().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters),
-  description: z.string().max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).optional(),
+  name: bridgeSkillNameSchema,
+  description: bridgeSkillDescriptionSchema.optional(),
   uploadId: z.string().uuid(),
   mainPath: bridgeSkillFilePathSchema,
   includePaths: z.array(bridgeSkillFilePathSchema).min(1).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
@@ -366,27 +384,31 @@ export async function startPrivateJsonLineServer(
 }
 
 function serveClient(socket: Socket, options: PrivateJsonLineServerOptions): void {
-  socket.setEncoding("utf8");
-  let buffer = "";
-  let bufferedBytes = 0;
+  let buffer = Buffer.alloc(0);
   let requestQueue = Promise.resolve();
   const cancellation = new AbortController();
   socket.once("close", () => cancellation.abort());
 
-  socket.on("data", (chunk: string) => {
-    buffer += chunk;
-    bufferedBytes += Buffer.byteLength(chunk, "utf8");
-    if (bufferedBytes > options.maxRequestBytes) {
+  socket.on("data", (chunk: Buffer) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    if (buffer.length > options.maxRequestBytes) {
       writeResponse(socket, options.requestTooLarge(), options.maxResponseBytes);
       socket.destroy();
       return;
     }
     while (true) {
-      const newline = buffer.indexOf("\n");
+      const newline = buffer.indexOf(0x0a);
       if (newline < 0) break;
-      const line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
-      bufferedBytes -= Buffer.byteLength(line, "utf8") + 1;
+      const lineBytes = buffer.subarray(0, newline);
+      buffer = buffer.subarray(newline + 1);
+      let line: string;
+      try {
+        line = decodeUtf8Strict(lineBytes, "Companion request");
+      } catch (error) {
+        writeResponse(socket, options.internalError(error), options.maxResponseBytes);
+        socket.destroy();
+        return;
+      }
       if (!line.trim()) continue;
       requestQueue = requestQueue
         .then(() => {
@@ -411,7 +433,7 @@ async function dispatchLine(
 ): Promise<Record<string, unknown>> {
   let decoded: unknown;
   try {
-    decoded = JSON.parse(line);
+    decoded = parseJsonTextStrict(line, "Companion request");
   } catch {
     return errorResponse(null, -32700, "Invalid JSON.");
   }
@@ -544,10 +566,9 @@ async function dispatchRequest(
       return localizeSettingsView(view, params.locale);
     }
     case "settings.update": {
-      const view = await applicationService.updateSettings(
-        request.params as BridgeSettingsMutationInput
-      );
-      return localizeSettingsView(view);
+      const { mutation, locale } = splitSettingsMutationPresentation(request.params);
+      const view = await applicationService.updateSettings(mutation);
+      return localizeSettingsView(view, locale);
     }
     case "skills.snapshot":
       emptyParamsSchema.parse(request.params || {});
@@ -669,6 +690,31 @@ async function dispatchRequest(
   }
 }
 
+/**
+ * `locale` is presentation-only companion metadata. It must never be handed
+ * to the strict, shared settings mutation contract or persisted as a bridge
+ * setting. Keeping this adapter at the transport boundary also lets older
+ * native clients omit it without changing their mutation shape.
+ */
+function splitSettingsMutationPresentation(input: unknown): {
+  mutation: BridgeSettingsMutationInput;
+  locale?: string;
+} {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("Invalid settings mutation.");
+  }
+  const record = input as Record<string, unknown>;
+  const locale = record.locale;
+  if (locale !== undefined && (typeof locale !== "string" || !locale.trim() || locale.length > 100)) {
+    throw new Error("Invalid settings presentation locale.");
+  }
+  const { locale: _presentationLocale, ...mutation } = record;
+  return {
+    mutation: mutation as BridgeSettingsMutationInput,
+    ...(typeof locale === "string" ? { locale } : {})
+  };
+}
+
 function requireRemoteManagement(
   controller: RemoteCompanionControl | undefined
 ): RemoteCompanionControl {
@@ -726,7 +772,13 @@ function writeResponse(
   maxResponseBytes: number
 ): void {
   if (socket.destroyed || !socket.writable) return;
-  let serialized = JSON.stringify(response);
+  let serialized: string;
+  try {
+    assertJsonTextIntegrity(response, "Companion response");
+    serialized = JSON.stringify(response);
+  } catch {
+    serialized = JSON.stringify(errorResponse(null, -32603, "Companion response has invalid Unicode text."));
+  }
   if (Buffer.byteLength(serialized, "utf8") > maxResponseBytes) {
     serialized = JSON.stringify(
       errorResponse(response.id as JsonRpcId, -32603, "Companion response is too large.")

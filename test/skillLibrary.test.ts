@@ -95,6 +95,31 @@ describe("SkillLibrary", () => {
     expect(file.contentDigest).toBe(sha256(file.content));
   });
 
+  it("round-trips a decomposed Unicode path while using an NFC case-folded collision key", async () => {
+    const library = await createLibrary();
+    const decomposedPath = "references/Cafe\u0301.md";
+    const created = await library.createBridgeSkill({
+      requestId: randomUUID(),
+      name: "Verbatim path",
+      document: "# Main",
+      files: [{ path: decomposedPath, content: "exact path" }]
+    });
+
+    expect((await library.read({ reference: created })).files[0]?.path).toBe(decomposedPath);
+    expect((await library.readFile({ reference: created, path: decomposedPath })).path).toBe(decomposedPath);
+    await expect(library.updateBridgeSkill({
+      requestId: randomUUID(),
+      skillId: created.skillId,
+      expectedVersion: created.version,
+      files: {
+        upsert: [
+          { path: decomposedPath, content: "one" },
+          { path: "references/Caf\u00e9.md", content: "two" }
+        ]
+      }
+    })).rejects.toThrow("SKILL_FILE_PATH_CONFLICT");
+  });
+
   it("applies file changes atomically, keeps history immutable, and restores the whole tree", async () => {
     const library = await createLibrary();
     const first = await library.createBridgeSkill({
@@ -162,7 +187,7 @@ describe("SkillLibrary", () => {
     })).rejects.toThrow("SKILL_FILE_PATH_CONFLICT");
     await expect(library.createBridgeSkill({
       ...base, requestId: randomUUID(), files: [{ path: "bad.md", content: "\ud800" }]
-    })).rejects.toThrow("invalid Unicode scalar");
+    })).rejects.toThrow("SKILL_FILE_INVALID");
   });
 
   it("rejects a persisted index that is not strict UTF-8", async () => {

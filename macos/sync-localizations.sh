@@ -4,7 +4,7 @@ set -euo pipefail
 script_directory="$(cd "$(dirname "$0")" && pwd)"
 repository_root="$(cd "$script_directory/.." && pwd)"
 localization_sync_directory="$(mktemp -d /tmp/codex-bridge-localization-sync.XXXXXX)"
-catalog="$script_directory/Resources/Localization/Localizable.xcstrings"
+extracted_catalog="$localization_sync_directory/Localizable.xcstrings"
 
 cleanup() {
   rm -rf "$localization_sync_directory"
@@ -23,8 +23,10 @@ if [[ ! -e "${stringsdata_files[0]}" ]]; then
   exit 1
 fi
 
-xcrun xcstringstool sync "$catalog" \
+cp "$script_directory/Resources/Localization/Localizable.xcstrings" "$extracted_catalog"
+xcrun xcstringstool sync "$extracted_catalog" \
   --stringsdata "${stringsdata_files[@]}" \
   --skip-marking-strings-stale
+node scripts/check-macos-localizations.mjs --extracted-catalog "$extracted_catalog"
 
-echo "Updated $catalog from Swift source. Add translations for new entries, then run npm run macos:localizations:check."
+echo "The String Catalog is generated from locales/catalog.json and was not edited. Add any reported source keys to locales/catalog.json, then run npm run localization:generate."

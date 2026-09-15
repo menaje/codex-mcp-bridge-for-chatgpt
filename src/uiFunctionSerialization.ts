@@ -79,6 +79,9 @@ function canonicalizeTranspilerSyntax(source: string): string {
     .replace(/\bmessage2\b/g, "message")
     // tsc prints empty constructor calls that the source runner omits.
     .replace(/\bnew\s+([A-Za-z_$][\w$]*)\(\)/g, "new $1")
+    // The source runner spells an undefined return as `void 0`; tsc retains
+    // the source spelling. Both are safe in standalone browser resources.
+    .replace(/\bvoid\s+0\b/g, "undefined")
     // tsc wraps a single arrow parameter; both forms have the same meaning.
     .replace(/\(([A-Za-z_$][\w$]*)\)=>/g, "$1=>")
     // tsc adds semicolons before a closing block or expression.

@@ -65,9 +65,9 @@ private enum SkillLibraryScope: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: LocalizedStringKey {
         switch self {
-        case .all: "모든 스킬"
-        case .active: "활성"
-        case .archived: "보관됨"
+        case .all: "macos.skills.allSkills"
+        case .active: "macos.skills.active"
+        case .archived: "macos.skills.archived"
         }
     }
 }
@@ -87,8 +87,7 @@ func resolveBridgeSkillMarkdownNavigationTarget(
     currentFilePath: String?,
     availableFilePaths: [String]
 ) -> BridgeSkillMarkdownNavigationTarget? {
-    let decoded = (linkPath.removingPercentEncoding ?? linkPath)
-        .precomposedStringWithCanonicalMapping
+    let decoded = linkPath.removingPercentEncoding ?? linkPath
     guard !decoded.isEmpty,
           !decoded.hasPrefix("/"),
           !decoded.contains("\\"),
@@ -96,7 +95,6 @@ func resolveBridgeSkillMarkdownNavigationTarget(
           !decoded.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { return nil }
 
     var segments = currentFilePath?
-        .precomposedStringWithCanonicalMapping
         .split(separator: "/", omittingEmptySubsequences: false)
         .dropLast()
         .map(String.init) ?? []
@@ -112,14 +110,18 @@ func resolveBridgeSkillMarkdownNavigationTarget(
     }
 
     let resolvedPath = segments.joined(separator: "/")
-    let comparisonKey: (String) -> String = {
-        $0.precomposedStringWithCanonicalMapping.lowercased(with: Locale(identifier: "en_US"))
-    }
-    if comparisonKey(resolvedPath) == "document.md" { return .main }
+    if bridgeSkillPathComparisonKey(resolvedPath) == "document.md" { return .main }
     guard let storedPath = availableFilePaths.first(where: {
-        comparisonKey($0) == comparisonKey(resolvedPath)
+        bridgeSkillPathComparisonKey($0) == bridgeSkillPathComparisonKey(resolvedPath)
     }) else { return nil }
     return .file(storedPath)
+}
+
+func bridgeSkillPathComparisonKey(_ value: String) -> String {
+    (try? BridgeTextIntegrity.searchKey(
+        value,
+        options: .init(allowEmpty: true, trim: false, collapseWhitespace: false)
+    )) ?? value
 }
 
 enum SkillsLibraryAdaptiveColumns {
@@ -138,9 +140,9 @@ private enum SkillEditorMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: LocalizedStringKey {
         switch self {
-        case .preview: "미리보기"
-        case .edit: "편집"
-        case .split: "나란히 보기"
+        case .preview: "macos.skills.preview"
+        case .edit: "macos.common.editAction"
+        case .split: "macos.skills.sideBySide"
         }
     }
     var symbol: String {
@@ -207,32 +209,32 @@ struct SkillsLibraryWindowView: View {
             detailWithInspector
         }
         .navigationSplitViewStyle(.balanced)
-        .searchable(text: $searchText, placement: .sidebar, prompt: "브리지 스킬 검색")
+        .searchable(text: $searchText, placement: .sidebar, prompt: "macos.skills.searchBridgeSkills")
         .toolbar { libraryToolbar }
         .sheet(item: $sheet) { presentedSheet($0) }
         .confirmationDialog(
-            "저장하지 않은 변경사항을 버릴까요?",
+            "macos.skills.discardUnsavedChanges",
             isPresented: $showsDiscardConfirmation,
             titleVisibility: .visible
         ) {
-            Button("변경사항 버리기", role: .destructive) { discardAndApplyPendingSelection() }
-            Button("취소", role: .cancel) {
+            Button("macos.skills.discardChanges", role: .destructive) { discardAndApplyPendingSelection() }
+            Button("common.cancel", role: .cancel) {
                 pendingSkillID = nil
                 pendingDocumentSelection = nil
                 pendingVersionReference = nil
             }
         } message: {
-            Text("다른 문서로 이동하면 현재 Markdown 편집 내용이 사라집니다.")
+            Text("macos.skills.movingToAnotherDocumentWillDiscardTheCurrentMarkdownEdits")
         }
         .confirmationDialog(
-            "선택한 버전을 새 현재 버전으로 복원할까요?",
+            "macos.restoretheselectedversionasthenewcurrent",
             isPresented: $showsRestoreConfirmation,
             titleVisibility: .visible
         ) {
-            Button("새 버전으로 복원") { restoreSelectedVersion() }
-            Button("취소", role: .cancel) { restoreTarget = nil }
+            Button("macos.restoreasnewversion") { restoreSelectedVersion() }
+            Button("common.cancel", role: .cancel) { restoreTarget = nil }
         } message: {
-            Text("메인 문서와 첨부 파일 트리 전체를 복사해 새 불변 버전을 만듭니다.")
+            Text("macos.skills.thisCopiesTheMainDocumentAndTheEntireAttachmentTreeIntoANewImmutableVersion")
         }
         .task {
             compactInspectorPreviousVisibility = nil
@@ -322,7 +324,7 @@ struct SkillsLibraryWindowView: View {
 
     private var skillSidebar: some View {
         VStack(spacing: 0) {
-            Picker("표시 범위", selection: $scope) {
+            Picker("macos.skills.displayScope", selection: $scope) {
                 ForEach(SkillLibraryScope.allCases) { option in Text(option.title).tag(option) }
             }
             .pickerStyle(.segmented)
@@ -333,11 +335,11 @@ struct SkillsLibraryWindowView: View {
                 let skills = filteredSkills(snapshot.skills)
                 if skills.isEmpty {
                     SkillEmptyState(
-                        title: searchText.isEmpty ? "브리지 스킬이 없습니다" : "검색 결과가 없습니다",
+                        title: searchText.isEmpty ? "macos.skills.noBridgeSkills" : "macos.skills.noSearchResults",
                         symbol: searchText.isEmpty ? "books.vertical" : "magnifyingglass",
                         detail: searchText.isEmpty
-                            ? "새 자유형 Markdown 스킬을 만들거나 파일·폴더·ZIP을 가져오세요."
-                            : "다른 검색어나 표시 범위를 사용해 보세요."
+                            ? "macos.skills.createANewFreeFormMarkdownSkillOrImportFilesAFolderOrAZip"
+                            : "macos.skills.tryAnotherSearchTermOrScope"
                     )
                 } else {
                     List(skills, selection: selectedSkillBinding) { skill in
@@ -346,16 +348,16 @@ struct SkillsLibraryWindowView: View {
                             .contextMenu { skillContextMenu(skill) }
                     }
                     .listStyle(.sidebar)
-                    .accessibilityLabel("브리지 스킬 목록")
+                    .accessibilityLabel("macos.skills.bridgeSkillList")
                 }
             } else if model.bridgeConnected {
-                ProgressView("스킬 라이브러리를 불러오는 중…")
+                ProgressView("macos.loadingskilllibrary")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 SkillEmptyState(
-                    title: "브리지에 연결할 수 없습니다",
+                    title: "macos.skills.cannotConnectToBridge",
                     symbol: "bolt.horizontal.circle",
-                    detail: "연결 상태를 확인한 뒤 다시 시도하세요."
+                    detail: "macos.skills.checkTheConnectionAndTryAgain"
                 )
             }
         }
@@ -365,13 +367,13 @@ struct SkillsLibraryWindowView: View {
         Group {
             if let document = model.selectedBridgeSkill {
                 List(selection: selectedDocumentBinding) {
-                    Section("문서") {
-                        Label("메인 문서", systemImage: "doc.text")
+                    Section("macos.skills.documents") {
+                        Label("macos.skills.mainDocument", systemImage: "doc.text")
                             .tag(SkillDocumentSelection.main)
                             .contextMenu { mainDocumentContextMenu(document) }
                     }
                     if !document.files.isEmpty {
-                        Section("첨부 Markdown") {
+                        Section("macos.skills.attachedMarkdown") {
                             OutlineGroup(SkillFileTree.nodes(for: document.files), children: \.children) { node in
                                 skillFileTreeRow(node, document: document)
                             }
@@ -380,12 +382,12 @@ struct SkillsLibraryWindowView: View {
                 }
                 .listStyle(.inset)
                 .navigationTitle(document.skill.name)
-                .accessibilityLabel("스킬 문서 파일 트리")
+                .accessibilityLabel("macos.skills.skillDocumentFileTree")
             } else {
                 SkillEmptyState(
-                    title: "스킬을 선택하세요",
+                    title: "macos.skills.selectASkill",
                     symbol: "doc.text.magnifyingglass",
-                    detail: "왼쪽 목록에서 관리할 브리지 스킬을 선택하세요."
+                    detail: "macos.skills.selectABridgeSkillToManageFromTheListOnTheLeft"
                 )
             }
         }
@@ -403,7 +405,7 @@ struct SkillsLibraryWindowView: View {
                 }
                 if !isCurrentVersion(document) {
                     SkillStatusBanner(style: .warning, message: BridgeAppLocalization.string(
-                        "과거 불변 버전을 보고 있습니다. 내용을 바꾸려면 버전 이력에서 새 현재 버전으로 복원하세요.",
+                        "macos.skills.youAreViewingAnImmutablePastVersionToChangeItRestoreItAsANewCurrentVersionFromVersionHistory",
                         locale: locale
                     ))
                 }
@@ -414,9 +416,9 @@ struct SkillsLibraryWindowView: View {
             .navigationTitle(selectedDocumentTitle(document))
         } else {
             SkillEmptyState(
-                title: "브리지 스킬 라이브러리",
+                title: "macos.skills.bridgeSkillLibrary",
                 symbol: "books.vertical",
-                detail: "스킬을 선택하거나 새 Markdown 스킬을 만드세요."
+                detail: "macos.skills.selectASkillOrCreateANewMarkdownSkill"
             )
         }
     }
@@ -424,18 +426,22 @@ struct SkillsLibraryWindowView: View {
     private func documentHeader(_ document: BridgeSkillDocument) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(selectedDocumentTitle(document)).font(.headline)
+                Text(verbatim: selectedDocumentTitle(document)).font(.headline)
                 if documentSelection == .main, !document.skill.description.isEmpty {
-                    Text(document.skill.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(verbatim: document.skill.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 } else if case .file(let path) = documentSelection {
-                    Text(path).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text(verbatim: path).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                 }
             }
             Spacer()
-            Text("v\(document.skill.version)")
+            Text(verbatim: "v\(document.skill.version)")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .accessibilityLabel(Text("버전 \(document.skill.version)"))
+                .accessibilityLabel(Text(verbatim: BridgeAppLocalization.format(
+                    "macos.skills.versionValue",
+                    locale: locale,
+                    document.skill.version
+                )))
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -444,13 +450,13 @@ struct SkillsLibraryWindowView: View {
     @ViewBuilder
     private func sourceWorkspace(_ document: BridgeSkillDocument) -> some View {
         if model.bridgeSkillFileLoading {
-            ProgressView("Markdown 파일을 불러오는 중…")
+            ProgressView("macos.skills.loadingMarkdownFile")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if case .file = documentSelection, model.selectedBridgeSkillFile == nil {
             SkillEmptyState(
-                title: "파일을 불러올 수 없습니다",
+                title: "macos.skills.cannotLoadFile",
                 symbol: "doc.badge.ellipsis",
-                detail: "파일을 다시 선택하거나 연결 상태를 확인하세요."
+                detail: "macos.skills.selectTheFileAgainOrCheckTheConnection"
             )
         } else {
             switch editorMode {
@@ -476,9 +482,9 @@ struct SkillsLibraryWindowView: View {
         VStack(spacing: 0) {
             if documentSelection == .main {
                 VStack(spacing: 8) {
-                    TextField("스킬 이름", text: $draftName)
+                    TextField("macos.skills.skillName", text: $draftName)
                         .font(.headline)
-                    TextField("검색용 설명(선택)", text: $draftDescription)
+                    TextField("macos.skills.searchDescriptionOptional", text: $draftDescription)
                         .font(.callout)
                 }
                 .textFieldStyle(.roundedBorder)
@@ -491,7 +497,7 @@ struct SkillsLibraryWindowView: View {
                 .padding(10)
                 .background(Color(nsColor: .textBackgroundColor))
                 .textSelection(.enabled)
-                .accessibilityLabel("선택한 파일 전체 Markdown 원문")
+                .accessibilityLabel("macos.skills.fullMarkdownSourceOfSelectedFile")
         }
     }
 
@@ -499,33 +505,33 @@ struct SkillsLibraryWindowView: View {
     private var libraryToolbar: some ToolbarContent {
         ToolbarItem(placement: .automatic) {
             Menu {
-                Button("새 스킬", systemImage: "doc.badge.plus") { sheet = .newSkill }
-                Button("새 Markdown 파일", systemImage: "doc.badge.plus") { sheet = .newFile }
+                Button("macos.newskill", systemImage: "doc.badge.plus") { sheet = .newSkill }
+                Button("macos.skills.newMarkdownFile", systemImage: "doc.badge.plus") { sheet = .newFile }
                     .disabled(model.selectedBridgeSkill.map { !isCurrentVersion($0) } ?? true)
                 Divider()
-                Button("파일·폴더·ZIP으로 새 스킬 가져오기…", systemImage: "square.and.arrow.down") {
+                Button("macos.skills.importNewSkillFromFilesFolderOrZip", systemImage: "square.and.arrow.down") {
                     presentImportPanel(intoCurrentSkill: false)
                 }
                 if let document = model.selectedBridgeSkill, isCurrentVersion(document) {
-                    Button("현재 스킬로 가져오기…", systemImage: "doc.badge.arrow.up") {
+                    Button("macos.skills.importIntoCurrentSkill", systemImage: "doc.badge.arrow.up") {
                         presentImportPanel(intoCurrentSkill: true)
                     }
                 }
             } label: {
-                Label("추가", systemImage: "plus")
+                Label("macos.add", systemImage: "plus")
             }
-            .help("새 스킬 또는 Markdown 파일 추가")
+            .help("macos.skills.addANewSkillOrMarkdownFile")
             .disabled(windowState.hasUnsavedChanges)
         }
         ToolbarItem(placement: .automatic) {
             Button { presentImportPanel(intoCurrentSkill: false) } label: {
-                Label("새 스킬 가져오기", systemImage: "square.and.arrow.down")
+                Label("macos.skills.importNewSkill", systemImage: "square.and.arrow.down")
             }
-                .help("Markdown 파일, 폴더 또는 ZIP 가져오기")
+                .help("macos.skills.importMarkdownFilesAFolderOrAZip")
                 .disabled(windowState.hasUnsavedChanges)
         }
         ToolbarItem(placement: .primaryAction) {
-            Picker("보기 방식", selection: $editorMode) {
+            Picker("macos.skills.viewMode", selection: $editorMode) {
                 ForEach(SkillEditorMode.allCases) { mode in Label(mode.title, systemImage: mode.symbol).tag(mode) }
             }
             .pickerStyle(.segmented)
@@ -533,7 +539,7 @@ struct SkillsLibraryWindowView: View {
             .disabled(model.selectedBridgeSkill.map { !isCurrentVersion($0) } ?? true)
         }
         ToolbarItem(placement: .primaryAction) {
-            Button("저장", systemImage: "square.and.arrow.down") { saveCurrentDocument() }
+            Button("macos.save", systemImage: "square.and.arrow.down") { saveCurrentDocument() }
                 .disabled(!windowState.hasUnsavedChanges || model.skillMutationInProgress ||
                           model.selectedBridgeSkill.map { !isCurrentVersion($0) } ?? true)
         }
@@ -545,44 +551,48 @@ struct SkillsLibraryWindowView: View {
                         Button {
                             requestVersion(version)
                         } label: {
-                            Label(
-                                "v\(version.version) · \(version.createdAt)",
-                                systemImage: version.version == document.skill.version ? "checkmark" : "doc"
-                            )
+                            Label {
+                                Text(verbatim: "v\(version.version) · \(version.createdAt)")
+                            } icon: {
+                                Image(systemName: version.version == document.skill.version ? "checkmark" : "doc")
+                            }
                         }
                     }
                 } label: {
                     Label {
-                        Text("버전") + Text(verbatim: " v\(document.skill.version)")
+                        Text("macos.skills.version") + Text(verbatim: " v\(document.skill.version)")
                     } icon: {
                         Image(systemName: "clock.arrow.circlepath")
                     }
                 }
-                .help("버전 이력과 메타데이터")
+                .help("macos.skills.versionHistoryAndMetadata")
             }
         }
         ToolbarItem(placement: .primaryAction) {
             if let document = model.selectedBridgeSkill {
-                Button("ZIP으로 내보내기…", systemImage: "square.and.arrow.up") { export(document) }
+                Button("macos.skills.exportAsZip", systemImage: "square.and.arrow.up") { export(document) }
             }
         }
         ToolbarItem(placement: .primaryAction) {
-            Button { setInspectorPresented(!showsInspector) } label: { Label("버전과 정보", systemImage: "sidebar.trailing") }
-                .help("버전 이력과 메타데이터")
+            Button { setInspectorPresented(!showsInspector) } label: { Label("macos.skills.versionsAndInfo", systemImage: "sidebar.trailing") }
+                .help("macos.skills.versionHistoryAndMetadata")
         }
         ToolbarItem(placement: .primaryAction) {
             Menu {
                 if let document = model.selectedBridgeSkill {
-                    Button(document.skill.enabled ? "보관" : "다시 활성화",
+                    Button(BridgeAppLocalization.string(
+                        document.skill.enabled ? "macos.skills.archive" : "macos.skills.reactivate",
+                        locale: locale
+                    ),
                            systemImage: document.skill.enabled ? "archivebox" : "tray.and.arrow.up") {
                         toggleArchived(document)
                     }
                     .disabled(windowState.hasUnsavedChanges)
-                    Button("영구 삭제…", systemImage: "trash", role: .destructive) { sheet = .deleteSkill(document) }
+                    Button("macos.skills.deletePermanentlyDialog", systemImage: "trash", role: .destructive) { sheet = .deleteSkill(document) }
                         .disabled(windowState.hasUnsavedChanges)
                 }
-                Button("새로 고침", systemImage: "arrow.clockwise") { Task { await model.refreshSkillLibrary() } }
-            } label: { Label("추가 작업", systemImage: "ellipsis.circle") }
+                Button("macos.refresh", systemImage: "arrow.clockwise") { Task { await model.refreshSkillLibrary() } }
+            } label: { Label("macos.skills.moreActions", systemImage: "ellipsis.circle") }
             .disabled(model.selectedBridgeSkill == nil && model.skillLibrary == nil)
         }
     }
@@ -590,39 +600,45 @@ struct SkillsLibraryWindowView: View {
     private var versionInspector: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("스킬 정보").font(.headline)
+                Text("macos.skills.skillInfo").font(.headline)
                 if let document = model.selectedBridgeSkill {
-                    LabeledContent("이름", value: document.skill.name)
-                    LabeledContent("버전", value: "v\(document.skill.version)")
-                    LabeledContent("상태", value: document.skill.enabled ? "활성" : "보관됨")
-                    LabeledContent("파일", value: "\(document.files.count + 1)")
+                    LabeledContent("macos.name", value: document.skill.name)
+                    LabeledContent("macos.skills.version", value: "v\(document.skill.version)")
+                    LabeledContent(
+                        "macos.skills.status",
+                        value: BridgeAppLocalization.string(
+                            document.skill.enabled ? "macos.skills.active" : "macos.skills.archived",
+                            locale: locale
+                        )
+                    )
+                    LabeledContent("macos.skills.files", value: "\(document.files.count + 1)")
                     if let digest = document.skill.contentDigest {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("콘텐츠 확인값").font(.caption).foregroundStyle(.secondary)
-                            Text(digest).font(.caption2.monospaced()).textSelection(.enabled)
+                            Text("macos.skills.contentDigest").font(.caption).foregroundStyle(.secondary)
+                            Text(verbatim: digest).font(.caption2.monospaced()).textSelection(.enabled)
                         }
                     }
                     Divider()
-                    Text("버전 이력").font(.headline)
+                    Text("macos.skills.versionHistory").font(.headline)
                     if let versions = model.selectedBridgeSkillVersions?.versions {
                         ForEach(versions) { version in
                             VStack(alignment: .leading, spacing: 5) {
                                 HStack {
-                                    Text("v\(version.version)").font(.body.monospacedDigit().weight(.medium))
+                                    Text(verbatim: "v\(version.version)").font(.body.monospacedDigit().weight(.medium))
                                     if version.version == model.selectedBridgeSkillVersions?.currentVersion {
-                                        Text("현재").font(.caption2).foregroundStyle(.secondary)
+                                        Text("macos.current").font(.caption2).foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    Button("보기") { requestVersion(version) }.buttonStyle(.link)
+                                    Button("macos.skills.view") { requestVersion(version) }.buttonStyle(.link)
                                 }
-                                Text(DisplayFormat.dateTime(version.createdAt, locale: locale))
+                                Text(verbatim: DisplayFormat.dateTime(version.createdAt, locale: locale))
                                     .font(.caption).foregroundStyle(.secondary)
                                 if version.legacy {
-                                    Label("이전 형식", systemImage: "exclamationmark.triangle")
+                                    Label("macos.skills.legacyFormat", systemImage: "exclamationmark.triangle")
                                         .font(.caption).foregroundStyle(.orange)
                                 }
                                 if version.version != model.selectedBridgeSkillVersions?.currentVersion {
-                                    Button("새 현재 버전으로 복원") {
+                                    Button("macos.skills.restoreAsNewCurrentVersion") {
                                         restoreTarget = version
                                         showsRestoreConfirmation = true
                                     }
@@ -635,7 +651,7 @@ struct SkillsLibraryWindowView: View {
                         ProgressView().controlSize(.small)
                     }
                 } else {
-                    Text("스킬을 선택하면 메타데이터와 불변 버전 이력을 볼 수 있습니다.")
+                    Text("macos.skills.selectASkillToViewItsMetadataAndImmutableVersionHistory")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -658,7 +674,7 @@ struct SkillsLibraryWindowView: View {
             NewBridgeSkillFileSheet { path, content in
                 guard let document = model.selectedBridgeSkill else { return }
                 Task { @MainActor in
-                    postMutationDocumentSelection = .file(path.precomposedStringWithCanonicalMapping)
+                    postMutationDocumentSelection = .file(path)
                     if await model.updateBridgeSkill(.init(
                         skillId: document.skill.skillId,
                         expectedVersion: currentExpectedVersion(document),
@@ -719,11 +735,11 @@ struct SkillsLibraryWindowView: View {
     @ViewBuilder
     private func skillFileTreeRow(_ node: SkillFileTree, document: BridgeSkillDocument) -> some View {
         if let path = node.path {
-            Label(node.name, systemImage: "doc.text")
+            Label { Text(verbatim: node.name) } icon: { Image(systemName: "doc.text") }
                 .tag(SkillDocumentSelection.file(path))
                 .contextMenu { fileContextMenu(path: path, document: document) }
         } else {
-            Label(node.name, systemImage: "folder")
+            Label { Text(verbatim: node.name) } icon: { Image(systemName: "folder") }
         }
     }
 
@@ -1000,8 +1016,11 @@ struct SkillsLibraryWindowView: View {
 
     @ViewBuilder
     private func skillContextMenu(_ skill: BridgeSkillSummary) -> some View {
-        Button("열기") { requestSkillSelection(skill.skillId) }
-        Button(skill.enabled ? "보관" : "다시 활성화") {
+        Button("macos.skills.open") { requestSkillSelection(skill.skillId) }
+        Button(BridgeAppLocalization.string(
+            skill.enabled ? "macos.skills.archive" : "macos.skills.reactivate",
+            locale: locale
+        )) {
             Task { await model.setBridgeSkillEnabled(.init(
                 skillId: skill.skillId, expectedVersion: skill.version, enabled: !skill.enabled
             )) }
@@ -1011,23 +1030,23 @@ struct SkillsLibraryWindowView: View {
 
     @ViewBuilder
     private func mainDocumentContextMenu(_ document: BridgeSkillDocument) -> some View {
-        Button("편집") { editorMode = .edit; synchronizeDraftFromModel() }
+        Button("macos.common.editAction") { editorMode = .edit; synchronizeDraftFromModel() }
             .disabled(!isCurrentVersion(document))
-        Button("현재 스킬로 가져오기…") { presentImportPanel(intoCurrentSkill: true) }
+        Button("macos.skills.importIntoCurrentSkill") { presentImportPanel(intoCurrentSkill: true) }
             .disabled(!isCurrentVersion(document) || windowState.hasUnsavedChanges)
-        Button("ZIP으로 내보내기…") { export(document) }
+        Button("macos.skills.exportAsZip") { export(document) }
     }
 
     @ViewBuilder
     private func fileContextMenu(path: String, document: BridgeSkillDocument) -> some View {
-        Button("편집") { requestDocumentSelection(.file(path)); editorMode = .edit }
+        Button("macos.common.editAction") { requestDocumentSelection(.file(path)); editorMode = .edit }
             .disabled(!isCurrentVersion(document))
-        Button("이름 변경…") { sheet = .renameFile(path) }
+        Button("macos.skills.renameDialog") { sheet = .renameFile(path) }
             .disabled(!isCurrentVersion(document) || windowState.hasUnsavedChanges)
-        Button("현재 스킬로 가져오기…") { presentImportPanel(intoCurrentSkill: true) }
+        Button("macos.skills.importIntoCurrentSkill") { presentImportPanel(intoCurrentSkill: true) }
             .disabled(!isCurrentVersion(document) || windowState.hasUnsavedChanges)
         Divider()
-        Button("파일 삭제", role: .destructive) { deleteFile(path, from: document) }
+        Button("macos.skills.deleteFile", role: .destructive) { deleteFile(path, from: document) }
             .disabled(!isCurrentVersion(document) || windowState.hasUnsavedChanges)
     }
 
@@ -1036,7 +1055,7 @@ struct SkillsLibraryWindowView: View {
         Task { @MainActor in
             await model.loadBridgeSkillFile(path: oldPath)
             guard let content = model.selectedBridgeSkillFile?.content else { return }
-            postMutationDocumentSelection = .file(newPath.precomposedStringWithCanonicalMapping)
+            postMutationDocumentSelection = .file(newPath)
             if await model.updateBridgeSkill(.init(
                 skillId: document.skill.skillId,
                 expectedVersion: currentExpectedVersion(document),
@@ -1052,10 +1071,10 @@ struct SkillsLibraryWindowView: View {
     private func deleteFile(_ path: String, from document: BridgeSkillDocument) {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = BridgeAppLocalization.string("첨부 Markdown 파일을 삭제할까요?", locale: locale)
+        alert.messageText = BridgeAppLocalization.string("macos.skills.deleteTheAttachedMarkdownFile", locale: locale)
         alert.informativeText = path
-        alert.addButton(withTitle: BridgeAppLocalization.string("파일 삭제", locale: locale))
-        alert.addButton(withTitle: BridgeAppLocalization.string("취소", locale: locale))
+        alert.addButton(withTitle: BridgeAppLocalization.string("macos.skills.deleteFile", locale: locale))
+        alert.addButton(withTitle: BridgeAppLocalization.string("common.cancel", locale: locale))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         Task { @MainActor in
             if await model.updateBridgeSkill(.init(
@@ -1072,7 +1091,7 @@ struct SkillsLibraryWindowView: View {
     private func presentImportPanel(intoCurrentSkill: Bool) {
         importTargetSkillID = intoCurrentSkill ? model.selectedBridgeSkill?.skill.skillId : nil
         let panel = NSOpenPanel()
-        panel.title = BridgeAppLocalization.string("Markdown 파일, 폴더 또는 ZIP 가져오기", locale: locale)
+        panel.title = BridgeAppLocalization.string("macos.skills.importMarkdownFilesAFolderOrAZip", locale: locale)
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
@@ -1255,24 +1274,28 @@ private struct SplitViewAutosaveAnchor: NSViewRepresentable {
 }
 
 private struct SkillSummaryRow: View {
+    @Environment(\.locale) private var locale
     let skill: BridgeSkillSummary
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text(skill.name).fontWeight(.medium).lineLimit(1)
+                Text(verbatim: skill.name).fontWeight(.medium).lineLimit(1)
                 if !skill.enabled {
-                    Image(systemName: "archivebox.fill").foregroundStyle(.orange).accessibilityLabel("보관됨")
+                    Image(systemName: "archivebox.fill").foregroundStyle(.orange).accessibilityLabel("macos.skills.archived")
                 }
             }
             if !skill.description.isEmpty {
-                Text(skill.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Text(verbatim: skill.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
-            Text("v\(skill.version)").font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+            Text(verbatim: "v\(skill.version)").font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
         }
         .padding(.vertical, 3)
         .accessibilityElement(children: .combine)
-        .accessibilityValue(skill.enabled ? "활성" : "보관됨")
+        .accessibilityValue(Text(verbatim: BridgeAppLocalization.string(
+            skill.enabled ? "macos.skills.active" : "macos.skills.archived",
+            locale: locale
+        )))
     }
 }
 
@@ -1336,7 +1359,7 @@ private struct SkillStatusBanner: View {
     let message: String
 
     var body: some View {
-        Label(message, systemImage: symbol)
+        Label { Text(verbatim: message) } icon: { Image(systemName: symbol) }
             .font(.caption)
             .foregroundStyle(style == .error ? Color.red : Color.orange)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1360,9 +1383,9 @@ extension BridgeSkillWarningCode {
         let key: String
         switch self {
         case .archived:
-            key = "이 스킬은 보관되어 검색 결과에서 제외됩니다. 불변 버전은 계속 읽을 수 있습니다."
+            key = "macos.skills.thisSkillIsArchivedAndExcludedFromSearchResultsItsImmutableVersionsRemainReadable"
         case .legacyStructured:
-            key = "이전 구조형 버전입니다. 수정하거나 복원하면 자유형 Markdown과 파일 트리의 새 버전이 만들어집니다."
+            key = "macos.skills.thisIsALegacyStructuredVersionEditingOrRestoringItCreatesANewFreeFormMarkdownAndFileTreeVersion"
         }
         return BridgeAppLocalization.string(key, locale: locale)
     }
@@ -1517,7 +1540,7 @@ struct SafeMarkdownView: View {
             if let relative = safeRelativeMarkdownPath(url) { onOpenRelativeLink(relative) }
             return .handled
         })
-        .accessibilityLabel("렌더링된 Markdown 미리보기")
+        .accessibilityLabel("macos.skills.renderedMarkdownPreview")
     }
 
     @ViewBuilder
@@ -1548,7 +1571,7 @@ struct SafeMarkdownView: View {
             }.padding(.vertical, 2)
         case .code(let language, let source):
             VStack(alignment: .leading, spacing: 7) {
-                if let language { Text(language).font(.caption2.monospaced()).foregroundStyle(.secondary) }
+                if let language { Text(verbatim: language).font(.caption2.monospaced()).foregroundStyle(.secondary) }
                 ScrollView(.horizontal) {
                     Text(verbatim: source).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1613,18 +1636,18 @@ struct BridgeSkillImportIssue: Identifiable, Sendable, Equatable {
     func localizedReason(locale: Locale) -> String {
         let key: String
         switch reason {
-        case "macos-metadata": key = "macOS 메타데이터 파일은 가져오지 않습니다."
-        case "unsupported-file": key = "현재는 .md와 .markdown만 지원합니다."
-        case "symbolic-link": key = "심볼릭 링크는 가져올 수 없습니다."
-        case "special-file": key = "일반 파일만 가져올 수 있습니다."
-        case "stat-failed": key = "파일 정보를 확인할 수 없습니다."
-        case "unsafe-path": key = "선택한 폴더 밖의 파일 경로는 가져올 수 없습니다."
-        case "path-conflict": key = "다른 파일과 경로가 충돌합니다."
-        case "invalid-utf8": key = "유효한 UTF-8 Markdown이 아닙니다."
-        case "file-too-large": key = "Markdown 파일 하나의 크기는 3MiB를 넘을 수 없습니다."
-        case "collection-too-large": key = "Markdown 파일이 허용된 파일 수 또는 크기 한도를 초과합니다."
-        case "read-failed": key = "파일을 읽을 수 없습니다."
-        default: key = "가져올 수 없는 파일입니다."
+        case "macos-metadata": key = "macos.skills.macosMetadataFilesAreNotImported"
+        case "unsupported-file": key = "macos.skills.onlyMdAndMarkdownAreCurrentlySupported"
+        case "symbolic-link": key = "macos.skills.symbolicLinksCannotBeImported"
+        case "special-file": key = "macos.skills.onlyRegularFilesCanBeImported"
+        case "stat-failed": key = "macos.skills.fileInformationCouldNotBeRead"
+        case "unsafe-path": key = "macos.skills.aFilePathOutsideTheSelectedFolderCannotBeImported"
+        case "path-conflict": key = "macos.skills.itsPathConflictsWithAnotherFile"
+        case "invalid-utf8": key = "macos.skills.thisIsNotValidUtf8Markdown"
+        case "file-too-large": key = "macos.skills.aMarkdownFileCannotExceed3Mib"
+        case "collection-too-large": key = "macos.skills.theMarkdownFilesExceedTheAllowedFileCountOrSizeLimit"
+        case "read-failed": key = "macos.skills.theFileCouldNotBeRead"
+        default: key = "macos.skills.thisFileCannotBeImported"
         }
         return BridgeAppLocalization.string(key, locale: locale)
     }
@@ -1695,7 +1718,7 @@ enum BridgeSkillDropLoader {
         for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
             guard let item = try? await provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier),
                   let url = decodeURL(from: item) else { continue }
-            let key = url.standardizedFileURL.path.precomposedStringWithCanonicalMapping
+            let key = bridgeSkillPathComparisonKey(url.standardizedFileURL.path)
             if seen.insert(key).inserted { urls.append(url) }
         }
         return urls
@@ -1746,7 +1769,7 @@ enum BridgeSkillImportCollector {
         var unique: [String: BridgeSkillImportFile] = [:]
         var keys = Set<String>()
         for file in files {
-            let key = file.path.precomposedStringWithCanonicalMapping.lowercased()
+            let key = bridgeSkillPathComparisonKey(file.path)
             if keys.contains(key) {
                 issues.append(.init(path: file.path, reason: "path-conflict"))
             } else {
@@ -1775,7 +1798,7 @@ enum BridgeSkillImportCollector {
             if values.isSymbolicLink == true || values.isRegularFile != true {
                 issues.append(.init(path: relativePath, reason: "special-file")); return
             }
-            let normalized = relativePath.precomposedStringWithCanonicalMapping.replacingOccurrences(of: "\\", with: "/")
+            let normalized = relativePath.replacingOccurrences(of: "\\", with: "/")
             if isMacMetadataPath(normalized) {
                 issues.append(.init(path: normalized, reason: "macos-metadata")); return
             }
@@ -1820,12 +1843,7 @@ private func isMacMetadataPath(_ path: String) -> Bool {
 }
 
 private func decodeBridgeSkillMarkdown(_ data: Data) -> String? {
-    let bom = Data([0xef, 0xbb, 0xbf])
-    if data.starts(with: bom) {
-        guard let suffix = String(data: data.dropFirst(bom.count), encoding: .utf8) else { return nil }
-        return "\u{feff}" + suffix
-    }
-    return String(data: data, encoding: .utf8)
+    try? BridgeTextIntegrity.decodeUTF8Strict(data)
 }
 
 private func resolvedFilesystemURL(_ url: URL) -> URL {
@@ -1856,27 +1874,32 @@ private struct BridgeSkillImportReviewSheet: View {
         _mainPath = State(initialValue: currentSkill == nil ? review.suggestedMainPath : nil)
         var initiallySelected = Set(review.paths)
         if currentSkill != nil {
-            initiallySelected = Set(initiallySelected.filter { $0.lowercased() != "document.md" })
+            initiallySelected = Set(initiallySelected.filter {
+                bridgeSkillPathComparisonKey($0) != "document.md"
+            })
         }
         _selectedPaths = State(initialValue: initiallySelected)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("가져오기 검토").font(.title2.weight(.semibold))
-            Text(currentSkill == nil
-                 ? "메인 문서를 선택하세요. 나머지 선택 파일은 상대경로를 유지한 첨부 Markdown으로 저장됩니다."
-                 : "선택 파일은 첨부 문서로 추가·교체됩니다. 메인 교체는 메인 문서를 명시적으로 선택한 경우에만 적용됩니다.")
+            Text("macos.skills.reviewImport").font(.title2.weight(.semibold))
+            Text(verbatim: BridgeAppLocalization.string(
+                currentSkill == nil
+                    ? "macos.skills.chooseTheMainDocumentOtherSelectedFilesAreSavedAsAttachedMarkdownWithTheirRelativePathsPreserved"
+                    : "macos.skills.selectedFilesAreAddedOrReplacedAsAttachmentsTheMainDocumentIsReplacedOnlyWhenYouExplicitlySelectOne",
+                locale: locale
+            ))
                 .font(.callout).foregroundStyle(.secondary)
             if currentSkill == nil {
                 Form {
-                    TextField("스킬 이름", text: $name)
-                    TextField("검색용 설명(선택)", text: $description)
+                    TextField("macos.skills.skillName", text: $name)
+                    TextField("macos.skills.searchDescriptionOptional", text: $description)
                 }.formStyle(.grouped).frame(height: 120)
             }
-            Picker("메인 문서", selection: $mainPath) {
-                if currentSkill != nil { Text("메인 문서 변경 안 함").tag(String?.none) }
-                ForEach(review.paths, id: \.self) { path in Text(path).tag(String?.some(path)) }
+            Picker("macos.skills.mainDocument", selection: $mainPath) {
+                if currentSkill != nil { Text("macos.skills.keepMainDocument").tag(String?.none) }
+                ForEach(review.paths, id: \.self) { path in Text(verbatim: path).tag(String?.some(path)) }
             }
             List(review.paths, id: \.self) { path in
                 Toggle(isOn: Binding(
@@ -1887,22 +1910,34 @@ private struct BridgeSkillImportReviewSheet: View {
                     }
                 )) {
                     HStack {
-                        Label(path, systemImage: path == mainPath ? "doc.text.fill" : "doc.text")
+                        Label {
+                            Text(verbatim: path)
+                        } icon: {
+                            Image(systemName: path == mainPath ? "doc.text.fill" : "doc.text")
+                        }
                         Spacer()
-                        if currentSkill?.files.contains(where: { $0.path.lowercased() == path.lowercased() }) == true {
-                            Text("교체").font(.caption).foregroundStyle(.orange)
-                        } else if currentSkill != nil, path.lowercased() == "document.md", path != mainPath {
-                            Text("메인으로 선택하거나 제외").font(.caption).foregroundStyle(.orange)
+                        if currentSkill?.files.contains(where: {
+                            bridgeSkillPathComparisonKey($0.path) == bridgeSkillPathComparisonKey(path)
+                        }) == true {
+                            Text("macos.skills.replace").font(.caption).foregroundStyle(.orange)
+                        } else if currentSkill != nil,
+                                  bridgeSkillPathComparisonKey(path) == "document.md",
+                                  path != mainPath {
+                            Text("macos.skills.chooseAsMainOrExclude").font(.caption).foregroundStyle(.orange)
                         }
                     }
                 }
             }
             .frame(minHeight: 220)
             if !review.issues.isEmpty {
-                GroupBox("가져오지 않는 항목과 충돌") {
+                GroupBox("macos.skills.skippedItemsAndConflicts") {
                     VStack(alignment: .leading, spacing: 5) {
                         ForEach(review.issues) { issue in
-                            Label("\(issue.path): \(issue.localizedReason(locale: locale))", systemImage: "exclamationmark.triangle")
+                            Label {
+                                Text(verbatim: "\(issue.path): \(issue.localizedReason(locale: locale))")
+                            } icon: {
+                                Image(systemName: "exclamationmark.triangle")
+                            }
                                 .font(.caption).foregroundStyle(.orange)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
@@ -1910,16 +1945,16 @@ private struct BridgeSkillImportReviewSheet: View {
             }
             if selectionExceedsLimits {
                 Label(
-                    "Markdown 파일이 허용된 파일 수 또는 크기 한도를 초과합니다.",
+                    "macos.skills.theMarkdownFilesExceedTheAllowedFileCountOrSizeLimit",
                     systemImage: "exclamationmark.triangle"
                 )
                 .font(.caption)
                 .foregroundStyle(.orange)
             }
             HStack {
-                Button("취소", role: .cancel) { dismiss() }
+                Button("common.cancel", role: .cancel) { dismiss() }
                 Spacer()
-                Button("가져오기") {
+                Button("macos.skills.import") {
                     commit(.init(
                         name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                         description: description.isEmpty ? nil : description,
@@ -1942,16 +1977,18 @@ private struct BridgeSkillImportReviewSheet: View {
     }
 
     private var selectedRootDocumentConflicts: Bool {
-        selectedPaths.contains(where: { $0.lowercased() == "document.md" && $0 != mainPath })
+        selectedPaths.contains(where: {
+            bridgeSkillPathComparisonKey($0) == "document.md" && $0 != mainPath
+        })
     }
 
     private var selectionExceedsLimits: Bool {
         var attachments = Dictionary(uniqueKeysWithValues: (currentSkill?.files ?? []).map {
-            ($0.path.precomposedStringWithCanonicalMapping.lowercased(), $0.bytes)
+            (bridgeSkillPathComparisonKey($0.path), $0.bytes)
         })
         for path in selectedPaths where path != mainPath {
             guard let bytes = review.bytes(for: path) else { return true }
-            attachments[path.precomposedStringWithCanonicalMapping.lowercased()] = bytes
+            attachments[bridgeSkillPathComparisonKey(path)] = bytes
         }
         return attachments.count > 128 || attachments.values.reduce(0, +) > 8 * 1_024 * 1_024
     }
@@ -1966,16 +2003,16 @@ private struct NewBridgeSkillSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("새 브리지 스킬").font(.title2.weight(.semibold))
-            TextField("스킬 이름", text: $name)
-            TextField("검색용 설명(선택)", text: $description)
-            Text("메인 Markdown 문서").font(.caption).foregroundStyle(.secondary)
+            Text("macos.newbridgeskill").font(.title2.weight(.semibold))
+            TextField("macos.skills.skillName", text: $name)
+            TextField("macos.skills.searchDescriptionOptional", text: $description)
+            Text("macos.skills.mainMarkdownDocument").font(.caption).foregroundStyle(.secondary)
             TextEditor(text: $document).font(.system(.body, design: .monospaced))
                 .frame(minHeight: 320).border(Color(nsColor: .separatorColor))
             HStack {
-                Button("취소", role: .cancel) { dismiss() }
+                Button("common.cancel", role: .cancel) { dismiss() }
                 Spacer()
-                Button("스킬 만들기") { save(name, description.isEmpty ? nil : description, document) }
+                Button("macos.skills.createSkill") { save(name, description.isEmpty ? nil : description, document) }
                     .buttonStyle(.borderedProminent)
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || document.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -1991,14 +2028,14 @@ private struct NewBridgeSkillFileSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("새 Markdown 파일").font(.title2.weight(.semibold))
-            TextField("상대경로 (.md 또는 .markdown)", text: $path)
+            Text("macos.skills.newMarkdownFile").font(.title2.weight(.semibold))
+            TextField("macos.skills.relativePathMdOrMarkdown", text: $path)
             TextEditor(text: $content).font(.system(.body, design: .monospaced))
                 .frame(minHeight: 280).border(Color(nsColor: .separatorColor))
             HStack {
-                Button("취소", role: .cancel) { dismiss() }
+                Button("common.cancel", role: .cancel) { dismiss() }
                 Spacer()
-                Button("파일 추가") { save(path, content) }.buttonStyle(.borderedProminent)
+                Button("macos.skills.addFile") { save(path, content) }.buttonStyle(.borderedProminent)
                     .disabled(path.isEmpty)
             }
         }.padding(22).frame(width: 580, height: 450)
@@ -2017,12 +2054,12 @@ private struct RenameBridgeSkillFileSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Markdown 파일 이름 변경").font(.headline)
-            TextField("새 상대경로", text: $path)
+            Text("macos.skills.renameMarkdownFile").font(.headline)
+            TextField("macos.skills.newRelativePath", text: $path)
             HStack {
-                Button("취소", role: .cancel) { dismiss() }
+                Button("common.cancel", role: .cancel) { dismiss() }
                 Spacer()
-                Button("이름 변경") { save(path) }.buttonStyle(.borderedProminent)
+                Button("macos.skills.renameAction") { save(path) }.buttonStyle(.borderedProminent)
                     .disabled(path == oldPath || path.isEmpty)
             }
         }.padding(20).frame(width: 480)
@@ -2031,6 +2068,7 @@ private struct RenameBridgeSkillFileSheet: View {
 
 private struct BridgeSkillDeleteSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
     let skillName: String
     let isDeleting: Bool
     let confirm: (String) -> Void
@@ -2038,16 +2076,20 @@ private struct BridgeSkillDeleteSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("스킬 영구 삭제").font(.headline)
-            Text("모든 버전과 Markdown 파일을 삭제하며 복구할 수 없습니다.")
+            Text("macos.skills.permanentlyDeleteSkill").font(.headline)
+            Text("macos.skills.allVersionsAndMarkdownFilesWillBeDeletedAndCannotBeRecovered")
                 .font(.caption).foregroundStyle(.secondary)
-            Text("계속하려면 스킬 이름을 정확히 입력하세요: \(skillName)").font(.caption)
-            TextField("스킬 이름", text: $typedName)
+            Text(verbatim: BridgeAppLocalization.format(
+                "macos.skills.toContinueEnterTheExactSkillNameValue",
+                locale: locale,
+                skillName
+            )).font(.caption)
+            TextField("macos.skills.skillName", text: $typedName)
             HStack {
-                Button("취소", role: .cancel) { dismiss() }
+                Button("common.cancel", role: .cancel) { dismiss() }
                 Spacer()
                 if isDeleting { ProgressView().controlSize(.small) }
-                Button("영구 삭제", role: .destructive) { confirm(typedName) }
+                Button("macos.skills.deletePermanentlyAction", role: .destructive) { confirm(typedName) }
                     .disabled(typedName != skillName || isDeleting)
             }
         }.padding(20).frame(width: 430)

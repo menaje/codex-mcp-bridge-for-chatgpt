@@ -38,6 +38,27 @@ describe("Bridge skill ZIP packages", () => {
     expect(inspection.files.find((file) => file.path === "document.md")?.content).toBe("# Main\n");
   });
 
+  it("preserves Unicode path spelling while rejecting canonical path collisions", () => {
+    const decomposedPath = "references/Cafe\u0301.md";
+    const inspection = inspectBridgeSkillZip(
+      deterministicBridgeSkillZip("# Main\n", [{ path: decomposedPath, content: "# Accent\n" }])
+    );
+    expect(inspection.files.find((file) => file.content === "# Accent\n")?.path).toBe(decomposedPath);
+
+    expect(() => deterministicBridgeSkillZip("# Main\n", [
+      { path: decomposedPath, content: "decomposed" },
+      { path: "references/Café.md", content: "composed" }
+    ])).toThrow("SKILL_PACKAGE_PATH_CONFLICT");
+  });
+
+  it("rejects text that UTF-8 encoding would otherwise replace or truncate", () => {
+    expect(() => deterministicBridgeSkillZip("\ud800", []))
+      .toThrow("SKILL_PACKAGE_TEXT_INVALID");
+    expect(() => deterministicBridgeSkillZip("# Main\n", [
+      { path: "references/invalid.md", content: "before\udc00after" }
+    ])).toThrow("SKILL_PACKAGE_TEXT_INVALID");
+  });
+
   it("rejects encrypted metadata, nested archives, traversal, and CRC tampering", () => {
     const source = deterministicBridgeSkillZip("# Main\n", []);
     const encrypted = Buffer.from(source);

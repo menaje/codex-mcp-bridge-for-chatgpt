@@ -526,15 +526,29 @@ public struct SettingsMutation: Encodable, Sendable {
     public let expectedSettingsRevision: Int?
     public let expectedRegistryRevision: Int?
     public let operation: SettingsOperation
+    /// Display-only locale consumed by the companion transport adapter. It is
+    /// deliberately not a persisted bridge setting or part of `operation`.
+    public let locale: String?
 
     public init(
         expectedSettingsRevision: Int?,
         expectedRegistryRevision: Int?,
-        operation: SettingsOperation
+        operation: SettingsOperation,
+        locale: String? = nil
     ) {
         self.expectedSettingsRevision = expectedSettingsRevision
         self.expectedRegistryRevision = expectedRegistryRevision
         self.operation = operation
+        self.locale = locale
+    }
+
+    public func withPresentationLocale(_ value: String) -> SettingsMutation {
+        SettingsMutation(
+            expectedSettingsRevision: expectedSettingsRevision,
+            expectedRegistryRevision: expectedRegistryRevision,
+            operation: operation,
+            locale: value
+        )
     }
 }
 

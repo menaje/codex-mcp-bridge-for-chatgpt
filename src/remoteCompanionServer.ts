@@ -37,6 +37,7 @@ import {
 } from "./companionServer.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import { BRIDGE_SKILL_LIMITS } from "./skillLibrary.js";
+import { assertJsonTextIntegrity, decodeUtf8Strict, parseJsonUtf8Strict } from "./textIntegrity.js";
 import type { BridgeApplicationService } from "./tools.js";
 
 export const REMOTE_COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-remote-companion";
@@ -247,8 +248,8 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
     const servers: HttpsServer[] = [];
     try {
       ensureCertificate(this.certificateFile, this.privateKeyFile);
-      const certificate = readFileSync(this.certificateFile, "utf8");
-      const privateKey = readFileSync(this.privateKeyFile, "utf8");
+      const certificate = decodeUtf8Strict(readFileSync(this.certificateFile), "remote TLS certificate");
+      const privateKey = decodeUtf8Strict(readFileSync(this.privateKeyFile), "remote TLS private key");
       this.certificateSha256 = certificateFingerprint(certificate);
       // Own both address families explicitly: on macOS a dual-stack IPv6 bind
       // can succeed even when another process already owns the IPv4 port.
@@ -464,7 +465,7 @@ function loadOrCreateState(stateFile: string, displayName: string): PersistedRem
     return state;
   }
   assertPrivateRegularFile(stateFile);
-  return persistedStateSchema.parse(JSON.parse(readFileSync(stateFile, "utf8")));
+  return persistedStateSchema.parse(parseJsonUtf8Strict(readFileSync(stateFile), "Remote companion state"));
 }
 
 function persistState(stateFile: string, state: PersistedRemoteState): void {
@@ -685,7 +686,7 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
     chunks.push(buffer);
   }
   if (bytes === 0) throw new Error("request_body_required");
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return parseJsonUtf8Strict(Buffer.concat(chunks), "Remote companion request");
 }
 
 function setSecurityHeaders(response: ServerResponse): void {
@@ -698,7 +699,14 @@ function setSecurityHeaders(response: ServerResponse): void {
 
 function sendJson(response: ServerResponse, status: number, value: unknown): void {
   if (response.writableEnded || response.destroyed) return;
-  let body = JSON.stringify(value);
+  let body: string;
+  try {
+    assertJsonTextIntegrity(value, "Remote companion response");
+    body = JSON.stringify(value);
+  } catch {
+    status = 500;
+    body = JSON.stringify({ error: "response_invalid_unicode" });
+  }
   if (Buffer.byteLength(body, "utf8") > REMOTE_MAX_RESPONSE_BYTES) {
     status = 500;
     body = JSON.stringify({ error: "response_too_large" });

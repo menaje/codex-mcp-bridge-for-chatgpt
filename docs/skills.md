@@ -73,13 +73,14 @@ the original immutable version remains available in history.
 ## Bounds and safety
 
 The main document and each attachment accept up to 3 MiB of valid UTF-8;
-attachments total at most 8 MiB across 128 files. Paths are NFC-canonical
-relative `/` paths with bounded length/depth and case-insensitive collision
-checks. Markdown remains verbatim source text after Unicode well-formedness and
-NUL validation, while human metadata and path identities use the shared text
-policy. Local and remote native transport envelopes are 72 MiB so the complete
-tree still fits under worst-case JSON escaping. These are storage/transport
-bounds, not a prompt-size promise.
+attachments total at most 8 MiB across 128 files. Logical relative `/` paths
+have bounded length/depth and preserve their supplied Unicode spelling. A
+derived NFC, case-folded key rejects paths that would collide without replacing
+the stored path. Markdown and paths remain verbatim after Unicode
+well-formedness and NUL validation, while human metadata uses the shared
+canonical text policy. Local and remote native transport envelopes are 72 MiB
+so the complete tree still fits under worst-case JSON escaping. These are
+storage/transport bounds, not a prompt-size promise.
 
 ZIP is transport only. Uploads are ordered 512 KiB chunks, expire after ten
 minutes, and are consumed once after a successful atomic commit. Inspection
