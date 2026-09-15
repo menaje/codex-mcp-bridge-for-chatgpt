@@ -131,8 +131,8 @@
       "userSettingsSchema": 4,
       "taskInputContract": 5,
       "macosHelperProtocol": 2,
-      "localCompanionProtocol": 7,
-      "remoteCompanionProtocol": 5
+      "localCompanionProtocol": 8,
+      "remoteCompanionProtocol": 6
     },
     "contractSources": {
       "databaseSchema": "src/stateSchema.ts#CURRENT_STATE_SCHEMA_VERSION",

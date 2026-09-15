@@ -61,6 +61,120 @@ describe("SkillLibrary", () => {
     expect(result.skills[0]?.description).toBe("");
   });
 
+  it("stores, searches, and reads a version-pinned nested Markdown file tree", async () => {
+    const library = await createLibrary();
+    const created = await library.createBridgeSkill({
+      requestId: randomUUID(),
+      name: "API 검토",
+      document: "# Main\n\nUse the supporting documents only when relevant.",
+      files: [
+        { path: "references/API.md", content: "# API\n\nUse the `evidence-token` header." },
+        { path: "examples/request.markdown", content: "```json\n{\"ok\":true}\n```\n" }
+      ]
+    });
+
+    const read = await library.read({ reference: created });
+    expect(read.files).toEqual([
+      expect.objectContaining({ path: "examples/request.markdown", format: "markdown", bytes: 24 }),
+      expect.objectContaining({ path: "references/API.md", format: "markdown" })
+    ]);
+    expect(read).not.toHaveProperty("content");
+    expect(JSON.stringify(read.files)).not.toContain("evidence-token");
+    expect((await library.search({ query: "evidence-token" })).skills).toHaveLength(1);
+    expect((await library.search({ query: "request.markdown" })).skills).toHaveLength(1);
+
+    const file = await library.readFile({ reference: created, path: "references/API.md" });
+    expect(file).toMatchObject({
+      kind: "skill-file",
+      skill: { skillId: created.skillId, version: "1" },
+      path: "references/API.md",
+      content: expect.stringContaining("evidence-token"),
+      format: "markdown"
+    });
+    expect(file.bytes).toBe(Buffer.byteLength(file.content, "utf8"));
+    expect(file.contentDigest).toBe(sha256(file.content));
+  });
+
+  it("applies file changes atomically, keeps history immutable, and restores the whole tree", async () => {
+    const library = await createLibrary();
+    const first = await library.createBridgeSkill({
+      requestId: randomUUID(), name: "Versioned package", document: "# One",
+      files: [
+        { path: "notes/keep.md", content: "keep-v1" },
+        { path: "notes/remove.md", content: "remove-v1" }
+      ]
+    });
+    const second = await library.updateBridgeSkill({
+      requestId: randomUUID(), skillId: first.skillId, expectedVersion: first.version,
+      document: "# Two",
+      files: {
+        upsert: [
+          { path: "notes/keep.md", content: "keep-v2" },
+          { path: "new/deep/reference.md", content: "new-v2" }
+        ],
+        remove: ["notes/remove.md"]
+      }
+    });
+
+    expect((await library.read({ reference: first })).files.map((file) => file.path))
+      .toEqual(["notes/keep.md", "notes/remove.md"]);
+    expect((await library.readFile({ reference: first, path: "notes/keep.md" })).content).toBe("keep-v1");
+    expect((await library.read({ reference: second })).files.map((file) => file.path))
+      .toEqual(["new/deep/reference.md", "notes/keep.md"]);
+    await expect(library.readFile({ reference: second, path: "notes/remove.md" })).rejects.toThrow("SKILL_FILE_NOT_FOUND");
+
+    const restored = await library.restoreBridgeSkill({
+      requestId: randomUUID(), skillId: first.skillId, expectedVersion: second.version, sourceVersion: first.version
+    });
+    expect(restored.version).toBe("3");
+    expect((await library.read({ reference: restored })).document).toBe("# One");
+    expect((await library.readFile({ reference: restored, path: "notes/remove.md" })).content).toBe("remove-v1");
+  });
+
+  it("treats a case-only attachment upsert as replacement on case-insensitive targets", async () => {
+    const library = await createLibrary();
+    const first = await library.createBridgeSkill({
+      requestId: randomUUID(), name: "Case-aware files", document: "# Main",
+      files: [{ path: "references/API.md", content: "old" }]
+    });
+    const second = await library.updateBridgeSkill({
+      requestId: randomUUID(), skillId: first.skillId, expectedVersion: first.version,
+      files: { upsert: [{ path: "references/api.md", content: "new" }] }
+    });
+
+    expect((await library.read({ reference: second })).files.map((file) => file.path))
+      .toEqual(["references/api.md"]);
+    expect((await library.readFile({ reference: second, path: "references/api.md" })).content).toBe("new");
+  });
+
+  it("rejects unsafe, conflicting, unsupported, and invalid-Unicode file inputs", async () => {
+    const library = await createLibrary();
+    const base = { requestId: randomUUID(), name: "Unsafe package", document: "# Main" };
+    await expect(library.createBridgeSkill({ ...base, files: [{ path: "../escape.md", content: "x" }] }))
+      .rejects.toThrow("SKILL_FILE_PATH_INVALID");
+    await expect(library.createBridgeSkill({ ...base, requestId: randomUUID(), files: [{ path: "image.png", content: "x" }] }))
+      .rejects.toThrow("SKILL_FILE_TYPE_UNSUPPORTED");
+    await expect(library.createBridgeSkill({
+      ...base, requestId: randomUUID(), files: [
+        { path: "Cafe\u0301.md", content: "one" },
+        { path: "Caf\u00e9.md", content: "two" }
+      ]
+    })).rejects.toThrow("SKILL_FILE_PATH_CONFLICT");
+    await expect(library.createBridgeSkill({
+      ...base, requestId: randomUUID(), files: [{ path: "bad.md", content: "\ud800" }]
+    })).rejects.toThrow("invalid Unicode scalar");
+  });
+
+  it("rejects a persisted index that is not strict UTF-8", async () => {
+    const root = await temporaryRoot();
+    const directory = path.join(root, "bridge-skills");
+    await mkdir(directory, { recursive: true });
+    await writeFile(path.join(directory, "index.json"), Buffer.from([0x7b, 0x22, 0xff, 0x22, 0x7d]));
+    const library = new SkillLibrary({ directory });
+
+    await expect(library.search({})).rejects.toThrow("SKILL_LIBRARY_CORRUPT");
+  });
+
   it("adapts a v2 structured record losslessly into a legacy Markdown document", async () => {
     const root = await temporaryRoot();
     const directory = path.join(root, "bridge-skills");

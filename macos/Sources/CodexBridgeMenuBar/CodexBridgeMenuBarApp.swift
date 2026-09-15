@@ -482,12 +482,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
     static let shared = SkillsLibraryWindowController()
     private var window: NSWindow?
+    private let windowState = SkillsLibraryWindowState()
+    private weak var model: AppModel?
 
     func show(model: AppModel) {
+        self.model = model
         if window == nil {
             let skillsWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
-                styleMask: [.titled, .closable, .resizable],
+                contentRect: NSRect(x: 0, y: 0, width: 1_120, height: 760),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false
             )
@@ -498,13 +501,16 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
             skillsWindow.isReleasedWhenClosed = false
             skillsWindow.delegate = self
             PrimaryAppWindowPresentation.configure(skillsWindow)
-            skillsWindow.toolbarStyle = .unifiedCompact
+            skillsWindow.standardWindowButton(.miniaturizeButton)?.isEnabled = true
+            skillsWindow.standardWindowButton(.zoomButton)?.isEnabled = true
+            skillsWindow.toolbarStyle = .unified
             skillsWindow.setFrameAutosaveName("CodexBridgeSkillsLibraryWindow")
-            skillsWindow.contentMinSize = NSSize(width: 720, height: 620)
+            skillsWindow.contentMinSize = NSSize(width: 820, height: 600)
             skillsWindow.contentViewController = NSHostingController(
-                rootView: SkillsLibraryWindowRoot()
+                rootView: SkillsLibraryLocalizedRootView()
                     .environmentObject(model)
-                    .frame(minWidth: 720, minHeight: 620)
+                    .environmentObject(windowState)
+                    .frame(minWidth: 820, minHeight: 600)
             )
             skillsWindow.center()
             window = skillsWindow
@@ -527,16 +533,26 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
             PrimaryAppWindowPresentation.didClose(window)
         }
     }
-}
 
-@MainActor
-private struct SkillsLibraryWindowRoot: View {
-    @EnvironmentObject private var model: AppModel
-
-    var body: some View {
-        SkillsLibraryView(showsStandaloneWindowButton: false)
-            .environmentObject(model)
-            .environment(\.locale, model.interfaceLocale)
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard windowState.hasUnsavedChanges else { return true }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = BridgeAppLocalization.string(
+            "저장하지 않은 변경사항을 버리고 창을 닫을까요?",
+            locale: model?.interfaceLocale ?? .current
+        )
+        alert.informativeText = BridgeAppLocalization.string(
+            "현재 Markdown 편집 내용이 사라집니다.",
+            locale: model?.interfaceLocale ?? .current
+        )
+        alert.addButton(withTitle: BridgeAppLocalization.string("변경사항 버리기", locale: model?.interfaceLocale ?? .current))
+        alert.addButton(withTitle: BridgeAppLocalization.string("취소", locale: model?.interfaceLocale ?? .current))
+        if alert.runModal() == .alertFirstButtonReturn {
+            windowState.hasUnsavedChanges = false
+            return true
+        }
+        return false
     }
 }
 
@@ -610,6 +626,28 @@ struct CodexBridgeMenuBarApp: App {
         Settings {
             EmptyView()
                 .environmentObject(model)
+        }
+        .commands {
+            CommandMenu("브리지 스킬") {
+                Button("새 스킬") { performSkillLibraryCommand(.bridgeSkillCommandNew) }
+                    .keyboardShortcut("n", modifiers: .command)
+                Button("파일·폴더·ZIP 가져오기…") { performSkillLibraryCommand(.bridgeSkillCommandImport) }
+                    .keyboardShortcut("o", modifiers: .command)
+                Divider()
+                Button("저장") { performSkillLibraryCommand(.bridgeSkillCommandSave) }
+                    .keyboardShortcut("s", modifiers: .command)
+                Button("브리지 스킬 검색") { performSkillLibraryCommand(.bridgeSkillCommandFind) }
+                    .keyboardShortcut("f", modifiers: .command)
+                Button("미리보기/편집 전환") { performSkillLibraryCommand(.bridgeSkillCommandToggleEdit) }
+                    .keyboardShortcut("e", modifiers: .command)
+            }
+        }
+    }
+
+    private func performSkillLibraryCommand(_ name: Notification.Name) {
+        SkillsLibraryWindowController.shared.show(model: model)
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: name, object: nil)
         }
     }
 }

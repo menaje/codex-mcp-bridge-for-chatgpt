@@ -40,8 +40,8 @@ import { BRIDGE_SKILL_LIMITS } from "./skillLibrary.js";
 import type { BridgeApplicationService } from "./tools.js";
 
 export const REMOTE_COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-remote-companion";
-/** v5 carries the full worst-case JSON envelope for a 3 MiB Bridge document. */
-export const REMOTE_COMPANION_PROTOCOL_VERSION = 5;
+/** v6 adds immutable Markdown file trees and path-based file reads. */
+export const REMOTE_COMPANION_PROTOCOL_VERSION = 6;
 const REMOTE_API_PREFIX = "/remote-companion/v1";
 const REMOTE_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 const REMOTE_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
@@ -636,6 +636,7 @@ function capabilityForMethod(method: string, payload?: unknown): string {
       return "settings.write";
     case "skills.snapshot":
     case "skills.read":
+    case "skills.read-file":
     case "skills.versions":
       return "skills.read";
     case "skills.create":
@@ -643,6 +644,12 @@ function capabilityForMethod(method: string, payload?: unknown): string {
     case "skills.restore":
     case "skills.set-enabled":
     case "skills.delete":
+    case "skills.package-upload.begin":
+    case "skills.package-upload.chunk":
+    case "skills.package-upload.inspect":
+    case "skills.package.create":
+    case "skills.package.update":
+    case "skills.package.export":
       return "skills.write";
     case "dashboard.problem": {
       const action = (payload as {params?:{action?:unknown}} | undefined)?.params?.action;

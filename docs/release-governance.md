@@ -19,7 +19,7 @@ product. They never receive independent product versions.
 | Manifest schema | `manifestVersion` (currently 6) | Release metadata plus state and UI compatibility contracts |
 | UI resource policy | `ui-release-catalog.json`, its manifest digest, generated release inventory, UI contract generations and explicit URI versions | One current file per active card; compatible updates keep the URI, independent of SemVer |
 | State compatibility | `stateCompatibility` plus `state-migrations.json` (currently schemas 3–18 to 19) | Local data, applied-migration provenance, state-profile, backup, and recovery axes; see the [state upgrade and recovery runbook](state-upgrade-recovery.md) |
-| Tool/runtime contracts | Task input contract 5, helper protocol 2, local companion protocol 7, remote companion protocol 5, execution-policy references, App Server schema lock and pinned Codex CLI | Independent protocol and state axes |
+| Tool/runtime contracts | Task input contract 5, helper protocol 2, local companion protocol 8, remote companion protocol 6, execution-policy references, App Server schema lock and pinned Codex CLI | Independent protocol and state axes |
 | Runtime state | `.env`, authentication material, SQLite data, process locks | Never a version authority or release payload |
 
 `npm run release:check` checks the version mirrors, generated plugin and UI

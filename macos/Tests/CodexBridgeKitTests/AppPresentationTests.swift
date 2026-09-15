@@ -199,6 +199,37 @@ final class AppPresentationTests: XCTestCase {
         )
     }
 
+    func testNativeLocalizationDoesNotExposeBridgeSkillDiagnostics() {
+        let locale = Locale(identifier: "ko")
+        XCTAssertEqual(
+            BridgeAppLocalization.errorDescription(
+                LocalRPCError.remote(
+                    code: -32000,
+                    message: "SKILL_VERSION_CHANGED: Read the current bridge skill and retry."
+                ),
+                locale: locale
+            ),
+            "다른 곳에서 스킬이 변경되었습니다. 최신 버전을 불러온 뒤 다시 시도하세요."
+        )
+        XCTAssertEqual(
+            BridgeAppLocalization.errorDescription(
+                LocalRPCError.remote(
+                    code: -32000,
+                    message: "SKILL_PACKAGE_ENCRYPTED: Encrypted ZIP entries are not accepted."
+                ),
+                locale: locale
+            ),
+            "암호화된 ZIP 패키지는 가져올 수 없습니다."
+        )
+        XCTAssertEqual(
+            BridgeAppLocalization.errorDescription(
+                LocalRPCError.remote(code: -32000, message: "SKILL_FUTURE_FAILURE: raw English"),
+                locale: locale
+            ),
+            "스킬 요청을 처리하지 못했습니다. 입력과 연결 상태를 확인한 뒤 다시 시도하세요."
+        )
+    }
+
     @MainActor
     func testPrimaryAppWindowsUseStageManagerPrimaryBehavior() {
         let window = NSWindow(

@@ -2,6 +2,17 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import path from "node:path";
+import {
+  assertVerbatimUtf8Text,
+  canonicalHumanText,
+  canonicalSearchKey,
+  strictUtf8Decode
+} from "./skillTextPolicy.js";
+import {
+  BridgeSkillPackageUploads,
+  deterministicBridgeSkillZip,
+  type BridgeSkillPackageInspection
+} from "./skillPackage.js";
 
 /** The Bridge owns this private, versioned document library. */
 export const BRIDGE_SKILL_SOURCE = "bridge" as const;
@@ -9,16 +20,21 @@ export const SKILL_SOURCES = [BRIDGE_SKILL_SOURCE] as const;
 export type SkillSource = (typeof SKILL_SOURCES)[number];
 
 /**
- * A v3 document has one body instead of the former instructions plus material
- * buckets. Keep its input capacity above the old 512 KiB + 2 MiB aggregate.
+ * A v4 document has one free-form body plus an optional Markdown file tree.
+ * Main-document capacity remains unchanged from v3.
  */
 export const BRIDGE_SKILL_LIMITS = Object.freeze({
   nameMaxCharacters: 120,
   descriptionMaxCharacters: 2_000,
   documentMaxBytes: 3 * 1_024 * 1_024,
+  fileMaxBytes: 3 * 1_024 * 1_024,
+  fileTotalMaxBytes: 8 * 1_024 * 1_024,
+  fileMaxCount: 128,
+  filePathMaxBytes: 1_024,
+  filePathMaxDepth: 32,
   searchQueryMaxBytes: 1_000,
-  /** A 3 MiB source can expand sixfold when JSON escapes every C0 byte. */
-  mutationWireMaxBytes: 20 * 1_024 * 1_024,
+  /** Main + files can each expand sixfold when JSON escapes every C0 byte. */
+  mutationWireMaxBytes: 72 * 1_024 * 1_024,
   legacyInstructionsMaxBytes: 512 * 1_024,
   legacyReferenceMaxBytes: 512 * 1_024,
   legacyReferenceTotalMaxBytes: 2 * 1_024 * 1_024,
@@ -49,11 +65,42 @@ export type SkillDocument = {
   skill: SkillSummary;
   /** Exact, source-preserved Markdown supplied by the document author. */
   document: string;
+  /** Version-pinned inventory only. File contents are loaded with read-file. */
+  files: SkillFileSummary[];
   format: "markdown";
   /** True only while reading a v1/v2 structured record through its lossless adapter. */
   legacy: boolean;
   sourceSnapshot: "versioned-bridge-record";
-  warnings: string[];
+  warnings: SkillWarningCode[];
+};
+
+export type SkillWarningCode = "archived" | "legacy-structured";
+
+export type SkillFileSummary = {
+  path: string;
+  format: "markdown";
+  bytes: number;
+  contentDigest: string;
+};
+
+export type SkillFileInput = {
+  path: string;
+  content: string;
+};
+
+export type SkillFileChanges = {
+  upsert?: SkillFileInput[];
+  remove?: string[];
+};
+
+export type SkillFileDocument = {
+  kind: "skill-file";
+  skill: SkillSummary;
+  path: string;
+  content: string;
+  format: "markdown";
+  bytes: number;
+  contentDigest: string;
 };
 
 export type SkillSearchResult = { skills: SkillSummary[] };
@@ -82,6 +129,7 @@ export type CreateBridgeSkillInput = {
   /** Discovery metadata only. Omit it when the document does not need a summary. */
   description?: string;
   document: string;
+  files?: SkillFileInput[];
 };
 
 export type UpdateBridgeSkillInput = {
@@ -93,6 +141,7 @@ export type UpdateBridgeSkillInput = {
   /** Send an empty string to clear the optional discovery summary. */
   description?: string;
   document?: string;
+  files?: SkillFileChanges;
 };
 
 export type RestoreBridgeSkillInput = {
@@ -115,6 +164,25 @@ export type DeleteBridgeSkillInput = {
   skillId: string;
   expectedVersion: string;
   confirmName: string;
+};
+
+export type CreateBridgeSkillPackageInput = {
+  requestId: string;
+  name: string;
+  description?: string;
+  uploadId: string;
+  mainPath: string;
+  includePaths?: string[];
+};
+
+export type UpdateBridgeSkillPackageInput = {
+  requestId: string;
+  skillId: string;
+  expectedVersion: string;
+  uploadId: string;
+  /** Null imports every package document as an attachment. */
+  mainPath: string | null;
+  includePaths?: string[];
 };
 
 /**
@@ -164,9 +232,11 @@ type MarkdownBridgeSkillVersionRecord = {
   name: string;
   description: string;
   contentDigest: string;
-  contentDigestVersion: 3;
+  contentDigestVersion: 3 | 4;
   format: "markdown";
   documentFile: "document.md";
+  /** Absent on v3 records; v4 stores each entry below files/. */
+  files?: SkillFileSummary[];
 };
 
 type BridgeSkillVersionRecord = LegacyBridgeSkillVersionRecord | MarkdownBridgeSkillVersionRecord;
@@ -216,6 +286,7 @@ type LoadedBridgeVersion = {
   record: BridgeSkillRecord;
   version: BridgeSkillVersionRecord;
   document: string;
+  files: Array<SkillFileSummary & { content: string }>;
   legacy: boolean;
 };
 
@@ -238,12 +309,14 @@ const mutationQueues = new Map<string, Promise<void>>();
 /** Shared source of truth for model lookup and bridge-owned authoring. */
 export class SkillLibrary {
   private readonly store: BridgeSkillStore;
+  private readonly packageUploads: BridgeSkillPackageUploads;
 
   constructor(options: SkillLibraryOptions) {
     if (!path.isAbsolute(options.directory)) {
       throw new Error("SKILL_LIBRARY_DIRECTORY_INVALID: Bridge skills directory must be absolute.");
     }
     this.store = new BridgeSkillStore(path.normalize(options.directory), options.now || Date.now);
+    this.packageUploads = new BridgeSkillPackageUploads(path.normalize(options.directory), options.now || Date.now);
   }
 
   async search(input: { query?: string; limit?: number; includeDisabled?: boolean }): Promise<SkillSearchResult> {
@@ -257,7 +330,9 @@ export class SkillLibrary {
       if (!input.includeDisabled && !summary.enabled) continue;
       if (query && !matchesSearchMetadata(summary, query)) {
         const loaded = await this.store.readVersion(summary);
-        if (!matchesText(loaded.document, query)) continue;
+        if (!matchesText(loaded.document, query) && !loaded.files.some((file) => (
+          matchesText(file.path, query) || matchesText(file.content, query)
+        ))) continue;
       }
       matches.push(summary);
     }
@@ -267,6 +342,67 @@ export class SkillLibrary {
 
   async read(input: { reference: SkillReference }): Promise<SkillDocument> {
     return bridgeDocument(await this.store.readVersion(input.reference));
+  }
+
+  async readFile(input: { reference: SkillReference; path: string }): Promise<SkillFileDocument> {
+    const loaded = await this.store.readVersion(input.reference);
+    const requestedPath = normalizeSkillFilePath(input.path);
+    const file = loaded.files.find((candidate) => candidate.path === requestedPath);
+    if (!file) throw new Error("SKILL_FILE_NOT_FOUND: This file is not part of the requested immutable skill version.");
+    return {
+      kind: "skill-file",
+      skill: bridgeSummary(loaded.record, loaded.version.version),
+      path: file.path,
+      content: file.content,
+      format: file.format,
+      bytes: file.bytes,
+      contentDigest: file.contentDigest
+    };
+  }
+
+  beginBridgeSkillPackageUpload() {
+    return this.packageUploads.begin();
+  }
+
+  appendBridgeSkillPackageUpload(input: { uploadId: string; chunkIndex: number; data: string }) {
+    return this.packageUploads.append(input);
+  }
+
+  inspectBridgeSkillPackageUpload(uploadId: string): Promise<BridgeSkillPackageInspection> {
+    return this.packageUploads.inspect(uploadId);
+  }
+
+  async createBridgeSkillFromPackage(input: CreateBridgeSkillPackageInput): Promise<SkillSummary> {
+    return this.packageUploads.commit(input.uploadId, input.mainPath, input.includePaths, async (expanded) => {
+      if (expanded.document === undefined) throw new Error("SKILL_PACKAGE_MAIN_REQUIRED: Creating a skill package requires a main Markdown document.");
+      return this.createBridgeSkill({
+        requestId: input.requestId,
+        name: input.name,
+        description: input.description,
+        document: expanded.document,
+        files: expanded.files
+      });
+    });
+  }
+
+  async updateBridgeSkillFromPackage(input: UpdateBridgeSkillPackageInput): Promise<SkillSummary> {
+    return this.packageUploads.commit(input.uploadId, input.mainPath, input.includePaths, async (expanded) => {
+      return this.updateBridgeSkill({
+        requestId: input.requestId,
+        skillId: input.skillId,
+        expectedVersion: input.expectedVersion,
+        ...(expanded.document === undefined ? {} : { document: expanded.document }),
+        ...(expanded.files.length === 0 ? {} : { files: { upsert: expanded.files } })
+      });
+    });
+  }
+
+  async exportBridgeSkillPackage(reference: SkillReference): Promise<Buffer> {
+    const loaded = await this.store.readVersion(reference);
+    return deterministicBridgeSkillZip(
+      loaded.document,
+      loaded.files.map(({ path: filePath, content }) => ({ path: filePath, content }))
+    );
   }
 
   createBridgeSkill(input: CreateBridgeSkillInput): Promise<SkillSummary> {
@@ -333,7 +469,7 @@ class BridgeSkillStore {
         enabled: true,
         versions: []
       };
-      record.versions.push(await this.writeDocumentVersion(record, "1", normalized.document, now));
+      record.versions.push(await this.writeDocumentVersion(record, "1", normalized.document, normalized.files, now));
       index.skills.push(record);
       return bridgeSummary(record);
     });
@@ -351,9 +487,10 @@ class BridgeSkillStore {
       }
       const description = normalized.description ?? record.description;
       const document = normalized.document ?? current.document;
+      const files = applySkillFileChanges(current.files, normalized.files);
       const nextVersion = nextBridgeVersion(record.currentVersion);
       const now = isoNow(this.now);
-      const version = await this.writeDocumentVersion({ ...record, name, description }, nextVersion, document, now);
+      const version = await this.writeDocumentVersion({ ...record, name, description }, nextVersion, document, files, now);
       record.name = name;
       record.nameKey = nameKey;
       record.description = description;
@@ -377,7 +514,7 @@ class BridgeSkillStore {
       const nextVersion = nextBridgeVersion(record.currentVersion);
       const now = isoNow(this.now);
       const version = await this.writeDocumentVersion(
-        { ...record, name, description: source.version.description }, nextVersion, source.document, now
+        { ...record, name, description: source.version.description }, nextVersion, source.document, source.files, now
       );
       record.name = name;
       record.nameKey = nameKey;
@@ -484,10 +621,23 @@ class BridgeSkillStore {
       const document = await readBoundedText(
         path.join(root, version.documentFile), BRIDGE_SKILL_LIMITS.documentMaxBytes, "Bridge skill document"
       );
-      if (markdownDocumentDigest(version.name, version.description, document) !== version.contentDigest) {
+      const files = await Promise.all((version.files || []).map(async (file) => {
+        const filePath = await safeDescendant(path.join(root, "files"), file.path);
+        if (!filePath) throw new Error("SKILL_LIBRARY_CORRUPT: A bridge skill file escapes its version directory.");
+        const content = await readBoundedText(filePath, BRIDGE_SKILL_LIMITS.fileMaxBytes, "Bridge skill file", true);
+        const bytes = Buffer.byteLength(content, "utf8");
+        if (bytes !== file.bytes || sha256(content) !== file.contentDigest) {
+          throw new Error("SKILL_LIBRARY_CORRUPT: A bridge skill file no longer matches its recorded digest.");
+        }
+        return { ...file, content };
+      }));
+      const digest = version.contentDigestVersion === 3
+        ? markdownDocumentDigestV3(version.name, version.description, document)
+        : markdownDocumentDigest(version.name, version.description, document, files);
+      if (digest !== version.contentDigest) {
         throw new Error("SKILL_LIBRARY_CORRUPT: A bridge skill document no longer matches its recorded content digest.");
       }
-      return { record: cloneBridgeRecord(record), version: { ...version }, document, legacy: false };
+      return { record: cloneBridgeRecord(record), version: cloneMarkdownVersion(version), document, files, legacy: false };
     }
 
     const instructions = await readBoundedText(
@@ -513,6 +663,7 @@ class BridgeSkillStore {
       record: cloneBridgeRecord(record),
       version: cloneLegacyVersion(version),
       document: legacyDocument(instructions, references, version),
+      files: [],
       legacy: true
     };
   }
@@ -521,24 +672,38 @@ class BridgeSkillStore {
     record: Pick<BridgeSkillRecord, "skillId" | "name" | "description">,
     versionValue: string,
     document: string,
+    files: ReadonlyArray<SkillFileInput | (SkillFileSummary & { content: string })>,
     createdAt: string
   ): Promise<MarkdownBridgeSkillVersionRecord> {
     const directory = this.versionDirectory(record.skillId, versionValue);
     const staging = `${directory}.staging-${randomUUID()}`;
+    const normalizedFiles = normalizeSkillFiles(files);
+    const fileSummaries = normalizedFiles.map(({ path: filePath, content }) => ({
+      path: filePath,
+      format: "markdown" as const,
+      bytes: Buffer.byteLength(content, "utf8"),
+      contentDigest: sha256(content)
+    }));
     const version: MarkdownBridgeSkillVersionRecord = {
       kind: "document",
       version: versionValue,
       createdAt,
       name: record.name,
       description: record.description,
-      contentDigest: markdownDocumentDigest(record.name, record.description, document),
-      contentDigestVersion: 3,
+      contentDigest: markdownDocumentDigest(record.name, record.description, document, fileSummaries),
+      contentDigestVersion: 4,
       format: "markdown",
-      documentFile: "document.md"
+      documentFile: "document.md",
+      files: fileSummaries
     };
     try {
       await mkdir(staging, { recursive: true, mode: 0o700 });
       await writeFile(path.join(staging, version.documentFile), document, { encoding: "utf8", mode: 0o600 });
+      for (const file of normalizedFiles) {
+        const target = path.join(staging, "files", ...file.path.split("/"));
+        await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+        await writeFile(target, file.content, { encoding: "utf8", mode: 0o600 });
+      }
       await writeFile(path.join(staging, "manifest.json"), JSON.stringify({
         version: version.version,
         name: version.name,
@@ -546,7 +711,8 @@ class BridgeSkillStore {
         contentDigest: version.contentDigest,
         contentDigestVersion: version.contentDigestVersion,
         format: version.format,
-        documentFile: version.documentFile
+        documentFile: version.documentFile,
+        files: version.files
       }, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
       await mkdir(path.dirname(directory), { recursive: true, mode: 0o700 });
       await rename(staging, directory);
@@ -560,7 +726,10 @@ class BridgeSkillStore {
   private async readIndex(): Promise<BridgeSkillIndex> {
     let raw: string;
     try {
-      raw = await readFile(path.join(this.directory, BRIDGE_SKILL_INDEX), "utf8");
+      raw = strictUtf8Decode(
+        await readFile(path.join(this.directory, BRIDGE_SKILL_INDEX)),
+        "SKILL_LIBRARY_CORRUPT: Bridge skill index"
+      );
     } catch (error) {
       if (isErrno(error, "ENOENT")) return { schemaVersion: 5, skills: [], mutationReceipts: [] };
       throw error;
@@ -824,16 +993,13 @@ function bridgeVersionSummary(record: BridgeSkillRecord, version: BridgeSkillVer
 }
 
 function bridgeDocument(loaded: LoadedBridgeVersion): SkillDocument {
-  const warnings: string[] = [];
-  if (!loaded.record.enabled) {
-    warnings.push("This bridge skill is archived. Its immutable versions remain readable, but it is excluded from discovery.");
-  }
-  if (loaded.legacy) {
-    warnings.push("This is a legacy structured version. Editing or restoring it creates a new free-form Markdown version.");
-  }
+  const warnings: SkillWarningCode[] = [];
+  if (!loaded.record.enabled) warnings.push("archived");
+  if (loaded.legacy) warnings.push("legacy-structured");
   return {
     skill: bridgeSummary(loaded.record, loaded.version.version),
     document: loaded.document,
+    files: loaded.files.map(({ content: _content, ...file }) => ({ ...file })),
     format: "markdown",
     legacy: loaded.legacy,
     sourceSnapshot: "versioned-bridge-record",
@@ -842,7 +1008,7 @@ function bridgeDocument(loaded: LoadedBridgeVersion): SkillDocument {
 }
 
 function normalizeCreateInput(input: CreateBridgeSkillInput): {
-  requestId: string; name: string; nameKey: string; description: string; document: string;
+  requestId: string; name: string; nameKey: string; description: string; document: string; files: SkillFileInput[];
 } {
   const name = normalizeSkillName(input.name);
   return {
@@ -850,16 +1016,18 @@ function normalizeCreateInput(input: CreateBridgeSkillInput): {
     name,
     nameKey: skillNameKey(name),
     description: input.description === undefined ? "" : normalizeDescription(input.description, true),
-    document: normalizeDocument(input.document)
+    document: normalizeDocument(input.document),
+    files: normalizeSkillFiles(input.files || [])
   };
 }
 
 function normalizeUpdateInput(input: UpdateBridgeSkillInput): {
-  requestId: string; skillId: string; expectedVersion: string; name?: string; nameKey?: string; description?: string; document?: string;
+  requestId: string; skillId: string; expectedVersion: string; name?: string; nameKey?: string; description?: string;
+  document?: string; files?: SkillFileChanges;
 } {
   assertBridgeSkillId(input.skillId);
   assertBridgeVersion(input.expectedVersion, "expectedVersion");
-  if (input.name === undefined && input.description === undefined && input.document === undefined) {
+  if (input.name === undefined && input.description === undefined && input.document === undefined && input.files === undefined) {
     throw new Error("SKILL_UPDATE_EMPTY: Provide at least one bridge skill field to update.");
   }
   const name = input.name === undefined ? undefined : normalizeSkillName(input.name);
@@ -869,7 +1037,8 @@ function normalizeUpdateInput(input: UpdateBridgeSkillInput): {
     expectedVersion: input.expectedVersion,
     ...(name === undefined ? {} : { name, nameKey: skillNameKey(name) }),
     ...(input.description === undefined ? {} : { description: normalizeDescription(input.description, true) }),
-    ...(input.document === undefined ? {} : { document: normalizeDocument(input.document) })
+    ...(input.document === undefined ? {} : { document: normalizeDocument(input.document) }),
+    ...(input.files === undefined ? {} : { files: normalizeSkillFileChanges(input.files) })
   };
 }
 
@@ -905,8 +1074,7 @@ function normalizeDeleteInput(input: DeleteBridgeSkillInput): DeleteBridgeSkillI
 }
 
 function normalizeSkillName(value: string): string {
-  if (typeof value !== "string") throw new Error("SKILL_NAME_INVALID: Skill name must be text.");
-  const normalized = value.normalize("NFC").replace(/\s+/gu, " ").trim();
+  const normalized = canonicalHumanText(value, "SKILL_NAME_INVALID: Skill name").replace(/\s+/gu, " ").trim();
   if (!normalized || Array.from(normalized).length > BRIDGE_SKILL_LIMITS.nameMaxCharacters || CONTROL_CHARACTERS.test(normalized)) {
     throw new Error(`SKILL_NAME_INVALID: Use 1-${BRIDGE_SKILL_LIMITS.nameMaxCharacters} visible characters for a skill name.`);
   }
@@ -914,8 +1082,7 @@ function normalizeSkillName(value: string): string {
 }
 
 function normalizeDescription(value: string, allowEmpty: boolean): string {
-  if (typeof value !== "string") throw new Error("SKILL_DESCRIPTION_INVALID: Skill description must be text.");
-  const normalized = value.normalize("NFC").replace(/\s+/gu, " ").trim();
+  const normalized = canonicalHumanText(value, "SKILL_DESCRIPTION_INVALID: Skill description").replace(/\s+/gu, " ").trim();
   if ((!allowEmpty && !normalized) || Array.from(normalized).length > BRIDGE_SKILL_LIMITS.descriptionMaxCharacters || CONTROL_CHARACTERS.test(normalized)) {
     throw new Error(`SKILL_DESCRIPTION_INVALID: Use at most ${BRIDGE_SKILL_LIMITS.descriptionMaxCharacters} visible characters for a description.`);
   }
@@ -923,13 +1090,105 @@ function normalizeDescription(value: string, allowEmpty: boolean): string {
 }
 
 function normalizeDocument(value: string): string {
-  if (typeof value !== "string") throw new Error("SKILL_DOCUMENT_INVALID: A bridge skill document must be text.");
-  const bytes = Buffer.byteLength(value, "utf8");
-  if (!value.trim() || bytes > BRIDGE_SKILL_LIMITS.documentMaxBytes || value.includes("\u0000")) {
+  const document = assertVerbatimUtf8Text(value, "SKILL_DOCUMENT_INVALID: A bridge skill document");
+  const bytes = Buffer.byteLength(document, "utf8");
+  if (!document.trim() || bytes > BRIDGE_SKILL_LIMITS.documentMaxBytes || document.includes("\u0000")) {
     throw new Error(`SKILL_DOCUMENT_INVALID: A document must be 1-${BRIDGE_SKILL_LIMITS.documentMaxBytes} UTF-8 bytes without NUL characters.`);
   }
-  // Do not normalize Markdown: code, paths, line endings, and combining text are source content.
-  return value;
+  return document;
+}
+
+function normalizeSkillFiles(
+  files: ReadonlyArray<SkillFileInput | (SkillFileSummary & { content: string })>
+): SkillFileInput[] {
+  if (!Array.isArray(files) || files.length > BRIDGE_SKILL_LIMITS.fileMaxCount) {
+    throw new Error(`SKILL_FILES_INVALID: A skill can contain at most ${BRIDGE_SKILL_LIMITS.fileMaxCount} Markdown files.`);
+  }
+  const exact = new Set<string>();
+  const filesystemKeys = new Set<string>();
+  let totalBytes = 0;
+  const normalized = files.map((file) => {
+    if (!file || typeof file !== "object" || typeof file.path !== "string" || typeof file.content !== "string") {
+      throw new Error("SKILL_FILE_INVALID: Each skill file requires a relative path and Markdown content.");
+    }
+    const filePath = normalizeSkillFilePath(file.path);
+    const content = assertVerbatimUtf8Text(file.content, `SKILL_FILE_INVALID: ${filePath}`);
+    if (content.includes("\u0000")) throw new Error("SKILL_FILE_INVALID: Markdown files cannot contain NUL characters.");
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (bytes > BRIDGE_SKILL_LIMITS.fileMaxBytes) {
+      throw new Error(`SKILL_FILE_TOO_LARGE: ${filePath} exceeds ${BRIDGE_SKILL_LIMITS.fileMaxBytes} UTF-8 bytes.`);
+    }
+    totalBytes += bytes;
+    const filesystemKey = filePath.toLocaleLowerCase("en-US");
+    if (exact.has(filePath) || filesystemKeys.has(filesystemKey)) {
+      throw new Error(`SKILL_FILE_PATH_CONFLICT: ${filePath} conflicts with another Markdown file path.`);
+    }
+    exact.add(filePath);
+    filesystemKeys.add(filesystemKey);
+    return { path: filePath, content };
+  });
+  if (totalBytes > BRIDGE_SKILL_LIMITS.fileTotalMaxBytes) {
+    throw new Error(`SKILL_FILES_TOO_LARGE: Markdown files exceed ${BRIDGE_SKILL_LIMITS.fileTotalMaxBytes} total UTF-8 bytes.`);
+  }
+  return normalized.sort((left, right) => compareSkillFilePaths(left.path, right.path));
+}
+
+function normalizeSkillFileChanges(value: SkillFileChanges): SkillFileChanges {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("SKILL_FILE_CHANGES_INVALID: File changes must be an object.");
+  }
+  const keys = Object.keys(value as Record<string, unknown>);
+  if (keys.some((key) => key !== "upsert" && key !== "remove")) {
+    throw new Error("SKILL_FILE_CHANGES_INVALID: File changes contain an unsupported field.");
+  }
+  const upsert = normalizeSkillFiles(value.upsert || []);
+  if (!Array.isArray(value.remove || [])) throw new Error("SKILL_FILE_CHANGES_INVALID: remove must be a path list.");
+  const remove = (value.remove || []).map(normalizeSkillFilePath);
+  if (new Set(remove).size !== remove.length) throw new Error("SKILL_FILE_CHANGES_INVALID: remove contains duplicate paths.");
+  const upsertPaths = new Set(upsert.map((file) => file.path));
+  if (remove.some((filePath) => upsertPaths.has(filePath))) {
+    throw new Error("SKILL_FILE_CHANGES_INVALID: A path cannot be upserted and removed in the same update.");
+  }
+  if (upsert.length === 0 && remove.length === 0) {
+    throw new Error("SKILL_FILE_CHANGES_INVALID: Provide at least one file to add, replace, or remove.");
+  }
+  return { ...(upsert.length ? { upsert } : {}), ...(remove.length ? { remove } : {}) };
+}
+
+function applySkillFileChanges(
+  current: ReadonlyArray<SkillFileSummary & { content: string }>,
+  changes: SkillFileChanges | undefined
+): SkillFileInput[] {
+  if (!changes) return current.map(({ path: filePath, content }) => ({ path: filePath, content }));
+  const files = new Map(current.map(({ path: filePath, content }) => [filePath, content]));
+  for (const filePath of changes.remove || []) {
+    if (!files.delete(filePath)) throw new Error(`SKILL_FILE_NOT_FOUND: ${filePath} is not in the current skill version.`);
+  }
+  for (const file of changes.upsert || []) {
+    const filesystemKey = file.path.toLocaleLowerCase("en-US");
+    const existing = [...files.keys()].find((filePath) => filePath.toLocaleLowerCase("en-US") === filesystemKey);
+    if (existing && existing !== file.path) files.delete(existing);
+    files.set(file.path, file.content);
+  }
+  return normalizeSkillFiles([...files].map(([filePath, content]) => ({ path: filePath, content })));
+}
+
+export function normalizeSkillFilePath(value: string): string {
+  const source = canonicalHumanText(value, "SKILL_FILE_PATH_INVALID: Skill file path");
+  if (source.includes("\u0000") || source.includes("\\") || source.startsWith("/") || /^[A-Za-z]:/u.test(source)) {
+    throw new Error("SKILL_FILE_PATH_INVALID: Use a logical relative path with / separators.");
+  }
+  const segments = source.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === ".." || CONTROL_CHARACTERS.test(segment))) {
+    throw new Error("SKILL_FILE_PATH_INVALID: Empty, dot, parent, and control-character path segments are not allowed.");
+  }
+  if (segments.length > BRIDGE_SKILL_LIMITS.filePathMaxDepth || Buffer.byteLength(source, "utf8") > BRIDGE_SKILL_LIMITS.filePathMaxBytes) {
+    throw new Error("SKILL_FILE_PATH_INVALID: The Markdown file path is too deep or too long.");
+  }
+  if (!/\.(?:md|markdown)$/iu.test(source) || source.toLocaleLowerCase("en-US") === "document.md") {
+    throw new Error("SKILL_FILE_TYPE_UNSUPPORTED: Only .md and .markdown attachments are supported; document.md is reserved for the main document.");
+  }
+  return source;
 }
 
 function normalizeLegacyRequirements(value: unknown): LegacyRequirementInput[] {
@@ -958,11 +1217,35 @@ function normalizeLegacyHumanText(value: string, max: number, label: string): st
 }
 
 function skillNameKey(name: string): string {
-  return name.normalize("NFKC").toLocaleLowerCase("en-US");
+  return canonicalSearchKey(name);
 }
 
-function markdownDocumentDigest(name: string, description: string, document: string): string {
+function markdownDocumentDigestV3(name: string, description: string, document: string): string {
   return sha256(stableJson({ name, description, document, format: "markdown" }));
+}
+
+function markdownDocumentDigest(
+  name: string,
+  description: string,
+  document: string,
+  files: ReadonlyArray<SkillFileSummary>
+): string {
+  return sha256(stableJson({
+    name,
+    description,
+    document: {
+      bytes: Buffer.byteLength(document, "utf8"),
+      contentDigest: sha256(document),
+      format: "markdown"
+    },
+    files: files.map((file) => ({
+      path: file.path,
+      format: file.format,
+      bytes: file.bytes,
+      contentDigest: file.contentDigest
+    })),
+    format: "markdown-tree"
+  }));
 }
 
 function legacyVersionDigest(
@@ -1083,15 +1366,56 @@ function validateBridgeVersion(value: unknown, indexVersion: 1 | 2 | 3 | 4 | 5):
 
 function validateMarkdownVersion(value: Record<string, unknown>): MarkdownBridgeSkillVersionRecord {
   if (!/^[1-9]\d*$/.test(stringValue(value.version)) || typeof value.createdAt !== "string" || typeof value.name !== "string" ||
-    typeof value.description !== "string" || !SHA256.test(stringValue(value.contentDigest)) || value.contentDigestVersion !== 3 ||
+    typeof value.description !== "string" || !SHA256.test(stringValue(value.contentDigest)) || ![3, 4].includes(value.contentDigestVersion as number) ||
     value.format !== "markdown" || value.documentFile !== "document.md") {
     throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill document version is invalid.");
   }
+  const contentDigestVersion = value.contentDigestVersion as 3 | 4;
+  const files = contentDigestVersion === 3 ? undefined : validateSkillFileSummaries(value.files);
   return {
     kind: "document", version: stringValue(value.version), createdAt: value.createdAt,
     name: normalizeSkillName(value.name), description: normalizeDescription(value.description, true),
-    contentDigest: stringValue(value.contentDigest), contentDigestVersion: 3, format: "markdown", documentFile: "document.md"
+    contentDigest: stringValue(value.contentDigest), contentDigestVersion, format: "markdown", documentFile: "document.md",
+    ...(files === undefined ? {} : { files })
   };
+}
+
+function validateSkillFileSummaries(value: unknown): SkillFileSummary[] {
+  if (!Array.isArray(value) || value.length > BRIDGE_SKILL_LIMITS.fileMaxCount) {
+    throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill file inventory is invalid.");
+  }
+  const paths = new Set<string>();
+  const filesystemKeys = new Set<string>();
+  let totalBytes = 0;
+  const files = value.map((entry) => {
+    if (!isRecord(entry) || typeof entry.path !== "string" || entry.format !== "markdown" ||
+      !Number.isSafeInteger(entry.bytes) || (entry.bytes as number) < 0 ||
+      (entry.bytes as number) > BRIDGE_SKILL_LIMITS.fileMaxBytes || !SHA256.test(stringValue(entry.contentDigest))) {
+      throw new Error("SKILL_LIBRARY_CORRUPT: A bridge skill file inventory entry is invalid.");
+    }
+    const filePath = normalizeSkillFilePath(entry.path);
+    const key = filePath.toLocaleLowerCase("en-US");
+    if (paths.has(filePath) || filesystemKeys.has(key)) {
+      throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill file paths conflict.");
+    }
+    paths.add(filePath);
+    filesystemKeys.add(key);
+    totalBytes += entry.bytes as number;
+    return {
+      path: filePath,
+      format: "markdown" as const,
+      bytes: entry.bytes as number,
+      contentDigest: stringValue(entry.contentDigest)
+    };
+  });
+  if (totalBytes > BRIDGE_SKILL_LIMITS.fileTotalMaxBytes) {
+    throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill files exceed the aggregate size limit.");
+  }
+  const sorted = files.slice().sort((left, right) => compareSkillFilePaths(left.path, right.path));
+  if (files.some((file, index) => file.path !== sorted[index]?.path)) {
+    throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill file inventory is not deterministically sorted.");
+  }
+  return files;
 }
 
 function validateLegacyVersion(value: unknown, indexVersion: 1 | 2 | 3 | 4 | 5): LegacyBridgeSkillVersionRecord {
@@ -1236,8 +1560,12 @@ function isMarkdownVersion(version: BridgeSkillVersionRecord): version is Markdo
 function cloneBridgeRecord(record: BridgeSkillRecord): BridgeSkillRecord {
   return {
     ...record,
-    versions: record.versions.map((version) => isMarkdownVersion(version) ? { ...version } : cloneLegacyVersion(version))
+    versions: record.versions.map((version) => isMarkdownVersion(version) ? cloneMarkdownVersion(version) : cloneLegacyVersion(version))
   };
+}
+
+function cloneMarkdownVersion(version: MarkdownBridgeSkillVersionRecord): MarkdownBridgeSkillVersionRecord {
+  return { ...version, ...(version.files ? { files: version.files.map((file) => ({ ...file })) } : {}) };
 }
 
 function cloneLegacyVersion(version: LegacyBridgeSkillVersionRecord): LegacyBridgeSkillVersionRecord {
@@ -1322,7 +1650,7 @@ function matchesSearchMetadata(skill: SkillSummary, query: string): boolean {
 }
 
 function matchesText(value: string, query: string): boolean {
-  const haystack = value.normalize("NFKC").toLocaleLowerCase("en-US");
+  const haystack = canonicalSearchKey(value);
   return query.split(/\s+/u).every((term) => haystack.includes(term));
 }
 
@@ -1331,7 +1659,11 @@ function normalizeSearchQuery(value: string | undefined): string {
   if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > BRIDGE_SKILL_LIMITS.searchQueryMaxBytes) {
     throw new Error(`SKILL_SEARCH_INVALID: Search text must be at most ${BRIDGE_SKILL_LIMITS.searchQueryMaxBytes.toLocaleString("en-US")} UTF-8 bytes.`);
   }
-  return value.normalize("NFKC").trim().toLocaleLowerCase("en-US");
+  return canonicalSearchKey(value).trim();
+}
+
+function compareSkillFilePaths(left: string, right: string): number {
+  return left.localeCompare(right, "en-US", { sensitivity: "variant" });
 }
 
 function normalizeSearchLimit(value: number | undefined): number {
@@ -1381,12 +1713,13 @@ function sameMutationLockOwner(left: BridgeSkillMutationLockOwner | undefined, r
   return left.token === right.token && left.pid === right.pid && left.host === right.host;
 }
 
-async function readBoundedText(file: string, maxBytes: number, label: string): Promise<string> {
+async function readBoundedText(file: string, maxBytes: number, label: string, allowEmpty = false): Promise<string> {
   const information = await stat(file);
-  if (!information.isFile() || information.size < 1 || information.size > maxBytes) {
+  if (!information.isFile() || (!allowEmpty && information.size < 1) || information.size > maxBytes) {
     throw new Error(`${label} is unavailable or exceeds its ${maxBytes}-byte limit.`);
   }
-  const value = await readFile(file, "utf8");
+  const bytes = await readFile(file);
+  const value = strictUtf8Decode(bytes, label);
   if (Buffer.byteLength(value, "utf8") > maxBytes || value.includes("\u0000")) {
     throw new Error(`${label} is unavailable or is not supported UTF-8 text.`);
   }

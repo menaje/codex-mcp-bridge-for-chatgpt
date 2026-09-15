@@ -207,16 +207,19 @@ import {
   BRIDGE_SKILL_SOURCE,
   SkillLibrary,
   type CreateBridgeSkillInput,
+  type CreateBridgeSkillPackageInput,
   type DeleteBridgeSkillInput,
   type DeletedBridgeSkill,
   type SkillDocument,
+  type SkillFileDocument,
   type SkillReference,
   type SkillSearchResult,
   type SkillSummary,
   type SkillVersionList,
   type RestoreBridgeSkillInput,
   type SetBridgeSkillEnabledInput,
-  type UpdateBridgeSkillInput
+  type UpdateBridgeSkillInput,
+  type UpdateBridgeSkillPackageInput
 } from "./skillLibrary.js";
 
 type CodexJobStatus =
@@ -1191,10 +1194,26 @@ const bridgeSkillReadOutputSchema = z.strictObject({
   kind: z.literal("skill"),
   skill: skillSummaryOutputSchema,
   document: z.string().min(1),
+  files: z.array(z.strictObject({
+    path: z.string().min(1),
+    format: z.literal("markdown"),
+    bytes: z.number().int().nonnegative(),
+    contentDigest: z.string().regex(/^[a-f0-9]{64}$/)
+  })),
   format: z.literal("markdown"),
   legacy: z.boolean(),
   sourceSnapshot: z.literal("versioned-bridge-record"),
-  warnings: z.array(z.string())
+  warnings: z.array(z.enum(["archived", "legacy-structured"]))
+});
+
+const bridgeSkillFileOutputSchema = z.strictObject({
+  kind: z.literal("skill-file"),
+  skill: skillSummaryOutputSchema,
+  path: z.string().min(1),
+  content: z.string(),
+  format: z.literal("markdown"),
+  bytes: z.number().int().nonnegative(),
+  contentDigest: z.string().regex(/^[a-f0-9]{64}$/)
 });
 
 const bridgeSkillVersionsOutputSchema = z.strictObject({
@@ -1214,12 +1233,13 @@ const bridgeSkillVersionsOutputSchema = z.strictObject({
 const bridgeSkillOutputSchema = z.union([
   bridgeSkillSearchOutputSchema,
   bridgeSkillReadOutputSchema,
+  bridgeSkillFileOutputSchema,
   bridgeSkillVersionsOutputSchema
 ]);
 
 const bridgeSkillManageOutputSchema = z.strictObject({
   kind: z.literal("skill-mutation"),
-  action: z.enum(["create", "update", "restore", "set-enabled"]),
+  action: z.enum(["create", "update", "create-package", "update-package", "restore", "set-enabled"]),
   requestId: z.string().uuid(),
   skill: skillSummaryOutputSchema,
   message: z.string().min(1)
@@ -3833,14 +3853,26 @@ export function registerBridgeTools(
       }
       return effectiveSkillLibrary.read({ reference });
     },
+    async readBridgeSkillFile(reference, filePath) {
+      if (reference.source !== BRIDGE_SKILL_SOURCE) {
+        throw new Error("SKILL_SOURCE_UNSUPPORTED: The native library can manage bridge-owned skills only.");
+      }
+      return effectiveSkillLibrary.readFile({ reference, path: filePath });
+    },
     listBridgeSkillVersions(input) {
       return effectiveSkillLibrary.listBridgeSkillVersions(input);
     },
     createBridgeSkill(input) {
       return effectiveSkillLibrary.createBridgeSkill(input);
     },
+    createBridgeSkillFromPackage(input) {
+      return effectiveSkillLibrary.createBridgeSkillFromPackage(input);
+    },
     updateBridgeSkill(input) {
       return effectiveSkillLibrary.updateBridgeSkill(input);
+    },
+    updateBridgeSkillFromPackage(input) {
+      return effectiveSkillLibrary.updateBridgeSkillFromPackage(input);
     },
     restoreBridgeSkill(input) {
       return effectiveSkillLibrary.restoreBridgeSkill(input);
@@ -3850,6 +3882,25 @@ export function registerBridgeTools(
     },
     deleteBridgeSkill(input) {
       return effectiveSkillLibrary.deleteBridgeSkill(input);
+    },
+    beginBridgeSkillPackageUpload() {
+      return effectiveSkillLibrary.beginBridgeSkillPackageUpload();
+    },
+    appendBridgeSkillPackageUpload(input) {
+      return effectiveSkillLibrary.appendBridgeSkillPackageUpload(input);
+    },
+    inspectBridgeSkillPackageUpload(uploadId) {
+      return effectiveSkillLibrary.inspectBridgeSkillPackageUpload(uploadId);
+    },
+    async exportBridgeSkillPackage(reference) {
+      const data = await effectiveSkillLibrary.exportBridgeSkillPackage(reference);
+      return {
+        fileName: `${reference.skillId}-v${reference.version}.zip`,
+        mediaType: "application/zip" as const,
+        bytes: data.byteLength,
+        contentDigest: createHash("sha256").update(data).digest("hex"),
+        data: data.toString("base64")
+      };
     },
     async problemAction(rawInput, scopeId, source = "operator") {
       const input = problemActionSchema.parse(rawInput);
@@ -4298,6 +4349,16 @@ export function registerBridgeTools(
       message: `Skill document must be at most ${BRIDGE_SKILL_LIMITS.documentMaxBytes} UTF-8 bytes.`
     })
     .refine((value) => !value.includes("\u0000"), { message: "Skill document cannot contain NUL characters." });
+  const bridgeSkillFilePathInput = z.string().min(1).max(BRIDGE_SKILL_LIMITS.filePathMaxBytes)
+    .describe("Logical relative .md or .markdown path returned by bridge_skill. Never use a host filesystem path.");
+  const bridgeSkillFileInput = z.strictObject({
+    path: bridgeSkillFilePathInput,
+    content: z.string().max(BRIDGE_SKILL_LIMITS.fileMaxBytes)
+      .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.fileMaxBytes, {
+        message: `Skill file must be at most ${BRIDGE_SKILL_LIMITS.fileMaxBytes} UTF-8 bytes.`
+      })
+      .refine((value) => !value.includes("\u0000"), { message: "Skill file cannot contain NUL characters." })
+  });
   const bridgeSkillInput = z.discriminatedUnion("operation", [
     z.strictObject({
       operation: z.literal("search"),
@@ -4314,6 +4375,11 @@ export function registerBridgeTools(
       skill: skillReferenceInput
     }),
     z.strictObject({
+      operation: z.literal("read-file"),
+      skill: skillReferenceInput,
+      path: bridgeSkillFilePathInput
+    }),
+    z.strictObject({
       operation: z.literal("versions"),
       skillId: z.string().trim().regex(/^bridge_[a-f0-9]{32}$/).describe("Bridge skill id whose immutable version history should be listed.")
     })
@@ -4324,7 +4390,18 @@ export function registerBridgeTools(
       requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
       name: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters),
       description: z.string().max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).optional().describe("Optional discovery summary. The Markdown document remains the complete skill body."),
-      document: bridgeSkillDocumentInput.describe("Complete free-form Markdown document. The bridge preserves it without adding frontmatter or splitting sections.")
+      document: bridgeSkillDocumentInput.describe("Complete free-form Markdown document. The bridge preserves it without adding frontmatter or splitting sections."),
+      files: z.array(bridgeSkillFileInput).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
+        .describe("Optional independent Markdown files in the same immutable skill version. Paths are logical relative paths.")
+    }),
+    z.strictObject({
+      operation: z.literal("create-package"),
+      requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
+      name: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters),
+      description: z.string().max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).optional(),
+      uploadId: scopeIdSchema().describe("Expiring upload id supplied by a trusted binary-upload adapter after ZIP inspection."),
+      mainPath: bridgeSkillFilePathInput.describe("Exact inspected Markdown path selected as the main document."),
+      includePaths: z.array(bridgeSkillFilePathInput).min(1).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
     }),
     z.strictObject({
       operation: z.literal("update"),
@@ -4333,9 +4410,22 @@ export function registerBridgeTools(
       expectedVersion: z.string().trim().regex(/^[1-9]\d*$/).describe("Current version read before this mutation. A successful update creates the next immutable version."),
       name: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters).optional(),
       description: z.string().max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).optional(),
-      document: bridgeSkillDocumentInput.optional()
-    }).refine((value) => value.name !== undefined || value.description !== undefined || value.document !== undefined, {
+      document: bridgeSkillDocumentInput.optional(),
+      files: z.strictObject({
+        upsert: z.array(bridgeSkillFileInput).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional(),
+        remove: z.array(bridgeSkillFilePathInput).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
+      }).optional().describe("Atomic attachment changes applied with the document and metadata update.")
+    }).refine((value) => value.name !== undefined || value.description !== undefined || value.document !== undefined || value.files !== undefined, {
       message: "Provide at least one field to update."
+    }),
+    z.strictObject({
+      operation: z.literal("update-package"),
+      requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
+      skillId: z.string().trim().regex(/^bridge_[a-f0-9]{32}$/),
+      expectedVersion: z.string().trim().regex(/^[1-9]\d*$/),
+      uploadId: scopeIdSchema().describe("Expiring upload id supplied by a trusted binary-upload adapter after ZIP inspection."),
+      mainPath: bridgeSkillFilePathInput.nullable().describe("Select a main replacement, or null to import all inspected Markdown as attachments."),
+      includePaths: z.array(bridgeSkillFilePathInput).min(1).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
     }),
     z.strictObject({
       operation: z.literal("restore"),
@@ -4357,7 +4447,7 @@ export function registerBridgeTools(
     {
       title: "Find and Read Bridge Skills",
       description:
-        "Find and read reusable bridge-owned Markdown documents. Search by the user's goal when no exact skill name is known, then read the selected immutable version. Reading never starts Codex, executes a script, or changes permissions.",
+        "Find and read reusable bridge-owned Markdown documents. Search by goal, read an exact immutable version to get its main document and file inventory, then use read-file only for relevant attached Markdown. Reading never starts Codex, executes a script, or changes permissions.",
       inputSchema: bridgeSkillInput,
       outputSchema: bridgeSkillOutputSchema,
       annotations: {
@@ -4393,6 +4483,17 @@ export function registerBridgeTools(
         );
       }
 
+      if (args.operation === "read-file") {
+        const result = await effectiveSkillLibrary.readFile({ reference: args.skill as SkillReference, path: args.path });
+        const structured = bridgeSkillFileOutputSchema.parse(result);
+        return contractedToolResult(
+          skillResultContract,
+          result,
+          structured,
+          { content: bridgeSkillPrimaryContent(structured) }
+        );
+      }
+
       const result = await effectiveSkillLibrary.read({ reference: args.skill as SkillReference });
       const structured = bridgeSkillReadOutputSchema.parse({ kind: "skill", ...result });
       return contractedToolResult(
@@ -4409,7 +4510,7 @@ export function registerBridgeTools(
     {
       title: "Manage a Bridge Skill",
       description:
-        "Create, version, restore, or archive a bridge-owned Markdown skill document. Every mutation requires a requestId for exact retries. Content updates and restores are append-only: the bridge preserves prior document versions.",
+        "Create, version, restore, or archive a bridge-owned free-form Markdown skill and its optional Markdown file tree. Every mutation requires a requestId for exact retries. Document and file updates are atomic and append-only: prior versions remain immutable.",
       inputSchema: bridgeSkillManageInput,
       outputSchema: bridgeSkillManageOutputSchema,
       annotations: {
@@ -4425,8 +4526,18 @@ export function registerBridgeTools(
             requestId: args.requestId,
             name: args.name,
             description: args.description,
-            document: args.document
+            document: args.document,
+            files: args.files
           })
+        : args.operation === "create-package"
+          ? await effectiveSkillLibrary.createBridgeSkillFromPackage({
+              requestId: args.requestId,
+              name: args.name,
+              description: args.description,
+              uploadId: args.uploadId,
+              mainPath: args.mainPath,
+              includePaths: args.includePaths
+            })
         : args.operation === "update"
           ? await effectiveSkillLibrary.updateBridgeSkill({
               requestId: args.requestId,
@@ -4434,8 +4545,18 @@ export function registerBridgeTools(
               expectedVersion: args.expectedVersion,
               ...(args.name === undefined ? {} : { name: args.name }),
               ...(args.description === undefined ? {} : { description: args.description }),
-              ...(args.document === undefined ? {} : { document: args.document })
+              ...(args.document === undefined ? {} : { document: args.document }),
+              ...(args.files === undefined ? {} : { files: args.files })
             })
+          : args.operation === "update-package"
+            ? await effectiveSkillLibrary.updateBridgeSkillFromPackage({
+                requestId: args.requestId,
+                skillId: args.skillId,
+                expectedVersion: args.expectedVersion,
+                uploadId: args.uploadId,
+                mainPath: args.mainPath,
+                includePaths: args.includePaths
+              })
           : args.operation === "restore"
             ? await effectiveSkillLibrary.restoreBridgeSkill({
                 requestId: args.requestId,
@@ -4455,9 +4576,9 @@ export function registerBridgeTools(
         action,
         requestId: args.requestId,
         skill,
-        message: action === "create"
+        message: action === "create" || action === "create-package"
           ? `Created bridge skill ${JSON.stringify(skill.name)} at version ${skill.version}.`
-          : action === "update"
+          : action === "update" || action === "update-package"
             ? `Created version ${skill.version} of bridge skill ${JSON.stringify(skill.name)}.`
             : action === "restore"
               ? `Restored historical content as version ${skill.version} of bridge skill ${JSON.stringify(skill.name)}.`
@@ -9427,12 +9548,21 @@ export type BridgeApplicationService = {
   /** Native app access to the same bridge-owned, versioned source as MCP. */
   skillLibrarySnapshot?(): Promise<SkillSearchResult>;
   readBridgeSkill?(reference: SkillReference): Promise<SkillDocument>;
+  readBridgeSkillFile?(reference: SkillReference, path: string): Promise<SkillFileDocument>;
   listBridgeSkillVersions?(input: { skillId: string }): Promise<SkillVersionList>;
   createBridgeSkill?(input: CreateBridgeSkillInput): Promise<SkillSummary>;
+  createBridgeSkillFromPackage?(input: CreateBridgeSkillPackageInput): Promise<SkillSummary>;
   updateBridgeSkill?(input: UpdateBridgeSkillInput): Promise<SkillSummary>;
+  updateBridgeSkillFromPackage?(input: UpdateBridgeSkillPackageInput): Promise<SkillSummary>;
   restoreBridgeSkill?(input: RestoreBridgeSkillInput): Promise<SkillSummary>;
   setBridgeSkillEnabled?(input: SetBridgeSkillEnabledInput): Promise<SkillSummary>;
   deleteBridgeSkill?(input: DeleteBridgeSkillInput): Promise<DeletedBridgeSkill>;
+  beginBridgeSkillPackageUpload?(): Promise<{ uploadId: string; expiresAt: string; chunkMaxBytes: number }>;
+  appendBridgeSkillPackageUpload?(input: { uploadId: string; chunkIndex: number; data: string }): Promise<{ receivedBytes: number; nextChunk: number }>;
+  inspectBridgeSkillPackageUpload?(uploadId: string): Promise<import("./skillPackage.js").BridgeSkillPackageInspection>;
+  exportBridgeSkillPackage?(reference: SkillReference): Promise<{
+    fileName: string; mediaType: "application/zip"; bytes: number; contentDigest: string; data: string;
+  }>;
 };
 type CodexWeeklyUsageView = z.infer<typeof codexWeeklyUsageOutputSchema>;
 type CancellationDisplay = z.infer<typeof cancellationDisplayOutputSchema>;

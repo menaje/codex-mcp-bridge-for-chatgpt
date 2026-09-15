@@ -420,6 +420,9 @@ enum BridgeAppLocalization {
     }
 
     private static func localizedErrorDetail(_ message: String, locale: Locale) -> String {
+        if let skillError = skillErrorDescription(message, locale: locale) {
+            return skillError
+        }
         if message.contains("SETUP_CANDIDATE_UNAVAILABLE") {
             return string("찾은 연결 설정이 더 이상 유효하지 않습니다. 다시 찾아 주세요.", locale: locale)
         }
@@ -482,6 +485,82 @@ enum BridgeAppLocalization {
             "요청을 처리하지 못했습니다. 진단 로그에서 자세한 내용을 확인해 주세요.",
             locale: locale
         )
+    }
+
+    /// Bridge skill errors cross the companion boundary as stable machine
+    /// codes. Never expose the helper's English diagnostic suffix in native UI.
+    private static func skillErrorDescription(_ message: String, locale: Locale) -> String? {
+        let mappings: [(codes: [String], localized: String)] = [
+            (["SKILL_VERSION_CHANGED"],
+             string("다른 곳에서 스킬이 변경되었습니다. 최신 버전을 불러온 뒤 다시 시도하세요.", locale: locale)),
+            (["SKILL_FILE_NOT_FOUND", "SKILL_VERSION_NOT_FOUND", "SKILL_NOT_FOUND"],
+             string("요청한 스킬 또는 Markdown 파일 버전을 찾을 수 없습니다.", locale: locale)),
+            (["SKILL_NAME_CONFLICT"],
+             string("같은 이름의 브리지 스킬이 이미 있습니다.", locale: locale)),
+            (["SKILL_LIBRARY_BUSY"],
+             string("다른 작업이 스킬 라이브러리를 변경하고 있습니다. 잠시 후 다시 시도하세요.", locale: locale)),
+            (["SKILL_LIBRARY_CORRUPT"],
+             string("스킬 라이브러리의 무결성을 확인할 수 없습니다. 진단 로그를 확인해 주세요.", locale: locale)),
+            (["SKILL_DELETE_CLEANUP_PENDING"],
+             string("스킬은 삭제되었지만 보안 정리가 아직 끝나지 않았습니다. 같은 요청으로 다시 시도하세요.", locale: locale)),
+            (["SKILL_DELETE_CONFIRMATION_INVALID"],
+             string("영구 삭제하려면 현재 스킬 이름을 정확히 입력하세요.", locale: locale)),
+            (["SKILL_MUTATION_REQUEST_REUSED", "SKILL_MUTATION_INVALIDATED"],
+             string("이 변경 요청은 이미 다른 작업에 사용되었거나 삭제로 무효화되었습니다. 새 요청으로 다시 시도하세요.", locale: locale)),
+            (["SKILL_FILE_TYPE_UNSUPPORTED", "SKILL_PACKAGE_FILE_UNSUPPORTED"],
+             string("현재는 UTF-8 .md와 .markdown 파일만 지원합니다.", locale: locale)),
+            (["SKILL_FILE_PATH_INVALID", "SKILL_FILE_PATH_CONFLICT", "SKILL_PACKAGE_PATH_INVALID",
+              "SKILL_PACKAGE_PATH_CONFLICT", "SKILL_PACKAGE_PATH_ENCODING_INVALID"],
+             string("패키지에 안전하지 않거나 지원하지 않는 파일 경로가 있습니다.", locale: locale)),
+            (["SKILL_FILES_INVALID", "SKILL_FILE_TOO_LARGE", "SKILL_FILES_TOO_LARGE"],
+             string("Markdown 파일이 허용된 파일 수 또는 크기 한도를 초과합니다.", locale: locale)),
+            (["SKILL_FILE_CHANGES_INVALID", "SKILL_FILE_INVALID", "SKILL_DOCUMENT_INVALID",
+              "SKILL_DESCRIPTION_INVALID", "SKILL_NAME_INVALID", "SKILL_MUTATION_INVALID",
+              "SKILL_MUTATION_REQUEST_ID_INVALID", "SKILL_ID_INVALID", "SKILL_ENABLED_INVALID",
+              "SKILL_SEARCH_INVALID", "SKILL_SEARCH_LIMIT_INVALID", "SKILL_UPDATE_EMPTY", "SKILL_VERSION_INVALID"],
+             string("스킬 변경 내용이 올바르지 않습니다. 입력값을 확인해 주세요.", locale: locale)),
+            (["SKILL_PACKAGE_TEXT_INVALID"],
+             string("패키지에 유효한 UTF-8 Markdown이 아닌 파일이 있습니다.", locale: locale)),
+            (["SKILL_PACKAGE_ENCRYPTED"],
+             string("암호화된 ZIP 패키지는 가져올 수 없습니다.", locale: locale)),
+            (["SKILL_PACKAGE_ZIP64_UNSUPPORTED", "SKILL_PACKAGE_COMPRESSION_UNSUPPORTED"],
+             string("이 ZIP 압축 형식은 지원하지 않습니다.", locale: locale)),
+            (["SKILL_PACKAGE_BOMB", "SKILL_PACKAGE_EXPANDED_TOO_LARGE",
+              "SKILL_PACKAGE_COMPRESSED_TOO_LARGE"],
+             string("ZIP 패키지가 허용된 파일 수 또는 크기 한도를 초과합니다.", locale: locale)),
+            (["SKILL_PACKAGE_NESTED_ARCHIVE"],
+             string("ZIP 안에 포함된 다른 압축 파일은 가져올 수 없습니다.", locale: locale)),
+            (["SKILL_PACKAGE_SPECIAL_FILE"],
+             string("ZIP 안의 심볼릭 링크나 특수 파일은 가져올 수 없습니다.", locale: locale)),
+            (["SKILL_PACKAGE_NO_MARKDOWN"],
+             string("ZIP에 지원되는 Markdown 파일이 없습니다.", locale: locale)),
+            (["SKILL_PACKAGE_MAIN_REQUIRED", "SKILL_PACKAGE_MAIN_NOT_FOUND",
+              "SKILL_PACKAGE_MAIN_CONFLICT", "SKILL_PACKAGE_SELECTION_INVALID"],
+             string("가져올 메인 Markdown 문서와 파일 선택을 확인해 주세요.", locale: locale)),
+            (["SKILL_UPLOAD_NOT_FOUND"],
+             string("ZIP 업로드가 만료되었거나 이미 사용되었습니다. 파일을 다시 선택해 주세요.", locale: locale)),
+            (["SKILL_UPLOAD_ALREADY_INSPECTED", "SKILL_UPLOAD_CHUNK_INVALID",
+              "SKILL_UPLOAD_CHUNK_OUT_OF_ORDER", "SKILL_PACKAGE_EMPTY"],
+             string("ZIP 업로드를 완료하지 못했습니다. 파일을 다시 선택해 주세요.", locale: locale)),
+            (["SKILL_PACKAGE_INVALID", "SKILL_PACKAGE_CORRUPT"],
+             string("ZIP 패키지가 올바르지 않거나 손상되었습니다.", locale: locale)),
+            (["SKILL_SOURCE_UNSUPPORTED"],
+             string("이 기능에서는 브리지 스킬만 관리할 수 있습니다.", locale: locale)),
+            (["SKILL_LIBRARY_DIRECTORY_INVALID"],
+             string("브리지 스킬 저장 위치가 올바르지 않습니다.", locale: locale))
+        ]
+        if let mapping = mappings.first(where: { item in
+            item.codes.contains(where: message.contains)
+        }) {
+            return mapping.localized
+        }
+        if message.range(of: #"\bSKILL_[A-Z0-9_]+\b"#, options: .regularExpression) != nil {
+            return string(
+                "스킬 요청을 처리하지 못했습니다. 입력과 연결 상태를 확인한 뒤 다시 시도하세요.",
+                locale: locale
+            )
+        }
+        return nil
     }
 
     private static func statusProblemCode(

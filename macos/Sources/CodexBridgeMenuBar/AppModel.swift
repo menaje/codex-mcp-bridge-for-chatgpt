@@ -306,7 +306,9 @@ final class AppModel: ObservableObject {
     @Published var settings: SettingsSnapshot?
     @Published private(set) var skillLibrary: BridgeSkillLibrarySnapshot?
     @Published private(set) var selectedBridgeSkill: BridgeSkillDocument?
+    @Published private(set) var selectedBridgeSkillFile: BridgeSkillFileDocument?
     @Published private(set) var selectedBridgeSkillVersions: BridgeSkillVersionList?
+    @Published private(set) var bridgeSkillFileLoading = false
     @Published var skillLibraryErrorMessage: String?
     @Published var skillMutationErrorMessage: String?
     @Published private(set) var skillMutationInProgress = false
@@ -410,6 +412,8 @@ final class AppModel: ObservableObject {
     private var settingsRequestGeneration = 0
     private var skillLibraryRequestGeneration = 0
     private var bridgeSkillSelectionRequestGeneration = 0
+    private var bridgeSkillFileRequestGeneration = 0
+    private var bridgeSkillFileCache: [String: BridgeSkillFileDocument] = [:]
     private var statusRequestGeneration = 0
     @Published private(set) var localConnectionRecovery = ConnectionRecoveryWindow() { didSet { scheduleOperationalObservation() } }
     private var connectionGeneration = 0
@@ -1815,6 +1819,7 @@ final class AppModel: ObservableObject {
             if !isBridgeConnectionChecking {
                 skillLibrary = nil
                 selectedBridgeSkill = nil
+                selectedBridgeSkillFile = nil
                 selectedBridgeSkillVersions = nil
                 skillLibraryErrorMessage = nil
             }
@@ -1853,6 +1858,7 @@ final class AppModel: ObservableObject {
                   generation == connectionGeneration,
                   request == bridgeSkillSelectionRequestGeneration else { return }
             selectedBridgeSkill = document
+            selectedBridgeSkillFile = nil
             selectedBridgeSkillVersions = nil
             skillLibraryErrorMessage = nil
             do {
@@ -1878,6 +1884,44 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func loadBridgeSkillFile(path: String) async {
+        guard let document = selectedBridgeSkill else { return }
+        let reference = document.skill.reference
+        let cacheKey = "\(reference.skillId)\u{0}\(reference.version)\u{0}\(path)"
+        if let cached = bridgeSkillFileCache[cacheKey] {
+            selectedBridgeSkillFile = cached
+            return
+        }
+        selectedBridgeSkillFile = nil
+        bridgeSkillFileRequestGeneration += 1
+        let request = bridgeSkillFileRequestGeneration
+        let generation = connectionGeneration
+        bridgeSkillFileLoading = true
+        defer {
+            if request == bridgeSkillFileRequestGeneration { bridgeSkillFileLoading = false }
+        }
+        do {
+            let client = try await bridgeClient()
+            let file = try await client.readBridgeSkillFile(reference, path: path)
+            guard !Task.isCancelled, generation == connectionGeneration,
+                  request == bridgeSkillFileRequestGeneration,
+                  selectedBridgeSkill?.skill.reference == reference else { return }
+            bridgeSkillFileCache[cacheKey] = file
+            selectedBridgeSkillFile = file
+            skillLibraryErrorMessage = nil
+        } catch {
+            guard !Task.isCancelled, generation == connectionGeneration,
+                  request == bridgeSkillFileRequestGeneration else { return }
+            skillLibraryErrorMessage = localizedErrorDescription(error)
+        }
+    }
+
+    func selectBridgeSkillMainDocument() {
+        bridgeSkillFileRequestGeneration += 1
+        bridgeSkillFileLoading = false
+        selectedBridgeSkillFile = nil
+    }
+
     @discardableResult
     func createBridgeSkill(_ request: BridgeSkillCreateRequest) async -> Bool {
         guard !skillMutationInProgress else { return false }
@@ -1891,6 +1935,60 @@ final class AppModel: ObservableObject {
             guard generation == connectionGeneration else { return false }
             await refreshSkillLibrary()
             await loadBridgeSkill(created)
+            return true
+        } catch {
+            guard generation == connectionGeneration else { return false }
+            skillMutationErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+    }
+
+    func inspectBridgeSkillPackage(at url: URL) async -> BridgeSkillPackageInspection? {
+        skillMutationErrorMessage = nil
+        do {
+            let client = try await bridgeClient()
+            return try await client.uploadBridgeSkillPackage(at: url)
+        } catch {
+            skillMutationErrorMessage = localizedErrorDescription(error)
+            return nil
+        }
+    }
+
+    @discardableResult
+    func createBridgeSkillPackage(_ request: BridgeSkillPackageCreateRequest) async -> Bool {
+        await mutateBridgeSkill { client in try await client.createBridgeSkillPackage(request) }
+    }
+
+    @discardableResult
+    func updateBridgeSkillPackage(_ request: BridgeSkillPackageUpdateRequest) async -> Bool {
+        await mutateBridgeSkill { client in try await client.updateBridgeSkillPackage(request) }
+    }
+
+    func exportBridgeSkillPackage(_ reference: BridgeSkillReference) async -> BridgeSkillPackageExport? {
+        skillMutationErrorMessage = nil
+        do {
+            let client = try await bridgeClient()
+            return try await client.exportBridgeSkillPackage(reference)
+        } catch {
+            skillMutationErrorMessage = localizedErrorDescription(error)
+            return nil
+        }
+    }
+
+    private func mutateBridgeSkill(
+        _ operation: (any BridgeApplicationClient) async throws -> BridgeSkillSummary
+    ) async -> Bool {
+        guard !skillMutationInProgress else { return false }
+        skillMutationInProgress = true
+        defer { skillMutationInProgress = false }
+        skillMutationErrorMessage = nil
+        let generation = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            let updated = try await operation(client)
+            guard generation == connectionGeneration else { return false }
+            await refreshSkillLibrary()
+            await loadBridgeSkill(updated)
             return true
         } catch {
             guard generation == connectionGeneration else { return false }
@@ -1974,6 +2072,7 @@ final class AppModel: ObservableObject {
             _ = try await client.deleteBridgeSkill(request)
             guard generation == connectionGeneration else { return false }
             selectedBridgeSkill = nil
+            selectedBridgeSkillFile = nil
             selectedBridgeSkillVersions = nil
             await refreshSkillLibrary()
             return true
@@ -2942,8 +3041,11 @@ final class AppModel: ObservableObject {
         settings = nil
         skillLibraryRequestGeneration += 1
         bridgeSkillSelectionRequestGeneration += 1
+        bridgeSkillFileRequestGeneration += 1
         skillLibrary = nil
         selectedBridgeSkill = nil
+        selectedBridgeSkillFile = nil
+        bridgeSkillFileCache.removeAll()
         selectedBridgeSkillVersions = nil
         authStatus = nil
         setupDiscovery = nil

@@ -217,7 +217,7 @@ private func transact(
         if count < 0 { throw LocalRPCError.connectionFailed(posixMessage()) }
         if count == 0 { throw LocalRPCError.emptyResponse }
         // Each prior chunk was known not to contain a line terminator. Scan
-        // only this chunk, rather than rescanning the full accumulated 20 MiB
+        // only this chunk, rather than rescanning the full accumulated response
         // response after every 16 KiB read.
         if let newline = buffer[..<count].firstIndex(of: 0x0A) {
             response.append(buffer, count: newline)

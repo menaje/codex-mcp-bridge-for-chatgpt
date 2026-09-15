@@ -906,11 +906,70 @@ public struct BridgeSkillDocument: Codable, Sendable, Equatable, Identifiable {
     public let skill: BridgeSkillSummary
     /// Exact authored source. The client renders this value but never rewrites it.
     public let document: String
+    public let files: [BridgeSkillFileSummary]
     public let format: String
     /// A legacy structured version exposed through the lossless Markdown adapter.
     public let legacy: Bool
     public let sourceSnapshot: String
-    public let warnings: [String]
+    public let warnings: [BridgeSkillWarningCode]
+}
+
+public enum BridgeSkillWarningCode: String, Codable, Sendable, Equatable {
+    case archived
+    case legacyStructured = "legacy-structured"
+}
+
+public struct BridgeSkillFileSummary: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { path }
+    public let path: String
+    public let format: String
+    public let bytes: Int
+    public let contentDigest: String
+}
+
+public struct BridgeSkillFileReadRequest: Codable, Sendable, Equatable {
+    public let skillId: String
+    public let source: String
+    public let version: String
+    public let path: String
+
+    public init(reference: BridgeSkillReference, path: String) {
+        skillId = reference.skillId
+        source = reference.source
+        version = reference.version
+        self.path = path
+    }
+}
+
+public struct BridgeSkillFileDocument: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { "\(skill.id)-\(path)" }
+    public let kind: String
+    public let skill: BridgeSkillSummary
+    public let path: String
+    public let content: String
+    public let format: String
+    public let bytes: Int
+    public let contentDigest: String
+}
+
+public struct BridgeSkillFileInput: Codable, Sendable, Equatable {
+    public let path: String
+    public let content: String
+
+    public init(path: String, content: String) {
+        self.path = path
+        self.content = content
+    }
+}
+
+public struct BridgeSkillFileChanges: Codable, Sendable, Equatable {
+    public let upsert: [BridgeSkillFileInput]?
+    public let remove: [String]?
+
+    public init(upsert: [BridgeSkillFileInput]? = nil, remove: [String]? = nil) {
+        self.upsert = upsert
+        self.remove = remove
+    }
 }
 
 public struct BridgeSkillLibrarySnapshot: Codable, Sendable, Equatable {
@@ -955,17 +1014,20 @@ public struct BridgeSkillCreateRequest: Codable, Sendable, Equatable {
     public let name: String
     public let description: String?
     public let document: String
+    public let files: [BridgeSkillFileInput]?
 
     public init(
         requestId: String = UUID().uuidString,
         name: String,
         description: String? = nil,
-        document: String
+        document: String,
+        files: [BridgeSkillFileInput]? = nil
     ) {
         self.requestId = requestId
         self.name = name
         self.description = description
         self.document = document
+        self.files = files
     }
 }
 
@@ -976,6 +1038,7 @@ public struct BridgeSkillUpdateRequest: Codable, Sendable, Equatable {
     public let name: String?
     public let description: String?
     public let document: String?
+    public let files: BridgeSkillFileChanges?
 
     public init(
         requestId: String = UUID().uuidString,
@@ -983,7 +1046,8 @@ public struct BridgeSkillUpdateRequest: Codable, Sendable, Equatable {
         expectedVersion: String,
         name: String? = nil,
         description: String? = nil,
-        document: String? = nil
+        document: String? = nil,
+        files: BridgeSkillFileChanges? = nil
     ) {
         self.requestId = requestId
         self.skillId = skillId
@@ -991,6 +1055,7 @@ public struct BridgeSkillUpdateRequest: Codable, Sendable, Equatable {
         self.name = name
         self.description = description
         self.document = document
+        self.files = files
     }
 }
 
@@ -1057,4 +1122,108 @@ public struct BridgeSkillDeletion: Codable, Sendable, Equatable {
     public let skillId: String
     public let source: String
     public let deletedAt: String
+}
+
+public struct BridgeSkillPackageUploadStarted: Codable, Sendable, Equatable {
+    public let uploadId: String
+    public let expiresAt: String
+    public let chunkMaxBytes: Int
+}
+
+public struct BridgeSkillPackageUploadChunk: Codable, Sendable, Equatable {
+    public let uploadId: String
+    public let chunkIndex: Int
+    public let data: String
+
+    public init(uploadId: String, chunkIndex: Int, data: String) {
+        self.uploadId = uploadId
+        self.chunkIndex = chunkIndex
+        self.data = data
+    }
+}
+
+public struct BridgeSkillPackageUploadProgress: Codable, Sendable, Equatable {
+    public let receivedBytes: Int
+    public let nextChunk: Int
+}
+
+public struct BridgeSkillPackageUploadReference: Codable, Sendable, Equatable {
+    public let uploadId: String
+    public init(uploadId: String) { self.uploadId = uploadId }
+}
+
+public struct BridgeSkillPackageIgnoredFile: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { "\(path)-\(reason)" }
+    public let path: String
+    public let reason: String
+}
+
+public struct BridgeSkillPackageInspection: Codable, Sendable, Equatable {
+    public let uploadId: String
+    public let expiresAt: String
+    public let files: [BridgeSkillFileSummary]
+    public let suggestedMainPath: String?
+    public let ignored: [BridgeSkillPackageIgnoredFile]
+    public let strippedWrapper: String?
+}
+
+public struct BridgeSkillPackageCreateRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let name: String
+    public let description: String?
+    public let uploadId: String
+    public let mainPath: String
+    public let includePaths: [String]?
+
+    public init(requestId: String = UUID().uuidString, name: String, description: String? = nil,
+                uploadId: String, mainPath: String, includePaths: [String]? = nil) {
+        self.requestId = requestId
+        self.name = name
+        self.description = description
+        self.uploadId = uploadId
+        self.mainPath = mainPath
+        self.includePaths = includePaths
+    }
+}
+
+public struct BridgeSkillPackageUpdateRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let skillId: String
+    public let expectedVersion: String
+    public let uploadId: String
+    public let mainPath: String?
+    public let includePaths: [String]?
+
+    public init(requestId: String = UUID().uuidString, skillId: String, expectedVersion: String,
+                uploadId: String, mainPath: String?, includePaths: [String]? = nil) {
+        self.requestId = requestId
+        self.skillId = skillId
+        self.expectedVersion = expectedVersion
+        self.uploadId = uploadId
+        self.mainPath = mainPath
+        self.includePaths = includePaths
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case requestId, skillId, expectedVersion, uploadId, mainPath, includePaths
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(requestId, forKey: .requestId)
+        try container.encode(skillId, forKey: .skillId)
+        try container.encode(expectedVersion, forKey: .expectedVersion)
+        try container.encode(uploadId, forKey: .uploadId)
+        if let mainPath { try container.encode(mainPath, forKey: .mainPath) }
+        else { try container.encodeNil(forKey: .mainPath) }
+        try container.encodeIfPresent(includePaths, forKey: .includePaths)
+    }
+}
+
+public struct BridgeSkillPackageExport: Codable, Sendable, Equatable {
+    public let fileName: String
+    public let mediaType: String
+    public let bytes: Int
+    public let contentDigest: String
+    public let data: String
 }

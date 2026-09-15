@@ -30,11 +30,13 @@ final class BridgeModelsTests: XCTestCase {
             requestId: "00000000-0000-4000-8000-000000000114",
             name: "Report review",
             description: "Review a report with evidence.",
-            document: "# Review\n\nCheck each claim against its source."
+            document: "# Review\n\nCheck each claim against its source.",
+            files: [.init(path: "references/evidence.md", content: "# Evidence")]
         )
         let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(create)) as? [String: Any])
         XCTAssertEqual(encoded["requestId"] as? String, "00000000-0000-4000-8000-000000000114")
         XCTAssertEqual(encoded["document"] as? String, "# Review\n\nCheck each claim against its source.")
+        XCTAssertEqual((encoded["files"] as? [[String: Any]])?.first?["path"] as? String, "references/evidence.md")
         XCTAssertNil(encoded["instructions"])
         XCTAssertNil(encoded["references"])
 
@@ -80,6 +82,12 @@ final class BridgeModelsTests: XCTestCase {
                 "availability":"available"
               },
               "document":"# Review\r\n\r\n- preserve source",
+              "files":[{
+                "path":"references/evidence.md",
+                "format":"markdown",
+                "bytes":10,
+                "contentDigest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }],
               "format":"markdown",
               "legacy":false,
               "sourceSnapshot":"versioned-bridge-record",
@@ -90,6 +98,7 @@ final class BridgeModelsTests: XCTestCase {
         XCTAssertEqual(document.document, "# Review\r\n\r\n- preserve source")
         XCTAssertEqual(document.format, "markdown")
         XCTAssertFalse(document.legacy)
+        XCTAssertEqual(document.files.first?.path, "references/evidence.md")
 
         let deletion = BridgeSkillDeleteRequest(
             requestId: "00000000-0000-4000-8000-000000000115",
@@ -111,6 +120,20 @@ final class BridgeModelsTests: XCTestCase {
         )
         XCTAssertEqual(deleted.skillId, deletion.skillId)
         XCTAssertEqual(deleted.source, "bridge")
+
+        let packageUpdate = BridgeSkillPackageUpdateRequest(
+            requestId: "00000000-0000-4000-8000-000000000116",
+            skillId: deletion.skillId,
+            expectedVersion: "2",
+            uploadId: "00000000-0000-4000-8000-000000000117",
+            mainPath: nil,
+            includePaths: ["references/evidence.md"]
+        )
+        let packageJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(packageUpdate)) as? [String: Any]
+        )
+        XCTAssertTrue(packageJSON["mainPath"] is NSNull)
+        XCTAssertEqual(packageJSON["includePaths"] as? [String], ["references/evidence.md"])
     }
 
     @MainActor

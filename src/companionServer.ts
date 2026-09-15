@@ -20,6 +20,7 @@ import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { ChangeSignal, changeWaitParamsSchema } from "./changeSignal.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import { BRIDGE_SKILL_LIMITS } from "./skillLibrary.js";
+import { BRIDGE_SKILL_PACKAGE_LIMITS } from "./skillPackage.js";
 import type {
   BridgeApplicationService,
   BridgeSettingsMutationInput
@@ -27,8 +28,8 @@ import type {
 import { localizeSettingsView } from "./settingsLocalization.js";
 
 export const COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-companion";
-/** v7 carries the full worst-case JSON envelope for a 3 MiB Bridge document. */
-export const COMPANION_PROTOCOL_VERSION = 7;
+/** v8 adds immutable Markdown file trees and path-based file reads. */
+export const COMPANION_PROTOCOL_VERSION = 8;
 export const COMPANION_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 // A source-preserved 3 MiB Markdown document can JSON-escape sixfold.
 export const COMPANION_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
@@ -55,12 +56,19 @@ const requestSchema = z.strictObject({
     "settings.update",
     "skills.snapshot",
     "skills.read",
+    "skills.read-file",
     "skills.versions",
     "skills.create",
     "skills.update",
     "skills.restore",
     "skills.set-enabled",
     "skills.delete",
+    "skills.package-upload.begin",
+    "skills.package-upload.chunk",
+    "skills.package-upload.inspect",
+    "skills.package.create",
+    "skills.package.update",
+    "skills.package.export",
     "completion.claim",
     "completion.delivered",
     "completion.release",
@@ -99,6 +107,15 @@ const bridgeSkillReferenceSchema = z.strictObject({
   version: z.string().regex(/^[1-9]\d*$/)
 });
 const bridgeSkillMutationRequestIdSchema = z.string().uuid();
+const bridgeSkillFilePathSchema = z.string().min(1).max(BRIDGE_SKILL_LIMITS.filePathMaxBytes);
+const bridgeSkillFileSchema = z.strictObject({
+  path: bridgeSkillFilePathSchema,
+  content: z.string().max(BRIDGE_SKILL_LIMITS.fileMaxBytes)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.fileMaxBytes)
+});
+const bridgeSkillReadFileParamsSchema = bridgeSkillReferenceSchema.extend({
+  path: bridgeSkillFilePathSchema
+});
 const bridgeSkillVersionsParamsSchema = z.strictObject({
   skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/)
 });
@@ -110,7 +127,8 @@ const bridgeSkillCreateParamsSchema = z.strictObject({
     .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.documentMaxBytes, {
       message: `Skill document must be at most ${BRIDGE_SKILL_LIMITS.documentMaxBytes} UTF-8 bytes.`
     })
-    .refine((value) => !value.includes("\u0000"), { message: "Skill document cannot contain NUL characters." })
+    .refine((value) => !value.includes("\u0000"), { message: "Skill document cannot contain NUL characters." }),
+  files: z.array(bridgeSkillFileSchema).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
 });
 const bridgeSkillUpdateParamsSchema = z.strictObject({
   requestId: bridgeSkillMutationRequestIdSchema,
@@ -123,8 +141,12 @@ const bridgeSkillUpdateParamsSchema = z.strictObject({
       message: `Skill document must be at most ${BRIDGE_SKILL_LIMITS.documentMaxBytes} UTF-8 bytes.`
     })
     .refine((value) => !value.includes("\u0000"), { message: "Skill document cannot contain NUL characters." })
-    .optional()
-}).refine((value) => value.name !== undefined || value.description !== undefined || value.document !== undefined, {
+    .optional(),
+  files: z.strictObject({
+    upsert: z.array(bridgeSkillFileSchema).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional(),
+    remove: z.array(bridgeSkillFilePathSchema).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
+  }).optional()
+}).refine((value) => value.name !== undefined || value.description !== undefined || value.document !== undefined || value.files !== undefined, {
   message: "Provide at least one bridge skill field to update."
 });
 const bridgeSkillRestoreParamsSchema = z.strictObject({
@@ -144,6 +166,27 @@ const bridgeSkillDeleteParamsSchema = z.strictObject({
   skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
   expectedVersion: z.string().regex(/^[1-9]\d*$/),
   confirmName: z.string().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters)
+});
+const bridgeSkillPackageUploadParamsSchema = z.strictObject({ uploadId: z.string().uuid() });
+const bridgeSkillPackageChunkParamsSchema = bridgeSkillPackageUploadParamsSchema.extend({
+  chunkIndex: z.number().int().nonnegative(),
+  data: z.string().min(1).max(Math.ceil(BRIDGE_SKILL_PACKAGE_LIMITS.uploadChunkMaxBytes * 4 / 3) + 4)
+});
+const bridgeSkillPackageCreateParamsSchema = z.strictObject({
+  requestId: bridgeSkillMutationRequestIdSchema,
+  name: z.string().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters),
+  description: z.string().max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).optional(),
+  uploadId: z.string().uuid(),
+  mainPath: bridgeSkillFilePathSchema,
+  includePaths: z.array(bridgeSkillFilePathSchema).min(1).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
+});
+const bridgeSkillPackageUpdateParamsSchema = z.strictObject({
+  requestId: bridgeSkillMutationRequestIdSchema,
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+  expectedVersion: z.string().regex(/^[1-9]\d*$/),
+  uploadId: z.string().uuid(),
+  mainPath: bridgeSkillFilePathSchema.nullable(),
+  includePaths: z.array(bridgeSkillFilePathSchema).min(1).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
 });
 const completionClaimParamsSchema = z.strictObject({
   leaseOwner: z.string().uuid(),
@@ -234,12 +277,19 @@ export const REMOTE_COMPANION_APPLICATION_METHODS = new Set([
     "settings.update",
     "skills.snapshot",
     "skills.read",
+    "skills.read-file",
     "skills.versions",
     "skills.create",
     "skills.update",
     "skills.restore",
     "skills.set-enabled",
     "skills.delete",
+    "skills.package-upload.begin",
+    "skills.package-upload.chunk",
+    "skills.package-upload.inspect",
+    "skills.package.create",
+    "skills.package.update",
+    "skills.package.export",
   "runtime.snapshot"
 ]);
 
@@ -420,13 +470,18 @@ async function dispatchRequest(
           "settings.read",
           "settings.write",
           ...(applicationService.skillLibrarySnapshot && applicationService.readBridgeSkill &&
-            applicationService.listBridgeSkillVersions
+            applicationService.readBridgeSkillFile && applicationService.listBridgeSkillVersions
             ? ["skills.read"]
             : []),
           ...(applicationService.createBridgeSkill && applicationService.updateBridgeSkill &&
             applicationService.restoreBridgeSkill && applicationService.setBridgeSkillEnabled &&
             applicationService.deleteBridgeSkill
             ? ["skills.write"]
+            : []),
+          ...(applicationService.beginBridgeSkillPackageUpload && applicationService.appendBridgeSkillPackageUpload &&
+            applicationService.inspectBridgeSkillPackageUpload && applicationService.createBridgeSkillFromPackage &&
+            applicationService.updateBridgeSkillFromPackage && applicationService.exportBridgeSkillPackage
+            ? ["skills.package"]
             : []),
           ...(applicationService.claimNativeCompletionNotifications &&
             applicationService.markNativeCompletionNotificationsDelivered &&
@@ -501,6 +556,10 @@ async function dispatchRequest(
       return requireSkillLibrary(applicationService).readBridgeSkill(
         bridgeSkillReferenceSchema.parse(request.params || {})
       );
+    case "skills.read-file": {
+      const params = bridgeSkillReadFileParamsSchema.parse(request.params || {});
+      return requireSkillLibrary(applicationService).readBridgeSkillFile(params, params.path);
+    }
     case "skills.versions":
       return requireSkillLibrary(applicationService).listBridgeSkillVersions(
         bridgeSkillVersionsParamsSchema.parse(request.params || {})
@@ -524,6 +583,29 @@ async function dispatchRequest(
     case "skills.delete":
       return requireSkillLibrary(applicationService).deleteBridgeSkill(
         bridgeSkillDeleteParamsSchema.parse(request.params || {})
+      );
+    case "skills.package-upload.begin":
+      emptyParamsSchema.parse(request.params || {});
+      return requireSkillPackages(applicationService).beginBridgeSkillPackageUpload();
+    case "skills.package-upload.chunk":
+      return requireSkillPackages(applicationService).appendBridgeSkillPackageUpload(
+        bridgeSkillPackageChunkParamsSchema.parse(request.params || {})
+      );
+    case "skills.package-upload.inspect": {
+      const params = bridgeSkillPackageUploadParamsSchema.parse(request.params || {});
+      return requireSkillPackages(applicationService).inspectBridgeSkillPackageUpload(params.uploadId);
+    }
+    case "skills.package.create":
+      return requireSkillPackages(applicationService).createBridgeSkillFromPackage(
+        bridgeSkillPackageCreateParamsSchema.parse(request.params || {})
+      );
+    case "skills.package.update":
+      return requireSkillPackages(applicationService).updateBridgeSkillFromPackage(
+        bridgeSkillPackageUpdateParamsSchema.parse(request.params || {})
+      );
+    case "skills.package.export":
+      return requireSkillPackages(applicationService).exportBridgeSkillPackage(
+        bridgeSkillReferenceSchema.parse(request.params || {})
       );
     case "completion.claim": {
       if (!applicationService.claimNativeCompletionNotifications) {
@@ -596,13 +678,14 @@ function requireRemoteManagement(
 
 function requireSkillLibrary(applicationService: BridgeApplicationService): Required<Pick<
   BridgeApplicationService,
-  "skillLibrarySnapshot" | "readBridgeSkill" | "listBridgeSkillVersions" |
+  "skillLibrarySnapshot" | "readBridgeSkill" | "readBridgeSkillFile" | "listBridgeSkillVersions" |
   "createBridgeSkill" | "updateBridgeSkill" | "restoreBridgeSkill" | "setBridgeSkillEnabled" |
   "deleteBridgeSkill"
 >> {
   if (
     !applicationService.skillLibrarySnapshot ||
     !applicationService.readBridgeSkill ||
+    !applicationService.readBridgeSkillFile ||
     !applicationService.listBridgeSkillVersions ||
     !applicationService.createBridgeSkill ||
     !applicationService.updateBridgeSkill ||
@@ -614,9 +697,26 @@ function requireSkillLibrary(applicationService: BridgeApplicationService): Requ
   }
   return applicationService as Required<Pick<
     BridgeApplicationService,
-    "skillLibrarySnapshot" | "readBridgeSkill" | "listBridgeSkillVersions" |
+    "skillLibrarySnapshot" | "readBridgeSkill" | "readBridgeSkillFile" | "listBridgeSkillVersions" |
     "createBridgeSkill" | "updateBridgeSkill" | "restoreBridgeSkill" | "setBridgeSkillEnabled" |
     "deleteBridgeSkill"
+  >>;
+}
+
+function requireSkillPackages(applicationService: BridgeApplicationService): Required<Pick<
+  BridgeApplicationService,
+  "beginBridgeSkillPackageUpload" | "appendBridgeSkillPackageUpload" | "inspectBridgeSkillPackageUpload" |
+  "createBridgeSkillFromPackage" | "updateBridgeSkillFromPackage" | "exportBridgeSkillPackage"
+>> {
+  if (!applicationService.beginBridgeSkillPackageUpload || !applicationService.appendBridgeSkillPackageUpload ||
+    !applicationService.inspectBridgeSkillPackageUpload || !applicationService.createBridgeSkillFromPackage ||
+    !applicationService.updateBridgeSkillFromPackage || !applicationService.exportBridgeSkillPackage) {
+    throw new Error("SKILL_PACKAGE_UNAVAILABLE");
+  }
+  return applicationService as Required<Pick<
+    BridgeApplicationService,
+    "beginBridgeSkillPackageUpload" | "appendBridgeSkillPackageUpload" | "inspectBridgeSkillPackageUpload" |
+    "createBridgeSkillFromPackage" | "updateBridgeSkillFromPackage" | "exportBridgeSkillPackage"
   >>;
 }
 

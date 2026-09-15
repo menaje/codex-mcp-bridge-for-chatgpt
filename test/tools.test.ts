@@ -194,7 +194,8 @@ describe("current bridge tool contracts", () => {
         requestId: randomUUID(),
         name: "Evidence review",
         description: "Review reports with an evidence table.",
-        document: originalDocument
+        document: originalDocument,
+        files: [{ path: "references/policy.md", content: "# Policy\n\nKeep the immutable evidence chain." }]
       }
     });
     expect(created.isError, JSON.stringify(created)).not.toBe(true);
@@ -210,9 +211,23 @@ describe("current bridge tool contracts", () => {
     expect(read.isError, JSON.stringify(read)).not.toBe(true);
     expect(read.structuredContent).toMatchObject({
       kind: "skill", document: originalDocument, format: "markdown", legacy: false,
-      sourceSnapshot: "versioned-bridge-record"
+      sourceSnapshot: "versioned-bridge-record",
+      files: [expect.objectContaining({ path: "references/policy.md", format: "markdown" })]
     });
     expect(JSON.parse((read.content[0] as any).text)).toEqual(read.structuredContent);
+
+    const fileRead = await client.callTool({
+      name: "bridge_skill",
+      arguments: { operation: "read-file", skill: createdReference, path: "references/policy.md" }
+    });
+    expect(fileRead.isError, JSON.stringify(fileRead)).not.toBe(true);
+    expect(fileRead.structuredContent).toMatchObject({
+      kind: "skill-file",
+      path: "references/policy.md",
+      content: expect.stringContaining("immutable evidence chain"),
+      format: "markdown"
+    });
+    expect(JSON.parse((fileRead.content[0] as any).text)).toEqual(fileRead.structuredContent);
 
     const oldReferenceOperation = await client.callTool({
       name: "bridge_skill", arguments: { operation: "reference", skill: createdReference, referenceId: "unused" }
@@ -223,7 +238,11 @@ describe("current bridge tool contracts", () => {
       name: "bridge_skill_manage",
       arguments: {
         operation: "update", requestId: randomUUID(), skillId: createdSkill.skillId,
-        expectedVersion: createdSkill.version, document: "# Evidence review\n\nUpdated Markdown body."
+        expectedVersion: createdSkill.version, document: "# Evidence review\n\nUpdated Markdown body.",
+        files: {
+          remove: ["references/policy.md"],
+          upsert: [{ path: "references/current.md", content: "# Current policy" }]
+        }
       }
     });
     expect(updated.isError, JSON.stringify(updated)).not.toBe(true);
