@@ -1,6 +1,7 @@
 import XCTest
 @testable import CodexBridgeMenuBar
 
+@MainActor
 final class SkillsLibraryPresentationTests: XCTestCase {
     func testRendererRecognizesWholeDocumentMarkdownStructures() {
         let source = """
@@ -58,6 +59,7 @@ final class SkillsLibraryPresentationTests: XCTestCase {
         XCTAssertTrue(source.contains("SkillsLibraryShowsInspectorV2\") private var showsInspector = false"))
         XCTAssertTrue(source.contains("compactInspectorPreviousVisibility"))
         XCTAssertTrue(source.contains("columnVisibility = .detailOnly"))
+        XCTAssertTrue(source.contains("NSWindow.didResizeNotification"))
         XCTAssertEqual(source.components(separatedBy: "HSplitView").count - 1, 1)
         XCTAssertTrue(source.contains("OutlineGroup"))
         XCTAssertTrue(source.contains(".searchable"))
@@ -111,6 +113,115 @@ final class SkillsLibraryPresentationTests: XCTestCase {
                 .localizedReason(locale: Locale(identifier: "ko")),
             "macOS 메타데이터 파일은 가져오지 않습니다."
         )
+    }
+
+    func testUnsavedDraftRequiresExplicitDiscardAndOnlyClearsAfterConfirmation() {
+        let state = SkillsLibraryWindowState()
+        var decisionCount = 0
+        XCTAssertTrue(state.confirmDiscardIfNeeded {
+            decisionCount += 1
+            return false
+        })
+        XCTAssertEqual(decisionCount, 0)
+
+        state.hasUnsavedChanges = true
+        XCTAssertFalse(state.confirmDiscardIfNeeded {
+            decisionCount += 1
+            return false
+        })
+        XCTAssertTrue(state.hasUnsavedChanges)
+        XCTAssertEqual(decisionCount, 1)
+
+        XCTAssertTrue(state.confirmDiscardIfNeeded {
+            decisionCount += 1
+            return true
+        })
+        XCTAssertFalse(state.hasUnsavedChanges)
+        XCTAssertEqual(decisionCount, 2)
+    }
+
+    func testFailedApplicationShutdownPreservesUnsavedDraftState() {
+        let state = SkillsLibraryWindowState()
+        state.hasUnsavedChanges = true
+
+        XCTAssertTrue(state.confirmDiscardForApplicationShutdown { true })
+        XCTAssertTrue(state.hasUnsavedChanges)
+        XCTAssertTrue(state.applicationShutdownDiscardApproved)
+        XCTAssertTrue(state.confirmDiscardForApplicationShutdown {
+            XCTFail("An unchanged draft must not ask twice during one shutdown attempt")
+            return false
+        })
+
+        state.cancelApplicationShutdownDiscard()
+        XCTAssertTrue(state.hasUnsavedChanges)
+        XCTAssertFalse(state.applicationShutdownDiscardApproved)
+
+        XCTAssertTrue(state.confirmDiscardForApplicationShutdown { true })
+        state.hasUnsavedChanges = true
+        XCTAssertFalse(state.applicationShutdownDiscardApproved)
+        XCTAssertFalse(state.confirmDiscardForApplicationShutdown { false })
+        XCTAssertTrue(state.hasUnsavedChanges)
+
+        XCTAssertTrue(state.confirmDiscardForApplicationShutdown { true })
+        state.completeApplicationShutdownDiscard()
+        XCTAssertFalse(state.hasUnsavedChanges)
+        XCTAssertFalse(state.applicationShutdownDiscardApproved)
+    }
+
+    func testApplicationQuitPathsConsultTheSkillsDraftGuard() throws {
+        let application = try String(contentsOf: sourceURL("CodexBridgeMenuBarApp.swift"), encoding: .utf8)
+        let dashboard = try String(contentsOf: sourceURL("DashboardViews.swift"), encoding: .utf8)
+        XCTAssertTrue(application.contains("func applicationShouldTerminate"))
+        XCTAssertTrue(application.contains("confirmDiscardBeforeApplicationShutdown()"))
+        XCTAssertTrue(dashboard.contains("guard SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown()"))
+    }
+
+    func testRelativeMarkdownNavigationUsesCanonicalStoredAttachmentPath() {
+        let storedPath = "references/Caf\u{e9}.md"
+        XCTAssertEqual(
+            resolveBridgeSkillMarkdownNavigationTarget(
+                linkPath: "REFERENCES/Cafe\u{301}.MD",
+                currentFilePath: nil,
+                availableFilePaths: [storedPath]
+            ),
+            .file(storedPath)
+        )
+        XCTAssertEqual(
+            resolveBridgeSkillMarkdownNavigationTarget(
+                linkPath: "../references/Cafe%CC%81.md",
+                currentFilePath: "guides/setup.md",
+                availableFilePaths: [storedPath]
+            ),
+            .file(storedPath)
+        )
+        XCTAssertEqual(
+            resolveBridgeSkillMarkdownNavigationTarget(
+                linkPath: "DOCUMENT.MD",
+                currentFilePath: nil,
+                availableFilePaths: [storedPath]
+            ),
+            .main
+        )
+        XCTAssertNil(resolveBridgeSkillMarkdownNavigationTarget(
+            linkPath: "../references/Caf\u{e9}.md",
+            currentFilePath: nil,
+            availableFilePaths: [storedPath]
+        ))
+    }
+
+    func testInspectorAdaptiveColumnPolicyTracksLiveWindowWidth() {
+        XCTAssertFalse(SkillsLibraryAdaptiveColumns.shouldCollapseForInspector(
+            isPresented: false,
+            contentWidth: 820
+        ))
+        XCTAssertTrue(SkillsLibraryAdaptiveColumns.shouldCollapseForInspector(
+            isPresented: true,
+            contentWidth: 820
+        ))
+        XCTAssertFalse(SkillsLibraryAdaptiveColumns.shouldCollapseForInspector(
+            isPresented: true,
+            contentWidth: 1_120
+        ))
     }
 
     private func sourceURL(_ name: String) -> URL {

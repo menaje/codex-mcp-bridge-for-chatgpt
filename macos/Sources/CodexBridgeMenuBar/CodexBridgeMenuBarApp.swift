@@ -319,8 +319,17 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model = Self.model else { return .terminateNow }
-        if model.applicationShutdownCompleted { return .terminateNow }
+        guard SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown() else {
+            return .terminateCancel
+        }
+        guard let model = Self.model else {
+            SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
+            return .terminateNow
+        }
+        if model.applicationShutdownCompleted {
+            SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
+            return .terminateNow
+        }
         if terminationRequestInProgress { return .terminateLater }
         terminationRequestInProgress = true
         Task { @MainActor in
@@ -332,6 +341,15 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
                     shouldTerminate = await model.shutdownApplication(force: true)
                     if !shouldTerminate { presentShutdownFailure(model: model) }
                 }
+            }
+            if shouldTerminate,
+               !SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown() {
+                shouldTerminate = false
+            }
+            if shouldTerminate {
+                SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
+            } else {
+                SkillsLibraryWindowController.shared.cancelApplicationShutdownDiscard()
             }
             terminationRequestInProgress = false
             sender.reply(toApplicationShouldTerminate: shouldTerminate)
@@ -487,6 +505,8 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
 
     var contentWidth: CGFloat? { window?.contentLayoutRect.width }
 
+    func manages(_ candidate: NSWindow) -> Bool { window === candidate }
+
     func show(model: AppModel) {
         self.model = model
         if window == nil {
@@ -537,24 +557,47 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard windowState.hasUnsavedChanges else { return true }
+        windowState.confirmDiscardIfNeeded {
+            presentDiscardAlert(
+                message: "저장하지 않은 변경사항을 버리고 창을 닫을까요?",
+                bringSkillsWindowForward: false
+            )
+        }
+    }
+
+    func confirmDiscardBeforeApplicationShutdown() -> Bool {
+        windowState.confirmDiscardForApplicationShutdown {
+            presentDiscardAlert(
+                message: "저장하지 않은 변경사항을 버릴까요?",
+                bringSkillsWindowForward: true
+            )
+        }
+    }
+
+    func completeApplicationShutdownDiscard() {
+        windowState.completeApplicationShutdownDiscard()
+    }
+
+    func cancelApplicationShutdownDiscard() {
+        windowState.cancelApplicationShutdownDiscard()
+    }
+
+    private func presentDiscardAlert(message: String, bringSkillsWindowForward: Bool) -> Bool {
+        let locale = model?.interfaceLocale ?? .current
+        if bringSkillsWindowForward, let window {
+            NSApp.activate(ignoringOtherApps: true)
+            PrimaryAppWindowPresentation.show(window)
+        }
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = BridgeAppLocalization.string(
-            "저장하지 않은 변경사항을 버리고 창을 닫을까요?",
-            locale: model?.interfaceLocale ?? .current
-        )
+        alert.messageText = BridgeAppLocalization.string(message, locale: locale)
         alert.informativeText = BridgeAppLocalization.string(
             "현재 Markdown 편집 내용이 사라집니다.",
-            locale: model?.interfaceLocale ?? .current
+            locale: locale
         )
-        alert.addButton(withTitle: BridgeAppLocalization.string("변경사항 버리기", locale: model?.interfaceLocale ?? .current))
-        alert.addButton(withTitle: BridgeAppLocalization.string("취소", locale: model?.interfaceLocale ?? .current))
-        if alert.runModal() == .alertFirstButtonReturn {
-            windowState.hasUnsavedChanges = false
-            return true
-        }
-        return false
+        alert.addButton(withTitle: BridgeAppLocalization.string("변경사항 버리기", locale: locale))
+        alert.addButton(withTitle: BridgeAppLocalization.string("취소", locale: locale))
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }
 

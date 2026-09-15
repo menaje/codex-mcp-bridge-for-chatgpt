@@ -6,7 +6,37 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class SkillsLibraryWindowState: ObservableObject {
-    @Published var hasUnsavedChanges = false
+    @Published var hasUnsavedChanges = false {
+        didSet {
+            if hasUnsavedChanges { applicationShutdownDiscardApproved = false }
+        }
+    }
+    private(set) var applicationShutdownDiscardApproved = false
+
+    func confirmDiscardIfNeeded(_ decision: () -> Bool) -> Bool {
+        guard hasUnsavedChanges else { return true }
+        guard decision() else { return false }
+        hasUnsavedChanges = false
+        return true
+    }
+
+    func confirmDiscardForApplicationShutdown(_ decision: () -> Bool) -> Bool {
+        guard hasUnsavedChanges else { return true }
+        guard !applicationShutdownDiscardApproved else { return true }
+        guard decision() else { return false }
+        applicationShutdownDiscardApproved = true
+        return true
+    }
+
+    func completeApplicationShutdownDiscard() {
+        guard applicationShutdownDiscardApproved else { return }
+        applicationShutdownDiscardApproved = false
+        hasUnsavedChanges = false
+    }
+
+    func cancelApplicationShutdownDiscard() {
+        applicationShutdownDiscardApproved = false
+    }
 }
 
 struct SkillsLibraryLocalizedRootView: View {
@@ -44,6 +74,59 @@ private enum SkillLibraryScope: String, CaseIterable, Identifiable {
 private enum SkillDocumentSelection: Hashable {
     case main
     case file(String)
+}
+
+enum BridgeSkillMarkdownNavigationTarget: Equatable {
+    case main
+    case file(String)
+}
+
+func resolveBridgeSkillMarkdownNavigationTarget(
+    linkPath: String,
+    currentFilePath: String?,
+    availableFilePaths: [String]
+) -> BridgeSkillMarkdownNavigationTarget? {
+    let decoded = (linkPath.removingPercentEncoding ?? linkPath)
+        .precomposedStringWithCanonicalMapping
+    guard !decoded.isEmpty,
+          !decoded.hasPrefix("/"),
+          !decoded.contains("\\"),
+          decoded.range(of: "^[A-Za-z]:", options: .regularExpression) == nil,
+          !decoded.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { return nil }
+
+    var segments = currentFilePath?
+        .precomposedStringWithCanonicalMapping
+        .split(separator: "/", omittingEmptySubsequences: false)
+        .dropLast()
+        .map(String.init) ?? []
+    for segment in decoded.split(separator: "/", omittingEmptySubsequences: false).map(String.init) {
+        if segment == "." { continue }
+        if segment == ".." {
+            guard !segments.isEmpty else { return nil }
+            segments.removeLast()
+        } else {
+            guard !segment.isEmpty else { return nil }
+            segments.append(segment)
+        }
+    }
+
+    let resolvedPath = segments.joined(separator: "/")
+    let comparisonKey: (String) -> String = {
+        $0.precomposedStringWithCanonicalMapping.lowercased(with: Locale(identifier: "en_US"))
+    }
+    if comparisonKey(resolvedPath) == "document.md" { return .main }
+    guard let storedPath = availableFilePaths.first(where: {
+        comparisonKey($0) == comparisonKey(resolvedPath)
+    }) else { return nil }
+    return .file(storedPath)
+}
+
+enum SkillsLibraryAdaptiveColumns {
+    static let inspectorCompactWidth: CGFloat = 1_050
+
+    static func shouldCollapseForInspector(isPresented: Bool, contentWidth: CGFloat) -> Bool {
+        isPresented && contentWidth < inspectorCompactWidth
+    }
 }
 
 private enum SkillEditorMode: String, CaseIterable, Identifiable {
@@ -152,9 +235,12 @@ struct SkillsLibraryWindowView: View {
             Text("메인 문서와 첨부 파일 트리 전체를 복사해 새 불변 버전을 만듭니다.")
         }
         .task {
+            compactInspectorPreviousVisibility = nil
             restoreColumnVisibility()
             await Task.yield()
-            if showsInspector { adaptNavigationForVisibleInspector() }
+            if showsInspector {
+                synchronizeNavigationForWindowWidth(SkillsLibraryWindowController.shared.contentWidth ?? 1_120)
+            }
             await model.refreshSkillLibrary()
         }
         .onChange(of: columnVisibility) { visibility in saveColumnVisibility(visibility) }
@@ -168,6 +254,11 @@ struct SkillsLibraryWindowView: View {
         .onChange(of: draftContent) { _ in updateDirtyState() }
         .onChange(of: draftName) { _ in updateDirtyState() }
         .onChange(of: draftDescription) { _ in updateDirtyState() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { notification in
+            guard let resizedWindow = notification.object as? NSWindow,
+                  SkillsLibraryWindowController.shared.manages(resizedWindow) else { return }
+            synchronizeNavigationForWindowWidth(resizedWindow.contentLayoutRect.width)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .bridgeSkillCommandNew)) { _ in
             guard !windowState.hasUnsavedChanges else { NSSound.beep(); return }
             sheet = .newSkill
@@ -763,25 +854,18 @@ struct SkillsLibraryWindowView: View {
 
     private func openRelativeLink(_ path: String) {
         guard let document = model.selectedBridgeSkill else { return }
-        let decoded = path.removingPercentEncoding ?? path
-        let base: [String]
-        if case .file(let currentPath) = documentSelection {
-            base = currentPath.split(separator: "/").dropLast().map(String.init)
-        } else {
-            base = []
+        let currentFilePath: String?
+        if case .file(let path) = documentSelection { currentFilePath = path }
+        else { currentFilePath = nil }
+        guard let target = resolveBridgeSkillMarkdownNavigationTarget(
+            linkPath: path,
+            currentFilePath: currentFilePath,
+            availableFilePaths: document.files.map(\.path)
+        ) else { return }
+        switch target {
+        case .main: requestDocumentSelection(.main)
+        case .file(let storedPath): requestDocumentSelection(.file(storedPath))
         }
-        var segments = base
-        for segment in decoded.split(separator: "/").map(String.init) {
-            if segment == "." { continue }
-            if segment == ".." {
-                guard !segments.isEmpty else { return }
-                segments.removeLast()
-            } else { segments.append(segment) }
-        }
-        let normalized = segments.joined(separator: "/")
-        if normalized == "document.md" { requestDocumentSelection(.main); return }
-        guard document.files.contains(where: { $0.path == normalized }) else { return }
-        requestDocumentSelection(.file(normalized))
     }
 
     private func requestVersion(_ version: BridgeSkillVersionSummary) {
@@ -839,29 +923,44 @@ struct SkillsLibraryWindowView: View {
     }
 
     private func setInspectorPresented(_ presented: Bool) {
-        if presented {
-            adaptNavigationForVisibleInspector()
-            showsInspector = true
-        } else {
-            showsInspector = false
-            synchronizeNavigationForInspector(false)
-        }
+        showsInspector = presented
+        synchronizeNavigationForInspector(presented)
     }
 
     private func synchronizeNavigationForInspector(_ visible: Bool) {
         if visible {
-            adaptNavigationForVisibleInspector()
-        } else if let previous = compactInspectorPreviousVisibility {
-            compactInspectorPreviousVisibility = nil
-            columnVisibility = previous
+            synchronizeNavigationForWindowWidth(SkillsLibraryWindowController.shared.contentWidth ?? 1_120)
+        } else {
+            restoreNavigationAfterCompactInspector()
         }
     }
 
-    private func adaptNavigationForVisibleInspector() {
-        guard compactInspectorPreviousVisibility == nil,
-              (SkillsLibraryWindowController.shared.contentWidth ?? 1_120) < 1_050 else { return }
-        compactInspectorPreviousVisibility = columnVisibility
-        columnVisibility = .detailOnly
+    private func synchronizeNavigationForWindowWidth(_ contentWidth: CGFloat) {
+        if SkillsLibraryAdaptiveColumns.shouldCollapseForInspector(
+            isPresented: showsInspector,
+            contentWidth: contentWidth
+        ) {
+            adaptNavigationForVisibleInspector(contentWidth: contentWidth)
+        } else {
+            restoreNavigationAfterCompactInspector()
+        }
+    }
+
+    private func adaptNavigationForVisibleInspector(contentWidth: CGFloat? = nil) {
+        guard SkillsLibraryAdaptiveColumns.shouldCollapseForInspector(
+            isPresented: true,
+            contentWidth: contentWidth ?? SkillsLibraryWindowController.shared.contentWidth ?? 1_120
+        ) else { return }
+        if compactInspectorPreviousVisibility == nil {
+            compactInspectorPreviousVisibility = columnVisibility
+        }
+        if columnVisibility != .detailOnly { columnVisibility = .detailOnly }
+    }
+
+    private func restoreNavigationAfterCompactInspector() {
+        guard let previous = compactInspectorPreviousVisibility else { return }
+        compactInspectorPreviousVisibility = nil
+        columnVisibility = previous
     }
 
     private func focusSkillSearch() {

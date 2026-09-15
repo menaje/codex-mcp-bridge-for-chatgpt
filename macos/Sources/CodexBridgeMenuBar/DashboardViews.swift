@@ -775,11 +775,14 @@ struct DashboardPopoverView: View {
     }
 
     private func shutdownAndQuit(force: Bool) {
+        guard SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown() else { return }
         Task {
             guard await model.shutdownApplication(force: force) else {
+                SkillsLibraryWindowController.shared.cancelApplicationShutdownDiscard()
                 if !model.applicationShutdownReserved { presentApplicationQuitFailure() }
                 return
             }
+            SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
             NSApp.terminate(nil)
         }
     }
