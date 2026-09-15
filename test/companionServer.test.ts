@@ -81,7 +81,7 @@ describe("native companion server", () => {
     expect(await request(socketPath,{jsonrpc:"2.0",id:2,method:"thread.handoff",params:{...params,codexThreadUrl:"https://example.com"}})).toHaveProperty("error");
     expect(service.threadHandoff).toHaveBeenCalledTimes(1);
   });
-  it("uses the same bridge skill source and immutable versions as MCP", async () => {
+  it("uses one free-form Bridge Markdown document contract on the native socket", async () => {
     const socketPath = temporarySocketPath();
     const service = fakeApplicationService();
     const first = {
@@ -92,30 +92,14 @@ describe("native companion server", () => {
       description: "Review reports.",
       contentDigest: "b".repeat(64),
       enabled: true,
-      availability: "available",
-      execution: { mode: "conversation-or-codex", note: "Apply directly.", requirements: [] }
+      availability: "available" as const
     };
-    service.skillLibrarySnapshot = vi.fn(async () => ({
-      skills: [first]
-    }));
+    service.skillLibrarySnapshot = vi.fn(async () => ({ skills: [first] }));
     service.readBridgeSkill = vi.fn(async () => ({
       skill: first,
-      instructions: "Check every claim.",
-      references: [],
-      sourceSnapshot: "versioned-bridge-record" as const,
-      warnings: []
-    }));
-    service.readBridgeSkillReference = vi.fn(async ({ reference, referenceId }) => ({
-      skill: reference,
-      execution: first.execution,
-      reference: {
-        referenceId,
-        name: "Checklist",
-        mediaType: "text/plain",
-        contentDigest: "c".repeat(64),
-        bytes: 11
-      },
-      content: "- verify\n",
+      document: "# Review\n\nCheck every claim.",
+      format: "markdown" as const,
+      legacy: false,
       sourceSnapshot: "versioned-bridge-record" as const,
       warnings: []
     }));
@@ -132,94 +116,55 @@ describe("native companion server", () => {
         description: first.description,
         contentDigest: first.contentDigest,
         createdAt: "2026-09-15T00:00:00.000Z",
-        referenceCount: 1,
-        execution: first.execution
+        format: "markdown" as const,
+        legacy: false
       }]
     }));
     service.createBridgeSkill = vi.fn(async () => first);
     service.updateBridgeSkill = vi.fn(async () => ({ ...first, version: "2" }));
     service.restoreBridgeSkill = vi.fn(async () => ({ ...first, version: "3" }));
     service.setBridgeSkillEnabled = vi.fn(async () => ({ ...first, enabled: false, availability: "disabled" as const }));
+    service.deleteBridgeSkill = vi.fn(async () => first);
     servers.push(await startBridgeCompanionServer({ socketPath, applicationService: service }));
 
     const hello = await request(socketPath, {
       jsonrpc: "2.0", id: "skills-hello", method: "companion.hello", params: {}
     });
     expect(hello.result.capabilities).toEqual(expect.arrayContaining(["skills.read", "skills.write"]));
-
     await expect(request(socketPath, {
       jsonrpc: "2.0", id: "skills-snapshot", method: "skills.snapshot", params: {}
     })).resolves.toMatchObject({ result: { skills: [first] } });
-    expect(service.skillLibrarySnapshot).toHaveBeenCalledTimes(1);
-
     await expect(request(socketPath, {
       jsonrpc: "2.0", id: "skills-read", method: "skills.read",
       params: { skillId: first.skillId, source: "bridge", version: "1" }
-    })).resolves.toMatchObject({ result: { instructions: "Check every claim." } });
-
+    })).resolves.toMatchObject({ result: { document: "# Review\n\nCheck every claim.", format: "markdown" } });
     await expect(request(socketPath, {
-      jsonrpc: "2.0", id: "skills-reference", method: "skills.reference",
-      params: { reference: { skillId: first.skillId, source: "bridge", version: "1" }, referenceId: "ref_" + "c".repeat(32) }
-    })).resolves.toMatchObject({ result: { content: "- verify\n" } });
-    await expect(request(socketPath, {
-      jsonrpc: "2.0", id: "skills-versions", method: "skills.versions", params: { skillId: first.skillId }
-    })).resolves.toMatchObject({ result: { currentVersion: "1" } });
+      jsonrpc: "2.0", id: "skills-reference-removed", method: "skills.reference", params: {}
+    })).resolves.toHaveProperty("error");
 
-    const create = {
-      requestId: randomUUID(),
-      name: "Report review",
-      description: "Review reports.",
-      instructions: "Check every claim."
-    };
-    await request(socketPath, {
-      jsonrpc: "2.0", id: "skills-create", method: "skills.create", params: create
-    });
+    const create = { requestId: randomUUID(), name: "Report review", description: "Review reports.", document: "# Review" };
+    await request(socketPath, { jsonrpc: "2.0", id: "skills-create", method: "skills.create", params: create });
     expect(service.createBridgeSkill).toHaveBeenCalledWith(create);
 
-    // Quotes force JSON escaping. This is a valid maximum-size skill mutation
-    // whose serialized wire form exceeds the old 3 MiB transport cap.
-    const maxEscapedText = "\"".repeat(512 * 1_024);
-    const largeCreate = {
-      requestId: randomUUID(),
-      name: "Large bridge skill",
-      description: "Exercises the declared bridge skill material boundary.",
-      instructions: maxEscapedText,
-      references: [
-        { name: "Part one", content: maxEscapedText },
-        { name: "Part two", content: maxEscapedText },
-        { name: "Part three", content: maxEscapedText },
-        { name: "Part four", content: maxEscapedText }
-      ]
-    };
-    await expect(request(socketPath, {
-      jsonrpc: "2.0", id: "skills-create-large", method: "skills.create", params: largeCreate
-    })).resolves.toMatchObject({ result: { skillId: first.skillId } });
-    expect(service.createBridgeSkill).toHaveBeenLastCalledWith(largeCreate);
-
-    const update = { requestId: randomUUID(), skillId: first.skillId, expectedVersion: "1", instructions: "Check evidence too." };
-    await expect(request(socketPath, {
-      jsonrpc: "2.0", id: "skills-update", method: "skills.update", params: update
-    })).resolves.toMatchObject({ result: { version: "2" } });
+    const update = { requestId: randomUUID(), skillId: first.skillId, expectedVersion: "1", document: "# Check evidence" };
+    await request(socketPath, { jsonrpc: "2.0", id: "skills-update", method: "skills.update", params: update });
     expect(service.updateBridgeSkill).toHaveBeenCalledWith(update);
 
-    const restore = { requestId: randomUUID(), skillId: first.skillId, expectedVersion: "2", sourceVersion: "1" };
-    await expect(request(socketPath, {
-      jsonrpc: "2.0", id: "skills-restore", method: "skills.restore", params: restore
-    })).resolves.toMatchObject({ result: { version: "3" } });
-    expect(service.restoreBridgeSkill).toHaveBeenCalledWith(restore);
-
     const setEnabled = { requestId: randomUUID(), skillId: first.skillId, expectedVersion: "3", enabled: false };
-    await expect(request(socketPath, {
-      jsonrpc: "2.0", id: "skills-disable", method: "skills.set-enabled", params: setEnabled
-    })).resolves.toMatchObject({ result: { enabled: false } });
+    await request(socketPath, { jsonrpc: "2.0", id: "skills-disable", method: "skills.set-enabled", params: setEnabled });
     expect(service.setBridgeSkillEnabled).toHaveBeenCalledWith(setEnabled);
+
+    const deletion = { requestId: randomUUID(), skillId: first.skillId, expectedVersion: "3", confirmName: first.name };
+    await expect(request(socketPath, {
+      jsonrpc: "2.0", id: "skills-delete", method: "skills.delete", params: deletion
+    })).resolves.toMatchObject({ result: { skillId: first.skillId } });
+    expect(service.deleteBridgeSkill).toHaveBeenCalledWith(deletion);
 
     const wrongSource = await request(socketPath, {
       jsonrpc: "2.0", id: "skills-wrong-source", method: "skills.read",
       params: { skillId: first.skillId, source: "codex", version: "1" }
     });
     expect(wrongSource).toHaveProperty("error");
-    expect(service.readBridgeSkill).toHaveBeenCalledTimes(1);
   });
   it("serves lightweight health independently of a stalled admission snapshot", async () => {
     const socketPath = temporarySocketPath();

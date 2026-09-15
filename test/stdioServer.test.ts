@@ -85,7 +85,7 @@ describe("persistent stdio bridge", { timeout: 15_000 }, () => {
       expect(before.inputSchema.properties).toHaveProperty("executionEnvelopeRef");
       expect(before.inputSchema.properties).toHaveProperty("selection");
       expect(before.inputSchema.properties).not.toHaveProperty("executionPolicyRef");
-      expect((before.inputSchema.properties?.taskContractVersion as { const?: string }).const).toBe("4");
+      expect((before.inputSchema.properties?.taskContractVersion as { const?: string }).const).toBe("5");
 
       const models = await client.callTool({ name: "codex_models", arguments: { refresh: true } });
       expect(models.isError).not.toBe(true);

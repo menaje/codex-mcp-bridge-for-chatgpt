@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 public let remoteCompanionProtocolName = "codex-mcp-bridge-remote-companion"
-public let remoteCompanionProtocolVersion = 2
+public let remoteCompanionProtocolVersion = 3
 
 public enum RemoteCompanionError: LocalizedError, Sendable {
     case invalidInvitation
@@ -277,17 +277,6 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
         try await call("skills.read", params: reference, timeout: 20)
     }
 
-    public func readBridgeSkillReference(
-        reference: BridgeSkillReference,
-        referenceId: String
-    ) async throws -> BridgeSkillReferenceDocument {
-        try await call(
-            "skills.reference",
-            params: BridgeSkillReferenceReadParameters(reference: reference, referenceId: referenceId),
-            timeout: 20
-        )
-    }
-
     public func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList {
         try await call("skills.versions", params: BridgeSkillVersionsParameters(skillId: skillId), timeout: 20)
     }
@@ -314,6 +303,12 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
         _ request: BridgeSkillSetEnabledRequest
     ) async throws -> BridgeSkillSummary {
         try await call("skills.set-enabled", params: request, timeout: 30)
+    }
+
+    public func deleteBridgeSkill(
+        _ request: BridgeSkillDeleteRequest
+    ) async throws -> BridgeSkillSummary {
+        try await call("skills.delete", params: request, timeout: 30)
     }
 
     public func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {

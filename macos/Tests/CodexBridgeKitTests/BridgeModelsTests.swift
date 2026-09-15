@@ -25,26 +25,18 @@ final class BridgeModelsTests: XCTestCase {
         XCTAssertNil(project.archivedAt)
     }
 
-    func testBridgeSkillMutationAndVersionContractsPreserveRequirements() throws {
+    func testBridgeSkillMutationAndVersionContractsPreserveFreeformMarkdown() throws {
         let create = BridgeSkillCreateRequest(
             requestId: "00000000-0000-4000-8000-000000000114",
             name: "Report review",
             description: "Review a report with evidence.",
-            instructions: "Check each claim against its source.",
-            references: [BridgeSkillMaterialInput(name: "Checklist", content: "- verify evidence", mediaType: "text/markdown")],
-            executionMode: "conversation-or-codex",
-            requirements: [BridgeSkillRequirementInput(
-                kind: "bridge-capability",
-                id: "conversation",
-                description: "Apply the procedure in the current conversation."
-            )]
+            document: "# Review\n\nCheck each claim against its source."
         )
         let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(create)) as? [String: Any])
         XCTAssertEqual(encoded["requestId"] as? String, "00000000-0000-4000-8000-000000000114")
-        XCTAssertEqual(encoded["executionMode"] as? String, "conversation-or-codex")
-        let requirement = try XCTUnwrap((encoded["requirements"] as? [[String: Any]])?.first)
-        XCTAssertEqual(requirement["kind"] as? String, "bridge-capability")
-        XCTAssertEqual(requirement["id"] as? String, "conversation")
+        XCTAssertEqual(encoded["document"] as? String, "# Review\n\nCheck each claim against its source.")
+        XCTAssertNil(encoded["instructions"])
+        XCTAssertNil(encoded["references"])
 
         let history = try JSONDecoder().decode(
             BridgeSkillVersionList.self,
@@ -62,60 +54,50 @@ final class BridgeModelsTests: XCTestCase {
                 "description":"Review a report with evidence.",
                 "contentDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "createdAt":"2026-09-15T00:00:00.000Z",
-                "referenceCount":1,
-                "execution":{
-                  "mode":"conversation-or-codex",
-                  "note":"Apply this version directly in the conversation.",
-                  "requirements":[{
-                    "kind":"bridge-capability",
-                    "id":"conversation",
-                    "description":"Apply the procedure in the current conversation.",
-                    "availability":"available"
-                  }]
-                }
+                "format":"markdown",
+                "legacy":false
               }]
             }
             """#.utf8)
         )
         XCTAssertEqual(history.currentVersion, "2")
         XCTAssertEqual(history.versions.first?.reference.version, "2")
-        XCTAssertEqual(history.versions.first?.execution.requirements.first?.requirementId, "conversation")
-        XCTAssertEqual(history.versions.first?.execution.requirements.first?.availability, "available")
+        XCTAssertEqual(history.versions.first?.format, "markdown")
+        XCTAssertFalse(history.versions.first?.legacy ?? true)
 
-        let material = try JSONDecoder().decode(
-            BridgeSkillReferenceDocument.self,
+        let document = try JSONDecoder().decode(
+            BridgeSkillDocument.self,
             from: Data(#"""
             {
               "skill":{
                 "skillId":"bridge_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "source":"bridge",
-                "version":"2"
+                "version":"2",
+                "name":"Report review",
+                "description":"Review a report with evidence.",
+                "contentDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "enabled":true,
+                "availability":"available"
               },
-              "reference":{
-                "referenceId":"ref_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                "name":"Checklist",
-                "mediaType":"text/markdown",
-                "contentDigest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                "bytes":17
-              },
-              "content":"- verify evidence",
+              "document":"# Review\r\n\r\n- preserve source",
+              "format":"markdown",
+              "legacy":false,
               "sourceSnapshot":"versioned-bridge-record",
-              "warnings":[],
-              "execution":{
-                "mode":"conversation-or-codex",
-                "note":"Apply this version directly in the conversation.",
-                "requirements":[{
-                  "kind":"bridge-capability",
-                  "id":"conversation",
-                  "description":"Apply the procedure in the current conversation.",
-                  "availability":"available"
-                }]
-              }
+              "warnings":[]
             }
             """#.utf8)
         )
-        XCTAssertEqual(material.execution.mode, "conversation-or-codex")
-        XCTAssertEqual(material.execution.requirements.first?.requirementId, "conversation")
+        XCTAssertEqual(document.document, "# Review\r\n\r\n- preserve source")
+        XCTAssertEqual(document.format, "markdown")
+        XCTAssertFalse(document.legacy)
+
+        let deletion = BridgeSkillDeleteRequest(
+            requestId: "00000000-0000-4000-8000-000000000115",
+            skillId: "bridge_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            expectedVersion: "2",
+            confirmName: "Report review"
+        )
+        XCTAssertEqual(deletion.confirmName, "Report review")
     }
 
     @MainActor

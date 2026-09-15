@@ -207,9 +207,8 @@ import {
   BRIDGE_SKILL_SOURCE,
   SkillLibrary,
   type CreateBridgeSkillInput,
-  type PreparedSkillDelivery,
+  type DeleteBridgeSkillInput,
   type SkillDocument,
-  type SkillReferenceDocument,
   type SkillReference,
   type SkillSearchResult,
   type SkillSummary,
@@ -235,7 +234,8 @@ export const MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES = 24 * 1024;
 /** Complete serialized codex_task descriptor ceiling at maximum bounded choices. */
 export const CODEX_TASK_DESCRIPTOR_MAX_JSON_BYTES = 128 * 1024;
 /** Stable task envelope adopted once; settings/catalog/project values stay runtime-authoritative. */
-export const CODEX_TASK_INPUT_CONTRACT_VERSION = "4" as const;
+/** v5 removes Bridge-document delivery from Codex task admission. */
+export const CODEX_TASK_INPUT_CONTRACT_VERSION = "5" as const;
 const MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING =
   "The model-authoritative primary answer was truncated by the structured-output byte limit. Request a narrower report only if the missing sections are required.";
 
@@ -410,15 +410,6 @@ const backendHandoffAuditOutputSchema = z.strictObject({
   summarySha256: z.string()
 });
 
-const requiredSkillDeliveryAuditOutputSchema = z.strictObject({
-  skillId: z.string().min(1),
-  source: z.literal(BRIDGE_SKILL_SOURCE),
-  version: z.string().min(1),
-  name: z.string().min(1),
-  contentDigest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
-  delivery: z.literal("bridge-instruction-bundle")
-});
-
 const bridgeSessionOutputSchema = z.strictObject({
   requestedMode: z.enum(["auto", "new", "continue"]),
   action: z.enum(["start", "continue"]),
@@ -434,7 +425,6 @@ const bridgeSessionOutputSchema = z.strictObject({
   ]),
   threadId: z.string().optional(),
   handoff: backendHandoffAuditOutputSchema.optional(),
-  requiredSkills: z.array(requiredSkillDeliveryAuditOutputSchema).optional(),
   scopeId: z.string(),
   requestId: z.string(),
   projectName: z.string().nullable()
@@ -1183,34 +1173,12 @@ const skillReferenceOutputSchema = z.strictObject({
   version: z.string().min(1)
 });
 
-const skillMaterialOutputSchema = z.strictObject({
-  referenceId: z.string().min(1),
-  name: z.string().min(1),
-  mediaType: z.string().min(1),
-  contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  bytes: z.number().int().positive()
-});
-
-const skillRequirementOutputSchema = z.strictObject({
-  kind: z.enum(["bridge-capability", "environment"]),
-  id: z.string().min(1),
-  description: z.string().min(1).nullable(),
-  availability: z.enum(["available", "external-environment", "unsupported"])
-});
-
-const skillExecutionOutputSchema = z.strictObject({
-  mode: z.enum(["conversation", "codex", "conversation-or-codex"]),
-  note: z.string().min(1),
-  requirements: z.array(skillRequirementOutputSchema)
-});
-
 const skillSummaryOutputSchema = skillReferenceOutputSchema.extend({
   name: z.string().min(1),
-  description: z.string().min(1),
+  description: z.string(),
   contentDigest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   enabled: z.boolean(),
-  availability: z.enum(["available", "metadata-only", "disabled"]),
-  execution: skillExecutionOutputSchema
+  availability: z.enum(["available", "disabled"])
 });
 
 const bridgeSkillSearchOutputSchema = z.strictObject({
@@ -1221,18 +1189,9 @@ const bridgeSkillSearchOutputSchema = z.strictObject({
 const bridgeSkillReadOutputSchema = z.strictObject({
   kind: z.literal("skill"),
   skill: skillSummaryOutputSchema,
-  instructions: z.string().min(1),
-  references: z.array(skillMaterialOutputSchema),
-  sourceSnapshot: z.literal("versioned-bridge-record"),
-  warnings: z.array(z.string())
-});
-
-const bridgeSkillReferenceOutputSchema = z.strictObject({
-  kind: z.literal("skill-reference"),
-  skill: skillReferenceOutputSchema,
-  execution: skillExecutionOutputSchema,
-  reference: skillMaterialOutputSchema,
-  content: z.string().min(1),
+  document: z.string().min(1),
+  format: z.literal("markdown"),
+  legacy: z.boolean(),
   sourceSnapshot: z.literal("versioned-bridge-record"),
   warnings: z.array(z.string())
 });
@@ -1243,20 +1202,17 @@ const bridgeSkillVersionsOutputSchema = z.strictObject({
   source: z.literal(BRIDGE_SKILL_SOURCE),
   currentVersion: z.string().regex(/^[1-9]\d*$/),
   enabled: z.boolean(),
-  versions: z.array(skillReferenceOutputSchema.extend({
-    name: z.string().min(1),
-    description: z.string().min(1),
+  versions: z.array(skillSummaryOutputSchema.extend({
     contentDigest: z.string().regex(/^[a-f0-9]{64}$/),
     createdAt: z.string().min(1),
-    referenceCount: z.number().int().min(0),
-    execution: skillExecutionOutputSchema
+    format: z.literal("markdown"),
+    legacy: z.boolean()
   }))
 });
 
 const bridgeSkillOutputSchema = z.union([
   bridgeSkillSearchOutputSchema,
   bridgeSkillReadOutputSchema,
-  bridgeSkillReferenceOutputSchema,
   bridgeSkillVersionsOutputSchema
 ]);
 
@@ -1660,14 +1616,6 @@ type SessionDecision = {
     | "no-compatible-session";
   threadId?: string;
   handoff?: BackendHandoffAudit;
-  /** Required selections delivered by the bridge; extra Codex skill use is not constrained by this list. */
-  requiredSkills?: RequiredSkillDeliveryAudit[];
-};
-
-type RequiredSkillDeliveryAudit = SkillReference & {
-  name: string;
-  contentDigest: string | null;
-  delivery: "bridge-instruction-bundle";
 };
 
 type BackendHandoffAudit = {
@@ -1686,11 +1634,11 @@ type CodexRouting = {
   scopeId: string;
   requestId: string;
   requestHash: string;
-  requestHashVersion: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  requestHashVersion: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 };
 
-// Version 9 binds bridge-only skill references into task idempotency.
-const CURRENT_TASK_REQUEST_HASH_VERSION = 9 as const;
+// Version 10 removes bridge document selections from Codex task admission.
+const CURRENT_TASK_REQUEST_HASH_VERSION = 10 as const;
 
 type TaskProjectAdmission = {
   projectId: string;
@@ -1752,7 +1700,7 @@ type CodexJob = {
   scopeId: string;
   requestId: string;
   requestHash: string;
-  requestHashVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  requestHashVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
   sourceThreadId?: string;
   selectionKey?: string;
   executionDecision?: ExecutionDecision;
@@ -3884,12 +3832,6 @@ export function registerBridgeTools(
       }
       return effectiveSkillLibrary.read({ reference });
     },
-    async readBridgeSkillReference(input) {
-      if (input.reference.source !== BRIDGE_SKILL_SOURCE) {
-        throw new Error("SKILL_SOURCE_UNSUPPORTED: The native library can manage bridge-owned skills only.");
-      }
-      return effectiveSkillLibrary.readReference(input);
-    },
     listBridgeSkillVersions(input) {
       return effectiveSkillLibrary.listBridgeSkillVersions(input);
     },
@@ -3904,6 +3846,9 @@ export function registerBridgeTools(
     },
     setBridgeSkillEnabled(input) {
       return effectiveSkillLibrary.setBridgeSkillEnabled(input);
+    },
+    deleteBridgeSkill(input) {
+      return effectiveSkillLibrary.deleteBridgeSkill(input);
     },
     async problemAction(rawInput, scopeId, source = "operator") {
       const input = problemActionSchema.parse(rawInput);
@@ -4347,31 +4292,11 @@ export function registerBridgeTools(
     source: z.literal(BRIDGE_SKILL_SOURCE).describe("Bridge-owned skill source returned by bridge_skill search."),
     version: z.string().trim().min(1).max(100).describe("Exact bridge skill version returned by bridge_skill search.")
   });
-  const skillReferenceMaterialInput = z.strictObject({
-    name: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters),
-    content: z.string().min(1).max(BRIDGE_SKILL_LIMITS.referenceMaxBytes)
-      .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.referenceMaxBytes, {
-        message: `Reference material must be at most ${BRIDGE_SKILL_LIMITS.referenceMaxBytes} UTF-8 bytes.`
-      })
-      .refine((value) => !value.includes("\u0000"), {
-        message: "Reference material cannot contain NUL characters."
-      }),
-    mediaType: z.string().trim().min(3).max(BRIDGE_SKILL_LIMITS.mediaTypeMaxCharacters).optional()
-  });
-  const skillReferenceMaterialsInput = z.array(skillReferenceMaterialInput)
-    .max(BRIDGE_SKILL_LIMITS.referenceMaxCount)
-    .refine((references) => references.reduce(
-      (total, reference) => total + Buffer.byteLength(reference.content, "utf8"),
-      0
-    ) <= BRIDGE_SKILL_LIMITS.referenceTotalMaxBytes, {
-      message: `Reference materials must total at most ${BRIDGE_SKILL_LIMITS.referenceTotalMaxBytes} UTF-8 bytes.`
-    });
-  const skillRequirementInput = z.strictObject({
-    kind: z.enum(["bridge-capability", "environment"]),
-    id: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.requirementIdMaxCharacters),
-    description: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.requirementDescriptionMaxCharacters).optional()
-  });
-  const bridgeSkillExecutionModeInput = z.enum(["conversation", "codex", "conversation-or-codex"]);
+  const bridgeSkillDocumentInput = z.string().min(1).max(BRIDGE_SKILL_LIMITS.documentMaxBytes)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.documentMaxBytes, {
+      message: `Skill document must be at most ${BRIDGE_SKILL_LIMITS.documentMaxBytes} UTF-8 bytes.`
+    })
+    .refine((value) => !value.includes("\u0000"), { message: "Skill document cannot contain NUL characters." });
   const bridgeSkillInput = z.discriminatedUnion("operation", [
     z.strictObject({
       operation: z.literal("search"),
@@ -4388,11 +4313,6 @@ export function registerBridgeTools(
       skill: skillReferenceInput
     }),
     z.strictObject({
-      operation: z.literal("reference"),
-      skill: skillReferenceInput,
-      referenceId: z.string().trim().min(1).max(200).describe("Exact referenceId returned by a bridge_skill read operation.")
-    }),
-    z.strictObject({
       operation: z.literal("versions"),
       skillId: z.string().trim().regex(/^bridge_[a-f0-9]{32}$/).describe("Bridge skill id whose immutable version history should be listed.")
     })
@@ -4402,14 +4322,8 @@ export function registerBridgeTools(
       operation: z.literal("create"),
       requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
       name: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters),
-      description: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).describe("Brief trigger-oriented description used for skill discovery."),
-      instructions: z.string().min(1).max(BRIDGE_SKILL_LIMITS.instructionsMaxBytes)
-        .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.instructionsMaxBytes, {
-          message: `Instructions must be at most ${BRIDGE_SKILL_LIMITS.instructionsMaxBytes} UTF-8 bytes.`
-        }),
-      references: skillReferenceMaterialsInput.optional(),
-      executionMode: bridgeSkillExecutionModeInput.optional(),
-      requirements: z.array(skillRequirementInput).max(BRIDGE_SKILL_LIMITS.requirementMaxCount).optional()
+      description: z.string().max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).optional().describe("Optional discovery summary. The Markdown document remains the complete skill body."),
+      document: bridgeSkillDocumentInput.describe("Complete free-form Markdown document. The bridge preserves it without adding frontmatter or splitting sections.")
     }),
     z.strictObject({
       operation: z.literal("update"),
@@ -4417,17 +4331,9 @@ export function registerBridgeTools(
       skillId: z.string().trim().regex(/^bridge_[a-f0-9]{32}$/).describe("Exact bridge-origin skill id."),
       expectedVersion: z.string().trim().regex(/^[1-9]\d*$/).describe("Current version read before this mutation. A successful update creates the next immutable version."),
       name: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters).optional(),
-      description: z.string().trim().min(1).max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).optional(),
-      instructions: z.string().min(1).max(BRIDGE_SKILL_LIMITS.instructionsMaxBytes)
-        .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.instructionsMaxBytes, {
-          message: `Instructions must be at most ${BRIDGE_SKILL_LIMITS.instructionsMaxBytes} UTF-8 bytes.`
-        })
-        .optional(),
-      references: skillReferenceMaterialsInput.optional().describe("When supplied, replaces the complete reference-material list for the new version."),
-      executionMode: bridgeSkillExecutionModeInput.optional(),
-      requirements: z.array(skillRequirementInput).max(BRIDGE_SKILL_LIMITS.requirementMaxCount).optional()
-    }).refine((value) => value.name !== undefined || value.description !== undefined ||
-      value.instructions !== undefined || value.references !== undefined || value.executionMode !== undefined || value.requirements !== undefined, {
+      description: z.string().max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).optional(),
+      document: bridgeSkillDocumentInput.optional()
+    }).refine((value) => value.name !== undefined || value.description !== undefined || value.document !== undefined, {
       message: "Provide at least one field to update."
     }),
     z.strictObject({
@@ -4442,7 +4348,7 @@ export function registerBridgeTools(
       requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
       skillId: z.string().trim().regex(/^bridge_[a-f0-9]{32}$/),
       expectedVersion: z.string().trim().regex(/^[1-9]\d*$/).describe("Current version read before this mutation."),
-      enabled: z.boolean().describe("False archives the skill from discovery and new Codex delivery while preserving immutable history.")
+      enabled: z.boolean().describe("False archives the skill from Bridge document discovery while preserving immutable history.")
     })
   ]);
   server.registerTool(
@@ -4450,7 +4356,7 @@ export function registerBridgeTools(
     {
       title: "Find and Read Bridge Skills",
       description:
-        "Find a reusable bridge-owned procedure before applying one to a conversation task. Search by the user's goal when no exact skill name is known, then read the selected exact version. Read reference materials only when needed. Reading never starts Codex, executes a script, or changes permissions.",
+        "Find and read reusable bridge-owned Markdown documents. Search by the user's goal when no exact skill name is known, then read the selected immutable version. Reading never starts Codex, executes a script, or changes permissions.",
       inputSchema: bridgeSkillInput,
       outputSchema: bridgeSkillOutputSchema,
       annotations: {
@@ -4486,23 +4392,8 @@ export function registerBridgeTools(
         );
       }
 
-      const reference = args.skill as SkillReference;
-      if (args.operation === "read") {
-        const result = await effectiveSkillLibrary.read({ reference });
-        const structured = bridgeSkillReadOutputSchema.parse({ kind: "skill", ...result });
-        return contractedToolResult(
-          skillResultContract,
-          result,
-          structured,
-          { content: bridgeSkillPrimaryContent(structured) }
-        );
-      }
-
-      const result = await effectiveSkillLibrary.readReference({
-        reference,
-        referenceId: args.referenceId
-      });
-      const structured = bridgeSkillReferenceOutputSchema.parse({ kind: "skill-reference", ...result });
+      const result = await effectiveSkillLibrary.read({ reference: args.skill as SkillReference });
+      const structured = bridgeSkillReadOutputSchema.parse({ kind: "skill", ...result });
       return contractedToolResult(
         skillResultContract,
         result,
@@ -4517,7 +4408,7 @@ export function registerBridgeTools(
     {
       title: "Manage a Bridge Skill",
       description:
-        "Create, version, restore, or archive a bridge-owned skill. Every mutation requires a requestId for exact retries. Content updates and restores are append-only: the bridge preserves prior instructions, materials, and declared prerequisites.",
+        "Create, version, restore, or archive a bridge-owned Markdown skill document. Every mutation requires a requestId for exact retries. Content updates and restores are append-only: the bridge preserves prior document versions.",
       inputSchema: bridgeSkillManageInput,
       outputSchema: bridgeSkillManageOutputSchema,
       annotations: {
@@ -4533,10 +4424,7 @@ export function registerBridgeTools(
             requestId: args.requestId,
             name: args.name,
             description: args.description,
-            instructions: args.instructions,
-            references: args.references,
-            executionMode: args.executionMode,
-            requirements: args.requirements
+            document: args.document
           })
         : args.operation === "update"
           ? await effectiveSkillLibrary.updateBridgeSkill({
@@ -4545,10 +4433,7 @@ export function registerBridgeTools(
               expectedVersion: args.expectedVersion,
               ...(args.name === undefined ? {} : { name: args.name }),
               ...(args.description === undefined ? {} : { description: args.description }),
-              ...(args.instructions === undefined ? {} : { instructions: args.instructions }),
-              ...(args.references === undefined ? {} : { references: args.references }),
-              ...(args.executionMode === undefined ? {} : { executionMode: args.executionMode }),
-              ...(args.requirements === undefined ? {} : { requirements: args.requirements })
+              ...(args.document === undefined ? {} : { document: args.document })
             })
           : args.operation === "restore"
             ? await effectiveSkillLibrary.restoreBridgeSkill({
@@ -6773,10 +6658,6 @@ export function registerBridgeTools(
             requireSameCwd: true
           });
           await enforceSensitiveFilePreflight(config, cwd, "run Codex");
-          const skillDelivery = await prepareTaskSkills(
-            effectiveSkillLibrary,
-            args.requiredSkills
-          );
           const routing = resolveTaskRouting({
             args,
             activityRequest,
@@ -6821,7 +6702,6 @@ export function registerBridgeTools(
             agentRole: agentResolution.role,
             projectAdmission,
             backendHandoff,
-            skillDelivery,
             resolved: {
               cwd,
               sandbox,
@@ -6897,10 +6777,6 @@ export function registerBridgeTools(
           userSettings,
           requireSameCwd: false
         });
-        const skillDelivery = await prepareTaskSkills(
-          effectiveSkillLibrary,
-          args.requiredSkills
-        );
         const routing = resolveTaskRouting({
           args,
           activityRequest,
@@ -6945,7 +6821,6 @@ export function registerBridgeTools(
             executionPolicyRef: taskAdmissionPolicyRef(args),
             executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
             projectRequest: args.project,
-            skillDelivery,
             onAdmitted: onTaskAdmitted
           }));
         }
@@ -6971,7 +6846,6 @@ export function registerBridgeTools(
           executionPolicyRef: taskAdmissionPolicyRef(args),
           executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
           projectRequest: args.project,
-          skillDelivery,
           onAdmitted: onTaskAdmitted
         }));
       } catch (error) {
@@ -7242,8 +7116,6 @@ type CodexTaskArgs = {
   agent?: CodexTaskAgentInput;
   executionMode?: ActivityExecutionMode;
   selection?: ModelChoice;
-  /** Exact library selections required for this one Codex turn. */
-  requiredSkills?: SkillReference[];
   /** Normalized private fields derived solely from the current nested input. */
   activityId?: string;
   continuationOfActivityId?: string;
@@ -7434,27 +7306,6 @@ function backendHandoffPrompt(handoff: BackendHandoff, prompt: string): string {
     "[New request]",
     prompt
   ].join("\n");
-}
-
-function promptWithRequiredSkills(prompt: string, delivery?: PreparedSkillDelivery): string {
-  return delivery?.promptPreamble
-    ? `${delivery.promptPreamble}\n\n[Requested work]\n${prompt}`
-    : prompt;
-}
-
-function requiredSkillDeliveryAudit(
-  delivery: PreparedSkillDelivery | undefined
-): RequiredSkillDeliveryAudit[] | undefined {
-  if (!delivery || delivery.requiredSkills.length === 0) return undefined;
-  return delivery.requiredSkills.map((skill) => ({ ...skill }));
-}
-
-async function prepareTaskSkills(
-  library: SkillLibrary,
-  references: readonly SkillReference[] | undefined
-): Promise<PreparedSkillDelivery | undefined> {
-  if (!references || references.length === 0) return undefined;
-  return library.prepareForExecution({ references });
 }
 
 type AgentThreadResumeErrorCode =
@@ -8061,7 +7912,6 @@ async function startNewSession(input: {
   agentRole?: string;
   projectAdmission?: TaskProjectAdmission;
   backendHandoff?: BackendHandoff;
-  skillDelivery?: PreparedSkillDelivery;
   resolved: {
     cwd: string;
     sandbox: SandboxMode;
@@ -8079,7 +7929,7 @@ async function startNewSession(input: {
   const basePrompt = input.backendHandoff
     ? backendHandoffPrompt(input.backendHandoff, input.args.prompt)
     : input.args.prompt;
-  const prompt = promptWithRequiredSkills(basePrompt, input.skillDelivery);
+  const prompt = basePrompt;
   const payload: Record<string, unknown> = {
     prompt,
     ...executionAccessArguments(access)
@@ -8096,10 +7946,7 @@ async function startNewSession(input: {
     requestedMode: input.requestedMode,
     action: "start",
     reason: input.reason,
-    ...(input.backendHandoff ? { handoff: backendHandoffAudit(input.backendHandoff) } : {}),
-    ...(requiredSkillDeliveryAudit(input.skillDelivery)
-      ? { requiredSkills: requiredSkillDeliveryAudit(input.skillDelivery) }
-      : {})
+    ...(input.backendHandoff ? { handoff: backendHandoffAudit(input.backendHandoff) } : {})
   };
   return runCodex({
     jobs: input.jobs,
@@ -8244,7 +8091,6 @@ async function continueTrackedSession(input: {
   executionPolicyRef?: string;
   executionPolicyCatalogFingerprint: string | null;
   projectRequest?: RuntimeProjectSelection;
-  skillDelivery?: PreparedSkillDelivery;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
   const access = resolveExecutionPolicy(input.config, input.preferences, input.session.cwd, input.session.sandbox);
@@ -8252,15 +8098,12 @@ async function continueTrackedSession(input: {
   if (!input.preflightDone) {
     await enforceSensitiveFilePreflight(input.config, currentCwd, "continue Codex");
   }
-  const prompt = promptWithRequiredSkills(input.prompt, input.skillDelivery);
+  const prompt = input.prompt;
   const decision: SessionDecision = {
     requestedMode: input.requestedMode,
     action: "continue",
     reason: input.reason,
-    threadId: input.session.threadId,
-    ...(requiredSkillDeliveryAudit(input.skillDelivery)
-      ? { requiredSkills: requiredSkillDeliveryAudit(input.skillDelivery) }
-      : {})
+    threadId: input.session.threadId
   };
   let executionStateApplied = false;
   return runCodex({
@@ -8393,7 +8236,6 @@ async function forkTrackedSession(input: {
   executionPolicyRef?: string;
   executionPolicyCatalogFingerprint: string | null;
   projectRequest?: RuntimeProjectSelection;
-  skillDelivery?: PreparedSkillDelivery;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
   const access = resolveExecutionPolicy(input.config, input.preferences, input.session.cwd, input.session.sandbox);
@@ -8405,15 +8247,12 @@ async function forkTrackedSession(input: {
   const storage = await input.config.codexService?.sessionPolicy(input.session.backendKind, input.preferences.showBridgeThreadsInCodexApp, input.session.threadId);
   const currentCwd = resolvePinnedAgentCwd(input);
   await enforceSensitiveFilePreflight(input.config, currentCwd, "fork Codex context");
-  const prompt = promptWithRequiredSkills(input.prompt, input.skillDelivery);
+  const prompt = input.prompt;
   const sessionDecision: SessionDecision = {
     requestedMode: "new",
     action: "start",
     reason: "explicit-new",
-    threadId: input.session.threadId,
-    ...(requiredSkillDeliveryAudit(input.skillDelivery)
-      ? { requiredSkills: requiredSkillDeliveryAudit(input.skillDelivery) }
-      : {})
+    threadId: input.session.threadId
   };
   return runCodex({
     jobs: input.jobs,
@@ -9584,12 +9423,12 @@ export type BridgeApplicationService = {
   /** Native app access to the same bridge-owned, versioned source as MCP. */
   skillLibrarySnapshot?(): Promise<SkillSearchResult>;
   readBridgeSkill?(reference: SkillReference): Promise<SkillDocument>;
-  readBridgeSkillReference?(input: { reference: SkillReference; referenceId: string }): Promise<SkillReferenceDocument>;
   listBridgeSkillVersions?(input: { skillId: string }): Promise<SkillVersionList>;
   createBridgeSkill?(input: CreateBridgeSkillInput): Promise<SkillSummary>;
   updateBridgeSkill?(input: UpdateBridgeSkillInput): Promise<SkillSummary>;
   restoreBridgeSkill?(input: RestoreBridgeSkillInput): Promise<SkillSummary>;
   setBridgeSkillEnabled?(input: SetBridgeSkillEnabledInput): Promise<SkillSummary>;
+  deleteBridgeSkill?(input: DeleteBridgeSkillInput): Promise<SkillSummary>;
 };
 type CodexWeeklyUsageView = z.infer<typeof codexWeeklyUsageOutputSchema>;
 type CancellationDisplay = z.infer<typeof cancellationDisplayOutputSchema>;
@@ -12132,13 +11971,6 @@ function codexTaskInputSchema(
   const project = currentProjectSelectionZod().optional().describe(
     "Exact current selector for new/fresh work. Omit for continue/fork; never send a path or private project ID."
   );
-  const requiredSkills = z.array(z.strictObject({
-    skillId: z.string().trim().min(1).max(200),
-    source: z.literal(BRIDGE_SKILL_SOURCE),
-    version: z.string().trim().min(1).max(100)
-  })).max(32).optional().describe(
-    "Exact bridge skills selected through bridge_skill for this one Codex turn. The bridge verifies each immutable reference immediately before dispatch. This fixed input shape does not change when skills are added or revised."
-  );
   const publicCommon = {
     scopeId: scopeIdSchema()
       .optional()
@@ -12155,7 +11987,6 @@ function codexTaskInputSchema(
     activity: activity.optional(),
     agent: agent.optional(),
     executionMode,
-    requiredSkills,
     selection: modelChoiceZod().optional().describe(
       "Exact model/reasoning choice discovered through codex_models. Required at runtime for automatic-policy new Activity, new Agent, and fresh context; automatic continue/fork may omit it to inherit the thread selection. Fixed policy must omit it."
     )
@@ -12231,9 +12062,9 @@ type TaskRequestHashInput = {
   backendHandoff?: BackendHandoff | BackendHandoffAudit;
 };
 
-/** Current request identity commits the public v3 envelope, exact required
- * skill references, and admission-time execution semantics. It deliberately
- * excludes card presentation and other mutable UI state. */
+/** Current request identity commits the public task envelope and admission-time
+ * execution semantics. It deliberately excludes independent Bridge document
+ * library state, card presentation, and other mutable UI state. */
 function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
   const activityCreation = input.args.activityId
     ? null
@@ -12255,11 +12086,6 @@ function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
         prompt: input.args.prompt,
         taskContractVersion: CODEX_TASK_INPUT_CONTRACT_VERSION,
         executionEnvelopeRef: input.args.executionEnvelopeRef,
-        requiredSkills: (input.args.requiredSkills || []).map((skill) => ({
-          skillId: skill.skillId,
-          source: skill.source,
-          version: skill.version
-        })),
         backendHandoff: input.backendHandoff
           ? backendHandoffAuditForHash(input.backendHandoff, input.args.handoffSummary)
           : input.args.handoffSummary
@@ -13252,7 +13078,8 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
       requestHashVersion !== 6 &&
       requestHashVersion !== 7 &&
       requestHashVersion !== 8 &&
-      requestHashVersion !== 9) ||
+      requestHashVersion !== 9 &&
+      requestHashVersion !== 10) ||
     !isOptionalString(value.selectionKey) ||
     !Array.isArray(value.exclusiveKeys) ||
     !value.exclusiveKeys.every((entry) => typeof entry === "string") ||
@@ -14479,7 +14306,7 @@ function contractedToolResult<Schema extends z.ZodType>(
  * `bridge_skill` is a model-facing read surface. Its compatibility channel is
  * intentionally a complete compact JSON mirror of the validated structured
  * result, so MCP hosts that consume `content` rather than `structuredContent`
- * receive the exact instructions, materials, requirements, and warnings.
+ * receive the exact Markdown document, version metadata, and warnings.
  */
 function bridgeSkillPrimaryContent(value: unknown): ToolResult["content"] {
   const text = JSON.stringify(value);

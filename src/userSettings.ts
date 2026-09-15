@@ -27,7 +27,7 @@ export type { ProjectRegistryOperation } from "./projectRegistry.js";
 export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
 const EXECUTION_POLICY_HMAC_SECRET_META_KEY = "execution_policy_hmac_secret_v1";
 const EXECUTION_POLICY_REF_CONTRACT_VERSION = 5;
-const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 4;
+const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 5;
 
 export type BridgeUserSettings = {
   schemaVersion: typeof MODEL_POLICY_SCHEMA_VERSION;
@@ -178,10 +178,10 @@ export class UserSettingsStore {
 
   /**
    * Stable installation-bound reference to the maximum authority and static
-   * wire shape advertised by codex_task contract v4.
+   * wire shape advertised by codex_task contract v5.
    *
    * User settings, projects, and the live model catalog are deliberately not
-   * included: contract v4 declares their runtime-authoritative behavior in a
+   * included: contract v5 declares their runtime-authoritative behavior in a
    * stable schema. A process/operator change can alter the maximum authority
    * or the schema itself and therefore still requires a connection Refresh.
    */
@@ -192,8 +192,7 @@ export class UserSettingsStore {
       )
       .update(canonicalJsonValue({
         contract: TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION,
-        taskInputContract: 4,
-        requiredSkillReferences: "bridge-versioned-v2",
+        taskInputContract: 5,
         maxPromptChars: this.config.maxPromptChars,
         operator: canonicalExecutionOperatorEnvelope(this.config)
       }))

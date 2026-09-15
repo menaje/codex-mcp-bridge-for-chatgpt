@@ -540,18 +540,6 @@ struct DashboardPopoverView: View {
     private var footer: some View {
         HStack(spacing: 10) {
             Button {
-                presentSettingsWindow()
-            } label: {
-                Label("설정", systemImage: "gearshape")
-                    .labelStyle(.iconOnly)
-                    .frame(width: 28, height: 28)
-            }
-            .buttonStyle(.borderless)
-            .keyboardShortcut(",")
-            .help("설정")
-            .accessibilityLabel("설정")
-
-            Button {
                 presentSkillsLibraryWindow()
             } label: {
                 Label("스킬 라이브러리", systemImage: "books.vertical")
@@ -576,6 +564,20 @@ struct DashboardPopoverView: View {
             .accessibilityAddTraits(model.dashboardPanel == .history ? [.isSelected] : [])
             .accessibilityIdentifier("dashboard-history")
             .disabled(model.dashboard == nil || !model.bridgeConnected || model.changingProblems)
+
+            Spacer()
+
+            Button {
+                presentSettingsWindow()
+            } label: {
+                Label("설정", systemImage: "gearshape")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.borderless)
+            .keyboardShortcut(",")
+            .help("설정")
+            .accessibilityLabel("설정")
 
             if model.isRemoteClient {
                 Menu {
@@ -605,6 +607,12 @@ struct DashboardPopoverView: View {
                 .disabled(model.isBusy)
             } else {
                 Menu {
+                    if model.codexRuntime?.showsMenuUpdate == true {
+                        Button("코덱스 업데이트") {
+                            Task { await model.manageCodex(.init(action: "update")) }
+                        }
+                        Divider()
+                    }
                     Button("작업 완료 후 서버 재시작") {
                         Task { await model.restartRuntime(force: false) }
                     }
@@ -643,13 +651,6 @@ struct DashboardPopoverView: View {
                 .disabled(model.needsSetup || model.isBusy)
             }
 
-            if !model.isRemoteClient, model.codexRuntime?.showsMenuUpdate == true {
-                Button("코덱스 업데이트") {
-                    Task { await model.manageCodex(.init(action: "update")) }
-                }
-            }
-
-            Spacer()
             Button {
                 if model.isRemoteClient {
                     shutdownAndQuit(force: false)

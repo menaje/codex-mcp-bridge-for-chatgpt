@@ -103,10 +103,10 @@ describe("release manifest", () => {
       rollbackPolicy: "verified-original-before-service-open-v1",
       persistentContracts: {
         userSettingsSchema: 4,
-        taskInputContract: 4,
+        taskInputContract: 5,
         macosHelperProtocol: 2,
-        localCompanionProtocol: 4,
-        remoteCompanionProtocol: 2
+        localCompanionProtocol: 5,
+        remoteCompanionProtocol: 3
       }
     });
     expect(catalog).toMatchObject({

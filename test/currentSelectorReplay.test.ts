@@ -132,11 +132,11 @@ describe("current task selector contract", () => {
         projectRef: selected.projectRef,
         projectRevision: selected.projectRevision
       },
-      activity: { mode: "new", title: "Current v4 replay" },
+      activity: { mode: "new", title: "Current v5 replay" },
       agent: { mode: "new", name: "Replay Agent" },
       executionMode: "foreground"
     };
-    expect(request.taskContractVersion).toBe("4");
+    expect(request.taskContractVersion).toBe("5");
 
     const admitted = await connection.client.callTool({ name: "codex_task", arguments: request });
     expect(admitted.isError).not.toBe(true);

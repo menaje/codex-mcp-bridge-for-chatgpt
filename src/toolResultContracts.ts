@@ -63,7 +63,8 @@ export const TOOL_CONTENT_BYTE_CAPS = Object.freeze({
   // Read/reference operations deliberately mirror their complete structured
   // result in model-visible content. Keep the compatibility cap aligned with
   // the structured cap so a primary payload is never silently summarized.
-  bridge_skill: 3 * 1_024 * 1_024,
+  // Preserve the complete 3 MiB source even when JSON escaping doubles it.
+  bridge_skill: 8 * 1_024 * 1_024,
   bridge_skill_manage: 768,
   codex_settings: 768,
   codex_agent: 512,
@@ -82,7 +83,7 @@ export const TOOL_STRUCTURED_BYTE_CAPS = Object.freeze({
   codex_dashboard: 16 * 1_024,
   codex_status: 512 * 1_024,
   codex_models: 256 * 1_024,
-  bridge_skill: 3 * 1_024 * 1_024,
+  bridge_skill: 8 * 1_024 * 1_024,
   bridge_skill_manage: 64 * 1_024,
   codex_settings: 32 * 1_024,
   codex_agent: 128 * 1_024,

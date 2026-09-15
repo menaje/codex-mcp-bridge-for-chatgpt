@@ -1,180 +1,6 @@
 {
   "sourceLanguage" : "ko",
   "strings" : {
-    "브리지가 인식하는 기능" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Von der Bridge erkannte Funktion"
-      }
-    },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Capability recognized by the Bridge"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Capacidad reconocida por el Bridge"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Capacité reconnue par le Bridge"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge が認識する機能"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "브리지가 인식하는 기능"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Capacidade reconhecida pelo Bridge"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge 识别的功能"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge 識別的功能"
-      }
-    }
-  }
-},
-    "실행 환경에서 별도 준비 필요" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Erfordert separate Vorbereitung in der Ausführungsumgebung"
-      }
-    },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Requires separate preparation in the execution environment"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Requiere preparación por separado en el entorno de ejecución"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Nécessite une préparation distincte dans l’environnement d’exécution"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "実行環境で別途準備が必要"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "실행 환경에서 별도 준비 필요"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Requer preparação separada no ambiente de execução"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "需要在执行环境中单独准备"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "需要在執行環境中另外準備"
-      }
-    }
-  }
-},
-    "브리지가 지원하지 않는 기능" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Von der Bridge nicht unterstützte Funktion"
-      }
-    },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Capability unsupported by the Bridge"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Capacidad no compatible con el Bridge"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Capacité non prise en charge par le Bridge"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge でサポートされない機能"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "브리지가 지원하지 않는 기능"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Capacidade não compatível com o Bridge"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge 不支持的功能"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge 不支援的功能"
-      }
-    }
-  }
-},
     " (저장됨 · 현재 선택 불가)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -514,63 +340,63 @@
       }
     },
     "%@ · %lld bytes" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%@ · %lld Byte"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %lld Byte"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %lld bytes"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %lld bytes"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %lld octets"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %lld バイト"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %lld bytes"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %lld bytes"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %lld 字节"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %lld 位元組"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%@ · %lld bytes"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%@ · %lld bytes"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%@ · %lld octets"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%@ · %lld バイト"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%@ · %lld bytes"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%@ · %lld bytes"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%@ · %lld 字节"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%@ · %lld 位元組"
-      }
-    }
-  }
-},
     "%@ · Bridge %@ · 연결됨" : {
       "localizations" : {
         "de" : {
@@ -2987,63 +2813,63 @@
       }
     },
     "Codex 전용" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Nur Codex"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur Codex"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex only"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo Codex"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex uniquement"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex 専用"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex 전용"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Somente Codex"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅 Codex"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "僅限 Codex"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Codex only"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Solo Codex"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Codex uniquement"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Codex 専用"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Codex 전용"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Somente Codex"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "仅 Codex"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "僅限 Codex"
-      }
-    }
-  }
-},
     "Codex에 로그인되어 있습니다." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3202,63 +3028,63 @@
       }
     },
     "MIME 형식" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "MIME-Typ"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MIME-Typ"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MIME type"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tipo MIME"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Type MIME"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MIME タイプ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MIME 형식"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tipo MIME"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MIME 类型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MIME 類型"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "MIME type"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Tipo MIME"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Type MIME"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "MIME タイプ"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "MIME 형식"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Tipo MIME"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "MIME 类型"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "MIME 類型"
-      }
-    }
-  }
-},
     "Mac 앱" : {
       "localizations" : {
         "de" : {
@@ -3307,6 +3133,65 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mac 應用"
+          }
+        }
+      }
+    },
+    "Markdown 원문" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown-Quelle"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown Source"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fuente Markdown"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Source Markdown"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown ソース"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown 원문"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fonte Markdown"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown 源"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown 原始碼"
           }
         }
       }
@@ -5657,121 +5542,122 @@
       }
     },
     "v%@ · %@" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "v%@ · %@"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@ · %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@ · %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@ · %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@ · %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@ · %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@ · %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@ · %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@ · %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@ · %@"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "v%@ · %@"
+    "v%@의 Markdown 원문을 복사해 새 불변 버전을 만듭니다. 기존 버전은 바뀌지 않습니다." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erstellt eine neue unveränderliche Version durch Kopieren der Markdown-Quelle von v%@. Die vorhandene Version wird nicht geändert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Creates a new immutable version by copying the Markdown source from v%@. The existing version does not change."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Crea una nueva versión inmutable copiando la fuente Markdown de v%@. La versión existente no cambia."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Crée une nouvelle version immuable en copiant la source Markdown de v%@. La version existante ne change pas."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@ の Markdown ソースをコピーして、新しい不変バージョンを作成します。既存のバージョンは変更されません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "v%@의 Markdown 원문을 복사해 새 불변 버전을 만듭니다. 기존 버전은 바뀌지 않습니다."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cria uma nova versão imutável copiando a fonte Markdown de v%@. A versão existente não é alterada."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制 v%@ 的 Markdown 源以创建新的不可变版本。现有版本不会更改。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "複製 v%@ 的 Markdown 原始碼以建立新的不可變版本。現有版本不會變更。"
+          }
+        }
       }
     },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "v%@ · %@"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "v%@ · %@"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "v%@ · %@"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "v%@ · %@"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "v%@ · %@"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "v%@ · %@"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "v%@ · %@"
-      }
-    }
-  }
-},
-    "v%@의 지침과 참고 자료를 복사해 새 불변 버전을 만듭니다. 기존 버전은 바뀌지 않습니다." : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Kopiert Anweisungen und Referenzmaterialien von v%@ in eine neue unveränderliche Version. Die vorhandene Version bleibt unverändert."
-      }
-    },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Copies v%@ instructions and reference materials into a new immutable version. The existing version does not change."
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Copia las instrucciones y los materiales de referencia de v%@ en una nueva versión inmutable. La versión existente no cambia."
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Copie les instructions et les documents de référence de v%@ dans une nouvelle version immuable. La version existante ne change pas."
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "v%@の指示と参考資料をコピーして、新しい不変バージョンを作成します。既存のバージョンは変更されません。"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "v%@의 지침과 참고 자료를 복사해 새 불변 버전을 만듭니다. 기존 버전은 바뀌지 않습니다."
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Copia as instruções e os materiais de referência de v%@ para uma nova versão imutável. A versão existente não é alterada."
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "将 v%@ 的说明和参考资料复制为新的不可变版本。现有版本不会更改。"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "將 v%@ 的指示和參考資料複製為新的不可變版本。現有版本不會變更。"
-      }
-    }
-  }
-},
     "‘%@’ 서버 자체와 다른 기기의 등록은 변경하지 않습니다." : {
       "localizations" : {
         "de" : {
@@ -6852,6 +6738,65 @@
         }
       }
     },
+    "계속하려면 스킬 이름을 정확히 입력하세요: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geben Sie zum Fortfahren den genauen Skill-Namen ein: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To continue, enter the exact skill name: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Para continuar, introduce el nombre exacto de la habilidad: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pour continuer, saisissez le nom exact de la compétence : %@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "続行するには、スキル名を正確に入力してください: %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계속하려면 스킬 이름을 정확히 입력하세요: %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Para continuar, digite o nome exato da habilidade: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要继续，请准确输入技能名称：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "若要繼續，請正確輸入技能名稱：%@"
+          }
+        }
+      }
+    },
     "계정 사용량" : {
       "localizations" : {
         "de" : {
@@ -7607,63 +7552,63 @@
       }
     },
     "기능 또는 환경 이름" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Name der Funktion oder Umgebung"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Name der Funktion oder Umgebung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capability or environment name"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nombre de función o entorno"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nom de la capacité ou de l’environnement"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "機能または環境の名前"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기능 또는 환경 이름"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nome da capacidade ou do ambiente"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "功能或环境名称"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "功能或環境名稱"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Capability or environment name"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Nombre de función o entorno"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Nom de la capacité ou de l’environnement"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "機能または環境の名前"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "기능 또는 환경 이름"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Nome da capacidade ou do ambiente"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "功能或环境名称"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "功能或環境名稱"
-      }
-    }
-  }
-},
     "기존 Bridge 연결 파일" : {
       "localizations" : {
         "de" : {
@@ -9327,63 +9272,63 @@
       }
     },
     "대화 또는 Codex" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Unterhaltung oder Codex"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unterhaltung oder Codex"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversation or Codex"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversación o Codex"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversation ou Codex"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会話または Codex"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 또는 Codex"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversa ou Codex"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "对话或 Codex"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "對話或 Codex"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Conversation or Codex"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Conversación o Codex"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Conversation ou Codex"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "会話または Codex"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "대화 또는 Codex"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Conversa ou Codex"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "对话或 Codex"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "對話或 Codex"
-      }
-    }
-  }
-},
     "대화 저장을 확인할 수 없어 연결을 유지합니다." : {
       "localizations" : {
         "de" : {
@@ -9443,63 +9388,63 @@
       }
     },
     "대화 전용" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Nur Unterhaltung"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur Unterhaltung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversation only"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo conversación"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Conversation uniquement"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会話専用"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 전용"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Somente conversa"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅对话"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "僅對話"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Conversation only"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Solo conversación"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Conversation uniquement"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "会話専用"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "대화 전용"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Somente conversa"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "仅对话"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "僅對話"
-      }
-    }
-  }
-},
     "더 보기" : {
       "localizations" : {
         "de" : {
@@ -13001,63 +12946,63 @@
       }
     },
     "버전" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Versions"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versions"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Version"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versión"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Version"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "バージョン"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "버전"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "versão"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "版本"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "版本"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Version"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Versión"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Version"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "バージョン"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "버전"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "versão"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "版本"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "版本"
-      }
-    }
-  }
-},
     "버전 관리" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -13118,63 +13063,63 @@
       }
     },
     "버전 이력" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Versionsverlauf"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versionsverlauf"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Version history"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Historial de versiones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Historique des versions"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "バージョン履歴"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "버전 이력"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Histórico de versões"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "版本历史"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "版本記錄"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Version history"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Historial de versiones"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Historique des versions"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "バージョン履歴"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "버전 이력"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Histórico de versões"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "版本历史"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "版本記錄"
-      }
-    }
-  }
-},
     "변경사항 자동 저장" : {
       "localizations" : {
         "de" : {
@@ -13553,63 +13498,63 @@
       }
     },
     "보관한 스킬 표시" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Archivierte Skills anzeigen"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Archivierte Skills anzeigen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show archived skills"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostrar habilidades archivadas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afficher les compétences archivées"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アーカイブしたスキルを表示"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보관한 스킬 표시"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mostrar habilidades arquivadas"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示已归档技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "顯示已封存技能"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Show archived skills"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Mostrar habilidades archivadas"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Afficher les compétences archivées"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "アーカイブしたスキルを表示"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "보관한 스킬 표시"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Mostrar habilidades arquivadas"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "显示已归档技能"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "顯示已封存技能"
-      }
-    }
-  }
-},
     "보안 및 연결 승인 알림" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -14501,6 +14446,65 @@
         }
       }
     },
+    "브리지 · v%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · v%@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · v%@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · v%@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · v%@"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · v%@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브리지 · v%@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · v%@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · v%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge · v%@"
+          }
+        }
+      }
+    },
     "브리지 · 버전 %@" : {
       "localizations" : {
         "de" : {
@@ -14560,121 +14564,121 @@
       }
     },
     "브리지 기능" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge-Funktion"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge-Funktion"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge capability"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capacidad del Bridge"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capacité du Bridge"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge 機能"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브리지 기능"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capacidade do Bridge"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge 功能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge 功能"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge capability"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Capacidad del Bridge"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Capacité du Bridge"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge 機能"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "브리지 기능"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Capacidade do Bridge"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge 功能"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge 功能"
-      }
-    }
-  }
-},
     "브리지 기능은 conversation, codex-task, reference-text만 인식합니다. 환경 조건은 실행 환경에서 따로 준비해야 합니다." : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Die Bridge erkennt nur conversation, codex-task und reference-text. Bereiten Sie Umgebungsanforderungen separat in der Ausführungsumgebung vor."
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Bridge erkennt nur conversation, codex-task und reference-text. Bereiten Sie Umgebungsanforderungen separat in der Ausführungsumgebung vor."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Bridge recognizes only conversation, codex-task, and reference-text. Prepare environment requirements separately in the execution environment."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El Bridge solo reconoce conversation, codex-task y reference-text. Prepare los requisitos de entorno por separado en el entorno de ejecución."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le Bridge ne reconnaît que conversation, codex-task et reference-text. Préparez séparément les prérequis d’environnement dans l’environnement d’exécution."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge が認識するのは conversation、codex-task、reference-text のみです。環境要件は実行環境で別途準備してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브리지 기능은 conversation, codex-task, reference-text만 인식합니다. 환경 조건은 실행 환경에서 따로 준비해야 합니다."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Bridge reconhece apenas conversation, codex-task e reference-text. Prepare os requisitos de ambiente separadamente no ambiente de execução."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge 仅识别 conversation、codex-task 和 reference-text。请在执行环境中单独准备环境要求。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge 僅識別 conversation、codex-task 和 reference-text。請在執行環境中另外準備環境需求。"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "The Bridge recognizes only conversation, codex-task, and reference-text. Prepare environment requirements separately in the execution environment."
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "El Bridge solo reconoce conversation, codex-task y reference-text. Prepare los requisitos de entorno por separado en el entorno de ejecución."
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Le Bridge ne reconnaît que conversation, codex-task et reference-text. Préparez séparément les prérequis d’environnement dans l’environnement d’exécution."
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge が認識するのは conversation、codex-task、reference-text のみです。環境要件は実行環境で別途準備してください。"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "브리지 기능은 conversation, codex-task, reference-text만 인식합니다. 환경 조건은 실행 환경에서 따로 준비해야 합니다."
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "O Bridge reconhece apenas conversation, codex-task e reference-text. Prepare os requisitos de ambiente separadamente no ambiente de execução."
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge 仅识别 conversation、codex-task 和 reference-text。请在执行环境中单独准备环境要求。"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Bridge 僅識別 conversation、codex-task 和 reference-text。請在執行環境中另外準備環境需求。"
-      }
-    }
-  }
-},
     "브리지 기본값" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -15359,6 +15363,64 @@
         }
       }
     },
+    "브리지가 인식하는 기능" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Von der Bridge erkannte Funktion"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capability recognized by the Bridge"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capacidad reconocida por el Bridge"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capacité reconnue par le Bridge"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge が認識する機能"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브리지가 인식하는 기능"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capacidade reconhecida pelo Bridge"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge 识别的功能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge 識別的功能"
+          }
+        }
+      }
+    },
     "브리지가 전용으로 설치하고 업데이트·삭제를 관리하는 Codex입니다." : {
       "localizations" : {
         "de" : {
@@ -15471,6 +15533,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "橋接器已驗證處理結果。任務結果保存在執行記錄中。"
+          }
+        }
+      }
+    },
+    "브리지가 지원하지 않는 기능" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Von der Bridge nicht unterstützte Funktion"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capability unsupported by the Bridge"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capacidad no compatible con el Bridge"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capacité non prise en charge par le Bridge"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge でサポートされない機能"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "브리지가 지원하지 않는 기능"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Capacidade não compatível com o Bridge"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge 不支持的功能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bridge 不支援的功能"
           }
         }
       }
@@ -15942,63 +16062,63 @@
       }
     },
     "사용 경로" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Verwendungsweg"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verwendungsweg"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use route"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ruta de uso"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mode d’utilisation"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用経路"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용 경로"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Caminho de uso"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用路径"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用路徑"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Use route"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Ruta de uso"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Mode d’utilisation"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "使用経路"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "사용 경로"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Caminho de uso"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "使用路径"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "使用路徑"
-      }
-    }
-  }
-},
     "사용 안 함" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17371,63 +17491,63 @@
       }
     },
     "새 버전으로 복원" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Als neue Version wiederherstellen"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Als neue Version wiederherstellen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore as new version"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restaurar como nueva versión"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restaurer comme nouvelle version"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しいバージョンとして復元"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 버전으로 복원"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restaurar como nova versão"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还原为新版本"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還原為新版本"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Restore as new version"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Restaurar como nueva versión"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Restaurer comme nouvelle version"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "新しいバージョンとして復元"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "새 버전으로 복원"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Restaurar como nova versão"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "还原为新版本"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "還原為新版本"
-      }
-    }
-  }
-},
     "새 브리지 스킬" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -17651,6 +17771,65 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "新增技能"
+          }
+        }
+      }
+    },
+    "새 스킬을 만들면 하나의 자유형 Markdown 문서로 저장됩니다." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein neuer Skill wird als ein einzelnes Markdown-Dokument im freien Format gespeichert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A new skill is stored as one free-form Markdown document."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Una nueva habilidad se guarda como un único documento Markdown de formato libre."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Une nouvelle compétence est enregistrée sous la forme d’un document Markdown libre unique."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新しいスキルは 1 つの自由形式 Markdown ドキュメントとして保存されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새 스킬을 만들면 하나의 자유형 Markdown 문서로 저장됩니다."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uma nova habilidade é armazenada como um único documento Markdown de formato livre."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新技能将保存为一个自由格式的 Markdown 文档。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新技能會儲存為一份自由格式的 Markdown 文件。"
           }
         }
       }
@@ -19865,63 +20044,63 @@
       }
     },
     "선택한 버전을 새 현재 버전으로 복원할까요?" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Ausgewählte Version als neue aktuelle Version wiederherstellen?"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ausgewählte Version als neue aktuelle Version wiederherstellen?"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore the selected version as the new current version?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "¿Restaurar la versión seleccionada como nueva versión actual?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restaurer la version sélectionnée comme nouvelle version actuelle ?"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選択したバージョンを新しい現在のバージョンとして復元しますか？"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "선택한 버전을 새 현재 버전으로 복원할까요?"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restaurar a versão selecionada como a nova versão atual?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要将所选版本还原为新的当前版本吗？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要將所選版本還原為新的目前版本嗎？"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Restore the selected version as the new current version?"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "¿Restaurar la versión seleccionada como nueva versión actual?"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Restaurer la version sélectionnée comme nouvelle version actuelle ?"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "選択したバージョンを新しい現在のバージョンとして復元しますか？"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "선택한 버전을 새 현재 버전으로 복원할까요?"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Restaurar a versão selecionada como a nova versão atual?"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "要将所选版本还原为新的当前版本吗？"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "要將所選版本還原為新的目前版本嗎？"
-      }
-    }
-  }
-},
     "선택한 서버로 연결" : {
       "localizations" : {
         "de" : {
@@ -20248,63 +20427,63 @@
       }
     },
     "설명 (선택)" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Beschreibung (optional)"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beschreibung (optional)"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Description (optional)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Descripción (opcional)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Description (facultative)"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "説明（任意）"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설명 (선택)"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Descrição (opcional)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "说明（可选）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "說明（可選）"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Description (optional)"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Descripción (opcional)"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Description (facultative)"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "説明（任意）"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "설명 (선택)"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Descrição (opcional)"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "说明（可选）"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "說明（可選）"
-      }
-    }
-  }
-},
     "설명 저장" : {
       "localizations" : {
         "de" : {
@@ -21675,121 +21854,121 @@
       }
     },
     "스킬 검색" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Skills suchen"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skills suchen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search skills"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Buscar habilidades"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rechercher des compétences"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキルを検索"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스킬 검색"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pesquisar habilidades"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜尋技能"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Search skills"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Buscar habilidades"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Rechercher des compétences"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "スキルを検索"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "스킬 검색"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Pesquisar habilidades"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "搜索技能"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "搜尋技能"
-      }
-    }
-  }
-},
     "스킬 다시 활성화" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Skill reaktivieren"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skill reaktivieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reactivate skill"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reactivar habilidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Réactiver la compétence"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキルを再有効化"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스킬 다시 활성화"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reativar habilidade"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新启用技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新啟用技能"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Reactivate skill"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Reactivar habilidad"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Réactiver la compétence"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "スキルを再有効化"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "스킬 다시 활성화"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Reativar habilidade"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "重新启用技能"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "重新啟用技能"
-      }
-    }
-  }
-},
     "스킬 라이브러리" : {
       "localizations" : {
         "de" : {
@@ -21907,63 +22086,358 @@
       }
     },
     "스킬 보관" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Skill archivieren"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skill archivieren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Archive skill"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Archivar habilidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Archiver la compétence"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキルをアーカイブ"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스킬 보관"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arquivar habilidade"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "归档技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "封存技能"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Archive skill"
+    "스킬 선택" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skill auswählen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select a Skill"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seleccionar una habilidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sélectionner une compétence"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキルを選択"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스킬 선택"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Selecionar uma habilidade"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "選擇技能"
+          }
+        }
       }
     },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Archivar habilidad"
+    "스킬 영구 삭제" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skill dauerhaft löschen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permanently Delete Skill"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eliminar la habilidad permanentemente"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer définitivement la compétence"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキルを完全に削除"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스킬 영구 삭제"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Excluir habilidade permanentemente"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "永久删除技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "永久刪除技能"
+          }
+        }
       }
     },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Archiver la compétence"
+    "스킬 이름" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skill-Name"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skill Name"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nombre de la habilidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nom de la compétence"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキル名"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스킬 이름"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nome da habilidade"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "技能名称"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "技能名稱"
+          }
+        }
       }
     },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "スキルをアーカイブ"
+    "스킬 창 열기" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skills-Fenster öffnen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Skills Window"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abrir ventana de habilidades"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrir la fenêtre des compétences"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキルウインドウを開く"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스킬 창 열기"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abrir janela de habilidades"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开技能窗口"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開啟技能視窗"
+          }
+        }
       }
     },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "스킬 보관"
+    "스킬이 없습니다" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keine Skills"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Skills"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No hay habilidades"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucune compétence"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "スキルがありません"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스킬이 없습니다"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sem habilidades"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有技能"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "沒有技能"
+          }
+        }
       }
     },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Arquivar habilidade"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "归档技能"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "封存技能"
-      }
-    }
-  }
-},
     "승인 필요" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -22287,6 +22761,65 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在啟動"
+          }
+        }
+      }
+    },
+    "실시간 렌더" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live-Vorschau"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live Preview"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vista previa en vivo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aperçu en direct"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ライブプレビュー"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실시간 렌더"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Visualização ao vivo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实时预览"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "即時預覽"
           }
         }
       }
@@ -23024,63 +23557,63 @@
       }
     },
     "실행 조건" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Ausführungsanforderungen"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ausführungsanforderungen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Execution requirements"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Requisitos de ejecución"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prérequis d’exécution"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "実行要件"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실행 조건"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Requisitos de execução"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "执行要求"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "執行需求"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Execution requirements"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Requisitos de ejecución"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Prérequis d’exécution"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "実行要件"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "실행 조건"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Requisitos de execução"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "执行要求"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "執行需求"
-      }
-    }
-  }
-},
     "실행 중" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23400,6 +23933,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "執行限制已更改。請在 ChatGPT 開發者模式中重新整理外掛。"
+          }
+        }
+      }
+    },
+    "실행 환경에서 별도 준비 필요" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erfordert separate Vorbereitung in der Ausführungsumgebung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Requires separate preparation in the execution environment"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Requiere preparación por separado en el entorno de ejecución"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nécessite une préparation distincte dans l’environnement d’exécution"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "実行環境で別途準備が必要"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "실행 환경에서 별도 준비 필요"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Requer preparação separada no ambiente de execução"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要在执行环境中单独准备"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要在執行環境中另外準備"
           }
         }
       }
@@ -26221,6 +26812,65 @@
         }
       }
     },
+    "영구 삭제" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dauerhaft löschen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete Permanently"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eliminar permanentemente"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer définitivement"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完全に削除"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "영구 삭제"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Excluir permanentemente"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "永久删除"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "永久刪除"
+          }
+        }
+      }
+    },
     "예약 취소" : {
       "localizations" : {
         "de" : {
@@ -26652,63 +27302,122 @@
       }
     },
     "외부 환경" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Externe Umgebung"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Externe Umgebung"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "External environment"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entorno externo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Environnement externe"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外部環境"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "외부 환경"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ambiente externo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外部环境"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外部環境"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "External environment"
+    "왼쪽 목록에서 스킬을 선택하거나 새 자유형 Markdown 문서를 만드세요." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wählen Sie einen Skill aus der linken Liste oder erstellen Sie ein neues Markdown-Dokument im freien Format."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select a skill from the list on the left, or create a new free-form Markdown document."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Selecciona una habilidad de la lista de la izquierda o crea un nuevo documento Markdown de formato libre."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sélectionnez une compétence dans la liste de gauche ou créez un nouveau document Markdown libre."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "左のリストからスキルを選択するか、新しい自由形式 Markdown ドキュメントを作成してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "왼쪽 목록에서 스킬을 선택하거나 새 자유형 Markdown 문서를 만드세요."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Selecione uma habilidade na lista à esquerda ou crie um novo documento Markdown de formato livre."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从左侧列表中选择技能，或创建新的自由格式 Markdown 文档。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從左側清單選擇技能，或建立新的自由格式 Markdown 文件。"
+          }
+        }
       }
     },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Entorno externo"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Environnement externe"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "外部環境"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "외부 환경"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Ambiente externo"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "外部环境"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "外部環境"
-      }
-    }
-  }
-},
     "요청된 종료 재시도" : {
       "localizations" : {
         "de" : {
@@ -27571,6 +28280,65 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "切換到遠端客戶端模式？"
+          }
+        }
+      }
+    },
+    "원문을 그대로 보존하며, 오른쪽 미리보기가 즉시 반영됩니다." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Quelle bleibt unverändert erhalten, und die Vorschau rechts wird sofort aktualisiert."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The source is preserved exactly, and the preview on the right updates immediately."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La fuente se conserva exactamente y la vista previa de la derecha se actualiza de inmediato."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La source est conservée telle quelle et l’aperçu de droite se met immédiatement à jour."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ソースはそのまま保持され、右側のプレビューにすぐ反映されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원문을 그대로 보존하며, 오른쪽 미리보기가 즉시 반영됩니다."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A fonte é preservada exatamente, e a visualização à direita é atualizada imediatamente."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "源文将被原样保留，右侧预览会立即更新。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "原始碼會完整保留，右側預覽會立即更新。"
           }
         }
       }
@@ -28741,63 +29509,63 @@
       }
     },
     "이 버전을 새 현재 버전으로 복원" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Diese Version als neue aktuelle Version wiederherstellen"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diese Version als neue aktuelle Version wiederherstellen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore this version as the new current version"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restaurar esta versión como nueva versión actual"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restaurer cette version comme nouvelle version actuelle"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このバージョンを新しい現在のバージョンとして復元"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 버전을 새 현재 버전으로 복원"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restaurar esta versão como a nova versão atual"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将此版本还原为新的当前版本"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將此版本還原為新的目前版本"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Restore this version as the new current version"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Restaurar esta versión como nueva versión actual"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Restaurer cette version comme nouvelle version actuelle"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "このバージョンを新しい現在のバージョンとして復元"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "이 버전을 새 현재 버전으로 복원"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Restaurar esta versão como a nova versão atual"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "将此版本还原为新的当前版本"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "將此版本還原為新的目前版本"
-      }
-    }
-  }
-},
     "이 브리지의 작업 외 비용도 포함됩니다." : {
       "localizations" : {
         "de" : {
@@ -29062,6 +29830,65 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此應用僅使用所選伺服器的狀態和設定，不會在此 Mac 上啟動 helper、Bridge、Tunnel 或 Codex。"
+          }
+        }
+      }
+    },
+    "이 작업은 보관과 다릅니다. 모든 버전과 원문을 삭제하며 복구할 수 없습니다." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dies unterscheidet sich vom Archivieren. Alle Versionen und die Quelle werden gelöscht und können nicht wiederhergestellt werden."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This is different from archiving. It deletes every version and source and cannot be undone."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esto es diferente de archivar. Elimina todas las versiones y el código fuente, y no se puede deshacer."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cette action est différente de l’archivage. Elle supprime toutes les versions et la source, sans possibilité d’annulation."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "これはアーカイブとは異なります。すべてのバージョンとソースを削除し、元に戻せません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 작업은 보관과 다릅니다. 모든 버전과 원문을 삭제하며 복구할 수 없습니다."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Isso é diferente de arquivar. Exclui todas as versões e a fonte e não pode ser desfeito."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这不同于归档。它会删除所有版本和源文，且无法撤销。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這與封存不同。它會刪除所有版本和原始碼，且無法復原。"
           }
         }
       }
@@ -29966,6 +30793,65 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此歷史執行的詳細錯誤資訊已不再保留。"
+          }
+        }
+      }
+    },
+    "이전 형식" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Legacy-Format"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Legacy Format"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Formato heredado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Format hérité"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "旧形式"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이전 형식"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Formato legado"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "旧格式"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "舊格式"
           }
         }
       }
@@ -31162,179 +32048,238 @@
       }
     },
     "자료 %lld개" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%lld Materialien"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Materialien"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld materials"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld materiales"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld documents"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資料 %lld件"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "자료 %lld개"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld materiais"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 份资料"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 份資料"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%lld materials"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%lld materiales"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%lld documents"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "資料 %lld件"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "자료 %lld개"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%lld materiais"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%lld 份资料"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "%lld 份資料"
-      }
-    }
-  }
-},
     "자료 불러오는 중…" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Materialien werden geladen…"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Materialien werden geladen…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loading materials…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cargando materiales…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chargement des documents…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資料を読み込み中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "자료 불러오는 중…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Carregando materiais…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载资料…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在載入資料…"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Loading materials…"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Cargando materiales…"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Chargement des documents…"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "資料を読み込み中…"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "자료 불러오는 중…"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Carregando materiais…"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "正在加载资料…"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "正在載入資料…"
-      }
-    }
-  }
-},
     "자료 이름" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Materialname"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Materialname"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Material name"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nombre del material"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nom du document"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資料名"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "자료 이름"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nome do material"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "资料名称"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資料名稱"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Material name"
+    "자유형 Markdown 문서" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown-Dokument im freien Format"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Free-form Markdown Document"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Documento Markdown de formato libre"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Document Markdown libre"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自由形式 Markdown ドキュメント"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "자유형 Markdown 문서"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Documento Markdown de formato livre"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自由格式 Markdown 文档"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自由格式 Markdown 文件"
+          }
+        }
       }
     },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Nombre del material"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Nom du document"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "資料名"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "자료 이름"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Nome do material"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "资料名称"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "資料名稱"
-      }
-    }
-  }
-},
     "작업" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -35270,63 +36215,63 @@
       }
     },
     "종류" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Typ"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Typ"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Type"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tipo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Type"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "種類"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "종류"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tipo"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "类型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "類型"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Type"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Tipo"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Type"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "種類"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "종류"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Tipo"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "类型"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "類型"
-      }
-    }
-  }
-},
     "주간 사용량" : {
       "localizations" : {
         "de" : {
@@ -37624,63 +38569,63 @@
       }
     },
     "추가" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Hinzufügen"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hinzufügen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Añadir"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajouter"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "追加"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "추가"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adicionar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加入"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Add"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Añadir"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Ajouter"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "追加"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "추가"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Adicionar"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "添加"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "加入"
-      }
-    }
-  }
-},
     "추가 사용량" : {
       "localizations" : {
         "de" : {
@@ -40421,63 +41366,63 @@
       }
     },
     "현재" : {
-  "localizations" : {
-    "de" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Aktuell"
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktuell"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Current"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actual"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Actuelle"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "現在"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "현재"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Atual"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目前"
+          }
+        }
       }
     },
-    "en" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Current"
-      }
-    },
-    "es" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Actual"
-      }
-    },
-    "fr" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Actuelle"
-      }
-    },
-    "ja" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "現在"
-      }
-    },
-    "ko" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "현재"
-      }
-    },
-    "pt" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "Atual"
-      }
-    },
-    "zh-Hans" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "当前"
-      }
-    },
-    "zh-Hant" : {
-      "stringUnit" : {
-        "state" : "translated",
-        "value" : "目前"
-      }
-    }
-  }
-},
     "현재 Tunnel ID" : {
       "localizations" : {
         "de" : {

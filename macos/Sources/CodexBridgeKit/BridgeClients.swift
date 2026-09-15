@@ -97,17 +97,6 @@ public struct BridgeCompanionClient: Sendable {
         try await rpc.call("skills.read", params: reference, timeout: 20)
     }
 
-    public func readBridgeSkillReference(
-        reference: BridgeSkillReference,
-        referenceId: String
-    ) async throws -> BridgeSkillReferenceDocument {
-        try await rpc.call(
-            "skills.reference",
-            params: BridgeSkillReferenceReadParameters(reference: reference, referenceId: referenceId),
-            timeout: 20
-        )
-    }
-
     public func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList {
         try await rpc.call("skills.versions", params: BridgeSkillVersionsParameters(skillId: skillId), timeout: 20)
     }
@@ -134,6 +123,12 @@ public struct BridgeCompanionClient: Sendable {
         _ request: BridgeSkillSetEnabledRequest
     ) async throws -> BridgeSkillSummary {
         try await rpc.call("skills.set-enabled", params: request, timeout: 30)
+    }
+
+    public func deleteBridgeSkill(
+        _ request: BridgeSkillDeleteRequest
+    ) async throws -> BridgeSkillSummary {
+        try await rpc.call("skills.delete", params: request, timeout: 30)
     }
 
     public func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {

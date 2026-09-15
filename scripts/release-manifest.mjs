@@ -367,10 +367,10 @@ export function validateReleaseManifest(value) {
   );
   const requiredContracts = {
     userSettingsSchema: 4,
-    taskInputContract: 4,
+    taskInputContract: 5,
     macosHelperProtocol: 2,
-    localCompanionProtocol: 4,
-    remoteCompanionProtocol: 2
+    localCompanionProtocol: 5,
+    remoteCompanionProtocol: 3
   };
   for (const [name, expected] of Object.entries(requiredContracts)) {
     if (persistentContracts[name] !== expected) {

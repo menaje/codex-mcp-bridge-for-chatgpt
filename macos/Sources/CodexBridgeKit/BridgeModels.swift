@@ -871,7 +871,7 @@ public struct HelperLogs: Codable, Sendable {
     public let entries: [HelperLogEntry]
 }
 
-/// A stable reference into the bridge-owned skill library.
+/// A stable reference into the Bridge-owned Markdown document library.
 public struct BridgeSkillReference: Codable, Sendable, Equatable {
     public let skillId: String
     public let source: String
@@ -884,96 +884,37 @@ public struct BridgeSkillReference: Codable, Sendable, Equatable {
     }
 }
 
-public struct BridgeSkillExecution: Codable, Sendable, Equatable {
-    public let mode: String
-    public let note: String
-    public let requirements: [BridgeSkillRequirement]
-
-    enum CodingKeys: String, CodingKey {
-        case mode
-        case note
-        case requirements
-    }
-
-    public init(mode: String, note: String, requirements: [BridgeSkillRequirement] = []) {
-        self.mode = mode
-        self.note = note
-        self.requirements = requirements
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        mode = try container.decode(String.self, forKey: .mode)
-        note = try container.decode(String.self, forKey: .note)
-        requirements = try container.decodeIfPresent([BridgeSkillRequirement].self, forKey: .requirements) ?? []
-    }
-}
-
-public struct BridgeSkillRequirement: Codable, Sendable, Equatable, Identifiable {
-    public var id: String { "\(kind)-\(requirementId)" }
-    public let kind: String
-    public let requirementId: String
-    public let description: String?
-    public let availability: String
-
-    enum CodingKeys: String, CodingKey {
-        case kind
-        case requirementId = "id"
-        case description
-        case availability
-    }
-
-    public init(kind: String, id: String, description: String?, availability: String) {
-        self.kind = kind
-        self.requirementId = id
-        self.description = description
-        self.availability = availability
-    }
-}
-
 public struct BridgeSkillSummary: Codable, Sendable, Identifiable, Equatable {
     public var id: String { "\(source)-\(skillId)-\(version)" }
     public let skillId: String
     public let source: String
     public let version: String
     public let name: String
+    /// Optional discovery metadata. An empty string has no special UI meaning.
     public let description: String
     public let contentDigest: String?
     public let enabled: Bool
     public let availability: String
-    public let execution: BridgeSkillExecution
 
     public var reference: BridgeSkillReference {
         BridgeSkillReference(skillId: skillId, source: source, version: version)
     }
 }
 
-public struct BridgeSkillMaterial: Codable, Sendable, Identifiable, Equatable {
-    public let referenceId: String
-    public var id: String { referenceId }
-    public let name: String
-    public let mediaType: String
-    public let contentDigest: String
-    public let bytes: Int
-}
-
-public struct BridgeSkillReferenceDocument: Codable, Sendable, Equatable {
-    public let skill: BridgeSkillReference
-    public let execution: BridgeSkillExecution
-    public let reference: BridgeSkillMaterial
-    public let content: String
+public struct BridgeSkillDocument: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { skill.id }
+    public let skill: BridgeSkillSummary
+    /// Exact authored source. The client renders this value but never rewrites it.
+    public let document: String
+    public let format: String
+    /// A legacy structured version exposed through the lossless Markdown adapter.
+    public let legacy: Bool
     public let sourceSnapshot: String
     public let warnings: [String]
 }
 
-public struct BridgeSkillReferenceReadParameters: Codable, Sendable, Equatable {
-    public let reference: BridgeSkillReference
-    public let referenceId: String
-
-    public init(reference: BridgeSkillReference, referenceId: String) {
-        self.reference = reference
-        self.referenceId = referenceId
-    }
+public struct BridgeSkillLibrarySnapshot: Codable, Sendable, Equatable {
+    public let skills: [BridgeSkillSummary]
 }
 
 public struct BridgeSkillVersionsParameters: Codable, Sendable, Equatable {
@@ -982,18 +923,6 @@ public struct BridgeSkillVersionsParameters: Codable, Sendable, Equatable {
     public init(skillId: String) {
         self.skillId = skillId
     }
-}
-
-public struct BridgeSkillDocument: Codable, Sendable, Equatable {
-    public let skill: BridgeSkillSummary
-    public let instructions: String
-    public let references: [BridgeSkillMaterial]
-    public let sourceSnapshot: String
-    public let warnings: [String]
-}
-
-public struct BridgeSkillLibrarySnapshot: Codable, Sendable, Equatable {
-    public let skills: [BridgeSkillSummary]
 }
 
 public struct BridgeSkillVersionSummary: Codable, Sendable, Identifiable, Equatable {
@@ -1005,8 +934,8 @@ public struct BridgeSkillVersionSummary: Codable, Sendable, Identifiable, Equata
     public let description: String
     public let contentDigest: String
     public let createdAt: String
-    public let referenceCount: Int
-    public let execution: BridgeSkillExecution
+    public let format: String
+    public let legacy: Bool
 
     public var reference: BridgeSkillReference {
         BridgeSkillReference(skillId: skillId, source: source, version: version)
@@ -1021,62 +950,22 @@ public struct BridgeSkillVersionList: Codable, Sendable, Equatable {
     public let versions: [BridgeSkillVersionSummary]
 }
 
-public struct BridgeSkillMaterialInput: Codable, Sendable, Equatable {
-    public let name: String
-    public let content: String
-    public let mediaType: String?
-
-    public init(name: String, content: String, mediaType: String? = nil) {
-        self.name = name
-        self.content = content
-        self.mediaType = mediaType
-    }
-}
-
-public struct BridgeSkillRequirementInput: Codable, Sendable, Equatable, Identifiable {
-    public var id: String { "\(kind)-\(requirementId)" }
-    public let kind: String
-    public let requirementId: String
-    public let description: String?
-
-    enum CodingKeys: String, CodingKey {
-        case kind
-        case requirementId = "id"
-        case description
-    }
-
-    public init(kind: String, id: String, description: String? = nil) {
-        self.kind = kind
-        self.requirementId = id
-        self.description = description
-    }
-}
-
 public struct BridgeSkillCreateRequest: Codable, Sendable, Equatable {
     public let requestId: String
     public let name: String
-    public let description: String
-    public let instructions: String
-    public let references: [BridgeSkillMaterialInput]?
-    public let executionMode: String?
-    public let requirements: [BridgeSkillRequirementInput]?
+    public let description: String?
+    public let document: String
 
     public init(
         requestId: String = UUID().uuidString,
         name: String,
-        description: String,
-        instructions: String,
-        references: [BridgeSkillMaterialInput]? = nil,
-        executionMode: String? = nil,
-        requirements: [BridgeSkillRequirementInput]? = nil
+        description: String? = nil,
+        document: String
     ) {
         self.requestId = requestId
         self.name = name
         self.description = description
-        self.instructions = instructions
-        self.references = references
-        self.executionMode = executionMode
-        self.requirements = requirements
+        self.document = document
     }
 }
 
@@ -1086,10 +975,7 @@ public struct BridgeSkillUpdateRequest: Codable, Sendable, Equatable {
     public let expectedVersion: String
     public let name: String?
     public let description: String?
-    public let instructions: String?
-    public let references: [BridgeSkillMaterialInput]?
-    public let executionMode: String?
-    public let requirements: [BridgeSkillRequirementInput]?
+    public let document: String?
 
     public init(
         requestId: String = UUID().uuidString,
@@ -1097,20 +983,14 @@ public struct BridgeSkillUpdateRequest: Codable, Sendable, Equatable {
         expectedVersion: String,
         name: String? = nil,
         description: String? = nil,
-        instructions: String? = nil,
-        references: [BridgeSkillMaterialInput]? = nil,
-        executionMode: String? = nil,
-        requirements: [BridgeSkillRequirementInput]? = nil
+        document: String? = nil
     ) {
         self.requestId = requestId
         self.skillId = skillId
         self.expectedVersion = expectedVersion
         self.name = name
         self.description = description
-        self.instructions = instructions
-        self.references = references
-        self.executionMode = executionMode
-        self.requirements = requirements
+        self.document = document
     }
 }
 
@@ -1149,5 +1029,25 @@ public struct BridgeSkillSetEnabledRequest: Codable, Sendable, Equatable {
         self.skillId = skillId
         self.expectedVersion = expectedVersion
         self.enabled = enabled
+    }
+}
+
+/// Permanent deletion is intentionally native-only and requires typing the current name.
+public struct BridgeSkillDeleteRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let skillId: String
+    public let expectedVersion: String
+    public let confirmName: String
+
+    public init(
+        requestId: String = UUID().uuidString,
+        skillId: String,
+        expectedVersion: String,
+        confirmName: String
+    ) {
+        self.requestId = requestId
+        self.skillId = skillId
+        self.expectedVersion = expectedVersion
+        self.confirmName = confirmName
     }
 }

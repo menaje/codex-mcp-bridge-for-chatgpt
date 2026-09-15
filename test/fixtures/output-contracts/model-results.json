@@ -131,12 +131,7 @@
             "description": "Review reports with an evidence table.",
             "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "enabled": true,
-            "availability": "available",
-            "execution": {
-              "mode": "conversation-or-codex",
-              "note": "Read and apply this version directly in the conversation.",
-              "requirements": []
-            }
+            "availability": "available"
           }
         ]
       }
@@ -157,12 +152,7 @@
           "description": "Review reports with an evidence table.",
           "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "enabled": true,
-          "availability": "available",
-          "execution": {
-            "mode": "conversation-or-codex",
-            "note": "Read and apply this version directly in the conversation.",
-            "requirements": []
-          }
+          "availability": "available"
         },
         "message": "Created bridge skill \"Evidence review\" at version 1."
       }

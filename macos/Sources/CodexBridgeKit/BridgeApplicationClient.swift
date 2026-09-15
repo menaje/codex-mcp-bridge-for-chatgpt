@@ -18,15 +18,12 @@ public protocol BridgeApplicationClient: Sendable {
 
     func skillLibrary() async throws -> BridgeSkillLibrarySnapshot
     func readBridgeSkill(_ reference: BridgeSkillReference) async throws -> BridgeSkillDocument
-    func readBridgeSkillReference(
-        reference: BridgeSkillReference,
-        referenceId: String
-    ) async throws -> BridgeSkillReferenceDocument
     func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList
     func createBridgeSkill(_ request: BridgeSkillCreateRequest) async throws -> BridgeSkillSummary
     func updateBridgeSkill(_ request: BridgeSkillUpdateRequest) async throws -> BridgeSkillSummary
     func restoreBridgeSkill(_ request: BridgeSkillRestoreRequest) async throws -> BridgeSkillSummary
     func setBridgeSkillEnabled(_ request: BridgeSkillSetEnabledRequest) async throws -> BridgeSkillSummary
+    func deleteBridgeSkill(_ request: BridgeSkillDeleteRequest) async throws -> BridgeSkillSummary
 
     func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult
 
@@ -79,13 +76,6 @@ public extension BridgeApplicationClient {
         throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
     }
 
-    func readBridgeSkillReference(
-        reference: BridgeSkillReference,
-        referenceId: String
-    ) async throws -> BridgeSkillReferenceDocument {
-        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
-    }
-
     func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList {
         throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
     }
@@ -103,6 +93,10 @@ public extension BridgeApplicationClient {
     }
 
     func setBridgeSkillEnabled(_ request: BridgeSkillSetEnabledRequest) async throws -> BridgeSkillSummary {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func deleteBridgeSkill(_ request: BridgeSkillDeleteRequest) async throws -> BridgeSkillSummary {
         throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
     }
 }
