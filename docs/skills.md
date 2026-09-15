@@ -61,6 +61,20 @@ selected exact result, and apply the instructions directly while answering the
 conversation. Reading a skill does not start Codex, execute a script, grant a
 tool permission, or change instruction priority.
 
+## ChatGPT connection refresh
+
+The `bridge_skill` and `bridge_skill_manage` names and their closed operation
+schemas are stable. Creating, editing, restoring, archiving, or reactivating
+an individual bridge skill is a runtime library change, so it does **not**
+require a ChatGPT connection refresh. A later search or read sees the current
+library through the same descriptors.
+
+Refresh the ChatGPT connection only after deploying a release that adds,
+removes, or changes a model-facing tool descriptor or a card resource URI.
+Start the new bridge first, use **Refresh** in the connection's plugin settings,
+then begin a new conversation before relying on the changed descriptor. See
+[ChatGPT integration](chatgpt-setup.md#7-refresh-after-a-release).
+
 ## Passing a skill to Codex
 
 For local work, put the exact `bridge_skill` result in
@@ -113,6 +127,9 @@ archive/reactivate actions. The standalone library window is resizable.
    skill configuration, and that reading alone has not started a task or run a
    script.
 
-The final host-level walkthrough needs to be performed in a real ChatGPT
-session; repository tests validate the MCP and native-client contracts but do
-not emulate the host model's tool-selection behavior.
+The real ChatGPT host-level walkthrough was completed on 2026-09-15: a fresh
+ChatGPT conversation created a test bridge skill through `bridge_skill_manage`,
+then a separate conversation that was not given the skill name or ID searched
+by purpose, read the selected exact version, and applied its instructions to a
+report-review response. Repository tests still validate the MCP and native
+client contracts; they do not emulate the host model's tool-selection behavior.
