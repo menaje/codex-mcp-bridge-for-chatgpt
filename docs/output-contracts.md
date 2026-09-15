@@ -62,11 +62,12 @@ configuration.
 ## Validation
 
 `test/outputContracts.test.ts` supplies fixtures for setup, replay, running,
-completed, failed, and cancelled task results; all twelve model-visible tools;
+completed, failed, and cancelled task results; all ten model-visible tools;
 root expansion; state contradictions; and structured action validation. The
-tool-guidance audit measures the current model-visible output schemas at
-54,843 UTF-8 JSON bytes and all tool output schemas at 153,166 bytes. These
-are descriptor measurements, not model-token counts.
+output-contract audit measures the current model-visible output schemas at
+44,337 UTF-8 JSON bytes. The total descriptor budget is 56,000 bytes and no
+single public output schema may exceed 18,000 bytes. These are descriptor
+measurements, not model-token counts or result-payload limits.
 
 See [Input contracts](input-contracts.md) for the corresponding request
 boundary and [the migration guide](mcp-2026-07-28-migration.md) for the

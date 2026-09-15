@@ -85,6 +85,7 @@ npm test
 npm run macos:check
 npm run release:check
 npx tsx scripts/audit-tool-guidance.ts
+npm run mcp:conformance
 ```
 
 The isolated audit uses a temporary project root, in-memory state, and an
@@ -92,24 +93,20 @@ upstream that rejects every execution. It verifies current-protocol discovery,
 tool descriptors, and no-execution validation probes without reading operator
 credentials or changing an installed bridge.
 
-The official conformance runner is useful for wire checks, but its complete
-`--requirements 2026-07-28` server suite is a fixture suite: it calls named
-sample tools, prompts, resources, MRTR flows, and Tasks that this bridge does
-not advertise. Run the current `server-stateless` scenario against an isolated
-bridge endpoint and retain its output with the source revision:
+`npm run mcp:conformance` builds an isolated loopback server, pins
+`@modelcontextprotocol/conformance@0.2.0-alpha.11`, and runs its
+`2026-07-28` `server-stateless` scenario. It prints a retained temporary
+artifact directory; set `MCP_CONFORMANCE_OUTPUT_DIR` to retain it elsewhere.
 
-```sh
-npx -y @modelcontextprotocol/conformance@0.2.0-alpha.11 server \
-  --url http://127.0.0.1:8765/mcp \
-  --spec-version 2026-07-28 \
-  --scenario server-stateless \
-  --output-dir /tmp/mcp-conformance
-```
-
-Do not add test-only tools or advertise optional capabilities merely to improve
-that fixture score. The bridge's own HTTP and stdio integration tests cover its
-advertised tool and resource surface, headers, error codes, cache hints,
-metadata, and detached-request behavior.
+The command passes an internal fixture flag only to that temporary process.
+It enables diagnostic fixture tools there and nowhere in normal bridge startup.
+They exercise the suite's required-client-capability, response-stream, logging,
+and list-change probes through the same HTTP handler. Normal bridge startup
+never enables them, so they cannot appear in a deployed `tools/list` response.
+The fixture capability is not part of the bridge's product surface and normal
+startup must never advertise it. Ordinary HTTP and stdio integration tests
+cover the actual advertised tools and resources, headers, error codes, cache
+hints, metadata, and detached-request behavior.
 
 Before publishing, run the connector through a real ChatGPT conversation and
 Secure MCP Tunnel, record the current protocol discovery, a tool call, and a

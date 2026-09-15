@@ -2,6 +2,12 @@
 
 Date: 2026-09-14 (Asia/Seoul)
 
+> Superseded as the candidate acceptance record by
+> [`mcp-2026-07-28-verification-2026-09-14.md`](mcp-2026-07-28-verification-2026-09-14.md),
+> which covers the later integration with the cardless `dev` UI-resource
+> surface. The observations below are retained as the pre-integration
+> checkpoint and must not be used to assess the current candidate.
+
 ## Scope
 
 This record covers the remaining hardening work after the current-only MCP

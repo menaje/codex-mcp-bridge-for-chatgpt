@@ -5,7 +5,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { loadConfig } from "../src/config.js";
-import { createHttpServer, type BridgeHttpServer } from "../src/server.js";
+import {
+  createHttpServer,
+  type BridgeHttpRuntimeOptions,
+  type BridgeHttpServer
+} from "../src/server.js";
 import type {
   CodexModelCatalogProvider,
   CodexModelCatalogSnapshot,
@@ -152,7 +156,10 @@ async function postWithHost(endpoint: string, host: string): Promise<number> {
   });
 }
 
-async function start(options: Record<string, string> = {}): Promise<RunningServer> {
+async function start(
+  options: Record<string, string> = {},
+  runtimeOptions: BridgeHttpRuntimeOptions = {}
+): Promise<RunningServer> {
   const root = await mkdtemp(path.join(tmpdir(), "mcp-2026-http-"));
   const config = loadConfig({
     CODEX_MCP_BRIDGE_NO_AUTH: "1",
@@ -162,7 +169,7 @@ async function start(options: Record<string, string> = {}): Promise<RunningServe
     ...options
   });
   const catalog = new FixtureCatalog();
-  const server = createHttpServer(config, new FixtureUpstream(), catalog);
+  const server = createHttpServer(config, new FixtureUpstream(), catalog, runtimeOptions);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as { port: number }).port;
   const item = { root, server, baseUrl: `http://127.0.0.1:${port}`, catalog };
@@ -171,6 +178,47 @@ async function start(options: Record<string, string> = {}): Promise<RunningServe
 }
 
 describe("MCP 2026-07-28 HTTP server", () => {
+  it("keeps conformance fixtures opt-in and checks required client capabilities", async () => {
+    const normal = await start();
+    const normalList = await fetch(`${normal.baseUrl}/mcp`, {
+      method: "POST",
+      headers: currentHeaders("tools/list"),
+      body: JSON.stringify(currentRequest("tools/list"))
+    });
+    const normalNames = ((await normalList.json()).result.tools as Array<{ name: string }>)
+      .map((tool) => tool.name);
+    expect(normalNames).not.toContain("test_missing_capability");
+
+    const fixtures = await start({}, { conformanceFixtures: true });
+    const fixtureList = await fetch(`${fixtures.baseUrl}/mcp`, {
+      method: "POST",
+      headers: currentHeaders("tools/list"),
+      body: JSON.stringify(currentRequest("tools/list"))
+    });
+    const fixtureNames = ((await fixtureList.json()).result.tools as Array<{ name: string }>)
+      .map((tool) => tool.name);
+    expect(fixtureNames).toEqual(expect.arrayContaining([
+      "test_missing_capability",
+      "test_streaming_elicitation",
+      "test_logging_tool",
+      "test_trigger_tool_change"
+    ]));
+
+    const missingCapability = await fetch(`${fixtures.baseUrl}/mcp`, {
+      method: "POST",
+      headers: currentHeaders("tools/call", "test_missing_capability"),
+      body: JSON.stringify(currentRequest("tools/call", {
+        name: "test_missing_capability",
+        arguments: {}
+      }))
+    });
+    expect(missingCapability.status).toBe(400);
+    expect((await missingCapability.json()).error).toEqual(expect.objectContaining({
+      code: -32021,
+      data: expect.objectContaining({ requiredCapabilities: { sampling: {} } })
+    }));
+  });
+
   it("discovers and serves only the current tools and resources", async () => {
     const { baseUrl } = await start();
     const client = currentClient("current-http-client");
