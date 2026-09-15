@@ -90,7 +90,7 @@ struct SkillsLibraryWindowView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var windowState: SkillsLibraryWindowState
     @Environment(\.locale) private var locale
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
     @State private var scope: SkillLibraryScope = .all
     @State private var searchText = ""
     @State private var documentSelection: SkillDocumentSelection = .main
@@ -105,8 +105,9 @@ struct SkillsLibraryWindowView: View {
     @State private var showsDiscardConfirmation = false
     @State private var showsRestoreConfirmation = false
     @State private var restoreTarget: BridgeSkillVersionSummary?
-    @AppStorage("SkillsLibraryShowsInspector") private var showsInspector = true
-    @AppStorage("SkillsLibraryColumnVisibility") private var savedColumnVisibility = "all"
+    @AppStorage("SkillsLibraryShowsInspectorV2") private var showsInspector = false
+    @AppStorage("SkillsLibraryColumnVisibilityV2") private var savedColumnVisibility = "automatic"
+    @State private var compactInspectorPreviousVisibility: NavigationSplitViewVisibility?
     @State private var sheet: SkillLibrarySheet?
     @State private var isDropTargeted = false
     @State private var importTargetSkillID: String?
@@ -114,21 +115,13 @@ struct SkillsLibraryWindowView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             skillSidebar
-                .navigationSplitViewColumnWidth(min: 210, ideal: 250, max: 330)
+                .navigationSplitViewColumnWidth(min: 190, ideal: 250, max: 330)
                 .background(SplitViewAutosaveAnchor(name: "CodexBridgeSkillsNavigationSplit"))
         } content: {
             documentSidebar
-                .navigationSplitViewColumnWidth(min: 220, ideal: 275, max: 380)
+                .navigationSplitViewColumnWidth(min: 190, ideal: 275, max: 380)
         } detail: {
-            HSplitView {
-                documentDetail
-                    .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
-                    .background(SplitViewAutosaveAnchor(name: "CodexBridgeSkillsInspectorSplit"))
-                if showsInspector {
-                    versionInspector
-                        .frame(minWidth: 260, idealWidth: 300, maxWidth: 360, maxHeight: .infinity)
-                }
-            }
+            detailWithInspector
         }
         .navigationSplitViewStyle(.balanced)
         .searchable(text: $searchText, placement: .sidebar, prompt: "브리지 스킬 검색")
@@ -160,9 +153,12 @@ struct SkillsLibraryWindowView: View {
         }
         .task {
             restoreColumnVisibility()
+            await Task.yield()
+            if showsInspector { adaptNavigationForVisibleInspector() }
             await model.refreshSkillLibrary()
         }
         .onChange(of: columnVisibility) { visibility in saveColumnVisibility(visibility) }
+        .onChange(of: showsInspector) { visible in synchronizeNavigationForInspector(visible) }
         .onChange(of: model.selectedBridgeSkill?.id) { _ in synchronizeSelectionFromModel() }
         .onChange(of: model.selectedBridgeSkillFile?.id) { _ in synchronizeDraftFromModel() }
         .onChange(of: editorMode) { mode in
@@ -203,6 +199,33 @@ struct SkillsLibraryWindowView: View {
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var detailWithInspector: some View {
+        if #available(macOS 14.0, *) {
+            documentDetail
+                .frame(minWidth: 390, maxWidth: .infinity, maxHeight: .infinity)
+                .inspector(isPresented: $showsInspector) {
+                    versionInspector
+                        .inspectorColumnWidth(min: 260, ideal: 300, max: 360)
+                }
+        } else {
+            documentDetail
+                .frame(minWidth: 390, maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .trailing) {
+                    if showsInspector {
+                        versionInspector
+                            .frame(width: 300)
+                            .frame(maxHeight: .infinity)
+                            .background(.regularMaterial)
+                            .overlay(alignment: .leading) { Divider() }
+                            .shadow(color: .black.opacity(0.12), radius: 8, x: -2)
+                            .transition(.move(edge: .trailing))
+                    }
+                }
+                .animation(.default, value: showsInspector)
         }
     }
 
@@ -383,10 +406,6 @@ struct SkillsLibraryWindowView: View {
 
     @ToolbarContentBuilder
     private var libraryToolbar: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Button { toggleSidebar() } label: { Label("사이드바 표시", systemImage: "sidebar.leading") }
-                .help("사이드바 표시")
-        }
         ToolbarItem(placement: .automatic) {
             Menu {
                 Button("새 스킬", systemImage: "doc.badge.plus") { sheet = .newSkill }
@@ -457,7 +476,7 @@ struct SkillsLibraryWindowView: View {
             }
         }
         ToolbarItem(placement: .primaryAction) {
-            Button { showsInspector.toggle() } label: { Label("버전과 정보", systemImage: "sidebar.trailing") }
+            Button { setInspectorPresented(!showsInspector) } label: { Label("버전과 정보", systemImage: "sidebar.trailing") }
                 .help("버전 이력과 메타데이터")
         }
         ToolbarItem(placement: .primaryAction) {
@@ -809,10 +828,6 @@ struct SkillsLibraryWindowView: View {
         return document.skill.version == current
     }
 
-    private func toggleSidebar() {
-        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
-    }
-
     private func toggleEditingMode() {
         guard let document = model.selectedBridgeSkill, isCurrentVersion(document) else { return }
         if editorMode == .preview {
@@ -821,6 +836,32 @@ struct SkillsLibraryWindowView: View {
         } else {
             editorMode = .preview
         }
+    }
+
+    private func setInspectorPresented(_ presented: Bool) {
+        if presented {
+            adaptNavigationForVisibleInspector()
+            showsInspector = true
+        } else {
+            showsInspector = false
+            synchronizeNavigationForInspector(false)
+        }
+    }
+
+    private func synchronizeNavigationForInspector(_ visible: Bool) {
+        if visible {
+            adaptNavigationForVisibleInspector()
+        } else if let previous = compactInspectorPreviousVisibility {
+            compactInspectorPreviousVisibility = nil
+            columnVisibility = previous
+        }
+    }
+
+    private func adaptNavigationForVisibleInspector() {
+        guard compactInspectorPreviousVisibility == nil,
+              (SkillsLibraryWindowController.shared.contentWidth ?? 1_120) < 1_050 else { return }
+        compactInspectorPreviousVisibility = columnVisibility
+        columnVisibility = .detailOnly
     }
 
     private func focusSkillSearch() {
@@ -843,12 +884,13 @@ struct SkillsLibraryWindowView: View {
         switch savedColumnVisibility {
         case "detail": columnVisibility = .detailOnly
         case "double": columnVisibility = .doubleColumn
-        case "automatic": columnVisibility = .automatic
-        default: columnVisibility = .all
+        case "all": columnVisibility = .all
+        default: columnVisibility = .automatic
         }
     }
 
     private func saveColumnVisibility(_ visibility: NavigationSplitViewVisibility) {
+        guard compactInspectorPreviousVisibility == nil else { return }
         switch visibility {
         case .detailOnly: savedColumnVisibility = "detail"
         case .doubleColumn: savedColumnVisibility = "double"

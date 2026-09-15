@@ -54,12 +54,18 @@ final class SkillsLibraryPresentationTests: XCTestCase {
     func testFileTreePreservesNestedLogicalPathsWithoutHostPaths() throws {
         let source = try String(contentsOf: sourceURL("SkillsLibraryViews.swift"), encoding: .utf8)
         XCTAssertTrue(source.contains("NavigationSplitView"))
+        XCTAssertTrue(source.contains(".inspector(isPresented: $showsInspector)"))
+        XCTAssertTrue(source.contains("SkillsLibraryShowsInspectorV2\") private var showsInspector = false"))
+        XCTAssertTrue(source.contains("compactInspectorPreviousVisibility"))
+        XCTAssertTrue(source.contains("columnVisibility = .detailOnly"))
+        XCTAssertEqual(source.components(separatedBy: "HSplitView").count - 1, 1)
         XCTAssertTrue(source.contains("OutlineGroup"))
         XCTAssertTrue(source.contains(".searchable"))
         XCTAssertTrue(source.contains("SafeMarkdownView"))
         XCTAssertTrue(source.contains("windowState.hasUnsavedChanges"))
         XCTAssertFalse(source.contains("MarkdownLivePreviewBlock"))
         XCTAssertFalse(source.contains("WKWebView"))
+        XCTAssertFalse(source.contains("ToolbarItem(placement: .navigation)"))
     }
 
     func testSettingsDoesNotContainASkillManagementTab() throws {

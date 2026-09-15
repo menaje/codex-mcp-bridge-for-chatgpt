@@ -485,6 +485,8 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
     private let windowState = SkillsLibraryWindowState()
     private weak var model: AppModel?
 
+    var contentWidth: CGFloat? { window?.contentLayoutRect.width }
+
     func show(model: AppModel) {
         self.model = model
         if window == nil {
