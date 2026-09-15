@@ -192,7 +192,8 @@ describe("config policy", () => {
     });
     expect(stable.stateProfile).toBe("stable");
     expect(stable.stateDatabaseFile).toMatch(/\.codex-mcp-bridge\/state\.sqlite$/);
-    expect(stable.startupWarnings).toEqual(
+    expect(stable.startupWarnings).toEqual([]);
+    expect(stable.developerStartupWarnings).toEqual(
       defaultStateProfile() === "stable"
         ? []
         : [expect.stringContaining("explicitly targets the stable state profile")]
