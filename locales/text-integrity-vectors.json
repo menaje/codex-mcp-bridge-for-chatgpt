@@ -14,6 +14,12 @@
       "text": "각"
     },
     {
+      "name": "leading UTF-8 BOM is content",
+      "hex": "efbbbf61",
+      "valid": true,
+      "text": "﻿a"
+    },
+    {
       "name": "invalid continuation byte",
       "hex": "c328",
       "valid": false

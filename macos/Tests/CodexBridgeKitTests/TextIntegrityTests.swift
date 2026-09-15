@@ -61,6 +61,12 @@ final class TextIntegrityTests: XCTestCase {
         XCTAssertNoThrow(try BridgeTextIntegrity.validateJSONUTF8(paired))
     }
 
+    func testPreservesBOMForVerbatimTextButRejectsItForJSON() throws {
+        let jsonWithBOM = try XCTUnwrap(Data(hex: "efbbbf7b7d"))
+        XCTAssertEqual(try BridgeTextIntegrity.decodeUTF8Strict(jsonWithBOM), "\u{feff}{}")
+        XCTAssertThrowsError(try BridgeTextIntegrity.validateJSONUTF8(jsonWithBOM))
+    }
+
     func testCharacterLimitCountsUnicodeScalarsLikeNode() {
         XCTAssertThrowsError(
             try BridgeTextIntegrity.canonicalHumanText(

@@ -22,10 +22,12 @@ strict byte path. Native Swift exposes the matching `BridgeTextIntegrity` API.
 
 New human-facing inputs use the central policy at their write boundary. Existing
 SQLite records and immutable skill versions are not rewritten merely to change
-normalization. Version-2 skill instructions and references preserve exact valid
-UTF-8, including CRLF, combining characters, leading/trailing whitespace, and
-the absence or presence of a final newline. Hashes are calculated from the
-selected, actually stored UTF-8 text.
+normalization. Bridge skill documents, attached Markdown files, and their
+logical paths preserve exact valid UTF-8, including a leading BOM, CRLF,
+combining characters, leading/trailing whitespace, and the absence or presence
+of a final newline. Existing v1/v2 structured skill records remain on the
+lossless compatibility read path. Hashes are calculated from the selected,
+actually stored UTF-8 text.
 
 Persisted JSON is revalidated when it is read, so corrupt bytes or an escaped
 unpaired surrogate in a state record cannot silently become a replacement

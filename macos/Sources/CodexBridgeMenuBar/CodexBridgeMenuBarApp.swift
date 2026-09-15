@@ -324,8 +324,17 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let model = Self.model else { return .terminateNow }
-        if model.applicationShutdownCompleted { return .terminateNow }
+        guard SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown() else {
+            return .terminateCancel
+        }
+        guard let model = Self.model else {
+            SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
+            return .terminateNow
+        }
+        if model.applicationShutdownCompleted {
+            SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
+            return .terminateNow
+        }
         if terminationRequestInProgress { return .terminateLater }
         terminationRequestInProgress = true
         Task { @MainActor in
@@ -337,6 +346,15 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
                     shouldTerminate = await model.shutdownApplication(force: true)
                     if !shouldTerminate { presentShutdownFailure(model: model) }
                 }
+            }
+            if shouldTerminate,
+               !SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown() {
+                shouldTerminate = false
+            }
+            if shouldTerminate {
+                SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
+            } else {
+                SkillsLibraryWindowController.shared.cancelApplicationShutdownDiscard()
             }
             terminationRequestInProgress = false
             sender.reply(toApplicationShouldTerminate: shouldTerminate)
@@ -487,12 +505,20 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
     static let shared = SkillsLibraryWindowController()
     private var window: NSWindow?
+    private let windowState = SkillsLibraryWindowState()
+    private weak var model: AppModel?
+
+    var contentWidth: CGFloat? { window?.contentLayoutRect.width }
+    var navigationColumnVisibility: NavigationSplitViewVisibility { windowState.columnVisibility }
+
+    func manages(_ candidate: NSWindow) -> Bool { window === candidate }
 
     func show(model: AppModel) {
+        self.model = model
         if window == nil {
             let skillsWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
-                styleMask: [.titled, .closable, .resizable],
+                contentRect: NSRect(x: 0, y: 0, width: 1_120, height: 760),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false
             )
@@ -503,13 +529,16 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
             skillsWindow.isReleasedWhenClosed = false
             skillsWindow.delegate = self
             PrimaryAppWindowPresentation.configure(skillsWindow)
-            skillsWindow.toolbarStyle = .unifiedCompact
+            skillsWindow.standardWindowButton(.miniaturizeButton)?.isEnabled = true
+            skillsWindow.standardWindowButton(.zoomButton)?.isEnabled = true
+            skillsWindow.toolbarStyle = .unified
             skillsWindow.setFrameAutosaveName("CodexBridgeSkillsLibraryWindow")
-            skillsWindow.contentMinSize = NSSize(width: 720, height: 620)
+            skillsWindow.contentMinSize = NSSize(width: 820, height: 600)
             skillsWindow.contentViewController = NSHostingController(
-                rootView: SkillsLibraryWindowRoot()
+                rootView: SkillsLibraryLocalizedRootView()
                     .environmentObject(model)
-                    .frame(minWidth: 720, minHeight: 620)
+                    .environmentObject(windowState)
+                    .frame(minWidth: 820, minHeight: 600)
             )
             skillsWindow.center()
             window = skillsWindow
@@ -532,16 +561,49 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
             PrimaryAppWindowPresentation.didClose(window)
         }
     }
-}
 
-@MainActor
-private struct SkillsLibraryWindowRoot: View {
-    @EnvironmentObject private var model: AppModel
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        windowState.confirmDiscardIfNeeded {
+            presentDiscardAlert(
+                message: "macos.skills.discardUnsavedChangesAndClose",
+                bringSkillsWindowForward: false
+            )
+        }
+    }
 
-    var body: some View {
-        SkillsLibraryView(showsStandaloneWindowButton: false)
-            .environmentObject(model)
-            .environment(\.locale, model.interfaceLocale)
+    func confirmDiscardBeforeApplicationShutdown() -> Bool {
+        windowState.confirmDiscardForApplicationShutdown {
+            presentDiscardAlert(
+                message: "macos.skills.discardUnsavedChanges",
+                bringSkillsWindowForward: true
+            )
+        }
+    }
+
+    func completeApplicationShutdownDiscard() {
+        windowState.completeApplicationShutdownDiscard()
+    }
+
+    func cancelApplicationShutdownDiscard() {
+        windowState.cancelApplicationShutdownDiscard()
+    }
+
+    private func presentDiscardAlert(message: String, bringSkillsWindowForward: Bool) -> Bool {
+        let locale = model?.interfaceLocale ?? .current
+        if bringSkillsWindowForward, let window {
+            NSApp.activate(ignoringOtherApps: true)
+            PrimaryAppWindowPresentation.show(window)
+        }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = BridgeAppLocalization.string(message, locale: locale)
+        alert.informativeText = BridgeAppLocalization.string(
+            "macos.skills.theCurrentMarkdownEditsWillBeLost",
+            locale: locale
+        )
+        alert.addButton(withTitle: BridgeAppLocalization.string("macos.skills.discardChanges", locale: locale))
+        alert.addButton(withTitle: BridgeAppLocalization.string("common.cancel", locale: locale))
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }
 
@@ -615,6 +677,28 @@ struct CodexBridgeMenuBarApp: App {
         Settings {
             EmptyView()
                 .environmentObject(model)
+        }
+        .commands {
+            CommandMenu("macos.bridgeskills") {
+                Button("macos.newskill") { performSkillLibraryCommand(.bridgeSkillCommandNew) }
+                    .keyboardShortcut("n", modifiers: .command)
+                Button("macos.skills.importFilesFolderOrZip") { performSkillLibraryCommand(.bridgeSkillCommandImport) }
+                    .keyboardShortcut("o", modifiers: .command)
+                Divider()
+                Button("macos.save") { performSkillLibraryCommand(.bridgeSkillCommandSave) }
+                    .keyboardShortcut("s", modifiers: .command)
+                Button("macos.skills.searchBridgeSkills") { performSkillLibraryCommand(.bridgeSkillCommandFind) }
+                    .keyboardShortcut("f", modifiers: .command)
+                Button("macos.skills.togglePreviewEdit") { performSkillLibraryCommand(.bridgeSkillCommandToggleEdit) }
+                    .keyboardShortcut("e", modifiers: .command)
+            }
+        }
+    }
+
+    private func performSkillLibraryCommand(_ name: Notification.Name) {
+        SkillsLibraryWindowController.shared.show(model: model)
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: name, object: nil)
         }
     }
 }

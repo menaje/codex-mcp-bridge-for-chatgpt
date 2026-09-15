@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Centralize web and macOS translations in one generated nine-language catalog with semantic native keys and deterministic English fallback.",
+  "breaking": false,
+  "migration": null
+}

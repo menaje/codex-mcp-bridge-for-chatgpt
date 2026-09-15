@@ -410,6 +410,9 @@ enum BridgeAppLocalization {
     }
 
     private static func localizedErrorDetail(_ message: String, locale: Locale) -> String {
+        if let skillError = skillErrorDescription(message, locale: locale) {
+            return skillError
+        }
         if message.contains("SETUP_CANDIDATE_UNAVAILABLE") {
             return string("macos.thediscoveredconnectionsettingsarenolongervalid", locale: locale)
         }
@@ -472,6 +475,82 @@ enum BridgeAppLocalization {
             "macos.therequestcouldnotbecompletedcheckthe",
             locale: locale
         )
+    }
+
+    /// Bridge skill errors cross the companion boundary as stable machine
+    /// codes. Never expose the helper's English diagnostic suffix in native UI.
+    private static func skillErrorDescription(_ message: String, locale: Locale) -> String? {
+        let mappings: [(codes: [String], localized: String)] = [
+            (["SKILL_VERSION_CHANGED"],
+             string("macos.skills.theSkillWasChangedElsewhereLoadTheLatestVersionAndTryAgain", locale: locale)),
+            (["SKILL_FILE_NOT_FOUND", "SKILL_VERSION_NOT_FOUND", "SKILL_NOT_FOUND"],
+             string("macos.skills.theRequestedSkillOrMarkdownFileVersionCouldNotBeFound", locale: locale)),
+            (["SKILL_NAME_CONFLICT"],
+             string("macos.skills.aBridgeSkillWithTheSameNameAlreadyExists", locale: locale)),
+            (["SKILL_LIBRARY_BUSY"],
+             string("macos.skills.anotherOperationIsChangingTheSkillLibraryTryAgainShortly", locale: locale)),
+            (["SKILL_LIBRARY_CORRUPT"],
+             string("macos.skills.theIntegrityOfTheSkillLibraryCouldNotBeVerifiedCheckTheDiagnosticLog", locale: locale)),
+            (["SKILL_DELETE_CLEANUP_PENDING"],
+             string("macos.skills.theSkillWasDeletedButSecureCleanupIsNotFinishedRetryWithTheSameRequest", locale: locale)),
+            (["SKILL_DELETE_CONFIRMATION_INVALID"],
+             string("macos.skills.toDeletePermanentlyEnterTheCurrentSkillNameExactly", locale: locale)),
+            (["SKILL_MUTATION_REQUEST_REUSED", "SKILL_MUTATION_INVALIDATED"],
+             string("macos.skills.thisChangeRequestWasUsedByAnotherOperationOrInvalidatedByDeletionTryAgainWithANewRequest", locale: locale)),
+            (["SKILL_FILE_TYPE_UNSUPPORTED", "SKILL_PACKAGE_FILE_UNSUPPORTED"],
+             string("macos.skills.onlyUtf8MdAndMarkdownFilesAreCurrentlySupported", locale: locale)),
+            (["SKILL_FILE_PATH_INVALID", "SKILL_FILE_PATH_CONFLICT", "SKILL_PACKAGE_PATH_INVALID",
+              "SKILL_PACKAGE_PATH_CONFLICT", "SKILL_PACKAGE_PATH_ENCODING_INVALID"],
+             string("macos.skills.thePackageContainsAnUnsafeOrUnsupportedFilePath", locale: locale)),
+            (["SKILL_FILES_INVALID", "SKILL_FILE_TOO_LARGE", "SKILL_FILES_TOO_LARGE"],
+             string("macos.skills.theMarkdownFilesExceedTheAllowedFileCountOrSizeLimit", locale: locale)),
+            (["SKILL_FILE_CHANGES_INVALID", "SKILL_FILE_INVALID", "SKILL_DOCUMENT_INVALID",
+              "SKILL_DESCRIPTION_INVALID", "SKILL_NAME_INVALID", "SKILL_MUTATION_INVALID",
+              "SKILL_MUTATION_REQUEST_ID_INVALID", "SKILL_ID_INVALID", "SKILL_ENABLED_INVALID",
+              "SKILL_SEARCH_INVALID", "SKILL_SEARCH_LIMIT_INVALID", "SKILL_UPDATE_EMPTY", "SKILL_VERSION_INVALID"],
+             string("macos.skills.theSkillChangesAreInvalidCheckTheInput", locale: locale)),
+            (["SKILL_PACKAGE_TEXT_INVALID"],
+             string("macos.skills.thePackageContainsAFileThatIsNotValidUtf8Markdown", locale: locale)),
+            (["SKILL_PACKAGE_ENCRYPTED"],
+             string("macos.skills.encryptedZipPackagesCannotBeImported", locale: locale)),
+            (["SKILL_PACKAGE_ZIP64_UNSUPPORTED", "SKILL_PACKAGE_COMPRESSION_UNSUPPORTED"],
+             string("macos.skills.thisZipCompressionFormatIsNotSupported", locale: locale)),
+            (["SKILL_PACKAGE_BOMB", "SKILL_PACKAGE_EXPANDED_TOO_LARGE",
+              "SKILL_PACKAGE_COMPRESSED_TOO_LARGE"],
+             string("macos.skills.theZipPackageExceedsTheAllowedFileCountOrSizeLimit", locale: locale)),
+            (["SKILL_PACKAGE_NESTED_ARCHIVE"],
+             string("macos.skills.archivesNestedInsideAZipCannotBeImported", locale: locale)),
+            (["SKILL_PACKAGE_SPECIAL_FILE"],
+             string("macos.skills.symbolicLinksAndSpecialFilesInAZipCannotBeImported", locale: locale)),
+            (["SKILL_PACKAGE_NO_MARKDOWN"],
+             string("macos.skills.theZipContainsNoSupportedMarkdownFiles", locale: locale)),
+            (["SKILL_PACKAGE_MAIN_REQUIRED", "SKILL_PACKAGE_MAIN_NOT_FOUND",
+              "SKILL_PACKAGE_MAIN_CONFLICT", "SKILL_PACKAGE_SELECTION_INVALID"],
+             string("macos.skills.checkTheMainMarkdownDocumentAndFileSelectionToImport", locale: locale)),
+            (["SKILL_UPLOAD_NOT_FOUND"],
+             string("macos.skills.theZipUploadExpiredOrWasAlreadyUsedSelectTheFileAgain", locale: locale)),
+            (["SKILL_UPLOAD_ALREADY_INSPECTED", "SKILL_UPLOAD_CHUNK_INVALID",
+              "SKILL_UPLOAD_CHUNK_OUT_OF_ORDER", "SKILL_PACKAGE_EMPTY"],
+             string("macos.skills.theZipUploadCouldNotBeCompletedSelectTheFileAgain", locale: locale)),
+            (["SKILL_PACKAGE_INVALID", "SKILL_PACKAGE_CORRUPT"],
+             string("macos.skills.theZipPackageIsInvalidOrDamaged", locale: locale)),
+            (["SKILL_SOURCE_UNSUPPORTED"],
+             string("macos.skills.thisFeatureCanManageBridgeSkillsOnly", locale: locale)),
+            (["SKILL_LIBRARY_DIRECTORY_INVALID"],
+             string("macos.skills.theBridgeSkillStorageLocationIsInvalid", locale: locale))
+        ]
+        if let mapping = mappings.first(where: { item in
+            item.codes.contains(where: message.contains)
+        }) {
+            return mapping.localized
+        }
+        if message.range(of: #"\bSKILL_[A-Z0-9_]+\b"#, options: .regularExpression) != nil {
+            return string(
+                "macos.skills.theSkillRequestCouldNotBeCompletedCheckTheInputAndConnectionThenTryAgain",
+                locale: locale
+            )
+        }
+        return nil
     }
 
     private static func statusProblemCode(

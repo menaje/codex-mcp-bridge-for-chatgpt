@@ -184,7 +184,7 @@ In a fresh ChatGPT conversation:
 1. Open Settings and register a project.
 2. Open Dashboard; confirm both current cards load.
 3. Call `codex_models` and confirm its one current catalog response.
-4. Start a harmless task with contract version 4 and its exact envelope
+4. Start a harmless task with contract version 5 and its exact envelope
    constant.
 5. Read its status and exact terminal result.
 6. If Codex asks an ordinary question, answer it through the current ChatGPT

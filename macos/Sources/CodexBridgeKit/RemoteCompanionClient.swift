@@ -3,7 +3,8 @@ import Foundation
 import Security
 
 public let remoteCompanionProtocolName = "codex-mcp-bridge-remote-companion"
-public let remoteCompanionProtocolVersion = 2
+public let remoteCompanionProtocolVersion = 6
+let remoteCompanionMaximumResponseBytes = bridgeSkillTransportEnvelopeMaxBytes
 
 public enum RemoteCompanionError: LocalizedError, Sendable {
     case invalidInvitation
@@ -293,15 +294,11 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
         try await call("skills.read", params: reference, timeout: 20)
     }
 
-    public func readBridgeSkillReference(
-        reference: BridgeSkillReference,
-        referenceId: String
-    ) async throws -> BridgeSkillReferenceDocument {
-        try await call(
-            "skills.reference",
-            params: BridgeSkillReferenceReadParameters(reference: reference, referenceId: referenceId),
-            timeout: 20
-        )
+    public func readBridgeSkillFile(
+        _ reference: BridgeSkillReference,
+        path: String
+    ) async throws -> BridgeSkillFileDocument {
+        try await call("skills.read-file", params: BridgeSkillFileReadRequest(reference: reference, path: path), timeout: 20)
     }
 
     public func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList {
@@ -330,6 +327,84 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
         _ request: BridgeSkillSetEnabledRequest
     ) async throws -> BridgeSkillSummary {
         try await call("skills.set-enabled", params: request, timeout: 30)
+    }
+
+    public func deleteBridgeSkill(
+        _ request: BridgeSkillDeleteRequest
+    ) async throws -> BridgeSkillDeletion {
+        try await call("skills.delete", params: request, timeout: 30)
+    }
+
+    public func uploadBridgeSkillPackage(_ archive: Data) async throws -> BridgeSkillPackageInspection {
+        guard !archive.isEmpty else { throw NSError(domain: "SKILL_PACKAGE_EMPTY", code: 1) }
+        guard archive.count <= bridgeSkillPackageCompressedMaxBytes else {
+            throw NSError(domain: "SKILL_PACKAGE_COMPRESSED_TOO_LARGE", code: 1)
+        }
+        let started: BridgeSkillPackageUploadStarted = try await call(
+            "skills.package-upload.begin", params: EmptyParameters(), timeout: 20
+        )
+        var offset = 0
+        var chunkIndex = 0
+        while offset < archive.count {
+            let end = min(offset + started.chunkMaxBytes, archive.count)
+            let data = archive.subdata(in: offset..<end).base64EncodedString()
+            let _: BridgeSkillPackageUploadProgress = try await call(
+                "skills.package-upload.chunk",
+                params: BridgeSkillPackageUploadChunk(uploadId: started.uploadId, chunkIndex: chunkIndex, data: data),
+                timeout: 30
+            )
+            offset = end
+            chunkIndex += 1
+        }
+        return try await call(
+            "skills.package-upload.inspect",
+            params: BridgeSkillPackageUploadReference(uploadId: started.uploadId), timeout: 30
+        )
+    }
+
+    public func uploadBridgeSkillPackage(at archiveURL: URL) async throws -> BridgeSkillPackageInspection {
+        let values = try archiveURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values.isRegularFile == true, let size = values.fileSize, size > 0 else {
+            throw NSError(domain: "SKILL_PACKAGE_EMPTY", code: 1)
+        }
+        guard size <= bridgeSkillPackageCompressedMaxBytes else {
+            throw NSError(domain: "SKILL_PACKAGE_COMPRESSED_TOO_LARGE", code: 1)
+        }
+        let started: BridgeSkillPackageUploadStarted = try await call(
+            "skills.package-upload.begin", params: EmptyParameters(), timeout: 20
+        )
+        let handle = try FileHandle(forReadingFrom: archiveURL)
+        defer { try? handle.close() }
+        var chunkIndex = 0
+        while let chunk = try handle.read(upToCount: started.chunkMaxBytes), !chunk.isEmpty {
+            let _: BridgeSkillPackageUploadProgress = try await call(
+                "skills.package-upload.chunk",
+                params: BridgeSkillPackageUploadChunk(
+                    uploadId: started.uploadId,
+                    chunkIndex: chunkIndex,
+                    data: chunk.base64EncodedString()
+                ),
+                timeout: 30
+            )
+            chunkIndex += 1
+        }
+        return try await call(
+            "skills.package-upload.inspect",
+            params: BridgeSkillPackageUploadReference(uploadId: started.uploadId),
+            timeout: 30
+        )
+    }
+
+    public func createBridgeSkillPackage(_ request: BridgeSkillPackageCreateRequest) async throws -> BridgeSkillSummary {
+        try await call("skills.package.create", params: request, timeout: 30)
+    }
+
+    public func updateBridgeSkillPackage(_ request: BridgeSkillPackageUpdateRequest) async throws -> BridgeSkillSummary {
+        try await call("skills.package.update", params: request, timeout: 30)
+    }
+
+    public func exportBridgeSkillPackage(_ reference: BridgeSkillReference) async throws -> BridgeSkillPackageExport {
+        try await call("skills.package.export", params: reference, timeout: 30)
     }
 
     public func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {
@@ -491,7 +566,7 @@ private final class RemoteHTTPTransport: Sendable {
     private let endpoint: URL
     private let session: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
-    private let maximumResponseBytes = 2 * 1_024 * 1_024
+    private let maximumResponseBytes = remoteCompanionMaximumResponseBytes
 
     init(endpoint: String, certificateSha256: String) throws {
         self.endpoint = try Self.normalizedEndpoint(endpoint)

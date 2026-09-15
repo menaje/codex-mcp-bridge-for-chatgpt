@@ -56,6 +56,7 @@
     "macos:localizations:check": "npm run localization:check && ./macos/check-localizations.sh",
     "macos:localizations:sync": "npm run localization:generate && ./macos/sync-localizations.sh",
     "macos:check": "npm run macos:localizations:check && swift test --package-path macos -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors",
+    "macos:skills-visual:check": "tsx scripts/native-skill-library-visual-acceptance.ts",
     "macos:bundle": "./macos/build-app.sh",
     "macos:package": "./macos/package-release.sh",
     "bridge:local": "node scripts/start-codex-mcp-bridge.mjs --mode local",

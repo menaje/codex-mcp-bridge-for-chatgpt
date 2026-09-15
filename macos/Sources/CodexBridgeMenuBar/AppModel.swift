@@ -306,8 +306,9 @@ final class AppModel: ObservableObject {
     @Published var settings: SettingsSnapshot?
     @Published private(set) var skillLibrary: BridgeSkillLibrarySnapshot?
     @Published private(set) var selectedBridgeSkill: BridgeSkillDocument?
+    @Published private(set) var selectedBridgeSkillFile: BridgeSkillFileDocument?
     @Published private(set) var selectedBridgeSkillVersions: BridgeSkillVersionList?
-    @Published private(set) var selectedBridgeSkillReference: BridgeSkillReferenceDocument?
+    @Published private(set) var bridgeSkillFileLoading = false
     @Published var skillLibraryErrorMessage: String?
     @Published var skillMutationErrorMessage: String?
     @Published private(set) var skillMutationInProgress = false
@@ -411,7 +412,8 @@ final class AppModel: ObservableObject {
     private var settingsRequestGeneration = 0
     private var skillLibraryRequestGeneration = 0
     private var bridgeSkillSelectionRequestGeneration = 0
-    private var bridgeSkillReferenceRequestGeneration = 0
+    private var bridgeSkillFileRequestGeneration = 0
+    private var bridgeSkillFileCache: [String: BridgeSkillFileDocument] = [:]
     private var statusRequestGeneration = 0
     @Published private(set) var localConnectionRecovery = ConnectionRecoveryWindow() { didSet { scheduleOperationalObservation() } }
     private var connectionGeneration = 0
@@ -1845,8 +1847,8 @@ final class AppModel: ObservableObject {
             if !isBridgeConnectionChecking {
                 skillLibrary = nil
                 selectedBridgeSkill = nil
+                selectedBridgeSkillFile = nil
                 selectedBridgeSkillVersions = nil
-                selectedBridgeSkillReference = nil
                 skillLibraryErrorMessage = nil
             }
             return
@@ -1884,8 +1886,8 @@ final class AppModel: ObservableObject {
                   generation == connectionGeneration,
                   request == bridgeSkillSelectionRequestGeneration else { return }
             selectedBridgeSkill = document
+            selectedBridgeSkillFile = nil
             selectedBridgeSkillVersions = nil
-            selectedBridgeSkillReference = nil
             skillLibraryErrorMessage = nil
             do {
                 let versions = try await client.bridgeSkillVersions(skillId: reference.skillId)
@@ -1910,58 +1912,42 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func loadBridgeSkillReference(_ reference: BridgeSkillMaterial) async {
-        guard let skill = selectedBridgeSkill else { return }
-        bridgeSkillReferenceRequestGeneration += 1
-        let request = bridgeSkillReferenceRequestGeneration
-        let selectedSkillReference = skill.skill.reference
+    func loadBridgeSkillFile(path: String) async {
+        guard let document = selectedBridgeSkill else { return }
+        let reference = document.skill.reference
+        let cacheKey = "\(reference.skillId)\u{0}\(reference.version)\u{0}\(path)"
+        if let cached = bridgeSkillFileCache[cacheKey] {
+            selectedBridgeSkillFile = cached
+            return
+        }
+        selectedBridgeSkillFile = nil
+        bridgeSkillFileRequestGeneration += 1
+        let request = bridgeSkillFileRequestGeneration
         let generation = connectionGeneration
+        bridgeSkillFileLoading = true
+        defer {
+            if request == bridgeSkillFileRequestGeneration { bridgeSkillFileLoading = false }
+        }
         do {
             let client = try await bridgeClient()
-            let document = try await client.readBridgeSkillReference(
-                reference: skill.skill.reference,
-                referenceId: reference.referenceId
-            )
-            guard !Task.isCancelled,
-                  generation == connectionGeneration,
-                  request == bridgeSkillReferenceRequestGeneration,
-                  selectedBridgeSkill?.skill.reference == selectedSkillReference else { return }
-            selectedBridgeSkillReference = document
+            let file = try await client.readBridgeSkillFile(reference, path: path)
+            guard !Task.isCancelled, generation == connectionGeneration,
+                  request == bridgeSkillFileRequestGeneration,
+                  selectedBridgeSkill?.skill.reference == reference else { return }
+            bridgeSkillFileCache[cacheKey] = file
+            selectedBridgeSkillFile = file
             skillLibraryErrorMessage = nil
         } catch {
-            guard !Task.isCancelled,
-                  generation == connectionGeneration,
-                  request == bridgeSkillReferenceRequestGeneration,
-                  selectedBridgeSkill?.skill.reference == selectedSkillReference else { return }
+            guard !Task.isCancelled, generation == connectionGeneration,
+                  request == bridgeSkillFileRequestGeneration else { return }
             skillLibraryErrorMessage = localizedErrorDescription(error)
         }
     }
 
-    func bridgeSkillMaterialInputs(
-        for document: BridgeSkillDocument
-    ) async -> [BridgeSkillMaterialInput]? {
-        let generation = connectionGeneration
-        do {
-            let client = try await bridgeClient()
-            var materials: [BridgeSkillMaterialInput] = []
-            for reference in document.references {
-                let loaded = try await client.readBridgeSkillReference(
-                    reference: document.skill.reference,
-                    referenceId: reference.referenceId
-                )
-                materials.append(.init(
-                    name: loaded.reference.name,
-                    content: loaded.content,
-                    mediaType: loaded.reference.mediaType
-                ))
-            }
-            guard !Task.isCancelled, generation == connectionGeneration else { return nil }
-            return materials
-        } catch {
-            guard !Task.isCancelled, generation == connectionGeneration else { return nil }
-            skillLibraryErrorMessage = localizedErrorDescription(error)
-            return nil
-        }
+    func selectBridgeSkillMainDocument() {
+        bridgeSkillFileRequestGeneration += 1
+        bridgeSkillFileLoading = false
+        selectedBridgeSkillFile = nil
     }
 
     @discardableResult
@@ -1977,6 +1963,60 @@ final class AppModel: ObservableObject {
             guard generation == connectionGeneration else { return false }
             await refreshSkillLibrary()
             await loadBridgeSkill(created)
+            return true
+        } catch {
+            guard generation == connectionGeneration else { return false }
+            skillMutationErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+    }
+
+    func inspectBridgeSkillPackage(at url: URL) async -> BridgeSkillPackageInspection? {
+        skillMutationErrorMessage = nil
+        do {
+            let client = try await bridgeClient()
+            return try await client.uploadBridgeSkillPackage(at: url)
+        } catch {
+            skillMutationErrorMessage = localizedErrorDescription(error)
+            return nil
+        }
+    }
+
+    @discardableResult
+    func createBridgeSkillPackage(_ request: BridgeSkillPackageCreateRequest) async -> Bool {
+        await mutateBridgeSkill { client in try await client.createBridgeSkillPackage(request) }
+    }
+
+    @discardableResult
+    func updateBridgeSkillPackage(_ request: BridgeSkillPackageUpdateRequest) async -> Bool {
+        await mutateBridgeSkill { client in try await client.updateBridgeSkillPackage(request) }
+    }
+
+    func exportBridgeSkillPackage(_ reference: BridgeSkillReference) async -> BridgeSkillPackageExport? {
+        skillMutationErrorMessage = nil
+        do {
+            let client = try await bridgeClient()
+            return try await client.exportBridgeSkillPackage(reference)
+        } catch {
+            skillMutationErrorMessage = localizedErrorDescription(error)
+            return nil
+        }
+    }
+
+    private func mutateBridgeSkill(
+        _ operation: (any BridgeApplicationClient) async throws -> BridgeSkillSummary
+    ) async -> Bool {
+        guard !skillMutationInProgress else { return false }
+        skillMutationInProgress = true
+        defer { skillMutationInProgress = false }
+        skillMutationErrorMessage = nil
+        let generation = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            let updated = try await operation(client)
+            guard generation == connectionGeneration else { return false }
+            await refreshSkillLibrary()
+            await loadBridgeSkill(updated)
             return true
         } catch {
             guard generation == connectionGeneration else { return false }
@@ -2040,6 +2080,29 @@ final class AppModel: ObservableObject {
             guard generation == connectionGeneration else { return false }
             await refreshSkillLibrary()
             await loadBridgeSkill(updated)
+            return true
+        } catch {
+            guard generation == connectionGeneration else { return false }
+            skillMutationErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func deleteBridgeSkill(_ request: BridgeSkillDeleteRequest) async -> Bool {
+        guard !skillMutationInProgress else { return false }
+        skillMutationInProgress = true
+        defer { skillMutationInProgress = false }
+        skillMutationErrorMessage = nil
+        let generation = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            _ = try await client.deleteBridgeSkill(request)
+            guard generation == connectionGeneration else { return false }
+            selectedBridgeSkill = nil
+            selectedBridgeSkillFile = nil
+            selectedBridgeSkillVersions = nil
+            await refreshSkillLibrary()
             return true
         } catch {
             guard generation == connectionGeneration else { return false }
@@ -3031,11 +3094,12 @@ final class AppModel: ObservableObject {
         settings = nil
         skillLibraryRequestGeneration += 1
         bridgeSkillSelectionRequestGeneration += 1
-        bridgeSkillReferenceRequestGeneration += 1
+        bridgeSkillFileRequestGeneration += 1
         skillLibrary = nil
         selectedBridgeSkill = nil
+        selectedBridgeSkillFile = nil
+        bridgeSkillFileCache.removeAll()
         selectedBridgeSkillVersions = nil
-        selectedBridgeSkillReference = nil
         authStatus = nil
         setupDiscovery = nil
         remoteHello = nil

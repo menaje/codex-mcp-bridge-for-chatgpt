@@ -249,10 +249,10 @@
           ],
           "properties": {
             "userSettingsSchema": { "const": 4 },
-            "taskInputContract": { "const": 4 },
+            "taskInputContract": { "const": 5 },
             "macosHelperProtocol": { "const": 2 },
-            "localCompanionProtocol": { "const": 4 },
-            "remoteCompanionProtocol": { "const": 2 }
+            "localCompanionProtocol": { "const": 8 },
+            "remoteCompanionProtocol": { "const": 6 }
           }
         },
         "contractSources": {

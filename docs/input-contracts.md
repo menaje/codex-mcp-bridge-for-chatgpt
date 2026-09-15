@@ -10,12 +10,12 @@ There is no hidden parser for a previous tool generation.
 
 ## Task admission
 
-`codex_task` uses input contract version 4. A new logical task needs:
+`codex_task` uses input contract version 5. A new logical task needs:
 
 ```json
 {
   "requestId": "a UUID for this logical task",
-  "taskContractVersion": "3",
+  "taskContractVersion": "5",
   "executionEnvelopeRef": "the exact 64-hex value from tools/list",
   "prompt": "the user's requested work",
   "project": {
@@ -36,27 +36,12 @@ authorization, and any App Server capability checks. Callers cannot pass a
 sandbox, approval policy, working directory, raw thread ID, presentation
 identity, or other permission override.
 
-### Required skills
+### Bridge documents are independent
 
-After using `bridge_skill` to search and read a procedure, a local Codex task
-may include its exact immutable bridge reference:
-
-```json
-{
-  "requiredSkills": [
-    {
-      "skillId": "bridge_0123456789abcdef0123456789abcdef",
-      "source": "bridge",
-      "version": "3"
-    }
-  ]
-}
-```
-
-The closed reference shape remains stable as skills are added or revised. The
-Bridge resolves it again immediately before dispatch and scopes the selected
-bridge version to that turn. `requiredSkills` confirms explicit delivery, not
-result validation, and it does not restrict any additional Codex skills.
+`bridge_skill` reads Bridge-owned reusable Markdown documents. A read does
+not add data to `codex_task`, change the task descriptor, or deliver a document
+to Codex. Apply a document only when it is relevant to the user's request;
+start a local task independently through the ordinary `codex_task` contract.
 
 ## Model selection
 
@@ -101,6 +86,7 @@ Do not send:
 - model-catalog `contractVersion`;
 - Task contract version 2, a legacy project selector, `projectLookup`, or
   retired execution/UI fields;
+- `requiredSkills` or any Bridge-document reference in `codex_task`;
 - legacy cancellation and Activity-update shapes;
 - a compatibility tool name, card resource URI, or session identifier.
 

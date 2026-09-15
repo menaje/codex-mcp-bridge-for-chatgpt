@@ -71,6 +71,13 @@ describe("text integrity policy", () => {
       .toEqual({ value: "각" });
   });
 
+  it("preserves a BOM in verbatim text but rejects it at the JSON grammar boundary", () => {
+    const jsonWithBom = Buffer.from("efbbbf7b7d", "hex");
+    expect(decodeUtf8Strict(jsonWithBom)).toBe("\ufeff{}");
+    expect(() => parseJsonUtf8Strict(jsonWithBom)).toThrow();
+    expect(() => parseRuntimeScriptJsonUtf8Strict(jsonWithBom)).toThrow();
+  });
+
   it("counts and preserves the exact UTF-8 text selected for storage", () => {
     const raw = "Café\r\n`./각`";
     expect(verbatimText(raw)).toBe(raw);

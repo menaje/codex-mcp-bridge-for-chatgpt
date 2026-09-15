@@ -41,10 +41,11 @@ import { assertJsonTextIntegrity, decodeUtf8Strict, parseJsonUtf8Strict } from "
 import type { BridgeApplicationService } from "./tools.js";
 
 export const REMOTE_COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-remote-companion";
-export const REMOTE_COMPANION_PROTOCOL_VERSION = 2;
+/** v6 adds immutable Markdown file trees and path-based file reads. */
+export const REMOTE_COMPANION_PROTOCOL_VERSION = 6;
 const REMOTE_API_PREFIX = "/remote-companion/v1";
 const REMOTE_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
-const REMOTE_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const REMOTE_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 const REMOTE_MAX_DEVICES = 32;
 const REMOTE_DEFAULT_PAIRING_TTL_SECONDS = 300;
 const REMOTE_DEVICE_CAPABILITIES = [
@@ -636,13 +637,20 @@ function capabilityForMethod(method: string, payload?: unknown): string {
       return "settings.write";
     case "skills.snapshot":
     case "skills.read":
-    case "skills.reference":
+    case "skills.read-file":
     case "skills.versions":
       return "skills.read";
     case "skills.create":
     case "skills.update":
     case "skills.restore":
     case "skills.set-enabled":
+    case "skills.delete":
+    case "skills.package-upload.begin":
+    case "skills.package-upload.chunk":
+    case "skills.package-upload.inspect":
+    case "skills.package.create":
+    case "skills.package.update":
+    case "skills.package.export":
       return "skills.write";
     case "dashboard.problem": {
       const action = (payload as {params?:{action?:unknown}} | undefined)?.params?.action;
@@ -678,9 +686,7 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
     chunks.push(buffer);
   }
   if (bytes === 0) throw new Error("request_body_required");
-  const parsed = JSON.parse(decodeUtf8Strict(Buffer.concat(chunks), "Remote companion request"));
-  assertJsonTextIntegrity(parsed, "Remote companion request");
-  return parsed;
+  return parseJsonUtf8Strict(Buffer.concat(chunks), "Remote companion request");
 }
 
 function setSecurityHeaders(response: ServerResponse): void {

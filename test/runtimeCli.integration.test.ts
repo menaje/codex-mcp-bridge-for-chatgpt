@@ -43,7 +43,7 @@ it.each(["cli", "stdio"])("starts native and remote app connections in the built
     }
     expect(existsSync(socketPath), output).toBe(true);
     expect(lstatSync(socketPath).mode & 0o777).toBe(0o600);
-    expect(await rpc(socketPath, "companion.hello")).toMatchObject({ protocol: { name: "codex-mcp-bridge-companion", version: 4 } });
+    expect(await rpc(socketPath, "companion.hello")).toMatchObject({ protocol: { name: "codex-mcp-bridge-companion", version: 8 } });
     expect(await rpc(socketPath, "remote.status")).toMatchObject({ enabled: false, listening: false });
     const native = await rpc(socketPath, "dashboard.snapshot", { enrich: false });
     expect(native).toMatchObject({ enrichment: { state: "structural" }, counts: { trackedConversations: 0 } });

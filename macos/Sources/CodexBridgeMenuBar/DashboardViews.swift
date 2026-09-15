@@ -569,18 +569,6 @@ struct DashboardPopoverView: View {
     private var footer: some View {
         HStack(spacing: 10) {
             Button {
-                presentSettingsWindow()
-            } label: {
-                Label("macos.settings", systemImage: "gearshape")
-                    .labelStyle(.iconOnly)
-                    .frame(width: 28, height: 28)
-            }
-            .buttonStyle(.borderless)
-            .keyboardShortcut(",")
-            .help("macos.settings")
-            .accessibilityLabel("macos.settings")
-
-            Button {
                 presentSkillsLibraryWindow()
             } label: {
                 Label("macos.skilllibrary", systemImage: "books.vertical")
@@ -605,6 +593,20 @@ struct DashboardPopoverView: View {
             .accessibilityAddTraits(model.dashboardPanel == .history ? [.isSelected] : [])
             .accessibilityIdentifier("dashboard-history")
             .disabled(model.dashboard == nil || !model.bridgeConnected || model.changingProblems)
+
+            Spacer()
+
+            Button {
+                presentSettingsWindow()
+            } label: {
+                Label("macos.settings", systemImage: "gearshape")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.borderless)
+            .keyboardShortcut(",")
+            .help("macos.settings")
+            .accessibilityLabel("macos.settings")
 
             if model.isRemoteClient {
                 Menu {
@@ -634,6 +636,12 @@ struct DashboardPopoverView: View {
                 .disabled(model.isBusy)
             } else {
                 Menu {
+                    if model.codexRuntime?.showsMenuUpdate == true {
+                        Button("macos.updatecodex") {
+                            Task { await model.manageCodex(.init(action: "update")) }
+                        }
+                        Divider()
+                    }
                     Button("macos.restartserveraftertasksfinish") {
                         Task { await model.restartRuntime(force: false) }
                     }
@@ -672,13 +680,6 @@ struct DashboardPopoverView: View {
                 .disabled(model.needsSetup || model.isBusy)
             }
 
-            if !model.isRemoteClient, model.codexRuntime?.showsMenuUpdate == true {
-                Button("macos.updatecodex") {
-                    Task { await model.manageCodex(.init(action: "update")) }
-                }
-            }
-
-            Spacer()
             Button {
                 if model.isRemoteClient {
                     shutdownAndQuit(force: false)
@@ -803,11 +804,14 @@ struct DashboardPopoverView: View {
     }
 
     private func shutdownAndQuit(force: Bool) {
+        guard SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown() else { return }
         Task {
             guard await model.shutdownApplication(force: force) else {
+                SkillsLibraryWindowController.shared.cancelApplicationShutdownDiscard()
                 if !model.applicationShutdownReserved { presentApplicationQuitFailure() }
                 return
             }
+            SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
             NSApp.terminate(nil)
         }
     }

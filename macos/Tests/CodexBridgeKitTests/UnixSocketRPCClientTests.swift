@@ -4,6 +4,29 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class UnixSocketRPCClientTests: XCTestCase {
+    func testDefaultTransportReadsMaximumBridgeSkillDocumentEnvelope() async throws {
+        struct DocumentResult: Decodable { let document: String }
+        // C0 control characters are valid source text (except NUL) but use
+        // JSON's six-byte escape form, exercising the true transport bound.
+        let document = String(repeating: "\u{0001}", count: 3 * 1_024 * 1_024)
+        let body = String(
+            decoding: try JSONSerialization.data(withJSONObject: [
+                "result": ["document": document]
+            ]),
+            as: UTF8.self
+        )
+        XCTAssertGreaterThan(body.lengthOfBytes(using: .utf8), 8 * 1_024 * 1_024)
+        XCTAssertLessThanOrEqual(body.lengthOfBytes(using: .utf8), bridgeSkillTransportEnvelopeMaxBytes)
+        let path = "/tmp/cb-rpc-large-skill-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { _ in NativeFixtureReply(body: body) }
+        defer { server.stop() }
+
+        let client = UnixSocketRPCClient(socketPath: path)
+        XCTAssertEqual(client.maximumResponseBytes, bridgeSkillTransportEnvelopeMaxBytes)
+        let result: DocumentResult = try await client.call("skills.read", params: EmptyParameters())
+        XCTAssertEqual(result.document, document)
+    }
+
     func testContractDecodeFailureIsNotReportedAsPersistentDataLoss() async throws {
         struct RequiredResult: Decodable { let value: String }
         let path = "/tmp/cb-rpc-contract-\(UUID().uuidString.prefix(8)).sock"

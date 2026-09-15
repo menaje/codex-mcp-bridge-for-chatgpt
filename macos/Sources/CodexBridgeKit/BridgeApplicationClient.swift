@@ -1,5 +1,9 @@
 import Foundation
 
+/// Matches the Bridge companion envelope for the main document plus files.
+public let bridgeSkillTransportEnvelopeMaxBytes = 72 * 1_024 * 1_024
+public let bridgeSkillPackageCompressedMaxBytes = 16 * 1_024 * 1_024
+
 public protocol BridgeApplicationClient: Sendable {
     func dashboard(
         limit: Int,
@@ -18,15 +22,18 @@ public protocol BridgeApplicationClient: Sendable {
 
     func skillLibrary() async throws -> BridgeSkillLibrarySnapshot
     func readBridgeSkill(_ reference: BridgeSkillReference) async throws -> BridgeSkillDocument
-    func readBridgeSkillReference(
-        reference: BridgeSkillReference,
-        referenceId: String
-    ) async throws -> BridgeSkillReferenceDocument
+    func readBridgeSkillFile(_ reference: BridgeSkillReference, path: String) async throws -> BridgeSkillFileDocument
     func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList
     func createBridgeSkill(_ request: BridgeSkillCreateRequest) async throws -> BridgeSkillSummary
     func updateBridgeSkill(_ request: BridgeSkillUpdateRequest) async throws -> BridgeSkillSummary
     func restoreBridgeSkill(_ request: BridgeSkillRestoreRequest) async throws -> BridgeSkillSummary
     func setBridgeSkillEnabled(_ request: BridgeSkillSetEnabledRequest) async throws -> BridgeSkillSummary
+    func deleteBridgeSkill(_ request: BridgeSkillDeleteRequest) async throws -> BridgeSkillDeletion
+    func uploadBridgeSkillPackage(_ archive: Data) async throws -> BridgeSkillPackageInspection
+    func uploadBridgeSkillPackage(at archiveURL: URL) async throws -> BridgeSkillPackageInspection
+    func createBridgeSkillPackage(_ request: BridgeSkillPackageCreateRequest) async throws -> BridgeSkillSummary
+    func updateBridgeSkillPackage(_ request: BridgeSkillPackageUpdateRequest) async throws -> BridgeSkillSummary
+    func exportBridgeSkillPackage(_ reference: BridgeSkillReference) async throws -> BridgeSkillPackageExport
 
     func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult
 
@@ -79,10 +86,7 @@ public extension BridgeApplicationClient {
         throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
     }
 
-    func readBridgeSkillReference(
-        reference: BridgeSkillReference,
-        referenceId: String
-    ) async throws -> BridgeSkillReferenceDocument {
+    func readBridgeSkillFile(_ reference: BridgeSkillReference, path: String) async throws -> BridgeSkillFileDocument {
         throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
     }
 
@@ -104,6 +108,30 @@ public extension BridgeApplicationClient {
 
     func setBridgeSkillEnabled(_ request: BridgeSkillSetEnabledRequest) async throws -> BridgeSkillSummary {
         throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+
+    func deleteBridgeSkill(_ request: BridgeSkillDeleteRequest) async throws -> BridgeSkillDeletion {
+        throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
+    }
+    func uploadBridgeSkillPackage(_ archive: Data) async throws -> BridgeSkillPackageInspection {
+        throw NSError(domain: "SKILL_PACKAGE_UNAVAILABLE", code: 1)
+    }
+
+    func uploadBridgeSkillPackage(at archiveURL: URL) async throws -> BridgeSkillPackageInspection {
+        let archive = try Data(contentsOf: archiveURL, options: [.mappedIfSafe])
+        return try await uploadBridgeSkillPackage(archive)
+    }
+
+    func createBridgeSkillPackage(_ request: BridgeSkillPackageCreateRequest) async throws -> BridgeSkillSummary {
+        throw NSError(domain: "SKILL_PACKAGE_UNAVAILABLE", code: 1)
+    }
+
+    func updateBridgeSkillPackage(_ request: BridgeSkillPackageUpdateRequest) async throws -> BridgeSkillSummary {
+        throw NSError(domain: "SKILL_PACKAGE_UNAVAILABLE", code: 1)
+    }
+
+    func exportBridgeSkillPackage(_ reference: BridgeSkillReference) async throws -> BridgeSkillPackageExport {
+        throw NSError(domain: "SKILL_PACKAGE_UNAVAILABLE", code: 1)
     }
 }
 

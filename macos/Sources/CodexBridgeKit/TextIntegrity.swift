@@ -45,10 +45,18 @@ public enum BridgeTextIntegrity {
     /// Reject malformed sequences rather than accepting Foundation's lossy
     /// replacement behavior at network, file, or local-socket byte boundaries.
     public static func decodeUTF8Strict(_ data: Data) throws -> String {
-        guard let value = String(data: data, encoding: .utf8) else {
+        // Foundation removes a leading UTF-8 BOM. Count and reinsert every
+        // leading BOM so verbatim byte boundaries match Node and never discard
+        // authored content before persistence, hashing, or transport.
+        let bom = Data([0xef, 0xbb, 0xbf])
+        var prefixBytes = 0
+        while data.dropFirst(prefixBytes).starts(with: bom) {
+            prefixBytes += bom.count
+        }
+        guard let suffix = String(data: data.dropFirst(prefixBytes), encoding: .utf8) else {
             throw BridgeTextIntegrityError.invalidUTF8
         }
-        return value
+        return String(repeating: "\u{feff}", count: prefixBytes / bom.count) + suffix
     }
 
     public static func canonicalHumanText(
@@ -85,10 +93,17 @@ public enum BridgeTextIntegrity {
 
     /// A derived comparison key only; this must never be stored in place of
     /// the presentation value. NFKC is intentionally not used.
-    public static func searchKey(_ value: String) throws -> String {
+    public static func searchKey(
+        _ value: String,
+        options: BridgeTextIntegrityOptions = .init(
+            allowEmpty: true,
+            trim: true,
+            collapseWhitespace: true
+        )
+    ) throws -> String {
         let canonical = try canonicalHumanText(
             value,
-            options: .init(allowEmpty: true, trim: true, collapseWhitespace: true)
+            options: options
         )
         return canonical.lowercased(with: Locale(identifier: "en_US"))
             .precomposedStringWithCanonicalMapping
@@ -99,7 +114,10 @@ public enum BridgeTextIntegrity {
     /// Foundation can otherwise accept an escaped unpaired UTF-16 surrogate
     /// that Node's JSON parser would expose as a lossy JavaScript string.
     public static func validateJSONUTF8(_ data: Data) throws {
-        _ = try decodeUTF8Strict(data)
+        let text = try decodeUTF8Strict(data)
+        // JSON.parse rejects a leading BOM. Foundation's JSONDecoder accepts
+        // one, so reject it here to keep both bridge implementations aligned.
+        if text.first == "\u{feff}" { throw BridgeTextIntegrityError.invalidUnicode }
         try validateJSONUnicodeEscapes(Array(data))
     }
 

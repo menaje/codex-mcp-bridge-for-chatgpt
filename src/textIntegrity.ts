@@ -156,6 +156,26 @@ export function utf8ByteLength(value: string, field = "text"): number {
   return Buffer.byteLength(value, "utf8");
 }
 
+/** Count Unicode scalar values consistently with Swift's unicodeScalars. */
+export function unicodeScalarLength(value: string, field = "text"): number {
+  assertWellFormedUnicode(value, field);
+  return Array.from(value).length;
+}
+
+/** Safe predicate for schema layers that must report, rather than throw, validation failure. */
+export function hasAtMostUnicodeScalars(
+  value: unknown,
+  maximum: number,
+  field = "text"
+): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    return unicodeScalarLength(value, field) <= maximum;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Canonical text for names, descriptions, tags, and other display/searchable
  * fields where canonically equivalent Unicode spellings mean the same thing.
@@ -223,7 +243,7 @@ function assertTextConstraints(value: string, options: TextIntegrityOptions): vo
   if (!allowEmpty && value.length === 0) {
     throw new TextIntegrityError("TEXT_EMPTY", `${field} cannot be empty.`);
   }
-  if (options.maxCharacters !== undefined && Array.from(value).length > options.maxCharacters) {
+  if (options.maxCharacters !== undefined && unicodeScalarLength(value, field) > options.maxCharacters) {
     throw new TextIntegrityError(
       "TEXT_TOO_LONG",
       `${field} exceeds ${options.maxCharacters} characters.`
