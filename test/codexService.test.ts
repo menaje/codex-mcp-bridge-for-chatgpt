@@ -145,12 +145,12 @@ describe("Codex execution context", () => {
 });
 
 describe("account usage and billing projection", () => {
-  it("preserves model display names and labels the Spark allowance without its internal codename", () => {
+  it("preserves upstream model display names", () => {
     const account = projectCodexAccount({ account: { type: "chatgpt" } }, { rateLimitsByLimitId: {
-      codex_bengalfox: { primary: { usedPercent: 1, windowDurationMins: 10080 } },
-      another: { limitName: "Another model", primary: { usedPercent: 2, windowDurationMins: 300 } }
+      another: { limitName: "Another model", primary: { usedPercent: 1, windowDurationMins: 10080 } },
+      other: { limitName: "Other model", primary: { usedPercent: 2, windowDurationMins: 300 } }
     } });
-    expect(account.windows.map(window => window.limitName)).toEqual(["GPT-5.3-Codex-Spark", "Another model"]);
+    expect(account.windows.map(window => window.limitName)).toEqual(["Another model", "Other model"]);
   });
   const limits = { accountId: "private-account", rateLimitsByLimitId: { codex: { limitId: "codex",
     primary: { usedPercent: 30, windowDurationMins: 300, resetsAt: 100 }, secondary: { usedPercent: 80, windowDurationMins: 10080 },

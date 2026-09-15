@@ -895,23 +895,6 @@ private struct CodexMenuAccountView: View {
 private struct CodexMenuPlanDetails: View {
     let account: CodexAccountUsage
     var body: some View {
-        if !account.menuSparkWindows.isEmpty {
-            Divider().padding(.vertical, 3)
-            Text(verbatim: "GPT-5.3-Codex-Spark").font(.caption.weight(.semibold))
-            ForEach(account.menuSparkWindows) { window in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        if window.windowDurationMins == 10080 { Text("주간 사용량") }
-                        else { Text(Duration.seconds(Int64(window.windowDurationMins * 60)).formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated))) }
-                        Spacer()
-                        Text(min(99.9, floor(max(0, window.remainingPercent) * 10) / 10) / 100,
-                            format: .percent.precision(.fractionLength(0...1))).monospacedDigit()
-                        Text("남음")
-                    }.font(.caption)
-                    ProgressView(value: max(0, min(100, window.remainingPercent)), total: 100)
-                }
-            }
-        }
         if let balance = account.menuCreditBalance {
             HStack {
                 Text("추가 크레딧")

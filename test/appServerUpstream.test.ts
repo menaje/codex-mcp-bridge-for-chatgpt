@@ -74,8 +74,8 @@ describe("CodexAppServerUpstreamPool", () => {
           limitId: "codex",
           primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 123 }
         },
-        codex_spark: {
-          limitId: "codex_spark",
+        other_limit: {
+          limitId: "other_limit",
           primary: { usedPercent: 34, windowDurationMins: 10_080, resetsAt: 456 }
         }
       }

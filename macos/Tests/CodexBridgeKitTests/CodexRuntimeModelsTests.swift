@@ -2,16 +2,11 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class CodexRuntimeModelsTests: XCTestCase {
-    func testMenuKeepsCodexWeeklyUsageAndOnlyIncludesUsedSparkWindows() throws {
+    func testMenuKeepsCodexWeeklyUsageWithUnrelatedWindows() throws {
         let usage = try account(windows: [window("codex", minutes: 10080, remaining: 42),
-            window("codex_bengalfox", minutes: 300, remaining: 100), window("codex_bengalfox", minutes: 10080, remaining: 99)])
+            window("other_limit", minutes: 300, remaining: 99)])
         XCTAssertEqual(usage.weeklyUsage?.remainingPercent, 42)
-        XCTAssertEqual(usage.menuSparkWindows.count, 1)
-        XCTAssertEqual(usage.menuSparkWindows.first?.windowDurationMins, 10080)
-        XCTAssertEqual(usage.menuSparkWindows.first?.displayName, "GPT-5.3-Codex-Spark")
-        XCTAssertTrue(try account(windows: [window("codex_bengalfox", minutes: 10080, remaining: 100)]).menuSparkWindows.isEmpty)
-        XCTAssertEqual(try account(windows: [window("codex_bengalfox", minutes: 300, remaining: 99.95)]).menuSparkWindows.count, 1)
-        XCTAssertTrue(try account(mode: "api-key", windows: [window("codex_bengalfox", minutes: 300, remaining: 80)]).menuSparkWindows.isEmpty)
+        XCTAssertEqual(usage.weeklyUsage?.limitId, "codex")
     }
 
     func testCreditBalanceIsNotPresentedAsSpendingOrDisplayedBeforePlanExhaustion() throws {

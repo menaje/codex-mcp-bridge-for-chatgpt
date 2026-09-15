@@ -119,8 +119,7 @@ public struct CodexAccountUsage: Codable, Sendable, Equatable {
         public let windowDurationMins: Double
         public let resetsAt: Double?
         public var id: String { "\(limitId):\(windowDurationMins)" }
-        public var isSpark: Bool { limitId == "codex_bengalfox" }
-        public var displayName: String? { isSpark ? "GPT-5.3-Codex-Spark" : limitName ?? (limitId == "codex" ? "Codex" : nil) }
+        public var displayName: String? { limitName ?? (limitId == "codex" ? "Codex" : nil) }
     }
     public struct Credits: Codable, Sendable, Equatable {
         public let hasCredits: Bool
@@ -159,11 +158,6 @@ public struct CodexAccountUsage: Codable, Sendable, Equatable {
             remainingPercent: window.remainingPercent, windowDurationMins: 10080,
             resetsAt: window.resetsAt.map { formatter.string(from: Date(timeIntervalSince1970: $0)) },
             observedAt: formatter.string(from: Date(timeIntervalSince1970: observedAt / 1000)))
-    }
-    public var menuSparkWindows: [Window] {
-        guard authMode == "chatgpt" else { return [] }
-        return windows.filter { $0.isSpark && $0.remainingPercent < 100 }
-            .sorted { $0.windowDurationMins > $1.windowDurationMins }
     }
     /// Balance is not a spend ledger. Surface it only when a plan window is exhausted.
     public var menuCreditBalance: String? {

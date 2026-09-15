@@ -30,7 +30,7 @@ export function projectCodexAccount(accountResponse: unknown, limitsResponse: un
       if (!finite(window.usedPercent) || !finite(window.windowDurationMins) || window.windowDurationMins <= 0) continue;
       const usedPercent = Math.max(0, Math.min(100, window.usedPercent));
       if (!windows.some(item => item.limitId === limitId && item.windowDurationMins === window.windowDurationMins)) {
-        windows.push({ limitId, limitName: limitId === "codex_bengalfox" ? "GPT-5.3-Codex-Spark" : typeof bucket.limitName === "string" ? bucket.limitName : null,
+        windows.push({ limitId, limitName: typeof bucket.limitName === "string" ? bucket.limitName : null,
           usedPercent, remainingPercent: 100 - usedPercent, windowDurationMins: window.windowDurationMins,
           resetsAt: finite(window.resetsAt) && window.resetsAt >= 0 ? window.resetsAt : null });
       }

@@ -111,8 +111,8 @@ lines.on("line", (line) => {
             resetsAt: 1_900_604_800
           }
         },
-        codex_spark: {
-          limitId: "codex_spark",
+        other_limit: {
+          limitId: "other_limit",
           primary: { usedPercent: 99, windowDurationMins: 10_080, resetsAt: 1_900_604_800 },
           secondary: null
         }
