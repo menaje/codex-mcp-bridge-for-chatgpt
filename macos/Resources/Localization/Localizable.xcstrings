@@ -3137,6 +3137,64 @@
         }
       }
     },
+    "Markdown 블록 편집" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown-Block bearbeiten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit Markdown block"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Editar bloque Markdown"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifier le bloc Markdown"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown ブロックを編集"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown 블록 편집"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Editar bloco Markdown"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑 Markdown 块"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯 Markdown 區塊"
+          }
+        }
+      }
+    },
     "Markdown 원문" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3192,6 +3250,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Markdown 原始碼"
+          }
+        }
+      }
+    },
+    "Markdown 원문 편집" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown-Quelle bearbeiten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit Markdown source"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Editar fuente Markdown"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifier la source Markdown"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown ソースを編集"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown 원문 편집"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Editar fonte Markdown"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑 Markdown 源"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯 Markdown 原始碼"
           }
         }
       }
@@ -10076,6 +10192,122 @@
         }
       }
     },
+    "렌더된 문서에서 선택한 블록만 원문으로 전환해 수정합니다." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur der ausgewählte Block wird im gerenderten Dokument zur Markdown-Quelle für die Bearbeitung."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only the selected block becomes Markdown source for editing in the rendered document."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo el bloque seleccionado pasa a ser código fuente Markdown para editarse en el documento renderizado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seul le bloc sélectionné devient la source Markdown à modifier dans le document rendu."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "レンダリングされた文書では、選択したブロックだけが編集用の Markdown ソースに切り替わります。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "렌더된 문서에서 선택한 블록만 원문으로 전환해 수정합니다."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Somente o bloco selecionado passa a ser o código-fonte Markdown para edição no documento renderizado."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在渲染后的文档中，只有选中的块会切换为 Markdown 源码进行编辑。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在已渲染的文件中，只有選取的區塊會切換為 Markdown 原始碼以供編輯。"
+          }
+        }
+      }
+    },
+    "렌더된 블록을 클릭하면 해당 부분만 Markdown 원문으로 편집합니다." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klicken Sie auf einen gerenderten Block, um nur diesen Teil als Markdown-Quelle zu bearbeiten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Click a rendered block to edit only that part as Markdown source."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Haga clic en un bloque renderizado para editar solo esa parte como fuente Markdown."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur un bloc rendu pour modifier uniquement cette partie comme source Markdown."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "レンダリングされたブロックをクリックすると、その部分だけを Markdown ソースとして編集できます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "렌더된 블록을 클릭하면 해당 부분만 Markdown 원문으로 편집합니다."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clique em um bloco renderizado para editar somente essa parte como fonte Markdown."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "点击渲染后的块，即可仅将该部分作为 Markdown 源码编辑。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "點擊已渲染的區塊，即可只將該部分作為 Markdown 原始碼編輯。"
+          }
+        }
+      }
+    },
     "로그 새로고침" : {
       "localizations" : {
         "de" : {
@@ -14617,64 +14849,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bridge 功能"
-          }
-        }
-      }
-    },
-    "브리지 기능은 conversation, codex-task, reference-text만 인식합니다. 환경 조건은 실행 환경에서 따로 준비해야 합니다." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Die Bridge erkennt nur conversation, codex-task und reference-text. Bereiten Sie Umgebungsanforderungen separat in der Ausführungsumgebung vor."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The Bridge recognizes only conversation, codex-task, and reference-text. Prepare environment requirements separately in the execution environment."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "El Bridge solo reconoce conversation, codex-task y reference-text. Prepare los requisitos de entorno por separado en el entorno de ejecución."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Le Bridge ne reconnaît que conversation, codex-task et reference-text. Préparez séparément les prérequis d’environnement dans l’environnement d’exécution."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bridge が認識するのは conversation、codex-task、reference-text のみです。環境要件は実行環境で別途準備してください。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "브리지 기능은 conversation, codex-task, reference-text만 인식합니다. 환경 조건은 실행 환경에서 따로 준비해야 합니다."
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "O Bridge reconhece apenas conversation, codex-task e reference-text. Prepare os requisitos de ambiente separadamente no ambiente de execução."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bridge 仅识别 conversation、codex-task 和 reference-text。请在执行环境中单独准备环境要求。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bridge 僅識別 conversation、codex-task 和 reference-text。請在執行環境中另外準備環境需求。"
           }
         }
       }
@@ -23556,64 +23730,6 @@
         }
       }
     },
-    "실행 조건" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ausführungsanforderungen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Execution requirements"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Requisitos de ejecución"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Prérequis d’exécution"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "実行要件"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "실행 조건"
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Requisitos de execução"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "执行要求"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "執行需求"
-          }
-        }
-      }
-    },
     "실행 중" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -29129,6 +29245,64 @@
         }
       }
     },
+    "이 Markdown 블록 편집" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diesen Markdown-Block bearbeiten"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit this Markdown block"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Editar este bloque Markdown"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modifier ce bloc Markdown"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この Markdown ブロックを編集"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Markdown 블록 편집"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Editar este bloco Markdown"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑此 Markdown 块"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編輯此 Markdown 區塊"
+          }
+        }
+      }
+    },
     "이 값은 기존 비공개 .env에 저장되며 키체인을 사용하지 않습니다. 적용할 때 진행 중인 작업을 안전하게 비운 뒤 서버를 재시작합니다." : {
       "localizations" : {
         "de" : {
@@ -29620,6 +29794,64 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "也包含此橋接之外的工作費用。"
+          }
+        }
+      }
+    },
+    "이 블록 렌더" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diesen Block rendern"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Render this block"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Renderizar este bloque"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Afficher ce bloc"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このブロックをレンダリング"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 블록 렌더"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Renderizar este bloco"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "渲染此块"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "渲染此區塊"
           }
         }
       }
@@ -36811,64 +37043,6 @@
         }
       }
     },
-    "지침" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Anweisungen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Instructions"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Instrucciones"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Instructions"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "手順"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "지침"
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Instruções"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "说明"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "指示"
-          }
-        }
-      }
-    },
     "진단 로그 (민감정보 가림)" : {
       "localizations" : {
         "de" : {
@@ -37254,64 +37428,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "由於正在進行的任務未在時限內完成，應用未退出。請確認是否強制退出。"
-          }
-        }
-      }
-    },
-    "참고 자료" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Referenzmaterial"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Reference Materials"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Materiales de referencia"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Documents de référence"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "参考資料"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "참고 자료"
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Materiais de referência"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "参考资料"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "參考資料"
           }
         }
       }

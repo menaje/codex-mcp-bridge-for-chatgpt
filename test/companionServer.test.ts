@@ -124,7 +124,11 @@ describe("native companion server", () => {
     service.updateBridgeSkill = vi.fn(async () => ({ ...first, version: "2" }));
     service.restoreBridgeSkill = vi.fn(async () => ({ ...first, version: "3" }));
     service.setBridgeSkillEnabled = vi.fn(async () => ({ ...first, enabled: false, availability: "disabled" as const }));
-    service.deleteBridgeSkill = vi.fn(async () => first);
+    service.deleteBridgeSkill = vi.fn(async () => ({
+      skillId: first.skillId,
+      source: "bridge" as const,
+      deletedAt: "2026-09-15T00:00:00.000Z"
+    }));
     servers.push(await startBridgeCompanionServer({ socketPath, applicationService: service }));
 
     const hello = await request(socketPath, {
@@ -155,9 +159,11 @@ describe("native companion server", () => {
     expect(service.setBridgeSkillEnabled).toHaveBeenCalledWith(setEnabled);
 
     const deletion = { requestId: randomUUID(), skillId: first.skillId, expectedVersion: "3", confirmName: first.name };
-    await expect(request(socketPath, {
+    const deleted = await request(socketPath, {
       jsonrpc: "2.0", id: "skills-delete", method: "skills.delete", params: deletion
-    })).resolves.toMatchObject({ result: { skillId: first.skillId } });
+    });
+    expect(deleted).toMatchObject({ result: { skillId: first.skillId, source: "bridge" } });
+    expect(Object.keys(deleted.result).sort()).toEqual(["deletedAt", "skillId", "source"]);
     expect(service.deleteBridgeSkill).toHaveBeenCalledWith(deletion);
 
     const wrongSource = await request(socketPath, {

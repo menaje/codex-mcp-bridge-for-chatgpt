@@ -2382,7 +2382,7 @@ private struct BridgeSkillDocumentEditor: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(mode).font(.title3.weight(.semibold))
-                    Text("원문을 그대로 보존하며, 오른쪽 미리보기가 즉시 반영됩니다.")
+                    Text("렌더된 문서에서 선택한 블록만 원문으로 전환해 수정합니다.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -2414,31 +2414,202 @@ private struct BridgeSkillDocumentEditor: View {
 
 private struct MarkdownLivePreviewEditor: View {
     @Binding var markdown: String
+    @State private var activeBlock: MarkdownLivePreviewBlock?
+    @State private var activeDraft = ""
 
     var body: some View {
-        HSplitView {
-            VStack(alignment: .leading, spacing: 7) {
-                Text("Markdown 원문")
-                    .font(.caption.weight(.medium))
-                TextEditor(text: $markdown)
-                    .font(.system(.body, design: .monospaced))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary.opacity(0.24))
-                    }
+        Group {
+            if let activeBlock {
+                activeBlockSurface(activeBlock)
+            } else {
+                renderedDocumentSurface
             }
-            .frame(minWidth: 240)
-            VStack(alignment: .leading, spacing: 7) {
-                Text("실시간 렌더")
-                    .font(.caption.weight(.medium))
-                MarkdownDocumentView(markdown: markdown)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary.opacity(0.24))
-                    }
-            }
-            .frame(minWidth: 240)
         }
+        .onAppear {
+            if markdown.isEmpty, activeBlock == nil {
+                beginEditing(MarkdownLivePreviewBlock(location: 0, length: 0))
+            }
+        }
+    }
+
+    private var renderedDocumentSurface: some View {
+        let document = MarkdownLivePreviewDocument(markdown: markdown)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("렌더된 블록을 클릭하면 해당 부분만 Markdown 원문으로 편집합니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(document.blocks) { block in
+                    Button {
+                        beginEditing(block)
+                    } label: {
+                        MarkdownRenderedText(markdown: document.source(for: block))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .padding(8)
+                            .background(Color(nsColor: .textBackgroundColor).opacity(0.35))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .help("이 Markdown 블록 편집")
+                    .accessibilityLabel("Markdown 블록 편집")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+        }
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.18))
+        .accessibilityIdentifier("bridge-skill-live-preview")
+    }
+
+    private func activeBlockSurface(_ block: MarkdownLivePreviewBlock) -> some View {
+        let document = MarkdownLivePreviewDocument(markdown: markdown)
+        let fragments = document.fragments(around: block)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Markdown 원문 편집", systemImage: "pencil.line")
+                        .font(.caption.weight(.medium))
+                    Spacer()
+                    Button("이 블록 렌더") {
+                        finishEditing()
+                    }
+                    .buttonStyle(.bordered)
+                }
+                if !fragments.before.isEmpty {
+                    MarkdownRenderedText(markdown: fragments.before)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                TextEditor(text: $activeDraft)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 150)
+                    .padding(6)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.accentColor.opacity(0.72), lineWidth: 1)
+                    }
+                    .onChange(of: activeDraft) { value in
+                        replaceActiveBlock(with: value)
+                    }
+                    .accessibilityIdentifier("bridge-skill-markdown-source")
+                if !fragments.after.isEmpty {
+                    MarkdownRenderedText(markdown: fragments.after)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+        }
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.18))
+    }
+
+    private func beginEditing(_ block: MarkdownLivePreviewBlock) {
+        let document = MarkdownLivePreviewDocument(markdown: markdown)
+        activeDraft = document.source(for: block)
+        activeBlock = block
+    }
+
+    private func replaceActiveBlock(with replacement: String) {
+        guard var activeBlock else { return }
+        let document = MarkdownLivePreviewDocument(markdown: markdown)
+        guard document.contains(activeBlock) else {
+            finishEditing()
+            return
+        }
+        markdown = document.replacing(activeBlock, with: replacement)
+        activeBlock.length = (replacement as NSString).length
+        self.activeBlock = activeBlock
+    }
+
+    private func finishEditing() {
+        activeBlock = nil
+        activeDraft = ""
+    }
+}
+
+struct MarkdownLivePreviewBlock: Identifiable, Equatable {
+    let location: Int
+    var length: Int
+
+    var id: Int { location }
+    var range: NSRange { NSRange(location: location, length: length) }
+}
+
+/// Splits a document for live preview without changing any authored source.
+struct MarkdownLivePreviewDocument {
+    let markdown: String
+
+    var blocks: [MarkdownLivePreviewBlock] {
+        let source = markdown as NSString
+        let sourceLength = source.length
+        guard sourceLength > 0 else { return [] }
+        var result: [MarkdownLivePreviewBlock] = []
+        var cursor = 0
+        var blockStart: Int?
+        var fence: String?
+
+        while cursor < sourceLength {
+            let lineRange = source.lineRange(for: NSRange(location: cursor, length: 0))
+            let line = source.substring(with: lineRange)
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let activeFence = fence {
+                if trimmed.hasPrefix(activeFence) { fence = nil }
+            } else if trimmed.isEmpty {
+                if let blockStart, cursor > blockStart {
+                    result.append(MarkdownLivePreviewBlock(location: blockStart, length: cursor - blockStart))
+                }
+                blockStart = nil
+            } else {
+                if blockStart == nil { blockStart = cursor }
+                if let delimiter = markdownFenceDelimiter(trimmed) { fence = delimiter }
+            }
+            cursor = NSMaxRange(lineRange)
+        }
+        if let blockStart, sourceLength > blockStart {
+            result.append(MarkdownLivePreviewBlock(location: blockStart, length: sourceLength - blockStart))
+        }
+        return result
+    }
+
+    func source(for block: MarkdownLivePreviewBlock) -> String {
+        guard contains(block) else { return "" }
+        return (markdown as NSString).substring(with: block.range)
+    }
+
+    func replacing(_ block: MarkdownLivePreviewBlock, with replacement: String) -> String {
+        guard contains(block) else { return markdown }
+        return (markdown as NSString).replacingCharacters(in: block.range, with: replacement)
+    }
+
+    func fragments(around block: MarkdownLivePreviewBlock) -> (before: String, after: String) {
+        guard contains(block) else { return (markdown, "") }
+        let source = markdown as NSString
+        let before = source.substring(to: block.location)
+        let after = source.substring(from: NSMaxRange(block.range))
+        return (before, after)
+    }
+
+    func contains(_ block: MarkdownLivePreviewBlock) -> Bool {
+        block.location >= 0 && block.length >= 0 && NSMaxRange(block.range) <= (markdown as NSString).length
+    }
+}
+
+private func markdownFenceDelimiter(_ trimmedLine: String) -> String? {
+    if trimmedLine.hasPrefix("```") { return "```" }
+    if trimmedLine.hasPrefix("~~~") { return "~~~" }
+    return nil
+}
+
+private struct MarkdownRenderedText: View {
+    let markdown: String
+
+    var body: some View {
+        Text(renderedMarkdown)
+            .textSelection(.enabled)
+    }
+
+    private var renderedMarkdown: AttributedString {
+        (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
     }
 }
 
@@ -2447,16 +2618,11 @@ private struct MarkdownDocumentView: View {
 
     var body: some View {
         ScrollView {
-            Text(renderedMarkdown)
+            MarkdownRenderedText(markdown: markdown)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
                 .padding(10)
         }
         .background(Color(nsColor: .textBackgroundColor).opacity(0.35))
-    }
-
-    private var renderedMarkdown: AttributedString {
-        (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
     }
 }
 

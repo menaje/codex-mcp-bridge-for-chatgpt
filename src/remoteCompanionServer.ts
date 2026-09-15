@@ -40,8 +40,8 @@ import { BRIDGE_SKILL_LIMITS } from "./skillLibrary.js";
 import type { BridgeApplicationService } from "./tools.js";
 
 export const REMOTE_COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-remote-companion";
-/** v3 matches the free-form Bridge skill document companion surface. */
-export const REMOTE_COMPANION_PROTOCOL_VERSION = 3;
+/** v4 matches the free-form document surface and deletion tombstone contract. */
+export const REMOTE_COMPANION_PROTOCOL_VERSION = 4;
 const REMOTE_API_PREFIX = "/remote-companion/v1";
 const REMOTE_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 const REMOTE_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;

@@ -1,5 +1,9 @@
 import Foundation
 
+/// Matches the Bridge companion envelope. A 3 MiB Markdown source can grow
+/// while JSON-encoded, so app transports must not keep a smaller hidden cap.
+public let bridgeSkillTransportEnvelopeMaxBytes = 8 * 1_024 * 1_024
+
 public protocol BridgeApplicationClient: Sendable {
     func dashboard(
         limit: Int,
@@ -23,7 +27,7 @@ public protocol BridgeApplicationClient: Sendable {
     func updateBridgeSkill(_ request: BridgeSkillUpdateRequest) async throws -> BridgeSkillSummary
     func restoreBridgeSkill(_ request: BridgeSkillRestoreRequest) async throws -> BridgeSkillSummary
     func setBridgeSkillEnabled(_ request: BridgeSkillSetEnabledRequest) async throws -> BridgeSkillSummary
-    func deleteBridgeSkill(_ request: BridgeSkillDeleteRequest) async throws -> BridgeSkillSummary
+    func deleteBridgeSkill(_ request: BridgeSkillDeleteRequest) async throws -> BridgeSkillDeletion
 
     func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult
 
@@ -96,7 +100,7 @@ public extension BridgeApplicationClient {
         throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
     }
 
-    func deleteBridgeSkill(_ request: BridgeSkillDeleteRequest) async throws -> BridgeSkillSummary {
+    func deleteBridgeSkill(_ request: BridgeSkillDeleteRequest) async throws -> BridgeSkillDeletion {
         throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
     }
 }

@@ -127,7 +127,7 @@ public struct BridgeCompanionClient: Sendable {
 
     public func deleteBridgeSkill(
         _ request: BridgeSkillDeleteRequest
-    ) async throws -> BridgeSkillSummary {
+    ) async throws -> BridgeSkillDeletion {
         try await rpc.call("skills.delete", params: request, timeout: 30)
     }
 

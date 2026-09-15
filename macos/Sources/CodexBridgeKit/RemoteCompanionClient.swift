@@ -3,7 +3,8 @@ import Foundation
 import Security
 
 public let remoteCompanionProtocolName = "codex-mcp-bridge-remote-companion"
-public let remoteCompanionProtocolVersion = 3
+public let remoteCompanionProtocolVersion = 4
+let remoteCompanionMaximumResponseBytes = bridgeSkillTransportEnvelopeMaxBytes
 
 public enum RemoteCompanionError: LocalizedError, Sendable {
     case invalidInvitation
@@ -307,7 +308,7 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
 
     public func deleteBridgeSkill(
         _ request: BridgeSkillDeleteRequest
-    ) async throws -> BridgeSkillSummary {
+    ) async throws -> BridgeSkillDeletion {
         try await call("skills.delete", params: request, timeout: 30)
     }
 
@@ -470,7 +471,7 @@ private final class RemoteHTTPTransport: Sendable {
     private let endpoint: URL
     private let session: URLSession
     private let trustDelegate: PinnedServerTrustDelegate
-    private let maximumResponseBytes = 2 * 1_024 * 1_024
+    private let maximumResponseBytes = remoteCompanionMaximumResponseBytes
 
     init(endpoint: String, certificateSha256: String) throws {
         self.endpoint = try Self.normalizedEndpoint(endpoint)

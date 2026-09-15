@@ -41,7 +41,7 @@ public struct UnixSocketRPCClient: Sendable {
     public init(
         socketPath: String,
         timeout: TimeInterval = 10,
-        maximumResponseBytes: Int = 2 * 1_024 * 1_024
+        maximumResponseBytes: Int = bridgeSkillTransportEnvelopeMaxBytes
     ) {
         self.socketPath = socketPath
         self.timeout = timeout

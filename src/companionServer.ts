@@ -27,8 +27,8 @@ import type {
 import { localizeSettingsView } from "./settingsLocalization.js";
 
 export const COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-companion";
-/** v5 removes structured skill sub-documents and adds native-only deletion. */
-export const COMPANION_PROTOCOL_VERSION = 5;
+/** v6 returns privacy-preserving native skill deletion tombstones. */
+export const COMPANION_PROTOCOL_VERSION = 6;
 export const COMPANION_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 // A source-preserved 3 MiB Markdown document may double when JSON-escaped.
 export const COMPANION_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;

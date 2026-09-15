@@ -98,6 +98,19 @@ final class BridgeModelsTests: XCTestCase {
             confirmName: "Report review"
         )
         XCTAssertEqual(deletion.confirmName, "Report review")
+
+        let deleted = try JSONDecoder().decode(
+            BridgeSkillDeletion.self,
+            from: Data(#"""
+            {
+              "skillId":"bridge_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "source":"bridge",
+              "deletedAt":"2026-09-15T00:00:00.000Z"
+            }
+            """#.utf8)
+        )
+        XCTAssertEqual(deleted.skillId, deletion.skillId)
+        XCTAssertEqual(deleted.source, "bridge")
     }
 
     @MainActor

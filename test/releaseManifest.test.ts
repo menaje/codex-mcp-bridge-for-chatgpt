@@ -105,8 +105,8 @@ describe("release manifest", () => {
         userSettingsSchema: 4,
         taskInputContract: 5,
         macosHelperProtocol: 2,
-        localCompanionProtocol: 5,
-        remoteCompanionProtocol: 3
+        localCompanionProtocol: 6,
+        remoteCompanionProtocol: 4
       }
     });
     expect(catalog).toMatchObject({

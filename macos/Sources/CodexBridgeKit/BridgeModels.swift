@@ -1051,3 +1051,10 @@ public struct BridgeSkillDeleteRequest: Codable, Sendable, Equatable {
         self.confirmName = confirmName
     }
 }
+
+/// A permanent deletion intentionally returns no deleted skill metadata.
+public struct BridgeSkillDeletion: Codable, Sendable, Equatable {
+    public let skillId: String
+    public let source: String
+    public let deletedAt: String
+}

@@ -208,6 +208,7 @@ import {
   SkillLibrary,
   type CreateBridgeSkillInput,
   type DeleteBridgeSkillInput,
+  type DeletedBridgeSkill,
   type SkillDocument,
   type SkillReference,
   type SkillSearchResult,
@@ -9428,7 +9429,7 @@ export type BridgeApplicationService = {
   updateBridgeSkill?(input: UpdateBridgeSkillInput): Promise<SkillSummary>;
   restoreBridgeSkill?(input: RestoreBridgeSkillInput): Promise<SkillSummary>;
   setBridgeSkillEnabled?(input: SetBridgeSkillEnabledInput): Promise<SkillSummary>;
-  deleteBridgeSkill?(input: DeleteBridgeSkillInput): Promise<SkillSummary>;
+  deleteBridgeSkill?(input: DeleteBridgeSkillInput): Promise<DeletedBridgeSkill>;
 };
 type CodexWeeklyUsageView = z.infer<typeof codexWeeklyUsageOutputSchema>;
 type CancellationDisplay = z.infer<typeof cancellationDisplayOutputSchema>;

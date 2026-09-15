@@ -4,6 +4,26 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class UnixSocketRPCClientTests: XCTestCase {
+    func testDefaultTransportReadsMaximumBridgeSkillDocumentEnvelope() async throws {
+        struct DocumentResult: Decodable { let document: String }
+        let document = String(repeating: "m", count: 3 * 1_024 * 1_024)
+        let body = String(
+            decoding: try JSONSerialization.data(withJSONObject: [
+                "result": ["document": document]
+            ]),
+            as: UTF8.self
+        )
+        XCTAssertGreaterThan(body.lengthOfBytes(using: .utf8), 2 * 1_024 * 1_024)
+        let path = "/tmp/cb-rpc-large-skill-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { _ in NativeFixtureReply(body: body) }
+        defer { server.stop() }
+
+        let client = UnixSocketRPCClient(socketPath: path)
+        XCTAssertEqual(client.maximumResponseBytes, bridgeSkillTransportEnvelopeMaxBytes)
+        let result: DocumentResult = try await client.call("skills.read", params: EmptyParameters())
+        XCTAssertEqual(result.document, document)
+    }
+
     func testContractDecodeFailureIsNotReportedAsPersistentDataLoss() async throws {
         struct RequiredResult: Decodable { let value: String }
         let path = "/tmp/cb-rpc-contract-\(UUID().uuidString.prefix(8)).sock"

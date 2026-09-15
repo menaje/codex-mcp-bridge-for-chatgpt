@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -212,11 +212,66 @@ describe("SkillLibrary", () => {
       requestId: randomUUID(), skillId: first.skillId, expectedVersion: "1", confirmName: "Release review"
     };
     const deleted = await library.deleteBridgeSkill(deleteRequest);
-    expect(deleted.skillId).toBe(first.skillId);
+    expect(deleted).toEqual({
+      skillId: first.skillId,
+      source: "bridge",
+      deletedAt: expect.any(String)
+    });
     await expect(stat(path.join(directory, first.skillId))).rejects.toMatchObject({ code: "ENOENT" });
     expect(await library.deleteBridgeSkill(deleteRequest)).toEqual(deleted);
     expect((await library.search({ includeDisabled: true })).skills).toEqual([]);
     await expect(library.read({ reference: first })).rejects.toThrow("SKILL_NOT_FOUND");
+    const index = await readFile(path.join(directory, "index.json"), "utf8");
+    expect(index).not.toContain("Release review");
+    expect(index).not.toContain("Verify the release");
+    expect(JSON.parse(index)).toMatchObject({
+      schemaVersion: 4,
+      mutationReceipts: [expect.objectContaining({
+        outcome: expect.objectContaining({
+          kind: "deleted",
+          deletion: expect.objectContaining({ skillId: first.skillId, source: "bridge" })
+        })
+      })]
+    });
+  });
+
+  it("scrubs historical deleted-skill receipt metadata on the next index write", async () => {
+    const root = await temporaryRoot();
+    const directory = path.join(root, "bridge-skills");
+    const deletedSkillId = `bridge_${"d".repeat(32)}`;
+    const staleName = "Deleted historical review";
+    const staleDescription = "This deleted description must not remain in index.json.";
+    await mkdir(directory, { recursive: true });
+    await writeFile(path.join(directory, "index.json"), JSON.stringify({
+      schemaVersion: 3,
+      skills: [],
+      mutationReceipts: [{
+        requestId: randomUUID(),
+        actionHash: sha256("historical-delete"),
+        skill: {
+          skillId: deletedSkillId,
+          source: "bridge",
+          version: "1",
+          name: staleName,
+          description: staleDescription,
+          contentDigest: sha256("historical-document"),
+          enabled: false,
+          availability: "disabled"
+        },
+        createdAt: "2026-01-01T00:00:00.000Z"
+      }]
+    }, null, 2), "utf8");
+
+    const library = new SkillLibrary({ directory });
+    await library.createBridgeSkill({
+      requestId: randomUUID(), name: "Current document", document: "# Current\n"
+    });
+
+    const index = await readFile(path.join(directory, "index.json"), "utf8");
+    expect(index).not.toContain(staleName);
+    expect(index).not.toContain(staleDescription);
+    expect(JSON.parse(index)).toMatchObject({ schemaVersion: 4, mutationReceipts: [expect.any(Object)] });
+    expect(JSON.parse(index).mutationReceipts).toHaveLength(1);
   });
 
   it("requires the current name for deletion and rejects NUL source text", async () => {

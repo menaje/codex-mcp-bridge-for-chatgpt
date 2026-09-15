@@ -30,15 +30,18 @@ anything, start Codex, grant permissions, or inject text into a Codex task.
 ## Native library management
 
 The macOS Bridge Skills window is the authoring surface. Selecting an item
-opens rendered Markdown. Editing stays in the same detail surface, with the
-source editor and a live rendered preview side by side. Saving creates a new
+opens rendered Markdown. Editing stays in that same document surface: click a
+rendered block to turn only that block into its source-preserving Markdown
+editor while the surrounding document remains rendered. Saving creates a new
 immutable document version.
 
 Archive hides a document from ordinary discovery but retains every version.
 Permanent deletion is available only through the native companion API and UI;
-it requires the user to type the current name, removes every version, and is
-not recoverable. The model-facing `bridge_skill_manage` tool intentionally
-does not expose deletion.
+it requires the user to type the current name, removes every version and
+active-library receipt, and is not recoverable. An exact retry returns only a
+minimal deletion tombstone (`skillId`, `source`, `deletedAt`), never deleted
+name, description, digest, or Markdown. The model-facing
+`bridge_skill_manage` tool intentionally does not expose deletion.
 
 ## Compatibility migration
 
@@ -52,8 +55,9 @@ version. The original immutable version remains available in history.
 
 ## Bounds and safety
 
-`document` accepts up to 3 MiB of UTF-8 text. Bridge transports and model
-result envelopes allow up to 8 MiB so JSON escaping cannot silently reduce
-that source capacity. This is not a prompt-size promise and does not bypass
-normal MCP host limits. NUL-containing text is rejected. The native renderer
-displays Markdown as text and does not execute embedded HTML or scripts.
+`document` accepts up to 3 MiB of UTF-8 text. Bridge transports, local native
+IPC, remote native HTTPS, and model result envelopes allow up to 8 MiB so JSON
+escaping cannot silently reduce that source capacity. This is not a prompt-size
+promise and does not bypass normal MCP host limits. NUL-containing text is
+rejected. The native renderer displays Markdown as text and does not execute
+embedded HTML or scripts.

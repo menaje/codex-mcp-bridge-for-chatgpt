@@ -3,6 +3,10 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class RemoteConnectionTests: XCTestCase {
+    func testRemoteTransportUsesTheBridgeSkillEnvelopeLimit() {
+        XCTAssertEqual(remoteCompanionMaximumResponseBytes, bridgeSkillTransportEnvelopeMaxBytes)
+    }
+
     func testLivePinnedPairingWhenRequested() async throws {
         guard let invitation = ProcessInfo.processInfo.environment[
             "CODEX_MCP_BRIDGE_LIVE_REMOTE_INVITATION"
