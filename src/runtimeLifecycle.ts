@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readPrivateFile, writePrivateFileAtomic } from "../scripts/managed-file.mjs";
 import * as z from "zod/v4";
+import { parseJsonUtf8Strict } from "./textIntegrity.js";
 
 export const lifecycleConfigurationSchema = z.strictObject({
   apiKey: z.string().max(4096).optional(),
@@ -91,7 +92,9 @@ export class RuntimeLifecycleCoordinator {
   constructor(private readonly file: string, private readonly driver: LifecycleDriver,
     private readonly options: { intervalMs?: number; now?: () => number } = {}) {
     try {
-      this.records = stateSchema.parse(JSON.parse(readPrivateFile(file, { encoding: "utf8" }))).records;
+      this.records = stateSchema.parse(
+        parseJsonUtf8Strict(readPrivateFile(file), "runtime lifecycle state")
+      ).records;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       this.records = [];

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { parseJsonUtf8Strict } from "./textIntegrity.js";
 
 export type BridgeBuildInfo = {
   version: string;
@@ -16,7 +17,10 @@ export const BRIDGE_BUILD_INFO: BridgeBuildInfo = loadBuildInfo();
 function loadBuildInfo(): BridgeBuildInfo {
   try {
     const file = fileURLToPath(new URL("./build-info.json", import.meta.url));
-    const parsed = JSON.parse(readFileSync(file, "utf8")) as Partial<BridgeBuildInfo>;
+    const parsed = parseJsonUtf8Strict<Partial<BridgeBuildInfo>>(
+      readFileSync(file),
+      "bridge build information"
+    );
     if (
       typeof parsed.version === "string" &&
       typeof parsed.commit === "string" &&

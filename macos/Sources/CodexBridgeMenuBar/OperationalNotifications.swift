@@ -17,14 +17,14 @@ enum OperationalProblem: String, Codable, CaseIterable, Sendable {
     }
     var messageKey: String {
         switch self {
-        case .runtime: return "브리지를 사용할 수 없습니다. 연결 설정에서 상태와 복구 방법을 확인해 주세요."
-        case .tunnel: return "ChatGPT 연결을 복구하지 못했습니다. 연결 설정에서 터널을 확인해 주세요."
-        case .configuration: return "브리지 설정을 확인해야 합니다. 연결 설정을 열어 필수 항목을 확인해 주세요."
-        case .authentication: return "Codex 인증을 확인해야 합니다. Codex 설정에서 로그인 상태를 확인해 주세요."
-        case .installation: return "사용할 Codex를 찾지 못했습니다. Codex 설정에서 설치 또는 선택해 주세요."
-        case .remoteConnection: return "원격 서버에 연결하지 못했습니다. 연결 설정에서 서버 상태를 확인해 주세요."
-        case .remoteSecurity: return "원격 연결의 보안 확인이 필요합니다. 연결 설정에서 서버와 기기 등록을 확인해 주세요."
-        case .compatibility: return "구성 요소가 호환되지 않습니다. 연결 설정에서 업데이트 또는 복구 방법을 확인해 주세요."
+        case .runtime: return "macos.thebridgeisunavailableopenconnectionsettingsto"
+        case .tunnel: return "macos.thechatgptconnectioncouldnotberestoredcheck"
+        case .configuration: return "macos.bridgeconfigurationneedsattentionopenconnectionsettingsto"
+        case .authentication: return "macos.codexauthenticationneedsattentioncheckyoursignin"
+        case .installation: return "macos.nousablecodexwasfoundinstallorselect"
+        case .remoteConnection: return "macos.theremoteservercouldnotbereachedcheck"
+        case .remoteSecurity: return "macos.theremoteconnectionneedsasecuritycheckreview"
+        case .compatibility: return "macos.componentsareincompatiblecheckconnectionsettingsforupdate"
         }
     }
 
@@ -197,7 +197,7 @@ final class SystemOperationalNotificationDelivery: NSObject, OperationalNotifica
 
     static func content(problem: OperationalProblem, scope: String, locale: Locale) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
-        content.title = "Codex MCP Bridge for ChatGPT"
+        content.title = "macos.codexmcpbridgeforchatgpt"
         content.body = BridgeAppLocalization.string(problem.messageKey, locale: locale)
         content.userInfo = ["problem": problem.rawValue, "scope": scope]
         content.threadIdentifier = "bridge-operations"
@@ -208,8 +208,8 @@ final class SystemOperationalNotificationDelivery: NSObject, OperationalNotifica
 
     static func completionContent(locale: Locale) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
-        content.title = BridgeAppLocalization.string("Codex 작업이 완료되었습니다.", locale: locale)
-        content.body = BridgeAppLocalization.string("메뉴 막대 앱에서 현황과 결과를 확인하세요.", locale: locale)
+        content.title = BridgeAppLocalization.string("macos.codexworkiscomplete", locale: locale)
+        content.body = BridgeAppLocalization.string("macos.checkstatusandresultsinthemenubar", locale: locale)
         // Keep the system notification free of task prompts, paths, result
         // text, activity IDs, and ChatGPT conversation identifiers.
         content.userInfo = ["notificationKind": "completion"]
@@ -254,7 +254,10 @@ final class OperationalNotifications {
     init(defaults: UserDefaults, delivery: any OperationalNotificationDelivering) {
         self.defaults = defaults
         self.delivery = delivery
-        policy = defaults.data(forKey: stateKey).flatMap { try? JSONDecoder().decode(OperationalNotificationPolicy.self, from: $0) }
+        policy = defaults.data(forKey: stateKey).flatMap {
+            guard (try? BridgeTextIntegrity.validateJSONUTF8($0)) != nil else { return nil }
+            return try? JSONDecoder().decode(OperationalNotificationPolicy.self, from: $0)
+        }
             ?? OperationalNotificationPolicy()
     }
 

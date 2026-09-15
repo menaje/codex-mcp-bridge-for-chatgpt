@@ -17,11 +17,11 @@ enum DashboardPanel: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .running: return "실행 중"
-        case .responseRequired: return "응답 필요"
-        case .problems: return "문제"
-        case .history: return "작업·실행 기록"
-        case .background: return "백그라운드 프로세스"
+        case .running: return "macos.running"
+        case .responseRequired: return "dashboard.responseRequired"
+        case .problems: return "dashboard.problems"
+        case .history: return "macos.workrunhistory"
+        case .background: return "macos.backgroundprocesses"
         }
     }
 

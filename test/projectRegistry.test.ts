@@ -51,8 +51,9 @@ describe("project registry", () => {
     expect(() => normalizeProjectName("가".repeat(121))).toThrow(PROJECT_NAME_INVALID);
   });
 
-  it("uses locale-independent NFKC case folding for uniqueness and lookup", () => {
-    expect(projectNameKey("Ｓｔｒａßｅ")).toBe(projectNameKey("STRASSE"));
+  it("uses locale-independent NFC case folding without compatibility folding", () => {
+    expect(projectNameKey("Straße")).toBe(projectNameKey("STRASSE"));
+    expect(projectNameKey("Ｓｔｒａßｅ")).not.toBe(projectNameKey("STRASSE"));
     expect(projectNameKey("\u212aelvin")).toBe(projectNameKey("kelvin"));
     expect(projectNameKey("  Alpha\u00a0Project ")).toBe(projectNameKey("alpha project"));
   });
@@ -108,7 +109,7 @@ describe("project registry", () => {
     expect(() => new ProjectRegistry([
       project(UUID_A, "Ｓｅｒｖｉｃｅ", first, 0),
       project(UUID_B, "service", second, 1)
-    ], [], 1)).toThrow(PROJECT_NAME_CONFLICT);
+    ], [], 1)).not.toThrow();
     expect(() => new ProjectRegistry([
       project(UUID_A, "One", first, 0),
       project(UUID_B, "Two", first, 1)

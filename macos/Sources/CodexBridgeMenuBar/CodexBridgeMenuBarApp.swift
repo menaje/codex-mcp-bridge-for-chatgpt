@@ -256,7 +256,12 @@ final class BridgeMenuBarController: NSObject, NSPopoverDelegate {
         guard let model, let button = statusItem?.button else { return }
         let status = model.health.accessibilityLabel(locale: model.interfaceLocale)
         button.image = BridgeMenuBarIcon.templateImage(for: model.health)
-        button.toolTip = "Codex MCP Bridge for ChatGPT · \(status)"
+        button.toolTip = BridgeAppLocalization.format(
+            "macos.format.dotSeparatedPair",
+            locale: model.interfaceLocale,
+            BridgeAppLocalization.string("macos.codexmcpbridgeforchatgpt", locale: model.interfaceLocale),
+            status
+        )
         button.setAccessibilityLabel(status)
     }
 
@@ -344,22 +349,22 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = BridgeAppLocalization.string(
-            "안전하게 종료하지 못했습니다",
+            "macos.couldnotquitsafely",
             locale: model.interfaceLocale
         )
         alert.informativeText = [
             model.runtimeErrorMessage,
             BridgeAppLocalization.string(
-                "실행 중인 작업과 백그라운드 프로세스를 중단하고 앱의 관련 프로세스를 강제로 종료할까요? 파일 변경은 되돌아가지 않습니다.",
+                "macos.interruptrunningworkandbackgroundprocessesandforce",
                 locale: model.interfaceLocale
             )
         ].compactMap { $0 }.joined(separator: "\n\n")
         alert.addButton(withTitle: BridgeAppLocalization.string(
-            "강제 종료",
+            "macos.forcequit",
             locale: model.interfaceLocale
         ))
         alert.addButton(withTitle: BridgeAppLocalization.string(
-            "취소",
+            "common.cancel",
             locale: model.interfaceLocale
         ))
         return alert.runModal() == .alertFirstButtonReturn
@@ -370,15 +375,15 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.alertStyle = .critical
         let title = model.generalSettingsSaveState == .failed
-            ? "설정 변경사항을 저장하지 못했습니다"
-            : "관련 프로세스를 모두 종료하지 못했습니다"
+            ? "macos.couldnotsavesettings"
+            : "macos.couldnotstopallrelatedprocesses"
         alert.messageText = BridgeAppLocalization.string(title, locale: model.interfaceLocale)
         alert.informativeText = model.runtimeErrorMessage ?? BridgeAppLocalization.string(
-            "앱을 종료하지 않았습니다. 현황을 확인한 뒤 다시 시도해 주세요.",
+            "macos.theappwasnotquitreviewthestatus",
             locale: model.interfaceLocale
         )
         alert.addButton(withTitle: BridgeAppLocalization.string(
-            "확인",
+            "macos.ok",
             locale: model.interfaceLocale
         ))
         alert.runModal()
@@ -442,7 +447,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                 defer: false
             )
             settingsWindow.title = BridgeAppLocalization.string(
-                "일반",
+                "macos.general",
                 locale: model.interfaceLocale
             )
             settingsWindow.isReleasedWhenClosed = false
@@ -492,7 +497,7 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
                 defer: false
             )
             skillsWindow.title = BridgeAppLocalization.string(
-                "스킬 라이브러리",
+                "macos.skilllibrary",
                 locale: model.interfaceLocale
             )
             skillsWindow.isReleasedWhenClosed = false
@@ -511,7 +516,7 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
         }
         if let window {
             window.title = BridgeAppLocalization.string(
-                "스킬 라이브러리",
+                "macos.skilllibrary",
                 locale: model.interfaceLocale
             )
             PrimaryAppWindowPresentation.show(window)
@@ -553,7 +558,7 @@ final class ConnectionRepairWindowController: NSObject, NSWindowDelegate {
                 backing: .buffered,
                 defer: false
             )
-            repairWindow.title = "Codex MCP Bridge for ChatGPT"
+            repairWindow.title = "macos.codexmcpbridgeforchatgpt"
             repairWindow.isReleasedWhenClosed = false
             repairWindow.delegate = self
             PrimaryAppWindowPresentation.configure(repairWindow)

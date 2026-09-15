@@ -1,3 +1,5 @@
+import { canonicalHumanText, searchKey } from "./textIntegrity.js";
+
 export const AGENT_LIFECYCLES = [
   "idle",
   "active",
@@ -54,6 +56,9 @@ export type ActivityAgentAssignment = {
   releasedAt?: number;
 };
 
+// Kept byte-for-byte compatible for the v3-to-v4 state migration. New writes
+// use canonicalAgentName so the current text-integrity policy does not silently
+// change a released migration's provenance.
 export function normalizeAgentName(value: string): {
   agentName: string;
   normalizedName: string;
@@ -66,6 +71,28 @@ export function normalizeAgentName(value: string): {
   if (!agentName) throw new Error("Agent name cannot be empty.");
   if (agentName.length > 80) throw new Error("Agent name cannot exceed 80 characters.");
   return { agentName, normalizedName: agentName.toLowerCase() };
+}
+
+/** Current-write policy for a human-visible agent name. */
+export function canonicalAgentName(value: string): {
+  agentName: string;
+  normalizedName: string;
+} {
+  let agentName: string;
+  try {
+    agentName = canonicalHumanText(value, {
+      field: "Agent name",
+      maxCharacters: 80,
+      collapseWhitespace: true,
+      trim: true
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("exceeds")) {
+      throw new Error("Agent name cannot exceed 80 characters.");
+    }
+    throw new Error("Agent name cannot be empty.");
+  }
+  return { agentName, normalizedName: searchKey(agentName, { field: "Agent name" }) };
 }
 
 export function isAgentLifecycle(value: unknown): value is BridgeAgentLifecycle {

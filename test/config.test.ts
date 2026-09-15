@@ -144,6 +144,10 @@ describe("config policy", () => {
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING: '[{"model":"gpt-5.6-sol"}]'
     })).toThrow(/reasoning effort/i);
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_MODEL_SELECTION_CEILING: '["\\ud800"]'
+    })).toThrow(/JSON array/);
   });
 
   it("requires an absolute SQLite state database file", () => {

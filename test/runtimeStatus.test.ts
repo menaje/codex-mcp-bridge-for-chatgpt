@@ -104,6 +104,22 @@ describe("managed runtime status", () => {
     });
     expect(readManagedRuntimeStatus(file)).toBeNull();
   });
+
+  it("fails closed for invalid UTF-8 and escaped unpaired surrogates", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-runtime-status-"));
+    const file = path.join(root, "run", "status.json");
+    writeManagedRuntimeStatus(file, {
+      phase: "running",
+      runtimeBuildId: "build-one",
+      tunnel: connectedTunnel()
+    });
+
+    writeFileSync(file, Buffer.from([0xff]), { mode: 0o600 });
+    expect(readManagedRuntimeStatus(file)).toBeNull();
+
+    writeFileSync(file, Buffer.from('{"message":"\\ud800"}'), { mode: 0o600 });
+    expect(readManagedRuntimeStatus(file)).toBeNull();
+  });
 });
 
 function connectedTunnel() {

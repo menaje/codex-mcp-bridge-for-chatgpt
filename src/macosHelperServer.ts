@@ -66,6 +66,7 @@ import {
   type TunnelSetupDiscovery,
   type TunnelSetupDiscoveryOptions
 } from "./tunnelSetupDiscovery.js";
+import { assertJsonTextIntegrity, decodeUtf8Strict, parseJsonUtf8Strict } from "./textIntegrity.js";
 
 export const MACOS_HELPER_PROTOCOL_NAME = "codex-mcp-bridge-macos-helper";
 export const MACOS_HELPER_PROTOCOL_VERSION = 2;
@@ -938,7 +939,12 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private async reconcileLifecycle(record: LifecycleRecord): Promise<LifecycleReconciliation> {
     if (["waiting", "blocked"].includes(record.phase)) return "retry";
     let receipt: { requestId?: string; outcome?: string; failureCode?: string } | undefined;
-    try { receipt = JSON.parse(readPrivateFile(path.join(path.dirname(this.runtimeLockDirectory), "lifecycle-handoff.json"), { encoding: "utf8" })); }
+    try {
+      receipt = parseJsonUtf8Strict(
+        readPrivateFile(path.join(path.dirname(this.runtimeLockDirectory), "lifecycle-handoff.json")),
+        "lifecycle handoff receipt"
+      );
+    }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     if (receipt?.requestId === record.request.requestId && receipt.outcome === "failed") {
       const code = typeof receipt.failureCode === "string" && /^[A-Z][A-Z0-9_]{2,79}$/.test(receipt.failureCode)
@@ -1651,7 +1657,14 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
 
   private appendRuntimeLogLine(line: Buffer): void {
     const withoutCarriageReturn = line.at(-1) === 0x0d ? line.subarray(0, -1) : line;
-    const message = redactRuntimeText(withoutCarriageReturn.toString("utf8"));
+    let decoded: string;
+    try {
+      decoded = decodeUtf8Strict(withoutCarriageReturn, "Managed runtime log");
+    } catch {
+      this.appendLog("runtime", "Runtime log line omitted because it is not valid UTF-8.");
+      return;
+    }
+    const message = redactRuntimeText(decoded);
     if (message) this.appendLog("runtime", message);
   }
 
@@ -1696,6 +1709,7 @@ async function dispatchHelperLine(
   let decoded: unknown;
   try {
     decoded = JSON.parse(line);
+    assertJsonTextIntegrity(decoded, "macOS helper request");
   } catch {
     return helperError(null, -32700, "Invalid JSON.");
   }
@@ -2077,7 +2091,7 @@ function bridgeRequest<T = unknown>(
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
     const requestId = `helper-${process.pid}-${Date.now()}-${++bridgeRequestSequence}`;
-    let buffer = "";
+    let buffer = Buffer.alloc(0);
     let settled = false;
     let timer: NodeJS.Timeout;
     const finish = (error?: Error, value?: T) => {
@@ -2096,7 +2110,6 @@ function bridgeRequest<T = unknown>(
       () => finish(new Error("Bridge companion request timed out.")),
       timeoutMs
     );
-    socket.setEncoding("utf8");
     socket.once("connect", () => {
       socket.write(`${JSON.stringify({
         jsonrpc: "2.0",
@@ -2105,21 +2118,25 @@ function bridgeRequest<T = unknown>(
         params
       })}\n`);
     });
-    socket.on("data", (chunk: string) => {
-      buffer += chunk;
-      if (Buffer.byteLength(buffer, "utf8") > HELPER_MAX_RESPONSE_BYTES) {
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      if (buffer.length > HELPER_MAX_RESPONSE_BYTES) {
         finish(new Error("Bridge companion response is too large."));
         return;
       }
-      const newline = buffer.indexOf("\n");
+      const newline = buffer.indexOf(0x0a);
       if (newline < 0) return;
       try {
-        const response = JSON.parse(buffer.slice(0, newline)) as {
+        const response = JSON.parse(decodeUtf8Strict(
+          buffer.subarray(0, newline),
+          "Bridge companion response"
+        )) as {
           jsonrpc?: unknown;
           id?: unknown;
           result?: T;
           error?: { message?: string; code?: number };
         };
+        assertJsonTextIntegrity(response, "Bridge companion response");
         if (response.jsonrpc !== "2.0" || response.id !== requestId) {
           finish(new Error("Bridge companion response identity did not match the request."));
         } else if (response.error) finish(Object.assign(new Error(response.error.message || "Bridge companion request failed."), { code: response.error.code }));
@@ -2308,12 +2325,18 @@ function readProcessTable(): Promise<ManagedProcessIdentity[]> {
         return;
       }
       if (code !== 0) {
-        const detail = Buffer.concat(stderr).toString("utf8").trim();
+        let detail = "";
+        try {
+          detail = decodeUtf8Strict(Buffer.concat(stderr), "Process table stderr").trim();
+        } catch {
+          reject(new Error("Process table emitted invalid UTF-8 diagnostics."));
+          return;
+        }
         reject(new Error(detail || `/bin/ps exited with status ${code ?? "unknown"}.`));
         return;
       }
       try {
-        const rows = Buffer.concat(stdout).toString("utf8")
+        const rows = decodeUtf8Strict(Buffer.concat(stdout), "Process table stdout")
           .split("\n")
           .map((line) => line.trim())
           .filter(Boolean)

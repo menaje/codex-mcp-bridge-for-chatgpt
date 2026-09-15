@@ -3,7 +3,12 @@ import { DASHBOARD_CONTROL_SCRIPT } from "./dashboardControls.js";
 import { CARD_FORM_SCRIPT } from "./cardForms.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { usesFastProcessing } from "./executionPresentation.js";
-import { resolveHostUiLocaleTag, serializedUiTranslations, UI_TRANSLATIONS } from "./uiI18n.js";
+import {
+  resolveHostUiLocaleTag,
+  serializedUiTranslations,
+  UI_LOCALE_RESOLUTION,
+  UI_TRANSLATIONS
+} from "./uiI18n.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
   currentUiResourceUri,
@@ -13,7 +18,9 @@ import {
 } from "./uiResources.js";
 import {
   hostToolResultMetadata,
-  normalizeHostToolResult
+  normalizeHostToolResult,
+  parseUiJsonTextStrict,
+  uiJsonTextIsWellFormed
 } from "./uiHostToolResult.js";
 import {
   callUiToolWithFallback,
@@ -390,7 +397,10 @@ ${PROBLEM_REVIEW_MARKUP.trimStart()}
   </main>
   <script>
     const BUNDLES=${serializedUiTranslations(["problem", "common", "usage", "cancellation", "history.finite", "history.unlimited", "history.notice", "history.cleanup", "history.acknowledge", "history.started", ...DASHBOARD_TRANSLATION_KEYS, "activity.lastChanged", "activity.approve", "activity.approveSession", "activity.decline", "activity.answer", "activity.inputRequired", "activity.approval", "activity.optionalInput", "activity.openRequest", "activity.otherAnswer", "activity.yes", "activity.no", "question.gptHandles"])};
+    const LOCALE_RESOLUTION=${JSON.stringify(UI_LOCALE_RESOLUTION)};
     ${serializeUiFunction(resolveHostUiLocaleTag)}
+    ${serializeUiFunction(uiJsonTextIsWellFormed)}
+    ${serializeUiFunction(parseUiJsonTextStrict)}
     ${serializeUiFunction(normalizeHostToolResult)}
     ${serializeUiFunction(hostToolResultMetadata)}
     ${serializeUiFunction(withUiToolCallTimeout)}
@@ -412,7 +422,7 @@ ${PROBLEM_REVIEW_MARKUP.trimStart()}
     let requestId=1,view=null,busy=false,mounted=true,appendRequest=null,hydrationEpoch=0,automaticRefreshDisabled=false,refreshFailed=false,enrichmentFailed=false,historyLoadQueued=false,enrichmentTarget=null,enrichmentRunning=false,activeRows=[],terminalRows=[],idleRows=[],historyActiveRows=[],historyTerminalRows=[],terminalPagination=null,idlePagination=null,hostLocaleTag=resolveHostUiLocaleTag(window.openai&&window.openai.locale,initialMetadata,navigator.language),localePreference="auto",localeTag=hostLocaleTag,locale=resolveLocale(localeTag),t=BUNDLES[locale]||BUNDLES.en,standardBridgeReady=Promise.resolve(false),standardBridgeAttempt=null,standardBridgeInitialized=false,lastRefreshAt=0,lastRenderedAt=0,sizeReportingReady=false,sizeFrame=0,sizeChangeForced=false,resizeObserver=null,lastWidth=-1,lastHeight=-1;
     const expandedHistories=new Set(),historyDetails=new Map(),historyLoading=new Set(),historyErrors=new Map(),historyRequestTokens=new Map();
     const elements={scopeSelector:document.getElementById("scope-selector"),scopeConversation:document.getElementById("scope-conversation"),scopeAll:document.getElementById("scope-all"),scopeNote:document.getElementById("scope-note"),card:document.querySelector("main.card"),content:document.getElementById("dashboard-content"),counts:document.querySelector("section.counts"),refresh:document.getElementById("refresh"),weeklyUsage:document.getElementById("weekly-usage"),weeklyUsageValue:document.getElementById("weekly-usage-value"),weeklyUsageTrack:document.getElementById("weekly-usage-track"),weeklyUsageFill:document.getElementById("weekly-usage-fill"),weeklyUsageReset:document.getElementById("weekly-usage-reset"),weeklyUsageObserved:document.getElementById("weekly-usage-observed"),runningCount:document.getElementById("running-count"),responseCount:document.getElementById("response-count"),problemsCount:document.getElementById("problems-count"),backgroundStatus:document.getElementById("background-status"),backgroundFilter:document.getElementById("background-filter"),backgroundUnknown:document.getElementById("background-unknown"),activeSection:document.getElementById("active-section"),activeCount:document.getElementById("active-count"),activeList:document.getElementById("active-list"),activeEmpty:document.getElementById("active-empty"),terminalSection:document.getElementById("terminal-section"),terminalCount:document.getElementById("terminal-count"),terminalList:document.getElementById("terminal-list"),terminalEmpty:document.getElementById("terminal-empty"),terminalMoreWrap:document.getElementById("terminal-more-wrap"),terminalMore:document.getElementById("terminal-more"),message:document.getElementById("message"),updated:document.getElementById("updated")};
-    function resolveLocale(value){const normalized=String(value||"en").replaceAll("_","-").toLowerCase();if(normalized==="ko"||normalized.startsWith("ko-"))return"ko";if(normalized==="ja"||normalized.startsWith("ja-"))return"ja";if(normalized==="zh-hant"||/^zh-(tw|hk|mo)(-|$)/.test(normalized))return"zh-Hant";if(normalized==="zh"||normalized==="zh-hans"||normalized.startsWith("zh-"))return"zh-Hans";for(const key of["es","fr","de","pt"])if(normalized===key||normalized.startsWith(key+"-"))return key;return"en"}
+    function resolveLocale(value){const normalized=String(value||"en").replaceAll("_","-").toLowerCase();if(normalized==="ko"||normalized.startsWith("ko-"))return"ko";if(normalized==="ja"||normalized.startsWith("ja-"))return"ja";if(LOCALE_RESOLUTION.traditionalChineseTags.some((tag)=>normalized===tag||normalized.startsWith(tag+"-"))||LOCALE_RESOLUTION.traditionalChineseRegions.some((region)=>new RegExp("^zh-"+region+"(-|$)").test(normalized)))return"zh-Hant";if(normalized==="zh"||normalized==="zh-hans"||normalized.startsWith("zh-"))return"zh-Hans";for(const key of["es","fr","de","pt"])if(normalized===key||normalized.startsWith(key+"-"))return key;return"en"}
     function effectiveLocaleTag(){return localePreference==="auto"?hostLocaleTag:localePreference}
     function setLocale(value,rerender=true){localeTag=String(value||"en").replaceAll("_","-");locale=resolveLocale(localeTag);t=BUNDLES[locale]||BUNDLES.en;document.documentElement.lang=localeTag;document.title=t["dashboard.title"];for(const item of document.querySelectorAll("[data-i18n]"))item.textContent=t[item.dataset.i18n]||BUNDLES.en[item.dataset.i18n]||item.dataset.i18n;for(const item of document.querySelectorAll("[data-i18n-aria]"))item.setAttribute("aria-label",t[item.dataset.i18nAria]);elements.counts.setAttribute("aria-label",t["dashboard.countsLabel"]);elements.refresh.setAttribute("aria-label",t["common.refresh"]);elements.refresh.setAttribute("title",t["common.refresh"]);if(rerender&&view)paint(view)}
     function rpcRequest(method,params,timeout=70000,timeoutCode=""){if(!mounted)return Promise.reject(new Error("Codex overview unmounted"));return new Promise((resolve,reject)=>{const id=requestId++,timer=setTimeout(()=>{pending.delete(id);const error=new Error(t["common.error"]);if(timeoutCode)error.code=timeoutCode;reject(error)},timeout);pending.set(id,{resolve:(value)=>{clearTimeout(timer);resolve(value)},reject:(error)=>{clearTimeout(timer);reject(error)}});window.parent.postMessage({jsonrpc:"2.0",id,method,params},"*")})}
@@ -422,7 +432,7 @@ ${PROBLEM_REVIEW_MARKUP.trimStart()}
     async function standardToolCall(name,args){const ready=standardBridgeInitialized||await beginStandardBridge();if(!ready)throw new Error(t["common.error"]);const result=await rpcRequest("tools/call",{name,arguments:args},TOOL_CALL_TIMEOUT_MS,"MCP_TOOL_CALL_DISPATCH_TIMEOUT");return result&&result.result||result}
     async function callTool(name,args,readOnly=true){const compatibility=window.openai&&typeof window.openai.callTool==="function"?()=>window.openai.callTool(name,args):undefined;if(compatibility)return callUiToolWithFallback(compatibility,()=>standardToolCall(name,args),{standardTimeoutMs:TOOL_CALL_TIMEOUT_MS,compatibilityTimeoutMs:STANDARD_CALL_BUDGET_MS,timeoutMessage:t["common.error"],shouldFallback:()=>readOnly});return callUiToolWithFallback(()=>standardToolCall(name,args),undefined,{standardTimeoutMs:STANDARD_CALL_BUDGET_MS,compatibilityTimeoutMs:TOOL_CALL_TIMEOUT_MS,timeoutMessage:t["common.error"]})}
     function privateView(metadataValue){const metadata=hostToolResultMetadata(metadataValue),candidate=metadata&&metadata[DASHBOARD_VIEW_METADATA_KEY];return candidate&&candidate.kind==="codex/dashboardView"&&candidate.version===${DASHBOARD_PRIVATE_METADATA_CONTRACT_VERSION}&&candidate.purpose==="bridge-wide-read-only-hydration"?candidate.view:null}
-    function parsedToolText(result){const item=result&&Array.isArray(result.content)&&result.content.find((entry)=>entry&&entry.type==="text"&&typeof entry.text==="string");if(!item)return null;try{return JSON.parse(item.text)}catch{return null}}
+    function parsedToolText(result){const item=result&&Array.isArray(result.content)&&result.content.find((entry)=>entry&&entry.type==="text"&&typeof entry.text==="string");return item?parseUiJsonTextStrict(item.text):null}
     function errorText(value){if(typeof value==="string")return value;if(value&&typeof value.message==="string")return value.message;if(value&&value.error)return errorText(value.error);try{return JSON.stringify(value)}catch{return t["common.error"]}}
     function unwrap(value){const result=normalizeHostToolResult(value),metadata=hostToolResultMetadata(value),candidate=privateView(metadata)||result&&result.structuredContent||parsedToolText(result)||result;if(result&&result.isError)throw new Error(errorText(result));if(!candidate||candidate.kind!=="dashboard"||candidate.statusSource!=="codex-runtime-only"||!candidate.counts||!Array.isArray(candidate.activeRows)||!Array.isArray(candidate.terminalRows)||!Array.isArray(candidate.idleRows)||!candidate.pagination||!candidate.pagination.active||!candidate.pagination.terminal||!candidate.pagination.idle)throw new Error(t["common.error"]);const responseLocale=metadata.hostLocale||metadata["openai/locale"]||metadata["webplus/i18n"];if(responseLocale)hostLocaleTag=String(responseLocale);return candidate}
     function unwrapHistoryDetail(value){const result=normalizeHostToolResult(value),candidate=result&&result.structuredContent||parsedToolText(result)||result;if(result&&result.isError)throw new Error(errorText(result));if(!candidate||candidate.kind!=="dashboard-history"||typeof candidate.rowKey!=="string"||!Array.isArray(candidate.history)||!Number.isInteger(candidate.historyCount)||candidate.historyRevision!==undefined&&(typeof candidate.historyRevision!=="string"||!/^[a-f0-9]{64}$/.test(candidate.historyRevision)))throw new Error(t["common.error"]);return candidate}

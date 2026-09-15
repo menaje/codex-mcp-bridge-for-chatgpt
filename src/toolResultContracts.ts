@@ -1,6 +1,11 @@
 import type { CallToolResult, ContentBlock } from "@modelcontextprotocol/server";
 import { isDeepStrictEqual } from "node:util";
 import type * as z from "zod/v4";
+import {
+  assertJsonTextIntegrity,
+  assertWellFormedUnicode,
+  parseJsonTextStrict
+} from "./textIntegrity.js";
 
 /**
  * The four result projections intentionally have different trust and audience
@@ -213,6 +218,7 @@ function isReservedMcpMetadataKey(key: string): boolean {
 
 /** MCP 2026-07-28 permits any JSON value at the structured result root. */
 function jsonValue(value: unknown, label: string): string {
+  assertJsonTextIntegrity(value, label);
   let encoded: string | undefined;
   try {
     encoded = JSON.stringify(value);
@@ -225,7 +231,7 @@ function jsonValue(value: unknown, label: string): string {
   // JSON.stringify silently changes several JavaScript values (for example
   // NaN, Date, functions, and undefined object members). A result boundary
   // must not publish a value whose wire representation means something else.
-  const decoded = JSON.parse(encoded) as unknown;
+  const decoded = parseJsonTextStrict(encoded, label);
   if (!isDeepStrictEqual(value, decoded)) {
     throw new Error(
       `${label} must be a JSON value without lossy serialization (${firstJsonDifference(value, decoded)}).`
@@ -268,6 +274,7 @@ function firstJsonDifference(value: unknown, decoded: unknown, path = "$"): stri
 }
 
 export function boundedUtf8Text(text: string, maxBytes: number): string {
+  assertWellFormedUnicode(text, "Bounded output text");
   if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
   const suffix = "\n… [truncated by output contract]";
   const suffixBytes = Buffer.byteLength(suffix, "utf8");
@@ -300,6 +307,7 @@ export function boundedUtf8Text(text: string, maxBytes: number): string {
  * safe guard for quotes, backslashes, or control characters.
  */
 export function boundedUtf8JsonString(text: string, maxBytes: number): string {
+  assertWellFormedUnicode(text, "Bounded JSON output text");
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
     throw new Error("JSON string byte cap must be a positive safe integer.");
   }

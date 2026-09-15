@@ -10,51 +10,51 @@ struct CodexRuntimeUpdateControls: View {
     private var failed: Bool { runtime.updateCheckError != nil || (runtime.operation?.action == "check-updates" && runtime.operation?.phase == "failed") }
 
     var body: some View {
-        Toggle("현재 버전 유지", isOn: Binding(
+        Toggle("macos.keepcurrentversion", isOn: Binding(
             get: { runtime.preferences.pinnedVersion != nil },
             set: { value in preferences(pin: .some(value ? runtime.installedVersion : nil)) }
         ))
         HStack {
-            Toggle("업데이트 알림", isOn: Binding(
+            Toggle("macos.updatenotifications", isOn: Binding(
                 get: { runtime.preferences.notifications },
                 set: { preferences(notifications: $0) }
             ))
             Spacer()
             if checking { ProgressView().controlSize(.small) }
-            Button("지금 확인") { action("check-updates") }
+            Button("macos.checknow") { action("check-updates") }
                 .disabled(checking || runtime.isInstalling)
         }
         VStack(alignment: .leading, spacing: 5) {
             if let checked = runtime.checkedAt {
-                LabeledContent("마지막 확인", value: DisplayFormat.dateTime(checked, locale: model.interfaceLocale))
-            } else { Text("아직 업데이트를 확인하지 않았습니다.") }
+                LabeledContent("macos.lastchecked", value: DisplayFormat.dateTime(checked, locale: model.interfaceLocale))
+            } else { Text("macos.updateshavenotbeencheckedyet") }
             if failed {
-                Text("업데이트 정보를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.").foregroundStyle(.orange)
+                Text("macos.couldnotcheckforupdatespleasetryagain").foregroundStyle(.orange)
                 if let checked = runtime.lastSuccessfulCheckAt {
-                    LabeledContent("마지막 성공", value: DisplayFormat.dateTime(checked, locale: model.interfaceLocale))
+                    LabeledContent("macos.lastsuccessfulcheck", value: DisplayFormat.dateTime(checked, locale: model.interfaceLocale))
                 }
             }
             if let latest = runtime.latestVersion {
                 if latest.compare(runtime.installedVersion ?? "", options: .numeric) == .orderedDescending {
-                    LabeledContent("새 버전", value: "\(runtime.installedVersion ?? "—") → \(latest)")
-                } else if !failed { Text("최신 버전입니다.") }
+                    LabeledContent("macos.newversion", value: "\(runtime.installedVersion ?? "—") → \(latest)")
+                } else if !failed { Text("macos.uptodate") }
             }
-            if runtime.preferences.pinnedVersion != nil { Text("현재 버전 유지 중") }
+            if runtime.preferences.pinnedVersion != nil { Text("macos.keepingthecurrentversion") }
         }
         .font(.caption).foregroundStyle(.secondary)
         if let version = runtime.updateVersion, runtime.stagedVersion != version {
             HStack {
                 Text(verbatim: version).monospacedDigit()
-                Button("코덱스 업데이트") { action("update") }
+                Button("macos.updatecodex") { action("update") }
                     .disabled(!runtime.actions.update)
-                Button("이 버전 건너뛰기") { preferences(skip: version) }
+                Button("macos.skipthisversion") { preferences(skip: version) }
                     .disabled(!runtime.actions.skip)
             }
         }
         if let skipped = runtime.preferences.skippedVersion {
             HStack {
-                LabeledContent("건너뛴 버전", value: skipped)
-                Button("건너뛰기 해제") { preferences(skip: .some(nil)) }
+                LabeledContent("macos.skippedversion", value: skipped)
+                Button("macos.stopskippingthisversion") { preferences(skip: .some(nil)) }
             }
         }
     }

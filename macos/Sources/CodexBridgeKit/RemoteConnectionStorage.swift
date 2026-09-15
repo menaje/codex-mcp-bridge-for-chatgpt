@@ -48,6 +48,7 @@ public final class UserDefaultsBridgeConnectionStore: BridgeConnectionPreference
 
     public func load() -> BridgeConnectionPreferences {
         guard let data = defaults.data(forKey: key),
+              (try? BridgeTextIntegrity.validateJSONUTF8(data)) != nil,
               let decoded = try? JSONDecoder().decode(
                 BridgeConnectionPreferences.self,
                 from: data
@@ -137,7 +138,7 @@ public struct KeychainRemoteCredentialStore: RemoteCredentialStoring, Sendable {
             throw RemoteConnectionStorageError.keychain(status)
         }
         guard let data = item as? Data,
-              let credential = String(data: data, encoding: .utf8),
+              let credential = try? BridgeTextIntegrity.decodeUTF8Strict(data),
               credential.hasPrefix("device_"),
               credential.count >= 40 else {
             throw RemoteConnectionStorageError.invalidCredential
@@ -147,8 +148,12 @@ public struct KeychainRemoteCredentialStore: RemoteCredentialStoring, Sendable {
 
     public func saveCredential(_ credential: String, for serverId: String) throws {
         try validateServerId(serverId)
-        guard credential.hasPrefix("device_"), credential.count >= 40,
-              let data = credential.data(using: .utf8) else {
+        let exactCredential = try BridgeTextIntegrity.opaqueIdentifier(
+            credential,
+            options: .init(rejectControlCharacters: false)
+        )
+        guard exactCredential.hasPrefix("device_"), exactCredential.count >= 40,
+              let data = exactCredential.data(using: .utf8) else {
             throw RemoteConnectionStorageError.invalidCredential
         }
         let identity: [String: Any] = [
@@ -187,7 +192,11 @@ public struct KeychainRemoteCredentialStore: RemoteCredentialStoring, Sendable {
     }
 
     private func validateServerId(_ serverId: String) throws {
-        guard UUID(uuidString: serverId) != nil else {
+        let exactServerId = try BridgeTextIntegrity.opaqueIdentifier(
+            serverId,
+            options: .init(rejectControlCharacters: false)
+        )
+        guard UUID(uuidString: exactServerId) != nil else {
             throw RemoteConnectionStorageError.invalidServerIdentity
         }
     }

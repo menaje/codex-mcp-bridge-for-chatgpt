@@ -25,6 +25,10 @@ Use `npm run validate:full` when the full local toolchain is available. Keep
 generated build output out of the review unless it is a declared package
 artifact.
 
+When changing fixed UI copy, edit `locales/catalog.json`, regenerate with
+`npm run localization:generate`, and review the derived TypeScript, Swift, and
+String Catalog files. See [Localization source and generation](localization.md).
+
 ## MCP 2026-07-28 release gate
 
 This is a current-only MCP release. Confirm that:

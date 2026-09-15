@@ -93,6 +93,7 @@ public struct RuntimePaths: Sendable {
     private static func readRuntimeBuildID(_ root: URL) -> String? {
         let file = root.appendingPathComponent("dist/build-info.json")
         guard let data = try? Data(contentsOf: file),
+              (try? BridgeTextIntegrity.validateJSONUTF8(data)) != nil,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let buildID = object["id"] as? String,
               !buildID.isEmpty else {
@@ -122,10 +123,9 @@ public struct RuntimePaths: Sendable {
                 return false
             }
             guard process.terminationStatus == 0 else { return false }
-            let version = String(
-                data: output.fileHandleForReading.readDataToEndOfFile(),
-                encoding: .utf8
-            )?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let version = try? BridgeTextIntegrity.decodeUTF8Strict(
+                output.fileHandleForReading.readDataToEndOfFile()
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
             guard let major = version?.split(separator: ".").first.flatMap({
                 Int($0)
             }) else {

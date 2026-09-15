@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { requireAllowedCwd } from "./config.js";
+import { canonicalHumanText } from "./textIntegrity.js";
 
 export const PROJECT_NAME_MAX_LENGTH = 120;
 export const MAX_REGISTERED_PROJECTS = 100;
@@ -28,7 +29,6 @@ export const PROJECT_OPERATION_CONFLICT = "PROJECT_OPERATION_CONFLICT";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PROJECT_REF_PATTERN = /^prj_[A-Za-z0-9_-]{22}$/;
 const FORBIDDEN_PROJECT_NAME_CODE_POINT = /[\p{Cc}\p{Cs}\p{Bidi_Control}\p{Default_Ignorable_Code_Point}]/u;
-const UNICODE_WHITESPACE = /\p{White_Space}+/gu;
 
 /** Internal-only immutable project record. UUID and cwd must never enter model-facing output. */
 export type ProjectTarget = {
@@ -112,20 +112,25 @@ export function normalizeProjectName(value: string): string {
     throw new Error(`${PROJECT_NAME_INVALID}: Expected a project name string.`);
   }
   rejectForbiddenProjectNameCodePoints(value);
-  const normalized = value.normalize("NFC");
-  rejectForbiddenProjectNameCodePoints(normalized);
-  const canonical = normalized.replace(UNICODE_WHITESPACE, " ").trim();
-  rejectForbiddenProjectNameCodePoints(canonical);
-  if (!canonical || Array.from(canonical).length > PROJECT_NAME_MAX_LENGTH) {
+  let canonical: string;
+  try {
+    canonical = canonicalHumanText(value, {
+      field: "Project name",
+      maxCharacters: PROJECT_NAME_MAX_LENGTH,
+      collapseWhitespace: true,
+      trim: true
+    });
+  } catch {
     throw new Error(
       `${PROJECT_NAME_INVALID}: Use 1-${PROJECT_NAME_MAX_LENGTH} visible Unicode characters.`
     );
   }
+  rejectForbiddenProjectNameCodePoints(canonical);
   return canonical;
 }
 
 /**
- * Locale-independent Unicode NFKC case folding.
+ * Locale-independent Unicode NFC case folding.
  *
  * ECMAScript does not expose Unicode CaseFolding.txt directly. Per-code-point
  * upper/lower closure implements the full mappings (including expansions such
@@ -133,7 +138,7 @@ export function normalizeProjectName(value: string): string {
  * exceptions where the case-fold representative is not that closure.
  */
 export function projectNameKey(value: string): string {
-  const canonical = normalizeProjectName(value).normalize("NFKC");
+  const canonical = normalizeProjectName(value);
   const folded = Array.from(canonical, (character) => {
     if (character === "\u0131") return character;
     if (character === "\u1e9e") return "ss";
@@ -146,7 +151,10 @@ export function projectNameKey(value: string): string {
     }
     return character.toUpperCase().toLowerCase();
   }).join("");
-  return folded.normalize("NFKC");
+  // Do not use NFKC here: full-width and compatibility characters can be
+  // legitimate distinct project names. NFC keeps canonically equivalent text
+  // searchable without changing the stored display value.
+  return folded.normalize("NFC");
 }
 
 export function canonicalProjectCwd(

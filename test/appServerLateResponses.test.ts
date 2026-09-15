@@ -213,6 +213,16 @@ describe("AppServerLateResponseJournal", () => {
     expect(journal.status().totals.stateConflicts).toBe(1);
     store.close();
   });
+
+  it("rejects escaped unpaired surrogates in persisted telemetry", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    store.setMeta("app_server_late_responses_v1", '{"note":"\\ud800"}');
+
+    expect(() => new AppServerLateResponseJournal(store)).toThrow(
+      /late-response telemetry is invalid JSON/
+    );
+    store.close();
+  });
 });
 
 function syntheticLateResponse(

@@ -12,6 +12,28 @@ describe("SkillLibrary", () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
+  it("preserves verbatim instruction and reference bytes while canonicalizing human metadata", async () => {
+    const root = await temporaryRoot();
+    const library = new SkillLibrary({ directory: path.join(root, "bridge-skills") });
+    const instructions = "  Café\r\n`./각`\r\n";
+    const reference = "Café\r\n  keep trailing space  \r\n";
+    const created = await library.createBridgeSkill({
+      requestId: randomUUID(),
+      name: "  Café  ",
+      description: "  Café metadata  ",
+      instructions,
+      references: [{ name: "  Notes  ", content: reference }]
+    });
+    const document = await library.read({ reference: created });
+    expect(document.skill.name).toBe("Café");
+    expect(document.skill.description).toBe("Café metadata");
+    expect(document.instructions).toBe(instructions);
+    expect((await library.readReference({
+      reference: created,
+      referenceId: document.references[0]!.referenceId
+    })).content).toBe(reference);
+  });
+
   it("keeps bridge skill instructions and materials immutable by version", async () => {
     const root = await temporaryRoot();
     const library = new SkillLibrary({ directory: path.join(root, "bridge-skills") });

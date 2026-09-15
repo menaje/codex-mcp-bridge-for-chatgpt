@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { decodeUtf8Strict, parseJsonUtf8Strict } from "./text-integrity.mjs";
 
 const VERSION_PLACEHOLDER = "0.0.0";
 const ALLOWED_KINDS = new Set(["npm", "macos"]);
@@ -86,7 +87,10 @@ export function compareReleaseArtifacts(candidateArtifact, stableArtifact, kind)
 }
 
 function unpackNpmArchive(archive, destination) {
-  const listing = execFileSync("tar", ["-tzf", archive], { encoding: "utf8", maxBuffer: 20 * 1024 * 1024 });
+  const listing = decodeUtf8Strict(
+    execFileSync("tar", ["-tzf", archive], { maxBuffer: 20 * 1024 * 1024 }),
+    "npm archive listing"
+  );
   const entries = listing.split(/\r?\n/).filter(Boolean);
   if (entries.length === 0 || entries.length > 50_000) throw new Error("npm archive has an invalid entry count.");
   for (const entry of entries) {
@@ -166,14 +170,16 @@ function normalizedFileContent(file, relative, kind) {
     return normalizedMachOContent(file);
   }
   if (kind === "macos" && (relative === "Contents/Info.plist" || relative.endsWith("/Contents/Info.plist"))) {
-    const json = execFileSync("plutil", ["-convert", "json", "-o", "-", file], { encoding: "utf8" });
-    const value = JSON.parse(json);
+    const value = parseJsonUtf8Strict(
+      execFileSync("plutil", ["-convert", "json", "-o", "-", file]),
+      "macOS bundle Info.plist"
+    );
     value.CFBundleShortVersionString = VERSION_PLACEHOLDER;
     value.CFBundleVersion = "0";
     return Buffer.from(stableJson(value));
   }
   if (relative.endsWith("/release-manifest.json")) {
-    const value = JSON.parse(readFileSync(file, "utf8"));
+    const value = parseJsonUtf8Strict(readFileSync(file), "release manifest");
     if (isRecord(value.release)) {
       value.release.version = VERSION_PLACEHOLDER;
       value.release.stage = "normalized";
@@ -184,19 +190,19 @@ function normalizedFileContent(file, relative, kind) {
     return Buffer.from(stableJson(value));
   }
   if (relative.endsWith("/.codex-plugin/plugin.json")) {
-    const value = JSON.parse(readFileSync(file, "utf8"));
+    const value = parseJsonUtf8Strict(readFileSync(file), "plugin manifest");
     value.version = VERSION_PLACEHOLDER;
     return Buffer.from(stableJson(value));
   }
   if (relative.endsWith("/package.json")) {
-    const value = JSON.parse(readFileSync(file, "utf8"));
+    const value = parseJsonUtf8Strict(readFileSync(file), "package manifest");
     if (typeof value.version === "string" && value.name === "codex-mcp-bridge-for-chatgpt") {
       value.version = VERSION_PLACEHOLDER;
     }
     return Buffer.from(stableJson(value));
   }
   if (relative.endsWith("/package-lock.json")) {
-    const value = JSON.parse(readFileSync(file, "utf8"));
+    const value = parseJsonUtf8Strict(readFileSync(file), "package lock");
     if (value.name === "codex-mcp-bridge-for-chatgpt") {
       value.version = VERSION_PLACEHOLDER;
       if (isRecord(value.packages?.[""])) value.packages[""].version = VERSION_PLACEHOLDER;

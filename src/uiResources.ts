@@ -1,9 +1,32 @@
 import {
+  UI_LOCALE_RESOLUTION,
+  UI_TRANSLATIONS,
+  type UiTranslationKey
+} from "./uiI18n.js";
+import {
   UI_RESOURCE_MANIFEST,
   type UiResourceName as GeneratedUiResourceName
 } from "./uiManifest.generated.js";
 
 export type UiResourceName = GeneratedUiResourceName;
+
+const STALE_TRANSLATION_KEYS = [
+  "stale.title",
+  "stale.body",
+  "stale.currentResource",
+  "stale.card.settings",
+  "stale.card.dashboard"
+] as const satisfies readonly UiTranslationKey[];
+
+// Retained-card fallback text comes from the same generated catalog as active
+// cards. It remains a small subset only because an old URI must stay usable
+// without loading the current card's complete translation bundle.
+const STALE_UI_TRANSLATIONS = Object.fromEntries(
+  Object.entries(UI_TRANSLATIONS).map(([locale, bundle]) => [
+    locale,
+    Object.fromEntries(STALE_TRANSLATION_KEYS.map((key) => [key, bundle[key]]))
+  ])
+);
 
 function activeResource(name: UiResourceName) {
   return (UI_RESOURCE_MANIFEST.resources as Record<string, unknown>)[name] as {
@@ -14,72 +37,6 @@ function activeResource(name: UiResourceName) {
     readonly releaseProvenance?: UiResourceRevision["releaseProvenance"];
   } | undefined;
 }
-
-const STALE_UI_TRANSLATIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  en: {
-    "stale.title": "Plugin refresh required",
-    "stale.body": "This {card} card revision is no longer retained. Refresh the plugin metadata and open a new conversation.",
-    "stale.currentResource": "Current resource:",
-    "stale.card.settings": "settings",
-    "stale.card.dashboard": "overview"
-  },
-  ko: {
-    "stale.title": "플러그인 새로고침 필요",
-    "stale.body": "이 {card} 카드 버전은 더 이상 보관되지 않습니다. 플러그인 메타데이터를 새로고침하고 새 대화를 여세요.",
-    "stale.currentResource": "현재 리소스:",
-    "stale.card.settings": "설정",
-    "stale.card.dashboard": "전체 현황"
-  },
-  ja: {
-    "stale.title": "プラグインの更新が必要です",
-    "stale.body": "この{card}カードの版は保持されていません。プラグインのメタデータを更新して、新しい会話を開いてください。",
-    "stale.currentResource": "現在のリソース:",
-    "stale.card.settings": "設定",
-    "stale.card.dashboard": "全体状況"
-  },
-  "zh-Hans": {
-    "stale.title": "需要刷新插件",
-    "stale.body": "此{card}卡片版本已不再保留。请刷新插件元数据并打开新对话。",
-    "stale.currentResource": "当前资源：",
-    "stale.card.settings": "设置",
-    "stale.card.dashboard": "概览"
-  },
-  "zh-Hant": {
-    "stale.title": "需要重新整理外掛程式",
-    "stale.body": "此{card}卡片版本已不再保留。請重新整理外掛程式中繼資料並開啟新對話。",
-    "stale.currentResource": "目前資源：",
-    "stale.card.settings": "設定",
-    "stale.card.dashboard": "概覽"
-  },
-  es: {
-    "stale.title": "Es necesario actualizar el plugin",
-    "stale.body": "Esta versión de la tarjeta de {card} ya no se conserva. Actualiza los metadatos del plugin y abre una conversación nueva.",
-    "stale.currentResource": "Recurso actual:",
-    "stale.card.settings": "configuración",
-    "stale.card.dashboard": "resumen"
-  },
-  fr: {
-    "stale.title": "Actualisation du plugin requise",
-    "stale.body": "Cette version de la carte {card} n’est plus conservée. Actualisez les métadonnées du plugin et ouvrez une nouvelle conversation.",
-    "stale.currentResource": "Ressource actuelle :",
-    "stale.card.settings": "des paramètres",
-    "stale.card.dashboard": "de la vue d’ensemble"
-  },
-  de: {
-    "stale.title": "Plugin-Aktualisierung erforderlich",
-    "stale.body": "Diese Version der {card}-Karte wird nicht mehr vorgehalten. Aktualisieren Sie die Plugin-Metadaten und öffnen Sie eine neue Unterhaltung.",
-    "stale.currentResource": "Aktuelle Ressource:",
-    "stale.card.settings": "Einstellungen",
-    "stale.card.dashboard": "Übersicht"
-  },
-  pt: {
-    "stale.title": "É necessário atualizar o plugin",
-    "stale.body": "Esta versão do cartão de {card} não é mais mantida. Atualize os metadados do plugin e abra uma nova conversa.",
-    "stale.currentResource": "Recurso atual:",
-    "stale.card.settings": "configurações",
-    "stale.card.dashboard": "visão geral"
-  }
-};
 
 export type UiResourceRevision = {
   uriVersion: number;
@@ -145,10 +102,11 @@ function staleUiResourceNotice(name: UiResourceName): string {
   const current = currentUiResourceUri(name);
   return `<!doctype html><html dir="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title></title></head><body><main><h1 id="title"></h1><p id="body"></p><p><span id="current-label"></span> <code id="current"></code></p></main><script>
 const BUNDLES=${JSON.stringify(STALE_UI_TRANSLATIONS).replaceAll("<", "\\u003c")};
+const LOCALE_RESOLUTION=${JSON.stringify(UI_LOCALE_RESOLUTION)};
 const resourceName=${JSON.stringify(name)};
 const currentResource=${JSON.stringify(current)};
 const rawLocale=String(navigator.language||"en").replaceAll("_","-").toLowerCase();
-const locale=rawLocale==="ko"||rawLocale.startsWith("ko-")?"ko":rawLocale==="ja"||rawLocale.startsWith("ja-")?"ja":rawLocale==="zh-hant"||/^zh-(tw|hk|mo)(-|$)/.test(rawLocale)?"zh-Hant":rawLocale==="zh"||rawLocale==="zh-hans"||rawLocale.startsWith("zh-")?"zh-Hans":["es","fr","de","pt"].find((entry)=>rawLocale===entry||rawLocale.startsWith(entry+"-"))||"en";
+const locale=rawLocale==="ko"||rawLocale.startsWith("ko-")?"ko":rawLocale==="ja"||rawLocale.startsWith("ja-")?"ja":LOCALE_RESOLUTION.traditionalChineseTags.some((tag)=>rawLocale===tag||rawLocale.startsWith(tag+"-"))||LOCALE_RESOLUTION.traditionalChineseRegions.some((region)=>new RegExp("^zh-"+region+"(-|$)").test(rawLocale))?"zh-Hant":rawLocale==="zh"||rawLocale==="zh-hans"||rawLocale.startsWith("zh-")?"zh-Hans":["es","fr","de","pt"].find((entry)=>rawLocale===entry||rawLocale.startsWith(entry+"-"))||"en";
 const t=BUNDLES[locale]||BUNDLES.en;
 const card=t["stale.card."+resourceName]||resourceName;
 document.documentElement.lang=locale;

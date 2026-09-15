@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/server/validators/ajv";
 import type { BackendCapabilities } from "./modelPolicy.js";
+import { parseJsonUtf8Strict } from "./textIntegrity.js";
 
 export type CliProtocolSupport = {
   compatible: boolean;
@@ -30,10 +31,13 @@ export async function inspectCliProtocol(command: string, environment: NodeJS.Pr
   try {
     await generateSchema(command, directory, environment, timeoutMs);
     const [requests, config] = await Promise.all([
-      readFile(path.join(directory, "ClientRequest.json"), "utf8"),
-      readFile(path.join(directory, "v2", "ConfigReadResponse.json"), "utf8")
+      readFile(path.join(directory, "ClientRequest.json")),
+      readFile(path.join(directory, "v2", "ConfigReadResponse.json"))
     ]);
-    return inspectClientRequestContract(JSON.parse(requests), JSON.parse(config));
+    return inspectClientRequestContract(
+      parseJsonUtf8Strict(requests, "App Server ClientRequest schema"),
+      parseJsonUtf8Strict(config, "App Server ConfigReadResponse schema")
+    );
   } catch {
     throw new Error("CODEX_PROTOCOL_UNVERIFIED: Could not inspect the selected CLI's App Server request contract. Choose or repair an installation with a working schema generator.");
   } finally {

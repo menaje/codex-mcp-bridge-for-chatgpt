@@ -6,6 +6,11 @@ cards in a WebView. The existing ChatGPT cards and MCP tools remain the primary
 remote interface and keep their current descriptors, schemas, resource URIs,
 and cache contracts.
 
+Fixed UI copy, supported languages, and locale fallback rules come from the
+shared generated localization catalog. Native String Catalog files are derived
+from `locales/catalog.json`; see [Localization source and generation](localization.md)
+before editing copy or running localization checks.
+
 The menu bar opens as a compact status and usage summary with **Running**,
 **Response required**, and **Problems** counts. Selecting a count expands only
 that view below the summary; selecting it again collapses it, and another count

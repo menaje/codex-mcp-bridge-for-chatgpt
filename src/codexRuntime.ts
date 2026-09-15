@@ -9,6 +9,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { installManagedCli } from "./runtimeDownloads.js";
+import { decodeUtf8Strict, parseJsonUtf8Strict } from "./textIntegrity.js";
 
 const executeFile = promisify(execFile);
 const versionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
@@ -516,7 +517,10 @@ export class CodexRuntimeManager {
       if (!entry.isDirectory() || !/^\d+\.\d+\.\d+-[a-f0-9-]{36}$/.test(entry.name) || state.managed.some(item => item.id === entry.name)) continue;
       const directory = path.join(this.root, "cli", entry.name);
       try {
-        const marker = JSON.parse(await readFile(path.join(directory, "bridge-install.json"), "utf8"));
+        const marker = parseJsonUtf8Strict<Record<string, unknown>>(
+          await readFile(path.join(directory, "bridge-install.json")),
+          "managed runtime installation marker"
+        );
         if (marker.schemaVersion === 1 && marker.id === entry.name && marker.owner === "codex-mcp-bridge") result.push({ id: entry.name, bytes: await directoryBytes(directory) });
       } catch { /* Never reclaim unrecognized user files or incomplete ownership markers. */ }
     }
@@ -591,7 +595,9 @@ export class CodexRuntimeManager {
     for (const name of await readdir(directory).catch(() => [] as string[])) {
       const file = path.join(directory, name);
       try {
-        const value = z.object({ pid: z.number().int().positive(), selection: selectionSchema, startedAt: z.string() }).parse(JSON.parse(await readFile(file, "utf8")));
+        const value = z.object({ pid: z.number().int().positive(), selection: selectionSchema, startedAt: z.string() }).parse(
+          parseJsonUtf8Strict(await readFile(file), "runtime lease")
+        );
         if (pidAlive(value.pid)) leases.push(value); else await rm(file, { force: true });
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("CODEX_LEASE_INVALID: Cannot safely determine whether a runtime is in use.");
@@ -601,7 +607,9 @@ export class CodexRuntimeManager {
   }
   private async readState(): Promise<RuntimeState> {
     try {
-      const state = stateSchema.parse(JSON.parse(await readFile(path.join(this.root, "cli-state.json"), "utf8")));
+      const state = stateSchema.parse(
+        parseJsonUtf8Strict(await readFile(path.join(this.root, "cli-state.json")), "runtime state")
+      );
       if (state.operation && ["downloading", "installing", "verifying"].includes(state.operation.phase) && !pidAlive(state.operation.ownerPid)) {
         state.operation = { ...state.operation, phase: "failed", error: "CODEX_INSTALL_INTERRUPTED" };
       }
@@ -638,7 +646,12 @@ export async function withRuntimeLock<T>(root: string, name: string, task: () =>
     try { await mkdir(lock, { mode: 0o700 }); acquired = true; await writeFile(path.join(lock, "pid"), String(process.pid), { mode: 0o600 }); break; }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const owner = Number(await readFile(path.join(lock, "pid"), "utf8").catch(() => "0"));
+      const owner = Number(await readFile(path.join(lock, "pid"))
+        .then((data) => decodeUtf8Strict(data, "runtime lock owner"))
+        .catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return "0";
+          throw error;
+        }));
       if (owner > 0 && !pidAlive(owner)) { await rm(lock, { recursive: true, force: true }); continue; }
       await new Promise(resolve => setTimeout(resolve, 25));
     }
@@ -679,7 +692,11 @@ function newerThan(candidate: string, current: string | null): boolean {
 async function latestStableCli(): Promise<string> {
   const response = await fetch("https://registry.npmjs.org/@openai/codex/latest", { signal: AbortSignal.timeout(15_000) });
   if (!response.ok) throw new Error("CODEX_UPDATE_CHECK_FAILED: The version service is unavailable.");
-  return (await response.json() as { version: string }).version;
+  const body = new Uint8Array(await response.arrayBuffer());
+  if (body.byteLength > 1024 * 1024) throw new Error("CODEX_UPDATE_CHECK_FAILED: The version service returned too much data.");
+  const metadata = parseJsonUtf8Strict<{ version?: unknown }>(body, "Codex update metadata");
+  if (typeof metadata.version !== "string") throw new Error("CODEX_UPDATE_CHECK_FAILED: The version service returned invalid data.");
+  return metadata.version;
 }
 async function resolveOnPath(command: string, environment: NodeJS.ProcessEnv): Promise<string> {
   if (path.isAbsolute(command) || command.includes(path.sep)) return path.resolve(command);
@@ -695,7 +712,10 @@ async function physicalCodexPath(command: string): Promise<string> {
   if (resolved.endsWith(`${path.sep}bin${path.sep}codex.js`) || (process.platform === "win32" && resolved.endsWith(`${path.sep}codex.cmd`))) {
     const packageRoot = resolved.endsWith(".cmd") ? path.join(path.dirname(resolved), "node_modules", "@openai", "codex") : path.dirname(path.dirname(resolved));
     try {
-      const metadata = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
+      const metadata = parseJsonUtf8Strict<Record<string, unknown>>(
+        await readFile(path.join(packageRoot, "package.json")),
+        "Codex package metadata"
+      );
       if (metadata.name === "@openai/codex") {
         const target = `${process.arch === "arm64" ? "aarch64" : "x86_64"}-${process.platform === "darwin" ? "apple-darwin" : process.platform === "win32" ? "pc-windows-msvc" : "unknown-linux-musl"}`;
         const executable = `codex${process.platform === "win32" ? ".exe" : ""}`;

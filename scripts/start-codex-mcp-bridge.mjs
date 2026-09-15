@@ -24,6 +24,12 @@ import {
   recordTunnelProfileMetadata
 } from "./tunnel-profile.mjs";
 import { hasRecentTunnelControlPlanePoll, writeManagedRuntimeStatus } from "./runtime-status.mjs";
+import {
+  assertJsonTextIntegrity,
+  assertWellFormedUnicode,
+  decodeUtf8Strict,
+  parseJsonUtf8Strict
+} from "./text-integrity.mjs";
 
 if (process.env.CODEX_MCP_BRIDGE_MANAGED_BY_APP === "1") {
   // The helper owns these log pipes, not the runtime's lifetime. A helper exit
@@ -258,7 +264,10 @@ function ensureBuilt() {
 function buildMatchesSource(outputPaths) {
   if (!outputPaths.every((outputPath) => existsSync(outputPath))) return false;
   try {
-    const buildInfo = JSON.parse(readFileSync(resolve(repoRoot, "dist/build-info.json"), "utf8"));
+    const buildInfo = parseJsonUtf8Strict(
+      readFileSync(resolve(repoRoot, "dist/build-info.json")),
+      "Installed build metadata"
+    );
     return buildInfo.sourceHash === computeSourceHash(repoRoot);
   } catch {
     return false;
@@ -340,12 +349,13 @@ async function startSecureTunnel({ tunnelId }) {
 
   const doctor = spawnSync(tunnelClient, ["doctor", "--profile", profile, "--explain"], {
     cwd: repoRoot,
-    env: childEnvironment,
-    encoding: "utf8"
+    env: childEnvironment
   });
-  if (doctor.stdout) process.stdout.write(doctor.stdout);
-  if (doctor.stderr) process.stderr.write(doctor.stderr);
-  if (doctor.status !== 0 && !isIgnorableNoAuthDoctorFailure(`${doctor.stdout || ""}\n${doctor.stderr || ""}`)) {
+  const doctorStdout = processOutputText(doctor.stdout, "tunnel-client doctor stdout");
+  const doctorStderr = processOutputText(doctor.stderr, "tunnel-client doctor stderr");
+  if (doctorStdout) process.stdout.write(doctorStdout);
+  if (doctorStderr) process.stderr.write(doctorStderr);
+  if (doctor.status !== 0 && !isIgnorableNoAuthDoctorFailure(`${doctorStdout}\n${doctorStderr}`)) {
     throw new Error("tunnel-client doctor failed. Fix the tunnel or API-key setup first.");
   }
   recordTunnelProfileMetadata({
@@ -503,7 +513,7 @@ function spawnChild(command, childArgs, options = {}) {
 async function waitForHealth(url) {
   const started = Date.now();
   while (Date.now() - started < 30_000) {
-    const result = spawnSync("curl", ["-fsS", "--max-time", "5", url], { encoding: "utf8" });
+    const result = spawnSync("curl", ["-fsS", "--max-time", "5", url]);
     if (result.status === 0) return;
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
   }
@@ -517,7 +527,10 @@ function defaultTunnelClient() {
 
 function installedRuntimeBuildId() {
   try {
-    const build = JSON.parse(readFileSync(resolve(repoRoot, "dist/build-info.json"), "utf8"));
+    const build = parseJsonUtf8Strict(
+      readFileSync(resolve(repoRoot, "dist/build-info.json")),
+      "Installed build metadata"
+    );
     if (typeof build.id === "string" && build.id) return build.id;
   } catch {
     // ensureBuilt reports missing installed output before secure startup.
@@ -620,7 +633,6 @@ async function probeTunnelHealth(tunnelClient, environment) {
   ], {
     cwd: repoRoot,
     env: environment,
-    encoding: "utf8",
     timeout: 5_000,
     signal: cancellation.signal,
     killSignal: "SIGKILL",
@@ -632,7 +644,9 @@ async function probeTunnelHealth(tunnelClient, environment) {
   if (tunnelHealthCancellation === cancellation) tunnelHealthCancellation = undefined;
   if (result.status === 0) {
     try {
-      if (hasRecentTunnelControlPlanePoll(JSON.parse(result.stdout))) return { connected: true };
+      if (hasRecentTunnelControlPlanePoll(parseProcessJson(result.stdout, "Tunnel health report"))) {
+        return { connected: true };
+      }
     } catch { /* Missing or malformed successful-poll evidence is not readiness. */ }
     return { connected: false, reason: "control-plane-poll-stale-or-unverified" };
   }
@@ -642,7 +656,7 @@ async function probeTunnelHealth(tunnelClient, environment) {
   // Only retain known non-secret fields. Never log the CLI's raw output,
   // response bodies, URLs, or credentials returned by a failed endpoint.
   try {
-    const report = JSON.parse(result.stdout);
+    const report = parseProcessJson(result.stdout, "Tunnel health report");
     for (const name of ["healthz", "readyz"]) {
       if (Number.isInteger(report[name]?.status)) evidence.push(`${name}=${report[name].status}`);
     }
@@ -654,6 +668,22 @@ async function probeTunnelHealth(tunnelClient, environment) {
     // A command that could not execute may not produce a JSON report.
   }
   return { connected: false, reason: evidence.join(", ") };
+}
+
+function processOutputText(value, field) {
+  if (value instanceof Uint8Array) return decodeUtf8Strict(value, field);
+  if (typeof value === "string") {
+    assertWellFormedUnicode(value, field);
+    return value;
+  }
+  return "";
+}
+
+function parseProcessJson(value, field) {
+  if (value instanceof Uint8Array) return parseJsonUtf8Strict(value, field);
+  const parsed = JSON.parse(processOutputText(value, field));
+  assertJsonTextIntegrity(parsed, field);
+  return parsed;
 }
 
 function recordTunnelHealthTransition(connected, reason, pid) {

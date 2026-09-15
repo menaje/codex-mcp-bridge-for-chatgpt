@@ -39,11 +39,13 @@ xcrun xcstringstool compile \
   --output-directory "$compiled_directory" \
   --serialization-format text
 
-for locale in en ko ja zh-Hans zh-Hant es fr de pt; do
+while IFS= read -r locale; do
   localization_file="$compiled_directory/$locale.lproj/Localizable.strings"
   if [[ ! -f "$localization_file" ]]; then
     echo "Compiled localization is missing $locale.lproj/Localizable.strings." >&2
     exit 1
   fi
   plutil -lint "$localization_file" >/dev/null
-done
+done < <(node -e 'const fs = require("node:fs"); const catalog = JSON.parse(fs.readFileSync("locales/catalog.json", "utf8")); for (const locale of catalog.locales) console.log(locale.id);')
+
+node scripts/check-macos-localizations.mjs --compiled-directory "$compiled_directory"

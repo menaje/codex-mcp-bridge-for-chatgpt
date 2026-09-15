@@ -77,7 +77,9 @@ public enum RuntimeLifecycleHandoffStore {
               metadata.st_uid == getuid(), metadata.st_mode & 0o077 == 0, metadata.st_size <= 65536 else {
             throw CocoaError(.fileReadNoPermission)
         }
-        return try JSONDecoder().decode(Receipt.self, from: handle.readToEnd() ?? Data())
+        let data = try handle.readToEnd() ?? Data()
+        try BridgeTextIntegrity.validateJSONUTF8(data)
+        return try JSONDecoder().decode(Receipt.self, from: data)
     }
 
     public static func write(requestId: String, completed: Bool, runtimeLockDirectory: URL, failureCode: String? = nil) throws {

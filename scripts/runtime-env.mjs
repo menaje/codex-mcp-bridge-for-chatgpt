@@ -13,8 +13,8 @@ import {
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { loadEnvFile } from "node:process";
 import { parseEnv } from "node:util";
+import { decodeUtf8Strict } from "./text-integrity.mjs";
 
 const RUNTIME_CONFIG_DIRECTORY = "codex-mcp-bridge";
 const RUNTIME_ENV_FILENAME = ".env";
@@ -57,7 +57,6 @@ export function loadRuntimeEnvFile(
   filePath,
   {
     required = false,
-    apply = loadEnvFile,
     allowedKey,
     platform = process.platform,
     uid = typeof process.getuid === "function" ? process.getuid() : undefined
@@ -81,13 +80,14 @@ export function loadRuntimeEnvFile(
     }
   }
 
-  if (allowedKey) {
-    const values = parseEnv(readFileSync(filePath, "utf8"));
-    for (const [key, value] of Object.entries(values)) {
-      if (allowedKey(key) && process.env[key] === undefined) process.env[key] = value;
+  const values = parseEnv(readRuntimeEnvText(filePath));
+  for (const [key, value] of Object.entries(values)) {
+    // Match process.loadEnvFile's no-overwrite behavior while keeping the
+    // selected bytes under this module's strict UTF-8 policy. NODE_OPTIONS is
+    // intentionally not accepted from dotenv files.
+    if (key !== "NODE_OPTIONS" && (!allowedKey || allowedKey(key)) && process.env[key] === undefined) {
+      process.env[key] = value;
     }
-  } else {
-    apply(filePath);
   }
   return true;
 }
@@ -158,7 +158,7 @@ export function inspectRuntimeEnvFile(
   try {
     assertRuntimeEnvDirectory(dirname(resolvedPath), { platform, uid });
     assertPrivateRuntimeEnvFile(resolvedPath, { platform, uid });
-    const values = readManagedRuntimeEnvValues(readFileSync(resolvedPath, "utf8"));
+    const values = readManagedRuntimeEnvValues(readRuntimeEnvText(resolvedPath));
     validateSecureTunnelEnvironment(values, resolvedPath);
     return {
       path: resolvedPath,
@@ -253,7 +253,7 @@ export function readRuntimeEnvSubset(
   if (!Array.isArray(keys) || keys.some((key) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) {
     throw new Error("Runtime environment subset keys must be valid environment names.");
   }
-  return readSelectedRuntimeEnvValues(readFileSync(resolvedPath, "utf8"), new Set(keys));
+  return readSelectedRuntimeEnvValues(readRuntimeEnvText(resolvedPath), new Set(keys));
 }
 
 /**
@@ -276,7 +276,7 @@ export function prepareRuntimeEnvUpdate(
 
   const existed = pathEntryExists(resolvedPath);
   if (existed) assertPrivateRuntimeEnvFile(resolvedPath, { platform, uid });
-  const original = existed ? readFileSync(resolvedPath, "utf8") : "";
+  const original = existed ? readRuntimeEnvText(resolvedPath) : "";
   const previousValues = readManagedRuntimeEnvValues(original);
   const operatorUpdates = runtimeOperatorUpdates({ defaultBackend, maximumAccess });
   const updates = {
@@ -411,7 +411,7 @@ function writeAtomicPrivateRuntimeEnv(filePath, contents, options) {
     assertPrivateRuntimeEnvFile(temporaryPath, options);
     if (options.validate) {
       validateSecureTunnelEnvironment(
-        readManagedRuntimeEnvValues(readFileSync(temporaryPath, "utf8")),
+        readManagedRuntimeEnvValues(readRuntimeEnvText(temporaryPath)),
         filePath
       );
     }
@@ -450,9 +450,13 @@ function assertRuntimeEnvUnchanged(prepared, expectedContents, expectedExists) {
   }
   if (!exists) return;
   assertPrivateRuntimeEnvFile(prepared.path, prepared);
-  if (readFileSync(prepared.path, "utf8") !== expectedContents) {
+  if (readRuntimeEnvText(prepared.path) !== expectedContents) {
     throw new Error("RUNTIME_ENV_CHANGED: Runtime environment changed during the operation.");
   }
+}
+
+function readRuntimeEnvText(filePath) {
+  return decodeUtf8Strict(readFileSync(filePath), `Runtime environment file ${resolve(filePath)}`);
 }
 
 function ensurePrivateRuntimeDirectory(directory, { platform, uid }) {

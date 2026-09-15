@@ -10,34 +10,16 @@ enum BridgeAppLocalization {
         case operation
     }
 
-    static let supportedLanguageCodes = [
-        "en",
-        "ko",
-        "ja",
-        "zh-Hans",
-        "zh-Hant",
-        "es",
-        "fr",
-        "de",
-        "pt"
-    ]
+    static let supportedLanguageCodes = BridgeGeneratedLocalization.supportedLanguageCodes
 
     static let supportedPreferences = ["auto"] + supportedLanguageCodes
 
     static func locale(for preference: String) -> Locale {
-        switch preference {
-        case "auto": return .autoupdatingCurrent
-        case "ko": return Locale(identifier: "ko")
-        case "en": return Locale(identifier: "en")
-        case "ja": return Locale(identifier: "ja")
-        case "zh-Hans": return Locale(identifier: "zh-Hans")
-        case "zh-Hant": return Locale(identifier: "zh-Hant")
-        case "es": return Locale(identifier: "es")
-        case "fr": return Locale(identifier: "fr")
-        case "de": return Locale(identifier: "de")
-        case "pt": return Locale(identifier: "pt")
-        default: return Locale(identifier: "en")
-        }
+        if preference == "auto" { return .autoupdatingCurrent }
+        let language = supportedLanguageCodes.contains(preference)
+            ? preference
+            : BridgeGeneratedLocalization.defaultLanguageCode
+        return Locale(identifier: language)
     }
 
     static func languageCode(for preference: String) -> String {
@@ -46,12 +28,17 @@ enum BridgeAppLocalization {
     }
 
     static func string(_ key: String, locale: Locale) -> String {
+        // Every call site and generated String Catalog entry uses a semantic
+        // key. A missing bundle/key must never leak that identifier to users.
+        let fallback = BridgeGeneratedLocalization.defaultStrings[key]
+            ?? BridgeGeneratedLocalization.unavailableFallback
         let language = languageCode(for: locale)
         guard let path = Bundle.main.path(forResource: language, ofType: "lproj"),
               let bundle = Bundle(path: path) else {
-            return key
+            return fallback
         }
-        return bundle.localizedString(forKey: key, value: key, table: nil)
+        let localized = bundle.localizedString(forKey: key, value: fallback, table: nil)
+        return localized == key ? fallback : localized
     }
 
     static func format(_ key: String, locale: Locale, _ arguments: CVarArg...) -> String {
@@ -77,43 +64,43 @@ enum BridgeAppLocalization {
     static func lifecycleFailureDescription(_ diagnostic: String?, locale: Locale) -> String {
         let message = diagnostic ?? ""
         let causes: [(String, String)] = [
-            ("LIFECYCLE_TARGET_CHANGED", "대기 중 설정이나 CLI 선택이 바뀌었습니다. 현재 선택으로 다시 요청해 주세요."),
-            ("DRAIN_CANCEL_FAILED", "작업 접수를 다시 열지 못했습니다. 서버 상태를 확인해 주세요."),
-            ("RUNTIME_READINESS_TIMEOUT", "브리지 helper가 제한 시간 안에 준비되지 않았습니다."),
-            ("Timed out waiting for the bridge companion", "브리지 helper가 제한 시간 안에 준비되지 않았습니다."),
-            ("RUNTIME_READINESS_EXITED", "서버가 연결 준비를 마치기 전에 종료되었습니다. 설치와 연결 설정을 확인해 주세요."),
-            ("before the bridge and tunnel became ready", "서버가 연결 준비를 마치기 전에 종료되었습니다. 설치와 연결 설정을 확인해 주세요."),
-            ("HELPER_SHUTDOWN_TIMEOUT", "브리지 helper가 제한 시간 안에 종료되지 않았습니다. 관련 프로세스가 남아 있을 수 있습니다."),
-            ("HELPER_SHUTDOWN_FAILED", "브리지 helper를 종료하지 못했습니다. 관련 프로세스 상태를 확인해 주세요."),
-            ("RUNTIME_STOP_", "브리지 helper가 제한 시간 안에 종료되지 않았습니다. 관련 프로세스가 남아 있을 수 있습니다."),
-            ("RUNTIME_TREE_", "관련 프로세스의 확인 또는 종료를 마치지 못했습니다. 서버 상태를 확인해 주세요."),
-            ("LIFECYCLE_HANDOFF_CONNECTION_FAILED", "로컬 서비스의 응답을 확인하지 못해 후속 처리를 마치지 못했습니다. 다시 요청해 주세요."),
-            ("LIFECYCLE_SETTINGS_SAVE_FAILED", "설정 변경사항을 저장하지 못해 후속 처리를 중단했습니다."),
-            ("LIFECYCLE_MODE_SAVE_FAILED", "연결 모드 설정을 저장하지 못했습니다. 저장 위치와 권한을 확인해 주세요."),
-            ("LIFECYCLE_RECEIPT_SAVE_FAILED", "처리 결과를 저장하지 못했습니다. 저장 위치와 권한을 확인해 주세요."),
-            ("LIFECYCLE_RUNTIME_NOT_STOPPED", "서버가 아직 실행 중이어서 후속 처리를 진행하지 않았습니다."),
-            ("LIFECYCLE_RECOVERY_REQUIRED", "복구된 서버 상태가 예약과 일치하지 않습니다. 서버 상태를 확인한 뒤 다시 요청해 주세요."),
-            ("HELPER_REPLACEMENT_ROLLBACK_FAILED", "helper 교체와 이전 helper 복구에 실패했습니다. 설치 상태를 확인해 주세요."),
-            ("HELPER_REPLACEMENT_FAILED", "helper 교체를 마치지 못했습니다. 설치 상태를 확인한 뒤 다시 요청해 주세요."),
-            ("HELPER_LAUNCH_FAILED", "브리지 helper를 시작하지 못했습니다. 설치 상태를 확인해 주세요."),
-            ("HELPER_BUILD_MISMATCH", "실행 중인 브리지 helper가 현재 앱과 호환되지 않습니다. 앱을 다시 열어 갱신해 주세요."),
-            ("BRIDGE_RUNTIME_MISSING", "설치된 브리지 helper를 찾을 수 없습니다. 앱을 다시 설치해 주세요."),
-            ("SETUP_REQUIRED", "런타임 연결 정보가 아직 저장되지 않았습니다.")
+            ("LIFECYCLE_TARGET_CHANGED", "macos.settingsortheselectedclichangedwhilewaiting"),
+            ("DRAIN_CANCEL_FAILED", "macos.couldnotresumeacceptingworkchecktheserver"),
+            ("RUNTIME_READINESS_TIMEOUT", "macos.thebridgehelperwasnotreadybeforethe"),
+            ("Timed out waiting for the bridge companion", "macos.thebridgehelperwasnotreadybeforethe"),
+            ("RUNTIME_READINESS_EXITED", "macos.theserverexitedbeforetheconnectionwasready"),
+            ("before the bridge and tunnel became ready", "macos.theserverexitedbeforetheconnectionwasready"),
+            ("HELPER_SHUTDOWN_TIMEOUT", "macos.thebridgehelperdidnotstopbeforethe"),
+            ("HELPER_SHUTDOWN_FAILED", "macos.couldnotstopthebridgehelpercheckthe"),
+            ("RUNTIME_STOP_", "macos.thebridgehelperdidnotstopbeforethe"),
+            ("RUNTIME_TREE_", "macos.couldnotfinishcheckingorstoppingtherelated"),
+            ("LIFECYCLE_HANDOFF_CONNECTION_FAILED", "macos.couldnotfinishthefollowupactionbecause"),
+            ("LIFECYCLE_SETTINGS_SAVE_FAILED", "macos.thefollowupactionstoppedbecausethesettings"),
+            ("LIFECYCLE_MODE_SAVE_FAILED", "macos.couldnotsavetheconnectionmodecheckthe"),
+            ("LIFECYCLE_RECEIPT_SAVE_FAILED", "macos.couldnotsavetheactionresultcheckthe"),
+            ("LIFECYCLE_RUNTIME_NOT_STOPPED", "macos.thefollowupactiondidnotproceedbecause"),
+            ("LIFECYCLE_RECOVERY_REQUIRED", "macos.therecoveredserverstatedoesnotmatchthe"),
+            ("HELPER_REPLACEMENT_ROLLBACK_FAILED", "macos.bothhelperreplacementandrestoringtheprevioushelper"),
+            ("HELPER_REPLACEMENT_FAILED", "macos.couldnotfinishreplacingthehelpercheckthe"),
+            ("HELPER_LAUNCH_FAILED", "macos.couldnotstartthebridgehelpercheckthe"),
+            ("HELPER_BUILD_MISMATCH", "macos.therunningbridgehelperisincompatiblewiththis"),
+            ("BRIDGE_RUNTIME_MISSING", "macos.theinstalledbridgehelpercouldnotbefound"),
+            ("SETUP_REQUIRED", "macos.runtimeconnectiondetailshavenotbeensavedyet")
         ]
         let configurationFailed = message.contains("CONFIG_APPLY_FAILED") || message.contains("CONFIG_ROLLBACK_")
-        var details: [String] = configurationFailed ? [string("설정 적용에 실패했습니다.", locale: locale)] : []
+        var details: [String] = configurationFailed ? [string("macos.couldnotapplythesettings", locale: locale)] : []
         if let cause = causes.first(where: { message.contains($0.0) }) {
             details.append(string(cause.1, locale: locale))
         }
         if message.contains("CONFIG_ROLLBACK_RESTART_FAILED") {
-            details.append(string("이전 설정을 복원했지만 서버를 다시 시작하지 못했습니다.", locale: locale))
+            details.append(string("macos.theprevioussettingswererestoredbuttheserver", locale: locale))
         } else if message.contains("CONFIG_ROLLBACK_FAILED") {
-            details.append(string("이전 설정을 복원하지 못했습니다. 연결 설정을 확인해 주세요.", locale: locale))
+            details.append(string("macos.couldnotrestoretheprevioussettingscheckthe", locale: locale))
         } else if message.contains("Previous runtime configuration was restored.") {
-            details.append(string("이전 설정을 복원했습니다.", locale: locale))
+            details.append(string("macos.theprevioussettingswererestored", locale: locale))
         }
         return details.isEmpty
-            ? string("예약한 작업을 완료하지 못했습니다. 현재 상태를 확인한 뒤 다시 요청해 주세요.", locale: locale)
+            ? string("macos.thereservedoperationcouldnotfinishcheckthe", locale: locale)
             : details.joined(separator: " ")
     }
 
@@ -160,7 +147,7 @@ enum BridgeAppLocalization {
             return diagnosticMessage == nil
                 ? nil
                 : string(
-                    "요청을 처리하지 못했습니다. 진단 로그에서 자세한 내용을 확인해 주세요.",
+                    "macos.therequestcouldnotbecompletedcheckthe",
                     locale: locale
                 )
         }
@@ -170,58 +157,58 @@ enum BridgeAppLocalization {
         case "tunnel-connection-pending":
             return nil
         case "tunnel-process-exited", "tunnel-process-not-running":
-            key = "Secure MCP Tunnel 프로세스가 실행 중이지 않습니다."
+            key = "macos.thesecuremcptunnelprocessisnotrunning"
         case "tunnel-readiness-probe-failed", "tunnel-health-probe-failed":
-            key = "Secure MCP Tunnel 연결을 확인할 수 없습니다. 다시 연결하는 중일 수 있습니다."
+            key = "macos.unabletoverifythesecuremcptunnelconnection"
         case "tunnel-status-previous-launcher", "tunnel-status-different-build",
              "tunnel-status-different-profile", "tunnel-status-stale":
-            key = "Secure MCP Tunnel 상태가 현재 서버 실행과 일치하지 않습니다. 서버를 다시 시작해 주세요."
+            key = "macos.thesecuremcptunnelstatusdoesnotmatch"
         case "runtime-env-not-configured":
-            key = "런타임 연결 정보가 아직 저장되지 않았습니다."
+            key = "macos.runtimeconnectiondetailshavenotbeensavedyet"
         case "runtime-env-permissions-too-broad":
-            key = "연결 정보 파일 또는 폴더의 접근 권한이 너무 넓습니다. 앱 전용 권한으로 제한해 주세요."
+            key = "macos.theconnectionfileorfolderpermissionsaretoo"
         case "runtime-env-not-regular":
-            key = "연결 정보는 심볼릭 링크가 아닌 일반 파일이어야 합니다."
+            key = "macos.connectiondetailsmustbestoredinaregular"
         case "runtime-env-owner-mismatch":
-            key = "연결 정보 파일 또는 폴더를 현재 사용자가 소유하지 않습니다."
+            key = "macos.theconnectionfileorfolderisnotowned"
         case "runtime-api-key-invalid":
-            key = "Tunnel runtime API key가 없거나 형식이 올바르지 않습니다."
+            key = "macos.thetunnelruntimeapikeyismissingor"
         case "tunnel-id-invalid":
-            key = "Tunnel ID가 없거나 형식이 올바르지 않습니다."
+            key = "macos.thetunnelidismissingorhasan"
         case "runtime-env-project-conflict":
-            key = "연결 정보 파일을 등록된 프로젝트 폴더 밖으로 이동해 주세요."
+            key = "macos.movetheconnectionfileoutsideallregisteredproject"
         case "runtime-env-invalid-content", "runtime-env-invalid":
-            key = "연결 정보 파일의 내용이 올바르지 않습니다."
+            key = "macos.theconnectionfilecontentsareinvalid"
         case "remote-endpoint-not-configured":
-            key = "원격 관리 서버 주소가 설정되지 않았습니다."
+            key = "macos.theremotemanagementserveraddressisnotconfigured"
         case "remote-address-in-use":
-            key = "지정한 주소 또는 포트를 다른 프로그램이 사용 중입니다."
+            key = "macos.anotherapplicationisusingthespecifiedaddressor"
         case "remote-listener-permission-denied":
-            key = "원격 관리 서버를 시작할 권한이 없습니다. 주소와 포트를 확인해 주세요."
+            key = "macos.theremotemanagementservercannotstartwiththe"
         case "remote-tls-identity-failed":
-            key = "원격 관리용 보안 인증서를 준비하지 못했습니다."
+            key = "macos.thesecuritycertificateforremotemanagementcouldnot"
         case "remote-listener-failed", "remote-management-not-listening":
-            key = "원격 관리 서버가 지정한 주소에서 시작되지 않았습니다."
+            key = "macos.theremotemanagementserverdidnotstartat"
         case "bridge-runtime-missing":
-            key = "설치된 브리지 helper를 찾을 수 없습니다. 앱을 다시 설치해 주세요."
+            key = "macos.theinstalledbridgehelpercouldnotbefound"
         case "runtime-readiness-timeout":
-            key = "브리지 helper가 제한 시간 안에 준비되지 않았습니다."
+            key = "macos.thebridgehelperwasnotreadybeforethe"
         case "runtime-stop-failed", "runtime-stop-incomplete":
-            key = "브리지 helper가 제한 시간 안에 종료되지 않았습니다. 관련 프로세스가 남아 있을 수 있습니다."
+            key = "macos.thebridgehelperdidnotstopbeforethe"
         case "settings-revision-conflict", "project-registry-revision-conflict":
-            key = "다른 화면에서 설정이 변경되었습니다. 최신 값을 확인한 뒤 다시 시도해 주세요."
+            key = "macos.settingschangedelsewherereviewthelatestvaluesand"
         case "pairing-expired":
-            key = "페어링 초대가 만료되었습니다. 서버에서 새 초대를 만들어 주세요."
+            key = "macos.thepairinginvitationhasexpiredcreateanew"
         case "pairing-code-invalid":
-            key = "페어링 초대가 올바르지 않습니다. 서버에서 새 초대를 만들어 주세요."
+            key = "macos.thepairinginvitationisinvalidcreateanew"
         case "drain-timeout":
-            key = "진행 중인 작업이 제한 시간 안에 끝나지 않아 종료하지 않았습니다. 강제 종료 여부를 확인해 주세요."
+            key = "macos.theappwasnotquitbecauseactivework"
         case "background-process-state-unknown":
-            key = "일부 Agent의 백그라운드 프로세스 상태를 확인할 수 없어 안전 종료하지 않았습니다. 강제 종료 여부를 확인해 주세요."
+            key = "macos.theappwasnotquitsafelybecausesome"
         case "background-processes-active":
-            key = "백그라운드 프로세스가 실행 중이어서 안전 종료하지 않았습니다. 강제 종료하면 해당 프로세스도 중단됩니다."
+            key = "macos.theappwasnotquitsafelybecausebackground"
         default:
-            key = "요청을 처리하지 못했습니다. 진단 로그에서 자세한 내용을 확인해 주세요."
+            key = "macos.therequestcouldnotbecompletedcheckthe"
         }
         return string(key, locale: locale)
     }
@@ -230,8 +217,11 @@ enum BridgeAppLocalization {
         let identifier = locale.identifier.replacingOccurrences(of: "_", with: "-").lowercased()
         if identifier == "ko" || identifier.hasPrefix("ko-") { return "ko" }
         if identifier == "ja" || identifier.hasPrefix("ja-") { return "ja" }
-        if identifier == "zh-hant" || identifier.hasPrefix("zh-hant-") ||
-            identifier.range(of: #"^zh-(tw|hk|mo)(-|$)"#, options: .regularExpression) != nil {
+        if BridgeGeneratedLocalization.traditionalChineseTags.contains(where: {
+            identifier == $0 || identifier.hasPrefix("\($0)-")
+        }) || BridgeGeneratedLocalization.traditionalChineseRegions.contains(where: {
+            identifier.range(of: "^zh-\($0)(-|$)", options: .regularExpression) != nil
+        }) {
             return "zh-Hant"
         }
         if identifier == "zh" || identifier == "zh-hans" ||
@@ -258,13 +248,13 @@ enum BridgeAppLocalization {
     ) -> String {
         switch error {
         case .invalidProfiles:
-            return string("저장된 서버 프로필 목록이 올바르지 않습니다.", locale: locale)
+            return string("macos.thesavedserverprofilelistisinvalid", locale: locale)
         case .invalidServerIdentity:
-            return string("서버 고유 ID가 올바르지 않습니다.", locale: locale)
+            return string("macos.theserveridisinvalid", locale: locale)
         case .invalidCredential:
-            return string("서버 기기 자격 증명이 올바르지 않습니다.", locale: locale)
+            return string("macos.theserverdevicecredentialisinvalid", locale: locale)
         case .keychain(let status):
-            return format("보호된 자격 증명 저장소 오류(%d)", locale: locale, Int(status))
+            return format("macos.protectedcredentialstoreerror", locale: locale, Int(status))
         }
     }
 
@@ -274,48 +264,48 @@ enum BridgeAppLocalization {
     ) -> String {
         switch error {
         case .invalidInvitation:
-            return string("페어링 초대가 올바르지 않습니다. 서버에서 새 초대를 만들어 주세요.", locale: locale)
+            return string("macos.thepairinginvitationisinvalidcreateanew", locale: locale)
         case .expiredInvitation:
-            return string("페어링 초대가 만료되었습니다. 서버에서 새 초대를 만들어 주세요.", locale: locale)
+            return string("macos.thepairinginvitationhasexpiredcreateanew", locale: locale)
         case .invalidEndpoint:
-            return string("서버 주소는 경로가 없는 HTTPS 주소여야 합니다.", locale: locale)
+            return string("macos.theserveraddressmustbeanhttpsaddress", locale: locale)
         case .invalidCertificatePin:
-            return string("서버 인증서 확인 값이 올바르지 않습니다.", locale: locale)
+            return string("macos.theservercertificatefingerprintisinvalid", locale: locale)
         case .certificateMismatch:
             return string(
-                "서버 인증서가 페어링할 때 확인한 인증서와 다릅니다. 연결을 거부했습니다.",
+                "macos.theservercertificatediffersfromtheoneverified",
                 locale: locale
             )
         case .serverIdentityMismatch:
             return string(
-                "응답한 서버의 고유 ID가 저장된 서버와 다릅니다. 연결을 거부했습니다.",
+                "macos.therespondingserveriddiffersfromthesaved",
                 locale: locale
             )
         case .incompatibleProtocol:
             return string(
-                "이 앱과 서버의 원격 관리 프로토콜 버전이 호환되지 않습니다.",
+                "macos.theremotemanagementprotocolversionsofthisapp",
                 locale: locale
             )
         case .credentialMissing:
             return string(
-                "이 서버의 기기 자격 증명을 찾을 수 없어 다시 페어링해야 합니다.",
+                "macos.thedevicecredentialforthisservercouldnot",
                 locale: locale
             )
         case .unauthorized:
             return string(
-                "서버가 이 기기의 자격 증명을 거부했습니다. 서버에서 기기 등록을 확인해 주세요.",
+                "macos.theserverrejectedthisdevicescredentialcheck",
                 locale: locale
             )
         case .forbidden:
             return string(
-                "이 기기에는 요청한 서버 기능을 사용할 권한이 없습니다.",
+                "macos.thisdeviceisnotauthorizedtousethe",
                 locale: locale
             )
         case .responseTooLarge:
-            return string("원격 서버 응답이 허용 크기를 초과했습니다.", locale: locale)
+            return string("macos.theremoteserverresponseexceededtheallowedsize", locale: locale)
         case .invalidResponse(let message):
             return format(
-                "원격 서버 응답을 읽을 수 없습니다: %@",
+                "macos.couldnotreadtheremoteserverresponse",
                 locale: locale,
                 localizedErrorDetail(message, locale: locale)
             )
@@ -331,44 +321,44 @@ enum BridgeAppLocalization {
         switch error {
         case .runtimeMissing:
             return string(
-                "설치된 브리지 helper를 찾을 수 없습니다. 앱을 다시 설치해 주세요.",
+                "macos.theinstalledbridgehelpercouldnotbefound",
                 locale: locale
             )
         case .nodeMissing:
             return string(
-                "Node.js 22 이상을 찾을 수 없습니다. Node.js를 설치한 뒤 다시 시도해 주세요.",
+                "macos.nodejs22orlatercouldnotbe",
                 locale: locale
             )
         case .launchFailed(let message):
             return format(
-                "브리지 helper를 시작하지 못했습니다: %@",
+                "macos.couldnotstartthebridgehelper",
                 locale: locale,
                 localizedErrorDetail(message, locale: locale)
             )
         case .readinessTimeout:
-            return string("브리지 helper가 제한 시간 안에 준비되지 않았습니다.", locale: locale)
+            return string("macos.thebridgehelperwasnotreadybeforethe", locale: locale)
         case .incompatibleHelper:
             return string(
-                "실행 중인 브리지 helper가 현재 앱과 호환되지 않습니다. 앱을 다시 열어 갱신해 주세요.",
+                "macos.therunningbridgehelperisincompatiblewiththis",
                 locale: locale
             )
         case .replacementBlocked(let message):
             return format(
-                "실행 중인 작업을 안전하게 마치지 못해 helper 갱신을 중단했습니다: %@",
+                "macos.thehelperupdatewasstoppedbecauserunningwork",
                 locale: locale,
                 localizedErrorDetail(message, locale: locale)
             )
         case .replacementPending:
-            return string("작업이 끝나면 helper를 갱신하도록 예약했습니다.", locale: locale)
+            return string("macos.thehelperwillupdatewhenthecurrentwork", locale: locale)
         case .shutdownFailed(let message):
             return format(
-                "브리지 helper를 종료하지 못했습니다: %@",
+                "macos.couldnotstopthebridgehelper",
                 locale: locale,
                 localizedErrorDetail(message, locale: locale)
             )
         case .shutdownTimeout:
             return string(
-                "브리지 helper가 제한 시간 안에 종료되지 않았습니다. 관련 프로세스가 남아 있을 수 있습니다.",
+                "macos.thebridgehelperdidnotstopbeforethe",
                 locale: locale
             )
         }
@@ -380,37 +370,37 @@ enum BridgeAppLocalization {
     ) -> String {
         switch error {
         case .invalidSocketPath:
-            return string("로컬 연결 경로가 올바르지 않습니다.", locale: locale)
+            return string("macos.thelocalconnectionpathisinvalid", locale: locale)
         case .peerIdentityMismatch:
             return string(
-                "현재 사용자가 소유한 로컬 서비스가 아니므로 연결을 거부했습니다.",
+                "macos.theconnectionwasrefusedbecausethelocalservice",
                 locale: locale
             )
         case .connectionFailed(let message):
             return format(
-                "로컬 서비스에 연결할 수 없습니다: %@",
+                "macos.couldnotconnecttothelocalservice",
                 locale: locale,
                 localizedErrorDetail(message, locale: locale)
             )
         case .writeFailed(let message):
             return format(
-                "로컬 서비스에 요청을 보낼 수 없습니다: %@",
+                "macos.couldnotsendarequesttothelocal",
                 locale: locale,
                 localizedErrorDetail(message, locale: locale)
             )
         case .responseTooLarge:
-            return string("로컬 서비스 응답이 허용 크기를 초과했습니다.", locale: locale)
+            return string("macos.thelocalserviceresponseexceededtheallowedsize", locale: locale)
         case .emptyResponse:
-            return string("로컬 서비스가 응답 없이 연결을 닫았습니다.", locale: locale)
+            return string("macos.thelocalserviceclosedtheconnectionwithouta", locale: locale)
         case .malformedResponse(let message):
             if message == "BRIDGE_RESPONSE_CONTRACT_MISMATCH" {
                 return string(
-                    "실행 중인 브리지 helper가 현재 앱과 호환되지 않습니다. 앱을 다시 열어 갱신해 주세요.",
+                    "macos.therunningbridgehelperisincompatiblewiththis",
                     locale: locale
                 )
             }
             return format(
-                "로컬 서비스 응답을 읽을 수 없습니다: %@",
+                "macos.couldnotreadthelocalserviceresponse",
                 locale: locale,
                 localizedErrorDetail(message, locale: locale)
             )
@@ -421,15 +411,15 @@ enum BridgeAppLocalization {
 
     private static func localizedErrorDetail(_ message: String, locale: Locale) -> String {
         if message.contains("SETUP_CANDIDATE_UNAVAILABLE") {
-            return string("찾은 연결 설정이 더 이상 유효하지 않습니다. 다시 찾아 주세요.", locale: locale)
+            return string("macos.thediscoveredconnectionsettingsarenolongervalid", locale: locale)
         }
         if message.contains("SETUP_API_KEY_UNAVAILABLE") {
-            return string("선택한 Tunnel ID의 Runtime API 키를 읽을 수 없습니다.", locale: locale)
+            return string("macos.theruntimeapikeyfortheselectedtunnel", locale: locale)
         }
 
         let recoveryMarker = " 이전 helper 복구에도 실패했습니다: "
         if message.contains("LIFECYCLE_BUSY") {
-            return string("이미 예약된 작업이 있습니다. 예약을 취소한 뒤 다시 요청해 주세요.", locale: locale)
+            return string("macos.anoperationisalreadyreservedcancelitbefore", locale: locale)
         }
         if let markerRange = message.range(of: recoveryMarker) {
             let initialFailure = String(message[..<markerRange.lowerBound])
@@ -437,7 +427,7 @@ enum BridgeAppLocalization {
             return [
                 localizedErrorDetail(initialFailure, locale: locale),
                 format(
-                    "이전 helper 복구에도 실패했습니다: %@",
+                    "macos.restoringtheprevioushelperalsofailed",
                     locale: locale,
                     localizedErrorDetail(recoveryFailure, locale: locale)
                 )
@@ -448,14 +438,14 @@ enum BridgeAppLocalization {
         if direct != message { return direct }
 
         let dynamicKeys = [
-            "기존 LaunchAgent plist가 일반 파일이 아닙니다: %@",
-            "원격 서버 응답을 읽을 수 없습니다: %@",
-            "브리지 helper를 시작하지 못했습니다: %@",
-            "실행 중인 작업을 안전하게 마치지 못해 helper 갱신을 중단했습니다: %@",
-            "브리지 helper를 종료하지 못했습니다: %@",
-            "로컬 서비스에 연결할 수 없습니다: %@",
-            "로컬 서비스에 요청을 보낼 수 없습니다: %@",
-            "로컬 서비스 응답을 읽을 수 없습니다: %@"
+            "macos.theexistinglaunchagentplistisnotaregular",
+            "macos.couldnotreadtheremoteserverresponse",
+            "macos.couldnotstartthebridgehelper",
+            "macos.thehelperupdatewasstoppedbecauserunningwork",
+            "macos.couldnotstopthebridgehelper",
+            "macos.couldnotconnecttothelocalservice",
+            "macos.couldnotsendarequesttothelocal",
+            "macos.couldnotreadthelocalserviceresponse"
         ]
         for key in dynamicKeys {
             let prefix = String(key.dropLast(2))
@@ -479,7 +469,7 @@ enum BridgeAppLocalization {
             context: .operation,
             locale: locale
         ) ?? string(
-            "요청을 처리하지 못했습니다. 진단 로그에서 자세한 내용을 확인해 주세요.",
+            "macos.therequestcouldnotbecompletedcheckthe",
             locale: locale
         )
     }

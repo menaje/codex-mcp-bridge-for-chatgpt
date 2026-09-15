@@ -7,7 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { loadConfig } from "../src/config.js";
 import { BackendAwareModelCatalog } from "../src/modelCatalog.js";
-import { MODEL_DESCRIPTION_TRANSLATIONS } from "../src/modelDescriptionI18n.js";
+import { UI_TRANSLATIONS } from "../src/uiI18n.js";
 import { createBridgeMcpServer } from "../src/server.js";
 import { SETTINGS_CARD_HTML } from "../src/settingsCard.js";
 import { BridgeStateStore } from "../src/stateStore.js";
@@ -198,7 +198,7 @@ try {
     await row.locator('textarea').fill('여러 구성요소의 설계 판단이 필요한 작업에 사용합니다. 단순 조회나 정해진 수정은 다른 모델을 먼저 검토합니다.');
     await action('save').click();
     await row.locator('[data-description-source="user"]').waitFor();
-    const bundles=${JSON.stringify(MODEL_DESCRIPTION_TRANSLATIONS)},locales=[];
+    const bundles=${JSON.stringify(UI_TRANSLATIONS)},locales=[];
     for(const [locale,copy] of Object.entries(bundles)){
       await page.locator('#ui-language').selectOption(locale);
       check(await page.locator('#model-descriptions-title').textContent()===copy['settings.modelDescriptions.title'],'Translated title: '+locale);

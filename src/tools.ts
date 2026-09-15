@@ -48,7 +48,7 @@ import {
 } from "./activity.js";
 import {
   AGENT_CONTEXT_MODES,
-  normalizeAgentName,
+  canonicalAgentName,
   type ActivityAgentAssignment,
   type AgentContextMode,
   type BridgeAgent,
@@ -125,7 +125,7 @@ import {
 import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
 import {
   BridgeStateStore,
-  normalizeActivityTitle,
+  canonicalActivityTitle,
   type ActivityProjectAdmission,
   type BeginSteeringDeliveryInput,
   type CreateActivityInput,
@@ -176,6 +176,7 @@ import {
   type UiLocalePreference
 } from "./uiI18n.js";
 import { localizeSettingsView } from "./settingsLocalization.js";
+import { assertJsonTextIntegrity, decodeUtf8Strict, parseJsonUtf8Strict, verbatimText } from "./textIntegrity.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
   CANCELLATION_REASON_MAX_LENGTH,
@@ -892,6 +893,20 @@ const settingsViewOutputSchema = z.strictObject({
   }),
   warnings: z.array(z.string()),
   scopeNotice: z.string(),
+  presentation: z.strictObject({
+    warnings: z.array(z.strictObject({
+      key: z.string(),
+      parameters: z.record(z.string(), z.union([z.string(), z.number()]))
+    })),
+    catalogWarning: z.strictObject({
+      key: z.string(),
+      parameters: z.record(z.string(), z.union([z.string(), z.number()]))
+    }).nullable(),
+    scopeNotice: z.strictObject({
+      key: z.string(),
+      parameters: z.record(z.string(), z.union([z.string(), z.number()]))
+    })
+  }).optional(),
   policyActivation: z.strictObject({
     policyRevision: z.number().int().min(0),
     executionPolicyActive: z.boolean(),
@@ -5766,7 +5781,7 @@ export function registerBridgeTools(
           .describe("Exact active Job id returned by codex_task."),
         expectedJobVersion: z.number().int().min(1)
           .describe("Authoritative Job version observed immediately before steering."),
-        prompt: z.string().trim().min(1).max(config.maxPromptChars)
+        prompt: verbatimInput(config.maxPromptChars, "Steering prompt")
           .describe("Bounded additional guidance for the current in-flight turn only.")
       }),
       outputSchema: codexSteerOutputSchema,
@@ -5784,7 +5799,12 @@ export function registerBridgeTools(
         args.scopeId,
         "Codex active Job steering"
       );
-      const promptHash = createHash("sha256").update(args.prompt).digest("hex");
+      const prompt = verbatimText(args.prompt, {
+        field: "Steering prompt",
+        maxCharacters: config.maxPromptChars,
+        rejectControlCharacters: false
+      });
+      const promptHash = createHash("sha256").update(prompt).digest("hex");
       const actionHash = createHash("sha256")
         .update(JSON.stringify({
           action: "steer",
@@ -5845,7 +5865,7 @@ export function registerBridgeTools(
             actionHash
           );
           try {
-            const updated = await jobs.steer(validation.job.jobId, args.prompt);
+            const updated = await jobs.steer(validation.job.jobId, prompt);
             return {
               status: "delivered",
               result: steeringSuccessResult(updated)
@@ -7397,8 +7417,8 @@ function resolveBackendHandoff(input: {
     }
     return undefined;
   }
-  const summary = input.args.handoffSummary?.trim();
-  if (!summary) {
+  const summary = input.args.handoffSummary;
+  if (!summary || !/\S/u.test(summary)) {
     throw new BackendHandoffContractError(
       "BACKEND_HANDOFF_SUMMARY_REQUIRED",
       `Agent ${input.resolution.agent.agentId} is pinned to ${sourceThread.backendKind}, while new threads use ${input.targetBackend}. ` +
@@ -8733,7 +8753,7 @@ function encodeActivityHistoryCursor(scopeVersion: number, offset: number): stri
 
 function decodeActivityHistoryCursor(cursor: string): ActivityHistoryCursor {
   try {
-    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as unknown;
+    const value = parseBase64UrlJson(cursor, "Activity history pagination cursor");
     if (
       !isRecord(value) ||
       value.v !== 1 ||
@@ -8780,7 +8800,7 @@ function encodePageCursor(kind: PageCursorKind, offset: number): string {
 
 function decodePageCursor(cursor: string, expectedKind: PageCursorKind): number {
   try {
-    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as unknown;
+    const value = parseBase64UrlJson(cursor, `${expectedKind} pagination cursor`);
     if (
       !isRecord(value) ||
       value.v !== 1 ||
@@ -8795,6 +8815,10 @@ function decodePageCursor(cursor: string, expectedKind: PageCursorKind): number 
   } catch {
     throw new Error(`Invalid or mismatched ${expectedKind} pagination cursor.`);
   }
+}
+
+function parseBase64UrlJson(value: string, field: string): unknown {
+  return parseJsonUtf8Strict(Buffer.from(value, "base64url"), field);
 }
 
 type PublicSteeringValidation =
@@ -12079,6 +12103,21 @@ function editableModelPolicyZod() {
   ]);
 }
 
+function verbatimInput(maxCharacters: number, field: string) {
+  return z.string().refine((value) => {
+    try {
+      verbatimText(value, {
+        field,
+        maxCharacters,
+        rejectControlCharacters: false
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }, `${field} must contain at most ${maxCharacters} Unicode characters.`);
+}
+
 function codexTaskInputSchema(
   config: BridgeConfig,
   executionEnvelopeRefValue: string
@@ -12113,7 +12152,7 @@ function codexTaskInputSchema(
       context: z.enum(AGENT_CONTEXT_MODES).optional().describe(
         "Continue the current thread, fork it, or deliberately start fresh. Defaults to continue when resumable."
       ),
-      handoffSummary: z.string().trim().min(1).max(4_000).optional().describe(
+      handoffSummary: verbatimInput(4_000, "Handoff summary").optional().describe(
         "Required only when context='fresh' moves an existing Agent from its pinned backend to the configured backend. This explicit bounded summary is the only context copied; the transcript and backend state are not migrated."
       )
     }),
@@ -12129,7 +12168,7 @@ function codexTaskInputSchema(
   const requestId = scopeIdSchema().describe(
     "Unique idempotency UUID for one logical Codex call. Reuse it only for an exact retry. Never reuse it to group different tasks or multiple calls in one GPT response."
   );
-  const prompt = z.string().min(1).max(config.maxPromptChars).describe("Instruction for Codex.");
+  const prompt = verbatimInput(config.maxPromptChars, "Codex prompt").describe("Instruction for Codex.");
   const executionMode = z.enum(ACTIVITY_EXECUTION_MODES).optional()
     .describe("Controls Codex execution timing. Use background for an immediate tracked job or foreground to wait for the terminal result. Omit it to retain an existing Activity mode or default a new Activity to background.");
   const project = currentProjectSelectionZod().optional().describe(
@@ -12241,14 +12280,14 @@ function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
   const activityCreation = input.args.activityId
     ? null
     : {
-        title: normalizeActivityTitle(input.activityRequest.activityTitle || "Codex activity"),
+        title: canonicalActivityTitle(input.activityRequest.activityTitle || "Codex activity"),
         kind: input.activityRequest.activityKind || "other",
         executionMode: input.executionMode,
         handoffPolicy: input.activityRequest.handoffPolicy || "none",
         completionTrigger: input.activityRequest.completionTrigger || "manual"
       };
   const agentCreation = input.args.agentName
-    ? { name: normalizeAgentName(input.args.agentName).agentName }
+    ? { name: canonicalAgentName(input.args.agentName).agentName }
     : null;
   const requestHash = createHash("sha256")
     .update(
@@ -12268,7 +12307,7 @@ function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
           : input.args.handoffSummary
             ? {
                 unadmittedSummarySha256: createHash("sha256")
-                  .update(input.args.handoffSummary.trim())
+                  .update(input.args.handoffSummary)
                   .digest("hex")
               }
             : null,
@@ -12332,7 +12371,7 @@ function backendHandoffAuditForHash(
 ): BackendHandoffAudit {
   const summarySha256 = suppliedSummary === undefined
     ? handoff.summarySha256
-    : createHash("sha256").update(suppliedSummary.trim()).digest("hex");
+    : createHash("sha256").update(suppliedSummary).digest("hex");
   return {
     sourceBackend: handoff.sourceBackend,
     targetBackend: handoff.targetBackend,

@@ -25,6 +25,7 @@ import type {
   BridgeSettingsMutationInput
 } from "./tools.js";
 import { localizeSettingsView } from "./settingsLocalization.js";
+import { assertJsonTextIntegrity, decodeUtf8Strict } from "./textIntegrity.js";
 
 export const COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-companion";
 export const COMPANION_PROTOCOL_VERSION = 4;
@@ -342,24 +343,31 @@ export async function startPrivateJsonLineServer(
 }
 
 function serveClient(socket: Socket, options: PrivateJsonLineServerOptions): void {
-  socket.setEncoding("utf8");
-  let buffer = "";
+  let buffer = Buffer.alloc(0);
   let requestQueue = Promise.resolve();
   const cancellation = new AbortController();
   socket.once("close", () => cancellation.abort());
 
-  socket.on("data", (chunk: string) => {
-    buffer += chunk;
-    if (Buffer.byteLength(buffer, "utf8") > options.maxRequestBytes) {
+  socket.on("data", (chunk: Buffer) => {
+    buffer = Buffer.concat([buffer, chunk]);
+    if (buffer.length > options.maxRequestBytes) {
       writeResponse(socket, options.requestTooLarge(), options.maxResponseBytes);
       socket.destroy();
       return;
     }
     while (true) {
-      const newline = buffer.indexOf("\n");
+      const newline = buffer.indexOf(0x0a);
       if (newline < 0) break;
-      const line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
+      const lineBytes = buffer.subarray(0, newline);
+      buffer = buffer.subarray(newline + 1);
+      let line: string;
+      try {
+        line = decodeUtf8Strict(lineBytes, "Companion request");
+      } catch (error) {
+        writeResponse(socket, options.internalError(error), options.maxResponseBytes);
+        socket.destroy();
+        return;
+      }
       if (!line.trim()) continue;
       requestQueue = requestQueue
         .then(() => {
@@ -385,6 +393,7 @@ async function dispatchLine(
   let decoded: unknown;
   try {
     decoded = JSON.parse(line);
+    assertJsonTextIntegrity(decoded, "Companion request");
   } catch {
     return errorResponse(null, -32700, "Invalid JSON.");
   }
@@ -511,10 +520,9 @@ async function dispatchRequest(
       return localizeSettingsView(view, params.locale);
     }
     case "settings.update": {
-      const view = await applicationService.updateSettings(
-        request.params as BridgeSettingsMutationInput
-      );
-      return localizeSettingsView(view);
+      const { mutation, locale } = splitSettingsMutationPresentation(request.params);
+      const view = await applicationService.updateSettings(mutation);
+      return localizeSettingsView(view, locale);
     }
     case "skills.snapshot":
       emptyParamsSchema.parse(request.params || {});
@@ -609,6 +617,31 @@ async function dispatchRequest(
   }
 }
 
+/**
+ * `locale` is presentation-only companion metadata. It must never be handed
+ * to the strict, shared settings mutation contract or persisted as a bridge
+ * setting. Keeping this adapter at the transport boundary also lets older
+ * native clients omit it without changing their mutation shape.
+ */
+function splitSettingsMutationPresentation(input: unknown): {
+  mutation: BridgeSettingsMutationInput;
+  locale?: string;
+} {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("Invalid settings mutation.");
+  }
+  const record = input as Record<string, unknown>;
+  const locale = record.locale;
+  if (locale !== undefined && (typeof locale !== "string" || !locale.trim() || locale.length > 100)) {
+    throw new Error("Invalid settings presentation locale.");
+  }
+  const { locale: _presentationLocale, ...mutation } = record;
+  return {
+    mutation: mutation as BridgeSettingsMutationInput,
+    ...(typeof locale === "string" ? { locale } : {})
+  };
+}
+
 function requireRemoteManagement(
   controller: RemoteCompanionControl | undefined
 ): RemoteCompanionControl {
@@ -646,7 +679,13 @@ function writeResponse(
   maxResponseBytes: number
 ): void {
   if (socket.destroyed || !socket.writable) return;
-  let serialized = JSON.stringify(response);
+  let serialized: string;
+  try {
+    assertJsonTextIntegrity(response, "Companion response");
+    serialized = JSON.stringify(response);
+  } catch {
+    serialized = JSON.stringify(errorResponse(null, -32603, "Companion response has invalid Unicode text."));
+  }
   if (Buffer.byteLength(serialized, "utf8") > maxResponseBytes) {
     serialized = JSON.stringify(
       errorResponse(response.id as JsonRpcId, -32603, "Companion response is too large.")

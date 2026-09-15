@@ -74,7 +74,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         f.state.setFailure("LIFECYCLE_HANDOFF_FAILED: LIFECYCLE_HANDOFF_CONNECTION_FAILED")
         await model.refreshStatus()
         XCTAssertEqual(model.lifecycleOperation?.phase, "failed")
-        XCTAssertTrue(model.runtimeErrorMessage?.contains("로컬 서비스의 응답") == true)
+        XCTAssertTrue(model.runtimeErrorMessage?.contains("local service response") == true)
         _ = await model.shutdownApplication(force: false)
         XCTAssertEqual(f.server.count("lifecycle.request"), 2)
         XCTAssertTrue(model.applicationShutdownReserved)
@@ -86,17 +86,17 @@ final class RuntimeLifecycleTests: XCTestCase {
         let timeout = "RUNTIME_READINESS_TIMEOUT: \(secret)"
         let restored = BridgeAppLocalization.lifecycleFailureDescription(
             "CONFIG_APPLY_FAILED: \(timeout) Previous runtime configuration was restored.", locale: Locale(identifier: "ko"))
-        XCTAssertTrue(restored.contains("설정 적용에 실패"))
-        XCTAssertTrue(restored.contains("제한 시간"))
-        XCTAssertTrue(restored.contains("이전 설정을 복원했습니다"))
+        XCTAssertTrue(restored.contains("Could not apply the settings."))
+        XCTAssertTrue(restored.contains("before the timeout"))
+        XCTAssertTrue(restored.contains("The previous settings were restored."))
         XCTAssertFalse(restored.contains(secret))
         let failed = BridgeAppLocalization.lifecycleFailureDescription(
             "\(timeout) CONFIG_ROLLBACK_FAILED: token=\(secret)", locale: Locale(identifier: "ko"))
-        XCTAssertTrue(failed.contains("이전 설정을 복원하지 못했습니다"))
+        XCTAssertTrue(failed.contains("Could not restore the previous settings."))
         XCTAssertFalse(failed.contains(secret))
         let restartFailed = BridgeAppLocalization.lifecycleFailureDescription(
             "\(timeout) CONFIG_ROLLBACK_RESTART_FAILED: startup failed", locale: Locale(identifier: "ko"))
-        XCTAssertTrue(restartFailed.contains("복원했지만 서버를 다시 시작하지 못했습니다"))
+        XCTAssertTrue(restartFailed.contains("were restored, but the server could not restart."))
     }
 
     func testHandoffFailurePersistsOnlyTheErrorCategory() throws {
@@ -133,7 +133,7 @@ final class RuntimeLifecycleTests: XCTestCase {
         f.state.setFailure("RUNTIME_READINESS_TIMEOUT: timeout CONFIG_ROLLBACK_RESTART_FAILED: startup failed")
         let model = AppModel(paths: f.paths, bootstrapper: f.bootstrap)
         model.recordLocalConnectionStatus(try f.state.status())
-        XCTAssertTrue(model.runtimeErrorMessage?.contains("이전 설정을 복원했지만") == true)
+        XCTAssertTrue(model.runtimeErrorMessage?.contains("were restored, but the server could not restart.") == true)
         try requireImageRendering()
         let content = RuntimeLifecycleNoticeView().environmentObject(model).padding(12).frame(width: 440)
             .background(Color.white).environment(\.colorScheme, .light)

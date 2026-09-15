@@ -12,6 +12,7 @@ export function computeSourceHash(repoRoot) {
     "package.json",
     "package-lock.json",
     "tsconfig.json",
+    ...walk(repoRoot, "locales"),
     ...walk(repoRoot, "src"),
     ...walk(repoRoot, "scripts")
   ].sort();

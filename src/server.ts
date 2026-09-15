@@ -28,6 +28,9 @@ import { UserSettingsStore } from "./userSettings.js";
 import { CodexBackendRouter } from "./upstreamRouter.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import { SkillLibrary } from "./skillLibrary.js";
+import { assertJsonTextIntegrity, decodeUtf8Strict } from "./textIntegrity.js";
+
+const MAX_MCP_REQUEST_BYTES = 8 * 1024 * 1024;
 
 /**
  * The instructions remain deliberately policy-focused. Wire-protocol behavior
@@ -151,6 +154,7 @@ export function createBridgeMcpServer(
       }
     }
   );
+  installMcpToolTextIntegrityGuard(server);
   const toolRegistration = registerBridgeTools(
     server,
     config,
@@ -375,7 +379,11 @@ async function handleHttpRequest(
   config: BridgeConfig,
   validateHost: (request: IncomingMessage, response: ServerResponse) => boolean,
   validateOrigin: (request: IncomingMessage, response: ServerResponse) => boolean,
-  handleMcp: (request: IncomingMessage, response: ServerResponse) => Promise<void>
+  handleMcp: (
+    request: IncomingMessage,
+    response: ServerResponse,
+    parsedBody?: unknown
+  ) => Promise<void>
 ): Promise<void> {
   const pathname = new URL(req.url || "/", "http://bridge.invalid").pathname;
   if (pathname === "/healthz" && req.method === "GET") {
@@ -405,7 +413,43 @@ async function handleHttpRequest(
     writeJson(res, 401, { error: "unauthorized" });
     return;
   }
-  await handleMcp(req, res);
+  let parsedBody: unknown;
+  try {
+    parsedBody = await readMcpJsonBody(req);
+  } catch {
+    writeJson(res, 400, {
+      jsonrpc: "2.0",
+      error: { code: -32700, message: "MCP request body is not valid UTF-8 JSON." },
+      id: null
+    });
+    return;
+  }
+  await handleMcp(req, res, parsedBody);
+}
+
+/**
+ * The SDK's Node adapter decodes request chunks with a non-fatal TextDecoder.
+ * Read the JSON body once at this byte boundary and give its already-checked
+ * value to the adapter so malformed UTF-8 can never turn into U+FFFD.
+ */
+async function readMcpJsonBody(req: IncomingMessage): Promise<unknown | undefined> {
+  if (req.method === "GET" || req.method === "HEAD") return undefined;
+  const declaredLength = Number(req.headers["content-length"] || 0);
+  if (!Number.isSafeInteger(declaredLength) || declaredLength < 0 || declaredLength > MAX_MCP_REQUEST_BYTES) {
+    throw new Error("MCP request body is too large.");
+  }
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.length;
+    if (size > MAX_MCP_REQUEST_BYTES) throw new Error("MCP request body is too large.");
+    chunks.push(bytes);
+  }
+  if (size === 0) return undefined;
+  const parsed = JSON.parse(decodeUtf8Strict(Buffer.concat(chunks), "MCP request body"));
+  assertJsonTextIntegrity(parsed, "MCP request body");
+  return parsed;
 }
 
 function validationHostnames(
@@ -427,12 +471,35 @@ function validationHostnames(
 }
 
 function writeJson(res: ServerResponse, status: number, body: unknown): void {
+  assertJsonTextIntegrity(body, "HTTP JSON response");
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "content-length": String(Buffer.byteLength(payload, "utf8"))
   });
   res.end(payload);
+}
+
+/** Apply the same JSON-string invariant to every MCP tool in one place. */
+function installMcpToolTextIntegrityGuard(server: McpServer): void {
+  type UntypedToolCallback = (args: unknown, context: unknown) => unknown;
+  type UntypedRegisterTool = (
+    name: string,
+    config: unknown,
+    callback: UntypedToolCallback
+  ) => unknown;
+  const target = server as unknown as { registerTool: UntypedRegisterTool };
+  const registerTool = target.registerTool.bind(server);
+  target.registerTool = (name, config, callback) => registerTool(
+    name,
+    config,
+    async (args, context) => {
+      assertJsonTextIntegrity(args, `MCP tool ${name} input`);
+      const result = await callback(args, context);
+      assertJsonTextIntegrity(result, `MCP tool ${name} result`);
+      return result;
+    }
+  );
 }
 
 function logMcpError(prefix: string, error: unknown): void {

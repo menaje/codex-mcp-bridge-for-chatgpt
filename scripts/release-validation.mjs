@@ -10,6 +10,10 @@ export function classifyChangedPaths(paths) {
   for (const rawPath of paths) {
     const relative = rawPath.replaceAll("\\", "/");
     if (relative.startsWith("macos/")) macos = true;
+    if (relative.startsWith("locales/")) {
+      node = true;
+      macos = true;
+    }
     // CodexBridgeKit consumes the helper protocol, Dashboard/settings DTOs,
     // and packaged Node runtime. Any production TypeScript change therefore
     // exercises both sides of the local integration contract.

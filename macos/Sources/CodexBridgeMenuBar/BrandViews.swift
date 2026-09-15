@@ -204,7 +204,7 @@ struct FullRowDisclosure<Label: View, Content: View>: View {
             }
             .buttonStyle(.plain)
             .accessibilityValue(BridgeAppLocalization.string(
-                isExpanded ? "펼침" : "접힘",
+                isExpanded ? "macos.expanded" : "macos.collapsed",
                 locale: locale
             ))
 

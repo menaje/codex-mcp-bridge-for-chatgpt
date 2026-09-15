@@ -42,13 +42,13 @@ struct NativeSettingsView: View {
             if syncState.externalChangeDetected {
                 HStack(spacing: 10) {
                     Label(
-                        "다른 화면에서 설정이 변경되어 자동 저장을 멈췄습니다. 편집 내용을 유지하려면 확인한 뒤 최신 값을 다시 불러와 주세요.",
+                        "macos.settingschangedelsewheresoautomaticsavingpausedreview",
                         systemImage: "arrow.triangle.2.circlepath"
                     )
                     .font(.caption)
                     .foregroundStyle(.orange)
                     Spacer()
-                    Button("최신 값 불러오기") {
+                    Button("macos.reloadlatestvalues") {
                         showDiscardDraftConfirmation = true
                     }
                 }
@@ -56,19 +56,19 @@ struct NativeSettingsView: View {
             TabView(selection: $selectedTab) {
                 ConnectionSettingsPane()
                     .environmentObject(model)
-                    .tabItem { Label("연결", systemImage: "network") }
+                    .tabItem { Label("macos.link", systemImage: "network") }
                     .tag("connection")
 
                 if !model.isRemoteClient {
                     CodexRuntimeSettingsPane(isSelected: selectedTab == "codex")
                         .environmentObject(model)
-                        .tabItem { Label("Codex", systemImage: "terminal") }
+                        .tabItem { Label("macos.codex", systemImage: "terminal") }
                         .tag("codex")
                 }
 
                 if model.needsSetup {
                     ConnectionRepairView()
-                        .tabItem { Label("서버", systemImage: "wrench.and.screwdriver") }
+                        .tabItem { Label("macos.server", systemImage: "wrench.and.screwdriver") }
                         .tag("general")
                 } else {
                     Group {
@@ -87,7 +87,7 @@ struct NativeSettingsView: View {
                                 .environmentObject(model)
                         }
                     }
-                    .tabItem { Label("일반", systemImage: "gearshape") }
+                    .tabItem { Label("macos.general", systemImage: "gearshape") }
                     .tag("general")
 
                     Group {
@@ -102,12 +102,12 @@ struct NativeSettingsView: View {
                                 .environmentObject(model)
                         }
                     }
-                    .tabItem { Label("프로젝트", systemImage: "folder") }
+                    .tabItem { Label("settings.projects", systemImage: "folder") }
                     .tag("projects")
 
                     SkillsLibraryView()
                         .environmentObject(model)
-                        .tabItem { Label("스킬", systemImage: "books.vertical") }
+                        .tabItem { Label("macos.skills", systemImage: "books.vertical") }
                         .tag("skills")
 
                     if !model.isRemoteClient {
@@ -120,7 +120,7 @@ struct NativeSettingsView: View {
                                     .environmentObject(model)
                             }
                         }
-                        .tabItem { Label("서버", systemImage: "server.rack") }
+                        .tabItem { Label("macos.server", systemImage: "server.rack") }
                         .tag("server")
                     }
                 }
@@ -156,19 +156,19 @@ struct NativeSettingsView: View {
         }
         .onChange(of: model.needsSetup) { _ in reportSelectedPane() }
         .onChange(of: model.interfaceLocalePreference) { _ in reportSelectedPane() }
-        .alert("설정 충돌", isPresented: Binding(
+        .alert("macos.settingsconflict", isPresented: Binding(
             get: { model.settingsConflictMessage != nil },
             set: { if !$0 { model.settingsConflictMessage = nil } }
         )) {
-            Button("확인", role: .cancel) {}
+            Button("macos.ok", role: .cancel) {}
         } message: {
             Text(model.settingsConflictMessage ?? "")
         }
         .confirmationDialog(
-            "현재 편집 내용을 버리고 최신 설정을 불러올까요?",
+            "macos.discardyourcurrenteditsandloadthelatest",
             isPresented: $showDiscardDraftConfirmation
         ) {
-            Button("편집 내용 버리기", role: .destructive) {
+            Button("macos.discardedits", role: .destructive) {
                 model.cancelPendingSettingsAutosave()
                 synchronizeDraft(force: true)
                 model.restorePersistedInterfaceLocale()
@@ -184,13 +184,13 @@ struct NativeSettingsView: View {
     private func reportSelectedPane() {
         let key: String
         switch selectedTab {
-        case "connection": key = "연결"
-        case "codex": key = "Codex"
-        case "projects": key = "프로젝트"
-        case "skills": key = "스킬"
-        case "server": key = "서버"
+        case "connection": key = "macos.link"
+        case "codex": key = "macos.codex"
+        case "projects": key = "settings.projects"
+        case "skills": key = "macos.skills"
+        case "server": key = "macos.server"
         default:
-            key = model.needsSetup ? "서버 설정" : "일반"
+            key = model.needsSetup ? "macos.serversettings" : "macos.general"
         }
         onSelectedPaneChange?(BridgeAppLocalization.string(key, locale: model.interfaceLocale))
     }
@@ -225,21 +225,21 @@ private struct ConnectionSettingsPane: View {
 
     var body: some View {
         Form {
-            Section("앱 역할") {
+            Section("macos.approle") {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: model.isRemoteClient ? "network" : "desktopcomputer")
                         .font(.title2)
                         .foregroundStyle(Color.accentColor)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(BridgeAppLocalization.string(
-                            model.isRemoteClient ? "기존 서버에 연결" : "이 Mac에서 서버 실행",
+                            model.isRemoteClient ? "macos.connecttoexistingserver" : "macos.runserveronthismac",
                             locale: model.interfaceLocale
                         ))
                             .font(.headline)
                         Text(BridgeAppLocalization.string(
                             model.isRemoteClient
-                                ? "이 앱은 선택한 서버의 현황과 설정만 사용하며, 이 Mac에서 helper·Bridge·Tunnel·Codex를 시작하지 않습니다."
-                                : "이 Mac이 helper·Bridge·Tunnel·Codex runtime을 소유하고 실행합니다.",
+                                ? "macos.thisappusesonlytheselectedservers"
+                                : "macos.thismacownsandrunsthehelperbridge",
                             locale: model.interfaceLocale
                         ))
                             .font(.caption)
@@ -247,11 +247,11 @@ private struct ConnectionSettingsPane: View {
                     }
                     Spacer()
                     if model.isRemoteClient {
-                        Button("이 Mac에서 실행") {
+                        Button("macos.runonthismac") {
                             Task { await model.setConnectionMode(.localHost) }
                         }
                     } else {
-                        Button("기존 서버에 연결") {
+                        Button("macos.connecttoexistingserver") {
                             showRemoteConnectionSheet = true
                         }
                     }
@@ -264,35 +264,35 @@ private struct ConnectionSettingsPane: View {
                 hostedServerSections
             }
 
-            Section("이 Mac의 앱 설정") {
-                Toggle("브리지 문제 발생 시 알림", isOn: $model.bridgeProblemNotificationsEnabled)
-                Toggle("보안 및 연결 승인 알림", isOn: $model.securityNotificationsEnabled)
+            Section("macos.thismacsappsettings") {
+                Toggle("macos.notifyaboutbridgeproblems", isOn: $model.bridgeProblemNotificationsEnabled)
+                Toggle("macos.securityandconnectionapprovalnotifications", isOn: $model.securityNotificationsEnabled)
                 HStack {
                     switch model.notificationPermission {
                     case .authorized:
-                        Label("macOS 알림 허용됨", systemImage: "checkmark.circle.fill")
+                        Label("macos.macosnotificationsallowed", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                         Spacer()
-                        Button("macOS 알림 설정 열기") { model.openNotificationSettings() }
+                        Button("macos.openmacosnotificationsettings") { model.openNotificationSettings() }
                     case .denied:
-                        Label("macOS 알림이 꺼져 있습니다.", systemImage: "bell.slash")
+                        Label("macos.macosnotificationsaredisabled", systemImage: "bell.slash")
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Button("macOS 알림 설정 열기") { model.openNotificationSettings() }
+                        Button("macos.openmacosnotificationsettings") { model.openNotificationSettings() }
                     case .notDetermined:
-                        Button("macOS 알림 허용") {
+                        Button("macos.checkmacosnotificationpermission") {
                             Task { await model.requestNotificationAuthorization() }
                         }
                         .disabled(model.notificationAuthorizationInProgress)
                     case .unknown:
-                        Text("알림 권한 확인 중…").foregroundStyle(.secondary)
+                        Text("macos.checkingnotificationpermission").foregroundStyle(.secondary)
                     }
                 }
-                Text("알림은 macOS 알림 설정과 집중 모드를 따릅니다. 알림을 꺼도 메뉴바에서 연결 문제를 확인할 수 있습니다.")
+                Text("macos.notificationsfollowmacossettingsandfocusconnectionproblems")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Toggle(
-                    "로그인 시 메뉴 막대 앱 실행",
+                    "macos.launchmenubarappatlogin",
                     isOn: Binding(
                         get: { model.menuBarLoginItemStatus.isEnabled },
                         set: { model.setMenuBarLaunchAtLogin($0) }
@@ -302,8 +302,8 @@ private struct ConnectionSettingsPane: View {
 
                 Text(BridgeAppLocalization.string(
                     model.isRemoteClient
-                        ? "이 앱은 선택한 서버의 현황과 설정만 사용하며, 이 Mac에서 helper·Bridge·Tunnel·Codex를 시작하지 않습니다."
-                        : "이 Mac에만 즉시 적용됩니다. 이 설정을 꺼도 ChatGPT 연결을 위한 브리지 helper와 서버는 백그라운드에서 계속 실행됩니다.",
+                        ? "macos.thisappusesonlytheselectedservers"
+                        : "macos.appliesimmediatelyonthismacturningitoff",
                     locale: model.interfaceLocale
                 ))
                     .font(.caption)
@@ -311,22 +311,22 @@ private struct ConnectionSettingsPane: View {
 
                 switch model.menuBarLoginItemStatus {
                 case .enabled:
-                    Label("다음 사용자 로그인부터 메뉴 막대 앱이 자동으로 열립니다.", systemImage: "checkmark.circle")
+                    Label("macos.themenubarappwillopenautomaticallyat", systemImage: "checkmark.circle")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 case .requiresApproval:
-                    Label("macOS에서 로그인 항목 실행 승인이 필요합니다.", systemImage: "exclamationmark.triangle.fill")
+                    Label("macos.macosapprovalisrequiredforthisloginitem", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
-                    Button("로그인 항목 설정 열기") {
+                    Button("macos.openloginitemsettings") {
                         model.openLoginItemsSystemSettings()
                     }
                 case .notFound:
-                    Label("설치된 앱 번들에서 로그인 항목을 찾지 못했습니다.", systemImage: "xmark.circle.fill")
+                    Label("macos.theloginitemcouldnotbefoundin", systemImage: "xmark.circle.fill")
                         .font(.caption)
                         .foregroundStyle(.red)
                 case .unknown:
-                    Label("로그인 항목 상태를 확인할 수 없습니다.", systemImage: "questionmark.circle")
+                    Label("macos.theloginitemstatuscouldnotbedetermined", systemImage: "questionmark.circle")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 case .notRegistered:
@@ -382,24 +382,24 @@ private struct ConnectionSettingsPane: View {
             .environmentObject(model)
         }
         .confirmationDialog(
-            "원격 클라이언트 모드로 전환할까요?",
+            "macos.switchtoremoteclientmode",
             isPresented: $showRemoteModeConfirmation
         ) {
-            Button("작업을 마치고 원격 모드로 전환") {
+            Button("macos.switchtoremotemodeafterfinishingwork") {
                 Task { await model.setConnectionMode(.remoteClient) }
             }
-            Button("강제로 중지하고 전환", role: .destructive) {
+            Button("macos.forcestopandswitch", role: .destructive) {
                 Task { await model.setConnectionMode(.remoteClient, force: true) }
             }
-            Button("취소", role: .cancel) {}
+            Button("common.cancel", role: .cancel) {}
         } message: {
-            Text("이 Mac이 실행 중인 서버와 Tunnel을 먼저 종료합니다. 원격 모드에서는 앱을 종료해도 선택한 원격 서버를 중지하지 않습니다.")
+            Text("macos.theserverandtunnelrunningonthismac")
         }
         .confirmationDialog(
-            "다른 Mac 연결을 끌까요?",
+            "macos.remoteConnections.turnOffConfirmation",
             isPresented: $showDisableRemoteConnectionConfirmation
         ) {
-            Button("다른 Mac 연결 끄기", role: .destructive) {
+            Button("macos.turnoffconnectionsfromothermacs", role: .destructive) {
                 Task {
                     await model.configureRemoteManagement(
                         enabled: false,
@@ -408,19 +408,19 @@ private struct ConnectionSettingsPane: View {
                     )
                 }
             }
-            Button("취소", role: .cancel) {}
+            Button("common.cancel", role: .cancel) {}
         } message: {
-            Text("등록된 기기는 유지되지만 다시 켤 때까지 이 서버에 연결할 수 없습니다.")
+            Text("macos.registereddevicesarekeptbuttheycannotconnect")
         }
         .confirmationDialog(
-            "저장된 서버를 이 Mac에서 삭제할까요?",
+            "macos.deletethesavedserverfromthismac",
             isPresented: Binding(
                 get: { profileDeletionTarget != nil },
                 set: { if !$0 { profileDeletionTarget = nil } }
             ),
             presenting: profileDeletionTarget
         ) { profile in
-            Button("서버 프로필 및 자격 증명 삭제", role: .destructive) {
+            Button("macos.deleteserverprofileandcredentials", role: .destructive) {
                 Task {
                     if await model.removeRemoteServer(profile.serverId) {
                         profileDeletionTarget = nil
@@ -428,17 +428,21 @@ private struct ConnectionSettingsPane: View {
                 }
             }
         } message: { profile in
-            Text("‘\(profile.name)’ 서버 자체와 다른 기기의 등록은 변경하지 않습니다.")
+            Text(BridgeAppLocalization.format(
+                "macos.thisdoesnotchangetheserveritselfor",
+                locale: model.interfaceLocale,
+                profile.name
+            ))
         }
         .confirmationDialog(
-            "이 기기의 원격 접속 권한을 폐기할까요?",
+            "macos.revokethisdevicesremoteaccess",
             isPresented: Binding(
                 get: { deviceRevocationTarget != nil },
                 set: { if !$0 { deviceRevocationTarget = nil } }
             ),
             presenting: deviceRevocationTarget
         ) { device in
-            Button("접속 권한 폐기", role: .destructive) {
+            Button("macos.revokeaccess", role: .destructive) {
                 Task {
                     if await model.revokeRemoteDevice(device.id) {
                         deviceRevocationTarget = nil
@@ -446,19 +450,23 @@ private struct ConnectionSettingsPane: View {
                 }
             }
         } message: { device in
-            Text("‘\(device.name)’의 자격 증명은 즉시 더 이상 사용할 수 없습니다.")
+            Text(BridgeAppLocalization.format(
+                "macos.thecredentialsforwillstopworkingimmediately",
+                locale: model.interfaceLocale,
+                device.name
+            ))
         }
     }
 
     @ViewBuilder
     private var remoteClientSections: some View {
-        Section("활성 서버") {
+        Section("macos.activeserver") {
             if model.connectionPreferences.profiles.isEmpty {
-                Label("저장된 서버가 없습니다. 아래 페어링 초대를 입력해 첫 서버를 등록하세요.", systemImage: "server.rack")
+                Label("macos.noserversaresavedenterapairinginvitation", systemImage: "server.rack")
                     .foregroundStyle(.secondary)
                 HStack {
                     Spacer()
-                    Button("새 서버 페어링") {
+                    Button("macos.pairnewserver") {
                         showRemoteConnectionSheet = true
                     }
                     .buttonStyle(.borderedProminent)
@@ -471,19 +479,23 @@ private struct ConnectionSettingsPane: View {
                             HStack {
                                 Text(profile.name).font(.headline)
                                 if profile.serverId == model.connectionPreferences.activeServerId {
-                                    Text("활성").font(.caption2).padding(4).background(.quaternary, in: Capsule())
+                                    Text("agent.active").font(.caption2).padding(4).background(.quaternary, in: Capsule())
                                 }
                             }
                             Text(profile.endpoint)
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
-                            Text("서버 ID \(profile.serverId)")
+                            Text(BridgeAppLocalization.format(
+                                "macos.serverid",
+                                locale: model.interfaceLocale,
+                                profile.serverId
+                            ))
                                 .font(.caption2.monospaced())
                                 .foregroundStyle(.tertiary)
                         }
                         Spacer()
                         if profile.serverId != model.connectionPreferences.activeServerId {
-                            Button("전환") {
+                            Button("macos.switch") {
                                 Task { await model.activateRemoteServer(profile.serverId) }
                             }
                         }
@@ -497,7 +509,7 @@ private struct ConnectionSettingsPane: View {
                 }
                 HStack {
                     Spacer()
-                    Button("새 서버 페어링") {
+                    Button("macos.pairnewserver") {
                         showRemoteConnectionSheet = true
                     }
                     .disabled(model.isBusy)
@@ -505,8 +517,8 @@ private struct ConnectionSettingsPane: View {
             }
             if let profile = model.activeRemoteProfile {
                 HStack {
-                    TextField("활성 서버 표시 이름", text: $activeProfileName)
-                    Button("이름 저장") {
+                    TextField("macos.activeserverdisplayname", text: $activeProfileName)
+                    Button("macos.savename") {
                         _ = model.renameRemoteServer(profile.serverId, name: activeProfileName)
                     }
                     .disabled(activeProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -514,19 +526,24 @@ private struct ConnectionSettingsPane: View {
             }
             if let hello = model.remoteHello {
                 Label(
-                    "\(hello.server.displayName) · Bridge \(hello.bridge.version) · 연결됨",
+                    BridgeAppLocalization.format(
+                        "macos.bridgeconnected",
+                        locale: model.interfaceLocale,
+                        hello.server.displayName,
+                        hello.bridge.version
+                    ),
                     systemImage: "checkmark.circle.fill"
                 )
                 .foregroundStyle(.green)
             } else if model.activeRemoteProfile != nil {
-                Label("선택한 서버에 연결되지 않았습니다.", systemImage: "network.slash")
+                Label("macos.notconnectedtotheselectedserver", systemImage: "network.slash")
                     .foregroundStyle(.orange)
-                Button("다시 연결") { Task { await model.refreshAll() } }
+                Button("macos.reconnect") { Task { await model.refreshAll() } }
             }
         }
 
         if let error = model.connectionErrorMessage {
-            Section("연결 오류") {
+            Section("macos.connectionerror") {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
@@ -536,11 +553,11 @@ private struct ConnectionSettingsPane: View {
 
     @ViewBuilder
     private var hostedServerSections: some View {
-        Section("다른 Mac에서 이 서버 관리") {
-            Text("이 Mac의 이름과 접속 주소를 자동으로 사용합니다. 연결할 기기에 전달할 것은 아래에서 만드는 페어링 초대뿐입니다.")
+        Section("macos.managethisserverfromanothermac") {
+            Text("macos.thismacsnameandconnectionaddressare")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            TextField("다른 기기에 표시할 서버 이름", text: $hostedDisplayName)
+            TextField("macos.servernameshownonotherdevices", text: $hostedDisplayName)
             HStack {
                 if let status = model.remoteManagementStatus {
                     Label(
@@ -568,22 +585,22 @@ private struct ConnectionSettingsPane: View {
                         model.isBusy
                 )
                 if model.remoteManagementStatus?.enabled == true {
-                    Button("연결 끄기", role: .destructive) {
+                    Button("macos.turnoffconnections", role: .destructive) {
                         showDisableRemoteConnectionConfirmation = true
                     }
                     .disabled(model.isBusy)
                 }
             }
             FullRowDisclosure(
-                "고급 연결 설정",
+                "macos.advancedconnectionsettings",
                 isExpanded: $advancedConnectionSettingsExpanded
             ) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("자동 감지한 주소입니다. 다른 사설 DNS 또는 VPN 주소를 사용해야 할 때만 변경하세요.")
+                    Text("macos.thisaddresswasdetectedautomaticallychangeitonly")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        Text("HTTPS 주소")
+                        Text("macos.httpsaddress")
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
                             .frame(width: 76, alignment: .leading)
@@ -596,9 +613,17 @@ private struct ConnectionSettingsPane: View {
                     }
                     if let status = model.remoteManagementStatus {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("서버 ID: \(status.serverId)")
+                            Text(BridgeAppLocalization.format(
+                                "macos.connection.serverIdLabeled",
+                                locale: model.interfaceLocale,
+                                status.serverId
+                            ))
                             if let fingerprint = status.certificateSha256 {
-                                Text("인증서 SHA-256: \(fingerprint)")
+                                Text(BridgeAppLocalization.format(
+                                    "macos.certificatesha256",
+                                    locale: model.interfaceLocale,
+                                    fingerprint
+                                ))
                             }
                         }
                         .font(.caption2.monospaced())
@@ -619,11 +644,11 @@ private struct ConnectionSettingsPane: View {
         }
 
         if model.remoteManagementStatus?.listening == true {
-            Section("기기 페어링") {
-                Text("클라이언트 Mac의 연결 화면에 붙여넣을 1회용 초대를 만듭니다.")
+            Section("macos.devicepairing") {
+                Text("macos.createsaonetimeinvitationtopasteinto")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button("5분 동안 유효한 새 페어링 초대 만들고 복사") {
+                Button("macos.createandcopyanewpairinginvitationvalid") {
                     pairingInvitationCopied = false
                     Task {
                         if await model.beginRemotePairing(),
@@ -637,15 +662,19 @@ private struct ConnectionSettingsPane: View {
                 .disabled(model.isBusy)
                 if let pairing = model.remotePairingInvitation {
                     if pairingInvitationCopied {
-                        Label("페어링 초대를 클립보드에 복사했습니다.", systemImage: "checkmark.circle.fill")
+                        Label("macos.pairinginvitationcopiedtotheclipboard", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                     }
                     HStack {
-                        Text("\(DisplayFormat.dateTime(pairing.expiresAt, locale: model.interfaceLocale))까지 1회만 사용할 수 있습니다.")
+                        Text(BridgeAppLocalization.format(
+                            "macos.usableonceuntil",
+                            locale: model.interfaceLocale,
+                            DisplayFormat.dateTime(pairing.expiresAt, locale: model.interfaceLocale)
+                        ))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Button("초대 복사") {
+                        Button("macos.copyinvitation") {
                             copyToPasteboard(pairing.invitation)
                             pairingInvitationCopied = true
                         }
@@ -653,9 +682,9 @@ private struct ConnectionSettingsPane: View {
                 }
             }
 
-            Section("등록된 기기") {
+            Section("macos.registereddevices") {
                 if model.remoteManagementStatus?.devices.isEmpty != false {
-                    Text("등록된 원격 기기가 없습니다.")
+                    Text("macos.therearenoregisteredremotedevices")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(model.remoteManagementStatus?.devices ?? []) { device in
@@ -664,19 +693,19 @@ private struct ConnectionSettingsPane: View {
                             Text(device.name).font(.headline)
                             Text(device.lastSeenAt.map {
                                 BridgeAppLocalization.format(
-                                    "마지막 접속 %@",
+                                    "macos.lastconnected",
                                     locale: model.interfaceLocale,
                                     $0
                                 )
                             } ?? BridgeAppLocalization.string(
-                                "아직 접속하지 않음",
+                                "macos.neverconnected",
                                 locale: model.interfaceLocale
                             ))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("폐기", role: .destructive) {
+                        Button("macos.revoke", role: .destructive) {
                             deviceRevocationTarget = device
                         }
                     }
@@ -692,24 +721,24 @@ private struct ConnectionSettingsPane: View {
     private func remoteManagementStatusText(_ status: RemoteManagementStatus) -> String {
         if status.listening {
             return BridgeAppLocalization.string(
-                "연결 받을 준비됨",
+                "macos.readyforconnections",
                 locale: model.interfaceLocale
             )
         }
         if status.enabled {
-            return BridgeAppLocalization.string("시작 실패", locale: model.interfaceLocale)
+            return BridgeAppLocalization.string("macos.failedtostart", locale: model.interfaceLocale)
         }
-        return BridgeAppLocalization.string("꺼짐", locale: model.interfaceLocale)
+        return BridgeAppLocalization.string("macos.off", locale: model.interfaceLocale)
     }
 
     private var remoteManagementActionTitle: String {
         if model.remoteManagementStatus?.listening == true {
-            return BridgeAppLocalization.string("설정 저장", locale: model.interfaceLocale)
+            return BridgeAppLocalization.string("macos.savesettings", locale: model.interfaceLocale)
         }
         if model.remoteManagementStatus?.enabled == true {
-            return BridgeAppLocalization.string("다시 시작", locale: model.interfaceLocale)
+            return BridgeAppLocalization.string("macos.restart", locale: model.interfaceLocale)
         }
-        return BridgeAppLocalization.string("다른 Mac 연결 켜기", locale: model.interfaceLocale)
+        return BridgeAppLocalization.string("macos.turnonconnectionsfromothermacs", locale: model.interfaceLocale)
     }
 
     private func synchronizeHostedFields() {
@@ -743,9 +772,9 @@ private struct RemoteServerConnectionSheet: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(model.isRemoteClient ? "새 서버 페어링" : "기존 서버에 연결")
+                    Text(model.isRemoteClient ? "macos.pairnewserver" : "macos.connecttoexistingserver")
                         .font(.title2.bold())
-                    Text("서버에서 복사한 페어링 초대 하나로 주소와 보안 정보를 함께 확인합니다.")
+                    Text("macos.thepairinginvitationcopiedfromtheserververifies")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -757,15 +786,15 @@ private struct RemoteServerConnectionSheet: View {
 
             Form {
                 if !model.isRemoteClient, !model.connectionPreferences.profiles.isEmpty {
-                    Section("저장된 서버 사용") {
-                        Picker("서버", selection: $selectedServerId) {
+                    Section("macos.useasavedserver") {
+                        Picker("macos.server", selection: $selectedServerId) {
                             ForEach(model.connectionPreferences.profiles) { profile in
                                 Text(profile.name).tag(profile.serverId)
                             }
                         }
                         HStack {
                             Spacer()
-                            Button("선택한 서버로 연결") {
+                            Button("macos.connecttoselectedserver") {
                                 if model.prepareRemoteServerForModeSwitch(selectedServerId) {
                                     onComplete(true)
                                 }
@@ -776,8 +805,8 @@ private struct RemoteServerConnectionSheet: View {
                     }
                 }
 
-                Section("새 서버 페어링") {
-                    Text("서버 Mac에서 ‘새 페어링 초대 만들고 복사’를 누른 뒤 여기에 붙여넣으세요.")
+                Section("macos.pairnewserver") {
+                    Text("macos.ontheservermacclickcreateandcopy")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     TextEditor(text: $invitation)
@@ -785,20 +814,20 @@ private struct RemoteServerConnectionSheet: View {
                         .frame(minHeight: 76)
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
                     HStack {
-                        Button("클립보드에서 붙여넣기") {
+                        Button("macos.pastefromclipboard") {
                             if let copied = NSPasteboard.general.string(forType: .string) {
                                 invitation = copied.trimmingCharacters(in: .whitespacesAndNewlines)
                             }
                         }
                         Spacer()
                     }
-                    TextField("서버에 표시할 이 기기 이름", text: $deviceName)
-                    FullRowDisclosure("선택 사항", isExpanded: $optionalFieldsExpanded) {
-                        TextField("저장할 서버 이름(선택)", text: $profileName)
+                    TextField("macos.nameofthisdeviceshownontheserver", text: $deviceName)
+                    FullRowDisclosure("macos.optional", isExpanded: $optionalFieldsExpanded) {
+                        TextField("macos.servernametosaveoptional", text: $profileName)
                     }
                     HStack {
                         Spacer()
-                        Button(model.isRemoteClient ? "페어링하고 활성화" : "서버 확인 및 등록") {
+                        Button(model.isRemoteClient ? "macos.pairandactivate" : "macos.verifyandregisterserver") {
                             let shouldSwitchMode = !model.isRemoteClient
                             Task {
                                 if await model.pairRemoteServer(
@@ -817,13 +846,13 @@ private struct RemoteServerConnectionSheet: View {
                                 model.isBusy
                         )
                     }
-                    Text("기기 자격 증명은 macOS Keychain에만 저장됩니다. 서버 주소나 프로필에는 비밀값이 포함되지 않습니다.")
+                    Text("macos.devicecredentialsarestoredonlyinthemacos")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
 
                 if let error = model.connectionErrorMessage {
-                    Section("연결 오류") {
+                    Section("macos.connectionerror") {
                         Label(error, systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.red)
                             .textSelection(.enabled)
@@ -835,7 +864,7 @@ private struct RemoteServerConnectionSheet: View {
             Divider()
             HStack {
                 Spacer()
-                Button("취소") { onComplete(false) }
+                Button("common.cancel") { onComplete(false) }
                     .keyboardShortcut(.cancelAction)
             }
             .padding(16)
@@ -855,18 +884,18 @@ private struct SettingsConnectionUnavailablePane: View {
     var body: some View {
         VStack(spacing: 12) {
             if !model.bridgeConnected, model.isBridgeConnectionChecking {
-                ProgressView("브리지 연결을 확인하고 있습니다…")
+                ProgressView("macos.checkingthebridgeconnection")
                     .controlSize(.small)
             } else if model.isRemoteClient {
                 BridgeBrandStatusIcon(health: .unavailable, size: 44)
                 if model.activeRemoteProfile == nil {
-                    Text("연결 탭에서 서버를 페어링해 주세요.")
+                    Text("macos.pairaserverintheconnectiontab")
                         .font(.headline)
-                    Text("원격 모드에서는 이 Mac의 helper나 Codex runtime을 시작하지 않습니다.")
+                    Text("macos.remotemodedoesnotstartthehelperor")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("원격 서버 설정을 불러오지 못했습니다.")
+                    Text("macos.couldnotloadtheremoteserversettings")
                         .font(.headline)
                     if let error = model.connectionErrorMessage ??
                         model.statusErrorMessage ?? model.settingsLoadErrorMessage {
@@ -875,27 +904,27 @@ private struct SettingsConnectionUnavailablePane: View {
                             .foregroundStyle(.red)
                             .textSelection(.enabled)
                     }
-                    Button("다시 연결") { Task { await model.refreshAll() } }
+                    Button("macos.reconnect") { Task { await model.refreshAll() } }
                         .buttonStyle(.borderedProminent)
                 }
             } else if !model.bridgeConnected {
                 BridgeBrandStatusIcon(health: .unavailable, size: 44)
-                Text("설정을 불러오려면 이 Mac의 브리지 서버를 시작해 주세요.")
-                Button("서버 시작") { Task { await model.startRuntime() } }
+                Text("macos.startthebridgeserveronthismacto")
+                Button("macos.startserver") { Task { await model.startRuntime() } }
                     .buttonStyle(.borderedProminent)
                 if let error = model.runtimeErrorMessage ?? model.statusErrorMessage {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
             } else if model.settingsLoadErrorMessage != nil {
                 BridgeBrandStatusIcon(health: .attention, size: 44)
-                Text("설정을 불러오지 못했습니다.").font(.headline)
-                Text("로그인 정보, 대화 기록, 프로젝트와 브리지 설정은 유지됩니다.")
+                Text("macos.settingscouldnotbeloaded").font(.headline)
+                Text("macos.logininformationconversationhistoryprojectsandbridgesettings")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                Button("다시 시도") { Task { await model.refreshSettings() } }
+                Button("macos.tryagain") { Task { await model.refreshSettings() } }
             } else {
-                ProgressView("설정을 불러오는 중…")
+                ProgressView("macos.loadingsettings")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -943,15 +972,15 @@ private struct GeneralSettingsPane: View {
         Form {
             Section {
                 Label(
-                    "이 설정은 이 브리지 연결을 사용하는 모든 대화에 공유됩니다.",
+                    "macos.thesesettingsaresharedbyeveryconversationusing",
                     systemImage: "person.2"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
 
-            Section("접근 권한") {
-                Picker("접근 전략", selection: $draft.accessStrategy) {
+            Section("macos.access") {
+                Picker("macos.accessstrategy", selection: $draft.accessStrategy) {
                     ForEach(snapshot.capabilities.availableAccessStrategies, id: \.self) {
                         Text(accessLabel($0, locale: model.interfaceLocale)).tag($0)
                     }
@@ -959,15 +988,15 @@ private struct GeneralSettingsPane: View {
                 Text(accessDescription(draft.accessStrategy, locale: model.interfaceLocale))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("각 작업이 요청할 기본 권한입니다. 서버 탭의 최대 접근 권한을 넘을 수 없습니다.")
+                Text("macos.thisisthedefaultaccessleveleachtask")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if draft.accessStrategy == "always-full" {
                     Label(
                         BridgeAppLocalization.string(
                             snapshot.capabilities.allowDangerFullAccess
-                                ? "전체 접근은 이 macOS 사용자의 파일시스템과 네트워크 권한으로 Codex를 실행합니다."
-                                : "전체 접근 선택은 보존되어 있지만 현재 최대 접근 권한이 제한되어 읽기 전용으로 실행됩니다. 서버 탭에서 최대 권한을 변경할 수 있습니다.",
+                                ? "macos.fullaccessrunscodexwiththismacosuser"
+                                : "macos.yourfullaccesspreferenceispreservedbutthe",
                             locale: model.interfaceLocale
                         ),
                         systemImage: "exclamationmark.shield.fill"
@@ -977,33 +1006,33 @@ private struct GeneralSettingsPane: View {
                 }
             }
 
-            Section("모델 정책") {
-                Picker("선택 방식", selection: policyModeBinding) {
-                    Text("고정").tag("fixed")
-                    Text("자동").tag("automatic")
+            Section("macos.modelpolicy") {
+                Picker("macos.selectionmode", selection: policyModeBinding) {
+                    Text("settings.modelPolicy.fixed").tag("fixed")
+                    Text("settings.language.auto").tag("automatic")
                 }
                 .pickerStyle(.segmented)
 
                 if draft.policyMode == "fixed" {
-                    Picker("모델", selection: fixedModelIDBinding) {
+                    Picker("settings.model", selection: fixedModelIDBinding) {
                         ForEach(modelIDs, id: \.self) { modelID in
                             Text(modelLabel(modelID)).tag(modelID)
                         }
                     }
-                    Picker("추론 수준", selection: fixedEffortBinding) {
+                    Picker("macos.reasoningeffort", selection: fixedEffortBinding) {
                         ForEach(choicesForFixedModel, id: \.key) { choice in
                             Text(effortLabel(choice)).tag(choice.reasoningEffort)
                                 .disabled(draft.isUltraDisabled(choice))
                         }
                     }
                 } else {
-                    Picker("자동 허용 범위", selection: $draft.allowedKind) {
-                        Text("표시되는 전체 카탈로그").tag("catalog-visible")
-                        Text("명시적으로 선택").tag("explicit")
+                    Picker("macos.automaticallowlist", selection: $draft.allowedKind) {
+                        Text("macos.allvisiblecatalogmodels").tag("catalog-visible")
+                        Text("macos.selectexplicitly").tag("explicit")
                     }
                     if draft.allowedKind == "explicit" {
                         FullRowDisclosure(
-                            "허용 모델과 추론 수준",
+                            "macos.allowedmodelsandreasoningefforts",
                             isExpanded: $allowedModelsExpanded
                         ) {
                             VStack(alignment: .leading, spacing: 6) {
@@ -1036,29 +1065,29 @@ private struct GeneralSettingsPane: View {
                 }
 
                 Toggle(
-                    "Ultra 추론 허용",
+                    "settings.allowDelegation",
                     isOn: $draft.allowDelegation
                 )
-                Text("Ultra에는 자동 작업 위임이 포함됩니다. 끄면 저장된 선택을 포함해 GPT가 실행할 수 있는 조합에서 Ultra가 제외됩니다. 다른 추론 수준이나 에이전트 기능은 이 설정의 제어 대상이 아닙니다.")
+                Text("settings.ultraHint")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if draft.policyMode == "fixed", let choice = selectedFixedChoice, draft.isUltraDisabled(choice) {
-                    Text("Ultra가 비활성화되어 있습니다. 고정 모델에 사용할 다른 추론 수준을 선택해 주세요.")
+                    Text("settings.ultraFixedConflict")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 } else if draft.policyMode == "automatic", draft.allowedKind == "explicit",
                           choices.contains(where: { draft.explicitSelectionKeys.contains($0.key) && draft.isUltraDisabled($0) }),
                           draft.explicitSelectionKeys.isDisjoint(with: selectableChoiceKeys) {
-                    Text("Ultra가 꺼져 있어 현재 선택한 모델과 추론 조합으로 작업을 실행할 수 없습니다. 저장된 선택은 유지됩니다. 작업을 실행하려면 사용 가능한 다른 추론 수준을 선택해 주세요.")
+                    Text("settings.ultraNoSelection")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
-                Toggle("빠른 처리 (Fast)", isOn: $draft.usePriorityServiceTier)
-                Text("지원되는 모델을 더 빠르게 실행합니다. 모델과 추론 수준은 유지되며, 사용량이나 비용이 늘어날 수 있습니다.")
+                Toggle("settings.usePriority", isOn: $draft.usePriorityServiceTier)
+                Text("settings.usePriorityHint")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if snapshot.catalog.stale {
-                    Label("모델 카탈로그가 오래되어 정책 저장이 제한될 수 있습니다.", systemImage: "clock.badge.exclamationmark")
+                    Label("macos.themodelcatalogisstalesopolicychanges", systemImage: "clock.badge.exclamationmark")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
@@ -1068,7 +1097,7 @@ private struct GeneralSettingsPane: View {
                         .foregroundStyle(.orange)
                         .textSelection(.enabled)
                 }
-                Button("모델 목록 새로고침") {
+                Button("macos.refreshmodels") {
                     Task { await model.refreshSettings(refreshModels: true) }
                 }
                 .disabled(model.generalSettingsSaveState.isActive)
@@ -1079,16 +1108,16 @@ private struct GeneralSettingsPane: View {
                     .id(model.connectionContextID)
             }
 
-            Section("표시와 실행") {
-                Picker("앱 및 카드 언어", selection: $draft.uiLocalePreference) {
+            Section("macos.displayandexecution") {
+                Picker("macos.appandcardlanguage", selection: $draft.uiLocalePreference) {
                     ForEach(snapshot.capabilities.availableUiLocalePreferences, id: \.self) {
                         Text(localeLabel($0, locale: model.interfaceLocale)).tag($0)
                     }
                 }
-                Text("자동을 선택하면 macOS 앱은 Mac의 언어를, GPT 카드는 ChatGPT의 표시 언어를 따릅니다. 두 화면의 언어가 다를 수 있습니다. 언어를 직접 선택하면 앱과 GPT 카드에 동일하게 적용됩니다.")
+                Text("macos.withautomaticthemacosappfollowsyourmac")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                LabeledContent("동시 실행 에이전트 작업 수") {
+                LabeledContent("macos.concurrentagenttasks") {
                     HStack(spacing: 6) {
                         TextField(value: concurrentJobsBinding, format: .number) {
                             EmptyView()
@@ -1103,7 +1132,7 @@ private struct GeneralSettingsPane: View {
                     }
                 }
                 Text(BridgeAppLocalization.format(
-                    "1부터 운영 한도 %d까지 직접 입력할 수 있습니다. 등록된 에이전트 수가 아니라 동시에 실행할 작업의 상한입니다.",
+                    "macos.enteravaluefrom1totheoperator",
                     locale: model.interfaceLocale,
                     snapshot.capabilities.maxConcurrentJobs
                 ))
@@ -1111,30 +1140,30 @@ private struct GeneralSettingsPane: View {
                     .foregroundStyle(.secondary)
                 if draft.maxConcurrentJobs > 30 {
                     Label(
-                        "30을 넘기면 CPU·메모리·API 사용량이 크게 증가할 수 있습니다.",
+                        "macos.valuesabove30cansubstantiallyincreasecpumemory",
                         systemImage: "gauge.with.dots.needle.67percent"
                     )
                     .font(.caption)
                     .foregroundStyle(.orange)
                 }
-                Toggle("새 Agent 작업을 Codex 앱에 보존", isOn: $draft.showBridgeThreadsInCodexApp)
+                Toggle("macos.keepnewagenttasksinthecodexapp", isOn: $draft.showBridgeThreadsInCodexApp)
                 Text(threadVisibilityDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Toggle("백그라운드 작업 시 현황 카드 자동 표시", isOn: $draft.dashboardAutoOpenBackground)
-                Text("백그라운드 작업을 시작한 대화에서만 현황 카드를 자동으로 엽니다. 포그라운드 결과는 원래 도구 응답으로 반환됩니다.")
+                Toggle("settings.dashboardAutoOpenBackground", isOn: $draft.dashboardAutoOpenBackground)
+                Text("settings.dashboardAutoOpenBackgroundHint")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if model.isRemoteClient {
                     Label(
-                        "완료 알림은 브리지를 실행하는 Mac의 메뉴 막대 앱에서 전송됩니다.",
+                        "macos.completionnotificationsaresentbythemenubar",
                         systemImage: "bell.badge"
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 } else {
-                    Toggle("백그라운드 작업 완료 시 macOS 알림", isOn: $draft.completionFollowUp)
-                    Text("완료되면 이 Mac의 메뉴 막대 앱이 알림을 보냅니다. 알림을 클릭하면 현황을 열며 ChatGPT 대화에 자동 메시지를 추가하지 않습니다.")
+                    Toggle("settings.completionFollowUp", isOn: $draft.completionFollowUp)
+                    Text("macos.whenworkcompletesthemenubarappon")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1142,19 +1171,19 @@ private struct GeneralSettingsPane: View {
             }
 
             if let policy = snapshot.historyPolicy, snapshot.settings.historyRetentionDays != nil {
-                Section("실행 기록 보관") {
-                    Picker("보관 기간", selection: $draft.historyRetentionDays) {
-                        Text("7일").tag(7)
-                        Text("30일").tag(30)
-                        Text("90일").tag(90)
-                        Text("계속 보관").tag(0)
+                Section("history.title") {
+                    Picker("history.period", selection: $draft.historyRetentionDays) {
+                        Text("macos.history.retention7Days").tag(7)
+                        Text("macos.history.retention30Days").tag(30)
+                        Text("macos.history.retention90Days").tag(90)
+                        Text("history.forever").tag(0)
                     }
                     WorkHistoryPolicyView(policy: policy)
                 }
             }
 
             if let error = model.settingsErrorMessage ?? model.settingsLoadErrorMessage {
-                Section("저장하지 못한 이유") {
+                Section("macos.saveerror") {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.red)
@@ -1164,7 +1193,7 @@ private struct GeneralSettingsPane: View {
 
             Section {
                 HStack {
-                    Button("일반 설정 초기화", role: .destructive) {
+                    Button("macos.resetgeneralsettings", role: .destructive) {
                         model.cancelPendingSettingsAutosave()
                         showResetConfirmation = true
                     }
@@ -1176,8 +1205,8 @@ private struct GeneralSettingsPane: View {
         }
         .formStyle(.grouped)
         .disabled(model.modelDescriptionSaveInProgress)
-        .confirmationDialog("일반 설정을 운영자 기본값으로 되돌릴까요?", isPresented: $showResetConfirmation) {
-            Button("일반 설정 초기화", role: .destructive) {
+        .confirmationDialog("macos.resetgeneralsettingstotheoperatordefaults", isPresented: $showResetConfirmation) {
+            Button("macos.resetgeneralsettings", role: .destructive) {
                 Task {
                     if await model.resetGeneralSettings() { didReset() }
                 }
@@ -1189,26 +1218,26 @@ private struct GeneralSettingsPane: View {
     private var autosaveStatus: some View {
         switch model.generalSettingsSaveState {
         case .idle:
-            Text("변경사항 자동 저장")
+            Text("macos.changessaveautomatically")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .pending:
-            Label("저장 대기 중…", systemImage: "ellipsis")
+            Label("macos.waitingtosave", systemImage: "ellipsis")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .saving:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("저장 중…")
+                Text("settings.saving")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
         case .saved:
-            Label("저장됨", systemImage: "checkmark.circle")
+            Label("macos.saved", systemImage: "checkmark.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .failed:
-            Label("저장하지 못함", systemImage: "exclamationmark.triangle.fill")
+            Label("macos.couldnotsave", systemImage: "exclamationmark.triangle.fill")
                 .font(.caption)
                 .foregroundStyle(.red)
         }
@@ -1227,7 +1256,7 @@ private struct GeneralSettingsPane: View {
     }
 
     private var threadVisibilityDescription: String {
-        let key = "켜면 이후 새 작업과 새 컨텍스트를 영구 스레드로 저장하고 현황에서 Codex 대화를 열 수 있습니다. 기존 임시 작업에는 소급 적용되지 않습니다. 끄면 임시 스레드로 실행되어 서버 재시작 뒤 이어갈 수 없습니다."
+        let key = "macos.whenenablednewtasksandfreshcontextsare"
         return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
     }
 
@@ -1322,18 +1351,18 @@ private struct GeneralSettingsPane: View {
         let unavailable: String
         if draft.isUltraDisabled(choice) {
             unavailable = " (" + BridgeAppLocalization.string(
-                "Ultra 비활성화로 사용 불가", locale: model.interfaceLocale
+                "settings.ultraDisabled", locale: model.interfaceLocale
             ) + ")"
         } else if selectableChoiceKeys.contains(choice.key) {
             unavailable = ""
         } else if SettingsDraft.savedChoiceKeys(in: snapshot).contains(choice.key) {
             unavailable = BridgeAppLocalization.string(
-                " (저장됨 · 현재 선택 불가)",
+                "macos.savedcurrentlyunavailable",
                 locale: model.interfaceLocale
             )
         } else {
             unavailable = BridgeAppLocalization.string(
-                " (현재 선택 불가)",
+                "macos.currentlyunavailable",
                 locale: model.interfaceLocale
             )
         }
@@ -1369,18 +1398,18 @@ private struct RuntimeStatusPane: View {
 
     var body: some View {
         Form {
-            Section("서버 설정") {
-                Picker("허용할 최대 접근 권한", selection: $maximumAccess) {
-                    Text("읽기 전용").tag("read-only")
-                    Text("작업 폴더 쓰기").tag("workspace-write")
-                    Text("전체 접근").tag("full-access")
+            Section("macos.serversettings") {
+                Picker("macos.maximumallowedaccess", selection: $maximumAccess) {
+                    Text("macos.readonly").tag("read-only")
+                    Text("macos.workspacewrite").tag("workspace-write")
+                    Text("macos.fullaccess").tag("full-access")
                 }
-                Text("일반 탭의 접근 전략과 별개인 서버 안전 상한입니다. 어떤 작업도 이 권한을 넘을 수 없습니다. 변경하면 진행 중인 작업을 안전하게 비운 뒤 서버가 재시작됩니다.")
+                Text("macos.thisserversafetylimitisseparatefromthe")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if maximumAccess == "full-access" {
                     Label(
-                        "전체 접근은 이 macOS 사용자의 파일시스템과 네트워크 권한으로 Codex를 실행할 수 있게 합니다.",
+                        "macos.fullaccesscanruncodexwiththismacos",
                         systemImage: "exclamationmark.shield.fill"
                     )
                     .font(.caption)
@@ -1389,7 +1418,7 @@ private struct RuntimeStatusPane: View {
                 HStack {
                     Spacer()
                     if model.isBusy { ProgressView().controlSize(.small) }
-                    Button("저장하고 서버 재시작") {
+                    Button("macos.applyandrestartserver") {
                         showApplyConfirmation = true
                     }
                     .buttonStyle(.borderedProminent)
@@ -1402,9 +1431,9 @@ private struct RuntimeStatusPane: View {
             }
 
             if snapshot.policyActivation.developerModeRefreshRequired {
-                Section("필요한 조치") {
+                Section("macos.actionrequired") {
                     Label(
-                        "실행 한도가 바뀌었습니다. ChatGPT 개발자 모드에서 플러그인을 새로고침해 주세요.",
+                        "macos.executionlimitschangedrefreshtheplugininchatgpt",
                         systemImage: "arrow.triangle.2.circlepath"
                     )
                     .font(.caption)
@@ -1413,7 +1442,7 @@ private struct RuntimeStatusPane: View {
             }
 
             if !snapshot.warnings.isEmpty {
-                Section("확인할 사항") {
+                Section("macos.needsattention") {
                     ForEach(snapshot.warnings, id: \.self) { warning in
                         Label(warning, systemImage: "exclamationmark.triangle")
                             .font(.caption)
@@ -1424,13 +1453,13 @@ private struct RuntimeStatusPane: View {
             }
 
             if let error = model.runtimeErrorMessage {
-                Section("적용하지 못한 이유") {
+                Section("macos.applyerror") {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
                     if canRetryWithForce {
-                        Button("강제로 저장하고 재시작", role: .destructive) {
+                        Button("macos.forceapplyandrestart", role: .destructive) {
                             showForceConfirmation = true
                         }
                         .disabled(model.isBusy)
@@ -1444,10 +1473,10 @@ private struct RuntimeStatusPane: View {
             if !isDirty { synchronize() }
         }
         .confirmationDialog(
-            "런타임 설정을 저장하고 서버를 재시작할까요?",
+            "macos.applyserversettingsandrestarttheserver",
             isPresented: $showApplyConfirmation
         ) {
-            Button("저장하고 재시작") {
+            Button("macos.applyandrestart") {
                 Task {
                     if await model.configureRuntime(
                         defaultBackend: defaultBackend,
@@ -1458,13 +1487,13 @@ private struct RuntimeStatusPane: View {
                 }
             }
         } message: {
-            Text("진행 중인 작업이 있으면 완료될 때까지 기다린 뒤 적용합니다.")
+            Text("macos.theappwaitsforactiveworktofinish")
         }
         .confirmationDialog(
-            "확인할 수 없는 백그라운드 프로세스를 무시하고 강제로 재시작할까요?",
+            "macos.ignoreunverifiedbackgroundprocessesandforcearestart",
             isPresented: $showForceConfirmation
         ) {
-            Button("강제로 저장하고 재시작", role: .destructive) {
+            Button("macos.forceapplyandrestart", role: .destructive) {
                 Task {
                     if await model.configureRuntime(
                         defaultBackend: defaultBackend,
@@ -1476,7 +1505,7 @@ private struct RuntimeStatusPane: View {
                 }
             }
         } message: {
-            Text("실제로 실행 중인 Codex 작업이나 백그라운드 프로세스가 있으면 중단될 수 있습니다.")
+            Text("macos.runningcodextasksorbackgroundprocessesmaybe")
         }
     }
 
@@ -1505,11 +1534,11 @@ private struct ProjectsSettingsPane: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("프로젝트").font(.title2.bold())
+                    Text("settings.projects").font(.title2.bold())
                     Text(BridgeAppLocalization.string(
                         usesRemotePaths
-                            ? "선택한 서버의 프로젝트를 관리합니다. 모든 경로는 원격 서버 호스트의 파일시스템 기준입니다."
-                            : "프로젝트 이름과 연결할 기존 폴더를 관리합니다. 앱은 실제 폴더나 파일을 이동하지 않습니다.",
+                            ? "macos.manageprojectsontheselectedserverallpaths"
+                            : "macos.manageprojectnamesandtheirlinkedexistingfolders",
                         locale: model.interfaceLocale
                     ))
                         .foregroundStyle(.secondary)
@@ -1525,7 +1554,7 @@ private struct ProjectsSettingsPane: View {
                         )
                     }
                 } label: {
-                    Label("프로젝트 추가", systemImage: "plus")
+                    Label("macos.addproject", systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(model.isBusy)
@@ -1537,8 +1566,8 @@ private struct ProjectsSettingsPane: View {
                         Image(systemName: "folder.badge.plus")
                             .font(.largeTitle)
                             .foregroundStyle(.secondary)
-                        Text("등록된 프로젝트 없음").font(.headline)
-                        Text("Codex 작업을 시작하려면 기존 폴더를 하나 이상 등록하세요.")
+                        Text("macos.noregisteredprojects").font(.headline)
+                        Text("macos.registeratleastoneexistingfolderbeforestarting")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1571,7 +1600,7 @@ private struct ProjectsSettingsPane: View {
             }
             .listStyle(.inset)
 
-            Text("등록을 삭제해도 실제 폴더·파일과 기존 작업 기록은 그대로 유지됩니다.")
+            Text("macos.removingaregistrationpreservestheactualfolderfiles")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let error = model.settingsErrorMessage {
@@ -1589,14 +1618,14 @@ private struct ProjectsSettingsPane: View {
             }
         }
         .confirmationDialog(
-            "보관된 프로젝트 등록을 삭제할까요?",
+            "macos.removethisarchivedprojectregistration",
             isPresented: Binding(
                 get: { deletionTarget != nil },
                 set: { if !$0 { deletionTarget = nil } }
             ),
             presenting: deletionTarget
         ) { project in
-            Button("등록 삭제", role: .destructive) {
+            Button("macos.removeregistration", role: .destructive) {
                 Task {
                     if await model.applyProjectOperation(.delete(projectId: project.id)) {
                         deletionTarget = nil
@@ -1605,7 +1634,7 @@ private struct ProjectsSettingsPane: View {
             }
         } message: { project in
             Text(BridgeAppLocalization.format(
-                "‘%@’ 폴더와 기존 작업 기록은 그대로 유지됩니다.",
+                "macos.thefolderandexistingworkhistorywillbe",
                 locale: model.interfaceLocale,
                 project.name
             ))
@@ -1618,9 +1647,9 @@ private struct ProjectsSettingsPane: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
-        panel.prompt = BridgeAppLocalization.string("연결", locale: model.interfaceLocale)
+        panel.prompt = BridgeAppLocalization.string("macos.link", locale: model.interfaceLocale)
         panel.message = BridgeAppLocalization.string(
-            "연결할 폴더를 선택합니다. 실제 폴더나 파일은 이동하지 않습니다.",
+            "macos.choosethefoldertolinknofoldersor",
             locale: model.interfaceLocale
         )
         return panel.runModal() == .OK ? panel.url : nil
@@ -1647,10 +1676,10 @@ private struct ProjectRow: View {
                 HStack {
                     Text(project.name).font(.headline)
                     if project.archivedAt != nil {
-                        Text("보관됨").font(.caption2).padding(4).background(.quaternary, in: Capsule())
+                        Text("settings.projectArchived").font(.caption2).padding(4).background(.quaternary, in: Capsule())
                     }
                     if availability?.available == false {
-                        Label("폴더 사용 불가", systemImage: "exclamationmark.triangle")
+                        Label("macos.folderunavailable", systemImage: "exclamationmark.triangle")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
@@ -1664,14 +1693,14 @@ private struct ProjectRow: View {
             Spacer()
             Menu {
                 if project.archivedAt == nil {
-                    Button("이름 변경", action: rename)
-                    Button("연결 폴더 변경", action: relocate)
+                    Button("activity.rename", action: rename)
+                    Button("macos.changelinkedfolder", action: relocate)
                     Divider()
-                    Button("보관", action: archive)
+                    Button("settings.archiveProject", action: archive)
                 } else {
-                    Button("복원", action: restore)
+                    Button("settings.restoreProject", action: restore)
                     Divider()
-                    Button("등록 삭제", role: .destructive, action: delete)
+                    Button("macos.removeregistration", role: .destructive, action: delete)
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -1732,27 +1761,27 @@ private struct ProjectEditorSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(title).font(.title2.bold())
-            TextField("프로젝트 이름", text: $name)
+            TextField("macos.projectname", text: $name)
             if case .rename = editor {
                 EmptyView()
             } else {
                 HStack {
                     TextField(
                         BridgeAppLocalization.string(
-                            usesRemotePaths ? "서버의 절대 폴더 경로" : "폴더",
+                            usesRemotePaths ? "macos.absolutefolderpathontheserver" : "macos.folder",
                             locale: locale
                         ),
                         text: $cwd
                     )
                     .textFieldStyle(.roundedBorder)
                     if !usesRemotePaths {
-                        Button("선택") {
+                        Button("problem.selectShort") {
                             let panel = NSOpenPanel()
                             panel.canChooseFiles = false
                             panel.canChooseDirectories = true
-                            panel.prompt = BridgeAppLocalization.string("연결", locale: locale)
+                            panel.prompt = BridgeAppLocalization.string("macos.link", locale: locale)
                             panel.message = BridgeAppLocalization.string(
-                                "연결할 폴더를 선택합니다. 실제 폴더나 파일은 이동하지 않습니다.",
+                                "macos.choosethefoldertolinknofoldersor",
                                 locale: locale
                             )
                             if panel.runModal() == .OK, let url = panel.url { cwd = url.path }
@@ -1761,7 +1790,7 @@ private struct ProjectEditorSheet: View {
                 }
                 if usesRemotePaths {
                     Label(
-                        "이 Mac의 폴더가 아니라 원격 서버에서 존재하는 절대 경로를 입력하세요. 서버가 최종 경로와 허용 범위를 검증합니다.",
+                        "macos.enteranabsolutepaththatexistsonthe",
                         systemImage: "network"
                     )
                     .font(.caption)
@@ -1775,10 +1804,10 @@ private struct ProjectEditorSheet: View {
                     .textSelection(.enabled)
             }
             HStack {
-                Button("취소", role: .cancel) { dismiss() }
+                Button("common.cancel", role: .cancel) { dismiss() }
                 Spacer()
                 if isSaving { ProgressView().controlSize(.small) }
-                Button("저장") {
+                Button("macos.save") {
                     isSaving = true
                     Task {
                         if await save(operation) { dismiss() }
@@ -1800,10 +1829,10 @@ private struct ProjectEditorSheet: View {
     private var title: String {
         let key: String
         switch editor {
-        case .add: key = "프로젝트 추가"
-        case .rename: key = "프로젝트 이름 변경"
-        case .relocate: key = "연결 폴더 변경"
-        case .restore: key = "프로젝트 복원"
+        case .add: key = "macos.addproject"
+        case .rename: key = "macos.renameproject"
+        case .relocate: key = "macos.changelinkedfolder"
+        case .restore: key = "macos.restoreproject"
         }
         return BridgeAppLocalization.string(key, locale: locale)
     }
@@ -1830,9 +1859,9 @@ private struct ProjectEditorSheet: View {
 private func accessLabel(_ value: String, locale: Locale) -> String {
     let key: String
     switch value {
-    case "read-only": key = "읽기 전용"
-    case "adaptive": key = "브리지 기본값"
-    case "always-full": key = "항상 전체 접근"
+    case "read-only": key = "macos.readonly"
+    case "adaptive": key = "settings.access.adaptive"
+    case "always-full": key = "macos.alwaysfullaccess"
     default: return value
     }
     return BridgeAppLocalization.string(key, locale: locale)
@@ -1841,9 +1870,9 @@ private func accessLabel(_ value: String, locale: Locale) -> String {
 private func accessDescription(_ value: String, locale: Locale) -> String {
     let key: String
     switch value {
-    case "read-only": key = "모든 새 작업을 읽기 전용으로 제한합니다."
-    case "adaptive": key = "브리지에 저장된 기본 접근 권한으로 새 작업을 실행합니다."
-    case "always-full": key = "모든 새 작업에 전체 접근을 적용합니다."
+    case "read-only": key = "macos.restrictseverynewtasktoreadonlyaccess"
+    case "adaptive": key = "settings.access.adaptiveHint"
+    case "always-full": key = "macos.appliesfullaccesstoeverynewtask"
     default: return value
     }
     return BridgeAppLocalization.string(key, locale: locale)
@@ -1851,7 +1880,7 @@ private func accessDescription(_ value: String, locale: Locale) -> String {
 
 private func localeLabel(_ value: String, locale: Locale) -> String {
     switch value {
-    case "auto": return BridgeAppLocalization.string("자동", locale: locale)
+    case "auto": return BridgeAppLocalization.string("settings.language.auto", locale: locale)
     case "ko": return "한국어"
     case "en": return "English"
     case "ja": return "日本語"
@@ -1868,9 +1897,9 @@ private func localeLabel(_ value: String, locale: Locale) -> String {
 private func activityVisibilityLabel(_ value: String, locale: Locale) -> String {
     let key: String
     switch value {
-    case "always": key = "항상"
-    case "background-only": key = "백그라운드 작업만"
-    case "never": key = "표시 안 함"
+    case "always": key = "macos.always"
+    case "background-only": key = "macos.backgroundtasksonly"
+    case "never": key = "macos.never"
     default: return value
     }
     return BridgeAppLocalization.string(key, locale: locale)
@@ -1879,8 +1908,8 @@ private func activityVisibilityLabel(_ value: String, locale: Locale) -> String 
 private func handoffLabel(_ value: String, locale: Locale) -> String {
     let key: String
     switch value {
-    case "off": key = "사용 안 함"
-    case "auto-handoff": key = "완료 시 자동으로 ChatGPT에 넘기기"
+    case "off": key = "macos.runtime.offLabel"
+    case "auto-handoff": key = "macos.automaticallyhandoffoncompletion"
     default: return value
     }
     return BridgeAppLocalization.string(key, locale: locale)
@@ -1889,13 +1918,13 @@ private func handoffLabel(_ value: String, locale: Locale) -> String {
 private func phaseLabel(_ value: String?, locale: Locale) -> String {
     let key: String
     switch value {
-    case "running": key = "실행 중"
-    case "starting": key = "시작 중"
-    case "draining": key = "작업 종료 대기 중"
-    case "stopping": key = "중지 중"
-    case "backoff": key = "재시작 대기 중"
-    case "safe-mode": key = "안전 모드"
-    default: key = "중지됨"
+    case "running": key = "macos.running"
+    case "starting": key = "macos.starting"
+    case "draining": key = "macos.waitingfortaskstofinish"
+    case "stopping": key = "macos.stopping"
+    case "backoff": key = "macos.waitingtorestart"
+    case "safe-mode": key = "macos.safemode"
+    default: key = "macos.stopped"
     }
     return BridgeAppLocalization.string(key, locale: locale)
 }
@@ -1922,7 +1951,7 @@ struct SkillsLibraryView: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("스킬 라이브러리")
+                        Text("macos.skilllibrary")
                             .font(.title3.weight(.semibold))
                     }
                     Spacer()
@@ -1930,22 +1959,22 @@ struct SkillsLibraryView: View {
                         Button {
                             SkillsLibraryWindowController.shared.show(model: model)
                         } label: {
-                            Label("스킬 라이브러리", systemImage: "macwindow")
+                            Label("macos.skilllibrary", systemImage: "macwindow")
                         }
                     }
-                    Button("새 스킬") { showingCreate = true }
+                    Button("macos.newskill") { showingCreate = true }
                         .buttonStyle(.borderedProminent)
                     Button {
                         Task { await model.refreshSkillLibrary() }
                     } label: {
-                        Label("새로 고침", systemImage: "arrow.clockwise")
+                        Label("macos.refresh", systemImage: "arrow.clockwise")
                     }
                 }
 
                 HStack(spacing: 10) {
-                    TextField("스킬 검색", text: $searchText)
+                    TextField("macos.searchskills", text: $searchText)
                         .textFieldStyle(.roundedBorder)
-                    Toggle("보관한 스킬 표시", isOn: $showsArchivedSkills)
+                    Toggle("macos.showarchivedskills", isOn: $showsArchivedSkills)
                         .toggleStyle(.checkbox)
                         .font(.caption)
                 }
@@ -1963,11 +1992,11 @@ struct SkillsLibraryView: View {
                         .textSelection(.enabled)
                 }
 
-                GroupBox("브리지 스킬") {
+                GroupBox("macos.bridgeskills") {
                     if let snapshot = model.skillLibrary {
                         let bridgeSkills = filteredSkills(snapshot.skills)
                         if bridgeSkills.isEmpty {
-                            Text("아직 브리지 전용 스킬이 없습니다. 새 스킬을 만들어 대화와 Codex 실행에서 재사용할 수 있습니다.")
+                            Text("macos.therearenobridgeownedskillsyetcreate")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1981,12 +2010,16 @@ struct SkillsLibraryView: View {
                                             HStack {
                                                 Text(skill.name).fontWeight(.medium)
                                                 if !skill.enabled {
-                                                    Text("보관됨")
+                                                    Text("settings.projectArchived")
                                                         .font(.caption2.weight(.medium))
                                                         .foregroundStyle(.orange)
                                                 }
                                                 Spacer()
-                                                Text("v\(skill.version)")
+                                                Text(BridgeAppLocalization.format(
+                                                    "macos.v",
+                                                    locale: model.interfaceLocale,
+                                                    skill.version
+                                                ))
                                                     .font(.caption.monospacedDigit())
                                                     .foregroundStyle(.secondary)
                                             }
@@ -2007,7 +2040,7 @@ struct SkillsLibraryView: View {
                     } else {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("스킬 라이브러리를 불러오는 중…")
+                            Text("macos.loadingskilllibrary")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -2016,12 +2049,16 @@ struct SkillsLibraryView: View {
                 }
 
                 if let document = model.selectedBridgeSkill {
-                    GroupBox("선택한 스킬") {
+                    GroupBox("macos.selectedskill") {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(document.skill.name).fontWeight(.semibold)
-                                    Text("브리지 · 버전 \(document.skill.version)")
+                                    Text(BridgeAppLocalization.format(
+                                        "macos.bridgeversion",
+                                        locale: model.interfaceLocale,
+                                        document.skill.version
+                                    ))
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -2033,18 +2070,28 @@ struct SkillsLibraryView: View {
                                                 Task { await model.loadBridgeSkill(version.reference) }
                                             } label: {
                                                 if version.version == document.skill.version {
-                                                    Label("v\(version.version) · \(version.createdAt)", systemImage: "checkmark")
+                                                    Label(BridgeAppLocalization.format(
+                                                        "macos.modelDescription.versionAndSource",
+                                                        locale: model.interfaceLocale,
+                                                        version.version,
+                                                        version.createdAt
+                                                    ), systemImage: "checkmark")
                                                 } else {
-                                                    Text("v\(version.version) · \(version.createdAt)")
+                                                    Text(BridgeAppLocalization.format(
+                                                        "macos.modelDescription.versionAndSource",
+                                                        locale: model.interfaceLocale,
+                                                        version.version,
+                                                        version.createdAt
+                                                    ))
                                                 }
                                             }
                                         }
                                     } label: {
-                                        Label("버전", systemImage: "clock.arrow.circlepath")
+                                        Label("macos.version", systemImage: "clock.arrow.circlepath")
                                     }
                                 }
                                 if isCurrentVersion(document) {
-                                    Button(preparingEdit ? "자료 불러오는 중…" : "편집") {
+                                    Button(preparingEdit ? "macos.loadingmaterials" : "macos.common.editAction") {
                                         prepareEditor(for: document)
                                     }
                                     .disabled(preparingEdit)
@@ -2059,7 +2106,7 @@ struct SkillsLibraryView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             if !document.skill.execution.requirements.isEmpty {
                                 Divider()
-                                Text("실행 조건")
+                                Text("macos.executionrequirements")
                                     .font(.caption.weight(.medium))
                                 ForEach(document.skill.execution.requirements) { requirement in
                                     BridgeSkillRequirementRow(requirement: requirement, locale: model.interfaceLocale)
@@ -2067,7 +2114,7 @@ struct SkillsLibraryView: View {
                             }
                             if !document.references.isEmpty {
                                 Divider()
-                                Text("참고 자료")
+                                Text("macos.referencematerials")
                                     .font(.caption.weight(.medium))
                                 ForEach(document.references) { reference in
                                     Button {
@@ -2076,7 +2123,12 @@ struct SkillsLibraryView: View {
                                         HStack {
                                             Text(reference.name)
                                             Spacer()
-                                            Text("\(reference.mediaType) · \(reference.bytes) bytes")
+                                            Text(BridgeAppLocalization.format(
+                                                "macos.modelDescription.attachmentSize",
+                                                locale: model.interfaceLocale,
+                                                reference.mediaType,
+                                                reference.bytes
+                                            ))
                                                 .foregroundStyle(.secondary)
                                         }
                                         .font(.caption)
@@ -2097,23 +2149,31 @@ struct SkillsLibraryView: View {
                             }
                             if let history = history(for: document), !history.versions.isEmpty {
                                 Divider()
-                                Text("버전 이력")
+                                Text("macos.versionhistory")
                                     .font(.caption.weight(.medium))
                                 ForEach(history.versions) { version in
                                     HStack {
-                                        Button("v\(version.version)") {
+                                        Button(BridgeAppLocalization.format(
+                                            "macos.v",
+                                            locale: model.interfaceLocale,
+                                            version.version
+                                        )) {
                                             Task { await model.loadBridgeSkill(version.reference) }
                                         }
                                         .buttonStyle(.link)
                                         Text(version.createdAt)
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
-                                        Text("자료 \(version.referenceCount)개")
+                                        Text(BridgeAppLocalization.format(
+                                            "macos.materials",
+                                            locale: model.interfaceLocale,
+                                            version.referenceCount
+                                        ))
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                         Spacer()
                                         if version.version == history.currentVersion {
-                                            Text("현재")
+                                            Text("macos.current")
                                                 .font(.caption.weight(.medium))
                                                 .foregroundStyle(Color.accentColor)
                                         }
@@ -2121,18 +2181,18 @@ struct SkillsLibraryView: View {
                                 }
                                 if !isCurrentVersion(document),
                                    let selectedVersion = history.versions.first(where: { $0.version == document.skill.version }) {
-                                    Button("이 버전을 새 현재 버전으로 복원") {
+                                    Button("macos.restorethisversionasthenewcurrentversion") {
                                         restoreTarget = selectedVersion
                                     }
                                 }
                             }
                             if document.skill.enabled {
-                                Button("스킬 보관", role: .destructive) {
+                                Button("macos.archiveskill", role: .destructive) {
                                     submitLifecycleChange(for: document, enabled: false)
                                 }
                                 .disabled(model.skillMutationInProgress)
                             } else {
-                                Button("스킬 다시 활성화") {
+                                Button("macos.reactivateskill") {
                                     submitLifecycleChange(for: document, enabled: true)
                                 }
                                 .disabled(model.skillMutationInProgress)
@@ -2154,8 +2214,8 @@ struct SkillsLibraryView: View {
         .task { await model.refreshSkillLibrary() }
         .sheet(isPresented: $showingCreate) {
             BridgeSkillEditorSheet(
-                title: BridgeAppLocalization.string("새 브리지 스킬", locale: model.interfaceLocale),
-                actionLabel: BridgeAppLocalization.string("만들기", locale: model.interfaceLocale),
+                title: BridgeAppLocalization.string("macos.newbridgeskill", locale: model.interfaceLocale),
+                actionLabel: BridgeAppLocalization.string("macos.create", locale: model.interfaceLocale),
                 initialName: "",
                 initialDescription: "",
                 initialInstructions: "",
@@ -2178,8 +2238,8 @@ struct SkillsLibraryView: View {
         .sheet(isPresented: $showingEdit) {
             if let document = model.selectedBridgeSkill {
                 BridgeSkillEditorSheet(
-                    title: BridgeAppLocalization.string("브리지 스킬 편집", locale: model.interfaceLocale),
-                    actionLabel: BridgeAppLocalization.string("새 버전 저장", locale: model.interfaceLocale),
+                    title: BridgeAppLocalization.string("macos.editbridgeskill", locale: model.interfaceLocale),
+                    actionLabel: BridgeAppLocalization.string("macos.savenewversion", locale: model.interfaceLocale),
                     initialName: document.skill.name,
                     initialDescription: document.skill.description,
                     initialInstructions: document.instructions,
@@ -2205,14 +2265,14 @@ struct SkillsLibraryView: View {
             }
         }
         .confirmationDialog(
-            "선택한 버전을 새 현재 버전으로 복원할까요?",
+            "macos.restoretheselectedversionasthenewcurrent",
             isPresented: Binding(
                 get: { restoreTarget != nil },
                 set: { if !$0 { restoreTarget = nil } }
             ),
             titleVisibility: .visible
         ) {
-            Button("새 버전으로 복원") {
+            Button("macos.restoreasnewversion") {
                 guard let target = restoreTarget, let document = model.selectedBridgeSkill else { return }
                 let request = restoreRequest(for: document, target: target)
                 Task { @MainActor in
@@ -2223,7 +2283,11 @@ struct SkillsLibraryView: View {
                 }
             }
         } message: {
-            Text("v\(restoreTarget?.version ?? "")의 지침과 참고 자료를 복사해 새 불변 버전을 만듭니다. 기존 버전은 바뀌지 않습니다.")
+            Text(BridgeAppLocalization.format(
+                "macos.copiesvinstructionsandreferencematerialsintoa",
+                locale: model.interfaceLocale,
+                restoreTarget?.version ?? ""
+            ))
         }
     }
 
@@ -2316,7 +2380,12 @@ private struct BridgeSkillRequirementRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("\(requirement.kind) · \(requirement.requirementId)")
+            Text(BridgeAppLocalization.format(
+                "macos.format.dotSeparatedPair",
+                locale: locale,
+                requirement.kind,
+                requirement.requirementId
+            ))
                 .font(.caption)
             if let description = requirement.description {
                 Text(description)
@@ -2332,9 +2401,9 @@ private struct BridgeSkillRequirementRow: View {
     private var availabilityLabel: String {
         let key: String
         switch requirement.availability {
-        case "available": key = "브리지가 인식하는 기능"
-        case "external-environment": key = "실행 환경에서 별도 준비 필요"
-        default: key = "브리지가 지원하지 않는 기능"
+        case "available": key = "macos.capabilityrecognizedbythebridge"
+        case "external-environment": key = "macos.requiresseparatepreparationintheexecutionenvironment"
+        default: key = "macos.capabilityunsupportedbythebridge"
         }
         return BridgeAppLocalization.string(key, locale: locale)
     }
@@ -2399,15 +2468,15 @@ private struct BridgeSkillEditorSheet: View {
             Text(title).font(.headline)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    TextField("이름", text: $name)
-                    TextField("설명", text: $description, axis: .vertical)
+                    TextField("macos.name", text: $name)
+                    TextField("settings.modelDescriptions.label", text: $description, axis: .vertical)
                         .lineLimit(2...4)
-                    Picker("사용 경로", selection: $executionMode) {
-                        Text("대화 또는 Codex").tag("conversation-or-codex")
-                        Text("대화 전용").tag("conversation")
-                        Text("Codex 전용").tag("codex")
+                    Picker("macos.useroute", selection: $executionMode) {
+                        Text("macos.conversationorcodex").tag("conversation-or-codex")
+                        Text("macos.conversationonly").tag("conversation")
+                        Text("macos.codexonly").tag("codex")
                     }
-                    Text("지침")
+                    Text("macos.instructions")
                         .font(.caption.weight(.medium))
                     TextEditor(text: $instructions)
                         .font(.system(.body, design: .monospaced))
@@ -2419,23 +2488,23 @@ private struct BridgeSkillEditorSheet: View {
 
                     Divider()
                     HStack {
-                        Text("참고 자료").font(.caption.weight(.medium))
+                        Text("macos.referencematerials").font(.caption.weight(.medium))
                         Spacer()
-                        Button("추가") {
+                        Button("macos.add") {
                             referenceDrafts.append(.init())
                         }
                     }
                     ForEach($referenceDrafts) { $reference in
                         GroupBox {
                             VStack(alignment: .leading, spacing: 8) {
-                                TextField("자료 이름", text: $reference.name)
-                                TextField("MIME 형식", text: $reference.mediaType)
+                                TextField("macos.materialname", text: $reference.name)
+                                TextField("macos.mimetype", text: $reference.mediaType)
                                 TextEditor(text: $reference.content)
                                     .font(.system(.caption, design: .monospaced))
                                     .frame(minHeight: 100)
                                 HStack {
                                     Spacer()
-                                    Button("삭제", role: .destructive) {
+                                    Button("settings.removeProject", role: .destructive) {
                                         referenceDrafts.removeAll { $0.id == reference.id }
                                     }
                                 }
@@ -2445,27 +2514,27 @@ private struct BridgeSkillEditorSheet: View {
 
                     Divider()
                     HStack {
-                        Text("실행 조건").font(.caption.weight(.medium))
+                        Text("macos.executionrequirements").font(.caption.weight(.medium))
                         Spacer()
-                        Button("추가") {
+                        Button("macos.add") {
                             requirementDrafts.append(.init())
                         }
                     }
-                    Text("브리지 기능은 conversation, codex-task, reference-text만 인식합니다. 환경 조건은 실행 환경에서 따로 준비해야 합니다.")
+                    Text("macos.thebridgerecognizesonlyconversationcodextaskand")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     ForEach($requirementDrafts) { $requirement in
                         GroupBox {
                             VStack(alignment: .leading, spacing: 8) {
-                                Picker("종류", selection: $requirement.kind) {
-                                    Text("브리지 기능").tag("bridge-capability")
-                                    Text("외부 환경").tag("environment")
+                                Picker("macos.type", selection: $requirement.kind) {
+                                    Text("macos.bridgecapability").tag("bridge-capability")
+                                    Text("macos.externalenvironment").tag("environment")
                                 }
-                                TextField("기능 또는 환경 이름", text: $requirement.requirementId)
-                                TextField("설명 (선택)", text: $requirement.description)
+                                TextField("macos.capabilityorenvironmentname", text: $requirement.requirementId)
+                                TextField("macos.descriptionoptional", text: $requirement.description)
                                 HStack {
                                     Spacer()
-                                    Button("삭제", role: .destructive) {
+                                    Button("settings.removeProject", role: .destructive) {
                                         requirementDrafts.removeAll { $0.id == requirement.id }
                                     }
                                 }
@@ -2476,7 +2545,7 @@ private struct BridgeSkillEditorSheet: View {
                 .padding(.vertical, 2)
             }
             HStack {
-                Button("취소", role: .cancel) { dismiss() }
+                Button("common.cancel", role: .cancel) { dismiss() }
                 Spacer()
                 if isSaving { ProgressView().controlSize(.small) }
                 Button(actionLabel) {

@@ -49,7 +49,7 @@ export const UI_RESOURCE_MANIFEST = {
       {
         "name": "settings",
         "uriVersion": 1,
-        "digest": "757d1ee7b1d5ea115a8f2bc491450b7a66d31308378c1e25078badaf4b6eae55",
+        "digest": "87906be7276dd15a2f46783ca84d7bd13e4faef6590e0f4ead0c4744f83f2fc1",
         "uri": "ui://codex-mcp-bridge/settings/v1.html",
         "inventories": [
           "development-current"
@@ -67,7 +67,7 @@ export const UI_RESOURCE_MANIFEST = {
       {
         "name": "dashboard",
         "uriVersion": 1,
-        "digest": "3ee39218df2dda6269a195ba103b3e4a6a08b8037f6186016f7a7e40968261f5",
+        "digest": "26962e546df429a1809f5fed1199c5b48d0e6126c0047faa978f48a4f79e8c8d",
         "uri": "ui://codex-mcp-bridge/dashboard/v1.html",
         "inventories": [
           "development-current"
@@ -89,7 +89,7 @@ export const UI_RESOURCE_MANIFEST = {
   "resources": {
     "settings": {
       "uriVersion": 1,
-      "digest": "757d1ee7b1d5ea115a8f2bc491450b7a66d31308378c1e25078badaf4b6eae55",
+      "digest": "87906be7276dd15a2f46783ca84d7bd13e4faef6590e0f4ead0c4744f83f2fc1",
       "uri": "ui://codex-mcp-bridge/settings/v1.html",
       "metadata": {
         "descriptor": {
@@ -133,7 +133,7 @@ export const UI_RESOURCE_MANIFEST = {
     },
     "dashboard": {
       "uriVersion": 1,
-      "digest": "3ee39218df2dda6269a195ba103b3e4a6a08b8037f6186016f7a7e40968261f5",
+      "digest": "26962e546df429a1809f5fed1199c5b48d0e6126c0047faa978f48a4f79e8c8d",
       "uri": "ui://codex-mcp-bridge/dashboard/v1.html",
       "metadata": {
         "descriptor": {

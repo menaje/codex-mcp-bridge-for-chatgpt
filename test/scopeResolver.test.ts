@@ -168,4 +168,16 @@ describe("ScopeResolver", () => {
     expect(store.getMeta("scope_hmac_secret_v1")).toBe("not-a-valid-key");
     store.close();
   });
+
+  it("fails closed for an escaped unpaired surrogate in persisted conversation links", () => {
+    const file = path.join(
+      mkdtempSync(path.join(tmpdir(), "bridge-invalid-conversation-links-")),
+      "state.sqlite"
+    );
+    const store = new BridgeStateStore({ file });
+    store.setMeta("chatgpt_conversation_links_v1", '[["\\ud800","12345678-1234-4234-8234-123456789abc"]]');
+
+    expect(() => new ScopeResolver({ stateStore: store })).toThrow(/unpaired Unicode surrogate/i);
+    store.close();
+  });
 });

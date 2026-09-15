@@ -2,6 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import path from "node:path";
+import {
+  assertJsonTextIntegrity,
+  canonicalHumanText,
+  decodeUtf8Strict,
+  searchKey,
+  utf8ByteLength,
+  verbatimText
+} from "./textIntegrity.js";
 
 /** Every bridge skill is private, versioned, and owned by this Bridge. */
 export const BRIDGE_SKILL_SOURCE = "bridge" as const;
@@ -17,8 +25,8 @@ export type SkillRequirementKind = (typeof SKILL_REQUIREMENT_KINDS)[number];
 
 /**
  * Shared transport-facing bounds for bridge-owned skills. The canonical
- * normalizers below remain the final authority because they also apply NFC,
- * whitespace, and byte-level rules.
+ * normalizers below remain the final authority because they select the shared
+ * text-integrity policy for every persisted field.
  */
 export const BRIDGE_SKILL_LIMITS = Object.freeze({
   nameMaxCharacters: 120,
@@ -256,7 +264,6 @@ const SKILL_REQUIREMENT_DESCRIPTION_MAX_LENGTH = BRIDGE_SKILL_LIMITS.requirement
 const EXECUTION_BUNDLE_MAX_BYTES = BRIDGE_SKILL_LIMITS.executionBundleMaxBytes;
 const BRIDGE_SKILL_ID = /^bridge_[a-f0-9]{32}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 const BRIDGE_SKILL_INDEX = "index.json";
 const BRIDGE_SKILL_MUTATION_LOCK = ".mutation.lock";
 const BRIDGE_SKILL_MUTATION_LOCK_OWNER = "owner.json";
@@ -583,7 +590,7 @@ class BridgeSkillStore {
     if (!version) throw new Error("SKILL_VERSION_NOT_FOUND: This bridge skill version does not exist.");
     const root = this.versionDirectory(record.skillId, version.version);
     const instructions = await readBoundedText(path.join(root, "SKILL.md"), SKILL_INSTRUCTIONS_MAX_BYTES + 16 * 1024, "Bridge skill instructions")
-      .then((value) => stripBridgeFrontmatter(value));
+      .then((value) => stripBridgeFrontmatter(value, version.contentDigestVersion));
     const references = await Promise.all(version.references.map(async (reference) => {
       const filePath = await safeDescendant(root, reference.file);
       if (!filePath) throw new Error("SKILL_LIBRARY_CORRUPT: A bridge skill reference file escapes its version directory.");
@@ -627,7 +634,7 @@ class BridgeSkillStore {
       name: reference.name,
       mediaType: reference.mediaType,
       contentDigest: sha256(reference.content),
-      bytes: Buffer.byteLength(reference.content, "utf8"),
+      bytes: utf8ByteLength(reference.content, "Reference material"),
       file: ""
     }));
     for (const reference of storedReferences) reference.file = `references/${reference.referenceId}.txt`;
@@ -678,13 +685,21 @@ class BridgeSkillStore {
   private async readIndex(): Promise<BridgeSkillIndex> {
     let raw: string;
     try {
-      raw = await readFile(path.join(this.directory, BRIDGE_SKILL_INDEX), "utf8");
+      raw = decodeUtf8Strict(
+        await readFile(path.join(this.directory, BRIDGE_SKILL_INDEX)),
+        "Bridge skill index"
+      );
     } catch (error) {
       if (isErrno(error, "ENOENT")) return { schemaVersion: 2, skills: [], mutationReceipts: [] };
       throw error;
     }
     let parsed: unknown;
-    try { parsed = JSON.parse(raw); } catch { throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill index is not valid JSON."); }
+    try {
+      parsed = JSON.parse(raw);
+      assertJsonTextIntegrity(parsed, "Bridge skill index");
+    } catch {
+      throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill index is not valid JSON.");
+    }
     return validateIndex(parsed);
   }
 
@@ -1070,13 +1085,20 @@ function normalizeReferences(input: readonly BridgeSkillReferenceInput[]): Norma
     const key = skillNameKey(name);
     if (names.has(key)) throw new Error("SKILL_REFERENCE_NAME_CONFLICT: Reference material names must be unique within a version.");
     names.add(key);
-    if (typeof reference.content !== "string") throw new Error("SKILL_REFERENCE_INVALID: Reference material content must be text.");
-    const content = reference.content.replaceAll("\r\n", "\n");
-    const contentBytes = Buffer.byteLength(content, "utf8");
-    if (contentBytes === 0 || contentBytes > SKILL_REFERENCE_MAX_BYTES || content.includes("\u0000")) {
+    let content: string;
+    try {
+      // Markdown and reference material are immutable source content. Preserve
+      // CRLF, trailing newlines, combining characters, and every other valid
+      // UTF-8 code point exactly as supplied.
+      content = verbatimText(reference.content, {
+        field: "Reference material",
+        maxUtf8Bytes: SKILL_REFERENCE_MAX_BYTES,
+        rejectNul: true
+      });
+    } catch {
       throw new Error(`SKILL_REFERENCE_INVALID: Each reference material must be 1-${SKILL_REFERENCE_MAX_BYTES} UTF-8 bytes without NUL characters.`);
     }
-    bytes += contentBytes;
+    bytes += utf8ByteLength(content, "Reference material");
     if (bytes > SKILL_REFERENCE_TOTAL_MAX_BYTES) {
       throw new Error(`SKILL_REFERENCE_TOTAL_TOO_LARGE: Reference materials must total at most ${SKILL_REFERENCE_TOTAL_MAX_BYTES} UTF-8 bytes.`);
     }
@@ -1105,7 +1127,7 @@ function normalizeRequirements(input: readonly BridgeSkillRequirementInput[]): N
       throw new Error("SKILL_REQUIREMENT_KIND_INVALID: Requirement kind must be bridge-capability or environment.");
     }
     const id = normalizeRequirementId(requirement.id);
-    const key = `${requirement.kind}\u0000${id.toLocaleLowerCase("en-US")}`;
+    const key = `${requirement.kind}\u0000${searchKey(id, { field: "Requirement id" })}`;
     if (seen.has(key)) throw new Error("SKILL_REQUIREMENT_CONFLICT: Skill requirements must be unique.");
     seen.add(key);
     return {
@@ -1117,30 +1139,42 @@ function normalizeRequirements(input: readonly BridgeSkillRequirementInput[]): N
 }
 
 function normalizeRequirementId(value: string): string {
-  if (typeof value !== "string") throw new Error("SKILL_REQUIREMENT_INVALID: Requirement id must be text.");
-  const normalized = value.normalize("NFC").replace(/\s+/gu, " ").trim();
-  if (!normalized || Array.from(normalized).length > SKILL_REQUIREMENT_ID_MAX_LENGTH || CONTROL_CHARACTERS.test(normalized)) {
+  try {
+    return canonicalHumanText(value, {
+      field: "Requirement id",
+      maxCharacters: SKILL_REQUIREMENT_ID_MAX_LENGTH,
+      collapseWhitespace: true,
+      trim: true
+    });
+  } catch {
     throw new Error(`SKILL_REQUIREMENT_INVALID: Requirement id must be 1-${SKILL_REQUIREMENT_ID_MAX_LENGTH} visible characters.`);
   }
-  return normalized;
 }
 
 function normalizeRequirementDescription(value: string): string {
-  if (typeof value !== "string") throw new Error("SKILL_REQUIREMENT_INVALID: Requirement description must be text.");
-  const normalized = value.normalize("NFC").replace(/\s+/gu, " ").trim();
-  if (!normalized || Array.from(normalized).length > SKILL_REQUIREMENT_DESCRIPTION_MAX_LENGTH || CONTROL_CHARACTERS.test(normalized)) {
+  try {
+    return canonicalHumanText(value, {
+      field: "Requirement description",
+      maxCharacters: SKILL_REQUIREMENT_DESCRIPTION_MAX_LENGTH,
+      collapseWhitespace: true,
+      trim: true
+    });
+  } catch {
     throw new Error(`SKILL_REQUIREMENT_INVALID: Requirement description must be 1-${SKILL_REQUIREMENT_DESCRIPTION_MAX_LENGTH} visible characters.`);
   }
-  return normalized;
 }
 
 function normalizeSkillName(value: string): string {
-  if (typeof value !== "string") throw new Error("SKILL_NAME_INVALID: Skill name must be text.");
-  const normalized = value.normalize("NFC").replace(/\s+/gu, " ").trim();
-  if (!normalized || Array.from(normalized).length > SKILL_NAME_MAX_LENGTH || CONTROL_CHARACTERS.test(normalized)) {
+  try {
+    return canonicalHumanText(value, {
+      field: "Skill name",
+      maxCharacters: SKILL_NAME_MAX_LENGTH,
+      collapseWhitespace: true,
+      trim: true
+    });
+  } catch {
     throw new Error(`SKILL_NAME_INVALID: Use 1-${SKILL_NAME_MAX_LENGTH} visible characters for a skill name.`);
   }
-  return normalized;
 }
 
 function normalizeReferenceName(value: string): string {
@@ -1152,30 +1186,44 @@ function normalizeReferenceName(value: string): string {
 }
 
 function normalizeDescription(value: string): string {
-  if (typeof value !== "string") throw new Error("SKILL_DESCRIPTION_INVALID: Skill description must be text.");
-  const normalized = value.normalize("NFC").replace(/\s+/gu, " ").trim();
-  if (!normalized || Array.from(normalized).length > SKILL_DESCRIPTION_MAX_LENGTH || CONTROL_CHARACTERS.test(normalized)) {
+  try {
+    return canonicalHumanText(value, {
+      field: "Skill description",
+      maxCharacters: SKILL_DESCRIPTION_MAX_LENGTH,
+      collapseWhitespace: true,
+      trim: true
+    });
+  } catch {
     throw new Error(`SKILL_DESCRIPTION_INVALID: Use 1-${SKILL_DESCRIPTION_MAX_LENGTH} visible characters for a description.`);
   }
-  return normalized;
 }
 
 function normalizeInstructions(value: string): string {
-  if (typeof value !== "string") throw new Error("SKILL_INSTRUCTIONS_INVALID: Skill instructions must be text.");
-  const normalized = value.replaceAll("\r\n", "\n").trim();
-  const bytes = Buffer.byteLength(normalized, "utf8");
-  if (!normalized || bytes > SKILL_INSTRUCTIONS_MAX_BYTES || normalized.includes("\u0000")) {
+  try {
+    return verbatimText(value, {
+      field: "Instructions",
+      maxUtf8Bytes: SKILL_INSTRUCTIONS_MAX_BYTES,
+      rejectNul: true
+    });
+  } catch {
     throw new Error(`SKILL_INSTRUCTIONS_INVALID: Instructions must be 1-${SKILL_INSTRUCTIONS_MAX_BYTES} UTF-8 bytes without NUL characters.`);
   }
-  return normalized;
 }
 
 function normalizeMediaType(value: string | undefined): string {
   const raw = value === undefined ? "text/plain" : value;
-  if (typeof raw !== "string") {
+  let text: string;
+  try {
+    text = verbatimText(raw, {
+      field: "Reference material mediaType",
+      maxCharacters: BRIDGE_SKILL_LIMITS.mediaTypeMaxCharacters,
+      rejectControlCharacters: true,
+      rejectNul: true
+    });
+  } catch {
     throw new Error("SKILL_REFERENCE_MEDIA_TYPE_INVALID: Reference material mediaType must be text.");
   }
-  const normalized = raw.trim().toLowerCase();
+  const normalized = text.trim().toLowerCase();
   if (normalized.length > BRIDGE_SKILL_LIMITS.mediaTypeMaxCharacters ||
     !/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*(?:;[a-z0-9!#$&^_.+\-=]+)?$/.test(normalized)) {
     throw new Error(`SKILL_REFERENCE_MEDIA_TYPE_INVALID: Reference material mediaType must be a valid compact media type of at most ${BRIDGE_SKILL_LIMITS.mediaTypeMaxCharacters} characters.`);
@@ -1184,7 +1232,7 @@ function normalizeMediaType(value: string | undefined): string {
 }
 
 function skillNameKey(name: string): string {
-  return name.normalize("NFKC").toLocaleLowerCase("en-US");
+  return searchKey(name, { field: "Skill name" });
 }
 
 function bridgeVersionDigest(
@@ -1229,13 +1277,17 @@ function bridgeVersionDigest(
 function bridgeSkillMarkdown(name: string, description: string, instructions: string): string {
   // JSON strings are valid YAML scalar syntax and avoid emitting unsafe YAML
   // when a user-facing name contains quotes or punctuation.
-  return `---\nname: ${JSON.stringify(name)}\ndescription: ${JSON.stringify(description)}\n---\n\n${instructions}\n`;
+  return `---\nname: ${JSON.stringify(name)}\ndescription: ${JSON.stringify(description)}\n---\n\n${instructions}`;
 }
 
-function stripBridgeFrontmatter(value: string): string {
+function stripBridgeFrontmatter(value: string, digestVersion: 1 | 2): string {
   const match = /^---\n[\s\S]*?\n---\n\n?/.exec(value);
   if (!match) throw new Error("SKILL_LIBRARY_CORRUPT: Bridge SKILL.md is missing its managed frontmatter.");
-  return value.slice(match[0].length).trim();
+  const instructions = value.slice(match[0].length);
+  // Version 1 intentionally stripped the wrapper's trailing newline. Keep
+  // that historical verification behavior without rewriting an immutable
+  // record. Version 2 stores and returns the exact supplied UTF-8 text.
+  return digestVersion === 1 ? instructions.trim() : instructions;
 }
 
 function assertBridgeReference(reference: SkillReference): void {
@@ -1560,10 +1612,11 @@ async function safeDescendant(root: string, relative: string): Promise<string | 
 
 async function readMutationLockOwner(lockDirectory: string): Promise<BridgeSkillMutationLockOwner | undefined> {
   try {
-    const parsed: unknown = JSON.parse(await readFile(
-      path.join(lockDirectory, BRIDGE_SKILL_MUTATION_LOCK_OWNER),
-      "utf8"
+    const parsed: unknown = JSON.parse(decodeUtf8Strict(
+      await readFile(path.join(lockDirectory, BRIDGE_SKILL_MUTATION_LOCK_OWNER)),
+      "Bridge skill mutation lock"
     ));
+    assertJsonTextIntegrity(parsed, "Bridge skill mutation lock");
     if (!isRecord(parsed) || typeof parsed.token !== "string" || !REQUEST_ID.test(parsed.token) ||
       !Number.isSafeInteger(parsed.pid) || (parsed.pid as number) <= 0 ||
       typeof parsed.host !== "string" || !parsed.host) {
@@ -1609,8 +1662,14 @@ async function readBoundedText(file: string, maxBytes: number, label: string): P
   if (!information.isFile() || information.size < 1 || information.size > maxBytes) {
     throw new Error(`${label} is unavailable or exceeds its ${maxBytes}-byte limit.`);
   }
-  const value = await readFile(file, "utf8");
-  if (Buffer.byteLength(value, "utf8") > maxBytes || value.includes("\u0000")) {
+  let value: string;
+  try {
+    value = verbatimText(decodeUtf8Strict(await readFile(file), label), {
+      field: label,
+      maxUtf8Bytes: maxBytes,
+      rejectNul: true
+    });
+  } catch {
     throw new Error(`${label} is unavailable or is not supported UTF-8 text.`);
   }
   return value;
@@ -1629,10 +1688,16 @@ function uniqueReferences(references: readonly SkillReference[]): SkillReference
 
 function normalizeSearchQuery(value: string | undefined): string {
   if (value === undefined) return "";
-  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > BRIDGE_SKILL_LIMITS.searchQueryMaxBytes) {
+  try {
+    return searchKey(value, {
+      field: "Search text",
+      allowEmpty: true,
+      maxUtf8Bytes: BRIDGE_SKILL_LIMITS.searchQueryMaxBytes,
+      rejectControlCharacters: true
+    });
+  } catch {
     throw new Error(`SKILL_SEARCH_INVALID: Search text must be at most ${BRIDGE_SKILL_LIMITS.searchQueryMaxBytes.toLocaleString("en-US")} UTF-8 bytes.`);
   }
-  return value.normalize("NFKC").trim().toLocaleLowerCase("en-US");
 }
 
 function normalizeSearchLimit(value: number | undefined): number {
@@ -1645,7 +1710,11 @@ function normalizeSearchLimit(value: number | undefined): number {
 
 function matchesSearch(skill: SkillSummary, query: string): boolean {
   if (!query) return true;
-  const haystack = `${skill.name}\n${skill.description}`.normalize("NFKC").toLocaleLowerCase("en-US");
+  const haystack = searchKey(`${skill.name}\n${skill.description}`, {
+    field: "Stored bridge skill search text",
+    allowEmpty: true,
+    rejectControlCharacters: false
+  });
   return query.split(/\s+/u).every((term) => haystack.includes(term));
 }
 
@@ -1655,7 +1724,8 @@ function compareSkillSummaries(left: SkillSummary, right: SkillSummary): number 
 }
 
 function sha256(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
+  const exact = verbatimText(value, { field: "Hashed text", allowEmpty: true, rejectNul: false });
+  return createHash("sha256").update(exact, "utf8").digest("hex");
 }
 
 function isoNow(now: () => number): string {

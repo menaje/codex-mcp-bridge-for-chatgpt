@@ -13,6 +13,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import * as z from "zod/v4";
 import type { CodexBackendKind } from "./config.js";
+import { decodeUtf8Strict, parseJsonTextStrict, parseJsonUtf8Strict } from "./textIntegrity.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -280,7 +281,7 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
     if (!this.stateFile || !existsSync(this.stateFile)) return;
     try {
       if (statSync(this.stateFile).size > 5 * 1024 * 1024) return;
-      const parsed = JSON.parse(readFileSync(this.stateFile, "utf8")) as unknown;
+      const parsed = parseJsonUtf8Strict(readFileSync(this.stateFile), "Model catalog cache") as unknown;
       if (!isPersistedCatalog(parsed)) return;
       const fetchedAtMs = Date.parse(parsed.fetchedAt);
       if (!Number.isFinite(fetchedAtMs)) return;
@@ -318,7 +319,7 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
 export function parseCodexModelCatalog(raw: string): CodexModelDescriptor[] {
   let json: unknown;
   try {
-    json = JSON.parse(raw);
+    json = parseJsonTextStrict(raw, "Codex model catalog");
   } catch {
     throw new Error("Codex returned invalid JSON for its model catalog.");
   }
@@ -618,11 +619,11 @@ function emitCatalogChanged(
 
 async function runCodexCatalogCommand(command: string, args: string[], timeoutMs: number): Promise<string> {
   const { stdout } = await execFileAsync(command, args, {
-    encoding: "utf8",
+    encoding: "buffer",
     timeout: timeoutMs,
     maxBuffer: 5 * 1024 * 1024
   });
-  return stdout;
+  return decodeUtf8Strict(stdout as Buffer, "Codex model catalog");
 }
 
 function errorMessage(error: unknown): string {

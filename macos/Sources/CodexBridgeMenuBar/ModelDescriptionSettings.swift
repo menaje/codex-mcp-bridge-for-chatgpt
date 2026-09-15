@@ -45,8 +45,8 @@ struct ModelDescriptionsSettingsSection: View {
     }
 
     var body: some View {
-        Section("모델 설명") {
-            Text("자동 모드에서 GPT가 모델을 선택할 때 참고하는 설명입니다.")
+        Section("settings.modelDescriptions.title") {
+            Text("settings.modelDescriptions.hint")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             ForEach(modelIDs, id: \.self) { id in
@@ -72,7 +72,7 @@ private struct ModelDescriptionSettingsRow: View {
 
     private var busy: Bool { model.isBusy || model.generalSettingsSaveState.isActive }
     private var officialText: String {
-        catalogModel?.description ?? BridgeAppLocalization.string("제공된 공식 설명이 없습니다.", locale: model.interfaceLocale)
+        catalogModel?.description ?? BridgeAppLocalization.string("settings.modelDescriptions.empty", locale: model.interfaceLocale)
     }
 
     var body: some View {
@@ -82,11 +82,11 @@ private struct ModelDescriptionSettingsRow: View {
                     .font(.headline)
                     .textSelection(.enabled)
                 Spacer(minLength: 8)
-                Text(BridgeAppLocalization.string(override == nil ? "공식 설명" : "사용자 설명", locale: model.interfaceLocale))
+                Text(BridgeAppLocalization.string(override == nil ? "settings.modelDescriptions.official" : "settings.modelDescriptions.user", locale: model.interfaceLocale))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if edit == nil {
-                    Button("수정") {
+                    Button("macos.edit") {
                         edit = ModelDescriptionEdit(officialDescription: catalogModel?.description, override: override)
                         failed = false
                     }
@@ -94,7 +94,7 @@ private struct ModelDescriptionSettingsRow: View {
                 }
             }
             if catalogModel == nil {
-                Text("현재 카탈로그에 없는 모델입니다. 사용자 설명은 보관됩니다.")
+                Text("settings.modelDescriptions.unavailable")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -109,18 +109,18 @@ private struct ModelDescriptionSettingsRow: View {
                     .frame(minHeight: 90, maxHeight: 180)
                     .padding(5)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
-                    .accessibilityLabel(BridgeAppLocalization.string("설명", locale: model.interfaceLocale))
+                    .accessibilityLabel(BridgeAppLocalization.string("settings.modelDescriptions.label", locale: model.interfaceLocale))
                     .disabled(busy)
-                Text("최대 2,000자. 비우면 공식 설명을 사용합니다.")
+                Text("settings.modelDescriptions.limit")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if currentEdit.isTooLong {
-                    Text("설명은 2,000자 이내로 입력해 주세요.")
+                    Text("settings.modelDescriptions.tooLong")
                         .font(.caption)
                         .foregroundStyle(.red)
                 }
                 HStack {
-                    Button("설명 저장") {
+                    Button("settings.modelDescriptions.save") {
                         Task {
                             let saved = await model.saveModelDescription(
                                 modelID: modelID,
@@ -135,7 +135,7 @@ private struct ModelDescriptionSettingsRow: View {
                         }
                     }
                     .disabled(busy || currentEdit.isTooLong)
-                    Button("취소") { edit = nil; failed = false }
+                    Button("common.cancel") { edit = nil; failed = false }
                         .disabled(busy)
                 }
             } else {
@@ -144,7 +144,7 @@ private struct ModelDescriptionSettingsRow: View {
                     .textSelection(.enabled)
             }
             if override != nil || edit != nil {
-                FullRowDisclosure("공식 설명 보기", isExpanded: $officialExpanded) {
+                FullRowDisclosure("settings.modelDescriptions.compare", isExpanded: $officialExpanded) {
                     Text(officialText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -156,7 +156,7 @@ private struct ModelDescriptionSettingsRow: View {
                 .font(.caption)
             }
             if override != nil, edit == nil {
-                Button("공식 설명으로 복원") {
+                Button("settings.modelDescriptions.restore") {
                     Task {
                         failed = !(await model.saveModelDescription(modelID: modelID, description: nil, expectedOverride: override))
                     }

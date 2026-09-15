@@ -1,4 +1,4 @@
-import type { Readable, Writable } from "node:stream";
+import { Transform, type Readable, type TransformCallback, type Writable } from "node:stream";
 import { serveStdio, StdioServerTransport, type StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 import type { BridgeConfig } from "./config.js";
 import type { CodexModelCatalogProvider } from "./modelCatalog.js";
@@ -13,6 +13,9 @@ import {
 } from "./tools.js";
 import type { CodexUpstream } from "./upstream.js";
 import { UserSettingsStore } from "./userSettings.js";
+import { assertJsonTextIntegrity, decodeUtf8Strict } from "./textIntegrity.js";
+
+const MAX_STDIO_JSON_LINE_BYTES = 8 * 1024 * 1024;
 
 export type BridgeStdioRuntimeOptions = {
   /** Shared production store; when supplied, its lifecycle remains caller-owned. */
@@ -71,7 +74,12 @@ export function createStdioBridgeRuntime(
     scopeResolver,
     projectAvailability
   );
-  const transport = new StdioServerTransport(options.input, options.output);
+  // The SDK's stock stdio ReadBuffer calls Buffer.toString("utf8"), which
+  // replaces malformed bytes. Feed it only complete, prevalidated JSON lines.
+  const rawInput = options.input || process.stdin;
+  const strictInput = new StrictJsonLineInput();
+  rawInput.pipe(strictInput);
+  const transport = new StdioServerTransport(strictInput, options.output);
   let handle: StdioServerHandle | undefined;
   let started = false;
   let closePromise: Promise<void> | undefined;
@@ -96,12 +104,66 @@ export function createStdioBridgeRuntime(
           handle?.close() || server.close(),
           jobs.closeThreadConnections()
         ]).then(() => {
+          rawInput.unpipe(strictInput);
+          strictInput.destroy();
           if (ownsStateStore) stateStore.close();
         });
       }
       return closePromise;
     }
   };
+}
+
+/**
+ * Preserve the SDK's framed JSON-RPC behavior while checking a full raw line
+ * before it reaches the SDK's lossy UTF-8 conversion.
+ */
+class StrictJsonLineInput extends Transform {
+  private buffer = Buffer.alloc(0);
+
+  override _transform(chunk: Buffer | string, _encoding: BufferEncoding, callback: TransformCallback): void {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    this.buffer = Buffer.concat([this.buffer, bytes]);
+    if (this.buffer.length > MAX_STDIO_JSON_LINE_BYTES) {
+      callback(new Error("MCP stdio request exceeded the UTF-8 frame limit."));
+      return;
+    }
+    while (true) {
+      const newline = this.buffer.indexOf(0x0a);
+      if (newline < 0) break;
+      const line = this.buffer.subarray(0, newline);
+      this.buffer = this.buffer.subarray(newline + 1);
+      try {
+        const text = decodeUtf8Strict(line, "MCP stdio request");
+        if (text.trim()) {
+          try {
+            const parsed = JSON.parse(text);
+            assertJsonTextIntegrity(parsed, "MCP stdio request");
+          } catch (error) {
+            // Preserve the SDK's existing behavior for structurally invalid
+            // JSON lines, but never allow a text-integrity failure through.
+            if (!(error instanceof SyntaxError)) throw error;
+          }
+        }
+      } catch (error) {
+        callback(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      this.push(Buffer.concat([line, Buffer.from("\n")]));
+    }
+    callback();
+  }
+
+  override _flush(callback: TransformCallback): void {
+    try {
+      if (this.buffer.length > 0) {
+        decodeUtf8Strict(this.buffer, "MCP stdio request");
+      }
+      callback();
+    } catch (error) {
+      callback(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
 }
 
 function logStdioError(error: unknown): void {

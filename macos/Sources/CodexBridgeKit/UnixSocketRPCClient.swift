@@ -62,6 +62,7 @@ public struct UnixSocketRPCClient: Sendable {
             params: params
         )
         let requestData = try JSONEncoder().encode(request)
+        try BridgeTextIntegrity.validateJSONUTF8(requestData)
         let socketPath = self.socketPath
         let timeout = requestTimeout ?? self.timeout
         let maximumResponseBytes = self.maximumResponseBytes
@@ -89,6 +90,7 @@ public struct UnixSocketRPCClient: Sendable {
             throw error
         }
         do {
+            try BridgeTextIntegrity.validateJSONUTF8(responseData)
             let envelope = try JSONDecoder().decode(RPCResponse<Result>.self, from: responseData)
             guard envelope.jsonrpc == "2.0", envelope.id == requestID else {
                 throw LocalRPCError.malformedResponse("JSON-RPC response identity did not match the request.")

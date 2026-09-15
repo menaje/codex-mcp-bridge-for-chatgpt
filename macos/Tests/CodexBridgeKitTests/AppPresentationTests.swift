@@ -118,6 +118,15 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(BridgeAppLocalization.languageCode(for: "unknown"), "en")
     }
 
+    func testNativeSemanticKeyFallsBackToEnglishInsteadOfDisplayingItsIdentifier() {
+        let value = BridgeAppLocalization.string(
+            "settings.dashboardAutoOpenBackground",
+            locale: Locale(identifier: "unsupported")
+        )
+        XCTAssertEqual(value, "Automatically show Dashboard for background work")
+        XCTAssertNotEqual(value, "settings.dashboardAutoOpenBackground")
+    }
+
     func testReasoningEffortLabelsUseCanonicalLowercaseValuesInEveryLocale() {
         for language in BridgeAppLocalization.supportedLanguageCodes {
             let locale = BridgeAppLocalization.locale(for: language)
@@ -139,6 +148,9 @@ final class AppPresentationTests: XCTestCase {
             "ja-JP": "ja",
             "zh-CN": "zh-Hans",
             "zh-SG": "zh-Hans",
+            "zh-Hans-CN": "zh-Hans",
+            "zh-Hant-TW": "zh-Hant",
+            "zh-Hant-HK": "zh-Hant",
             "zh-TW": "zh-Hant",
             "zh-HK": "zh-Hant",
             "es-MX": "es",
@@ -173,29 +185,29 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(
             BridgeAppLocalization.statusProblemDescription(
                 problem: BridgeStatusProblem(code: "tunnel-process-not-running"),
-                diagnosticMessage: "The tunnel-client process is not running.",
-                context: .tunnel,
-                locale: Locale(identifier: "ko")
+            diagnosticMessage: "The tunnel-client process is not running.",
+            context: .tunnel,
+            locale: Locale(identifier: "ko")
             ),
-            "Secure MCP Tunnel 프로세스가 실행 중이지 않습니다."
+            "The Secure MCP Tunnel process is not running."
         )
         XCTAssertEqual(
             BridgeAppLocalization.statusProblemDescription(
                 problem: nil,
-                diagnosticMessage: "Unexpected English helper diagnostic.",
-                context: .helper,
-                locale: Locale(identifier: "ko")
+            diagnosticMessage: "Unexpected English helper diagnostic.",
+            context: .helper,
+            locale: Locale(identifier: "ko")
             ),
-            "요청을 처리하지 못했습니다. 진단 로그에서 자세한 내용을 확인해 주세요."
+            "The request could not be completed. Check the diagnostic logs for details."
         )
         XCTAssertEqual(
             BridgeAppLocalization.statusProblemDescription(
                 problem: BridgeStatusProblem(code: "runtime-env-owner-mismatch"),
-                diagnosticMessage: nil,
-                context: .runtimeConfiguration,
-                locale: Locale(identifier: "ko")
+            diagnosticMessage: nil,
+            context: .runtimeConfiguration,
+            locale: Locale(identifier: "ko")
             ),
-            "연결 정보 파일 또는 폴더를 현재 사용자가 소유하지 않습니다."
+            "The connection file or folder is not owned by the current user."
         )
     }
 
@@ -1295,7 +1307,7 @@ final class AppPresentationTests: XCTestCase {
         )
         XCTAssertEqual(
             DashboardExecutionPresentation.turnText(items[2].turn.execution),
-            "모델 · 추론 확인 불가"
+            "Model · Reasoning unavailable"
         )
     }
 

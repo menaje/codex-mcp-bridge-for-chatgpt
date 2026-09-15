@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import { canonicalHumanText, parseJsonTextStrict } from "./textIntegrity.js";
 import { CURRENT_STATE_SCHEMA, CURRENT_STATE_SCHEMA_VERSION } from "./stateSchema.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { PRODUCT_INFO } from "./productInfo.js";
@@ -67,6 +68,7 @@ import {
 import {
   AGENT_CONTEXT_MODES,
   AGENT_LIFECYCLES,
+  canonicalAgentName,
   isAgentContextMode,
   isAgentLifecycle,
   normalizeAgentName,
@@ -783,7 +785,7 @@ export class BridgeStateStore {
             : {}),
           sandbox: String(row.sandbox),
           ...(row.selection
-            ? { selection: parsePayload({ payload: String(row.selection) }, "session selection") }
+            ? { selection: parseCurrentPayload({ payload: String(row.selection) }, "session selection") }
             : {}),
           ...(row.policy_revision === null
             ? {}
@@ -955,7 +957,7 @@ export class BridgeStateStore {
         summary: string;
       }>;
     return rows.map((row) => {
-      const parsed = parsePayload({ payload: row.summary }, "archived dashboard job summary");
+      const parsed = parseCurrentPayload({ payload: row.summary }, "archived dashboard job summary");
       const summary = isRecord(parsed) ? parsed : {};
       const execution = readDashboardRetainedExecution(summary);
       return {
@@ -1002,7 +1004,7 @@ export class BridgeStateStore {
       const scopeVersion = this.nextScopeVersion(row.scope_id, now);
       if (!this.eventRetention.summary(jobId).usage) {
         const usage = this.database.prepare("SELECT payload FROM job_events WHERE job_id=? AND event_type LIKE 'app-usage%' ORDER BY event_id DESC LIMIT 1").get(jobId) as JsonRow | undefined;
-        if (usage) this.eventRetention.prepare({jobId,eventType:"app-usage",payload:JSON.parse(usage.payload)}, true, false);
+        if (usage) this.eventRetention.prepare({jobId,eventType:"app-usage",payload:parseStoredJson(usage.payload, "job event")}, true, false);
       }
       this.database
         .prepare("UPDATE jobs SET archived_at = ?, payload = ? WHERE job_id = ?")
@@ -1160,7 +1162,7 @@ export class BridgeStateStore {
         scopeId,
         ...project,
         continuationOfActivityId,
-        title: normalizeActivityTitle(input.title || "Codex activity"),
+        title: canonicalActivityTitle(input.title || "Codex activity"),
         kind,
         executionMode,
         handoffPolicy,
@@ -1262,7 +1264,7 @@ export class BridgeStateStore {
     return this.transaction(() => {
       this.ensureScope(scopeId, now);
       if (this.getAgent(agentId)) throw new Error("Agent id already exists.");
-      const { agentName, normalizedName } = normalizeAgentName(input.agentName);
+      const { agentName, normalizedName } = canonicalAgentName(input.agentName);
       const lifecycle = input.lifecycle || "idle";
       if (!isAgentLifecycle(lifecycle)) throw new Error("Invalid Agent lifecycle.");
       try {
@@ -1700,7 +1702,7 @@ export class BridgeStateStore {
   renameAgent(agentId: string, name: string, now = Date.now()): BridgeAgent {
     return this.transaction(() => {
       const agent = this.requireAgent(agentId);
-      const { agentName, normalizedName } = normalizeAgentName(name);
+      const { agentName, normalizedName } = canonicalAgentName(name);
       try {
         this.database
           .prepare(`
@@ -1726,7 +1728,7 @@ export class BridgeStateStore {
     return row
       ? {
           actionHash: row.action_hash,
-          result: parsePayload({ payload: row.result }, "Agent mutation result")
+          result: parseCurrentPayload({ payload: row.result }, "Agent mutation result")
         }
       : undefined;
   }
@@ -2498,7 +2500,7 @@ export class BridgeStateStore {
       scopeVersion: Number(row.scope_version),
       eventType: String(row.event_type),
       createdAt: Number(row.created_at),
-      payload: parsePayload({ payload: String(row.payload) }, "activity event")
+      payload: parseCurrentPayload({ payload: String(row.payload) }, "activity event")
     }));
   }
 
@@ -2515,7 +2517,7 @@ export class BridgeStateStore {
       eventType: String(row.event_type),
       status: String(row.status),
       createdAt: Number(row.created_at),
-      payload: parsePayload({ payload: String(row.payload) }, "job event")
+      payload: parseCurrentPayload({ payload: String(row.payload) }, "job event")
     }));
   }
 
@@ -2771,7 +2773,7 @@ export class BridgeStateStore {
       ? {
           settingsRevision: row.settings_revision,
           updatedAt: row.updated_at,
-          payload: parsePayload(row, "settings")
+          payload: parseCurrentPayload(row, "settings")
         }
       : undefined;
   }
@@ -4973,7 +4975,7 @@ export class BridgeStateStore {
     const lastProgressAt = finiteNumber(job.lastProgressAt) ?? previous?.last_progress_at ?? job.updatedAt;
     const lastProgress = job.lastProgress === undefined
       ? previous?.last_progress
-        ? parsePayload({ payload: previous.last_progress }, "job progress")
+        ? parseCurrentPayload({ payload: previous.last_progress }, "job progress")
         : undefined
       : job.lastProgress;
     job.activityId = activityId;
@@ -5381,7 +5383,7 @@ export class BridgeStateStore {
       project?.projectId || null,
       project?.projectCwd || null,
       input.continuationOfActivityId || null,
-      normalizeActivityTitle(input.title),
+      canonicalActivityTitle(input.title),
       input.kind,
       input.executionMode,
       input.handoffPolicy,
@@ -5943,7 +5945,7 @@ function readSteeringDeliveryRow(row: Record<string, unknown>): SteeringDelivery
     status,
     bridgeInstanceId: String(row.bridge_instance_id),
     result: row.result
-      ? parsePayload({ payload: String(row.result) }, "steering delivery result")
+      ? parseCurrentPayload({ payload: String(row.result) }, "steering delivery result")
       : undefined,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
@@ -5991,7 +5993,7 @@ function readCancellationOperationRow(row: Record<string, unknown>): Cancellatio
     reason: row.reason_text ? String(row.reason_text) : undefined,
     status: row.status as CancellationOperationStatus,
     result: row.result
-      ? parsePayload({ payload: String(row.result) }, "cancellation operation result")
+      ? parseCurrentPayload({ payload: String(row.result) }, "cancellation operation result")
       : undefined,
     createdAt: Number(row.created_at),
     completedAt: row.completed_at === null || row.completed_at === undefined
@@ -6100,7 +6102,7 @@ function readProjectStorageRow(row: ProjectStorageRow): ProjectTarget {
 }
 
 function hydrateJobPayload(row: JobStorageRow): unknown {
-  const payload = parsePayload(row, "job");
+  const payload = parseCurrentPayload(row, "job");
   if (!isRecord(payload)) throw new Error("Invalid job payload in the bridge state database: expected an object.");
   return {
     ...payload,
@@ -6122,10 +6124,10 @@ function hydrateJobPayload(row: JobStorageRow): unknown {
     version: row.job_version,
     lastProgressAt: row.last_progress_at,
     ...(row.last_progress
-      ? { lastProgress: parsePayload({ payload: row.last_progress }, "job progress") }
+      ? { lastProgress: parseCurrentPayload({ payload: row.last_progress }, "job progress") }
       : {}),
-    publicEvents: JSON.parse(row.public_events),
-    pendingInteractions: JSON.parse(row.pending_interactions),
+    publicEvents: parseStoredJson(row.public_events, "job public events"),
+    pendingInteractions: parseStoredJson(row.pending_interactions, "job pending interactions"),
     ...(row.terminal_origin ? { terminalOrigin: row.terminal_origin } : {}),
     ...(row.cancellation_intent_id
       ? { cancellationIntentId: row.cancellation_intent_id }
@@ -6309,9 +6311,28 @@ function normalizeUuid(value: string, label: string): string {
 }
 
 export function normalizeActivityTitle(value: string): string {
+  // Kept byte-for-byte compatible for callers that need historical activity
+  // behavior. New writes use canonicalActivityTitle below.
   const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
   if (!normalized) throw new Error("Activity title cannot be empty.");
   return normalized.slice(0, 120);
+}
+
+/** Current-write policy for a human-visible activity title. */
+export function canonicalActivityTitle(value: string): string {
+  try {
+    return canonicalHumanText(value, {
+      field: "Activity title",
+      maxCharacters: 120,
+      collapseWhitespace: true,
+      trim: true
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("exceeds")) {
+      throw new Error("Activity title cannot exceed 120 characters.");
+    }
+    throw new Error("Activity title cannot be empty.");
+  }
 }
 
 function normalizeVerificationEvidence(
@@ -6354,9 +6375,14 @@ function normalizeRequiredBoundedText(value: string, label: string, maxLength: n
 
 function normalizeOptionalBoundedText(value: string | undefined, maxLength: number): string | undefined {
   if (value === undefined) return undefined;
-  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  const normalized = canonicalHumanText(value, {
+    field: "Text",
+    allowEmpty: true,
+    maxCharacters: maxLength,
+    collapseWhitespace: true,
+    trim: true
+  });
   if (!normalized) return undefined;
-  if (normalized.length > maxLength) throw new Error(`Text cannot exceed ${maxLength} characters.`);
   return normalized;
 }
 
@@ -6439,7 +6465,7 @@ function readCompletionOutboxRow(row: Record<string, unknown>): CompletionOutbox
     scopeId: String(row.scope_id),
     completionVersion: Number(row.completion_version),
     channel: row.channel as "notify" | "verify",
-    payload: parsePayload({ payload: String(row.payload) }, "completion outbox"),
+    payload: parseCurrentPayload({ payload: String(row.payload) }, "completion outbox"),
     attemptCount: Number(row.attempt_count),
     nextAttemptAt: optionalNumber(row.next_attempt_at),
     leaseOwner: optionalString(row.lease_owner),
@@ -6558,6 +6584,31 @@ function parsePayload(row: JsonRow, label: string): unknown {
   } catch (error) {
     throw new Error(
       `Invalid ${label} payload in the bridge state database: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
+/** Strict parser for currently readable state rows; frozen migrations use parsePayload. */
+function parseCurrentPayload(row: JsonRow, label: string): unknown {
+  try {
+    return parseJsonTextStrict(row.payload, `bridge state ${label} payload`);
+  } catch (error) {
+    throw new Error(
+      `Invalid ${label} payload in the bridge state database: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
+function parseStoredJson(value: string, label: string): unknown {
+  try {
+    return parseJsonTextStrict(value, `bridge state ${label}`);
+  } catch (error) {
+    throw new Error(
+      `Invalid ${label} in the bridge state database: ${
         error instanceof Error ? error.message : String(error)
       }`
     );

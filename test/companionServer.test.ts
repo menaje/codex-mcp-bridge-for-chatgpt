@@ -456,6 +456,40 @@ describe("native companion server", () => {
     expect(response.result.scopeNotice).not.toBe("unlocalized");
   });
 
+  it("keeps an automatic-language settings update in the caller locale without persisting presentation metadata", async () => {
+    const socketPath = temporarySocketPath();
+    const applicationService = fakeApplicationService();
+    const rawView = {
+      settings: { settingsRevision: 4, registryRevision: 0, uiLocalePreference: "auto" },
+      catalog: { stale: false, warning: null, models: [] },
+      warnings: [
+        "CODEX_MCP_BRIDGE_ROOTS is a legacy compatibility restriction. " +
+          "Remove it to manage all project folders only from Codex settings."
+      ],
+      scopeNotice: "unlocalized"
+    } as SettingsView;
+    vi.mocked(applicationService.updateSettings).mockResolvedValue(rawView);
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService }));
+
+    const mutation = {
+      expectedSettingsRevision: 3,
+      operation: { kind: "patch", settings: { maxConcurrentJobs: 4 } }
+    };
+    const response = await request(socketPath, {
+      jsonrpc: "2.0",
+      id: "automatic-ko-update",
+      method: "settings.update",
+      params: { ...mutation, locale: "ko-KR" }
+    });
+
+    expect(applicationService.updateSettings).toHaveBeenCalledWith(mutation);
+    expect(response.result.warnings[0]).toContain("이전 버전 호환용 제한");
+    expect(response.result.presentation.warnings[0]).toEqual({
+      key: "settings.warning.legacyRoots",
+      parameters: {}
+    });
+  });
+
   it("rejects malformed requests without closing the server", async () => {
     const socketPath = temporarySocketPath();
     const server = await startBridgeCompanionServer({
