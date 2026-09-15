@@ -44,6 +44,8 @@ export type BridgeConfig = {
   modelCatalogTimeoutMs: number;
   modelCatalogStateFile: string;
   stateDatabaseFile: string;
+  /** Bridge-owned, versioned skills. This is never a Codex global skills root. */
+  bridgeSkillsDirectory: string;
   stateProfile: StateProfile | "explicit";
   upstreamPoolSize: number;
   secretScan: boolean;
@@ -95,6 +97,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const stateDatabaseFile = parseAbsoluteFilePath(
     explicitStateDatabaseFile || stateDatabaseFileForProfile(selectedStateProfile),
     "state database file"
+  );
+  const bridgeSkillsDirectory = parseAbsoluteDirectoryPath(
+    read("SKILLS_DIRECTORY") || path.join(path.dirname(stateDatabaseFile), "skills"),
+    "bridge skills directory"
   );
   const stateProfile: StateProfile | "explicit" = explicitStateDatabaseFile
     ? "explicit"
@@ -224,6 +230,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     modelCatalogTimeoutMs,
     modelCatalogStateFile,
     stateDatabaseFile,
+    bridgeSkillsDirectory,
     stateProfile,
     upstreamPoolSize,
     secretScan,
@@ -523,6 +530,13 @@ function normalizeOptional(raw: string | undefined): string | undefined {
 }
 
 function parseAbsoluteFilePath(raw: string, label: string): string {
+  if (!path.isAbsolute(raw) || /[\r\n]/.test(raw)) {
+    throw new Error(`Invalid ${label}; expected an absolute path.`);
+  }
+  return path.normalize(raw);
+}
+
+function parseAbsoluteDirectoryPath(raw: string, label: string): string {
   if (!path.isAbsolute(raw) || /[\r\n]/.test(raw)) {
     throw new Error(`Invalid ${label}; expected an absolute path.`);
   }

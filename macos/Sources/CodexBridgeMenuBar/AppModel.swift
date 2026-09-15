@@ -256,9 +256,13 @@ final class AppModel: ObservableObject {
     @Published private(set) var notificationPermission: OperationalNotificationPermission = .unknown
     @Published private(set) var notificationAuthorizationInProgress = false
     private let operationalNotifications: OperationalNotifications?
+    private let completionNotifications: CompletionNotifications?
     private var remoteOperationalProblem: OperationalProblem?
     private var notificationRefreshTask: Task<Void, Never>?
     private var notificationsStarted = false
+    private var completionNotificationDeliveryTask: Task<Void, Never>?
+    private var completionNotificationDeliveryRequested = false
+    var completionNotificationOpenHandler: (() -> Void)?
     private var statusRefreshTask: Task<Void, Never>?
     private var statusRefreshPending = false
     private var helperChangesTask: Task<Void, Never>?
@@ -300,6 +304,13 @@ final class AppModel: ObservableObject {
         dashboardPanel == .history && dashboard.map { $0.historyIncluded ?? true } != true
     }
     @Published var settings: SettingsSnapshot?
+    @Published private(set) var skillLibrary: BridgeSkillLibrarySnapshot?
+    @Published private(set) var selectedBridgeSkill: BridgeSkillDocument?
+    @Published private(set) var selectedBridgeSkillVersions: BridgeSkillVersionList?
+    @Published private(set) var selectedBridgeSkillReference: BridgeSkillReferenceDocument?
+    @Published var skillLibraryErrorMessage: String?
+    @Published var skillMutationErrorMessage: String?
+    @Published private(set) var skillMutationInProgress = false
     @Published var authStatus: CodexLoginStatus? { didSet { scheduleOperationalObservation() } }
     @Published var logs: [HelperLogEntry] = []
     @Published private(set) var setupDiscovery: TunnelSetupDiscovery?
@@ -398,6 +409,9 @@ final class AppModel: ObservableObject {
     private var dashboardRequestGeneration = 0
     private var deferredDashboardRead: (enrich: Bool, applyCachedEnrichment: Bool)?
     private var settingsRequestGeneration = 0
+    private var skillLibraryRequestGeneration = 0
+    private var bridgeSkillSelectionRequestGeneration = 0
+    private var bridgeSkillReferenceRequestGeneration = 0
     private var statusRequestGeneration = 0
     @Published private(set) var localConnectionRecovery = ConnectionRecoveryWindow() { didSet { scheduleOperationalObservation() } }
     private var connectionGeneration = 0
@@ -415,6 +429,7 @@ final class AppModel: ObservableObject {
         loginItemController: (any LoginItemControlling)? = nil,
         connectionStore: (any BridgeConnectionPreferencesStoring)? = nil,
         operationalNotifications: OperationalNotifications? = nil,
+        completionNotifications: CompletionNotifications? = nil,
         credentialStore: any RemoteCredentialStoring = KeychainRemoteCredentialStore(),
         remoteClientFactory: @escaping @Sendable (
             RemoteServerProfile,
@@ -439,6 +454,7 @@ final class AppModel: ObservableObject {
         self.loginItemController = loginItemController ?? ServiceManagementLoginItemController()
         self.connectionStore = connectionStore
         self.operationalNotifications = operationalNotifications
+        self.completionNotifications = completionNotifications
         self.credentialStore = credentialStore
         self.remoteClientFactory = remoteClientFactory
         self.remotePairingFactory = remotePairingFactory
@@ -524,6 +540,10 @@ final class AppModel: ObservableObject {
         SettingsWindowController.shared.show(model: self)
     }
 
+    func showDashboardForCompletionNotification() {
+        completionNotificationOpenHandler?()
+    }
+
     private func beginOperationalNotifications() {
         notificationsStarted = true
         scheduleOperationalObservation()
@@ -543,6 +563,34 @@ final class AppModel: ObservableObject {
         await operationalNotifications?.refresh(observation: operationalObservation,
             scope: operationalNotificationScope, locale: interfaceLocale, now: now)
         operationalActionRequiredProblem = operationalNotifications?.actionRequired
+    }
+
+    private func scheduleCompletionNotificationDelivery() {
+        guard !isRemoteClient,
+              bridgeConnected,
+              completionNotifications != nil,
+              !applicationShutdownInProgress,
+              !applicationShutdownCompleted else { return }
+        completionNotificationDeliveryRequested = true
+        guard completionNotificationDeliveryTask == nil else { return }
+        let generation = connectionGeneration
+        completionNotificationDeliveryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            while !Task.isCancelled,
+                  generation == self.connectionGeneration,
+                  !self.isRemoteClient,
+                  self.completionNotificationDeliveryRequested {
+                self.completionNotificationDeliveryRequested = false
+                let client = await self.localBridgeClient()
+                await self.completionNotifications?.refresh(
+                    client: client,
+                    locale: self.interfaceLocale
+                )
+            }
+            guard generation == self.connectionGeneration else { return }
+            self.completionNotificationDeliveryTask = nil
+        }
     }
 
     private func resolvedPaths() async -> RuntimePaths {
@@ -1303,6 +1351,9 @@ final class AppModel: ObservableObject {
             lastDashboardEnrichment = nil
             enqueueRefresh(["settings"])
         }
+        if next?.bridge.connected == true {
+            scheduleCompletionNotificationDelivery()
+        }
     }
 
     func toggleDashboardPanel(_ panel: DashboardPanel) async {
@@ -1745,6 +1796,7 @@ final class AppModel: ObservableObject {
                 interfaceLocalePreference = next.settings.uiLocalePreference
             }
             settingsLoadErrorMessage = nil
+            scheduleCompletionNotificationDelivery()
         } catch {
             guard !Task.isCancelled, generation == connectionGeneration,
                   request == settingsRequestGeneration else { return }
@@ -1756,6 +1808,216 @@ final class AppModel: ObservableObject {
         guard let current = settings else { return true }
         return next.settings.settingsRevision >= current.settings.settingsRevision &&
             next.settings.registryRevision >= current.settings.registryRevision
+    }
+
+    func refreshSkillLibrary() async {
+        skillLibraryRequestGeneration += 1
+        let request = skillLibraryRequestGeneration
+        guard bridgeConnected else {
+            if !isBridgeConnectionChecking {
+                skillLibrary = nil
+                selectedBridgeSkill = nil
+                selectedBridgeSkillVersions = nil
+                selectedBridgeSkillReference = nil
+                skillLibraryErrorMessage = nil
+            }
+            return
+        }
+        let generation = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            let next = try await client.skillLibrary()
+            guard !Task.isCancelled,
+                  generation == connectionGeneration,
+                  request == skillLibraryRequestGeneration else { return }
+            skillLibrary = next
+            skillLibraryErrorMessage = nil
+        } catch {
+            guard !Task.isCancelled,
+                  generation == connectionGeneration,
+                  request == skillLibraryRequestGeneration else { return }
+            skillLibraryErrorMessage = localizedErrorDescription(error)
+        }
+    }
+
+    func loadBridgeSkill(_ summary: BridgeSkillSummary) async {
+        await loadBridgeSkill(summary.reference)
+    }
+
+    func loadBridgeSkill(_ reference: BridgeSkillReference) async {
+        guard reference.source == "bridge" else { return }
+        bridgeSkillSelectionRequestGeneration += 1
+        let request = bridgeSkillSelectionRequestGeneration
+        let generation = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            let document = try await client.readBridgeSkill(reference)
+            guard !Task.isCancelled,
+                  generation == connectionGeneration,
+                  request == bridgeSkillSelectionRequestGeneration else { return }
+            selectedBridgeSkill = document
+            selectedBridgeSkillVersions = nil
+            selectedBridgeSkillReference = nil
+            skillLibraryErrorMessage = nil
+            do {
+                let versions = try await client.bridgeSkillVersions(skillId: reference.skillId)
+                guard !Task.isCancelled,
+                      generation == connectionGeneration,
+                      request == bridgeSkillSelectionRequestGeneration else { return }
+                selectedBridgeSkillVersions = versions
+            } catch {
+                // A document remains usable even if a legacy remote server has
+                // not yet exposed version history. The next explicit refresh
+                // will retry this optional management view.
+                guard !Task.isCancelled,
+                      generation == connectionGeneration,
+                      request == bridgeSkillSelectionRequestGeneration else { return }
+                selectedBridgeSkillVersions = nil
+            }
+        } catch {
+            guard !Task.isCancelled,
+                  generation == connectionGeneration,
+                  request == bridgeSkillSelectionRequestGeneration else { return }
+            skillLibraryErrorMessage = localizedErrorDescription(error)
+        }
+    }
+
+    func loadBridgeSkillReference(_ reference: BridgeSkillMaterial) async {
+        guard let skill = selectedBridgeSkill else { return }
+        bridgeSkillReferenceRequestGeneration += 1
+        let request = bridgeSkillReferenceRequestGeneration
+        let selectedSkillReference = skill.skill.reference
+        let generation = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            let document = try await client.readBridgeSkillReference(
+                reference: skill.skill.reference,
+                referenceId: reference.referenceId
+            )
+            guard !Task.isCancelled,
+                  generation == connectionGeneration,
+                  request == bridgeSkillReferenceRequestGeneration,
+                  selectedBridgeSkill?.skill.reference == selectedSkillReference else { return }
+            selectedBridgeSkillReference = document
+            skillLibraryErrorMessage = nil
+        } catch {
+            guard !Task.isCancelled,
+                  generation == connectionGeneration,
+                  request == bridgeSkillReferenceRequestGeneration,
+                  selectedBridgeSkill?.skill.reference == selectedSkillReference else { return }
+            skillLibraryErrorMessage = localizedErrorDescription(error)
+        }
+    }
+
+    func bridgeSkillMaterialInputs(
+        for document: BridgeSkillDocument
+    ) async -> [BridgeSkillMaterialInput]? {
+        let generation = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            var materials: [BridgeSkillMaterialInput] = []
+            for reference in document.references {
+                let loaded = try await client.readBridgeSkillReference(
+                    reference: document.skill.reference,
+                    referenceId: reference.referenceId
+                )
+                materials.append(.init(
+                    name: loaded.reference.name,
+                    content: loaded.content,
+                    mediaType: loaded.reference.mediaType
+                ))
+            }
+            guard !Task.isCancelled, generation == connectionGeneration else { return nil }
+            return materials
+        } catch {
+            guard !Task.isCancelled, generation == connectionGeneration else { return nil }
+            skillLibraryErrorMessage = localizedErrorDescription(error)
+            return nil
+        }
+    }
+
+    @discardableResult
+    func createBridgeSkill(_ request: BridgeSkillCreateRequest) async -> Bool {
+        guard !skillMutationInProgress else { return false }
+        skillMutationInProgress = true
+        defer { skillMutationInProgress = false }
+        skillMutationErrorMessage = nil
+        let generation = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            let created = try await client.createBridgeSkill(request)
+            guard generation == connectionGeneration else { return false }
+            await refreshSkillLibrary()
+            await loadBridgeSkill(created)
+            return true
+        } catch {
+            guard generation == connectionGeneration else { return false }
+            skillMutationErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func updateBridgeSkill(_ request: BridgeSkillUpdateRequest) async -> Bool {
+        guard !skillMutationInProgress else { return false }
+        skillMutationInProgress = true
+        defer { skillMutationInProgress = false }
+        skillMutationErrorMessage = nil
+        let generation = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            let updated = try await client.updateBridgeSkill(request)
+            guard generation == connectionGeneration else { return false }
+            await refreshSkillLibrary()
+            await loadBridgeSkill(updated)
+            return true
+        } catch {
+            guard generation == connectionGeneration else { return false }
+            skillMutationErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func restoreBridgeSkill(_ request: BridgeSkillRestoreRequest) async -> Bool {
+        guard !skillMutationInProgress else { return false }
+        skillMutationInProgress = true
+        defer { skillMutationInProgress = false }
+        skillMutationErrorMessage = nil
+        let generation = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            let restored = try await client.restoreBridgeSkill(request)
+            guard generation == connectionGeneration else { return false }
+            await refreshSkillLibrary()
+            await loadBridgeSkill(restored)
+            return true
+        } catch {
+            guard generation == connectionGeneration else { return false }
+            skillMutationErrorMessage = localizedErrorDescription(error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func setBridgeSkillEnabled(_ request: BridgeSkillSetEnabledRequest) async -> Bool {
+        guard !skillMutationInProgress else { return false }
+        skillMutationInProgress = true
+        defer { skillMutationInProgress = false }
+        skillMutationErrorMessage = nil
+        let generation = connectionGeneration
+        do {
+            let client = try await bridgeClient()
+            let updated = try await client.setBridgeSkillEnabled(request)
+            guard generation == connectionGeneration else { return false }
+            await refreshSkillLibrary()
+            await loadBridgeSkill(updated)
+            return true
+        } catch {
+            guard generation == connectionGeneration else { return false }
+            skillMutationErrorMessage = localizedErrorDescription(error)
+            return false
+        }
     }
 
     func refreshRuntimeImpact() async {
@@ -2672,6 +2934,9 @@ final class AppModel: ObservableObject {
         authRefreshPending = false
         codexRuntimePendingReads.removeAll()
         cancelChangeWatching()
+        completionNotificationDeliveryTask?.cancel()
+        completionNotificationDeliveryTask = nil
+        completionNotificationDeliveryRequested = false
         statusRefreshTask?.cancel()
         statusRefreshTask = nil
         statusRefreshPending = false
@@ -2711,6 +2976,13 @@ final class AppModel: ObservableObject {
         dashboardPanel = nil
         dashboardLoadedFilter = nil
         settings = nil
+        skillLibraryRequestGeneration += 1
+        bridgeSkillSelectionRequestGeneration += 1
+        bridgeSkillReferenceRequestGeneration += 1
+        skillLibrary = nil
+        selectedBridgeSkill = nil
+        selectedBridgeSkillVersions = nil
+        selectedBridgeSkillReference = nil
         authStatus = nil
         setupDiscovery = nil
         remoteHello = nil
@@ -2718,6 +2990,8 @@ final class AppModel: ObservableObject {
         setRemotePairingInvitation(nil)
         dashboardErrorMessage = nil
         settingsLoadErrorMessage = nil
+        skillLibraryErrorMessage = nil
+        skillMutationErrorMessage = nil
         settingsErrorMessage = nil
         settingsConflictMessage = nil
         runtimeImpactErrorMessage = nil
@@ -2815,6 +3089,9 @@ final class AppModel: ObservableObject {
         notificationRefreshTask?.cancel()
         notificationRefreshTask = nil
         notificationsStarted = false
+        completionNotificationDeliveryTask?.cancel()
+        completionNotificationDeliveryTask = nil
+        completionNotificationDeliveryRequested = false
         networkMonitor?.cancel()
         networkMonitor = nil
         for observer in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
@@ -2950,6 +3227,7 @@ final class AppModel: ObservableObject {
                 }
                 self.scheduleBackgroundRefreshes()
                 self.scheduleOperationalObservation()
+                self.scheduleCompletionNotificationDelivery()
             }
         }
     }
@@ -3120,11 +3398,6 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        guard dashboardVisible || settingsWindowVisible else {
-            companionChangesTask?.cancel()
-            companionChangesTask = nil
-            return
-        }
         guard companionChangesTask == nil, !companionChangesUnsupported, bridgeConnected else { return }
         companionChangesTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -3142,6 +3415,9 @@ final class AppModel: ObservableObject {
                     var topics = Set(notice.topics)
                     if topics.remove("enrichment") != nil {
                         self.dashboardEnrichmentInvalidated = true
+                    }
+                    if topics.contains("dashboard") {
+                        self.scheduleCompletionNotificationDelivery()
                     }
                     topics.remove("dashboard")
                     self.enqueueRefresh(topics)

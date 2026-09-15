@@ -320,8 +320,22 @@ public struct BridgeSettings: Codable, Sendable {
     public let showBridgeThreadsInCodexApp: Bool
     /// Automatically opens Dashboard only for background work in the origin conversation.
     public let dashboardAutoOpenBackground: Bool
-    /// Requests a durable completion follow-up when a verified delivery route is available.
+    /// Enables native macOS completion notifications for eligible background work.
     public let completionFollowUp: Bool
+}
+
+/// Opaque local-delivery receipt. It deliberately excludes task prompts,
+/// result content, project paths, Activity IDs, and conversation IDs.
+public struct NativeCompletionNotification: Codable, Sendable, Equatable, Identifiable {
+    public let eventId: String
+    public let outboxId: Int
+
+    public var id: String { eventId }
+
+    public init(eventId: String, outboxId: Int) {
+        self.eventId = eventId
+        self.outboxId = outboxId
+    }
 }
 
 public struct BridgeProject: Codable, Identifiable, Sendable {
@@ -855,4 +869,285 @@ public struct HelperLogEntry: Codable, Identifiable, Sendable {
 
 public struct HelperLogs: Codable, Sendable {
     public let entries: [HelperLogEntry]
+}
+
+/// A stable reference into the bridge-owned skill library.
+public struct BridgeSkillReference: Codable, Sendable, Equatable {
+    public let skillId: String
+    public let source: String
+    public let version: String
+
+    public init(skillId: String, source: String = "bridge", version: String) {
+        self.skillId = skillId
+        self.source = source
+        self.version = version
+    }
+}
+
+public struct BridgeSkillExecution: Codable, Sendable, Equatable {
+    public let mode: String
+    public let note: String
+    public let requirements: [BridgeSkillRequirement]
+
+    enum CodingKeys: String, CodingKey {
+        case mode
+        case note
+        case requirements
+    }
+
+    public init(mode: String, note: String, requirements: [BridgeSkillRequirement] = []) {
+        self.mode = mode
+        self.note = note
+        self.requirements = requirements
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decode(String.self, forKey: .mode)
+        note = try container.decode(String.self, forKey: .note)
+        requirements = try container.decodeIfPresent([BridgeSkillRequirement].self, forKey: .requirements) ?? []
+    }
+}
+
+public struct BridgeSkillRequirement: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { "\(kind)-\(requirementId)" }
+    public let kind: String
+    public let requirementId: String
+    public let description: String?
+    public let availability: String
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case requirementId = "id"
+        case description
+        case availability
+    }
+
+    public init(kind: String, id: String, description: String?, availability: String) {
+        self.kind = kind
+        self.requirementId = id
+        self.description = description
+        self.availability = availability
+    }
+}
+
+public struct BridgeSkillSummary: Codable, Sendable, Identifiable, Equatable {
+    public var id: String { "\(source)-\(skillId)-\(version)" }
+    public let skillId: String
+    public let source: String
+    public let version: String
+    public let name: String
+    public let description: String
+    public let contentDigest: String?
+    public let enabled: Bool
+    public let availability: String
+    public let execution: BridgeSkillExecution
+
+    public var reference: BridgeSkillReference {
+        BridgeSkillReference(skillId: skillId, source: source, version: version)
+    }
+}
+
+public struct BridgeSkillMaterial: Codable, Sendable, Identifiable, Equatable {
+    public let referenceId: String
+    public var id: String { referenceId }
+    public let name: String
+    public let mediaType: String
+    public let contentDigest: String
+    public let bytes: Int
+}
+
+public struct BridgeSkillReferenceDocument: Codable, Sendable, Equatable {
+    public let skill: BridgeSkillReference
+    public let execution: BridgeSkillExecution
+    public let reference: BridgeSkillMaterial
+    public let content: String
+    public let sourceSnapshot: String
+    public let warnings: [String]
+}
+
+public struct BridgeSkillReferenceReadParameters: Codable, Sendable, Equatable {
+    public let reference: BridgeSkillReference
+    public let referenceId: String
+
+    public init(reference: BridgeSkillReference, referenceId: String) {
+        self.reference = reference
+        self.referenceId = referenceId
+    }
+}
+
+public struct BridgeSkillVersionsParameters: Codable, Sendable, Equatable {
+    public let skillId: String
+
+    public init(skillId: String) {
+        self.skillId = skillId
+    }
+}
+
+public struct BridgeSkillDocument: Codable, Sendable, Equatable {
+    public let skill: BridgeSkillSummary
+    public let instructions: String
+    public let references: [BridgeSkillMaterial]
+    public let sourceSnapshot: String
+    public let warnings: [String]
+}
+
+public struct BridgeSkillLibrarySnapshot: Codable, Sendable, Equatable {
+    public let skills: [BridgeSkillSummary]
+}
+
+public struct BridgeSkillVersionSummary: Codable, Sendable, Identifiable, Equatable {
+    public var id: String { "\(source)-\(skillId)-\(version)" }
+    public let skillId: String
+    public let source: String
+    public let version: String
+    public let name: String
+    public let description: String
+    public let contentDigest: String
+    public let createdAt: String
+    public let referenceCount: Int
+    public let execution: BridgeSkillExecution
+
+    public var reference: BridgeSkillReference {
+        BridgeSkillReference(skillId: skillId, source: source, version: version)
+    }
+}
+
+public struct BridgeSkillVersionList: Codable, Sendable, Equatable {
+    public let skillId: String
+    public let source: String
+    public let currentVersion: String
+    public let enabled: Bool
+    public let versions: [BridgeSkillVersionSummary]
+}
+
+public struct BridgeSkillMaterialInput: Codable, Sendable, Equatable {
+    public let name: String
+    public let content: String
+    public let mediaType: String?
+
+    public init(name: String, content: String, mediaType: String? = nil) {
+        self.name = name
+        self.content = content
+        self.mediaType = mediaType
+    }
+}
+
+public struct BridgeSkillRequirementInput: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { "\(kind)-\(requirementId)" }
+    public let kind: String
+    public let requirementId: String
+    public let description: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case requirementId = "id"
+        case description
+    }
+
+    public init(kind: String, id: String, description: String? = nil) {
+        self.kind = kind
+        self.requirementId = id
+        self.description = description
+    }
+}
+
+public struct BridgeSkillCreateRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let name: String
+    public let description: String
+    public let instructions: String
+    public let references: [BridgeSkillMaterialInput]?
+    public let executionMode: String?
+    public let requirements: [BridgeSkillRequirementInput]?
+
+    public init(
+        requestId: String = UUID().uuidString,
+        name: String,
+        description: String,
+        instructions: String,
+        references: [BridgeSkillMaterialInput]? = nil,
+        executionMode: String? = nil,
+        requirements: [BridgeSkillRequirementInput]? = nil
+    ) {
+        self.requestId = requestId
+        self.name = name
+        self.description = description
+        self.instructions = instructions
+        self.references = references
+        self.executionMode = executionMode
+        self.requirements = requirements
+    }
+}
+
+public struct BridgeSkillUpdateRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let skillId: String
+    public let expectedVersion: String
+    public let name: String?
+    public let description: String?
+    public let instructions: String?
+    public let references: [BridgeSkillMaterialInput]?
+    public let executionMode: String?
+    public let requirements: [BridgeSkillRequirementInput]?
+
+    public init(
+        requestId: String = UUID().uuidString,
+        skillId: String,
+        expectedVersion: String,
+        name: String? = nil,
+        description: String? = nil,
+        instructions: String? = nil,
+        references: [BridgeSkillMaterialInput]? = nil,
+        executionMode: String? = nil,
+        requirements: [BridgeSkillRequirementInput]? = nil
+    ) {
+        self.requestId = requestId
+        self.skillId = skillId
+        self.expectedVersion = expectedVersion
+        self.name = name
+        self.description = description
+        self.instructions = instructions
+        self.references = references
+        self.executionMode = executionMode
+        self.requirements = requirements
+    }
+}
+
+public struct BridgeSkillRestoreRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let skillId: String
+    public let expectedVersion: String
+    public let sourceVersion: String
+
+    public init(
+        requestId: String = UUID().uuidString,
+        skillId: String,
+        expectedVersion: String,
+        sourceVersion: String
+    ) {
+        self.requestId = requestId
+        self.skillId = skillId
+        self.expectedVersion = expectedVersion
+        self.sourceVersion = sourceVersion
+    }
+}
+
+public struct BridgeSkillSetEnabledRequest: Codable, Sendable, Equatable {
+    public let requestId: String
+    public let skillId: String
+    public let expectedVersion: String
+    public let enabled: Bool
+
+    public init(
+        requestId: String = UUID().uuidString,
+        skillId: String,
+        expectedVersion: String,
+        enabled: Bool
+    ) {
+        self.requestId = requestId
+        self.skillId = skillId
+        self.expectedVersion = expectedVersion
+        self.enabled = enabled
+    }
 }

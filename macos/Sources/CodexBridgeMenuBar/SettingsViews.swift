@@ -105,6 +105,11 @@ struct NativeSettingsView: View {
                     .tabItem { Label("프로젝트", systemImage: "folder") }
                     .tag("projects")
 
+                    SkillsLibraryView()
+                        .environmentObject(model)
+                        .tabItem { Label("스킬", systemImage: "books.vertical") }
+                        .tag("skills")
+
                     if !model.isRemoteClient {
                         Group {
                             if let snapshot = model.settings {
@@ -182,6 +187,7 @@ struct NativeSettingsView: View {
         case "connection": key = "연결"
         case "codex": key = "Codex"
         case "projects": key = "프로젝트"
+        case "skills": key = "스킬"
         case "server": key = "서버"
         default:
             key = model.needsSetup ? "서버 설정" : "일반"
@@ -1119,10 +1125,19 @@ private struct GeneralSettingsPane: View {
                 Text("백그라운드 작업을 시작한 대화에서만 현황 카드를 자동으로 엽니다. 포그라운드 결과는 원래 도구 응답으로 반환됩니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Toggle("완료 후 자동 응답", isOn: $draft.completionFollowUp)
-                Text("검증된 호스트 이벤트가 있으면 이를 사용하고, 없으면 자동으로 열린 현황 카드가 완료 알림을 보냅니다. 가능한 경로가 없으면 전달 기록을 보관합니다.")
+                if model.isRemoteClient {
+                    Label(
+                        "완료 알림은 브리지를 실행하는 Mac의 메뉴 막대 앱에서 전송됩니다.",
+                        systemImage: "bell.badge"
+                    )
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                } else {
+                    Toggle("백그라운드 작업 완료 시 macOS 알림", isOn: $draft.completionFollowUp)
+                    Text("완료되면 이 Mac의 메뉴 막대 앱이 알림을 보냅니다. 알림을 클릭하면 현황을 열며 ChatGPT 대화에 자동 메시지를 추가하지 않습니다.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
             }
 
@@ -1883,4 +1898,672 @@ private func phaseLabel(_ value: String?, locale: Locale) -> String {
     default: key = "중지됨"
     }
     return BridgeAppLocalization.string(key, locale: locale)
+}
+
+struct SkillsLibraryView: View {
+    @EnvironmentObject private var model: AppModel
+    let showsStandaloneWindowButton: Bool
+    @State private var showingCreate = false
+    @State private var showingEdit = false
+    @State private var searchText = ""
+    @State private var showsArchivedSkills = true
+    @State private var preparingEdit = false
+    @State private var editReferences: [BridgeSkillMaterialInput] = []
+    @State private var restoreTarget: BridgeSkillVersionSummary?
+    @State private var restoreRetry: BridgeSkillRestoreRequest?
+    @State private var lifecycleRetry: BridgeSkillSetEnabledRequest?
+
+    init(showsStandaloneWindowButton: Bool = true) {
+        self.showsStandaloneWindowButton = showsStandaloneWindowButton
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("스킬 라이브러리")
+                            .font(.title3.weight(.semibold))
+                    }
+                    Spacer()
+                    if showsStandaloneWindowButton {
+                        Button {
+                            SkillsLibraryWindowController.shared.show(model: model)
+                        } label: {
+                            Label("스킬 라이브러리", systemImage: "macwindow")
+                        }
+                    }
+                    Button("새 스킬") { showingCreate = true }
+                        .buttonStyle(.borderedProminent)
+                    Button {
+                        Task { await model.refreshSkillLibrary() }
+                    } label: {
+                        Label("새로 고침", systemImage: "arrow.clockwise")
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    TextField("스킬 검색", text: $searchText)
+                        .textFieldStyle(.roundedBorder)
+                    Toggle("보관한 스킬 표시", isOn: $showsArchivedSkills)
+                        .toggleStyle(.checkbox)
+                        .font(.caption)
+                }
+
+                if let error = model.skillLibraryErrorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+                if let error = model.skillMutationErrorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+
+                GroupBox("브리지 스킬") {
+                    if let snapshot = model.skillLibrary {
+                        let bridgeSkills = filteredSkills(snapshot.skills)
+                        if bridgeSkills.isEmpty {
+                            Text("아직 브리지 전용 스킬이 없습니다. 새 스킬을 만들어 대화와 Codex 실행에서 재사용할 수 있습니다.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(bridgeSkills) { skill in
+                                    Button {
+                                        Task { await model.loadBridgeSkill(skill) }
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            HStack {
+                                                Text(skill.name).fontWeight(.medium)
+                                                if !skill.enabled {
+                                                    Text("보관됨")
+                                                        .font(.caption2.weight(.medium))
+                                                        .foregroundStyle(.orange)
+                                                }
+                                                Spacer()
+                                                Text("v\(skill.version)")
+                                                    .font(.caption.monospacedDigit())
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            Text(skill.description)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .multilineTextAlignment(.leading)
+                                        }
+                                        .padding(.vertical, 5)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    if skill.skillId != bridgeSkills.last?.skillId { Divider() }
+                                }
+                            }
+                        }
+                    } else {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("스킬 라이브러리를 불러오는 중…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                if let document = model.selectedBridgeSkill {
+                    GroupBox("선택한 스킬") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(document.skill.name).fontWeight(.semibold)
+                                    Text("브리지 · 버전 \(document.skill.version)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if let history = history(for: document) {
+                                    Menu {
+                                        ForEach(history.versions) { version in
+                                            Button {
+                                                Task { await model.loadBridgeSkill(version.reference) }
+                                            } label: {
+                                                if version.version == document.skill.version {
+                                                    Label("v\(version.version) · \(version.createdAt)", systemImage: "checkmark")
+                                                } else {
+                                                    Text("v\(version.version) · \(version.createdAt)")
+                                                }
+                                            }
+                                        }
+                                    } label: {
+                                        Label("버전", systemImage: "clock.arrow.circlepath")
+                                    }
+                                }
+                                if isCurrentVersion(document) {
+                                    Button(preparingEdit ? "자료 불러오는 중…" : "편집") {
+                                        prepareEditor(for: document)
+                                    }
+                                    .disabled(preparingEdit)
+                                }
+                            }
+                            Text(document.skill.description)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(document.instructions)
+                                .font(.system(.body, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if !document.skill.execution.requirements.isEmpty {
+                                Divider()
+                                Text("실행 조건")
+                                    .font(.caption.weight(.medium))
+                                ForEach(document.skill.execution.requirements) { requirement in
+                                    BridgeSkillRequirementRow(requirement: requirement, locale: model.interfaceLocale)
+                                }
+                            }
+                            if !document.references.isEmpty {
+                                Divider()
+                                Text("참고 자료")
+                                    .font(.caption.weight(.medium))
+                                ForEach(document.references) { reference in
+                                    Button {
+                                        Task { await model.loadBridgeSkillReference(reference) }
+                                    } label: {
+                                        HStack {
+                                            Text(reference.name)
+                                            Spacer()
+                                            Text("\(reference.mediaType) · \(reference.bytes) bytes")
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .font(.caption)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                if let preview = model.selectedBridgeSkillReference,
+                                   preview.skill == document.skill.reference {
+                                    Divider()
+                                    Text(preview.reference.name)
+                                        .font(.caption.weight(.medium))
+                                    Text(preview.content)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                            if let history = history(for: document), !history.versions.isEmpty {
+                                Divider()
+                                Text("버전 이력")
+                                    .font(.caption.weight(.medium))
+                                ForEach(history.versions) { version in
+                                    HStack {
+                                        Button("v\(version.version)") {
+                                            Task { await model.loadBridgeSkill(version.reference) }
+                                        }
+                                        .buttonStyle(.link)
+                                        Text(version.createdAt)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text("자료 \(version.referenceCount)개")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        if version.version == history.currentVersion {
+                                            Text("현재")
+                                                .font(.caption.weight(.medium))
+                                                .foregroundStyle(Color.accentColor)
+                                        }
+                                    }
+                                }
+                                if !isCurrentVersion(document),
+                                   let selectedVersion = history.versions.first(where: { $0.version == document.skill.version }) {
+                                    Button("이 버전을 새 현재 버전으로 복원") {
+                                        restoreTarget = selectedVersion
+                                    }
+                                }
+                            }
+                            if document.skill.enabled {
+                                Button("스킬 보관", role: .destructive) {
+                                    submitLifecycleChange(for: document, enabled: false)
+                                }
+                                .disabled(model.skillMutationInProgress)
+                            } else {
+                                Button("스킬 다시 활성화") {
+                                    submitLifecycleChange(for: document, enabled: true)
+                                }
+                                .disabled(model.skillMutationInProgress)
+                            }
+                            if !document.warnings.isEmpty {
+                                Divider()
+                                ForEach(document.warnings, id: \.self) { warning in
+                                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(18)
+        }
+        .task { await model.refreshSkillLibrary() }
+        .sheet(isPresented: $showingCreate) {
+            BridgeSkillEditorSheet(
+                title: BridgeAppLocalization.string("새 브리지 스킬", locale: model.interfaceLocale),
+                actionLabel: BridgeAppLocalization.string("만들기", locale: model.interfaceLocale),
+                initialName: "",
+                initialDescription: "",
+                initialInstructions: "",
+                initialReferences: [],
+                initialExecutionMode: "conversation-or-codex",
+                initialRequirements: [],
+                isSaving: model.skillMutationInProgress
+            ) { requestId, name, description, instructions, references, executionMode, requirements in
+                await model.createBridgeSkill(.init(
+                    requestId: requestId,
+                    name: name,
+                    description: description,
+                    instructions: instructions,
+                    references: references,
+                    executionMode: executionMode,
+                    requirements: requirements
+                ))
+            }
+        }
+        .sheet(isPresented: $showingEdit) {
+            if let document = model.selectedBridgeSkill {
+                BridgeSkillEditorSheet(
+                    title: BridgeAppLocalization.string("브리지 스킬 편집", locale: model.interfaceLocale),
+                    actionLabel: BridgeAppLocalization.string("새 버전 저장", locale: model.interfaceLocale),
+                    initialName: document.skill.name,
+                    initialDescription: document.skill.description,
+                    initialInstructions: document.instructions,
+                    initialReferences: editReferences,
+                    initialExecutionMode: document.skill.execution.mode,
+                    initialRequirements: document.skill.execution.requirements.map {
+                        .init(kind: $0.kind, id: $0.requirementId, description: $0.description)
+                    },
+                    isSaving: model.skillMutationInProgress
+                ) { requestId, name, description, instructions, references, executionMode, requirements in
+                    await model.updateBridgeSkill(.init(
+                        requestId: requestId,
+                        skillId: document.skill.skillId,
+                        expectedVersion: managementExpectedVersion(for: document),
+                        name: name,
+                        description: description,
+                        instructions: instructions,
+                        references: references,
+                        executionMode: executionMode,
+                        requirements: requirements
+                    ))
+                }
+            }
+        }
+        .confirmationDialog(
+            "선택한 버전을 새 현재 버전으로 복원할까요?",
+            isPresented: Binding(
+                get: { restoreTarget != nil },
+                set: { if !$0 { restoreTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("새 버전으로 복원") {
+                guard let target = restoreTarget, let document = model.selectedBridgeSkill else { return }
+                let request = restoreRequest(for: document, target: target)
+                Task { @MainActor in
+                    if await model.restoreBridgeSkill(request) {
+                        restoreRetry = nil
+                        restoreTarget = nil
+                    }
+                }
+            }
+        } message: {
+            Text("v\(restoreTarget?.version ?? "")의 지침과 참고 자료를 복사해 새 불변 버전을 만듭니다. 기존 버전은 바뀌지 않습니다.")
+        }
+    }
+
+    private func filteredSkills(_ skills: [BridgeSkillSummary]) -> [BridgeSkillSummary] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        return skills.filter { skill in
+            guard skill.source == "bridge", showsArchivedSkills || skill.enabled else { return false }
+            guard !query.isEmpty else { return true }
+            let haystack = "\(skill.name) \(skill.description)"
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            return haystack.contains(query)
+        }
+    }
+
+    private func history(for document: BridgeSkillDocument) -> BridgeSkillVersionList? {
+        guard let history = model.selectedBridgeSkillVersions,
+              history.skillId == document.skill.skillId else { return nil }
+        return history
+    }
+
+    private func isCurrentVersion(_ document: BridgeSkillDocument) -> Bool {
+        history(for: document)?.currentVersion == document.skill.version
+    }
+
+    /** Lifecycle mutations always guard the record's actual current version. */
+    private func managementExpectedVersion(for document: BridgeSkillDocument) -> String {
+        history(for: document)?.currentVersion ?? document.skill.version
+    }
+
+    private func submitLifecycleChange(for document: BridgeSkillDocument, enabled: Bool) {
+        let expectedVersion = managementExpectedVersion(for: document)
+        let request: BridgeSkillSetEnabledRequest
+        if let retry = lifecycleRetry,
+           retry.skillId == document.skill.skillId,
+           retry.expectedVersion == expectedVersion,
+           retry.enabled == enabled {
+            request = retry
+        } else {
+            request = .init(
+                skillId: document.skill.skillId,
+                expectedVersion: expectedVersion,
+                enabled: enabled
+            )
+            lifecycleRetry = request
+        }
+        Task { @MainActor in
+            if await model.setBridgeSkillEnabled(request) {
+                lifecycleRetry = nil
+            }
+        }
+    }
+
+    private func restoreRequest(
+        for document: BridgeSkillDocument,
+        target: BridgeSkillVersionSummary
+    ) -> BridgeSkillRestoreRequest {
+        let expectedVersion = managementExpectedVersion(for: document)
+        if let retry = restoreRetry,
+           retry.skillId == document.skill.skillId,
+           retry.expectedVersion == expectedVersion,
+           retry.sourceVersion == target.version {
+            return retry
+        }
+        let request = BridgeSkillRestoreRequest(
+            skillId: document.skill.skillId,
+            expectedVersion: expectedVersion,
+            sourceVersion: target.version
+        )
+        restoreRetry = request
+        return request
+    }
+
+    private func prepareEditor(for document: BridgeSkillDocument) {
+        guard !preparingEdit else { return }
+        preparingEdit = true
+        Task { @MainActor in
+            defer { preparingEdit = false }
+            guard let references = await model.bridgeSkillMaterialInputs(for: document) else { return }
+            editReferences = references
+            showingEdit = true
+        }
+    }
+
+}
+
+private struct BridgeSkillRequirementRow: View {
+    let requirement: BridgeSkillRequirement
+    let locale: Locale
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(requirement.kind) · \(requirement.requirementId)")
+                .font(.caption)
+            if let description = requirement.description {
+                Text(description)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Text(availabilityLabel)
+                .font(.caption2)
+                .foregroundStyle(requirement.availability == "available" ? Color.secondary : Color.orange)
+        }
+    }
+
+    private var availabilityLabel: String {
+        let key: String
+        switch requirement.availability {
+        case "available": key = "브리지가 인식하는 기능"
+        case "external-environment": key = "실행 환경에서 별도 준비 필요"
+        default: key = "브리지가 지원하지 않는 기능"
+        }
+        return BridgeAppLocalization.string(key, locale: locale)
+    }
+}
+
+private struct BridgeSkillEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let actionLabel: String
+    let isSaving: Bool
+    let save: @MainActor (
+        String,
+        String,
+        String,
+        String,
+        [BridgeSkillMaterialInput],
+        String,
+        [BridgeSkillRequirementInput]
+    ) async -> Bool
+    @State private var name: String
+    @State private var description: String
+    @State private var instructions: String
+    @State private var referenceDrafts: [BridgeSkillMaterialDraft]
+    @State private var executionMode: String
+    @State private var requirementDrafts: [BridgeSkillRequirementDraft]
+    @State private var requestId = UUID().uuidString
+
+    init(
+        title: String,
+        actionLabel: String,
+        initialName: String,
+        initialDescription: String,
+        initialInstructions: String,
+        initialReferences: [BridgeSkillMaterialInput],
+        initialExecutionMode: String,
+        initialRequirements: [BridgeSkillRequirementInput],
+        isSaving: Bool,
+        save: @escaping @MainActor (
+            String,
+            String,
+            String,
+            String,
+            [BridgeSkillMaterialInput],
+            String,
+            [BridgeSkillRequirementInput]
+        ) async -> Bool
+    ) {
+        self.title = title
+        self.actionLabel = actionLabel
+        self.isSaving = isSaving
+        self.save = save
+        _name = State(initialValue: initialName)
+        _description = State(initialValue: initialDescription)
+        _instructions = State(initialValue: initialInstructions)
+        _referenceDrafts = State(initialValue: initialReferences.map(BridgeSkillMaterialDraft.init))
+        _executionMode = State(initialValue: initialExecutionMode)
+        _requirementDrafts = State(initialValue: initialRequirements.map(BridgeSkillRequirementDraft.init))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.headline)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    TextField("이름", text: $name)
+                    TextField("설명", text: $description, axis: .vertical)
+                        .lineLimit(2...4)
+                    Picker("사용 경로", selection: $executionMode) {
+                        Text("대화 또는 Codex").tag("conversation-or-codex")
+                        Text("대화 전용").tag("conversation")
+                        Text("Codex 전용").tag("codex")
+                    }
+                    Text("지침")
+                        .font(.caption.weight(.medium))
+                    TextEditor(text: $instructions)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 190)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 5)
+                                .stroke(Color.secondary.opacity(0.25))
+                        }
+
+                    Divider()
+                    HStack {
+                        Text("참고 자료").font(.caption.weight(.medium))
+                        Spacer()
+                        Button("추가") {
+                            referenceDrafts.append(.init())
+                        }
+                    }
+                    ForEach($referenceDrafts) { $reference in
+                        GroupBox {
+                            VStack(alignment: .leading, spacing: 8) {
+                                TextField("자료 이름", text: $reference.name)
+                                TextField("MIME 형식", text: $reference.mediaType)
+                                TextEditor(text: $reference.content)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .frame(minHeight: 100)
+                                HStack {
+                                    Spacer()
+                                    Button("삭제", role: .destructive) {
+                                        referenceDrafts.removeAll { $0.id == reference.id }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Divider()
+                    HStack {
+                        Text("실행 조건").font(.caption.weight(.medium))
+                        Spacer()
+                        Button("추가") {
+                            requirementDrafts.append(.init())
+                        }
+                    }
+                    Text("브리지 기능은 conversation, codex-task, reference-text만 인식합니다. 환경 조건은 실행 환경에서 따로 준비해야 합니다.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    ForEach($requirementDrafts) { $requirement in
+                        GroupBox {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Picker("종류", selection: $requirement.kind) {
+                                    Text("브리지 기능").tag("bridge-capability")
+                                    Text("외부 환경").tag("environment")
+                                }
+                                TextField("기능 또는 환경 이름", text: $requirement.requirementId)
+                                TextField("설명 (선택)", text: $requirement.description)
+                                HStack {
+                                    Spacer()
+                                    Button("삭제", role: .destructive) {
+                                        requirementDrafts.removeAll { $0.id == requirement.id }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            HStack {
+                Button("취소", role: .cancel) { dismiss() }
+                Spacer()
+                if isSaving { ProgressView().controlSize(.small) }
+                Button(actionLabel) {
+                    Task { @MainActor in
+                        if await save(
+                            requestId,
+                            name,
+                            description,
+                            instructions,
+                            referenceDrafts.map(\.input),
+                            executionMode,
+                            requirementDrafts.map(\.input)
+                        ) { dismiss() }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canSave || isSaving)
+            }
+        }
+        .padding(20)
+        .frame(width: 680, height: 760)
+    }
+
+    private var canSave: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            referenceDrafts.allSatisfy {
+                !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                    !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            } &&
+            requirementDrafts.allSatisfy {
+                !$0.requirementId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+    }
+}
+
+private struct BridgeSkillMaterialDraft: Identifiable {
+    let id = UUID()
+    var name: String
+    var content: String
+    var mediaType: String
+
+    init() {
+        name = ""
+        content = ""
+        mediaType = "text/plain"
+    }
+
+    init(_ input: BridgeSkillMaterialInput) {
+        name = input.name
+        content = input.content
+        mediaType = input.mediaType ?? "text/plain"
+    }
+
+    var input: BridgeSkillMaterialInput {
+        .init(
+            name: name,
+            content: content,
+            mediaType: mediaType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : mediaType
+        )
+    }
+}
+
+private struct BridgeSkillRequirementDraft: Identifiable {
+    let id = UUID()
+    var kind: String
+    var requirementId: String
+    var description: String
+
+    init() {
+        kind = "environment"
+        requirementId = ""
+        description = ""
+    }
+
+    init(_ input: BridgeSkillRequirementInput) {
+        kind = input.kind
+        requirementId = input.requirementId
+        description = input.description ?? ""
+    }
+
+    var input: BridgeSkillRequirementInput {
+        .init(
+            kind: kind,
+            id: requirementId,
+            description: description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : description
+        )
+    }
 }

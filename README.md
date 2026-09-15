@@ -8,7 +8,7 @@ Use ChatGPT to run Codex against projects on your own computer, keep work organi
 - Run and continue local Codex work from a ChatGPT conversation.
 - Organize work as reusable Agents and goal-oriented Activities instead of isolated terminal calls.
 - See running work, requests needing a response, and problems from the native macOS menu-bar app or the ChatGPT status card. Select a summary count to filter current work, or open Run History. The card starts with this conversation when it has retained work, with a switch to all conversations.
-- Choose which project folders Codex may use and control model, reasoning, concurrency, and access policy centrally.
+- Choose which project folders Codex may use, find reusable procedures through the bridge skill library, and control model, reasoning, concurrency, and access policy centrally.
 - Run one Mac as the server and use another Mac as a client for status and settings.
 - Keep the normal starting policy read-only and place an operator-controlled ceiling on broader access.
 
@@ -108,7 +108,7 @@ Routine computer, app, Bridge, or Tunnel restarts do not require a ChatGPT conne
 | --- | --- |
 | Connection | This Mac's server/client role, saved servers, remote access, and device pairing |
 | General | Access strategy, model policy, Priority/Fast use, language, concurrent work, and card behavior |
-| Projects | The folders Codex may use for new work |
+| Projects | The folders Codex may use for new work, plus bridge-owned versioned skills shared with ChatGPT and scoped Codex tasks |
 | Server | Codex backend and the maximum access the server may grant |
 
 Changes in the native app's General tab are saved automatically. In the ChatGPT Settings card, choose **Save settings** after editing. These settings are shared by every ChatGPT conversation using that server. In client mode, General and Projects edit the selected remote server. The login-at-startup preference always belongs to the current Mac. Server settings require an explicit save and restart.
@@ -150,7 +150,7 @@ Use remote management only on a private LAN or private VPN that you control. See
 - [Security model](docs/security.md) — trust boundaries, authentication, access policy, and remaining risks
 - [Database schema and lifecycle](docs/database-schema.md) — state ownership, every table, upgrades, retention, capacity, backups, and offline compaction
 - [State upgrade and recovery runbook](docs/state-upgrade-recovery.md) — release-stage profiles, migration preflight, verified restore, and post-service recovery
-- [Input contracts](docs/input-contracts.md) and [output contracts](docs/output-contracts.md) — public and app-private protocol details
+- [Input/output contracts](docs/input-contracts.md), [bridge skill library](docs/skills.md) — public and app-private protocol details, versioned bridge skills, model-facing lookup, and per-turn Codex delivery
 - [Release process](docs/releasing.md) and [release governance](docs/release-governance.md) — maintainer workflow and distribution gates
 - [UI release policy](docs/ui-release-compatibility.md) — single-file cards, stable URI versions, cache limits, and release checks
 

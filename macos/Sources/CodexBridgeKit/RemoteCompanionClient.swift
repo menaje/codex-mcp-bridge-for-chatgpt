@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 public let remoteCompanionProtocolName = "codex-mcp-bridge-remote-companion"
-public let remoteCompanionProtocolVersion = 1
+public let remoteCompanionProtocolVersion = 2
 
 public enum RemoteCompanionError: LocalizedError, Sendable {
     case invalidInvitation
@@ -265,6 +265,55 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
 
     public func updateSettings(_ mutation: SettingsMutation) async throws -> SettingsSnapshot {
         try await call("settings.update", params: mutation, timeout: 30)
+    }
+
+    public func skillLibrary() async throws -> BridgeSkillLibrarySnapshot {
+        try await call("skills.snapshot", params: EmptyParameters(), timeout: 20)
+    }
+
+    public func readBridgeSkill(
+        _ reference: BridgeSkillReference
+    ) async throws -> BridgeSkillDocument {
+        try await call("skills.read", params: reference, timeout: 20)
+    }
+
+    public func readBridgeSkillReference(
+        reference: BridgeSkillReference,
+        referenceId: String
+    ) async throws -> BridgeSkillReferenceDocument {
+        try await call(
+            "skills.reference",
+            params: BridgeSkillReferenceReadParameters(reference: reference, referenceId: referenceId),
+            timeout: 20
+        )
+    }
+
+    public func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList {
+        try await call("skills.versions", params: BridgeSkillVersionsParameters(skillId: skillId), timeout: 20)
+    }
+
+    public func createBridgeSkill(
+        _ request: BridgeSkillCreateRequest
+    ) async throws -> BridgeSkillSummary {
+        try await call("skills.create", params: request, timeout: 30)
+    }
+
+    public func updateBridgeSkill(
+        _ request: BridgeSkillUpdateRequest
+    ) async throws -> BridgeSkillSummary {
+        try await call("skills.update", params: request, timeout: 30)
+    }
+
+    public func restoreBridgeSkill(
+        _ request: BridgeSkillRestoreRequest
+    ) async throws -> BridgeSkillSummary {
+        try await call("skills.restore", params: request, timeout: 30)
+    }
+
+    public func setBridgeSkillEnabled(
+        _ request: BridgeSkillSetEnabledRequest
+    ) async throws -> BridgeSkillSummary {
+        try await call("skills.set-enabled", params: request, timeout: 30)
     }
 
     public func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {

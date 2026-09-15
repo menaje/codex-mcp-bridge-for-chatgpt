@@ -11,6 +11,43 @@ public struct BridgeCompanionClient: Sendable {
         try await rpc.call("thread.handoff", params: ThreadHandoffParameters(rowKey: rowKey, codexThreadUrl: codexThreadUrl, action: action))
     }
 
+    public func claimCompletionNotifications(
+        leaseOwner: String,
+        limit: Int = 10
+    ) async throws -> [NativeCompletionNotification] {
+        let response: CompletionNotificationClaimResponse = try await rpc.call(
+            "completion.claim",
+            params: CompletionNotificationClaimParameters(leaseOwner: leaseOwner, limit: limit)
+        )
+        return response.events
+    }
+
+    public func markCompletionNotificationsDelivered(
+        outboxIDs: [Int],
+        leaseOwner: String
+    ) async throws {
+        let _: CompletionNotificationMutationResponse = try await rpc.call(
+            "completion.delivered",
+            params: CompletionNotificationMutationParameters(
+                leaseOwner: leaseOwner,
+                outboxIds: outboxIDs
+            )
+        )
+    }
+
+    public func releaseCompletionNotifications(
+        outboxIDs: [Int],
+        leaseOwner: String
+    ) async throws {
+        let _: CompletionNotificationMutationResponse = try await rpc.call(
+            "completion.release",
+            params: CompletionNotificationMutationParameters(
+                leaseOwner: leaseOwner,
+                outboxIds: outboxIDs
+            )
+        )
+    }
+
     public func waitForChanges(after: String?) async throws -> ChangeNotice {
         try await rpc.call("changes.wait", params: ChangeWaitParameters(after: after), timeout: 30)
     }
@@ -48,6 +85,55 @@ public struct BridgeCompanionClient: Sendable {
 
     public func updateSettings(_ mutation: SettingsMutation) async throws -> SettingsSnapshot {
         try await rpc.call("settings.update", params: mutation, timeout: 30)
+    }
+
+    public func skillLibrary() async throws -> BridgeSkillLibrarySnapshot {
+        try await rpc.call("skills.snapshot", params: EmptyParameters(), timeout: 20)
+    }
+
+    public func readBridgeSkill(
+        _ reference: BridgeSkillReference
+    ) async throws -> BridgeSkillDocument {
+        try await rpc.call("skills.read", params: reference, timeout: 20)
+    }
+
+    public func readBridgeSkillReference(
+        reference: BridgeSkillReference,
+        referenceId: String
+    ) async throws -> BridgeSkillReferenceDocument {
+        try await rpc.call(
+            "skills.reference",
+            params: BridgeSkillReferenceReadParameters(reference: reference, referenceId: referenceId),
+            timeout: 20
+        )
+    }
+
+    public func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList {
+        try await rpc.call("skills.versions", params: BridgeSkillVersionsParameters(skillId: skillId), timeout: 20)
+    }
+
+    public func createBridgeSkill(
+        _ request: BridgeSkillCreateRequest
+    ) async throws -> BridgeSkillSummary {
+        try await rpc.call("skills.create", params: request, timeout: 30)
+    }
+
+    public func updateBridgeSkill(
+        _ request: BridgeSkillUpdateRequest
+    ) async throws -> BridgeSkillSummary {
+        try await rpc.call("skills.update", params: request, timeout: 30)
+    }
+
+    public func restoreBridgeSkill(
+        _ request: BridgeSkillRestoreRequest
+    ) async throws -> BridgeSkillSummary {
+        try await rpc.call("skills.restore", params: request, timeout: 30)
+    }
+
+    public func setBridgeSkillEnabled(
+        _ request: BridgeSkillSetEnabledRequest
+    ) async throws -> BridgeSkillSummary {
+        try await rpc.call("skills.set-enabled", params: request, timeout: 30)
     }
 
     public func historyAction(_ action: HistoryAction) async throws -> HistoryActionResult {
@@ -97,6 +183,24 @@ private struct ThreadHandoffParameters: Encodable, Sendable {
     let rowKey: String
     let codexThreadUrl: String
     let action: String
+}
+
+private struct CompletionNotificationClaimParameters: Encodable, Sendable {
+    let leaseOwner: String
+    let limit: Int
+}
+
+private struct CompletionNotificationMutationParameters: Encodable, Sendable {
+    let leaseOwner: String
+    let outboxIds: [Int]
+}
+
+private struct CompletionNotificationClaimResponse: Decodable, Sendable {
+    let events: [NativeCompletionNotification]
+}
+
+private struct CompletionNotificationMutationResponse: Decodable, Sendable {
+    let ok: Bool
 }
 
 public struct MacOSHelperClient: Sendable {

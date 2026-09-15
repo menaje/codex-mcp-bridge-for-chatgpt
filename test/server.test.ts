@@ -20,6 +20,8 @@ import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 const CURRENT_PROTOCOL = "2026-07-28";
 const CURRENT_TOOL_ORDER = [
   "codex_answer",
+  "bridge_skill",
+  "bridge_skill_manage",
   "codex_dashboard",
   "codex_status",
   "codex_agent",

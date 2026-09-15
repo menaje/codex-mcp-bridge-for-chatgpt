@@ -167,17 +167,223 @@ describe("current bridge tool contracts", () => {
   it("publishes one current tool surface without compatibility tiers", async () => {
     const tools = await client.listTools();
     const names = new Set(tools.tools.map((tool) => tool.name));
-    for (const current of ["codex_task", "codex_models", "codex_settings", "codex_dashboard", "codex_ui_read"]) {
+    for (const current of ["codex_task", "codex_models", "codex_settings", "codex_dashboard", "codex_ui_read", "bridge_skill", "bridge_skill_manage"]) {
       expect(names.has(current)).toBe(true);
     }
     for (const retired of [
+      "codex_skill",
+      "codex_skill_manage",
       "codex_dashboard_snapshot",
       "codex_settings_snapshot",
       "codex_question_card",
       "codex_question_submit",
       "codex_question_notify"
     ]) expect(names.has(retired)).toBe(false);
+    const bridgeSkill = tools.tools.find((tool) => tool.name === "bridge_skill")!;
+    expect(JSON.stringify(bridgeSkill.inputSchema)).not.toContain('"project"');
     expect(tools.tools.some((tool) => "codex/registrationTier" in (tool._meta || {}))).toBe(false);
+  });
+
+  it("lets GPT search, read, and version bridge skills without starting Codex", async () => {
+    const created = await client.callTool({
+      name: "bridge_skill_manage",
+      arguments: {
+        operation: "create",
+        requestId: randomUUID(),
+        name: "Evidence review",
+        description: "Review reports with an evidence table.",
+        instructions: "List each claim, its evidence, and any unresolved risk.",
+        references: [{
+          name: "Review table",
+          mediaType: "text/markdown",
+          content: "| Claim | Evidence | Risk |\n| --- | --- | --- |"
+        }],
+        requirements: [{ kind: "bridge-capability", id: "external-review-system" }]
+      }
+    });
+    expect(created.isError, JSON.stringify(created)).not.toBe(true);
+    const createdSkill = (created.structuredContent as any).skill;
+    expect(createdSkill).toMatchObject({ source: "bridge", version: "1" });
+    const createdReference = {
+      skillId: createdSkill.skillId,
+      source: createdSkill.source,
+      version: createdSkill.version
+    };
+
+    const found = await client.callTool({
+      name: "bridge_skill",
+      arguments: { operation: "search", query: "evidence report" }
+    });
+    expect(found.isError, JSON.stringify(found)).not.toBe(true);
+    const candidates = (found.structuredContent as any).skills;
+    expect(candidates).toEqual([expect.objectContaining({
+      skillId: createdSkill.skillId,
+      source: "bridge",
+      version: "1"
+    })]);
+    expect(JSON.parse((found.content[0] as any).text)).toEqual(found.structuredContent);
+
+    const read = await client.callTool({
+      name: "bridge_skill",
+      arguments: {
+        operation: "read",
+        skill: {
+          skillId: candidates[0].skillId,
+          source: candidates[0].source,
+          version: candidates[0].version
+        }
+      }
+    });
+    expect(read.isError, JSON.stringify(read)).not.toBe(true);
+    expect(read.structuredContent).toMatchObject({
+      kind: "skill",
+      instructions: "List each claim, its evidence, and any unresolved risk.",
+      sourceSnapshot: "versioned-bridge-record"
+    });
+    expect((read.structuredContent as any).references).toHaveLength(1);
+    expect((read.structuredContent as any).warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining("external-review-system")
+    ]));
+    expect(JSON.parse((read.content[0] as any).text)).toEqual(read.structuredContent);
+    const reference = await client.callTool({
+      name: "bridge_skill",
+      arguments: {
+        operation: "reference",
+        skill: createdReference,
+        referenceId: (read.structuredContent as any).references[0].referenceId
+      }
+    });
+    expect(reference.isError, JSON.stringify(reference)).not.toBe(true);
+    expect(reference.structuredContent).toMatchObject({
+      kind: "skill-reference",
+      content: "| Claim | Evidence | Risk |\n| --- | --- | --- |",
+      execution: expect.objectContaining({ mode: "conversation-or-codex" })
+    });
+    expect(JSON.parse((reference.content[0] as any).text)).toEqual(reference.structuredContent);
+
+    const updated = await client.callTool({
+      name: "bridge_skill_manage",
+      arguments: {
+        operation: "update",
+        requestId: randomUUID(),
+        skillId: createdSkill.skillId,
+        expectedVersion: createdSkill.version,
+        instructions: "List each claim, its evidence, unresolved risks, and next steps."
+      }
+    });
+    expect(updated.isError, JSON.stringify(updated)).not.toBe(true);
+    const updatedSkill = (updated.structuredContent as any).skill;
+    expect(updatedSkill.version).toBe("2");
+
+    const versions = await client.callTool({
+      name: "bridge_skill",
+      arguments: { operation: "versions", skillId: createdSkill.skillId }
+    });
+    expect(versions.isError, JSON.stringify(versions)).not.toBe(true);
+    expect(versions.structuredContent).toMatchObject({
+      kind: "skill-versions",
+      currentVersion: "2"
+    });
+    expect((versions.structuredContent as any).versions.map((version: any) => version.version)).toEqual(["2", "1"]);
+    expect(JSON.parse((versions.content[0] as any).text)).toEqual(versions.structuredContent);
+
+    const restored = await client.callTool({
+      name: "bridge_skill_manage",
+      arguments: {
+        operation: "restore",
+        requestId: randomUUID(),
+        skillId: createdSkill.skillId,
+        expectedVersion: updatedSkill.version,
+        sourceVersion: "1"
+      }
+    });
+    const restoredSkill = (restored.structuredContent as any).skill;
+    expect(restored.isError, JSON.stringify(restored)).not.toBe(true);
+    expect(restoredSkill.version).toBe("3");
+
+    const archived = await client.callTool({
+      name: "bridge_skill_manage",
+      arguments: {
+        operation: "set-enabled",
+        requestId: randomUUID(),
+        skillId: createdSkill.skillId,
+        expectedVersion: restoredSkill.version,
+        enabled: false
+      }
+    });
+    expect(archived.isError, JSON.stringify(archived)).not.toBe(true);
+    expect((archived.structuredContent as any).skill).toMatchObject({ enabled: false, availability: "disabled" });
+    const afterArchive = await client.callTool({
+      name: "bridge_skill",
+      arguments: { operation: "search", query: "evidence report" }
+    });
+    expect((afterArchive.structuredContent as any).skills).toEqual([]);
+    const historical = await client.callTool({
+      name: "bridge_skill",
+      arguments: { operation: "read", skill: createdReference }
+    });
+    expect(historical.isError, JSON.stringify(historical)).not.toBe(true);
+    expect(historical.structuredContent).toMatchObject({
+      instructions: "List each claim, its evidence, and any unresolved risk."
+    });
+    expect(JSON.stringify((read as any)._meta || {})).not.toContain("List each claim");
+    expect(upstream.calls).toEqual([]);
+  });
+
+  it("delivers an exact bridge skill version to Codex without changing global skills", async () => {
+    const created = await client.callTool({
+      name: "bridge_skill_manage",
+      arguments: {
+        operation: "create",
+        requestId: randomUUID(),
+        name: "Local review",
+        description: "Review a local report before editing it.",
+        instructions: "Inspect the report, then make only evidence-backed edits.",
+        references: [{ name: "Checklist", content: "- inspect\n- verify\n" }]
+      }
+    });
+    const skill = (created.structuredContent as any).skill;
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+
+    const result = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: "73737373-7373-4737-8737-737373737373",
+        requestId: randomUUID(),
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Review the local report.",
+        project: {
+          name: project.name,
+          projectRef: project.projectRef,
+          projectRevision: project.projectRevision
+        },
+        selection,
+        executionMode: "foreground",
+        requiredSkills: [{
+          skillId: skill.skillId,
+          source: skill.source,
+          version: skill.version
+        }]
+      },
+      _meta: metadata
+    });
+
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    expect(upstream.calls).toHaveLength(1);
+    const dispatched = upstream.calls[0]!.args;
+    expect(dispatched.prompt).toContain("[Required bridge skill: Local review]");
+    expect(dispatched.prompt).toContain("evidence-backed edits");
+    expect(dispatched.prompt).toContain("[Reference material: Checklist (text/plain)]");
+    expect(dispatched).not.toHaveProperty("skillInputs");
+    const job = state.listJobs().find((candidate) => candidate.requestId === (result.structuredContent as any).requestId)!;
+    expect(job.sessionDecision.requiredSkills).toEqual([expect.objectContaining({
+      skillId: skill.skillId,
+      version: skill.version,
+      delivery: "bridge-instruction-bundle"
+    })]);
   });
 
   it("publishes Settings hydration without undefined optional catalog fields", async () => {
@@ -270,11 +476,11 @@ describe("current bridge tool contracts", () => {
     expect(row?.handoff).not.toHaveProperty("reason");
   });
 
-  it("publishes draft-2020-12-compatible v3 task input without retired fields", async () => {
+  it("publishes draft-2020-12-compatible v4 task input without retired fields", async () => {
     const tools = await client.listTools();
     const task = tools.tools.find((tool) => tool.name === "codex_task")!;
     const properties = task.inputSchema.properties as Record<string, { const?: string }>;
-    expect(properties.taskContractVersion?.const).toBe("3");
+    expect(properties.taskContractVersion?.const).toBe("4");
     expect(properties.executionEnvelopeRef?.const).toMatch(/^[a-f0-9]{64}$/);
     expect(properties).toHaveProperty("project");
     for (const retired of ["projectLookup", "sandbox", "executionPolicyRef", "presentationId", "waitToken"]) {
@@ -284,7 +490,7 @@ describe("current bridge tool contracts", () => {
     expect(status.inputSchema.properties).not.toHaveProperty("includeAllScopes");
   });
 
-  it("admits a current v3 task and returns the current terminal result contract", async () => {
+  it("admits a current v4 task and returns the current terminal result contract", async () => {
     const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
     const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
     const project = settings.current.projects[0]!;
@@ -512,10 +718,17 @@ describe("current bridge tool contracts", () => {
     ));
   });
 
-  it("automatically opens the originating conversation Dashboard only for background work", async () => {
-    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+  it("automatically opens the originating conversation Dashboard only for background work and queues completion delivery", async () => {
+    const tools = await client.listTools();
+    const descriptor = tools.tools.find((tool) => tool.name === "codex_task")!;
+    const dashboardDescriptor = tools.tools.find((tool) => tool.name === "codex_dashboard")!;
     const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
     const project = settings.current.projects[0]!;
+    expect((dashboardDescriptor._meta as Record<string, any>)["openai/outputTemplate"])
+      .toBe(DASHBOARD_CARD_URI);
+    expect((dashboardDescriptor._meta as Record<string, any>).ui)
+      .toMatchObject({ resourceUri: DASHBOARD_CARD_URI });
+    const hold = upstream.holdNextCall();
     const result = await client.callTool({
       name: "codex_task",
       arguments: {
@@ -525,6 +738,10 @@ describe("current bridge tool contracts", () => {
         executionEnvelopeRef: properties.executionEnvelopeRef?.const,
         prompt: "Complete background fixture work.",
         project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+        activity: {
+          mode: "new",
+          title: "Fixture completion delivery"
+        },
         selection,
         executionMode: "background"
       },
@@ -532,39 +749,54 @@ describe("current bridge tool contracts", () => {
     });
 
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
-    const hydration = result._meta as Record<string, any>;
-    expect(hydration["openai/outputTemplate"])
-      .toBe(DASHBOARD_CARD_URI);
-    expect(hydration["codex/dashboardOpen@1"]).toMatchObject({
-      scope: "conversation",
-      automatic: true,
-      completionDeliveryRoute: "dashboard",
-      presentationToken: expect.any(String)
+    await hold.started;
+    expect(result._meta || {}).not.toHaveProperty("openai/outputTemplate");
+    expect(result._meta || {}).not.toHaveProperty("codex/dashboardOpen@1");
+    const task = result.structuredContent as any;
+    const renderAction = task.nextActions.find((action: any) =>
+      action.kind === "tool" &&
+      action.tool === "codex_dashboard" &&
+      action.arguments.scope === "conversation" &&
+      action.arguments.backgroundJobId === task.jobId
+    );
+    expect(renderAction).toMatchObject({
+      kind: "tool",
+      tool: "codex_dashboard",
+      arguments: { scope: "conversation", backgroundJobId: task.jobId },
+      message: expect.stringContaining("originating background Dashboard")
     });
-    expect(hydration["openai/outputTemplate"]).not.toMatch(/activity|question/);
-
     const origin = state.listJobs().find((job) =>
-      job.jobId === (result.structuredContent as { jobId?: string }).jobId
+      job.jobId === task.jobId
     );
     expect(origin).toBeDefined();
-    const completionActivityId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    state.createActivity({
-      activityId: completionActivityId,
-      scopeId: origin!.scopeId,
+
+    const dashboardOpen = await client.callTool({
+      name: "codex_dashboard",
+      arguments: renderAction.arguments,
+      _meta: metadata
+    });
+    expect(dashboardOpen.isError, JSON.stringify(dashboardOpen)).not.toBe(true);
+    expect(dashboardOpen._meta || {}).not.toHaveProperty("openai/outputTemplate");
+    const dashboardOpenMeta = dashboardOpen._meta as Record<string, any>;
+    expect(dashboardOpenMeta["codex/dashboardOpen@1"]).toMatchObject({
+      scope: "conversation",
+      automatic: true,
+      completionDeliveryRoute: "native-notification"
+    });
+    expect(dashboardOpenMeta["codex/dashboardOpen@1"]).not.toHaveProperty("presentationToken");
+
+    hold.release();
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === origin!.jobId && job.status === "completed"
+    ));
+    const completedActivity = state.getActivity(origin!.activityId);
+    expect(completedActivity).toMatchObject({
+      lifecycle: "completed",
       handoffPolicy: "notify",
       completionTrigger: "sealed-jobs-terminal"
     });
-    state.upsertJob({
-      jobId: "dashboard-completion-job",
-      requestId: "dashboard-completion-request",
-      scopeId: origin!.scopeId,
-      activityId: completionActivityId,
-      status: "completed",
-      updatedAt: Date.now()
-    });
-    state.sealActivity(completionActivityId);
     const [outbox] = state.listPendingCompletionOutbox(origin!.scopeId);
-    expect(outbox).toMatchObject({ activityId: completionActivityId });
+    expect(outbox).toMatchObject({ activityId: origin!.activityId, channel: "notify" });
 
     const widgetInstanceId = randomUUID();
     const dashboard = await client.callTool({
@@ -572,43 +804,29 @@ describe("current bridge tool contracts", () => {
       arguments: {
         view: "dashboard",
         widgetInstanceId,
-        scope: "conversation",
-        presentationToken: hydration["codex/dashboardOpen@1"].presentationToken
+        scope: "conversation"
       },
       _meta: metadata
     });
     expect(dashboard.isError, JSON.stringify(dashboard)).not.toBe(true);
-    const completion = (dashboard.structuredContent as any).completionDelivery;
-    expect(completion).toMatchObject({ route: "dashboard", events: [{ outboxId: outbox!.outboxId }] });
+    expect((dashboard.structuredContent as any)).not.toHaveProperty("completionDelivery");
+    expect(state.listPendingCompletionOutbox(origin!.scopeId)).toMatchObject([
+      { outboxId: outbox!.outboxId, attemptCount: 0 }
+    ]);
 
-    const claimed = await client.callTool({
-      name: "codex_ui_problem",
-      arguments: {
-        action: "completion-claim",
-        outboxIds: [outbox!.outboxId],
-        presentationToken: hydration["codex/dashboardOpen@1"].presentationToken,
-        widgetInstanceId
-      },
-      _meta: metadata
+    const leaseOwner = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const nativeEvents = await server.applicationService.claimNativeCompletionNotifications!({
+      leaseOwner,
+      limit: 10
     });
-    expect(claimed.isError, JSON.stringify(claimed)).not.toBe(true);
-    expect(claimed.structuredContent).toMatchObject({
-      kind: "completion-delivery",
-      state: "claimed",
-      events: [{ outboxId: outbox!.outboxId }]
+    expect(nativeEvents).toEqual([
+      { eventId: expect.stringMatching(/^completion-[0-9a-f]{64}$/), outboxId: outbox!.outboxId }
+    ]);
+    expect(Object.keys(nativeEvents[0]!).sort()).toEqual(["eventId", "outboxId"]);
+    await server.applicationService.markNativeCompletionNotificationsDelivered!({
+      leaseOwner,
+      outboxIds: [outbox!.outboxId]
     });
-    const uncertain = await client.callTool({
-      name: "codex_ui_problem",
-      arguments: {
-        action: "completion-uncertain",
-        outboxIds: [outbox!.outboxId],
-        presentationToken: hydration["codex/dashboardOpen@1"].presentationToken,
-        widgetInstanceId
-      },
-      _meta: metadata
-    });
-    expect(uncertain.isError, JSON.stringify(uncertain)).not.toBe(true);
-    expect(uncertain.structuredContent).toMatchObject({ state: "uncertain" });
     expect(state.listPendingCompletionOutbox(origin!.scopeId)).toEqual([]);
 
     const settingsUpdate = await client.callTool({
@@ -638,9 +856,18 @@ describe("current bridge tool contracts", () => {
     expect(suppressed.isError, JSON.stringify(suppressed)).not.toBe(true);
     expect(suppressed._meta).not.toHaveProperty("openai/outputTemplate");
     expect(suppressed._meta).not.toHaveProperty("codex/dashboardOpen@1");
-    expect((suppressed.structuredContent as any).warnings).toContain(
-      "Completion follow-up is queued because no verified host event or automatic Dashboard presentation is available."
+    expect((suppressed.structuredContent as any).nextActions).not.toContainEqual(
+      expect.objectContaining({ tool: "codex_dashboard" })
     );
+    const suppressedJob = state.listJobs().find((job) =>
+      job.jobId === (suppressed.structuredContent as any).jobId
+    );
+    expect(suppressedJob).toBeDefined();
+    await eventually(() => state.getActivity(suppressedJob!.activityId)?.lifecycle === "completed");
+    expect(state.getActivity(suppressedJob!.activityId)).toMatchObject({
+      handoffPolicy: "notify",
+      completionTrigger: "sealed-jobs-terminal"
+    });
   });
 });
 

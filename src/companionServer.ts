@@ -19,6 +19,7 @@ import { DASHBOARD_STATUS_FILTERS } from "./dashboardPresentation.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { ChangeSignal, changeWaitParamsSchema } from "./changeSignal.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { BRIDGE_SKILL_LIMITS } from "./skillLibrary.js";
 import type {
   BridgeApplicationService,
   BridgeSettingsMutationInput
@@ -26,8 +27,8 @@ import type {
 import { localizeSettingsView } from "./settingsLocalization.js";
 
 export const COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-companion";
-export const COMPANION_PROTOCOL_VERSION = 2;
-export const COMPANION_MAX_REQUEST_BYTES = 1024 * 1024;
+export const COMPANION_PROTOCOL_VERSION = 4;
+export const COMPANION_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 export const COMPANION_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const COMPANION_MAX_CLIENTS = 8;
 const MAX_UNIX_SOCKET_PATH_BYTES = 100;
@@ -50,6 +51,17 @@ const requestSchema = z.strictObject({
     "thread.handoff",
     "settings.snapshot",
     "settings.update",
+    "skills.snapshot",
+    "skills.read",
+    "skills.reference",
+    "skills.versions",
+    "skills.create",
+    "skills.update",
+    "skills.restore",
+    "skills.set-enabled",
+    "completion.claim",
+    "completion.delivered",
+    "completion.release",
     "runtime.snapshot",
     "runtime.health",
     "runtime.beginDrain",
@@ -78,6 +90,94 @@ const dashboardHistoryDetailParamsSchema = z.strictObject({
 const settingsSnapshotParamsSchema = z.strictObject({
   refreshModels: z.boolean().optional(),
   locale: z.string().min(1).max(100).optional()
+});
+const bridgeSkillReferenceSchema = z.strictObject({
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+  source: z.literal("bridge"),
+  version: z.string().regex(/^[1-9]\d*$/)
+});
+const bridgeSkillMaterialInputSchema = z.strictObject({
+  name: z.string().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters),
+  content: z.string().min(1).max(BRIDGE_SKILL_LIMITS.referenceMaxBytes)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.referenceMaxBytes, {
+      message: `Reference material must be at most ${BRIDGE_SKILL_LIMITS.referenceMaxBytes} UTF-8 bytes.`
+    })
+    .refine((value) => !value.includes("\u0000"), {
+      message: "Reference material cannot contain NUL characters."
+    }),
+  mediaType: z.string().min(1).max(BRIDGE_SKILL_LIMITS.mediaTypeMaxCharacters).optional()
+});
+const bridgeSkillMaterialsInputSchema = z.array(bridgeSkillMaterialInputSchema)
+  .max(BRIDGE_SKILL_LIMITS.referenceMaxCount)
+  .refine((references) => references.reduce(
+    (total, reference) => total + Buffer.byteLength(reference.content, "utf8"),
+    0
+  ) <= BRIDGE_SKILL_LIMITS.referenceTotalMaxBytes, {
+    message: `Reference materials must total at most ${BRIDGE_SKILL_LIMITS.referenceTotalMaxBytes} UTF-8 bytes.`
+  });
+const bridgeSkillRequirementInputSchema = z.strictObject({
+  kind: z.enum(["bridge-capability", "environment"]),
+  id: z.string().min(1).max(BRIDGE_SKILL_LIMITS.requirementIdMaxCharacters),
+  description: z.string().min(1).max(BRIDGE_SKILL_LIMITS.requirementDescriptionMaxCharacters).optional()
+});
+const bridgeSkillExecutionModeSchema = z.enum(["conversation", "codex", "conversation-or-codex"]);
+const bridgeSkillMutationRequestIdSchema = z.string().uuid();
+const bridgeSkillReferenceReadParamsSchema = z.strictObject({
+  reference: bridgeSkillReferenceSchema,
+  referenceId: z.string().min(1).max(200)
+});
+const bridgeSkillVersionsParamsSchema = z.strictObject({
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/)
+});
+const bridgeSkillCreateParamsSchema = z.strictObject({
+  requestId: bridgeSkillMutationRequestIdSchema,
+  name: z.string().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters),
+  description: z.string().min(1).max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters),
+  instructions: z.string().min(1).max(BRIDGE_SKILL_LIMITS.instructionsMaxBytes)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.instructionsMaxBytes, {
+      message: `Instructions must be at most ${BRIDGE_SKILL_LIMITS.instructionsMaxBytes} UTF-8 bytes.`
+    }),
+  references: bridgeSkillMaterialsInputSchema.optional(),
+  executionMode: bridgeSkillExecutionModeSchema.optional(),
+  requirements: z.array(bridgeSkillRequirementInputSchema).max(BRIDGE_SKILL_LIMITS.requirementMaxCount).optional()
+});
+const bridgeSkillUpdateParamsSchema = z.strictObject({
+  requestId: bridgeSkillMutationRequestIdSchema,
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+  expectedVersion: z.string().regex(/^[1-9]\d*$/),
+  name: z.string().min(1).max(BRIDGE_SKILL_LIMITS.nameMaxCharacters).optional(),
+  description: z.string().min(1).max(BRIDGE_SKILL_LIMITS.descriptionMaxCharacters).optional(),
+  instructions: z.string().min(1).max(BRIDGE_SKILL_LIMITS.instructionsMaxBytes)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.instructionsMaxBytes, {
+      message: `Instructions must be at most ${BRIDGE_SKILL_LIMITS.instructionsMaxBytes} UTF-8 bytes.`
+    })
+    .optional(),
+  references: bridgeSkillMaterialsInputSchema.optional(),
+  executionMode: bridgeSkillExecutionModeSchema.optional(),
+  requirements: z.array(bridgeSkillRequirementInputSchema).max(BRIDGE_SKILL_LIMITS.requirementMaxCount).optional()
+}).refine((value) => value.name !== undefined || value.description !== undefined ||
+  value.instructions !== undefined || value.references !== undefined || value.executionMode !== undefined || value.requirements !== undefined, {
+  message: "Provide at least one bridge skill field to update."
+});
+const bridgeSkillRestoreParamsSchema = z.strictObject({
+  requestId: bridgeSkillMutationRequestIdSchema,
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+  expectedVersion: z.string().regex(/^[1-9]\d*$/),
+  sourceVersion: z.string().regex(/^[1-9]\d*$/)
+});
+const bridgeSkillSetEnabledParamsSchema = z.strictObject({
+  requestId: bridgeSkillMutationRequestIdSchema,
+  skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
+  expectedVersion: z.string().regex(/^[1-9]\d*$/),
+  enabled: z.boolean()
+});
+const completionClaimParamsSchema = z.strictObject({
+  leaseOwner: z.string().uuid(),
+  limit: z.number().int().min(1).max(20).optional()
+});
+const completionMutationParamsSchema = z.strictObject({
+  leaseOwner: z.string().uuid(),
+  outboxIds: z.array(z.number().int().positive()).min(1).max(20)
 });
 const runtimeSnapshotParamsSchema = z.strictObject({
   inspectBackgroundProcesses: z.boolean().optional()
@@ -156,8 +256,16 @@ export const REMOTE_COMPANION_APPLICATION_METHODS = new Set([
   "dashboard.history-detail",
   "dashboard.history",
   "dashboard.problem",
-  "settings.snapshot",
-  "settings.update",
+    "settings.snapshot",
+    "settings.update",
+    "skills.snapshot",
+    "skills.read",
+    "skills.reference",
+    "skills.versions",
+    "skills.create",
+    "skills.update",
+    "skills.restore",
+    "skills.set-enabled",
   "runtime.snapshot"
 ]);
 
@@ -334,6 +442,19 @@ async function dispatchRequest(
           ...(applicationService.problemAction ? ["dashboard.problems"] : []),
           "settings.read",
           "settings.write",
+          ...(applicationService.skillLibrarySnapshot && applicationService.readBridgeSkill &&
+            applicationService.readBridgeSkillReference && applicationService.listBridgeSkillVersions
+            ? ["skills.read"]
+            : []),
+          ...(applicationService.createBridgeSkill && applicationService.updateBridgeSkill &&
+            applicationService.restoreBridgeSkill && applicationService.setBridgeSkillEnabled
+            ? ["skills.write"]
+            : []),
+          ...(applicationService.claimNativeCompletionNotifications &&
+            applicationService.markNativeCompletionNotificationsDelivered &&
+            applicationService.releaseNativeCompletionNotifications
+            ? ["completion-notifications.local-delivery"]
+            : []),
           "runtime.drain",
           ...(applicationService.threadHandoff ? ["thread.handoff"] : []),
           ...(remoteManagement
@@ -395,6 +516,64 @@ async function dispatchRequest(
       );
       return localizeSettingsView(view);
     }
+    case "skills.snapshot":
+      emptyParamsSchema.parse(request.params || {});
+      return requireSkillLibrary(applicationService).skillLibrarySnapshot();
+    case "skills.read":
+      return requireSkillLibrary(applicationService).readBridgeSkill(
+        bridgeSkillReferenceSchema.parse(request.params || {})
+      );
+    case "skills.reference":
+      return requireSkillLibrary(applicationService).readBridgeSkillReference(
+        bridgeSkillReferenceReadParamsSchema.parse(request.params || {})
+      );
+    case "skills.versions":
+      return requireSkillLibrary(applicationService).listBridgeSkillVersions(
+        bridgeSkillVersionsParamsSchema.parse(request.params || {})
+      );
+    case "skills.create":
+      return requireSkillLibrary(applicationService).createBridgeSkill(
+        bridgeSkillCreateParamsSchema.parse(request.params || {})
+      );
+    case "skills.update":
+      return requireSkillLibrary(applicationService).updateBridgeSkill(
+        bridgeSkillUpdateParamsSchema.parse(request.params || {})
+      );
+    case "skills.restore":
+      return requireSkillLibrary(applicationService).restoreBridgeSkill(
+        bridgeSkillRestoreParamsSchema.parse(request.params || {})
+      );
+    case "skills.set-enabled":
+      return requireSkillLibrary(applicationService).setBridgeSkillEnabled(
+        bridgeSkillSetEnabledParamsSchema.parse(request.params || {})
+      );
+    case "completion.claim": {
+      if (!applicationService.claimNativeCompletionNotifications) {
+        throw new Error("COMPLETION_NOTIFICATIONS_UNAVAILABLE");
+      }
+      const params = completionClaimParamsSchema.parse(request.params || {});
+      return {
+        events: await applicationService.claimNativeCompletionNotifications(params)
+      };
+    }
+    case "completion.delivered": {
+      if (!applicationService.markNativeCompletionNotificationsDelivered) {
+        throw new Error("COMPLETION_NOTIFICATIONS_UNAVAILABLE");
+      }
+      await applicationService.markNativeCompletionNotificationsDelivered(
+        completionMutationParamsSchema.parse(request.params || {})
+      );
+      return { ok: true };
+    }
+    case "completion.release": {
+      if (!applicationService.releaseNativeCompletionNotifications) {
+        throw new Error("COMPLETION_NOTIFICATIONS_UNAVAILABLE");
+      }
+      await applicationService.releaseNativeCompletionNotifications(
+        completionMutationParamsSchema.parse(request.params || {})
+      );
+      return { ok: true };
+    }
     case "runtime.health":
       emptyParamsSchema.parse(request.params || {});
       if (!applicationService.runtimeHealth) throw new Error("RUNTIME_HEALTH_UNAVAILABLE");
@@ -435,6 +614,30 @@ function requireRemoteManagement(
 ): RemoteCompanionControl {
   if (!controller) throw new Error("REMOTE_MANAGEMENT_UNAVAILABLE");
   return controller;
+}
+
+function requireSkillLibrary(applicationService: BridgeApplicationService): Required<Pick<
+  BridgeApplicationService,
+  "skillLibrarySnapshot" | "readBridgeSkill" | "readBridgeSkillReference" | "listBridgeSkillVersions" |
+  "createBridgeSkill" | "updateBridgeSkill" | "restoreBridgeSkill" | "setBridgeSkillEnabled"
+>> {
+  if (
+    !applicationService.skillLibrarySnapshot ||
+    !applicationService.readBridgeSkill ||
+    !applicationService.readBridgeSkillReference ||
+    !applicationService.listBridgeSkillVersions ||
+    !applicationService.createBridgeSkill ||
+    !applicationService.updateBridgeSkill ||
+    !applicationService.restoreBridgeSkill ||
+    !applicationService.setBridgeSkillEnabled
+  ) {
+    throw new Error("SKILL_LIBRARY_UNAVAILABLE");
+  }
+  return applicationService as Required<Pick<
+    BridgeApplicationService,
+    "skillLibrarySnapshot" | "readBridgeSkill" | "readBridgeSkillReference" | "listBridgeSkillVersions" |
+    "createBridgeSkill" | "updateBridgeSkill" | "restoreBridgeSkill" | "setBridgeSkillEnabled"
+  >>;
 }
 
 function writeResponse(

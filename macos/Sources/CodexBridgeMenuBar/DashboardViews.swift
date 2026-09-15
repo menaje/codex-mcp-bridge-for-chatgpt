@@ -552,6 +552,17 @@ struct DashboardPopoverView: View {
             .accessibilityLabel("설정")
 
             Button {
+                presentSkillsLibraryWindow()
+            } label: {
+                Label("스킬 라이브러리", systemImage: "books.vertical")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.borderless)
+            .help("스킬 라이브러리")
+            .accessibilityLabel("스킬 라이브러리")
+
+            Button {
                 Task { await model.toggleDashboardPanel(.history) }
             } label: {
                 Label("작업·실행 기록", systemImage: "clock.arrow.circlepath")
@@ -775,6 +786,11 @@ struct DashboardPopoverView: View {
     private func presentSettingsWindow() {
         dismissMenuBarWindow()
         SettingsWindowController.shared.show(model: model)
+    }
+
+    private func presentSkillsLibraryWindow() {
+        dismissMenuBarWindow()
+        SkillsLibraryWindowController.shared.show(model: model)
     }
 
     private func presentConnectionRepairWindow() {

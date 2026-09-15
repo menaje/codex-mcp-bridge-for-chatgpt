@@ -1,8 +1,16 @@
 **카드와 독립된 완료 전달 검토 — 2026-09-14**
 
-관련 이슈: [#108](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/108), #105, #106. 사용자는 공통 전달부와 두 전송 경로, 카드 표시와 자동 응답 설정 분리, 검증된 호스트 우선·카드 보조 경로를 채택하는 방향에 동의했다. 현황 카드 자동 표시를 백그라운드 작업으로 제한하는 정책에도 동의하여 아래에 확정 사항으로 반영했다. 제품 구현은 아직 변경하지 않았다.
+관련 이슈: [#108](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/108), #105, #106. 아래 초기 검토에는 card·host-event 전달을 후보로 둔 당시의 논의가 남아 있다. 실제 ChatGPT 수명 검증에서 어느 쪽도 원래 대화의 자동 재개를 제공하지 못했으므로, 현재 구현과 이슈의 최종 결정은 그 가정을 대체한다.
 
-합의한 방향은 **완료 기록·재시도·전달 경로 선택을 서버에서 공통 관리하고, 호스트 이벤트와 현황 카드를 두 전송 경로로 지원**하는 것이다. 카드 표시 여부와 자동 후속 응답 의도는 분리한다. 현재 GPT 응답이 진행 중일 때의 결과·입력 대기도 유지한다. 응답이 끝난 뒤 호스트 이벤트로 ChatGPT의 원래 대화를 재개하는 경로는 아직 실증하지 않았다.
+## 최종 결정 및 구현
+
+`completionFollowUp`은 더 이상 ChatGPT 후속 응답을 뜻하지 않는다. 이를 켜면 새 one-job background Activity 중 명시적 completion 정책이 없는 경우에만 `notify`와 `sealed-jobs-terminal`을 적용하고, 성공적으로 완료된 Activity를 durable outbox에 기록한다. foreground, 기존/연결된 Activity, `none`·`verify` 등 명시 정책은 이 기본값으로 바꾸지 않는다.
+
+로컬 macOS 메뉴 막대 앱은 private Unix socket의 `completion.claim`, `completion.delivered`, `completion.release`만 사용한다. claim 결과는 stable `eventId`와 `outboxId`뿐이며 task prompt, result, path, Activity ID, scope, ChatGPT conversation ID는 IPC와 macOS 알림 표면에 나오지 않는다. macOS가 generic notification을 수락한 뒤에만 exact outbox record를 acknowledge하고, 실패하면 lease를 release한다. 알림을 클릭하면 로컬 Dashboard가 열리며 ChatGPT 대화는 재개하거나 메시지를 추가하지 않는다. 이 세 메서드는 remote companion HTTPS allowlist에 포함하지 않는다.
+
+Dashboard의 background-only 자동 표시는 별도 설정이다. 카드와 `ui/message`는 completion outbox를 claim·ack·전송하지 않는다. 앱이 꺼져 있거나 알림 권한이 없으면 outbox는 남아 있고, 중간 crash 후에는 stable event ID로 재시도될 수 있으므로 exactly-once visible delivery를 주장하지 않는다. 이 문서의 나머지는 이 결정을 내리기 전의 검토 기록이다.
+
+## 초기 검토 기록 (대체됨)
 
 **합의한 방향: 두 전달 경로와 카드 표시 설정**
 
@@ -131,3 +139,9 @@ MCP Tasks나 transport 진행 알림을 추가하는 것만으로 호스트의 �
 - **신규 background + upstream thread 할당 전**: Job은 등록되고 실행도 시작되지만 현재 task 출력 검증은 admitted Job의 `threadId`를 필수로 요구해 오류 결과를 반환했다. mock에서 재현했고 초기 Job 생성·즉시 반환·출력 refine 코드를 대조했다. 기존 thread를 지정한 background 경로는 통과했다. 실제 App Server의 지연된 thread 배정도 포함해 #106의 초기 상태 계약을 검증·수정해야 한다. 이미 등록된 Job에 새 requestId로 자동 재실행하는 대응은 피한다. [초기 identity 검증](../../src/tools.ts:518), [Job 시작](../../src/tools.ts:3579), [background 즉시 반환](../../src/tools.ts:9931).
 
 제품 구현은 아직 변경하지 않았다. 다음 구현에서는 초기 background 응답 계약을 먼저 정리하고, 기존 카드 없는 대기를 보존하면서 공통 전달부와 현황 카드 경로를 구현한다. 호스트 이벤트 경로는 실제 원래 대화 재개 검증을 통과한 환경에서 활성화한다.
+
+## 실환경 보정 — inline Dashboard 수명
+
+이 문서의 카드 보조 전달 가정은 2026-09-14 실제 ChatGPT 테스트에서 반증됐다. background 작업의 `codex_dashboard` 렌더는 원래 대화에 자동으로 표시됐지만, ChatGPT가 그 모델 응답을 끝낼 때 카드에 `ui/resource-teardown`을 전송했다. 화면에는 마지막 렌더가 남아도 카드의 타이머와 도구 호출은 중지되므로, 종료 뒤 `ui/message`로 완료 메시지를 보내는 전달 워커가 될 수 없다.
+
+따라서 현재 구현은 카드를 표시·제어 전용으로 유지하고, 카드 기반 completion claim/ack 및 `ui/message` 전송을 제거했다. 이 보정 뒤 사용자와 합의한 대체안은 ChatGPT 재개가 아닌 **로컬 macOS 완료 알림**이다. eligible `notify` outbox는 메뉴 막대 앱이 private local socket에서 opaque receipt로 claim하고, generic notification을 macOS가 수락하면 acknowledge한다. 이 보정은 위의 초기 합의와 다르므로, 카드 전달 행과 그 구현 전제는 역사적 검토로만 읽는다.

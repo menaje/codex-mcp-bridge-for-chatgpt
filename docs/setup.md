@@ -305,11 +305,14 @@ later use; a model temporarily missing from the list also keeps its saved text.
 - **Run history retention** keeps display history for 7, 30 (default), or 90 days, or indefinitely. Full result retention and connection idle time are separate policies; see [work history](work-history.md).
 
 Settings expose **Automatically show Dashboard for background work** and
-**Automatically follow up after completion**. The first applies only to newly
-admitted background work in its originating conversation; foreground work never
-opens Dashboard automatically. Completion follow-up is tracked by the durable
-outbox independently of a card. New work uses bounded input waits and exact
-result retrieval in the current GPT response. See [Card tools](card-tools.md).
+**Notify this Mac when background work completes**. The first applies only to
+newly admitted background work in its originating conversation; foreground work
+never opens Dashboard automatically. The second is independent of cards and
+ChatGPT: the local menu-bar app delivers a generic macOS notification for an
+eligible successful background completion, and opens its Dashboard when clicked.
+It requires that app to be running and macOS notifications to be allowed. It
+does not add or resume a ChatGPT message. New work uses bounded input waits and
+exact result retrieval in the current GPT response. See [Card tools](card-tools.md).
 
 Values above the normal concurrency range can increase CPU, memory, and API usage substantially.
 

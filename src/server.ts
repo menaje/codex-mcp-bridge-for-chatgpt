@@ -27,6 +27,7 @@ import { BridgeStateStore } from "./stateStore.js";
 import { UserSettingsStore } from "./userSettings.js";
 import { CodexBackendRouter } from "./upstreamRouter.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { SkillLibrary } from "./skillLibrary.js";
 
 /**
  * The instructions remain deliberately policy-focused. Wire-protocol behavior
@@ -38,6 +39,7 @@ export const BRIDGE_MCP_INSTRUCTIONS = [
   "Activity is the user-goal and verification boundary. Read authoritative state before changing it. Use codex_cancel with a unique requestId, exact expectedVersion, and a short factual user-facing reason only for explicit stop intent. Never include private reasoning, raw prompts, or secrets in a reason.",
   "Use the current codex_task descriptor exactly. Send taskContractVersion and executionEnvelopeRef, one UUID requestId per logical task, and the required nested project selector for new work. Do not send retired scope, sandbox, approval-policy, execution-policy, presentation, or legacy model fields.",
   "Saved bridge settings and operator limits are the execution authority. In fixed model mode omit selection. In automatic mode use an exact current selection from codex_models when required. Never invent aliases, projects, paths, or permission overrides.",
+  "When a reusable procedure may help, use bridge_skill to search the bridge-owned skill library by the user's goal, then read the exact selected skill and only the needed reference materials before applying it. Reading a skill neither starts work nor grants its declared tools or permissions; use codex_task only when local Codex work is actually needed.",
   "New work uses Codex App Server. Earlier MCP or SDK thread identities remain readable but cannot be continued through their retired execution paths. A fresh-context handoff copies only an explicit concise summary.",
   "For a host without conversation metadata, generate one UUID scopeId and reuse it only in that host context. Generate one UUID requestId per logical Codex call and reuse it only for an identical retry. Choose foreground to wait or background for independently tracked work.",
   "GPT handles ordinary Codex questions within the user's delegation. Never ask for credentials or authentication secrets. Ask the ChatGPT user directly in this conversation when their opinion is needed; use codex_answer only for a current Codex question.",
@@ -75,7 +77,8 @@ export function createBridgeMcpServer(
   userSettings?: UserSettingsStore,
   scopeResolver?: ScopeResolver,
   projectAvailability?: TaskProjectAvailabilityProjection,
-  cardPerformance?: CardPerformanceTracker
+  cardPerformance?: CardPerformanceTracker,
+  skillLibrary?: SkillLibrary
 ): BridgeMcpServer {
   // A directly constructed server has the same single-store admission boundary
   // as an HTTP runtime. HTTP handlers share their explicitly composed store.
@@ -121,6 +124,9 @@ export function createBridgeMcpServer(
   });
   config.codexService?.setVisibilityProvider(() => settingsStore.current.showBridgeThreadsInCodexApp);
   const effectiveModelCatalog = modelCatalog || createModelCatalog(config, upstream);
+  const effectiveSkillLibrary = skillLibrary || new SkillLibrary({
+    directory: config.bridgeSkillsDirectory
+  });
   if (upstream instanceof CodexBackendRouter) {
     for (const session of sessionRegistry.list()) {
       upstream.bindThread(session.threadId, session.backendKind);
@@ -155,7 +161,8 @@ export function createBridgeMcpServer(
     settingsStore,
     effectiveScopeResolver,
     projectAvailability,
-    cardPerformance
+    cardPerformance,
+    effectiveSkillLibrary
   );
   Object.defineProperty(server, "applicationService", {
     configurable: false,
@@ -208,6 +215,9 @@ export function createHttpServer(
   config.codexService?.setVisibilityProvider(() => userSettings.current.showBridgeThreadsInCodexApp);
   const projectAvailability = new TaskProjectAvailabilityProjection(config);
   const scopeResolver = new ScopeResolver({ stateStore });
+  const skillLibrary = new SkillLibrary({
+    directory: config.bridgeSkillsDirectory
+  });
   if (upstream instanceof CodexBackendRouter) {
     for (const session of sessions.list()) upstream.bindThread(session.threadId, session.backendKind);
   }
@@ -223,7 +233,8 @@ export function createHttpServer(
       userSettings,
       scopeResolver,
       projectAvailability,
-      cardPerformance
+      cardPerformance,
+      skillLibrary
     );
     if (runtimeOptions.conformanceFixtures) {
       registerMcpConformanceFixtures(server, () => notifyToolsChanged());

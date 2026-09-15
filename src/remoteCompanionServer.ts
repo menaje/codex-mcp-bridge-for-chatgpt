@@ -36,12 +36,13 @@ import {
   type RemotePairingInvitation
 } from "./companionServer.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { BRIDGE_SKILL_LIMITS } from "./skillLibrary.js";
 import type { BridgeApplicationService } from "./tools.js";
 
 export const REMOTE_COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-remote-companion";
-export const REMOTE_COMPANION_PROTOCOL_VERSION = 1;
+export const REMOTE_COMPANION_PROTOCOL_VERSION = 2;
 const REMOTE_API_PREFIX = "/remote-companion/v1";
-const REMOTE_MAX_REQUEST_BYTES = 1024 * 1024;
+const REMOTE_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 const REMOTE_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const REMOTE_MAX_DEVICES = 32;
 const REMOTE_DEFAULT_PAIRING_TTL_SECONDS = 300;
@@ -49,6 +50,8 @@ const REMOTE_DEVICE_CAPABILITIES = [
   "dashboard.read",
   "settings.read",
   "settings.write",
+  "skills.read",
+  "skills.write",
   "runtime.read"
 ];
 
@@ -630,6 +633,16 @@ function capabilityForMethod(method: string, payload?: unknown): string {
     case "settings.update":
     case "dashboard.history":
       return "settings.write";
+    case "skills.snapshot":
+    case "skills.read":
+    case "skills.reference":
+    case "skills.versions":
+      return "skills.read";
+    case "skills.create":
+    case "skills.update":
+    case "skills.restore":
+    case "skills.set-enabled":
+      return "skills.write";
     case "dashboard.problem": {
       const action = (payload as {params?:{action?:unknown}} | undefined)?.params?.action;
       return action === "retry-stop" ? "unavailable" : "settings.write";

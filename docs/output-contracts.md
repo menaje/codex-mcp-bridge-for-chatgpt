@@ -14,7 +14,7 @@ rejected before they cross the wire.
 
 ## Task result
 
-`codex_task` input contract version 3 returns task output contract version 2.
+`codex_task` input contract version 4 returns task output contract version 2.
 The different numbers are intentional: input and output evolve independently.
 
 Task output has a strict root with explicitly nullable fields where a state
@@ -62,10 +62,10 @@ configuration.
 ## Validation
 
 `test/outputContracts.test.ts` supplies fixtures for setup, replay, running,
-completed, failed, and cancelled task results; all ten model-visible tools;
+completed, failed, and cancelled task results; all twelve model-visible tools;
 root expansion; state contradictions; and structured action validation. The
 output-contract audit measures the current model-visible output schemas at
-44,337 UTF-8 JSON bytes. The total descriptor budget is 56,000 bytes and no
+55,839 UTF-8 JSON bytes. The total descriptor budget is 56,000 bytes and no
 single public output schema may exceed 18,000 bytes. These are descriptor
 measurements, not model-token counts or result-payload limits.
 

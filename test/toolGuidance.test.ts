@@ -34,6 +34,21 @@ describe("current model recovery contract", () => {
     });
   });
 
+  it("retains a scoped Dashboard render action for a background job", () => {
+    const jobId = "11111111-1111-4111-8111-111111111111";
+    const action = projectModelNextAction({
+      tool: "codex_dashboard",
+      arguments: { scope: "conversation", backgroundJobId: jobId },
+      userPrompt: "Mount the originating background Dashboard before replying."
+    });
+    expect(action).toEqual({
+      kind: "tool",
+      tool: "codex_dashboard",
+      arguments: { scope: "conversation", backgroundJobId: jobId },
+      message: "Mount the originating background Dashboard before replying."
+    });
+  });
+
   it("never turns an unknown stored action into an executable tool call", () => {
     const action = projectModelNextAction({ tool: "codex_task", arguments: { prompt: "run this" } });
     expect(action).toEqual(expect.objectContaining({ kind: "guidance" }));
