@@ -68,6 +68,7 @@
     "test:dashboard-scope-browser": "tsx scripts/dashboard-scope-browser-regression.ts",
     "test:dashboard-summary-browser": "tsx scripts/dashboard-summary-browser-regression.ts",
     "test:model-descriptions-browser": "tsx scripts/model-description-browser-regression.ts",
+    "mcp:conformance": "npm run build && node scripts/mcp-conformance.mjs",
     "check": "npm run build && npm run test",
     "macos:remote:check": "tsx scripts/check-native-remote.ts",
     "test:continuity": "node scripts/check-thread-continuity.mjs",

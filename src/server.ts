@@ -2,8 +2,9 @@ import { execFile as execCatalogFile } from "node:child_process";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { promisify as promisifyCatalog } from "node:util";
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { createMcpHandler, inputRequired, McpServer } from "@modelcontextprotocol/server";
 import { hostHeaderValidation, originValidation, toNodeHandler } from "@modelcontextprotocol/node";
+import { z } from "zod";
 import { ContextualModelCatalog } from "./contextualModelCatalog.js";
 import type { BridgeConfig } from "./config.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
@@ -50,6 +51,12 @@ export type BridgeHttpRuntimeOptions = {
   stateStore?: BridgeStateStore;
   /** Retained for callers that collect their own diagnostics. HTTP health does not expose it. */
   healthDiagnostics?: () => Record<string, unknown>;
+  /**
+   * Opt-in protocol-suite fixtures. These are never enabled by normal bridge
+   * startup and exist solely to exercise SDK paths that the product does not
+   * otherwise use (sampling, progressive responses, and list mutations).
+   */
+  conformanceFixtures?: boolean;
 };
 
 export type BridgeHttpServer = HttpServer & {
@@ -215,18 +222,25 @@ export function createHttpServer(
     for (const session of sessions.list()) upstream.bindThread(session.threadId, session.backendKind);
   }
 
-  const newMcpServer = () => createBridgeMcpServer(
-    config,
-    upstream,
-    sessions,
-    jobs,
-    modelCatalog,
-    userSettings,
-    scopeResolver,
-    projectAvailability,
-    cardPerformance,
-    skillLibrary
-  );
+  let notifyToolsChanged = () => {};
+  const newMcpServer = () => {
+    const server = createBridgeMcpServer(
+      config,
+      upstream,
+      sessions,
+      jobs,
+      modelCatalog,
+      userSettings,
+      scopeResolver,
+      projectAvailability,
+      cardPerformance,
+      skillLibrary
+    );
+    if (runtimeOptions.conformanceFixtures) {
+      registerMcpConformanceFixtures(server, () => notifyToolsChanged());
+    }
+    return server;
+  };
   // Runtime companions must start before an MCP request is received, so their
   // service comes from an unconnected instance. Every wire request still gets
   // a fresh server through createMcpHandler below.
@@ -239,6 +253,7 @@ export function createHttpServer(
       onerror: (error) => logMcpError("MCP request failed", error)
     }
   );
+  notifyToolsChanged = () => mcpHandler.notify.toolsChanged();
   const nodeMcpHandler = toNodeHandler(mcpHandler, {
     onerror: (error) => logMcpError("MCP node adapter failed", error)
   });
@@ -291,6 +306,67 @@ export function createHttpServer(
     void closeBridgeResources();
   });
   return httpServer;
+}
+
+/**
+ * The official stateless conformance scenario needs named diagnostic tools to
+ * exercise optional server-to-client capability and streaming paths. Keep
+ * those names out of every ordinary bridge server: this registration happens
+ * only when an explicit local test runtime asks for it.
+ */
+function registerMcpConformanceFixtures(
+  server: McpServer,
+  notifyToolsChanged: () => void
+): void {
+  const inputSchema = z.strictObject({});
+  const complete = (text: string) => ({ content: [{ type: "text" as const, text }] });
+
+  server.registerTool(
+    "test_missing_capability",
+    {
+      title: "Conformance Sampling Capability Fixture",
+      description: "Local protocol-suite fixture; never exposed by a normal bridge runtime.",
+      inputSchema
+    },
+    () => inputRequired({
+      inputRequests: {
+        sampling: inputRequired.createMessage({
+          messages: [{ role: "user", content: { type: "text", text: "Conformance fixture." } }],
+          maxTokens: 1
+        })
+      }
+    })
+  );
+  server.registerTool(
+    "test_streaming_elicitation",
+    {
+      title: "Conformance Response Stream Fixture",
+      description: "Local protocol-suite fixture; never exposed by a normal bridge runtime.",
+      inputSchema
+    },
+    () => complete("Conformance response stream fixture.")
+  );
+  server.registerTool(
+    "test_logging_tool",
+    {
+      title: "Conformance Logging Fixture",
+      description: "Local protocol-suite fixture; never exposed by a normal bridge runtime.",
+      inputSchema
+    },
+    () => complete("Conformance logging fixture.")
+  );
+  server.registerTool(
+    "test_trigger_tool_change",
+    {
+      title: "Conformance Tool Change Fixture",
+      description: "Local protocol-suite fixture; never exposed by a normal bridge runtime.",
+      inputSchema
+    },
+    () => {
+      notifyToolsChanged();
+      return complete("Conformance tool-list change fixture.");
+    }
+  );
 }
 
 async function handleHttpRequest(

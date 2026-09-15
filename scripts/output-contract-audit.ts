@@ -5,6 +5,8 @@ import { z } from "zod";
 import {
   APP_ONLY_OUTPUT_SCHEMAS,
   MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES,
+  MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET,
+  MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET,
   MODEL_VISIBLE_OUTPUT_SCHEMAS,
   type ModelVisibleOutputToolName
 } from "../src/tools.js";
@@ -123,6 +125,10 @@ const contentResults = Object.fromEntries(
 
 const modelVisibleSchemas = schemaAudit(MODEL_VISIBLE_OUTPUT_SCHEMAS);
 const appOnlySchemas = schemaAudit(APP_ONLY_OUTPUT_SCHEMAS);
+const largestModelVisibleSchema = Object.entries(modelVisibleSchemas.byTool)
+  .sort(([left], [right]) => left.localeCompare(right))
+  .sort(([, left], [, right]) => right - left)[0];
+assert.ok(largestModelVisibleSchema, "At least one model-visible output schema is required.");
 // Input now shares codex_status with other reads. Ordinary Codex questions use
 // the host conversation, so codex_answer is the only dedicated tool left.
 const dedicatedQuestionTools = ["codex_answer"];
@@ -135,7 +141,6 @@ const dedicatedQuestionSchemaBytes = dedicatedQuestionTools.reduce((total, name)
 const untypedNumericModelSchemaLiterals = untypedNumericLiteralPointers(
   MODEL_VISIBLE_OUTPUT_SCHEMAS
 );
-const MODEL_VISIBLE_SCHEMA_BUDGET = 60_000;
 
 const report = {
   auditVersion: 6,
@@ -163,12 +168,23 @@ const report = {
     modelPrimaryAnswerMaxJsonBytes: MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES
   },
   generationBudget: {
-    targetModelVisibleSchemaBytes: MODEL_VISIBLE_SCHEMA_BUDGET,
+    targetModelVisibleSchemaBytes: MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET,
+    targetSingleModelVisibleSchemaBytes: MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET,
     actualModelVisibleSchemaBytes: modelVisibleSchemas.totalBytes,
+    largestModelVisibleSchemaTool: largestModelVisibleSchema[0],
+    largestModelVisibleSchemaBytes: largestModelVisibleSchema[1],
     dedicatedQuestionTools,
     dedicatedQuestionToolsSchemaBytes: dedicatedQuestionSchemaBytes,
     sharedQuestionInputSchema: "codex_status",
-    passed: modelVisibleSchemas.totalBytes <= MODEL_VISIBLE_SCHEMA_BUDGET
+    headroomBytes: MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET - modelVisibleSchemas.totalBytes,
+    singleSchemaHeadroomBytes:
+      MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET - largestModelVisibleSchema[1],
+    enforcedAt: "mcp-2026-current-output-contracts",
+    liveHostEvidenceProducedByThisAudit: false,
+    separateLiveQuestionEvidence: "docs/audits/issue-70-unlocked-host.json",
+    passed:
+      modelVisibleSchemas.totalBytes <= MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET &&
+      largestModelVisibleSchema[1] <= MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET
   }
 };
 
@@ -179,8 +195,14 @@ if (process.argv.includes("--check")) {
     "Model-visible output schemas contain typeless numeric const/enum nodes that ChatGPT cannot expose reliably."
   );
   assert.ok(
-    modelVisibleSchemas.totalBytes <= MODEL_VISIBLE_SCHEMA_BUDGET,
-    `Model-visible schema budget exceeded: ${modelVisibleSchemas.totalBytes} > ${MODEL_VISIBLE_SCHEMA_BUDGET} bytes.`
+    modelVisibleSchemas.totalBytes <= MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET,
+    `Model-visible schema budget exceeded: ${modelVisibleSchemas.totalBytes} > ` +
+      `${MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET} bytes.`
+  );
+  assert.ok(
+    largestModelVisibleSchema[1] <= MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET,
+    `Single model-visible schema budget exceeded: ${largestModelVisibleSchema[0]} ` +
+      `${largestModelVisibleSchema[1]} > ${MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET} bytes.`
   );
   const retired = [
     "codex_ask_user", "codex_user_answer", "codex_question_action", "codex_activity",
