@@ -28,7 +28,9 @@ const server = createHttpServer(config, upstream, undefined, {
 let shuttingDown = false;
 let companions: Awaited<ReturnType<typeof startRuntimeCompanions>> | undefined;
 
-for (const warning of config.startupWarnings) console.warn(`warning: ${warning}`);
+for (const warning of [...config.startupWarnings, ...config.developerStartupWarnings]) {
+  console.warn(`warning: ${warning}`);
+}
 
 void main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));

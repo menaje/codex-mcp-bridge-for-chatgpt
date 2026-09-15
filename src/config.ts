@@ -57,7 +57,10 @@ export type BridgeConfig = {
   jobStaleAfterMs: number;
   maxRetainedJobs: number;
   maxJobResultBytes: number;
+  /** Operator-facing configuration warnings surfaced in Settings and status. */
   startupWarnings: string[];
+  /** Development-only startup diagnostics retained in local logs and diagnostics. */
+  developerStartupWarnings: string[];
 };
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -119,12 +122,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const maxRetainedJobs = parsePositiveInt(read("MAX_RETAINED_JOBS") || "100");
   const maxJobResultBytes = parsePositiveInt(read("MAX_JOB_RESULT_BYTES") || String(1024 * 1024));
   const startupWarnings: string[] = [];
+  const developerStartupWarnings: string[] = [];
   if (
     PRODUCT_INFO.releaseStage !== "stable" &&
     (stateProfile === "stable" ||
       (stateProfile === "explicit" && stateDatabaseFile === stateDatabaseFileForProfile("stable")))
   ) {
-    startupWarnings.push(
+    developerStartupWarnings.push(
       `This ${PRODUCT_INFO.releaseStage} build explicitly targets the stable state profile. ` +
       "Stop the stable runtime and complete the database preflight before continuing."
     );
@@ -242,7 +246,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     jobStaleAfterMs,
     maxRetainedJobs,
     maxJobResultBytes,
-    startupWarnings
+    startupWarnings,
+    developerStartupWarnings
   };
 }
 

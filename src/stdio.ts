@@ -29,7 +29,9 @@ const runtime = createStdioBridgeRuntime(config, upstream, { stateStore });
 let companions: Awaited<ReturnType<typeof startRuntimeCompanions>> | undefined;
 let shuttingDown = false;
 
-for (const warning of config.startupWarnings) console.error(`warning: ${warning}`);
+for (const warning of [...config.startupWarnings, ...config.developerStartupWarnings]) {
+  console.error(`warning: ${warning}`);
+}
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));

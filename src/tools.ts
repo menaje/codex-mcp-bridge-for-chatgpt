@@ -5084,7 +5084,10 @@ export function registerBridgeTools(
         performance: cardPerformance.snapshot(),
         forensics: {
           bridgeInstanceId: jobs.bridgeInstanceId,
-          startupWarnings: config.startupWarnings,
+          startupWarnings: [
+            ...config.startupWarnings,
+            ...config.developerStartupWarnings
+          ],
           settingsLoadWarnings: userSettings.loadWarnings
         }
       };

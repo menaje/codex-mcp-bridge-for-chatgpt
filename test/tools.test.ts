@@ -113,6 +113,7 @@ describe("current bridge tool contracts", () => {
   let root: string;
   let state: BridgeStateStore;
   let settings: UserSettingsStore;
+  let config: ReturnType<typeof loadConfig>;
   let client: Client;
   let server: BridgeHttpServer;
   let upstream: FixtureUpstream;
@@ -120,7 +121,7 @@ describe("current bridge tool contracts", () => {
   beforeEach(async () => {
     root = await mkdtemp(path.join(tmpdir(), "current-tools-"));
     state = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
-    const config = loadConfig({
+    config = loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_ROOTS: root,
       CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(root, "state.sqlite"),
@@ -311,6 +312,19 @@ describe("current bridge tool contracts", () => {
     expect(settingsView.settings).not.toHaveProperty("completionHandoff");
     expect(settingsView.capabilities).not.toHaveProperty("availableActivityCardVisibilities");
     expect(settingsView.capabilities).not.toHaveProperty("availableCompletionHandoffs");
+  });
+
+  it("keeps developer-only startup diagnostics out of normal Settings", async () => {
+    const diagnostic = "This development build explicitly targets the stable state profile.";
+    config.developerStartupWarnings.push(diagnostic);
+
+    const result = await client.callTool({
+      name: "codex_ui_read",
+      arguments: { view: "settings" }
+    });
+
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    expect((result.structuredContent as { warnings: string[] }).warnings).not.toContain(diagnostic);
   });
 
   it("publishes Dashboard hydration without undefined thread-handoff fields", async () => {
