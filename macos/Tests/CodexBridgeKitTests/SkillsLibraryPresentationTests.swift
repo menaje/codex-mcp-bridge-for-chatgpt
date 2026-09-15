@@ -1,4 +1,5 @@
 import XCTest
+import UniformTypeIdentifiers
 @testable import CodexBridgeMenuBar
 
 @MainActor
@@ -58,7 +59,7 @@ final class SkillsLibraryPresentationTests: XCTestCase {
         XCTAssertTrue(source.contains(".inspector(isPresented: $showsInspector)"))
         XCTAssertTrue(source.contains("SkillsLibraryShowsInspectorV2\") private var showsInspector = false"))
         XCTAssertTrue(source.contains("compactInspectorPreviousVisibility"))
-        XCTAssertTrue(source.contains("columnVisibility = .detailOnly"))
+        XCTAssertTrue(source.contains("windowState.columnVisibility = .detailOnly"))
         XCTAssertTrue(source.contains("NSWindow.didResizeNotification"))
         XCTAssertEqual(source.components(separatedBy: "HSplitView").count - 1, 1)
         XCTAssertTrue(source.contains("OutlineGroup"))
@@ -100,6 +101,36 @@ final class SkillsLibraryPresentationTests: XCTestCase {
         XCTAssertEqual(files.first(where: { $0.path == "SKILL.md" })?.content, "\u{feff}" + source)
         XCTAssertTrue(review.issues.contains { $0.path == "image.png" && $0.reason == "unsupported-file" })
         XCTAssertTrue(review.issues.contains { $0.path == ".DS_Store" && $0.reason == "macos-metadata" })
+    }
+
+    func testDroppedFileURLsDecodeFromNativeURLAndDataRepresentations() async throws {
+        let markdown = URL(fileURLWithPath: "/tmp/드롭/참고.md")
+        XCTAssertEqual(BridgeSkillDropLoader.decodeURL(from: markdown as NSURL), markdown)
+        XCTAssertEqual(
+            BridgeSkillDropLoader.decodeURL(from: markdown.dataRepresentation as NSData),
+            markdown
+        )
+
+        let provider = NSItemProvider(
+            item: markdown.dataRepresentation as NSData,
+            typeIdentifier: UTType.fileURL.identifier
+        )
+        let dropped = await BridgeSkillDropLoader.urls(from: [provider])
+        XCTAssertEqual(dropped, [markdown])
+    }
+
+    func testFileFolderAndZipInputsShareOneImportRouter() {
+        let markdown = URL(fileURLWithPath: "/tmp/skill/SKILL.md")
+        let folder = URL(fileURLWithPath: "/tmp/skill", isDirectory: true)
+        let archive = URL(fileURLWithPath: "/tmp/skill.zip")
+
+        XCTAssertEqual(BridgeSkillImportRouter.route(urls: [markdown]), .direct([markdown]))
+        XCTAssertEqual(BridgeSkillImportRouter.route(urls: [folder]), .direct([folder]))
+        XCTAssertEqual(BridgeSkillImportRouter.route(urls: [archive]), .package(archive))
+        XCTAssertEqual(
+            BridgeSkillImportRouter.route(urls: [archive, markdown]),
+            .direct([archive, markdown])
+        )
     }
 
     func testImportIssueReasonsAreLocalizedInsteadOfShowingServerCodes() {

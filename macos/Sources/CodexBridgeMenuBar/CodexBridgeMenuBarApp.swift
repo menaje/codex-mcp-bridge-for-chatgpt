@@ -504,6 +504,7 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
     private weak var model: AppModel?
 
     var contentWidth: CGFloat? { window?.contentLayoutRect.width }
+    var navigationColumnVisibility: NavigationSplitViewVisibility { windowState.columnVisibility }
 
     func manages(_ candidate: NSWindow) -> Bool { window === candidate }
 

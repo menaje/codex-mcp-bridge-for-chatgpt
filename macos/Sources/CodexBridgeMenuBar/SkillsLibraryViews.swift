@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class SkillsLibraryWindowState: ObservableObject {
+    @Published var columnVisibility: NavigationSplitViewVisibility = .automatic
     @Published var hasUnsavedChanges = false {
         didSet {
             if hasUnsavedChanges { applicationShutdownDiscardApproved = false }
@@ -173,7 +174,6 @@ struct SkillsLibraryWindowView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var windowState: SkillsLibraryWindowState
     @Environment(\.locale) private var locale
-    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
     @State private var scope: SkillLibraryScope = .all
     @State private var searchText = ""
     @State private var documentSelection: SkillDocumentSelection = .main
@@ -196,7 +196,7 @@ struct SkillsLibraryWindowView: View {
     @State private var importTargetSkillID: String?
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView(columnVisibility: $windowState.columnVisibility) {
             skillSidebar
                 .navigationSplitViewColumnWidth(min: 190, ideal: 250, max: 330)
                 .background(SplitViewAutosaveAnchor(name: "CodexBridgeSkillsNavigationSplit"))
@@ -243,7 +243,7 @@ struct SkillsLibraryWindowView: View {
             }
             await model.refreshSkillLibrary()
         }
-        .onChange(of: columnVisibility) { visibility in saveColumnVisibility(visibility) }
+        .onChange(of: windowState.columnVisibility) { visibility in saveColumnVisibility(visibility) }
         .onChange(of: showsInspector) { visible in synchronizeNavigationForInspector(visible) }
         .onChange(of: model.selectedBridgeSkill?.id) { _ in synchronizeSelectionFromModel() }
         .onChange(of: model.selectedBridgeSkillFile?.id) { _ in synchronizeDraftFromModel() }
@@ -952,15 +952,15 @@ struct SkillsLibraryWindowView: View {
             contentWidth: contentWidth ?? SkillsLibraryWindowController.shared.contentWidth ?? 1_120
         ) else { return }
         if compactInspectorPreviousVisibility == nil {
-            compactInspectorPreviousVisibility = columnVisibility
+            compactInspectorPreviousVisibility = windowState.columnVisibility
         }
-        if columnVisibility != .detailOnly { columnVisibility = .detailOnly }
+        if windowState.columnVisibility != .detailOnly { windowState.columnVisibility = .detailOnly }
     }
 
     private func restoreNavigationAfterCompactInspector() {
         guard let previous = compactInspectorPreviousVisibility else { return }
         compactInspectorPreviousVisibility = nil
-        columnVisibility = previous
+        windowState.columnVisibility = previous
     }
 
     private func focusSkillSearch() {
@@ -971,7 +971,7 @@ struct SkillsLibraryWindowView: View {
             textView.performFindPanelAction(item)
             return
         }
-        columnVisibility = .all
+        windowState.columnVisibility = .all
         DispatchQueue.main.async {
             guard let root = NSApp.keyWindow?.contentView,
                   let search = firstSubview(of: NSSearchField.self, in: root) else { return }
@@ -981,10 +981,10 @@ struct SkillsLibraryWindowView: View {
 
     private func restoreColumnVisibility() {
         switch savedColumnVisibility {
-        case "detail": columnVisibility = .detailOnly
-        case "double": columnVisibility = .doubleColumn
-        case "all": columnVisibility = .all
-        default: columnVisibility = .automatic
+        case "detail": windowState.columnVisibility = .detailOnly
+        case "double": windowState.columnVisibility = .doubleColumn
+        case "all": windowState.columnVisibility = .all
+        default: windowState.columnVisibility = .automatic
         }
     }
 
@@ -1090,16 +1090,7 @@ struct SkillsLibraryWindowView: View {
 
     private func loadDroppedURLs(_ providers: [NSItemProvider]) {
         Task { @MainActor in
-            var urls: [URL] = []
-            for provider in providers {
-                if let item = try? await provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier),
-                   let data = item as? Data,
-                   let url = URL(dataRepresentation: data, relativeTo: nil) {
-                    urls.append(url)
-                } else if let url = try? await provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) as? URL {
-                    urls.append(url)
-                }
-            }
+            let urls = await BridgeSkillDropLoader.urls(from: providers)
             if !urls.isEmpty {
                 let intoCurrent = model.selectedBridgeSkill.map(isCurrentVersion) ?? false
                 beginImport(urls, intoCurrentSkill: intoCurrent)
@@ -1110,21 +1101,21 @@ struct SkillsLibraryWindowView: View {
     private func beginImport(_ urls: [URL], intoCurrentSkill: Bool) {
         guard !urls.isEmpty else { return }
         importTargetSkillID = intoCurrentSkill ? model.selectedBridgeSkill?.skill.skillId : nil
-        if urls.count == 1, urls[0].pathExtension.lowercased() == "zip" {
-            let url = urls[0]
+        switch BridgeSkillImportRouter.route(urls: urls) {
+        case .package(let url):
             Task { @MainActor in
                 if let inspection = await model.inspectBridgeSkillPackage(at: url) {
                     sheet = .importReview(.package(sourceName: url.deletingPathExtension().lastPathComponent,
                                                    inspection: inspection))
                 }
             }
-            return
-        }
-        Task { @MainActor in
-            let review = await Task.detached(priority: .userInitiated) {
-                BridgeSkillImportCollector.collect(urls: urls)
-            }.value
-            sheet = .importReview(review)
+        case .direct(let directURLs):
+            Task { @MainActor in
+                let review = await Task.detached(priority: .userInitiated) {
+                    BridgeSkillImportCollector.collect(urls: directURLs)
+                }.value
+                sheet = .importReview(review)
+            }
         }
     }
 
@@ -1680,6 +1671,41 @@ struct BridgeSkillImportCommit {
     let description: String?
     let mainPath: String?
     let selectedPaths: Set<String>
+}
+
+enum BridgeSkillImportRoute: Equatable {
+    case package(URL)
+    case direct([URL])
+}
+
+enum BridgeSkillImportRouter {
+    static func route(urls: [URL]) -> BridgeSkillImportRoute {
+        if urls.count == 1, let url = urls.first, url.pathExtension.lowercased() == "zip" {
+            return .package(url)
+        }
+        return .direct(urls)
+    }
+}
+
+@MainActor
+enum BridgeSkillDropLoader {
+    static func urls(from providers: [NSItemProvider]) async -> [URL] {
+        var urls: [URL] = []
+        var seen = Set<String>()
+        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            guard let item = try? await provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier),
+                  let url = decodeURL(from: item) else { continue }
+            let key = url.standardizedFileURL.path.precomposedStringWithCanonicalMapping
+            if seen.insert(key).inserted { urls.append(url) }
+        }
+        return urls
+    }
+
+    static func decodeURL(from item: NSSecureCoding?) -> URL? {
+        if let url = item as? URL { return url }
+        if let data = item as? Data { return URL(dataRepresentation: data, relativeTo: nil) }
+        return nil
+    }
 }
 
 enum BridgeSkillImportCollector {
