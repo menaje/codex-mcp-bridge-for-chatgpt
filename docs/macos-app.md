@@ -133,16 +133,32 @@ the catalog's canonical lowercase English text (`low`, `medium`, `high`,
 `xhigh`, and other supported values) in the native menu, Dashboard card and both
 Settings surfaces. The effort field name and description remain localized.
 
-The normal native UI is intentionally limited to that Dashboard and the
-Settings card's General and Projects content plus a small Server tab for the
-backend and maximum access. General changes save automatically, except model
-descriptions, which use explicit Save/Cancel controls; the Server tab
-keeps an explicit apply-and-restart confirmation because those values are stored
-in the private dotenv and require runtime replacement. Tunnel setup, Codex
-browser login, and profile repair appear in a separate first-run/connection-
-repair window instead of becoming additional everyday Settings tabs.
+### Settings and skill management
 
-The General tab also contains one native-only **Mac app** control for launching
+The native Settings window uses a resizable macOS sidebar/detail layout. Its
+window title remains **Settings**, while the detail header identifies the selected
+destination without repeating that destination in the title bar. A fixed leading
+toolbar control shows or hides the sidebar. Search at the top of the sidebar
+matches individual localized controls as well as destinations; selecting a result
+opens its destination and scrolls to the related settings group. The sidebar
+exposes **General**, **Models & Execution**, **Projects**, **Codex Account &
+Installation**, **Connection**, and **Server** when each destination applies to
+the current role and connection state. A pinned card at the bottom identifies the
+currently managed Mac or remote server and its health, and opens Connection when
+selected. General contains language, notifications,
+launch behavior, and app display behavior. Shared access, model, Fast,
+concurrency, and retention controls live under Models & Execution. Projects uses
+a list-oriented manager, while the Server destination retains an explicit
+apply-and-restart confirmation because those values are stored in the private
+dotenv and require runtime replacement. Shared changes save automatically;
+model-description edits keep their explicit Save/Cancel controls. Skill
+management remains only in the separate Skill Library window.
+
+<p align="center">
+  <img src="images/macos-settings-sidebar-light-ko.png" alt="Korean native Settings window with a macOS sidebar and grouped General detail" width="820">
+</p>
+
+The General destination also contains one native-only **Mac app** control for launching
 the menu-bar UI at user login. It uses `SMAppService.mainApp` and reads the
 system registration or approval state directly. It is not part of the shared
 Settings revision, is not written to dotenv or UserDefaults, and does not change
@@ -284,14 +300,36 @@ not themselves mark a healthy runtime as disconnected.
 
 ## First run and connection repair
 
+When setup is incomplete, the menu-bar popover shows a compact neutral
+**Connection Setup Required** state with one primary action. Credentials and
+diagnostics are not embedded in the popover. That action opens a resizable,
+localized assistant with a fixed footer and default/cancel keyboard actions. A
+new setup follows these focused stages:
+
+1. choose whether this Mac runs the server or connects to an existing server;
+2. check supported existing settings before showing manual credentials;
+3. enter a Runtime API key and Tunnel ID only when discovery cannot complete the connection;
+4. check or start Codex browser login; and
+5. continue to ChatGPT Tunnel connection and first-project registration.
+
+<p align="center">
+  <img src="images/macos-connection-setup-light-en.png" alt="English first-run connection assistant showing the role-selection stage and fixed navigation footer" width="720">
+</p>
+
+Connection recovery is a separate state-based view. It prioritizes failed
+components and their actions, summarizes healthy components, keeps paths and
+logs in an Advanced Details disclosure, and does not use red failure styling
+until the operator attempts recovery. Settings → Connection uses the same setup
+entry point when initial configuration is required.
+
 The helper first inspects the existing runtime configuration. A valid file is
 reused without rewriting it or asking for a key. If it is missing or invalid,
-the native connection sheet accepts:
+the connection-details stage accepts:
 
 - the Secure MCP Tunnel runtime API key; and
 - the Tunnel identifier (`tunnel_` followed by 32 lowercase letters or digits).
 
-Before requiring manual entry, the connection sheet performs an explicit,
+Before requiring manual entry, the existing-settings stage performs an explicit,
 read-only discovery pass. It can find a partial private bridge dotenv, a valid
 `CONTROL_PLANE_TUNNEL_ID` paired with `CONTROL_PLANE_API_KEY` or the
 `tunnel-client`-supported `OPENAI_API_KEY` fallback, and current-user-private
@@ -304,7 +342,7 @@ Discovery returns only an opaque candidate identifier, source label, non-secret
 Tunnel ID, and whether a usable key exists. Selecting a complete candidate
 causes the helper to rediscover it and apply the key internally; the key is not
 returned to Swift. An ID-only candidate fills the non-secret Tunnel field so the
-operator can add the missing key. The sheet also links directly to the official
+operator can add the missing key. The assistant also links directly to the official
 Runtime API key and Tunnel settings pages and can parse both values from one
 operator-initiated clipboard paste. It does not create credentials, retain the
 clipboard contents, or place an API key on the clipboard.
@@ -321,7 +359,7 @@ app-owned editor changes only `CONTROL_PLANE_API_KEY` and
 the existing value when a field is blank. The config directory and file must
 be current-user-owned regular non-symlinks with `0700` and `0600` permissions.
 Replacement is same-directory, validated, synced, and atomic.
-If only those permissions are too broad, the repair sheet can restrict the
+If only those permissions are too broad, the recovery assistant can restrict the
 existing current-user-owned regular directory and file in place. It can also
 repair an over-readable pre-existing configuration directory before the first
 dotenv is created. It never follows a symlink or changes dotenv contents.

@@ -49,7 +49,7 @@ describe("documentation naming", () => {
     for (const image of [
       "macos-menubar-usage-light-en.png",
       "macos-dashboard-light-en.png",
-      "macos-app-roles-light-en.png",
+      "macos-connection-setup-light-en.png",
       "chatgpt-dashboard-light-en.png",
       "chatgpt-settings-light-en.png",
       "macos-pairing-invitation-light-en.png"
