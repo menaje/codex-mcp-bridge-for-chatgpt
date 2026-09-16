@@ -459,27 +459,30 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.model = model
         if window == nil {
             let settingsWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 820, height: 700),
-                styleMask: [.titled, .closable],
+                contentRect: NSRect(x: 0, y: 0, width: 980, height: 720),
+                styleMask: [.titled, .closable, .resizable],
                 backing: .buffered,
                 defer: false
             )
             settingsWindow.title = BridgeAppLocalization.string(
-                "macos.general",
+                "macos.settings",
                 locale: model.interfaceLocale
             )
             settingsWindow.isReleasedWhenClosed = false
             settingsWindow.delegate = self
             PrimaryAppWindowPresentation.configure(settingsWindow)
-            settingsWindow.toolbarStyle = .unifiedCompact
+            settingsWindow.standardWindowButton(.zoomButton)?.isEnabled = true
+            settingsWindow.toolbarStyle = .unified
             settingsWindow.setFrameAutosaveName("CodexBridgeSettingsWindow")
-            settingsWindow.contentViewController = NSHostingController(
-                rootView: NativeSettingsView(onSelectedPaneChange: { [weak settingsWindow] title in
+            settingsWindow.contentMinSize = NSSize(width: 820, height: 600)
+            let settingsHostingController = NSHostingController(
+                rootView: NativeSettingsView(onWindowTitleChange: { [weak settingsWindow] title in
                     settingsWindow?.title = title
                 })
                     .environmentObject(model)
-                    .frame(minWidth: 720, minHeight: 620)
+                    .frame(minWidth: 820, minHeight: 600)
             )
+            settingsWindow.contentViewController = settingsHostingController
             settingsWindow.center()
             window = settingsWindow
         }
@@ -608,40 +611,69 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
 }
 
 @MainActor
-final class ConnectionRepairWindowController: NSObject, NSWindowDelegate {
-    static let shared = ConnectionRepairWindowController()
+final class ConnectionAssistantWindowController: NSObject, NSWindowDelegate {
+    static let shared = ConnectionAssistantWindowController()
     private var window: NSWindow?
+    private let windowState = ConnectionAssistantWindowState()
 
-    func show(model: AppModel) {
+    func show(
+        model: AppModel,
+        presentation requestedPresentation: ConnectionAssistantPresentation? = nil
+    ) {
+        let presentation = requestedPresentation ?? (model.needsSetup ? .setup : .recovery)
+        if window == nil || window?.isVisible != true || requestedPresentation != nil {
+            windowState.begin(presentation)
+        }
         if window == nil {
             let repairWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 560, height: 660),
-                styleMask: [.titled, .closable],
+                contentRect: NSRect(x: 0, y: 0, width: 720, height: 640),
+                styleMask: [.titled, .closable, .resizable],
                 backing: .buffered,
                 defer: false
             )
-            repairWindow.title = "macos.codexmcpbridgeforchatgpt"
+            repairWindow.title = localizedTitle(for: presentation, model: model)
             repairWindow.isReleasedWhenClosed = false
             repairWindow.delegate = self
             PrimaryAppWindowPresentation.configure(repairWindow)
-            repairWindow.setFrameAutosaveName("CodexBridgeConnectionRepairWindow")
-            repairWindow.contentMinSize = NSSize(width: 500, height: 580)
-            repairWindow.contentViewController = NSHostingController(
-                rootView: ConnectionRepairView()
+            repairWindow.standardWindowButton(.zoomButton)?.isEnabled = true
+            repairWindow.toolbarStyle = .unified
+            repairWindow.setFrameAutosaveName("CodexBridgeConnectionAssistantWindow")
+            repairWindow.contentMinSize = NSSize(width: 620, height: 520)
+            let repairHostingController = NSHostingController(
+                rootView: ConnectionAssistantRootView(
+                    windowState: windowState,
+                    onClose: { [weak repairWindow] in repairWindow?.performClose(nil) },
+                    onTitleChange: { [weak repairWindow] title in repairWindow?.title = title }
+                )
                     .environmentObject(model)
-                    .frame(minWidth: 500, minHeight: 580)
+                    .frame(minWidth: 620, minHeight: 520)
             )
+            repairWindow.contentViewController = repairHostingController
             repairWindow.center()
             window = repairWindow
         }
         if let window {
+            window.title = localizedTitle(for: windowState.presentation, model: model)
             PrimaryAppWindowPresentation.show(window)
         }
         Task {
             if model.helperStatus == nil { await model.start() }
             await model.refreshStatus()
             await model.refreshAuthStatus()
+            if windowState.presentation == .setup { await model.refreshSetupDiscovery() }
         }
+    }
+
+    private func localizedTitle(
+        for presentation: ConnectionAssistantPresentation,
+        model: AppModel
+    ) -> String {
+        BridgeAppLocalization.string(
+            presentation == .setup
+                ? "macos.connectionAssistant.setupWindowTitle"
+                : "macos.connectionAssistant.recoveryWindowTitle",
+            locale: model.interfaceLocale
+        )
     }
 
     func windowWillClose(_ notification: Notification) {

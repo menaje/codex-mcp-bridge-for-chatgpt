@@ -25,125 +25,405 @@ private func detectedRemoteManagementEndpoint() -> String {
     return components.string ?? "https://\(host):8766"
 }
 
+enum SettingsNavigationPane: String, CaseIterable, Identifiable {
+    case general
+    case modelExecution = "model-execution"
+    case projects
+    case codex
+    case connection
+    case server
+
+    var id: String { rawValue }
+
+    var titleKey: String {
+        switch self {
+        case .general: return "macos.general"
+        case .modelExecution: return "macos.settings.modelAndExecution"
+        case .projects: return "settings.projects"
+        case .codex: return "macos.settings.codexAccountAndInstallation"
+        case .connection: return "macos.settings.connection"
+        case .server: return "macos.server"
+        }
+    }
+
+    var descriptionKey: String {
+        switch self {
+        case .general: return "macos.settings.generalDescription"
+        case .modelExecution: return "macos.settings.modelAndExecutionDescription"
+        case .projects: return "macos.settings.projectsDescription"
+        case .codex: return "macos.settings.codexAccountAndInstallationDescription"
+        case .connection: return "macos.settings.connectionDescription"
+        case .server: return "macos.settings.serverDescription"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: return "gearshape"
+        case .modelExecution: return "slider.horizontal.3"
+        case .projects: return "folder"
+        case .codex: return "terminal"
+        case .connection: return "network"
+        case .server: return "server.rack"
+        }
+    }
+
+    func isAvailable(
+        isRemoteClient: Bool,
+        hasSettings: Bool,
+        needsSetup: Bool
+    ) -> Bool {
+        switch self {
+        case .general, .connection:
+            return true
+        case .modelExecution, .projects:
+            return hasSettings && !needsSetup
+        case .codex:
+            return !isRemoteClient
+        case .server:
+            return !isRemoteClient && hasSettings && !needsSetup
+        }
+    }
+
+    static func resolved(
+        rawValue: String,
+        available: [SettingsNavigationPane],
+        needsSetup: Bool
+    ) -> SettingsNavigationPane {
+        let migrated = rawValue == "skills" ? "general" : rawValue
+        if let pane = SettingsNavigationPane(rawValue: migrated), available.contains(pane) {
+            return pane
+        }
+        if needsSetup, available.contains(.connection) { return .connection }
+        return available.first ?? .general
+    }
+}
+
+enum SettingsSearchTarget: String, CaseIterable, Identifiable {
+    case generalLanguage
+    case generalTaskPresentation
+    case generalNotifications
+    case generalLaunchAtLogin
+    case modelAccess
+    case modelSelection
+    case modelReasoning
+    case modelDelegation
+    case modelFastMode
+    case modelConcurrency
+    case modelHistory
+    case projects
+    case codexAccount
+    case codexInstallation
+    case codexUpdates
+    case connectionSetup
+    case connectionRole
+    case connectionActiveServer
+    case connectionRemoteManagement
+    case connectionDevicePairing
+    case serverAccess
+
+    var id: String { rawValue }
+
+    var pane: SettingsNavigationPane {
+        switch self {
+        case .generalLanguage, .generalTaskPresentation, .generalNotifications,
+             .generalLaunchAtLogin:
+            return .general
+        case .modelAccess, .modelSelection, .modelReasoning, .modelDelegation,
+             .modelFastMode, .modelConcurrency, .modelHistory:
+            return .modelExecution
+        case .projects:
+            return .projects
+        case .codexAccount, .codexInstallation, .codexUpdates:
+            return .codex
+        case .connectionSetup, .connectionRole, .connectionActiveServer,
+             .connectionRemoteManagement, .connectionDevicePairing:
+            return .connection
+        case .serverAccess:
+            return .server
+        }
+    }
+
+    var titleKey: String {
+        switch self {
+        case .generalLanguage: return "macos.appandcardlanguage"
+        case .generalTaskPresentation: return "macos.keepnewagenttasksinthecodexapp"
+        case .generalNotifications: return "macos.notifyaboutbridgeproblems"
+        case .generalLaunchAtLogin: return "macos.launchmenubarappatlogin"
+        case .modelAccess: return "macos.accessstrategy"
+        case .modelSelection: return "settings.model"
+        case .modelReasoning: return "macos.reasoningeffort"
+        case .modelDelegation: return "settings.allowDelegation"
+        case .modelFastMode: return "settings.usePriority"
+        case .modelConcurrency: return "macos.concurrentagenttasks"
+        case .modelHistory: return "history.title"
+        case .projects: return "settings.projects"
+        case .codexAccount: return "macos.accountusage"
+        case .codexInstallation: return "macos.cliinstallation"
+        case .codexUpdates: return "macos.versionmanagement"
+        case .connectionSetup: return "macos.connectionAssistant.openSetup"
+        case .connectionRole: return "macos.approle"
+        case .connectionActiveServer: return "macos.activeserver"
+        case .connectionRemoteManagement: return "macos.managethisserverfromanothermac"
+        case .connectionDevicePairing: return "macos.devicepairing"
+        case .serverAccess: return "macos.maximumallowedaccess"
+        }
+    }
+
+    var keywordKeys: [String] {
+        switch self {
+        case .generalLanguage:
+            return ["macos.displayandexecution", "macos.withautomaticthemacosappfollowsyourmac"]
+        case .generalTaskPresentation:
+            return ["settings.dashboardAutoOpenBackground", "settings.completionFollowUp"]
+        case .generalNotifications:
+            return ["macos.securityandconnectionapprovalnotifications", "macos.openmacosnotificationsettings"]
+        case .generalLaunchAtLogin:
+            return ["macos.openloginitemsettings", "macos.themenubarappwillopenautomaticallyat"]
+        case .modelAccess:
+            return ["macos.access", "macos.readonly", "macos.workspacewrite", "macos.fullaccess"]
+        case .modelSelection:
+            return ["macos.modelpolicy", "macos.selectionmode", "macos.automaticallowlist"]
+        case .modelReasoning:
+            return ["macos.modelpolicy"]
+        case .modelDelegation:
+            return ["settings.ultraHint"]
+        case .modelFastMode:
+            return ["settings.usePriorityHint"]
+        case .modelConcurrency:
+            return ["macos.settings.execution"]
+        case .modelHistory:
+            return ["history.period", "history.forever"]
+        case .projects:
+            return ["macos.addproject", "macos.noregisteredprojects"]
+        case .codexAccount:
+            return ["macos.settings.codexAccountAndInstallation", "macos.apicostconnection"]
+        case .codexInstallation:
+            return ["macos.bridgecli", "macos.useanothercodexinstallation"]
+        case .codexUpdates:
+            return ["macos.installationandrecovery", "macos.restorepreviousversion"]
+        case .connectionSetup:
+            return ["macos.runtimeapikey", "macos.tunnel", "macos.connectionAssistant.connectionDetailsTitle"]
+        case .connectionRole:
+            return ["macos.runserveronthismac", "macos.connecttoexistingserver"]
+        case .connectionActiveServer:
+            return ["macos.pairnewserver", "macos.reconnect"]
+        case .connectionRemoteManagement:
+            return ["macos.advancedconnectionsettings", "macos.httpsaddress"]
+        case .connectionDevicePairing:
+            return ["macos.registereddevices", "macos.createandcopyanewpairinginvitationvalid"]
+        case .serverAccess:
+            return ["macos.serversettings", "macos.applyandrestartserver"]
+        }
+    }
+
+    var anchorID: String {
+        switch self {
+        case .generalLanguage, .generalTaskPresentation:
+            return "settings-search-general-display"
+        case .generalNotifications, .generalLaunchAtLogin:
+            return "settings-search-general-app"
+        case .modelAccess:
+            return "settings-search-model-access"
+        case .modelSelection, .modelReasoning, .modelDelegation, .modelFastMode:
+            return "settings-search-model-policy"
+        case .modelConcurrency:
+            return "settings-search-model-execution"
+        case .modelHistory:
+            return "settings-search-model-history"
+        case .projects:
+            return "settings-search-projects"
+        case .codexAccount:
+            return "settings-search-codex-account"
+        case .codexInstallation, .codexUpdates:
+            return "settings-search-codex-installation"
+        case .connectionSetup:
+            return "settings-search-connection-setup"
+        case .connectionRole:
+            return "settings-search-connection-role"
+        case .connectionActiveServer:
+            return "settings-search-connection-active-server"
+        case .connectionRemoteManagement, .connectionDevicePairing:
+            return "settings-search-connection-remote-management"
+        case .serverAccess:
+            return "settings-search-server-access"
+        }
+    }
+
+    func isAvailable(
+        availablePanes: [SettingsNavigationPane],
+        isRemoteClient: Bool,
+        hasSettings: Bool,
+        needsSetup: Bool
+    ) -> Bool {
+        guard availablePanes.contains(pane) else { return false }
+        switch self {
+        case .generalLanguage, .generalTaskPresentation:
+            return hasSettings
+        case .connectionSetup:
+            return needsSetup
+        case .connectionRole:
+            return !needsSetup
+        case .connectionActiveServer:
+            return isRemoteClient && !needsSetup
+        case .connectionRemoteManagement, .connectionDevicePairing:
+            return !isRemoteClient && !needsSetup
+        default:
+            return true
+        }
+    }
+}
+
+enum SettingsSearchIndex {
+    static func results(
+        query: String,
+        locale: Locale,
+        availablePanes: [SettingsNavigationPane],
+        isRemoteClient: Bool,
+        hasSettings: Bool,
+        needsSetup: Bool
+    ) -> [SettingsSearchTarget] {
+        let terms = query
+            .split(whereSeparator: \.isWhitespace)
+            .map { normalized(String($0), locale: locale) }
+            .filter { !$0.isEmpty }
+        guard !terms.isEmpty else { return [] }
+
+        return SettingsSearchTarget.allCases.filter { target in
+            guard target.isAvailable(
+                availablePanes: availablePanes,
+                isRemoteClient: isRemoteClient,
+                hasSettings: hasSettings,
+                needsSetup: needsSetup
+            ) else { return false }
+            let keys = [target.titleKey, target.pane.titleKey] + target.keywordKeys
+            let searchableText = normalized(
+                keys.map { BridgeAppLocalization.string($0, locale: locale) }
+                    .joined(separator: " "),
+                locale: locale
+            )
+            return terms.allSatisfy(searchableText.contains)
+        }
+    }
+
+    private static func normalized(_ value: String, locale: Locale) -> String {
+        value.folding(
+            options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+            locale: locale
+        )
+    }
+}
+
+struct SettingsSearchRequest: Equatable {
+    let id = UUID()
+    let target: SettingsSearchTarget
+}
+
+struct SettingsSearchScrollContainer<Content: View>: View {
+    let request: SettingsSearchRequest?
+    let pane: SettingsNavigationPane
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            content()
+                .onAppear { scrollIfNeeded(using: proxy) }
+                .onChange(of: request?.id) { _ in scrollIfNeeded(using: proxy) }
+        }
+    }
+
+    private func scrollIfNeeded(using proxy: ScrollViewProxy) {
+        guard let request, request.target.pane == pane else { return }
+        Task { @MainActor in
+            await Task.yield()
+            withAnimation(.easeInOut(duration: 0.2)) {
+                proxy.scrollTo(request.target.anchorID, anchor: .top)
+            }
+        }
+    }
+}
+
 struct NativeSettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var syncState = SettingsDraftSyncState()
     @State private var showDiscardDraftConfirmation = false
-    @AppStorage("settings.selectedPane") private var selectedTab = "general"
-    var onSelectedPaneChange: ((String) -> Void)?
+    @State private var didResolveInitialPane = false
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var searchQuery = ""
+    @State private var searchRequest: SettingsSearchRequest?
+    @AppStorage("settings.selectedPane") private var selectedPaneID = "general"
+    var onWindowTitleChange: ((String) -> Void)?
 
-    init(onSelectedPaneChange: ((String) -> Void)? = nil) {
-        self.onSelectedPaneChange = onSelectedPaneChange
+    init(
+        onWindowTitleChange: ((String) -> Void)? = nil,
+        initialColumnVisibility: NavigationSplitViewVisibility = .all,
+        initialSearchQuery: String = ""
+    ) {
+        self.onWindowTitleChange = onWindowTitleChange
+        _columnVisibility = State(initialValue: initialColumnVisibility)
+        _searchQuery = State(initialValue: initialSearchQuery)
     }
 
     var body: some View {
-        VStack(spacing: 10) {
-            RuntimeLifecycleNoticeView()
-            if syncState.externalChangeDetected {
-                HStack(spacing: 10) {
-                    Label(
-                        "macos.settingschangedelsewheresoautomaticsavingpausedreview",
-                        systemImage: "arrow.triangle.2.circlepath"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    Spacer()
-                    Button("macos.reloadlatestvalues") {
-                        showDiscardDraftConfirmation = true
-                    }
-                }
-            }
-            TabView(selection: $selectedTab) {
-                ConnectionSettingsPane()
-                    .environmentObject(model)
-                    .tabItem { Label("macos.link", systemImage: "network") }
-                    .tag("connection")
-
-                if !model.isRemoteClient {
-                    CodexRuntimeSettingsPane(isSelected: selectedTab == "codex")
-                        .environmentObject(model)
-                        .tabItem { Label("macos.codex", systemImage: "terminal") }
-                        .tag("codex")
-                }
-
-                if model.needsSetup {
-                    ConnectionRepairView()
-                        .tabItem { Label("macos.server", systemImage: "wrench.and.screwdriver") }
-                        .tag("general")
-                } else {
-                    Group {
-                        if let snapshot = model.settings, let draft = syncState.draft {
-                            GeneralSettingsPane(
-                                snapshot: snapshot,
-                                draft: binding(for: draft),
-                                didReset: {
-                                    synchronizeDraft(force: true)
-                                    model.restorePersistedInterfaceLocale()
-                                }
-                            )
-                            .environmentObject(model)
-                        } else {
-                            SettingsConnectionUnavailablePane()
-                                .environmentObject(model)
-                        }
-                    }
-                    .tabItem { Label("macos.general", systemImage: "gearshape") }
-                    .tag("general")
-
-                    Group {
-                        if let snapshot = model.settings {
-                            ProjectsSettingsPane(
-                                snapshot: snapshot,
-                                usesRemotePaths: model.isRemoteClient
-                            )
-                            .environmentObject(model)
-                        } else {
-                            SettingsConnectionUnavailablePane()
-                                .environmentObject(model)
-                        }
-                    }
-                    .tabItem { Label("settings.projects", systemImage: "folder") }
-                    .tag("projects")
-
-                    if !model.isRemoteClient {
-                        Group {
-                            if let snapshot = model.settings {
-                                RuntimeStatusPane(snapshot: snapshot)
-                                    .environmentObject(model)
-                            } else {
-                                SettingsConnectionUnavailablePane()
-                                    .environmentObject(model)
-                            }
-                        }
-                        .tabItem { Label("macos.server", systemImage: "server.rack") }
-                        .tag("server")
-                    }
-                }
-            }
+        GeometryReader { geometry in
+            settingsNavigation
+                .frame(
+                    width: geometry.size.width,
+                    height: geometry.size.height,
+                    alignment: .top
+                )
         }
-        .padding(18)
+        .frame(minWidth: 820, minHeight: 600)
+    }
+
+    private var settingsNavigation: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            settingsSidebar
+                .id(settingsSidebarIdentity)
+                .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 270)
+        } detail: {
+            settingsDetail
+                .navigationSplitViewColumnWidth(min: 610, ideal: 720)
+        }
+        .navigationSplitViewStyle(.balanced)
+        .modifier(SettingsDefaultSidebarToolbarRemovalModifier())
+        .background(SettingsToolbarCleanupView())
+        .background(SettingsSidebarToggleAccessory(columnVisibility: $columnVisibility))
+        .searchable(
+            text: $searchQuery,
+            placement: .sidebar,
+            prompt: Text("macos.settings.searchPrompt")
+        )
         .background(Color(nsColor: .windowBackgroundColor))
         .environment(\.locale, model.interfaceLocale)
         .onAppear {
-            if selectedTab == "skills" { selectedTab = "general" }
+            if !didResolveInitialPane {
+                didResolveInitialPane = true
+                if model.needsSetup, model.requestedSettingsTab == nil {
+                    selectedPaneID = SettingsNavigationPane.connection.rawValue
+                }
+            }
+            normalizeSelection()
             synchronizeDraft()
             if let target = model.requestedSettingsTab {
-                selectedTab = target == "skills" ? "general" : target
+                selectRequestedPane(target)
                 model.requestedSettingsTab = nil
             }
-            reportSelectedPane()
+            reportWindowTitle()
         }
-        .onChange(of: selectedTab) { _ in reportSelectedPane() }
+        .onChange(of: selectedPaneID) { _ in
+            normalizeSelection()
+        }
         .onChange(of: model.requestedSettingsTab) { target in
             if let target {
-                selectedTab = target == "skills" ? "general" : target
+                selectRequestedPane(target)
                 model.requestedSettingsTab = nil
             }
         }
         .onChange(of: model.connectionContextID) { _ in
             syncState = SettingsDraftSyncState()
             synchronizeDraft(force: true)
-            selectedTab = model.settings == nil ? "connection" : "general"
+            selectedPaneID = model.settings == nil ? "connection" : "general"
         }
         .onChange(of: model.settings?.settings.settingsRevision) { revision in
             guard let snapshot = model.settings else { return }
@@ -154,10 +434,14 @@ struct NativeSettingsView: View {
             } else {
                 synchronizeDraft()
             }
-            reportSelectedPane()
         }
-        .onChange(of: model.needsSetup) { _ in reportSelectedPane() }
-        .onChange(of: model.interfaceLocalePreference) { _ in reportSelectedPane() }
+        .onChange(of: model.needsSetup) { _ in
+            normalizeSelection()
+        }
+        .onChange(of: model.isRemoteClient) { _ in
+            normalizeSelection()
+        }
+        .onChange(of: model.interfaceLocalePreference) { _ in reportWindowTitle() }
         .alert("macos.settingsconflict", isPresented: Binding(
             get: { model.settingsConflictMessage != nil },
             set: { if !$0 { model.settingsConflictMessage = nil } }
@@ -178,22 +462,315 @@ struct NativeSettingsView: View {
         }
     }
 
+    private var availablePanes: [SettingsNavigationPane] {
+        SettingsNavigationPane.allCases.filter {
+            $0.isAvailable(
+                isRemoteClient: model.isRemoteClient,
+                hasSettings: model.settings != nil,
+                needsSetup: model.needsSetup
+            )
+        }
+    }
+
+    private var selectedPane: SettingsNavigationPane {
+        SettingsNavigationPane.resolved(
+            rawValue: selectedPaneID,
+            available: availablePanes,
+            needsSetup: model.needsSetup
+        )
+    }
+
+    private var selection: Binding<SettingsNavigationPane?> {
+        Binding(
+            get: { selectedPane },
+            set: { pane in
+                guard let pane else { return }
+                selectedPaneID = pane.rawValue
+            }
+        )
+    }
+
+    private var settingsSidebarIdentity: String {
+        let destinations = availablePanes.map(\.rawValue).joined(separator: ",")
+        return "\(model.interfaceLocaleIdentifier):\(destinations)"
+    }
+
+    private var searchResults: [SettingsSearchTarget] {
+        SettingsSearchIndex.results(
+            query: searchQuery,
+            locale: model.interfaceLocale,
+            availablePanes: availablePanes,
+            isRemoteClient: model.isRemoteClient,
+            hasSettings: model.settings != nil,
+            needsSetup: model.needsSetup
+        )
+    }
+
+    private var settingsSidebar: some View {
+        VStack(spacing: 0) {
+            ScrollViewReader { scrollProxy in
+                List(selection: selection) {
+                    Section {
+                        if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            ForEach(availablePanes) { pane in
+                                HStack(spacing: 8) {
+                                    Label(
+                                        BridgeAppLocalization.string(
+                                            pane.titleKey,
+                                            locale: model.interfaceLocale
+                                        ),
+                                        systemImage: pane.symbol
+                                    )
+                                    Spacer(minLength: 4)
+                                    if pane == .connection,
+                                       model.health == .attention || model.health == .unavailable {
+                                        Image(systemName: "exclamationmark.circle.fill")
+                                            .foregroundStyle(model.health == .unavailable ? .red : .orange)
+                                            .accessibilityHidden(true)
+                                    }
+                                }
+                                .id("settings-pane-\(pane.rawValue)")
+                                .tag(pane)
+                                .accessibilityAddTraits(selectedPane == pane ? [.isSelected] : [])
+                            }
+                        } else if searchResults.isEmpty {
+                            Label(
+                                "macos.settings.noSearchResults",
+                                systemImage: "magnifyingglass"
+                            )
+                            .foregroundStyle(.secondary)
+                            .listRowSeparator(.hidden)
+                        } else {
+                            ForEach(searchResults) { target in
+                                Button {
+                                    selectSearchResult(target)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: target.pane.symbol)
+                                            .foregroundStyle(Color.accentColor)
+                                            .frame(width: 18)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(BridgeAppLocalization.string(
+                                                target.titleKey,
+                                                locale: model.interfaceLocale
+                                            ))
+                                                .lineLimit(2)
+                                            Text(BridgeAppLocalization.string(
+                                                target.pane.titleKey,
+                                                locale: model.interfaceLocale
+                                            ))
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer(minLength: 0)
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityHint(BridgeAppLocalization.string(
+                                    target.pane.descriptionKey,
+                                    locale: model.interfaceLocale
+                                ))
+                            }
+                        }
+                    }
+                    .id("settings-sidebar-top")
+                }
+                .listStyle(.sidebar)
+                .onAppear {
+                    scrollProxy.scrollTo("settings-sidebar-top", anchor: .top)
+                }
+                .onChange(of: settingsSidebarIdentity) { _ in
+                    scrollProxy.scrollTo("settings-sidebar-top", anchor: .top)
+                }
+            }
+            Divider()
+            settingsConnectionStatusCard
+                .padding(10)
+        }
+    }
+
+    private var settingsConnectionStatusCard: some View {
+        Button {
+            searchQuery = ""
+            selectedPaneID = SettingsNavigationPane.connection.rawValue
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: model.isRemoteClient ? "network" : "desktopcomputer")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.connectionTargetName)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                    Text(model.health.accessibilityLabel(locale: model.interfaceLocale))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Circle()
+                    .fill(settingsHealthColor)
+                    .frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .help(BridgeAppLocalization.string(
+            SettingsNavigationPane.connection.titleKey,
+            locale: model.interfaceLocale
+        ))
+        .accessibilityLabel(BridgeAppLocalization.format(
+            "macos.format.dotSeparatedPair",
+            locale: model.interfaceLocale,
+            model.connectionTargetName,
+            model.health.accessibilityLabel(locale: model.interfaceLocale)
+        ))
+    }
+
+    private var settingsHealthColor: Color {
+        switch model.health {
+        case .healthy: return .green
+        case .checking: return .blue
+        case .attention: return .orange
+        case .unavailable: return .red
+        }
+    }
+
+    private var settingsDetail: some View {
+        VStack(spacing: 0) {
+            SettingsPaneHeader(pane: selectedPane)
+                .environmentObject(model)
+            Divider()
+            VStack(spacing: 8) {
+                RuntimeLifecycleNoticeView()
+                if syncState.externalChangeDetected {
+                    HStack(spacing: 10) {
+                        Label(
+                            "macos.settingschangedelsewheresoautomaticsavingpausedreview",
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        Spacer()
+                        Button("macos.reloadlatestvalues") {
+                            showDiscardDraftConfirmation = true
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.top, 8)
+                }
+            }
+            GeometryReader { geometry in
+                paneContent
+                    .id("\(selectedPane.rawValue):\(model.interfaceLocaleIdentifier)")
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private var paneContent: some View {
+        switch selectedPane {
+        case .general:
+            AppGeneralSettingsPane(
+                snapshot: model.settings,
+                draft: syncState.draft.map { binding(for: $0) },
+                didReset: resetDraftAfterDefaults,
+                searchRequest: searchRequest
+            )
+            .environmentObject(model)
+        case .modelExecution:
+            if let snapshot = model.settings, let draft = syncState.draft {
+                ModelExecutionSettingsPane(
+                    snapshot: snapshot,
+                    draft: binding(for: draft),
+                    didReset: resetDraftAfterDefaults,
+                    searchRequest: searchRequest
+                )
+                .environmentObject(model)
+            } else {
+                SettingsConnectionUnavailablePane()
+                    .environmentObject(model)
+            }
+        case .projects:
+            if let snapshot = model.settings {
+                ProjectsSettingsPane(
+                    snapshot: snapshot,
+                    usesRemotePaths: model.isRemoteClient,
+                    searchRequest: searchRequest
+                )
+                .environmentObject(model)
+            } else {
+                SettingsConnectionUnavailablePane()
+                    .environmentObject(model)
+            }
+        case .codex:
+            CodexRuntimeSettingsPane(
+                isSelected: selectedPane == .codex,
+                searchRequest: searchRequest
+            )
+                .environmentObject(model)
+        case .connection:
+            if model.needsSetup {
+                ConnectionSetupSettingsPane()
+                    .id(SettingsSearchTarget.connectionSetup.anchorID)
+                    .environmentObject(model)
+            } else {
+                ConnectionSettingsPane(searchRequest: searchRequest)
+                    .environmentObject(model)
+            }
+        case .server:
+            if let snapshot = model.settings {
+                RuntimeStatusPane(snapshot: snapshot, searchRequest: searchRequest)
+                    .environmentObject(model)
+            } else {
+                SettingsConnectionUnavailablePane()
+                    .environmentObject(model)
+            }
+        }
+    }
+
     private func synchronizeDraft(force: Bool = false) {
         guard let snapshot = model.settings else { return }
         syncState.synchronize(with: snapshot, force: force)
     }
 
-    private func reportSelectedPane() {
-        let key: String
-        switch selectedTab {
-        case "connection": key = "macos.link"
-        case "codex": key = "macos.codex"
-        case "projects": key = "settings.projects"
-        case "server": key = "macos.server"
-        default:
-            key = model.needsSetup ? "macos.serversettings" : "macos.general"
-        }
-        onSelectedPaneChange?(BridgeAppLocalization.string(key, locale: model.interfaceLocale))
+    private func resetDraftAfterDefaults() {
+        synchronizeDraft(force: true)
+        model.restorePersistedInterfaceLocale()
+    }
+
+    private func normalizeSelection() {
+        let normalized = selectedPane.rawValue
+        if selectedPaneID != normalized { selectedPaneID = normalized }
+    }
+
+    private func selectRequestedPane(_ request: String) {
+        selectedPaneID = SettingsNavigationPane.resolved(
+            rawValue: request,
+            available: availablePanes,
+            needsSetup: model.needsSetup
+        ).rawValue
+    }
+
+    private func selectSearchResult(_ target: SettingsSearchTarget) {
+        selectedPaneID = target.pane.rawValue
+        searchRequest = SettingsSearchRequest(target: target)
+    }
+
+    private func reportWindowTitle() {
+        onWindowTitleChange?(BridgeAppLocalization.string(
+            "macos.settings",
+            locale: model.interfaceLocale
+        ))
     }
 
     private func binding(for value: SettingsDraft) -> Binding<SettingsDraft> {
@@ -210,8 +787,277 @@ struct NativeSettingsView: View {
     }
 }
 
+private struct SettingsDefaultSidebarToolbarRemovalModifier: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 14.0, *) {
+            content.toolbar(removing: .sidebarToggle)
+        } else {
+            content
+        }
+    }
+}
+
+@MainActor
+private final class SettingsSidebarAccessoryHostView: NSView {
+    var onWindowChange: ((NSWindow?) -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        onWindowChange?(window)
+    }
+}
+
+private struct SettingsSidebarToggleAccessory: NSViewRepresentable {
+    @Environment(\.locale) private var locale
+    @Binding var columnVisibility: NavigationSplitViewVisibility
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(columnVisibility: $columnVisibility, locale: locale)
+    }
+
+    func makeNSView(context: Context) -> SettingsSidebarAccessoryHostView {
+        let view = SettingsSidebarAccessoryHostView(frame: .zero)
+        view.onWindowChange = { [weak coordinator = context.coordinator] window in
+            coordinator?.install(in: window)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: SettingsSidebarAccessoryHostView, context: Context) {
+        context.coordinator.update(columnVisibility: $columnVisibility, locale: locale)
+        context.coordinator.install(in: nsView.window)
+    }
+
+    static func dismantleNSView(
+        _ nsView: SettingsSidebarAccessoryHostView,
+        coordinator: Coordinator
+    ) {
+        nsView.onWindowChange = nil
+        coordinator.uninstall()
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        private var columnVisibility: Binding<NavigationSplitViewVisibility>
+        private var locale: Locale
+        private weak var installedWindow: NSWindow?
+        private var accessoryController: NSTitlebarAccessoryViewController?
+        private weak var button: NSButton?
+
+        init(columnVisibility: Binding<NavigationSplitViewVisibility>, locale: Locale) {
+            self.columnVisibility = columnVisibility
+            self.locale = locale
+        }
+
+        func update(
+            columnVisibility: Binding<NavigationSplitViewVisibility>,
+            locale: Locale
+        ) {
+            self.columnVisibility = columnVisibility
+            self.locale = locale
+            updateButtonPresentation()
+        }
+
+        func install(in window: NSWindow?) {
+            guard let window else {
+                uninstall()
+                return
+            }
+            guard window !== installedWindow || accessoryController == nil else {
+                updateButtonPresentation()
+                return
+            }
+
+            uninstall()
+
+            let button = NSButton(
+                image: NSImage(
+                    systemSymbolName: "sidebar.left",
+                    accessibilityDescription: nil
+                ) ?? NSImage(),
+                target: self,
+                action: #selector(toggleSidebar)
+            )
+            button.identifier = NSUserInterfaceItemIdentifier("settings-sidebar-toggle")
+            button.imagePosition = .imageOnly
+            button.bezelStyle = .texturedRounded
+            button.controlSize = .regular
+            button.keyEquivalent = "s"
+            button.keyEquivalentModifierMask = [.command, .control]
+            button.translatesAutoresizingMaskIntoConstraints = false
+
+            let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 42, height: 28))
+            accessoryView.identifier = NSUserInterfaceItemIdentifier(
+                "settings-sidebar-toggle-accessory"
+            )
+            accessoryView.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.centerXAnchor.constraint(equalTo: accessoryView.centerXAnchor),
+                button.centerYAnchor.constraint(equalTo: accessoryView.centerYAnchor),
+                button.widthAnchor.constraint(equalToConstant: 32),
+                button.heightAnchor.constraint(equalToConstant: 28)
+            ])
+
+            let controller = NSTitlebarAccessoryViewController()
+            controller.layoutAttribute = .leading
+            controller.view = accessoryView
+            window.addTitlebarAccessoryViewController(controller)
+
+            installedWindow = window
+            accessoryController = controller
+            self.button = button
+            updateButtonPresentation()
+        }
+
+        func uninstall() {
+            if let window = installedWindow,
+               let accessoryController,
+               let index = window.titlebarAccessoryViewControllers.firstIndex(where: {
+                   $0 === accessoryController
+               }) {
+                window.removeTitlebarAccessoryViewController(at: index)
+            }
+            installedWindow = nil
+            accessoryController = nil
+            button = nil
+        }
+
+        @objc private func toggleSidebar() {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                columnVisibility.wrappedValue = sidebarIsHidden ? .all : .detailOnly
+            }
+            updateButtonPresentation()
+        }
+
+        private var sidebarIsHidden: Bool {
+            columnVisibility.wrappedValue == .detailOnly
+        }
+
+        private func updateButtonPresentation() {
+            let label = BridgeAppLocalization.string(
+                sidebarIsHidden
+                    ? "macos.settings.showSidebar"
+                    : "macos.settings.hideSidebar",
+                locale: locale
+            )
+            button?.toolTip = label
+            button?.setAccessibilityLabel(label)
+        }
+    }
+}
+
+@MainActor
+private final class SettingsToolbarCleanupNSView: NSView {
+    private weak var observedToolbar: NSToolbar?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        observeToolbarIfNeeded()
+        scheduleCleanup()
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil, let observedToolbar {
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSToolbar.willAddItemNotification,
+                object: observedToolbar
+            )
+            self.observedToolbar = nil
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    func scheduleCleanup() {
+        Task { @MainActor [weak self] in
+            self?.observeToolbarIfNeeded()
+            self?.removeAutomaticSidebarToggle()
+            for delay in [50_000_000, 150_000_000, 400_000_000] as [UInt64] {
+                try? await Task.sleep(nanoseconds: delay)
+                self?.observeToolbarIfNeeded()
+                self?.removeAutomaticSidebarToggle()
+            }
+        }
+    }
+
+    private func observeToolbarIfNeeded() {
+        guard let toolbar = window?.toolbar, toolbar !== observedToolbar else { return }
+        if let observedToolbar {
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSToolbar.willAddItemNotification,
+                object: observedToolbar
+            )
+        }
+        observedToolbar = toolbar
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(toolbarWillAddItem(_:)),
+            name: NSToolbar.willAddItemNotification,
+            object: toolbar
+        )
+    }
+
+    @objc private func toolbarWillAddItem(_ notification: Notification) {
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            self?.removeAutomaticSidebarToggle()
+        }
+    }
+
+    private func removeAutomaticSidebarToggle() {
+        guard let toolbar = window?.toolbar else { return }
+        let indexes = toolbar.items.indices.filter { index in
+            toolbar.items[index].itemIdentifier.rawValue.contains(
+                "navigationSplitView.toggleSidebar"
+            )
+        }
+        for index in indexes.reversed() {
+            toolbar.removeItem(at: index)
+        }
+    }
+}
+
+private struct SettingsToolbarCleanupView: NSViewRepresentable {
+    func makeNSView(context: Context) -> SettingsToolbarCleanupNSView {
+        SettingsToolbarCleanupNSView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: SettingsToolbarCleanupNSView, context: Context) {
+        nsView.scheduleCleanup()
+    }
+}
+
+private struct SettingsPaneHeader: View {
+    @EnvironmentObject private var model: AppModel
+    let pane: SettingsNavigationPane
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: pane.symbol)
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 30, height: 30)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(BridgeAppLocalization.string(pane.titleKey, locale: model.interfaceLocale))
+                    .font(.title2.bold())
+                Text(BridgeAppLocalization.string(pane.descriptionKey, locale: model.interfaceLocale))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct ConnectionSettingsPane: View {
     @EnvironmentObject private var model: AppModel
+    let searchRequest: SettingsSearchRequest?
     @State private var showRemoteModeConfirmation = false
     @State private var showRemoteConnectionSheet = false
     @State private var confirmRemoteModeAfterSheet = false
@@ -225,129 +1071,51 @@ private struct ConnectionSettingsPane: View {
     @State private var advancedConnectionSettingsExpanded = false
 
     var body: some View {
-        Form {
-            Section("macos.approle") {
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: model.isRemoteClient ? "network" : "desktopcomputer")
-                        .font(.title2)
-                        .foregroundStyle(Color.accentColor)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(BridgeAppLocalization.string(
-                            model.isRemoteClient ? "macos.connecttoexistingserver" : "macos.runserveronthismac",
-                            locale: model.interfaceLocale
-                        ))
-                            .font(.headline)
-                        Text(BridgeAppLocalization.string(
-                            model.isRemoteClient
-                                ? "macos.thisappusesonlytheselectedservers"
-                                : "macos.thismacownsandrunsthehelperbridge",
-                            locale: model.interfaceLocale
-                        ))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if model.isRemoteClient {
-                        Button("macos.runonthismac") {
-                            Task { await model.setConnectionMode(.localHost) }
+        SettingsSearchScrollContainer(request: searchRequest, pane: .connection) {
+            Form {
+                Section("macos.approle") {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: model.isRemoteClient ? "network" : "desktopcomputer")
+                            .font(.title2)
+                            .foregroundStyle(Color.accentColor)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(BridgeAppLocalization.string(
+                                model.isRemoteClient ? "macos.connecttoexistingserver" : "macos.runserveronthismac",
+                                locale: model.interfaceLocale
+                            ))
+                                .font(.headline)
+                            Text(BridgeAppLocalization.string(
+                                model.isRemoteClient
+                                    ? "macos.thisappusesonlytheselectedservers"
+                                    : "macos.thismacownsandrunsthehelperbridge",
+                                locale: model.interfaceLocale
+                            ))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                    } else {
-                        Button("macos.connecttoexistingserver") {
-                            showRemoteConnectionSheet = true
-                        }
-                    }
-                }
-            }
-
-            if model.isRemoteClient {
-                remoteClientSections
-            } else {
-                hostedServerSections
-            }
-
-            Section("macos.thismacsappsettings") {
-                Toggle("macos.notifyaboutbridgeproblems", isOn: $model.bridgeProblemNotificationsEnabled)
-                Toggle("macos.securityandconnectionapprovalnotifications", isOn: $model.securityNotificationsEnabled)
-                HStack {
-                    switch model.notificationPermission {
-                    case .authorized:
-                        Label("macos.macosnotificationsallowed", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
                         Spacer()
-                        Button("macos.openmacosnotificationsettings") { model.openNotificationSettings() }
-                    case .denied:
-                        Label("macos.macosnotificationsaredisabled", systemImage: "bell.slash")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("macos.openmacosnotificationsettings") { model.openNotificationSettings() }
-                    case .notDetermined:
-                        Button("macos.checkmacosnotificationpermission") {
-                            Task { await model.requestNotificationAuthorization() }
+                        if model.isRemoteClient {
+                            Button("macos.runonthismac") {
+                                Task { await model.setConnectionMode(.localHost) }
+                            }
+                        } else {
+                            Button("macos.connecttoexistingserver") {
+                                showRemoteConnectionSheet = true
+                            }
                         }
-                        .disabled(model.notificationAuthorizationInProgress)
-                    case .unknown:
-                        Text("macos.checkingnotificationpermission").foregroundStyle(.secondary)
                     }
                 }
-                Text("macos.notificationsfollowmacossettingsandfocusconnectionproblems")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Toggle(
-                    "macos.launchmenubarappatlogin",
-                    isOn: Binding(
-                        get: { model.menuBarLoginItemStatus.isEnabled },
-                        set: { model.setMenuBarLaunchAtLogin($0) }
-                    )
-                )
-                .disabled(model.loginItemOperationInProgress)
+                .id(SettingsSearchTarget.connectionRole.anchorID)
 
-                Text(BridgeAppLocalization.string(
-                    model.isRemoteClient
-                        ? "macos.thisappusesonlytheselectedservers"
-                        : "macos.appliesimmediatelyonthismacturningitoff",
-                    locale: model.interfaceLocale
-                ))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                switch model.menuBarLoginItemStatus {
-                case .enabled:
-                    Label("macos.themenubarappwillopenautomaticallyat", systemImage: "checkmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                case .requiresApproval:
-                    Label("macos.macosapprovalisrequiredforthisloginitem", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                    Button("macos.openloginitemsettings") {
-                        model.openLoginItemsSystemSettings()
-                    }
-                case .notFound:
-                    Label("macos.theloginitemcouldnotbefoundin", systemImage: "xmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                case .unknown:
-                    Label("macos.theloginitemstatuscouldnotbedetermined", systemImage: "questionmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                case .notRegistered:
-                    EmptyView()
-                }
-
-                if let error = model.loginItemErrorMessage {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
+                if model.isRemoteClient {
+                    remoteClientSections
+                } else {
+                    hostedServerSections
                 }
             }
-        }
-        .formStyle(.grouped)
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await model.refreshNotificationPermission() }
+            .formStyle(.grouped)
         }
         .onAppear {
-            Task { await model.refreshNotificationPermission() }
             synchronizeProfileName()
             guard !model.isRemoteClient else { return }
             Task {
@@ -542,6 +1310,7 @@ private struct ConnectionSettingsPane: View {
                 Button("macos.reconnect") { Task { await model.refreshAll() } }
             }
         }
+        .id(SettingsSearchTarget.connectionActiveServer.anchorID)
 
         if let error = model.connectionErrorMessage {
             Section("macos.connectionerror") {
@@ -643,6 +1412,7 @@ private struct ConnectionSettingsPane: View {
                     .textSelection(.enabled)
             }
         }
+        .id(SettingsSearchTarget.connectionRemoteManagement.anchorID)
 
         if model.remoteManagementStatus?.listening == true {
             Section("macos.devicepairing") {
@@ -933,11 +1703,247 @@ private struct SettingsConnectionUnavailablePane: View {
     }
 }
 
-private struct GeneralSettingsPane: View {
+private struct AppGeneralSettingsPane: View {
+    @EnvironmentObject private var model: AppModel
+    let snapshot: SettingsSnapshot?
+    let draft: Binding<SettingsDraft>?
+    let didReset: () -> Void
+    let searchRequest: SettingsSearchRequest?
+    @State private var showResetConfirmation = false
+
+    var body: some View {
+        SettingsSearchScrollContainer(request: searchRequest, pane: .general) {
+            Form {
+                if let snapshot, let draft {
+                    Section("macos.displayandexecution") {
+                    Picker("macos.appandcardlanguage", selection: draft.uiLocalePreference) {
+                        ForEach(snapshot.capabilities.availableUiLocalePreferences, id: \.self) {
+                            Text(localeLabel($0, locale: model.interfaceLocale)).tag($0)
+                        }
+                    }
+                    Text("macos.withautomaticthemacosappfollowsyourmac")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Toggle(
+                        "macos.keepnewagenttasksinthecodexapp",
+                        isOn: draft.showBridgeThreadsInCodexApp
+                    )
+                    Text("macos.whenenablednewtasksandfreshcontextsare")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Toggle(
+                        "settings.dashboardAutoOpenBackground",
+                        isOn: draft.dashboardAutoOpenBackground
+                    )
+                    Text("settings.dashboardAutoOpenBackgroundHint")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if model.isRemoteClient {
+                        Label(
+                            "macos.completionnotificationsaresentbythemenubar",
+                            systemImage: "bell.badge"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    } else {
+                        Toggle(
+                            "settings.completionFollowUp",
+                            isOn: draft.completionFollowUp
+                        )
+                        Text("macos.whenworkcompletesthemenubarappon")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    }
+                    .id(SettingsSearchTarget.generalLanguage.anchorID)
+                } else {
+                    Section {
+                        Label(
+                            "macos.settings.sharedSettingsAvailableAfterConnection",
+                            systemImage: "network"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("macos.thismacsappsettings") {
+                Toggle(
+                    "macos.notifyaboutbridgeproblems",
+                    isOn: $model.bridgeProblemNotificationsEnabled
+                )
+                Toggle(
+                    "macos.securityandconnectionapprovalnotifications",
+                    isOn: $model.securityNotificationsEnabled
+                )
+                HStack {
+                    switch model.notificationPermission {
+                    case .authorized:
+                        Label("macos.macosnotificationsallowed", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Spacer()
+                        Button("macos.openmacosnotificationsettings") {
+                            model.openNotificationSettings()
+                        }
+                    case .denied:
+                        Label("macos.macosnotificationsaredisabled", systemImage: "bell.slash")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("macos.openmacosnotificationsettings") {
+                            model.openNotificationSettings()
+                        }
+                    case .notDetermined:
+                        Button("macos.checkmacosnotificationpermission") {
+                            Task { await model.requestNotificationAuthorization() }
+                        }
+                        .disabled(model.notificationAuthorizationInProgress)
+                    case .unknown:
+                        Text("macos.checkingnotificationpermission")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text("macos.notificationsfollowmacossettingsandfocusconnectionproblems")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle(
+                    "macos.launchmenubarappatlogin",
+                    isOn: Binding(
+                        get: { model.menuBarLoginItemStatus.isEnabled },
+                        set: { model.setMenuBarLaunchAtLogin($0) }
+                    )
+                )
+                .disabled(model.loginItemOperationInProgress)
+
+                Text(BridgeAppLocalization.string(
+                    model.isRemoteClient
+                        ? "macos.thisappusesonlytheselectedservers"
+                        : "macos.appliesimmediatelyonthismacturningitoff",
+                    locale: model.interfaceLocale
+                ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                switch model.menuBarLoginItemStatus {
+                case .enabled:
+                    Label("macos.themenubarappwillopenautomaticallyat", systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                case .requiresApproval:
+                    Label(
+                        "macos.macosapprovalisrequiredforthisloginitem",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    Button("macos.openloginitemsettings") {
+                        model.openLoginItemsSystemSettings()
+                    }
+                case .notFound:
+                    Label("macos.theloginitemcouldnotbefoundin", systemImage: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                case .unknown:
+                    Label("macos.theloginitemstatuscouldnotbedetermined", systemImage: "questionmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                case .notRegistered:
+                    EmptyView()
+                }
+
+                if let error = model.loginItemErrorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+                }
+                .id(SettingsSearchTarget.generalNotifications.anchorID)
+
+                if let error = model.settingsErrorMessage ?? model.settingsLoadErrorMessage {
+                    Section("macos.saveerror") {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                if draft != nil {
+                    Section {
+                        HStack {
+                            Button("macos.resetgeneralsettings", role: .destructive) {
+                                model.cancelPendingSettingsAutosave()
+                                showResetConfirmation = true
+                            }
+                            .disabled(model.isBusy || model.generalSettingsSaveState.isActive)
+                            Spacer()
+                            SettingsAutosaveStatusView()
+                                .environmentObject(model)
+                        }
+                    }
+                }
+            }
+            .formStyle(.grouped)
+        }
+        .onAppear {
+            Task { await model.refreshNotificationPermission() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.refreshNotificationPermission() }
+        }
+        .confirmationDialog(
+            "macos.resetgeneralsettingstotheoperatordefaults",
+            isPresented: $showResetConfirmation
+        ) {
+            Button("macos.resetgeneralsettings", role: .destructive) {
+                Task {
+                    if await model.resetGeneralSettings() { didReset() }
+                }
+            }
+        }
+    }
+}
+
+private struct SettingsAutosaveStatusView: View {
+    @EnvironmentObject private var model: AppModel
+
+    @ViewBuilder
+    var body: some View {
+        switch model.generalSettingsSaveState {
+        case .idle:
+            Text("macos.changessaveautomatically")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .pending:
+            Label("macos.waitingtosave", systemImage: "ellipsis")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .saving:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("settings.saving")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        case .saved:
+            Label("macos.saved", systemImage: "checkmark.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .failed:
+            Label("macos.couldnotsave", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
+    }
+}
+
+private struct ModelExecutionSettingsPane: View {
     @EnvironmentObject private var model: AppModel
     let snapshot: SettingsSnapshot
     @Binding var draft: SettingsDraft
     let didReset: () -> Void
+    let searchRequest: SettingsSearchRequest?
     @State private var showResetConfirmation = false
     @State private var allowedModelsExpanded = false
     @State private var expandedModelIDs = Set<String>()
@@ -970,8 +1976,9 @@ private struct GeneralSettingsPane: View {
     }
 
     var body: some View {
-        Form {
-            Section {
+        SettingsSearchScrollContainer(request: searchRequest, pane: .modelExecution) {
+            Form {
+                Section {
                 Label(
                     "macos.thesesettingsaresharedbyeveryconversationusing",
                     systemImage: "person.2"
@@ -980,7 +1987,7 @@ private struct GeneralSettingsPane: View {
                 .foregroundStyle(.secondary)
             }
 
-            Section("macos.access") {
+                Section("macos.access") {
                 Picker("macos.accessstrategy", selection: $draft.accessStrategy) {
                     ForEach(snapshot.capabilities.availableAccessStrategies, id: \.self) {
                         Text(accessLabel($0, locale: model.interfaceLocale)).tag($0)
@@ -1005,9 +2012,10 @@ private struct GeneralSettingsPane: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
                 }
-            }
+                }
+                .id(SettingsSearchTarget.modelAccess.anchorID)
 
-            Section("macos.modelpolicy") {
+                Section("macos.modelpolicy") {
                 Picker("macos.selectionmode", selection: policyModeBinding) {
                     Text("settings.modelPolicy.fixed").tag("fixed")
                     Text("settings.language.auto").tag("automatic")
@@ -1102,22 +2110,15 @@ private struct GeneralSettingsPane: View {
                     Task { await model.refreshSettings(refreshModels: true) }
                 }
                 .disabled(model.generalSettingsSaveState.isActive)
-            }
+                }
+                .id(SettingsSearchTarget.modelSelection.anchorID)
 
             if draft.policyMode == "automatic", snapshot.settings.modelDescriptionOverrides != nil {
                 ModelDescriptionsSettingsSection(snapshot: snapshot)
                     .id(model.connectionContextID)
             }
 
-            Section("macos.displayandexecution") {
-                Picker("macos.appandcardlanguage", selection: $draft.uiLocalePreference) {
-                    ForEach(snapshot.capabilities.availableUiLocalePreferences, id: \.self) {
-                        Text(localeLabel($0, locale: model.interfaceLocale)).tag($0)
-                    }
-                }
-                Text("macos.withautomaticthemacosappfollowsyourmac")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Section("macos.settings.execution") {
                 LabeledContent("macos.concurrentagenttasks") {
                     HStack(spacing: 6) {
                         TextField(value: concurrentJobsBinding, format: .number) {
@@ -1147,32 +2148,11 @@ private struct GeneralSettingsPane: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
                 }
-                Toggle("macos.keepnewagenttasksinthecodexapp", isOn: $draft.showBridgeThreadsInCodexApp)
-                Text(threadVisibilityDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Toggle("settings.dashboardAutoOpenBackground", isOn: $draft.dashboardAutoOpenBackground)
-                Text("settings.dashboardAutoOpenBackgroundHint")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if model.isRemoteClient {
-                    Label(
-                        "macos.completionnotificationsaresentbythemenubar",
-                        systemImage: "bell.badge"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                } else {
-                    Toggle("settings.completionFollowUp", isOn: $draft.completionFollowUp)
-                    Text("macos.whenworkcompletesthemenubarappon")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
+                .id(SettingsSearchTarget.modelConcurrency.anchorID)
 
-            }
-
-            if let policy = snapshot.historyPolicy, snapshot.settings.historyRetentionDays != nil {
-                Section("history.title") {
+                if let policy = snapshot.historyPolicy, snapshot.settings.historyRetentionDays != nil {
+                    Section("history.title") {
                     Picker("history.period", selection: $draft.historyRetentionDays) {
                         Text("macos.history.retention7Days").tag(7)
                         Text("macos.history.retention30Days").tag(30)
@@ -1180,31 +2160,34 @@ private struct GeneralSettingsPane: View {
                         Text("history.forever").tag(0)
                     }
                     WorkHistoryPolicyView(policy: policy)
+                    }
+                    .id(SettingsSearchTarget.modelHistory.anchorID)
                 }
-            }
 
-            if let error = model.settingsErrorMessage ?? model.settingsLoadErrorMessage {
-                Section("macos.saveerror") {
+                if let error = model.settingsErrorMessage ?? model.settingsLoadErrorMessage {
+                    Section("macos.saveerror") {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
+                    }
                 }
-            }
 
-            Section {
-                HStack {
+                Section {
+                    HStack {
                     Button("macos.resetgeneralsettings", role: .destructive) {
                         model.cancelPendingSettingsAutosave()
                         showResetConfirmation = true
                     }
                     .disabled(model.isBusy || model.generalSettingsSaveState.isActive)
                     Spacer()
-                    autosaveStatus
+                    SettingsAutosaveStatusView()
+                        .environmentObject(model)
+                    }
                 }
             }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
         .disabled(model.modelDescriptionSaveInProgress)
         .confirmationDialog("macos.resetgeneralsettingstotheoperatordefaults", isPresented: $showResetConfirmation) {
             Button("macos.resetgeneralsettings", role: .destructive) {
@@ -1212,35 +2195,6 @@ private struct GeneralSettingsPane: View {
                     if await model.resetGeneralSettings() { didReset() }
                 }
             }
-        }
-    }
-
-    @ViewBuilder
-    private var autosaveStatus: some View {
-        switch model.generalSettingsSaveState {
-        case .idle:
-            Text("macos.changessaveautomatically")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .pending:
-            Label("macos.waitingtosave", systemImage: "ellipsis")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .saving:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("settings.saving")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        case .saved:
-            Label("macos.saved", systemImage: "checkmark.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .failed:
-            Label("macos.couldnotsave", systemImage: "exclamationmark.triangle.fill")
-                .font(.caption)
-                .foregroundStyle(.red)
         }
     }
 
@@ -1254,11 +2208,6 @@ private struct GeneralSettingsPane: View {
                 )
             }
         )
-    }
-
-    private var threadVisibilityDescription: String {
-        let key = "macos.whenenablednewtasksandfreshcontextsare"
-        return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
     }
 
     private func modelExpansionBinding(_ modelID: String) -> Binding<Bool> {
@@ -1379,6 +2328,7 @@ private struct GeneralSettingsPane: View {
 private struct RuntimeStatusPane: View {
     @EnvironmentObject private var model: AppModel
     let snapshot: SettingsSnapshot
+    let searchRequest: SettingsSearchRequest?
     private let defaultBackend = "app-server"
     @State private var maximumAccess = "read-only"
     @State private var showApplyConfirmation = false
@@ -1398,8 +2348,9 @@ private struct RuntimeStatusPane: View {
     }
 
     var body: some View {
-        Form {
-            Section("macos.serversettings") {
+        SettingsSearchScrollContainer(request: searchRequest, pane: .server) {
+            Form {
+                Section("macos.serversettings") {
                 Picker("macos.maximumallowedaccess", selection: $maximumAccess) {
                     Text("macos.readonly").tag("read-only")
                     Text("macos.workspacewrite").tag("workspace-write")
@@ -1429,32 +2380,33 @@ private struct RuntimeStatusPane: View {
                             !isDirty
                     )
                 }
-            }
+                }
+                .id(SettingsSearchTarget.serverAccess.anchorID)
 
-            if snapshot.policyActivation.developerModeRefreshRequired {
-                Section("macos.actionrequired") {
+                if snapshot.policyActivation.developerModeRefreshRequired {
+                    Section("macos.actionrequired") {
                     Label(
                         "macos.executionlimitschangedrefreshtheplugininchatgpt",
                         systemImage: "arrow.triangle.2.circlepath"
                     )
                     .font(.caption)
                     .foregroundStyle(.orange)
+                    }
                 }
-            }
 
-            if !snapshot.warnings.isEmpty {
-                Section("macos.needsattention") {
+                if !snapshot.warnings.isEmpty {
+                    Section("macos.needsattention") {
                     ForEach(snapshot.warnings, id: \.self) { warning in
                         Label(warning, systemImage: "exclamationmark.triangle")
                             .font(.caption)
                             .foregroundStyle(.orange)
                             .textSelection(.enabled)
                     }
+                    }
                 }
-            }
 
-            if let error = model.runtimeErrorMessage {
-                Section("macos.applyerror") {
+                if let error = model.runtimeErrorMessage {
+                    Section("macos.applyerror") {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.red)
@@ -1465,10 +2417,11 @@ private struct RuntimeStatusPane: View {
                         }
                         .disabled(model.isBusy)
                     }
+                    }
                 }
             }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
         .onAppear(perform: synchronize)
         .onChange(of: model.helperStatus?.configuration.operatorConfiguration) { _ in
             if !isDirty { synchronize() }
@@ -1520,6 +2473,7 @@ private struct ProjectsSettingsPane: View {
     @EnvironmentObject private var model: AppModel
     let snapshot: SettingsSnapshot
     let usesRemotePaths: Bool
+    let searchRequest: SettingsSearchRequest?
     @State private var editor: ProjectEditor?
     @State private var deletionTarget: BridgeProject?
 
@@ -1534,15 +2488,13 @@ private struct ProjectsSettingsPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("settings.projects").font(.title2.bold())
-                    Text(BridgeAppLocalization.string(
-                        usesRemotePaths
-                            ? "macos.manageprojectsontheselectedserverallpaths"
-                            : "macos.manageprojectnamesandtheirlinkedexistingfolders",
-                        locale: model.interfaceLocale
-                    ))
-                        .foregroundStyle(.secondary)
+                if usesRemotePaths {
+                    Label(
+                        "macos.manageprojectsontheselectedserverallpaths",
+                        systemImage: "network"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button {
@@ -1560,6 +2512,8 @@ private struct ProjectsSettingsPane: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(model.isBusy)
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
 
             List {
                 if snapshot.settings.projects.isEmpty {
@@ -1604,6 +2558,8 @@ private struct ProjectsSettingsPane: View {
             Text("macos.removingaregistrationpreservestheactualfolderfiles")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 14)
             if let error = model.settingsErrorMessage {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
@@ -1611,6 +2567,7 @@ private struct ProjectsSettingsPane: View {
                     .textSelection(.enabled)
             }
         }
+        .id(SettingsSearchTarget.projects.anchorID)
         .sheet(item: $editor) { editor in
             ProjectEditorSheet(editor: editor, usesRemotePaths: usesRemotePaths) { operation in
                 let succeeded = await model.applyProjectOperation(operation)

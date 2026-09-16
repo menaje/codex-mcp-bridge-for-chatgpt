@@ -45,7 +45,7 @@ On macOS, open the menu-bar icon to check the selected server without opening Ch
 The native client-only mode is currently available on macOS. Windows and Linux users run the Node.js server and use the ChatGPT Settings and Dashboard cards.
 
 <p align="center">
-  <img src="docs/images/macos-app-roles-light-en.png" alt="English macOS settings in light appearance showing the local server role and the option to connect to an existing server" width="720">
+  <img src="docs/images/macos-connection-setup-light-en.png" alt="English macOS first-run assistant in light appearance showing the local server and existing server roles" width="720">
 </p>
 
 ## Quick start
@@ -58,7 +58,7 @@ The native client-only mode is currently available on macOS. Windows and Linux u
    - **Run Server on This Mac** to run Codex locally.
    - **Connect to Existing Server** to use this Mac only as a client.
 
-Server mode requires macOS 13 or later, Node.js 22 or later, and `tunnel-client`. In **Settings → Codex**, use an existing app/terminal Codex or install a bridge-managed CLI. A single existing installation is selected automatically; saved choices and manual update preferences are preserved. The app guides you through the Tunnel runtime key, Tunnel ID, Codex browser login, and first project.
+Server mode requires macOS 13 or later, Node.js 22 or later, and `tunnel-client`. In **Settings → Codex Account & Installation**, use an existing app/terminal Codex or install a bridge-managed CLI. A single existing installation is selected automatically; saved choices and manual update preferences are preserved. The first-run assistant checks supported existing connection settings before asking for a Tunnel runtime key and Tunnel ID, then guides you through Codex browser login and the first project.
 
 The bridge connects directly to the selected Codex through App Server. See [Codex installation and updates](docs/codex-runtimes.md) for ownership, compatibility, authentication and recovery.
 
@@ -104,14 +104,7 @@ Routine computer, app, Bridge, or Tunnel restarts do not require a ChatGPT conne
 
 ## Settings at a glance
 
-| Area | What it controls |
-| --- | --- |
-| Connection | This Mac's server/client role, saved servers, remote access, and device pairing |
-| General | Access strategy, model policy, Priority/Fast use, language, concurrent work, and card behavior |
-| Projects | The folders Codex may use for new work, plus bridge-owned versioned skills shared with ChatGPT and scoped Codex tasks |
-| Server | Codex backend and the maximum access the server may grant |
-
-Changes in the native app's General tab are saved automatically. In the ChatGPT Settings card, choose **Save settings** after editing. These settings are shared by every ChatGPT conversation using that server. In client mode, General and Projects edit the selected remote server. The login-at-startup preference always belongs to the current Mac. Server settings require an explicit save and restart.
+The resizable native Settings window separates General, Models & Execution, Projects, Codex Account & Installation, Connection, and Server in a macOS sidebar. Shared changes save automatically, server limits require an explicit apply and restart, and skill management remains in the separate **Skill Library** window. See [Native macOS app](docs/macos-app.md#settings-and-skill-management) for scope and behavior details.
 
 <p align="center">
   <img src="docs/images/chatgpt-settings-light-en.png" alt="English ChatGPT settings card in light appearance showing access strategy, execution model policy, project registration, interface language, and concurrency" width="645">

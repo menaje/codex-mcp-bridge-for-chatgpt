@@ -5,16 +5,18 @@ import SwiftUI
 struct CodexRuntimeSettingsPane: View {
     @EnvironmentObject private var model: AppModel
     let isSelected: Bool
+    let searchRequest: SettingsSearchRequest?
     @State private var showInstallation = false
     @State private var showSelection = false
     @State private var showVersions = false
     @State private var showDeleteConfirmation = false
 
     var body: some View {
-        Form {
-            accountSection
-            if let runtime = model.codexRuntime {
-                Section("macos.cliinstallation") {
+        SettingsSearchScrollContainer(request: searchRequest, pane: .codex) {
+            Form {
+                accountSection
+                if let runtime = model.codexRuntime {
+                    Section("macos.cliinstallation") {
                     if let selected = runtime.selection {
                         HStack {
                             Text(sourceName(selected.source))
@@ -64,30 +66,31 @@ struct CodexRuntimeSettingsPane: View {
                             }
                         }
                     }
-                }
+                    }
+                    .id(SettingsSearchTarget.codexInstallation.anchorID)
 
-                if runtime.isInstalling {
-                    Section {
+                    if runtime.isInstalling {
+                        Section {
                         ProgressView(operationName(runtime.operation?.phase))
                         if let bytes = runtime.operation?.downloadedBytes,
                            let total = runtime.operation?.totalBytes, total > 0 {
                             ProgressView(value: Double(bytes), total: Double(total))
                         }
+                        }
                     }
-                }
-                if runtime.configuredCommand == nil && (runtime.operation?.phase == "pending" || runtime.pendingSelection != nil) {
-                    Section("macos.waitingtoapply") {
+                    if runtime.configuredCommand == nil && (runtime.operation?.phase == "pending" || runtime.pendingSelection != nil) {
+                        Section("macos.waitingtoapply") {
                         Text("macos.thecurrentenvironmentstaysinuserestartthe")
                             .font(.caption)
                         Button("macos.applyafterworkfinishes") {
                             Task { _ = await model.restartRuntime(force: false) }
                         }
                         .disabled(model.isBusy)
+                        }
                     }
-                }
 
-                if runtime.selection?.source == "bridge" && runtime.configuredCommand == nil {
-                    Section("macos.versionmanagement") {
+                    if runtime.selection?.source == "bridge" && runtime.configuredCommand == nil {
+                        Section("macos.versionmanagement") {
                         CodexRuntimeUpdateControls(runtime: runtime, kind: "cli")
                         FullRowDisclosure("macos.installationandrecovery", isExpanded: $showVersions) {
                             ForEach(Array((runtime.managedVersions ?? []).enumerated()), id: \.offset) { _, version in
@@ -120,10 +123,10 @@ struct CodexRuntimeSettingsPane: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         }
+                        }
                     }
-                }
-                if runtime.actions.retry && runtime.operation?.action != "check-updates" {
-                    Section {
+                    if runtime.actions.retry && runtime.operation?.action != "check-updates" {
+                        Section {
                         Text("macos.installationfailedyourpreviousinstallationispreserved")
                             .foregroundStyle(.orange)
                         Button("macos.tryagain") { action("retry") }
@@ -136,17 +139,18 @@ struct CodexRuntimeSettingsPane: View {
                             }
                         }
                         if runtime.actions.rollback { Button("macos.restorepreviousversion") { action("rollback") } }
+                        }
                     }
+                } else {
+                    ProgressView()
+                    Button("macos.common.refreshAction") { action("status") }
                 }
-            } else {
-                ProgressView()
-                Button("macos.common.refreshAction") { action("status") }
+                if let error = model.codexRuntimeError {
+                    Section("macos.needsattention") { Text(error).font(.caption).foregroundStyle(.orange) }
+                }
             }
-            if let error = model.codexRuntimeError {
-                Section("macos.needsattention") { Text(error).font(.caption).foregroundStyle(.orange) }
-            }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
         .onAppear { model.codexSettingsVisible = isSelected }
         .onChange(of: isSelected) { model.codexSettingsVisible = $0 }
         .onDisappear { model.codexSettingsVisible = false }
@@ -176,6 +180,7 @@ struct CodexRuntimeSettingsPane: View {
             }
 
         }
+        .id(SettingsSearchTarget.codexAccount.anchorID)
         if let billing = model.codexRuntime?.billing, billing.configured,
            model.selectedCodexAccount?.authMode != "api-key" {
             Section("macos.apicostconnection") {
