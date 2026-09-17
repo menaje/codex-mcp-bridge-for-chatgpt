@@ -95,11 +95,31 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                 in: artifacts,
                 expecting: ["Settings", "General", "Connection", "Server", "Manage language"]
             )
+            try await verifySettingsScrolling(
+                settingsWindow,
+                locales: ["en", "es", "fr", "de", "pt", "ko", "ja", "zh-Hans", "zh-Hant"]
+            )
+            model.previewInterfaceLocale("en")
+            try await settle(settingsWindow, iterations: 16)
+            clearSettingsCaptureErrors()
+            try await settle(settingsWindow, iterations: 8)
+            try scrollSettingsDetailToBottom(settingsWindow, scenario: "English default size")
+            try await settle(settingsWindow, iterations: 8)
+            try await capture(
+                settingsWindow,
+                named: "settings-general-bottom-en-light.png",
+                in: artifacts,
+                expecting: ["Reset General Settings", "Changes Save Automatically"]
+            )
+            try scrollSettingsDetailToTop(settingsWindow, scenario: "English default size")
             settingsWindow.appearance = NSAppearance(named: .darkAqua)
             settingsWindow.setContentSize(NSSize(width: 820, height: 600))
             try await settle(settingsWindow)
             clearSettingsCaptureErrors()
             try await settle(settingsWindow, iterations: 8)
+            try verifySettingsDetailViewport(settingsWindow, scenario: "English minimum size")
+            try scrollSettingsDetailToBottom(settingsWindow, scenario: "English minimum size")
+            try scrollSettingsDetailToTop(settingsWindow, scenario: "English minimum size")
             if ProcessInfo.processInfo.environment[
                 "CODEX_SETTINGS_VISUAL_HOLD_AFTER_MINIMUM"
             ] == "1" {
@@ -269,6 +289,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                     "allCapturesReadable": true,
                     "minimumWindowSizesCovered": true,
                     "dynamicLocaleChangeCovered": true,
+                    "settingsDetailBottomReachableAcrossLocales": true,
                     "settingsDestinationsCovered": true,
                     "settingsSearchCovered": true,
                     "sidebarTogglePositionStable": true,
@@ -335,6 +356,95 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
         model.loginItemErrorMessage = nil
         model.settingsErrorMessage = nil
         model.settingsLoadErrorMessage = nil
+    }
+
+    private func verifySettingsScrolling(
+        _ window: NSWindow,
+        locales: [String]
+    ) async throws {
+        for locale in locales {
+            model.previewInterfaceLocale(locale)
+            try await settle(window, iterations: 16)
+            clearSettingsCaptureErrors()
+            try await settle(window, iterations: 8)
+            let scenario = "settings locale \(locale)"
+            try verifySettingsDetailViewport(window, scenario: scenario)
+            try scrollSettingsDetailToBottom(window, scenario: scenario)
+            try scrollSettingsDetailToTop(window, scenario: scenario)
+        }
+    }
+
+    private func verifySettingsDetailViewport(
+        _ window: NSWindow,
+        scenario: String
+    ) throws {
+        guard let contentView = window.contentView,
+              let scrollView = settingsDetailScrollView(in: contentView) else {
+            throw AcceptanceError("The Settings detail scroll view is missing for \(scenario)")
+        }
+        let scrollRect = scrollView.convert(scrollView.bounds, to: contentView)
+        let visibleRect = scrollRect.intersection(contentView.bounds)
+        guard !visibleRect.isNull,
+              visibleRect.width >= scrollView.bounds.width - 1,
+              visibleRect.height >= scrollView.bounds.height - 1 else {
+            throw AcceptanceError(
+                "The Settings detail scroll view exceeds the visible window for \(scenario): " +
+                "scroll=\(scrollRect), visible=\(visibleRect), window=\(contentView.bounds)"
+            )
+        }
+    }
+
+    private func scrollSettingsDetailToBottom(
+        _ window: NSWindow,
+        scenario: String
+    ) throws {
+        try verifySettingsDetailViewport(window, scenario: scenario)
+        guard let scrollView = settingsDetailScrollView(in: window.contentView),
+              let documentView = scrollView.documentView else {
+            throw AcceptanceError("The Settings detail document is missing for \(scenario)")
+        }
+        let clipView = scrollView.contentView
+        let targetY = documentView.isFlipped
+            ? max(documentView.bounds.minY, documentView.bounds.maxY - clipView.bounds.height)
+            : documentView.bounds.minY
+        clipView.scroll(to: NSPoint(x: clipView.bounds.minX, y: targetY))
+        scrollView.reflectScrolledClipView(clipView)
+        window.contentView?.layoutSubtreeIfNeeded()
+        guard abs(clipView.bounds.minY - targetY) <= 1 else {
+            throw AcceptanceError(
+                "The Settings detail could not reach the bottom for \(scenario): " +
+                "wanted=\(targetY), actual=\(clipView.bounds.minY)"
+            )
+        }
+    }
+
+    private func scrollSettingsDetailToTop(
+        _ window: NSWindow,
+        scenario: String
+    ) throws {
+        guard let scrollView = settingsDetailScrollView(in: window.contentView),
+              let documentView = scrollView.documentView else {
+            throw AcceptanceError("The Settings detail document is missing for \(scenario)")
+        }
+        let clipView = scrollView.contentView
+        let targetY = documentView.isFlipped
+            ? documentView.bounds.minY
+            : max(documentView.bounds.minY, documentView.bounds.maxY - clipView.bounds.height)
+        clipView.scroll(to: NSPoint(x: clipView.bounds.minX, y: targetY))
+        scrollView.reflectScrolledClipView(clipView)
+        window.contentView?.layoutSubtreeIfNeeded()
+    }
+
+    private func settingsDetailScrollView(in root: NSView?) -> NSScrollView? {
+        allScrollViews(in: root).max { left, right in
+            left.bounds.width < right.bounds.width
+        }
+    }
+
+    private func allScrollViews(in root: NSView?) -> [NSScrollView] {
+        guard let root else { return [] }
+        let current = (root as? NSScrollView).map { [$0] } ?? []
+        return current + root.subviews.flatMap { allScrollViews(in: $0) }
     }
 
     private func sidebarToggleWindowX(_ window: NSWindow) -> CGFloat? {

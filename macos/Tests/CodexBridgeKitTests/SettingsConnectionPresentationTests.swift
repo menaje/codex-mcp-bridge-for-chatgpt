@@ -229,8 +229,9 @@ final class SettingsConnectionPresentationTests: XCTestCase {
 
     func testProductionSettingsUsesSidebarAndSeparateDraftDestinations() throws {
         let source = try source("SettingsViews.swift")
-        XCTAssertTrue(source.contains("NavigationSplitView"))
-        XCTAssertTrue(source.contains("NavigationSplitView(columnVisibility: $columnVisibility)"))
+        XCTAssertTrue(source.contains("HStack(spacing: 0)"))
+        XCTAssertTrue(source.contains(".frame(width: 238)"))
+        XCTAssertFalse(source.contains("NavigationSplitView(columnVisibility:"))
         XCTAssertTrue(source.contains("ScrollViewReader"))
         XCTAssertTrue(source.contains("settings-sidebar-top"))
         XCTAssertTrue(source.contains(".listStyle(.sidebar)"))
@@ -238,7 +239,10 @@ final class SettingsConnectionPresentationTests: XCTestCase {
         XCTAssertTrue(source.contains("SettingsSidebarToggleAccessory"))
         XCTAssertTrue(source.contains("addTitlebarAccessoryViewController"))
         XCTAssertTrue(source.contains("settings-sidebar-toggle-accessory"))
-        XCTAssertTrue(source.contains("placement: .sidebar"))
+        XCTAssertTrue(source.contains("SettingsSidebarSearchField"))
+        XCTAssertTrue(source.contains("NSSearchField"))
+        XCTAssertTrue(source.contains("settings-search-field"))
+        XCTAssertFalse(source.contains(".searchable("))
         XCTAssertTrue(source.contains("macos.settings.searchPrompt"))
         XCTAssertTrue(source.contains("settingsConnectionStatusCard"))
         XCTAssertTrue(source.contains("AppGeneralSettingsPane"))

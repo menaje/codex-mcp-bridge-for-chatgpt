@@ -377,23 +377,20 @@ struct NativeSettingsView: View {
     }
 
     private var settingsNavigation: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            settingsSidebar
-                .id(settingsSidebarIdentity)
-                .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 270)
-        } detail: {
+        HStack(spacing: 0) {
+            if columnVisibility != .detailOnly {
+                settingsSidebar
+                    .id(settingsSidebarIdentity)
+                    .frame(width: 238)
+                Divider()
+            }
             settingsDetail
-                .navigationSplitViewColumnWidth(min: 610, ideal: 720)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationSplitViewStyle(.balanced)
+        .animation(.easeInOut(duration: 0.2), value: columnVisibility)
         .modifier(SettingsDefaultSidebarToolbarRemovalModifier())
         .background(SettingsToolbarCleanupView())
         .background(SettingsSidebarToggleAccessory(columnVisibility: $columnVisibility))
-        .searchable(
-            text: $searchQuery,
-            placement: .sidebar,
-            prompt: Text("macos.settings.searchPrompt")
-        )
         .background(Color(nsColor: .windowBackgroundColor))
         .environment(\.locale, model.interfaceLocale)
         .onAppear {
@@ -508,6 +505,18 @@ struct NativeSettingsView: View {
 
     private var settingsSidebar: some View {
         VStack(spacing: 0) {
+            SettingsSidebarSearchField(
+                text: $searchQuery,
+                placeholder: BridgeAppLocalization.string(
+                    "macos.settings.searchPrompt",
+                    locale: model.interfaceLocale
+                )
+            )
+            .frame(height: 28)
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+
             ScrollViewReader { scrollProxy in
                 List(selection: selection) {
                     Section {
@@ -784,6 +793,49 @@ struct NativeSettingsView: View {
                 }
             }
         )
+    }
+}
+
+private struct SettingsSidebarSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let searchField = NSSearchField(frame: .zero)
+        searchField.identifier = NSUserInterfaceItemIdentifier("settings-search-field")
+        searchField.sendsSearchStringImmediately = true
+        searchField.delegate = context.coordinator
+        searchField.placeholderString = placeholder
+        searchField.setAccessibilityLabel(placeholder)
+        return searchField
+    }
+
+    func updateNSView(_ searchField: NSSearchField, context: Context) {
+        context.coordinator.text = $text
+        if searchField.stringValue != text {
+            searchField.stringValue = text
+        }
+        searchField.placeholderString = placeholder
+        searchField.setAccessibilityLabel(placeholder)
+    }
+
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let searchField = notification.object as? NSSearchField else { return }
+            if text.wrappedValue != searchField.stringValue {
+                text.wrappedValue = searchField.stringValue
+            }
+        }
     }
 }
 

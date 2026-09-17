@@ -45,8 +45,9 @@ if (main.split("@main\nstruct CodexBridgeMenuBarApp").length !== 2) {
   throw new Error("Review the changed production entry point.");
 }
 for (const contract of [
-  "NavigationSplitView",
+  "HStack(spacing: 0)",
   "ScrollViewReader",
+  "SettingsSidebarSearchField",
   "SettingsToolbarCleanupView",
   "SettingsSearchIndex",
   "settingsConnectionStatusCard",
@@ -156,6 +157,7 @@ await access(report, constants.R_OK);
 const expectedCaptures = [
   "settings-sidebar-ko-light.png",
   "settings-sidebar-en-light.png",
+  "settings-general-bottom-en-light.png",
   "settings-sidebar-en-dark-minimum.png",
   "settings-model-execution-en-light.png",
   "settings-projects-en-light.png",
