@@ -94,7 +94,7 @@
     ],
     "compatibilityResources": [],
     "releaseCatalog": "ui-release-catalog.json",
-    "releaseCatalogSha256": "f6bfd3a96106c6fb8448272ca7ff9609b7984e42128d96911ef34f08e696c086"
+    "releaseCatalogSha256": "c34e05627d8ef4c7113bb70c31bc120c3497d8d4c162248caf1becb559a5f441"
   },
   "stateCompatibility": {
     "currentSchema": 19,
@@ -133,8 +133,8 @@
       "userSettingsSchema": 4,
       "taskInputContract": 5,
       "macosHelperProtocol": 2,
-      "localCompanionProtocol": 8,
-      "remoteCompanionProtocol": 6
+      "localCompanionProtocol": 9,
+      "remoteCompanionProtocol": 7
     },
     "contractSources": {
       "databaseSchema": "src/stateSchema.ts#CURRENT_STATE_SCHEMA_VERSION",

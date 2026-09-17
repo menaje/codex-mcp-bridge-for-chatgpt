@@ -34,8 +34,7 @@ const CURRENT_TOOL_ORDER = [
   "codex_update_settings",
   "codex_task",
   "codex_ui_read",
-  "codex_ui_problem",
-  "codex_ui_stop"
+  "codex_ui_problem"
 ] as const;
 
 class FixtureUpstream implements CodexUpstream {

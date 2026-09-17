@@ -403,26 +403,6 @@ struct DashboardPopoverView: View {
             Text("macos.showsonlytasksagentsandconversationsretainedby")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            if shouldOfferCodexThreadPersistence {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(
-                        "macos.opennewagenttasksinthecodexapp",
-                        systemImage: "arrow.up.forward.app"
-                    )
-                    .font(.caption.weight(.semibold))
-                    Text("macos.newtasksandfreshcontextswillbekept")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Button("macos.enablefornewtasks") {
-                        model.enableCodexThreadPersistence()
-                    }
-                    .buttonStyle(.link)
-                    .disabled(model.generalSettingsSaveState.isActive)
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-            }
         }
         if dashboard.counts.runtimeUnknownAgents > 0,
            !model.dashboardEnrichmentPending || model.dashboardEnrichmentFailed {
@@ -561,13 +541,6 @@ struct DashboardPopoverView: View {
             key = "macos.codexloginisrequiredsigninbeforethe"
         }
         return BridgeAppLocalization.string(key, locale: model.interfaceLocale)
-    }
-
-    private var shouldOfferCodexThreadPersistence: Bool {
-        guard let settings = model.settings else { return false }
-        return !model.isRemoteClient &&
-            settings.capabilities.defaultBackend == "app-server" &&
-            !settings.settings.showBridgeThreadsInCodexApp
     }
 
     private var footer: some View {

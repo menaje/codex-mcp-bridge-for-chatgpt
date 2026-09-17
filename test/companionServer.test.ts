@@ -84,7 +84,7 @@ describe("native companion server", () => {
     expect(await request(socketPath,{jsonrpc:"2.0",id:2,method:"thread.handoff",params:{...params,codexThreadUrl:"https://example.com"}})).toHaveProperty("error");
     expect(service.threadHandoff).toHaveBeenCalledTimes(1);
   });
-  it("uses one free-form Bridge Markdown document contract on the native socket", async () => {
+  it("uses one free-form Bridge Markdown skill contract on the native socket", async () => {
     const socketPath = temporarySocketPath();
     const service = fakeApplicationService();
     const first = {
@@ -100,7 +100,7 @@ describe("native companion server", () => {
     service.skillLibrarySnapshot = vi.fn(async () => ({ skills: [first] }));
     service.readBridgeSkill = vi.fn(async () => ({
       skill: first,
-      document: "# Review\n\nCheck every claim.",
+      content: "# Review\n\nCheck every claim.",
       files: [{ path: "references/evidence.md", format: "markdown" as const, bytes: 21, contentDigest: "c".repeat(64) }],
       format: "markdown" as const,
       legacy: false,
@@ -174,7 +174,7 @@ describe("native companion server", () => {
       jsonrpc: "2.0", id: "skills-read", method: "skills.read",
       params: { skillId: first.skillId, source: "bridge", version: "1" }
     })).resolves.toMatchObject({ result: {
-      document: "# Review\n\nCheck every claim.", format: "markdown",
+      content: "# Review\n\nCheck every claim.", format: "markdown",
       files: [{ path: "references/evidence.md" }]
     } });
     await expect(request(socketPath, {
@@ -189,14 +189,14 @@ describe("native companion server", () => {
     })).resolves.toHaveProperty("error");
 
     const create = {
-      requestId: randomUUID(), name: "Report review", description: "Review reports.", document: "# Review",
+      requestId: randomUUID(), name: "Report review", description: "Review reports.", content: "# Review",
       files: [{ path: "references/evidence.md", content: "# Evidence" }]
     };
     await request(socketPath, { jsonrpc: "2.0", id: "skills-create", method: "skills.create", params: create });
     expect(service.createBridgeSkill).toHaveBeenCalledWith(create);
 
     const scalarBoundedCreate = {
-      requestId: randomUUID(), name: "😀".repeat(BRIDGE_SKILL_LIMITS.nameMaxCharacters), document: "# Unicode"
+      requestId: randomUUID(), name: "😀".repeat(BRIDGE_SKILL_LIMITS.nameMaxCharacters), content: "# Unicode"
     };
     await expect(request(socketPath, {
       jsonrpc: "2.0", id: "skills-create-scalar-bound", method: "skills.create", params: scalarBoundedCreate
@@ -210,7 +210,7 @@ describe("native companion server", () => {
     expect(service.createBridgeSkill).toHaveBeenCalledTimes(createCalls);
 
     const update = {
-      requestId: randomUUID(), skillId: first.skillId, expectedVersion: "1", document: "# Check evidence",
+      requestId: randomUUID(), skillId: first.skillId, expectedVersion: "1", content: "# Check evidence",
       files: { remove: ["references/evidence.md"] }
     };
     await request(socketPath, { jsonrpc: "2.0", id: "skills-update", method: "skills.update", params: update });
@@ -220,7 +220,7 @@ describe("native companion server", () => {
     await request(socketPath, { jsonrpc: "2.0", id: "skills-disable", method: "skills.set-enabled", params: setEnabled });
     expect(service.setBridgeSkillEnabled).toHaveBeenCalledWith(setEnabled);
 
-    const deletion = { requestId: randomUUID(), skillId: first.skillId, expectedVersion: "3", confirmName: first.name };
+    const deletion = { requestId: randomUUID(), skillId: first.skillId, expectedVersion: "3" };
     const deleted = await request(socketPath, {
       jsonrpc: "2.0", id: "skills-delete", method: "skills.delete", params: deletion
     });
@@ -259,15 +259,15 @@ describe("native companion server", () => {
     expect(wrongSource).toHaveProperty("error");
   });
 
-  it("carries the full worst-case JSON-escaped Bridge document over the native socket", async () => {
+  it("carries the full worst-case JSON-escaped Bridge skill content over the native socket", async () => {
     const socketPath = temporarySocketPath();
     const service = fakeApplicationService();
-    const document = "\u0001".repeat(BRIDGE_SKILL_LIMITS.documentMaxBytes);
+    const content = "\u0001".repeat(BRIDGE_SKILL_LIMITS.contentMaxBytes);
     const skill = {
       skillId: `bridge_${"c".repeat(32)}`,
       source: "bridge" as const,
       version: "1",
-      name: "Maximum document",
+      name: "Maximum skill",
       description: "",
       contentDigest: "d".repeat(64),
       enabled: true,
@@ -277,7 +277,7 @@ describe("native companion server", () => {
     service.createBridgeSkill = vi.fn(async () => skill);
     service.readBridgeSkill = vi.fn(async () => ({
       skill,
-      document,
+      content,
       files: [],
       format: "markdown" as const,
       legacy: false,
@@ -313,18 +313,18 @@ describe("native companion server", () => {
     expect(COMPANION_MAX_REQUEST_BYTES).toBe(BRIDGE_SKILL_LIMITS.mutationWireMaxBytes);
     expect(COMPANION_MAX_RESPONSE_BYTES).toBe(BRIDGE_SKILL_LIMITS.mutationWireMaxBytes);
     const create = await request(socketPath, {
-      jsonrpc: "2.0", id: "max-document-create", method: "skills.create",
-      params: { requestId: randomUUID(), name: skill.name, document }
+      jsonrpc: "2.0", id: "max-content-create", method: "skills.create",
+      params: { requestId: randomUUID(), name: skill.name, content }
     });
     expect(create).toMatchObject({ result: { skillId: skill.skillId } });
-    expect(service.createBridgeSkill).toHaveBeenCalledWith(expect.objectContaining({ document }));
+    expect(service.createBridgeSkill).toHaveBeenCalledWith(expect.objectContaining({ content }));
 
     const read = await request(socketPath, {
-      jsonrpc: "2.0", id: "max-document-read", method: "skills.read",
+      jsonrpc: "2.0", id: "max-content-read", method: "skills.read",
       params: { skillId: skill.skillId, source: "bridge", version: "1" }
     });
     expect(read).toMatchObject({ result: { format: "markdown" } });
-    expect(read.result.document).toBe(document);
+    expect(read.result.content).toBe(content);
   }, 20_000);
   it("serves lightweight health independently of a stalled admission snapshot", async () => {
     const socketPath = temporarySocketPath();

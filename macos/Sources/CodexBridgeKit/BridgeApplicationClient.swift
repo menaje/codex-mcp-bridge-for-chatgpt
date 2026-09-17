@@ -1,6 +1,6 @@
 import Foundation
 
-/// Matches the Bridge companion envelope for the main document plus files.
+/// Matches the Bridge companion envelope for skill content plus files.
 public let bridgeSkillTransportEnvelopeMaxBytes = 72 * 1_024 * 1_024
 public let bridgeSkillPackageCompressedMaxBytes = 16 * 1_024 * 1_024
 
@@ -21,8 +21,8 @@ public protocol BridgeApplicationClient: Sendable {
     func updateSettings(_ mutation: SettingsMutation) async throws -> SettingsSnapshot
 
     func skillLibrary() async throws -> BridgeSkillLibrarySnapshot
-    func readBridgeSkill(_ reference: BridgeSkillReference) async throws -> BridgeSkillDocument
-    func readBridgeSkillFile(_ reference: BridgeSkillReference, path: String) async throws -> BridgeSkillFileDocument
+    func readBridgeSkill(_ reference: BridgeSkillReference) async throws -> BridgeSkill
+    func readBridgeSkillFile(_ reference: BridgeSkillReference, path: String) async throws -> BridgeSkillFile
     func bridgeSkillVersions(skillId: String) async throws -> BridgeSkillVersionList
     func createBridgeSkill(_ request: BridgeSkillCreateRequest) async throws -> BridgeSkillSummary
     func updateBridgeSkill(_ request: BridgeSkillUpdateRequest) async throws -> BridgeSkillSummary
@@ -82,11 +82,11 @@ public extension BridgeApplicationClient {
         throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
     }
 
-    func readBridgeSkill(_ reference: BridgeSkillReference) async throws -> BridgeSkillDocument {
+    func readBridgeSkill(_ reference: BridgeSkillReference) async throws -> BridgeSkill {
         throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
     }
 
-    func readBridgeSkillFile(_ reference: BridgeSkillReference, path: String) async throws -> BridgeSkillFileDocument {
+    func readBridgeSkillFile(_ reference: BridgeSkillReference, path: String) async throws -> BridgeSkillFile {
         throw NSError(domain: "SKILL_LIBRARY_UNAVAILABLE", code: 1)
     }
 

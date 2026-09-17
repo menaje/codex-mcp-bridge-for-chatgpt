@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Simplify Dashboard execution controls and make native Skill Library lifecycle actions direct and accessible.",
+  "breaking": false,
+  "migration": null
+}

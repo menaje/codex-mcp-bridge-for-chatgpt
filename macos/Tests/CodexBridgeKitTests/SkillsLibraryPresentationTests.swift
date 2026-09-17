@@ -92,6 +92,55 @@ final class SkillsLibraryPresentationTests: XCTestCase {
         XCTAssertFalse(settings.contains("showsStandaloneWindowButton"))
     }
 
+    func testInspectorKeepsLifecycleActionsFixedAndDeleteNeedsNoTypedName() throws {
+        let source = try String(contentsOf: sourceURL("SkillsLibraryViews.swift"), encoding: .utf8)
+
+        XCTAssertTrue(source.contains("private func inspectorActions(_ document: BridgeSkill)"))
+        XCTAssertTrue(source.contains("let actionsDisabled = windowState.hasUnsavedChanges || model.skillMutationInProgress"))
+        XCTAssertTrue(source.contains(".help(Text(verbatim: lifecycleLabel))"))
+        XCTAssertTrue(source.contains(".accessibilityLabel(Text(verbatim: lifecycleLabel))"))
+        XCTAssertTrue(source.contains(".help(\"macos.skills.deletePermanentlyAction\")"))
+        XCTAssertTrue(source.contains("macos.skills.allVersionsAndMarkdownFilesWillBeDeletedAndCannotBeRecovered"))
+        XCTAssertTrue(source.contains("Text(verbatim: skillName)"))
+        XCTAssertFalse(source.contains("@State private var typedName"))
+        XCTAssertFalse(source.contains("confirmName:"))
+    }
+
+    func testSkillCommandsDropEllipsesWhileProgressCopyKeepsOne() {
+        let commands = [
+            "macos.skills.importNewSkillFromFilesFolderOrZip",
+            "macos.skills.importIntoCurrentSkill",
+            "macos.skills.importFilesFolderOrZip",
+            "macos.skills.exportAsZip",
+            "macos.skills.renameDialog",
+            "macos.skills.deletePermanentlyDialog"
+        ]
+        let locales = ["en", "ko", "ja", "zh-Hans", "zh-Hant", "es", "fr", "de", "pt"]
+        for key in commands {
+            for identifier in locales {
+                XCTAssertFalse(BridgeAppLocalization.string(
+                    key,
+                    locale: Locale(identifier: identifier)
+                ).contains("…"))
+            }
+        }
+        XCTAssertTrue(BridgeAppLocalization.string(
+            "macos.skills.loadingMarkdownFile",
+            locale: Locale(identifier: "en")
+        ).contains("…"))
+    }
+
+    func testDashboardHistoryNoLongerOffersTheCodexPersistenceBanner() throws {
+        let dashboard = try String(contentsOf: sourceURL("DashboardViews.swift"), encoding: .utf8)
+        let model = try String(contentsOf: sourceURL("AppModel.swift"), encoding: .utf8)
+        let settings = try String(contentsOf: sourceURL("SettingsViews.swift"), encoding: .utf8)
+
+        XCTAssertFalse(dashboard.contains("macos.opennewagenttasksinthecodexapp"))
+        XCTAssertFalse(dashboard.contains("macos.enablefornewtasks"))
+        XCTAssertFalse(model.contains("enableCodexThreadPersistence"))
+        XCTAssertTrue(settings.contains("showBridgeThreadsInCodexApp"))
+    }
+
     func testSkillsWindowUsesAStableCompactTitlebarAndFreshDefaultFrame() throws {
         let application = try String(
             contentsOf: sourceURL("CodexBridgeMenuBarApp.swift"),

@@ -885,7 +885,7 @@ public struct HelperLogs: Codable, Sendable {
     public let entries: [HelperLogEntry]
 }
 
-/// A stable reference into the Bridge-owned Markdown document library.
+/// A stable reference into the Bridge-owned Markdown skill library.
 public struct BridgeSkillReference: Codable, Sendable, Equatable {
     public let skillId: String
     public let source: String
@@ -915,11 +915,11 @@ public struct BridgeSkillSummary: Codable, Sendable, Identifiable, Equatable {
     }
 }
 
-public struct BridgeSkillDocument: Codable, Sendable, Equatable, Identifiable {
+public struct BridgeSkill: Codable, Sendable, Equatable, Identifiable {
     public var id: String { skill.id }
     public let skill: BridgeSkillSummary
     /// Exact authored source. The client renders this value but never rewrites it.
-    public let document: String
+    public let content: String
     public let files: [BridgeSkillFileSummary]
     public let format: String
     /// A legacy structured version exposed through the lossless Markdown adapter.
@@ -955,7 +955,7 @@ public struct BridgeSkillFileReadRequest: Codable, Sendable, Equatable {
     }
 }
 
-public struct BridgeSkillFileDocument: Codable, Sendable, Equatable, Identifiable {
+public struct BridgeSkillFile: Codable, Sendable, Equatable, Identifiable {
     public var id: String { "\(skill.id)-\(path)" }
     public let kind: String
     public let skill: BridgeSkillSummary
@@ -1027,20 +1027,20 @@ public struct BridgeSkillCreateRequest: Codable, Sendable, Equatable {
     public let requestId: String
     public let name: String
     public let description: String?
-    public let document: String
+    public let content: String
     public let files: [BridgeSkillFileInput]?
 
     public init(
         requestId: String = UUID().uuidString,
         name: String,
         description: String? = nil,
-        document: String,
+        content: String,
         files: [BridgeSkillFileInput]? = nil
     ) {
         self.requestId = requestId
         self.name = name
         self.description = description
-        self.document = document
+        self.content = content
         self.files = files
     }
 }
@@ -1051,7 +1051,7 @@ public struct BridgeSkillUpdateRequest: Codable, Sendable, Equatable {
     public let expectedVersion: String
     public let name: String?
     public let description: String?
-    public let document: String?
+    public let content: String?
     public let files: BridgeSkillFileChanges?
 
     public init(
@@ -1060,7 +1060,7 @@ public struct BridgeSkillUpdateRequest: Codable, Sendable, Equatable {
         expectedVersion: String,
         name: String? = nil,
         description: String? = nil,
-        document: String? = nil,
+        content: String? = nil,
         files: BridgeSkillFileChanges? = nil
     ) {
         self.requestId = requestId
@@ -1068,7 +1068,7 @@ public struct BridgeSkillUpdateRequest: Codable, Sendable, Equatable {
         self.expectedVersion = expectedVersion
         self.name = name
         self.description = description
-        self.document = document
+        self.content = content
         self.files = files
     }
 }
@@ -1111,23 +1111,20 @@ public struct BridgeSkillSetEnabledRequest: Codable, Sendable, Equatable {
     }
 }
 
-/// Permanent deletion is intentionally native-only and requires typing the current name.
+/// Permanent deletion is intentionally native-only and version checked.
 public struct BridgeSkillDeleteRequest: Codable, Sendable, Equatable {
     public let requestId: String
     public let skillId: String
     public let expectedVersion: String
-    public let confirmName: String
 
     public init(
         requestId: String = UUID().uuidString,
         skillId: String,
-        expectedVersion: String,
-        confirmName: String
+        expectedVersion: String
     ) {
         self.requestId = requestId
         self.skillId = skillId
         self.expectedVersion = expectedVersion
-        self.confirmName = confirmName
     }
 }
 

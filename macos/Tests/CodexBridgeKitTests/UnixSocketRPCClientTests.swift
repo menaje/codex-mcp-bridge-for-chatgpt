@@ -4,14 +4,14 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class UnixSocketRPCClientTests: XCTestCase {
-    func testDefaultTransportReadsMaximumBridgeSkillDocumentEnvelope() async throws {
-        struct DocumentResult: Decodable { let document: String }
+    func testDefaultTransportReadsMaximumBridgeSkillContentEnvelope() async throws {
+        struct SkillResult: Decodable { let content: String }
         // C0 control characters are valid source text (except NUL) but use
         // JSON's six-byte escape form, exercising the true transport bound.
-        let document = String(repeating: "\u{0001}", count: 3 * 1_024 * 1_024)
+        let content = String(repeating: "\u{0001}", count: 3 * 1_024 * 1_024)
         let body = String(
             decoding: try JSONSerialization.data(withJSONObject: [
-                "result": ["document": document]
+                "result": ["content": content]
             ]),
             as: UTF8.self
         )
@@ -23,8 +23,8 @@ final class UnixSocketRPCClientTests: XCTestCase {
 
         let client = UnixSocketRPCClient(socketPath: path)
         XCTAssertEqual(client.maximumResponseBytes, bridgeSkillTransportEnvelopeMaxBytes)
-        let result: DocumentResult = try await client.call("skills.read", params: EmptyParameters())
-        XCTAssertEqual(result.document, document)
+        let result: SkillResult = try await client.call("skills.read", params: EmptyParameters())
+        XCTAssertEqual(result.content, content)
     }
 
     func testContractDecodeFailureIsNotReportedAsPersistentDataLoss() async throws {

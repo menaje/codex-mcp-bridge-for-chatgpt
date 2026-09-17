@@ -121,7 +121,6 @@ describe("human-facing UI localization", () => {
     }
     for (const locale of SUPPORTED_UI_LOCALES.filter((entry) => entry !== "en")) {
       expect(UI_TRANSLATIONS[locale]["common.loading"]).not.toBe(UI_TRANSLATIONS.en["common.loading"]);
-      expect(UI_TRANSLATIONS[locale]["activity.forceStop"]).not.toBe(UI_TRANSLATIONS.en["activity.forceStop"]);
       expect(UI_TRANSLATIONS[locale]["settings.language"]).not.toBe(UI_TRANSLATIONS.en["settings.language"]);
       for (const key of [
         "settings.codexAppThreads",
@@ -394,7 +393,8 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-visibility"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="completion-handoff"');
     expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_read"');
-    expect(DASHBOARD_CARD_HTML).toContain('controlAction("codex_ui_stop"');
+    expect(DASHBOARD_CARD_HTML).not.toContain("codex_ui_stop");
+    expect(DASHBOARD_CARD_HTML).toContain('if(row.controlKind!=="request")return');
     expect(DASHBOARD_CARD_HTML).toContain('controlAction("codex_interaction_respond"');
     expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_problem"');
     expect(DASHBOARD_CARD_HTML).not.toContain('callTool("codex_activity"');

@@ -117,7 +117,7 @@ export class BridgeSkillPackageUploads {
     uploadId: string,
     mainPath: string | null,
     includePaths?: readonly string[]
-  ): Promise<{ document?: string; files: Array<{ path: string; content: string }> }> {
+  ): Promise<{ content?: string; files: Array<{ path: string; content: string }> }> {
     return this.commit(uploadId, mainPath, includePaths, async (selection) => selection);
   }
 
@@ -126,7 +126,7 @@ export class BridgeSkillPackageUploads {
     uploadId: string,
     mainPath: string | null,
     includePaths: readonly string[] | undefined,
-    operation: (selection: { document?: string; files: Array<{ path: string; content: string }> }) => Promise<Result>
+    operation: (selection: { content?: string; files: Array<{ path: string; content: string }> }) => Promise<Result>
   ): Promise<Result> {
     const inspection = await this.inspect(uploadId);
     const upload = this.require(uploadId);
@@ -145,7 +145,7 @@ export class BridgeSkillPackageUploads {
         throw new Error("SKILL_PACKAGE_SELECTION_INVALID: Select unique paths from the inspected package.");
       }
       if (normalizedMain !== null && !selectedPaths.has(normalizedMain)) {
-        throw new Error("SKILL_PACKAGE_SELECTION_INVALID: The main document must remain selected.");
+        throw new Error("SKILL_PACKAGE_SELECTION_INVALID: The selected skill content must remain included.");
       }
       const selected = normalizedMain === null ? undefined : available.get(normalizedMain);
       if (normalizedMain !== null && !selected) {
@@ -160,9 +160,9 @@ export class BridgeSkillPackageUploads {
         return key === "skill.md" || key === "document.md";
       });
       if (reservedMain) {
-        throw new Error(`SKILL_PACKAGE_MAIN_CONFLICT: ${reservedMain.path} must be selected as the main document or excluded.`);
+        throw new Error(`SKILL_PACKAGE_MAIN_CONFLICT: ${reservedMain.path} must be selected as skill content or excluded.`);
       }
-      const result = await operation({ ...(selected ? { document: selected.content } : {}), files });
+      const result = await operation({ ...(selected ? { content: selected.content } : {}), files });
       await this.discard(inspection.uploadId);
       return result;
     } catch (error) {
@@ -448,11 +448,11 @@ export async function inspectBridgeSkillZipFile(file: string): Promise<{
 }
 
 export function deterministicBridgeSkillZip(
-  document: string,
+  content: string,
   files: ReadonlyArray<{ path: string; content: string }>,
   mainPath: "SKILL.md" | "document.md" = "SKILL.md"
 ): Buffer {
-  const entries = [{ path: mainPath, content: document }, ...files]
+  const entries = [{ path: mainPath, content }, ...files]
     .map((entry) => {
       const filePath = normalizeExportPath(entry.path);
       return { path: filePath, bytes: encodePackageText(entry.content, filePath) };

@@ -213,12 +213,12 @@ import {
   BRIDGE_SKILL_LIMITS,
   BRIDGE_SKILL_SOURCE,
   SkillLibrary,
+  type BridgeSkill,
   type CreateBridgeSkillInput,
   type CreateBridgeSkillPackageInput,
   type DeleteBridgeSkillInput,
   type DeletedBridgeSkill,
-  type SkillDocument,
-  type SkillFileDocument,
+  type SkillFile,
   type SkillReference,
   type SkillSearchResult,
   type SkillSummary,
@@ -245,7 +245,7 @@ export const MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES = 24 * 1024;
 /** Complete serialized codex_task descriptor ceiling at maximum bounded choices. */
 export const CODEX_TASK_DESCRIPTOR_MAX_JSON_BYTES = 128 * 1024;
 /** Stable task envelope adopted once; settings/catalog/project values stay runtime-authoritative. */
-/** v5 removes Bridge-document delivery from Codex task admission. */
+/** v5 removes Bridge-skill delivery from Codex task admission. */
 export const CODEX_TASK_INPUT_CONTRACT_VERSION = "5" as const;
 const MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING =
   "The model-authoritative primary answer was truncated by the structured-output byte limit. Request a narrower report only if the missing sections are required.";
@@ -631,7 +631,7 @@ const dashboardRowOutputSchema = z.strictObject({
   updatedAt: z.string(),
   elapsedMs: z.number().int().min(0),
   backgroundProcessCount: z.number().int().min(0),
-  controlKind: z.enum(["request", "execution"]).nullable().optional(),
+  controlKind: z.literal("request").nullable().optional(),
   latestTurn: dashboardTurnOutputSchema.nullable().optional(),
   history: z.array(dashboardTurnOutputSchema).optional(),
   historyCount: z.number().int().min(0).optional(),
@@ -1211,10 +1211,8 @@ const bridgeSkillSearchOutputSchema = z.strictObject({
   skills: z.array(skillSummaryOutputSchema)
 });
 
-const bridgeSkillReadOutputSchema = z.strictObject({
-  kind: z.literal("skill"),
-  skill: skillSummaryOutputSchema,
-  document: z.string().min(1),
+const bridgeSkillValueOutputSchema = skillSummaryOutputSchema.extend({
+  content: z.string().min(1),
   files: z.array(z.strictObject({
     path: z.string().min(1),
     format: z.literal("markdown"),
@@ -1225,6 +1223,11 @@ const bridgeSkillReadOutputSchema = z.strictObject({
   legacy: z.boolean(),
   sourceSnapshot: z.literal("versioned-bridge-record"),
   warnings: z.array(z.enum(["archived", "legacy-structured"]))
+});
+
+const bridgeSkillReadOutputSchema = z.strictObject({
+  kind: z.literal("skill"),
+  skill: bridgeSkillValueOutputSchema
 });
 
 const bridgeSkillFileOutputSchema = z.strictObject({
@@ -1530,7 +1533,6 @@ export const OPERATOR_OUTPUT_SCHEMAS = Object.freeze({
 });
 export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
   codex_ui_read: z.union([dashboardViewOutputSchema, dashboardHistoryDetailOutputSchema, settingsViewOutputSchema, uiControlSummaryOutputSchema]),
-  codex_ui_stop: mutationOutputSchema,
   codex_ui_problem: problemActionResultSchema,
   codex_interaction_respond: mutationOutputSchema,
   codex_update_settings: settingsViewOutputSchema
@@ -1679,7 +1681,7 @@ type CodexRouting = {
   requestHashVersion: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 };
 
-// Version 10 removes bridge document selections from Codex task admission.
+// Version 10 removes Bridge skill selections from Codex task admission.
 const CURRENT_TASK_REQUEST_HASH_VERSION = 10 as const;
 
 type TaskProjectAdmission = {
@@ -4259,7 +4261,7 @@ export function registerBridgeTools(
 
   const controlProofs = uiControlProofs(jobs);
   const requireControlCard = (
-    args: { scopeId?: string; widgetInstanceId?: string; card: z.infer<typeof userControlProofInputSchema>; jobId?: string; agentId?: string; processId?: string },
+    args: { scopeId?: string; widgetInstanceId?: string; card: z.infer<typeof userControlProofInputSchema>; jobId?: string; agentId?: string },
     meta: unknown
   ) => {
     const widgetSessionId = mountedWidgetInstanceId(args, meta);
@@ -4271,8 +4273,7 @@ export function registerBridgeTools(
     if (!agent || !activity || agent.scopeId !== claims.scopeId || activity.scopeId !== claims.scopeId ||
       activity.cardGeneration !== claims.generation ||
       (args.jobId !== undefined && args.jobId !== claims.jobId) ||
-      (args.agentId !== undefined && args.agentId !== claims.agentId) ||
-      (args.processId !== undefined && !claims.processIds.includes(args.processId))) {
+      (args.agentId !== undefined && args.agentId !== claims.agentId)) {
       throw new Error("UI_CONTROL_TARGET_CHANGED: Refresh the selected work details.");
     }
     // Domain handlers still check the exact current Job/Agent version and state
@@ -4294,11 +4295,8 @@ export function registerBridgeTools(
     const pendingInteractions = job.pendingInteractions
       .filter((interaction) => !ordinaryCodexQuestion(interaction))
       .slice(0, MAX_CODEX_INTERACTION_QUESTIONS);
-    const canStop = isActiveActivityJobStatus(job.status);
-    const affectedJobIds = canStop ? jobs.terminationImpact(job.jobId).affectedJobIds : [];
-    const processIds = dashboardControllableBackgroundProcessIds(jobs, upstream, agent);
-    if (pendingInteractions.length === 0 && !canStop && processIds.length === 0) {
-      throw new Error("UI_CONTROL_UNAVAILABLE: This Agent has no controllable work.");
+    if (pendingInteractions.length === 0) {
+      throw new Error("UI_CONTROL_UNAVAILABLE: This Agent has no pending response request.");
     }
     const initialVersion = agent.version, initialJobVersion = job.version;
     if (jobs.getAgent(agent.agentId)?.version !== initialVersion || jobs.get(job.jobId)?.version !== initialJobVersion) {
@@ -4307,14 +4305,13 @@ export function registerBridgeTools(
     const claims: Omit<UiControlClaims, "version" | "expiresAt"> = {
       widgetInstanceId: args.widgetInstanceId, hostScopeId: host?.scopeId || null, scopeId: agent.scopeId,
       activityId: activity.activityId, generation: activity.cardGeneration, agentId: agent.agentId,
-      agentVersion: agent.version, jobId: job.jobId, jobVersion: job.version, processIds
+      agentVersion: agent.version, jobId: job.jobId, jobVersion: job.version, processIds: []
     };
     const card = { kind: "dashboard", token: controlProofs.issue(claims) };
     const detail = { kind: "control", rowKey: args.rowKey, agentId: agent.agentId, agentName: agent.agentName,
       agentVersion: agent.version, activityTitle: activity.title, projectName: job.projectName || null,
       conversationUrl: scopeResolver.conversationUrl(agent.scopeId), card,
       jobId: job.jobId, jobVersion: job.version, status: job.status,
-      canStop, affectedJobIds, backgroundProcesses: processIds.map(processId => ({ processId })),
       pendingInteractions: pendingInteractions.map(interaction => ({ ...interaction,
         ordinary: ordinaryCodexQuestion(interaction),
         ...(interaction.elicitation ? { elicitation: { ...interaction.elicitation, ...jobs.interactionInput(interaction.interactionId) } } : {}) })) };
@@ -4377,11 +4374,11 @@ export function registerBridgeTools(
     .refine((value) => hasAtMostUnicodeScalars(
       value, BRIDGE_SKILL_LIMITS.descriptionMaxCharacters, "Bridge skill description"
     ));
-  const bridgeSkillDocumentInput = z.string().min(1).max(BRIDGE_SKILL_LIMITS.documentMaxBytes)
-    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.documentMaxBytes, {
-      message: `Skill document must be at most ${BRIDGE_SKILL_LIMITS.documentMaxBytes} UTF-8 bytes.`
+  const bridgeSkillContentInput = z.string().min(1).max(BRIDGE_SKILL_LIMITS.contentMaxBytes)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.contentMaxBytes, {
+      message: `Skill content must be at most ${BRIDGE_SKILL_LIMITS.contentMaxBytes} UTF-8 bytes.`
     })
-    .refine((value) => !value.includes("\u0000"), { message: "Skill document cannot contain NUL characters." });
+    .refine((value) => !value.includes("\u0000"), { message: "Skill content cannot contain NUL characters." });
   const bridgeSkillFilePathInput = z.string().min(1).max(BRIDGE_SKILL_LIMITS.filePathMaxBytes)
     .describe("Logical relative .md or .markdown path returned by bridge_skill. Never use a host filesystem path.");
   const bridgeSkillFileInput = z.strictObject({
@@ -4422,8 +4419,8 @@ export function registerBridgeTools(
       operation: z.literal("create"),
       requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
       name: bridgeSkillNameInput,
-      description: bridgeSkillDescriptionInput.optional().describe("Optional discovery summary. The Markdown document remains the complete skill body."),
-      document: bridgeSkillDocumentInput.describe("Complete free-form Markdown document. The bridge preserves it without adding frontmatter or splitting sections."),
+      description: bridgeSkillDescriptionInput.optional().describe("Optional discovery summary. Content remains the complete skill body."),
+      content: bridgeSkillContentInput.describe("Complete free-form Markdown skill content. The bridge preserves it without adding frontmatter or splitting sections."),
       files: z.array(bridgeSkillFileInput).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
         .describe("Optional independent Markdown files in the same immutable skill version. Paths are logical relative paths.")
     }),
@@ -4433,7 +4430,7 @@ export function registerBridgeTools(
       name: bridgeSkillNameInput,
       description: bridgeSkillDescriptionInput.optional(),
       uploadId: scopeIdSchema().describe("Expiring upload id supplied by a trusted binary-upload adapter after ZIP inspection."),
-      mainPath: bridgeSkillFilePathInput.describe("Exact inspected Markdown path selected as the main document."),
+      mainPath: bridgeSkillFilePathInput.describe("Exact inspected Markdown path selected as the skill content."),
       includePaths: z.array(bridgeSkillFilePathInput).min(1).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
     }),
     z.strictObject({
@@ -4443,12 +4440,12 @@ export function registerBridgeTools(
       expectedVersion: z.string().regex(/^[1-9]\d*$/).describe("Current version read before this mutation. A successful update creates the next immutable version."),
       name: bridgeSkillNameInput.optional(),
       description: bridgeSkillDescriptionInput.optional(),
-      document: bridgeSkillDocumentInput.optional(),
+      content: bridgeSkillContentInput.optional(),
       files: z.strictObject({
         upsert: z.array(bridgeSkillFileInput).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional(),
         remove: z.array(bridgeSkillFilePathInput).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
-      }).optional().describe("Atomic attachment changes applied with the document and metadata update.")
-    }).refine((value) => value.name !== undefined || value.description !== undefined || value.document !== undefined || value.files !== undefined, {
+      }).optional().describe("Atomic attachment changes applied with the skill content and metadata update.")
+    }).refine((value) => value.name !== undefined || value.description !== undefined || value.content !== undefined || value.files !== undefined, {
       message: "Provide at least one field to update."
     }),
     z.strictObject({
@@ -4457,7 +4454,7 @@ export function registerBridgeTools(
       skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
       expectedVersion: z.string().regex(/^[1-9]\d*$/),
       uploadId: scopeIdSchema().describe("Expiring upload id supplied by a trusted binary-upload adapter after ZIP inspection."),
-      mainPath: bridgeSkillFilePathInput.nullable().describe("Select a main replacement, or null to import all inspected Markdown as attachments."),
+      mainPath: bridgeSkillFilePathInput.nullable().describe("Select replacement skill content, or null to import all inspected Markdown as attachments."),
       includePaths: z.array(bridgeSkillFilePathInput).min(1).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
     }),
     z.strictObject({
@@ -4472,7 +4469,7 @@ export function registerBridgeTools(
       requestId: scopeIdSchema().describe("Unique UUID for this logical bridge skill mutation. Reuse only for an exact retry."),
       skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
       expectedVersion: z.string().regex(/^[1-9]\d*$/).describe("Current version read before this mutation."),
-      enabled: z.boolean().describe("False archives the skill from Bridge document discovery while preserving immutable history.")
+      enabled: z.boolean().describe("False archives the skill from Bridge discovery while preserving immutable history.")
     })
   ]);
   server.registerTool(
@@ -4480,7 +4477,7 @@ export function registerBridgeTools(
     {
       title: "Find and Read Bridge Skills",
       description:
-        "Find and read reusable bridge-owned Markdown documents. Search by goal, read an exact immutable version to get its main document and file inventory, then use read-file only for relevant attached Markdown. Reading never starts Codex, executes a script, or changes permissions.",
+        "Find and read reusable bridge-owned Markdown skills. Search by goal, read an exact immutable version to get its content and file inventory, then use read-file only for relevant attached Markdown. Reading never starts Codex, executes a script, or changes permissions.",
       inputSchema: bridgeSkillInput,
       outputSchema: bridgeSkillOutputSchema,
       annotations: {
@@ -4528,7 +4525,8 @@ export function registerBridgeTools(
       }
 
       const result = await effectiveSkillLibrary.read({ reference: args.skill as SkillReference });
-      const structured = bridgeSkillReadOutputSchema.parse({ kind: "skill", ...result });
+      const { skill: summary, ...body } = result;
+      const structured = bridgeSkillReadOutputSchema.parse({ kind: "skill", skill: { ...summary, ...body } });
       return contractedToolResult(
         skillResultContract,
         result,
@@ -4543,7 +4541,7 @@ export function registerBridgeTools(
     {
       title: "Manage a Bridge Skill",
       description:
-        "Create, version, restore, or archive a bridge-owned free-form Markdown skill and its optional Markdown file tree. Every mutation requires a requestId for exact retries. Document and file updates are atomic and append-only: prior versions remain immutable.",
+        "Create, version, restore, or archive a bridge-owned free-form Markdown skill and its optional Markdown file tree. Every mutation requires a requestId for exact retries. Content and file updates are atomic and append-only: prior versions remain immutable.",
       inputSchema: bridgeSkillManageInput,
       outputSchema: bridgeSkillManageOutputSchema,
       annotations: {
@@ -4559,7 +4557,7 @@ export function registerBridgeTools(
             requestId: args.requestId,
             name: args.name,
             description: args.description,
-            document: args.document,
+            content: args.content,
             files: args.files
           })
         : args.operation === "create-package"
@@ -4578,7 +4576,7 @@ export function registerBridgeTools(
               expectedVersion: args.expectedVersion,
               ...(args.name === undefined ? {} : { name: args.name }),
               ...(args.description === undefined ? {} : { description: args.description }),
-              ...(args.document === undefined ? {} : { document: args.document }),
+              ...(args.content === undefined ? {} : { content: args.content }),
               ...(args.files === undefined ? {} : { files: args.files })
             })
           : args.operation === "update-package"
@@ -5413,43 +5411,6 @@ export function registerBridgeTools(
     }
   );
 
-    const backgroundProcessStopInput = z.strictObject({
-        scopeId: scopeIdSchema().optional()
-          .describe("Compatibility-only conversation UUID for MCP hosts without ChatGPT session metadata."),
-        widgetInstanceId: widgetInstanceIdSchema.optional(),
-        requestId: scopeIdSchema().describe("Unique UUID for this exact process termination and its retries."),
-        agentId: scopeIdSchema().describe("Exact Agent that owns the current App Server thread."),
-        expectedAgentVersion: z.number().int().min(1),
-        processId: z.string().trim().min(1).max(200),
-        card: userControlProofInputSchema
-      });
-  const stopBackgroundProcess: ToolCallback<typeof backgroundProcessStopInput> = async (args, extra) => {
-    const _meta = extra.mcpReq._meta;
-      const { scope, widgetSessionId, claims } = requireControlCard(args, _meta);
-      if (claims && claims.agentVersion !== args.expectedAgentVersion) {
-        throw new Error("UI_CONTROL_TARGET_CHANGED: The requested version differs from the displayed work.");
-      }
-      const actionHash = createHash("sha256")
-        .update(JSON.stringify({
-          action: "terminate-background-process",
-          agentId: args.agentId,
-          expectedAgentVersion: args.expectedAgentVersion,
-          processId: args.processId,
-          card: args.card
-        }))
-        .digest("hex");
-      const mutationResult = await runIdempotentMutation(scope.scopeId, args.requestId, actionHash, async () => {
-        const result = await terminateAgentBackgroundProcess({
-          jobs, upstream, scopeId: scope.scopeId, agentId: args.agentId,
-          expectedAgentVersion: args.expectedAgentVersion, processId: args.processId
-        });
-        if (typeof result.threadId === "string") invalidateCardRuntimeCache(upstream, result.threadId);
-        return result;
-      });
-      return mutationToolResult(mutationResult, "app");
-    };
-
-
   const codexCancelTargetInput = z.strictObject({
     requestId: scopeIdSchema(),
     target: z.discriminatedUnion("kind", [
@@ -5548,87 +5509,6 @@ export function registerBridgeTools(
       );
     }
   );
-
-    const cardJobStopInput = z.strictObject({
-        scopeId: scopeIdSchema().optional(),
-        widgetInstanceId: widgetInstanceIdSchema.optional(),
-        requestId: scopeIdSchema().describe("Unique UUID for this exact Dashboard cancellation and its retries."),
-        jobId: z.string().trim().min(1).max(200),
-        expectedJobVersion: z.number().int().min(1),
-        card: userControlProofInputSchema,
-        acknowledgeAffectedJobIds: z
-          .array(z.string().trim().min(1).max(200))
-          .max(HARD_MAX_CONCURRENT_JOBS)
-          .optional()
-      });
-  const stopCardJob: ToolCallback<typeof cardJobStopInput> = async (args, extra) => {
-      const _meta = extra.mcpReq._meta;
-      const { scope, widgetSessionId, claims } = requireControlCard(args, _meta);
-      if (claims && claims.jobVersion !== args.expectedJobVersion) {
-        throw new Error("UI_CONTROL_TARGET_CHANGED: The requested version differs from the displayed work.");
-      }
-      const widgetInstanceDigest = correlationDigest("dashboard-widget", widgetSessionId) as string;
-      const actionHash = createHash("sha256")
-        .update(JSON.stringify({
-          action: "cancel-dashboard-job",
-          jobId: args.jobId,
-          expectedJobVersion: args.expectedJobVersion,
-          card: args.card,
-          widgetInstanceDigest,
-          acknowledgeAffectedJobIds: [...(args.acknowledgeAffectedJobIds || [])].sort()
-        }))
-        .digest("hex");
-      const result = await runCancellationMutation(
-        scope.scopeId,
-        args.requestId,
-        actionHash,
-        async () => {
-          const job = jobs.get(args.jobId);
-          if (
-            !job ||
-            job.scopeId !== scope.scopeId ||
-            job.activityId !== claims.activityId
-          ) {
-            throw new Error("The requested Codex job is unavailable in this Dashboard selection.");
-          }
-          if (job.version !== args.expectedJobVersion) {
-            throw new Error(
-              `Codex job version changed from ${args.expectedJobVersion} to ${job.version}. Refresh the Dashboard before retrying cancellation.`
-            );
-          }
-          const { intent } = jobs.beginCancellationOperation({
-            scopeId: scope.scopeId,
-            requestId: args.requestId,
-            actionHash,
-            source: "widget-control",
-            toolName: "codex_ui_stop",
-            actionName: "cancel-dashboard-job",
-            target: cancellationTargetForJob(job),
-            expectedVersion: args.expectedJobVersion,
-            widgetProof: {
-              instanceDigest: widgetInstanceDigest,
-              cardGeneration: claims.generation
-            },
-            callerRequestDigest: correlationDigest("mcp-request", extra.mcpReq.id),
-            reasonCode: "dashboard-force-stop"
-          });
-          const cancelled = await jobs.cancel(job.jobId, intent, {
-            acknowledgeAffectedJobIds: args.acknowledgeAffectedJobIds
-          });
-          const formatted = formatJobStatus(
-            cancelled,
-            jobs.staleThresholdMs,
-            undefined,
-            userSettings.current,
-            jobs
-          );
-          jobs.completeCancellationOperation(scope.scopeId, args.requestId, formatted);
-          return formatted;
-        }
-      );
-      return mutationToolResult({ ok: true, action: "cancel-dashboard-job", job: result }, "app");
-    };
-
 
   const interactionAnswersBaseInput = z.record(
     z.string().trim().min(1).max(200),
@@ -7100,19 +6980,6 @@ export function registerBridgeTools(
     const result = await applicationService.problemAction!(input,claims.selectedScopeId || undefined,"widget-control");
     return {content:[{type:"text",text:"Problem action completed."}],structuredContent:result};
   });
-  server.registerTool("codex_ui_stop", {
-    title: "Stop Work from Dashboard", description: "App-only cancellation of an active Job or termination of idle background processes. Target-specific ownership, version, state, and mounted Dashboard proof checks apply.",
-    inputSchema: z.union([
-      cardJobStopInput.extend({ kind: z.literal("job") }),
-      backgroundProcessStopInput.extend({ kind: z.literal("process") })
-    ]), outputSchema: mutationOutputSchema,
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-    _meta: { ui: { visibility: ["app"] }, "openai/visibility": "private", "openai/widgetAccessible": true }
-  }, async (args, extra) => {
-    if (args.kind === "job") { const { kind, ...input } = args; return stopCardJob(input, extra); }
-    const { kind, ...input } = args; return stopBackgroundProcess(input, extra);
-  });
-
   configureAutomaticRecovery(jobs,upstream,applicationService);
   return {
     applicationService,
@@ -9389,85 +9256,6 @@ function formatAgentThreadSummary(
   };
 }
 
-async function terminateAgentBackgroundProcess(input: {
-  jobs: CodexJobRegistry;
-  upstream: CodexUpstream;
-  scopeId: string;
-  agentId: string;
-  expectedAgentVersion?: number;
-  processId: string;
-}): Promise<Record<string, unknown>> {
-  const requireIdleOwner = () => {
-    const agent = input.jobs.getAgent(input.agentId);
-    if (!agent || agent.scopeId !== input.scopeId) throw scopedHandleUnavailable("agent");
-    if (input.expectedAgentVersion !== undefined && agent.version !== input.expectedAgentVersion) {
-      throw new Error(
-        `AGENT_VERSION_CHANGED: Agent version changed from ${input.expectedAgentVersion} to ${agent.version}. Refresh the Dashboard before retrying process termination.`
-      );
-    }
-    if (agent.lifecycle === "active" || agent.lifecycle === "waiting-input" || agent.currentJobId) {
-      throw new Error(
-        `AGENT_BUSY: Refusing background process termination while Codex job ${agent.currentJobId || "unknown"} is active.`
-      );
-    }
-    const currentThread = input.jobs
-      .listAgentThreads(agent.agentId)
-      .find((thread) => thread.isCurrent);
-    return { agent, currentThread };
-  };
-
-  const initial = requireIdleOwner();
-  const currentThread = initial.currentThread;
-  if (
-    !currentThread ||
-    !backendSupports(currentThread.backendKind, "supportsBackgroundTerminals") ||
-    !input.upstream.listBackgroundTerminals ||
-    !input.upstream.terminateBackgroundTerminal
-  ) {
-    throw new Error("BACKGROUND_PROCESS_CONTROL_UNAVAILABLE: This Agent has no controllable App Server thread.");
-  }
-  const terminals = await input.upstream.listBackgroundTerminals(
-    currentThread.threadId,
-    currentThread.backendKind as CodexBackendKind
-  );
-  const terminal = terminals.find((entry) => entry.processId === input.processId);
-  if (!terminal) {
-    throw new Error(
-      "BACKGROUND_PROCESS_NOT_FOUND: The exact process is no longer a background terminal on this Agent thread."
-    );
-  }
-  // The upstream inventory lookup is asynchronous. Re-read bridge state after
-  // it returns so a turn or thread change that raced with the lookup cannot
-  // terminate a process under stale ownership assumptions. There is no await
-  // between this check and invoking the exact upstream terminate operation.
-  const authoritative = requireIdleOwner();
-  if (
-    !authoritative.currentThread ||
-    authoritative.currentThread.threadId !== currentThread.threadId ||
-    authoritative.currentThread.backendKind !== currentThread.backendKind
-  ) {
-    throw new Error(
-      "BACKGROUND_PROCESS_OWNERSHIP_CHANGED: The Agent's current App Server thread changed during validation."
-    );
-  }
-  const termination = await input.upstream.terminateBackgroundTerminal(
-    currentThread.threadId,
-    terminal.processId,
-    currentThread.backendKind as CodexBackendKind
-  );
-  return {
-    ok: termination.terminated,
-    action: "terminate-background-process",
-    agent: formatAgentSummary(authoritative.agent, input.jobs),
-    threadId: currentThread.threadId,
-    processId: terminal.processId,
-    terminated: termination.terminated,
-    historyPreserved: true,
-    deletionPerformed: false,
-    warning: "Background process termination does not roll back filesystem changes."
-  };
-}
-
 function formatAgentSummary(agent: BridgeAgent, jobs: CodexJobRegistry): Record<string, unknown> {
   const assignments = jobs.listActivityAgentAssignments(undefined, agent.agentId);
   const threads = jobs.listAgentThreads(agent.agentId);
@@ -9589,8 +9377,8 @@ export type BridgeApplicationService = {
   releaseNativeCompletionNotifications?(input: BridgeNativeCompletionNotificationMutation): Promise<void>;
   /** Native app access to the same bridge-owned, versioned source as MCP. */
   skillLibrarySnapshot?(): Promise<SkillSearchResult>;
-  readBridgeSkill?(reference: SkillReference): Promise<SkillDocument>;
-  readBridgeSkillFile?(reference: SkillReference, path: string): Promise<SkillFileDocument>;
+  readBridgeSkill?(reference: SkillReference): Promise<BridgeSkill>;
+  readBridgeSkillFile?(reference: SkillReference, path: string): Promise<SkillFile>;
   listBridgeSkillVersions?(input: { skillId: string }): Promise<SkillVersionList>;
   createBridgeSkill?(input: CreateBridgeSkillInput): Promise<SkillSummary>;
   createBridgeSkillFromPackage?(input: CreateBridgeSkillPackageInput): Promise<SkillSummary>;
@@ -10412,34 +10200,6 @@ function cachedDashboardRuntimes(
   return observations;
 }
 
-/**
- * A process stop is offered only from a fresh, confirmed Dashboard runtime
- * read. The signed ids are still re-read by the mutation handler immediately
- * before termination, so a stale process can never be targeted by the card.
- */
-function dashboardControllableBackgroundProcessIds(
-  jobs: CodexJobRegistry,
-  upstream: CodexUpstream,
-  agent: BridgeAgent
-): string[] {
-  if (agent.lifecycle === "active" || agent.lifecycle === "waiting-input" || agent.currentJobId) return [];
-  const thread = jobs.listAgentThreads(agent.agentId).find(entry => entry.isCurrent);
-  if (!thread || !backendSupports(thread.backendKind, "supportsBackgroundTerminals")) return [];
-  const entry = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
-  const now = Date.now();
-  if (
-    !entry ||
-    entry.stamp !== dashboardRuntimeStamp(agent, jobs.observedLatestJobForAgent(agent.agentId)) ||
-    entry.freshUntil <= now ||
-    entry.retainUntil <= now ||
-    entry.unavailable ||
-    entry.observation.backgroundProcessState !== "confirmed"
-  ) return [];
-  return [...new Set(entry.observation.backgroundProcessIds || [])]
-    .filter(processId => typeof processId === "string" && processId.trim().length > 0)
-    .slice(0, 100);
-}
-
 function cachedDashboardEnrichment(
   upstream: CodexUpstream,
   candidates: ReadonlyArray<DashboardRuntimeCandidate>
@@ -11238,11 +10998,7 @@ async function buildDashboardView(
       ? jobs.get(agent.currentJobId)
       : latestJobByAgent.get(agent.agentId);
     if (!job || !activityFor(job.activityId)) return null;
-    if (job.pendingInteractions.some(interaction => !ordinaryCodexQuestion(interaction))) return "request";
-    if (isActiveActivityJobStatus(job.status) || dashboardControllableBackgroundProcessIds(jobs, upstream, agent).length > 0) {
-      return "execution";
-    }
-    return null;
+    return job.pendingInteractions.some(interaction => !ordinaryCodexQuestion(interaction)) ? "request" : null;
   };
 
   const jobRow = (job: CodexJob, bucket: DashboardRow["bucket"]): DashboardRow => {
@@ -12254,7 +12010,7 @@ type TaskRequestHashInput = {
 };
 
 /** Current request identity commits the public task envelope and admission-time
- * execution semantics. It deliberately excludes independent Bridge document
+ * execution semantics. It deliberately excludes independent Bridge skill
  * library state, card presentation, and other mutable UI state. */
 function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
   const activityCreation = input.args.activityId
@@ -14497,7 +14253,7 @@ function contractedToolResult<Schema extends z.ZodType>(
  * `bridge_skill` is a model-facing read surface. Its compatibility channel is
  * intentionally a complete compact JSON mirror of the validated structured
  * result, so MCP hosts that consume `content` rather than `structuredContent`
- * receive the exact Markdown document, version metadata, and warnings.
+ * receive the exact Markdown skill content, version metadata, and warnings.
  */
 function bridgeSkillPrimaryContent(value: unknown): ToolResult["content"] {
   const text = JSON.stringify(value);

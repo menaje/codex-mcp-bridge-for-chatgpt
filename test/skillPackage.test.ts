@@ -51,7 +51,7 @@ describe("Bridge skill ZIP packages", () => {
       ""
     ].join("\n");
     const zip = deterministicBridgeSkillZip(
-      "# Bridge document\n",
+      "# Bridge skill content\n",
       [{ path: "SKILL.md", content: skill }],
       "document.md"
     );
@@ -66,7 +66,7 @@ describe("Bridge skill ZIP packages", () => {
       suggestedDescription: "Use SKILL.md metadata before the archive name."
     });
     expect(await uploads.consume(started.uploadId, "SKILL.md", ["SKILL.md"])).toEqual({
-      document: skill,
+      content: skill,
       files: []
     });
   });
@@ -131,7 +131,7 @@ describe("Bridge skill ZIP packages", () => {
     const inspection = await uploads.inspect(started.uploadId);
     expect(inspection.files.map((file) => file.path)).toEqual(["refs/info.md", "SKILL.md"]);
     const expanded = await uploads.consume(started.uploadId, "SKILL.md");
-    expect(expanded).toEqual({ document: "# Main", files: [{ path: "refs/info.md", content: "details" }] });
+    expect(expanded).toEqual({ content: "# Main", files: [{ path: "refs/info.md", content: "details" }] });
     await expect(uploads.inspect(started.uploadId)).rejects.toThrow("SKILL_UPLOAD_NOT_FOUND");
   });
 
@@ -258,7 +258,7 @@ describe("Bridge skill ZIP packages", () => {
   it("keeps a single-use upload retryable until the version mutation commits", async () => {
     const root = await temporaryRoot();
     const library = new SkillLibrary({ directory: path.join(root, "skills") });
-    await library.createBridgeSkill({ requestId: randomUUID(), name: "Existing", document: "# Existing" });
+    await library.createBridgeSkill({ requestId: randomUUID(), name: "Existing", content: "# Existing" });
     const zip = deterministicBridgeSkillZip("# Imported", []);
     const upload = await library.beginBridgeSkillPackageUpload();
     await library.appendBridgeSkillPackageUpload({ uploadId: upload.uploadId, chunkIndex: 0, data: zip.toString("base64") });

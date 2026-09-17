@@ -168,7 +168,7 @@ private enum SkillLibrarySheet: Identifiable {
     case newSkill
     case newFile
     case renameFile(String)
-    case deleteSkill(BridgeSkillDocument)
+    case deleteSkill(BridgeSkill)
     case importReview(BridgeSkillImportReview)
 
     var id: String {
@@ -453,7 +453,7 @@ struct SkillsLibraryWindowView: View {
     }
 
     private func documentHeader(
-        _ document: BridgeSkillDocument,
+        _ document: BridgeSkill,
         showsDocumentPicker: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -522,7 +522,7 @@ struct SkillsLibraryWindowView: View {
         .padding(.vertical, 12)
     }
 
-    private func compactDocumentPicker(_ document: BridgeSkillDocument) -> some View {
+    private func compactDocumentPicker(_ document: BridgeSkill) -> some View {
         Picker(
             "macos.skills.documents",
             selection: Binding(
@@ -541,7 +541,7 @@ struct SkillsLibraryWindowView: View {
         .frame(maxWidth: 180)
     }
 
-    private func versionHistoryMenu(_ document: BridgeSkillDocument) -> some View {
+    private func versionHistoryMenu(_ document: BridgeSkill) -> some View {
         Menu {
             if let history = model.selectedBridgeSkillVersions {
                 ForEach(history.versions) { version in
@@ -565,7 +565,7 @@ struct SkillsLibraryWindowView: View {
     }
 
     @ViewBuilder
-    private func sourceWorkspace(_ document: BridgeSkillDocument) -> some View {
+    private func sourceWorkspace(_ document: BridgeSkill) -> some View {
         if model.bridgeSkillFileLoading {
             ProgressView("macos.skills.loadingMarkdownFile")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -657,9 +657,9 @@ struct SkillsLibraryWindowView: View {
                            systemImage: document.skill.enabled ? "archivebox" : "tray.and.arrow.up") {
                         toggleArchived(document)
                     }
-                    .disabled(windowState.hasUnsavedChanges)
+                    .disabled(windowState.hasUnsavedChanges || model.skillMutationInProgress)
                     Button("macos.skills.deletePermanentlyDialog", systemImage: "trash", role: .destructive) { sheet = .deleteSkill(document) }
-                        .disabled(windowState.hasUnsavedChanges)
+                        .disabled(windowState.hasUnsavedChanges || model.skillMutationInProgress)
                 }
                 Button("macos.refresh", systemImage: "arrow.clockwise") { Task { await model.refreshSkillLibrary() } }
             } label: { Label("macos.skills.moreActions", systemImage: "ellipsis.circle") }
@@ -668,64 +668,103 @@ struct SkillsLibraryWindowView: View {
     }
 
     private var versionInspector: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("macos.skills.skillInfo").font(.headline)
-                if let document = model.selectedBridgeSkill {
-                    LabeledContent("macos.name", value: document.skill.name)
-                    LabeledContent("macos.skills.version", value: "v\(document.skill.version)")
-                    LabeledContent(
-                        "macos.skills.status",
-                        value: BridgeAppLocalization.string(
-                            document.skill.enabled ? "macos.skills.active" : "macos.skills.archived",
-                            locale: locale
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("macos.skills.skillInfo").font(.headline)
+                    if let document = model.selectedBridgeSkill {
+                        LabeledContent("macos.name", value: document.skill.name)
+                        LabeledContent("macos.skills.version", value: "v\(document.skill.version)")
+                        LabeledContent(
+                            "macos.skills.status",
+                            value: BridgeAppLocalization.string(
+                                document.skill.enabled ? "macos.skills.active" : "macos.skills.archived",
+                                locale: locale
+                            )
                         )
-                    )
-                    LabeledContent("macos.skills.files", value: "\(document.files.count + 1)")
-                    if let digest = document.skill.contentDigest {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("macos.skills.contentDigest").font(.caption).foregroundStyle(.secondary)
-                            Text(verbatim: digest).font(.caption2.monospaced()).textSelection(.enabled)
-                        }
-                    }
-                    Divider()
-                    Text("macos.skills.versionHistory").font(.headline)
-                    if let versions = model.selectedBridgeSkillVersions?.versions {
-                        ForEach(versions) { version in
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack {
-                                    Text(verbatim: "v\(version.version)").font(.body.monospacedDigit().weight(.medium))
-                                    if version.version == model.selectedBridgeSkillVersions?.currentVersion {
-                                        Text("macos.current").font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Button("macos.skills.view") { requestVersion(version) }.buttonStyle(.link)
-                                }
-                                Text(verbatim: DisplayFormat.dateTime(version.createdAt, locale: locale))
-                                    .font(.caption).foregroundStyle(.secondary)
-                                if version.legacy {
-                                    Label("macos.skills.legacyFormat", systemImage: "exclamationmark.triangle")
-                                        .font(.caption).foregroundStyle(.orange)
-                                }
-                                if version.version != model.selectedBridgeSkillVersions?.currentVersion {
-                                    Button("macos.skills.restoreAsNewCurrentVersion") {
-                                        restoreTarget = version
-                                        showsRestoreConfirmation = true
-                                    }
-                                    .font(.caption)
-                                }
+                        LabeledContent("macos.skills.files", value: "\(document.files.count + 1)")
+                        if let digest = document.skill.contentDigest {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("macos.skills.contentDigest").font(.caption).foregroundStyle(.secondary)
+                                Text(verbatim: digest).font(.caption2.monospaced()).textSelection(.enabled)
                             }
-                            Divider()
+                        }
+                        Divider()
+                        Text("macos.skills.versionHistory").font(.headline)
+                        if let versions = model.selectedBridgeSkillVersions?.versions {
+                            ForEach(versions) { version in
+                                VStack(alignment: .leading, spacing: 5) {
+                                    HStack {
+                                        Text(verbatim: "v\(version.version)").font(.body.monospacedDigit().weight(.medium))
+                                        if version.version == model.selectedBridgeSkillVersions?.currentVersion {
+                                            Text("macos.current").font(.caption2).foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Button("macos.skills.view") { requestVersion(version) }.buttonStyle(.link)
+                                    }
+                                    Text(verbatim: DisplayFormat.dateTime(version.createdAt, locale: locale))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    if version.legacy {
+                                        Label("macos.skills.legacyFormat", systemImage: "exclamationmark.triangle")
+                                            .font(.caption).foregroundStyle(.orange)
+                                    }
+                                    if version.version != model.selectedBridgeSkillVersions?.currentVersion {
+                                        Button("macos.skills.restoreAsNewCurrentVersion") {
+                                            restoreTarget = version
+                                            showsRestoreConfirmation = true
+                                        }
+                                        .font(.caption)
+                                    }
+                                }
+                                Divider()
+                            }
+                        } else {
+                            ProgressView().controlSize(.small)
                         }
                     } else {
-                        ProgressView().controlSize(.small)
+                        Text("macos.skills.selectASkillToViewItsMetadataAndImmutableVersionHistory")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
-                } else {
-                    Text("macos.skills.selectASkillToViewItsMetadataAndImmutableVersionHistory")
-                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(16)
+            }
+            if let document = model.selectedBridgeSkill {
+                Divider()
+                inspectorActions(document)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+            }
+        }
+    }
+
+    private func inspectorActions(_ document: BridgeSkill) -> some View {
+        let lifecycleLabel = BridgeAppLocalization.string(
+            document.skill.enabled ? "macos.skills.archive" : "macos.skills.reactivate",
+            locale: locale
+        )
+        let actionsDisabled = windowState.hasUnsavedChanges || model.skillMutationInProgress
+        return HStack(spacing: 10) {
+            Button { toggleArchived(document) } label: {
+                Label {
+                    Text(verbatim: lifecycleLabel)
+                } icon: {
+                    Image(systemName: document.skill.enabled ? "archivebox" : "tray.and.arrow.up")
                 }
             }
-            .padding(16)
+            .labelStyle(.iconOnly)
+            .help(Text(verbatim: lifecycleLabel))
+            .accessibilityLabel(Text(verbatim: lifecycleLabel))
+            .disabled(actionsDisabled)
+
+            Spacer()
+
+            Button(role: .destructive) { sheet = .deleteSkill(document) } label: {
+                Label("macos.skills.deletePermanentlyAction", systemImage: "trash")
+            }
+            .labelStyle(.iconOnly)
+            .help("macos.skills.deletePermanentlyAction")
+            .accessibilityLabel("macos.skills.deletePermanentlyAction")
+            .disabled(actionsDisabled)
         }
     }
 
@@ -733,9 +772,9 @@ struct SkillsLibraryWindowView: View {
     private func presentedSheet(_ item: SkillLibrarySheet) -> some View {
         switch item {
         case .newSkill:
-            NewBridgeSkillSheet { name, description, document in
+            NewBridgeSkillSheet { name, description, content in
                 Task { @MainActor in
-                    if await model.createBridgeSkill(.init(name: name, description: description, document: document)) {
+                    if await model.createBridgeSkill(.init(name: name, description: description, content: content)) {
                         sheet = nil
                     }
                 }
@@ -756,12 +795,11 @@ struct SkillsLibraryWindowView: View {
         case .renameFile(let oldPath):
             RenameBridgeSkillFileSheet(oldPath: oldPath) { newPath in renameFile(oldPath, to: newPath) }
         case .deleteSkill(let document):
-            BridgeSkillDeleteSheet(skillName: currentSkillName(for: document), isDeleting: model.skillMutationInProgress) { name in
+            BridgeSkillDeleteSheet(skillName: currentSkillName(for: document), isDeleting: model.skillMutationInProgress) {
                 Task { @MainActor in
                     if await model.deleteBridgeSkill(.init(
                         skillId: document.skill.skillId,
-                        expectedVersion: currentExpectedVersion(document),
-                        confirmName: name
+                        expectedVersion: currentExpectedVersion(document)
                     )) { sheet = nil }
                 }
             }
@@ -795,7 +833,7 @@ struct SkillsLibraryWindowView: View {
         }
     }
 
-    private func selectedDocumentTitle(_ document: BridgeSkillDocument) -> String {
+    private func selectedDocumentTitle(_ document: BridgeSkill) -> String {
         switch documentSelection {
         case .main: return document.skill.name
         case .file(let path): return path.split(separator: "/").last.map(String.init) ?? path
@@ -803,7 +841,7 @@ struct SkillsLibraryWindowView: View {
     }
 
     @ViewBuilder
-    private func skillFileTreeRow(_ row: SkillFileTreeVisibleRow, document: BridgeSkillDocument) -> some View {
+    private func skillFileTreeRow(_ row: SkillFileTreeVisibleRow, document: BridgeSkill) -> some View {
         let node = row.node
         if let path = node.path {
             Label { Text(verbatim: node.name) } icon: { Image(systemName: "doc.text") }
@@ -881,7 +919,7 @@ struct SkillsLibraryWindowView: View {
         documentSelection = requested
         editorMode = .preview
         switch requested {
-        case .main: model.selectBridgeSkillMainDocument(); synchronizeDraftFromModel()
+        case .main: model.selectBridgeSkillContent(); synchronizeDraftFromModel()
         case .file(let path):
             expandFolders(containing: path)
             Task { await model.loadBridgeSkillFile(path: path) }
@@ -952,9 +990,9 @@ struct SkillsLibraryWindowView: View {
 
     private var isEditingCurrentSource: Bool { windowState.hasUnsavedChanges || !draftContent.isEmpty }
 
-    private func currentSource(_ document: BridgeSkillDocument) -> String {
+    private func currentSource(_ document: BridgeSkill) -> String {
         switch documentSelection {
-        case .main: return document.document
+        case .main: return document.content
         case .file: return model.selectedBridgeSkillFile?.content ?? ""
         }
     }
@@ -969,7 +1007,7 @@ struct SkillsLibraryWindowView: View {
                 expectedVersion: currentExpectedVersion(document),
                 name: draftName,
                 description: draftDescription,
-                document: draftContent
+                content: draftContent
             )
         case .file(let path):
             request = .init(
@@ -1025,7 +1063,7 @@ struct SkillsLibraryWindowView: View {
         }
     }
 
-    private func toggleArchived(_ document: BridgeSkillDocument) {
+    private func toggleArchived(_ document: BridgeSkill) {
         Task { await model.setBridgeSkillEnabled(.init(
             skillId: document.skill.skillId,
             expectedVersion: currentExpectedVersion(document),
@@ -1033,16 +1071,16 @@ struct SkillsLibraryWindowView: View {
         )) }
     }
 
-    private func currentExpectedVersion(_ document: BridgeSkillDocument) -> String {
+    private func currentExpectedVersion(_ document: BridgeSkill) -> String {
         model.selectedBridgeSkillVersions?.currentVersion ?? document.skill.version
     }
 
-    private func currentSkillName(for document: BridgeSkillDocument) -> String {
+    private func currentSkillName(for document: BridgeSkill) -> String {
         guard let history = model.selectedBridgeSkillVersions else { return document.skill.name }
         return history.versions.first(where: { $0.version == history.currentVersion })?.name ?? document.skill.name
     }
 
-    private func isCurrentVersion(_ document: BridgeSkillDocument) -> Bool {
+    private func isCurrentVersion(_ document: BridgeSkill) -> Bool {
         guard let current = model.selectedBridgeSkillVersions?.currentVersion else { return true }
         return document.skill.version == current
     }
@@ -1087,7 +1125,7 @@ struct SkillsLibraryWindowView: View {
     }
 
     @ViewBuilder
-    private func mainDocumentContextMenu(_ document: BridgeSkillDocument) -> some View {
+    private func mainDocumentContextMenu(_ document: BridgeSkill) -> some View {
         Button("macos.common.editAction") { editorMode = .edit; synchronizeDraftFromModel() }
             .disabled(!isCurrentVersion(document))
         Button("macos.skills.importIntoCurrentSkill") { presentImportPanel(intoCurrentSkill: true) }
@@ -1096,7 +1134,7 @@ struct SkillsLibraryWindowView: View {
     }
 
     @ViewBuilder
-    private func fileContextMenu(path: String, document: BridgeSkillDocument) -> some View {
+    private func fileContextMenu(path: String, document: BridgeSkill) -> some View {
         Button("macos.common.editAction") { requestDocumentSelection(.file(path)); editorMode = .edit }
             .disabled(!isCurrentVersion(document))
         Button("macos.skills.renameDialog") { sheet = .renameFile(path) }
@@ -1126,7 +1164,7 @@ struct SkillsLibraryWindowView: View {
         }
     }
 
-    private func deleteFile(_ path: String, from document: BridgeSkillDocument) {
+    private func deleteFile(_ path: String, from document: BridgeSkill) {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = BridgeAppLocalization.string("macos.skills.deleteTheAttachedMarkdownFile", locale: locale)
@@ -1141,7 +1179,7 @@ struct SkillsLibraryWindowView: View {
                 files: .init(remove: [path])
             )) {
                 documentSelection = .main
-                model.selectBridgeSkillMainDocument()
+                model.selectBridgeSkillContent()
             }
         }
     }
@@ -1209,7 +1247,7 @@ struct SkillsLibraryWindowView: View {
                 if await model.updateBridgeSkill(.init(
                     skillId: current.skill.skillId,
                     expectedVersion: currentExpectedVersion(current),
-                    document: main?.content,
+                    content: main?.content,
                     files: attachments.isEmpty ? nil : .init(upsert: attachments)
                 )) { sheet = nil }
             }
@@ -1235,7 +1273,7 @@ struct SkillsLibraryWindowView: View {
             let attachments = selected.filter { $0.path != mainPath }.map { BridgeSkillFileInput(path: $0.path, content: $0.content) }
             Task { @MainActor in
                 if await model.createBridgeSkill(.init(
-                    name: commit.name, description: commit.description, document: main.content, files: attachments
+                    name: commit.name, description: commit.description, content: main.content, files: attachments
                 )) { sheet = nil }
             }
         case .package(let inspection):
@@ -1257,13 +1295,13 @@ struct SkillsLibraryWindowView: View {
         return selected.isEmpty ? nil : selected
     }
 
-    private var importTargetSkill: BridgeSkillDocument? {
+    private var importTargetSkill: BridgeSkill? {
         guard let importTargetSkillID,
               model.selectedBridgeSkill?.skill.skillId == importTargetSkillID else { return nil }
         return model.selectedBridgeSkill
     }
 
-    private func export(_ document: BridgeSkillDocument) {
+    private func export(_ document: BridgeSkill) {
         Task { @MainActor in
             guard let exported = await model.exportBridgeSkillPackage(document.skill.reference),
                   let data = Data(base64Encoded: exported.data) else { return }
@@ -2136,14 +2174,14 @@ private struct BridgeSkillImportReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.locale) private var locale
     let review: BridgeSkillImportReview
-    let currentSkill: BridgeSkillDocument?
+    let currentSkill: BridgeSkill?
     let commit: (BridgeSkillImportCommit) -> Void
     @State private var name: String
     @State private var description = ""
     @State private var mainPath: String?
     @State private var selectedPaths: Set<String>
 
-    init(review: BridgeSkillImportReview, currentSkill: BridgeSkillDocument?, commit: @escaping (BridgeSkillImportCommit) -> Void) {
+    init(review: BridgeSkillImportReview, currentSkill: BridgeSkill?, commit: @escaping (BridgeSkillImportCommit) -> Void) {
         self.review = review
         self.currentSkill = currentSkill
         self.commit = commit
@@ -2371,29 +2409,24 @@ private struct RenameBridgeSkillFileSheet: View {
 
 private struct BridgeSkillDeleteSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.locale) private var locale
     let skillName: String
     let isDeleting: Bool
-    let confirm: (String) -> Void
-    @State private var typedName = ""
+    let confirm: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("macos.skills.permanentlyDeleteSkill").font(.headline)
             Text("macos.skills.allVersionsAndMarkdownFilesWillBeDeletedAndCannotBeRecovered")
                 .font(.caption).foregroundStyle(.secondary)
-            Text(verbatim: BridgeAppLocalization.format(
-                "macos.skills.toContinueEnterTheExactSkillNameValue",
-                locale: locale,
-                skillName
-            )).font(.caption)
-            TextField("macos.skills.skillName", text: $typedName)
+            Text(verbatim: skillName)
+                .font(.body.weight(.semibold))
+                .textSelection(.enabled)
             HStack {
                 Button("common.cancel", role: .cancel) { dismiss() }
                 Spacer()
                 if isDeleting { ProgressView().controlSize(.small) }
-                Button("macos.skills.deletePermanentlyAction", role: .destructive) { confirm(typedName) }
-                    .disabled(typedName != skillName || isDeleting)
+                Button("macos.skills.deletePermanentlyAction", role: .destructive) { confirm() }
+                    .disabled(isDeleting)
             }
         }.padding(20).frame(width: 430)
     }

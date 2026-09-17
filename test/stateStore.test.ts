@@ -471,7 +471,7 @@ describe("BridgeStateStore", () => {
       requestId,
       actionHash: "f".repeat(64),
       source: "widget-control",
-      toolName: "codex_ui_stop",
+      toolName: "codex_cancel",
       actionName: "cancel-dashboard-job",
       target: {
         kind: "job",

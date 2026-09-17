@@ -12,7 +12,7 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "releaseInventory": {
     "catalog": "ui-release-catalog.json",
-    "catalogSha256": "f6bfd3a96106c6fb8448272ca7ff9609b7984e42128d96911ef34f08e696c086",
+    "catalogSha256": "c34e05627d8ef4c7113bb70c31bc120c3497d8d4c162248caf1becb559a5f441",
     "activeResources": [
       "settings",
       "dashboard"
@@ -67,7 +67,7 @@ export const UI_RESOURCE_MANIFEST = {
       {
         "name": "dashboard",
         "uriVersion": 1,
-        "digest": "26962e546df429a1809f5fed1199c5b48d0e6126c0047faa978f48a4f79e8c8d",
+        "digest": "1387c1094e63e23589bae581c935d7448152735fc4a9dbbd063055e73aef7242",
         "uri": "ui://codex-mcp-bridge/dashboard/v1.html",
         "inventories": [
           "development-current"
@@ -80,8 +80,7 @@ export const UI_RESOURCE_MANIFEST = {
           "codex_dashboard",
           "codex_ui_problem",
           "codex_ui_read",
-          "codex_interaction_respond",
-          "codex_ui_stop"
+          "codex_interaction_respond"
         ]
       }
     ]
@@ -133,7 +132,7 @@ export const UI_RESOURCE_MANIFEST = {
     },
     "dashboard": {
       "uriVersion": 1,
-      "digest": "26962e546df429a1809f5fed1199c5b48d0e6126c0047faa978f48a4f79e8c8d",
+      "digest": "1387c1094e63e23589bae581c935d7448152735fc4a9dbbd063055e73aef7242",
       "uri": "ui://codex-mcp-bridge/dashboard/v1.html",
       "metadata": {
         "descriptor": {
@@ -175,8 +174,7 @@ export const UI_RESOURCE_MANIFEST = {
           "codex_dashboard",
           "codex_ui_problem",
           "codex_ui_read",
-          "codex_interaction_respond",
-          "codex_ui_stop"
+          "codex_interaction_respond"
         ]
       }
     }

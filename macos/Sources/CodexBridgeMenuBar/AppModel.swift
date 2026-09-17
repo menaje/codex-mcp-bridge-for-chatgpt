@@ -305,8 +305,8 @@ final class AppModel: ObservableObject {
     }
     @Published var settings: SettingsSnapshot?
     @Published private(set) var skillLibrary: BridgeSkillLibrarySnapshot?
-    @Published private(set) var selectedBridgeSkill: BridgeSkillDocument?
-    @Published private(set) var selectedBridgeSkillFile: BridgeSkillFileDocument?
+    @Published private(set) var selectedBridgeSkill: BridgeSkill?
+    @Published private(set) var selectedBridgeSkillFile: BridgeSkillFile?
     @Published private(set) var selectedBridgeSkillVersions: BridgeSkillVersionList?
     @Published private(set) var bridgeSkillFileLoading = false
     @Published var skillLibraryErrorMessage: String?
@@ -413,7 +413,7 @@ final class AppModel: ObservableObject {
     private var skillLibraryRequestGeneration = 0
     private var bridgeSkillSelectionRequestGeneration = 0
     private var bridgeSkillFileRequestGeneration = 0
-    private var bridgeSkillFileCache: [String: BridgeSkillFileDocument] = [:]
+    private var bridgeSkillFileCache: [String: BridgeSkillFile] = [:]
     private var statusRequestGeneration = 0
     @Published private(set) var localConnectionRecovery = ConnectionRecoveryWindow() { didSet { scheduleOperationalObservation() } }
     private var connectionGeneration = 0
@@ -1881,11 +1881,11 @@ final class AppModel: ObservableObject {
         let generation = connectionGeneration
         do {
             let client = try await bridgeClient()
-            let document = try await client.readBridgeSkill(reference)
+            let skill = try await client.readBridgeSkill(reference)
             guard !Task.isCancelled,
                   generation == connectionGeneration,
                   request == bridgeSkillSelectionRequestGeneration else { return }
-            selectedBridgeSkill = document
+            selectedBridgeSkill = skill
             selectedBridgeSkillFile = nil
             selectedBridgeSkillVersions = nil
             skillLibraryErrorMessage = nil
@@ -1896,7 +1896,7 @@ final class AppModel: ObservableObject {
                       request == bridgeSkillSelectionRequestGeneration else { return }
                 selectedBridgeSkillVersions = versions
             } catch {
-                // A document remains usable even if a legacy remote server has
+                // Skill content remains usable even if a legacy remote server has
                 // not yet exposed version history. The next explicit refresh
                 // will retry this optional management view.
                 guard !Task.isCancelled,
@@ -1913,8 +1913,8 @@ final class AppModel: ObservableObject {
     }
 
     func loadBridgeSkillFile(path: String) async {
-        guard let document = selectedBridgeSkill else { return }
-        let reference = document.skill.reference
+        guard let skill = selectedBridgeSkill else { return }
+        let reference = skill.skill.reference
         let cacheKey = "\(reference.skillId)\u{0}\(reference.version)\u{0}\(path)"
         if let cached = bridgeSkillFileCache[cacheKey] {
             selectedBridgeSkillFile = cached
@@ -1944,7 +1944,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func selectBridgeSkillMainDocument() {
+    func selectBridgeSkillContent() {
         bridgeSkillFileRequestGeneration += 1
         bridgeSkillFileLoading = false
         selectedBridgeSkillFile = nil
@@ -2184,14 +2184,6 @@ final class AppModel: ObservableObject {
             self.settingsAutosaveDebounceTask = nil
             await self.drainSettingsAutosave()
         }
-    }
-
-    func enableCodexThreadPersistence() {
-        guard let snapshot = settings else { return }
-        var draft = SettingsDraft(snapshot: snapshot)
-        guard !draft.showBridgeThreadsInCodexApp else { return }
-        draft.showBridgeThreadsInCodexApp = true
-        scheduleSettingsAutosave(draft)
     }
 
     func cancelPendingSettingsAutosave() {

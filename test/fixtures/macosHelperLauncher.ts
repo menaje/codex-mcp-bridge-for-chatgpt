@@ -136,7 +136,7 @@ const server = createServer((socket) => {
       return;
     }
     const result = request.method === "companion.hello" ? {
-      protocol: { name: "codex-mcp-bridge-companion", version: 8 },
+      protocol: { name: "codex-mcp-bridge-companion", version: 9 },
       bridge: { buildId: "development" }
     } : {
       acceptingNewJobs,

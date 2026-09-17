@@ -22,8 +22,7 @@
         "codex_dashboard",
         "codex_ui_problem",
         "codex_ui_read",
-        "codex_interaction_respond",
-        "codex_ui_stop"
+        "codex_interaction_respond"
       ]
     }
   },

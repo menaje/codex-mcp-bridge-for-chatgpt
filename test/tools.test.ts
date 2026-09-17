@@ -169,7 +169,7 @@ describe("current bridge tool contracts", () => {
   it("publishes one current tool surface without compatibility tiers", async () => {
     const tools = await client.listTools();
     const names = new Set(tools.tools.map((tool) => tool.name));
-    for (const current of ["codex_task", "codex_models", "codex_settings", "codex_dashboard", "codex_ui_read", "bridge_skill", "bridge_skill_manage"]) {
+    for (const current of ["codex_task", "codex_cancel", "codex_models", "codex_settings", "codex_dashboard", "codex_ui_read", "bridge_skill", "bridge_skill_manage"]) {
       expect(names.has(current)).toBe(true);
     }
     for (const retired of [
@@ -179,15 +179,19 @@ describe("current bridge tool contracts", () => {
       "codex_settings_snapshot",
       "codex_question_card",
       "codex_question_submit",
-      "codex_question_notify"
+      "codex_question_notify",
+      "codex_ui_stop"
     ]) expect(names.has(retired)).toBe(false);
     const bridgeSkill = tools.tools.find((tool) => tool.name === "bridge_skill")!;
+    const bridgeSkillManage = tools.tools.find((tool) => tool.name === "bridge_skill_manage")!;
     expect(JSON.stringify(bridgeSkill.inputSchema)).not.toContain('"project"');
+    expect(JSON.stringify(bridgeSkillManage.inputSchema)).toContain('"content"');
+    expect(JSON.stringify(bridgeSkillManage.inputSchema)).not.toContain('"document"');
     expect(tools.tools.some((tool) => "codex/registrationTier" in (tool._meta || {}))).toBe(false);
   });
 
-  it("lets GPT search, read, and version Bridge Markdown documents without starting Codex", async () => {
-    const originalDocument = "# Evidence review\n\n| Claim | Evidence | Risk |\n| --- | --- | --- |";
+  it("lets GPT search, read, and version Bridge Markdown skills without starting Codex", async () => {
+    const originalContent = "# Evidence review\n\n| Claim | Evidence | Risk |\n| --- | --- | --- |";
     const created = await client.callTool({
       name: "bridge_skill_manage",
       arguments: {
@@ -195,7 +199,7 @@ describe("current bridge tool contracts", () => {
         requestId: randomUUID(),
         name: "Evidence review",
         description: "Review reports with an evidence table.",
-        document: originalDocument,
+        content: originalContent,
         files: [{ path: "references/policy.md", content: "# Policy\n\nKeep the immutable evidence chain." }]
       }
     });
@@ -211,9 +215,15 @@ describe("current bridge tool contracts", () => {
     const read = await client.callTool({ name: "bridge_skill", arguments: { operation: "read", skill: createdReference } });
     expect(read.isError, JSON.stringify(read)).not.toBe(true);
     expect(read.structuredContent).toMatchObject({
-      kind: "skill", document: originalDocument, format: "markdown", legacy: false,
-      sourceSnapshot: "versioned-bridge-record",
-      files: [expect.objectContaining({ path: "references/policy.md", format: "markdown" })]
+      kind: "skill",
+      skill: {
+        name: "Evidence review",
+        content: originalContent,
+        format: "markdown",
+        legacy: false,
+        sourceSnapshot: "versioned-bridge-record",
+        files: [expect.objectContaining({ path: "references/policy.md", format: "markdown" })]
+      }
     });
     expect(JSON.parse((read.content[0] as any).text)).toEqual(read.structuredContent);
 
@@ -239,7 +249,7 @@ describe("current bridge tool contracts", () => {
       name: "bridge_skill_manage",
       arguments: {
         operation: "update", requestId: randomUUID(), skillId: createdSkill.skillId,
-        expectedVersion: createdSkill.version, document: "# Evidence review\n\nUpdated Markdown body.",
+        expectedVersion: createdSkill.version, content: "# Evidence review\n\nUpdated Markdown body.",
         files: {
           remove: ["references/policy.md"],
           upsert: [{ path: "references/current.md", content: "# Current policy" }]
@@ -263,7 +273,7 @@ describe("current bridge tool contracts", () => {
     });
     expect((archived.structuredContent as any).skill).toMatchObject({ enabled: false, availability: "disabled" });
     const historical = await client.callTool({ name: "bridge_skill", arguments: { operation: "read", skill: createdReference } });
-    expect(historical.structuredContent).toMatchObject({ document: originalDocument });
+    expect(historical.structuredContent).toMatchObject({ skill: { content: originalContent } });
     expect(upstream.calls).toEqual([]);
   });
 
@@ -275,7 +285,7 @@ describe("current bridge tool contracts", () => {
         operation: "create",
         requestId: randomUUID(),
         name,
-        document: "# Unicode scalar boundary"
+        content: "# Unicode scalar boundary"
       }
     });
     expect(created.isError, JSON.stringify(created)).not.toBe(true);
@@ -288,7 +298,7 @@ describe("current bridge tool contracts", () => {
         operation: "create",
         requestId: randomUUID(),
         name: `${name}😀`,
-        document: "# Too long"
+        content: "# Too long"
       }
     });
     expect(overflow.isError).toBe(true);
@@ -303,7 +313,7 @@ describe("current bridge tool contracts", () => {
     expect(paddedReference.isError).toBe(true);
   });
 
-  it("keeps Bridge documents outside the Codex task schema and prompt", async () => {
+  it("keeps Bridge skills outside the Codex task schema and prompt", async () => {
     const created = await client.callTool({
       name: "bridge_skill_manage",
       arguments: {
@@ -311,7 +321,7 @@ describe("current bridge tool contracts", () => {
         requestId: randomUUID(),
         name: "Local review",
         description: "Review a local report before editing it.",
-        document: "Inspect the report, then make only evidence-backed edits."
+        content: "Inspect the report, then make only evidence-backed edits."
       }
     });
     const skill = (created.structuredContent as any).skill;

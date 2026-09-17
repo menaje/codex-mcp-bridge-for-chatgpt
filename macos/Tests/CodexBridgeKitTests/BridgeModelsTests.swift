@@ -30,12 +30,13 @@ final class BridgeModelsTests: XCTestCase {
             requestId: "00000000-0000-4000-8000-000000000114",
             name: "Report review",
             description: "Review a report with evidence.",
-            document: "# Review\n\nCheck each claim against its source.",
+            content: "# Review\n\nCheck each claim against its source.",
             files: [.init(path: "references/evidence.md", content: "# Evidence")]
         )
         let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(create)) as? [String: Any])
         XCTAssertEqual(encoded["requestId"] as? String, "00000000-0000-4000-8000-000000000114")
-        XCTAssertEqual(encoded["document"] as? String, "# Review\n\nCheck each claim against its source.")
+        XCTAssertEqual(encoded["content"] as? String, "# Review\n\nCheck each claim against its source.")
+        XCTAssertNil(encoded["document"])
         XCTAssertEqual((encoded["files"] as? [[String: Any]])?.first?["path"] as? String, "references/evidence.md")
         XCTAssertNil(encoded["instructions"])
         XCTAssertNil(encoded["references"])
@@ -67,8 +68,8 @@ final class BridgeModelsTests: XCTestCase {
         XCTAssertEqual(history.versions.first?.format, "markdown")
         XCTAssertFalse(history.versions.first?.legacy ?? true)
 
-        let document = try JSONDecoder().decode(
-            BridgeSkillDocument.self,
+        let skill = try JSONDecoder().decode(
+            BridgeSkill.self,
             from: Data(#"""
             {
               "skill":{
@@ -81,7 +82,7 @@ final class BridgeModelsTests: XCTestCase {
                 "enabled":true,
                 "availability":"available"
               },
-              "document":"# Review\r\n\r\n- preserve source",
+              "content":"# Review\r\n\r\n- preserve source",
               "files":[{
                 "path":"references/evidence.md",
                 "format":"markdown",
@@ -95,18 +96,18 @@ final class BridgeModelsTests: XCTestCase {
             }
             """#.utf8)
         )
-        XCTAssertEqual(document.document, "# Review\r\n\r\n- preserve source")
-        XCTAssertEqual(document.format, "markdown")
-        XCTAssertFalse(document.legacy)
-        XCTAssertEqual(document.files.first?.path, "references/evidence.md")
+        XCTAssertEqual(skill.content, "# Review\r\n\r\n- preserve source")
+        XCTAssertEqual(skill.format, "markdown")
+        XCTAssertFalse(skill.legacy)
+        XCTAssertEqual(skill.files.first?.path, "references/evidence.md")
 
         let deletion = BridgeSkillDeleteRequest(
             requestId: "00000000-0000-4000-8000-000000000115",
             skillId: "bridge_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            expectedVersion: "2",
-            confirmName: "Report review"
+            expectedVersion: "2"
         )
-        XCTAssertEqual(deletion.confirmName, "Report review")
+        let deletionJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(deletion)) as? [String: Any])
+        XCTAssertNil(deletionJSON["confirmName"])
 
         let deleted = try JSONDecoder().decode(
             BridgeSkillDeletion.self,

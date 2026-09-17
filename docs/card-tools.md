@@ -28,7 +28,6 @@ presenters, or Activity-card presenters.
 | `codex_update_settings` | Commit versioned settings and project changes. |
 | `codex_interaction_respond` | Respond to an original Codex approval or non-ordinary input request. |
 | `codex_ui_problem` | Resolve a verified UI problem. |
-| `codex_ui_stop` | Stop a Dashboard-selected Job or verified background process. |
 
 Each app-only action has a closed schema and requires its normal mounted
 Dashboard proof, scope, revision, and ownership checks. Model-visible tools do

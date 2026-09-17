@@ -199,8 +199,6 @@
         "settings.usePriorityHint": "Runs supported models faster. The model and reasoning level stay the same; usage or costs may increase.",
         "dashboard.execution.fast": "Fast",
         "dashboard.control.requests": "Review requests",
-        "dashboard.control.work": "Work controls",
-        "dashboard.control.stop": "Force stop",
         "dashboard.control.close": "Collapse",
         "dashboard.control.empty": "No review requests need attention.",
         "settings.fixedNotice": "This exact selection is enforced for Codex turns admitted after saving. An already active turn keeps its admission-time decision.",
@@ -341,11 +339,6 @@
         "activity.failed": "Failed",
         "activity.previousFailures": "Previous failures: {count}",
         "activity.empty": "No activities in this conversation yet.",
-        "activity.forceStop": "Force-stop Agent work…",
-        "activity.forceConfirmTitle": "Force-stop this Agent's current work?",
-        "activity.forceConfirm": "This sends TERM and automatically escalates to KILL for the exact tracked worker process group. Shared-worker jobs may be interrupted, and filesystem changes are not rolled back.",
-        "activity.forceStopping": "Force-stopping Agent work…",
-        "activity.forceStopped": "Agent work termination was confirmed.",
         "activity.viewDetails": "View details",
         "activity.hideDetails": "Hide details",
         "activity.updated": "Updated",
@@ -360,7 +353,6 @@
         "activity.enrichmentFailed": "Usage or runtime details could not be refreshed. Activity records are still available.",
         "activity.refreshFailedRetained": "Refresh failed; showing the last loaded Activity data.",
         "activity.openLive": "Open live Activity",
-        "activity.partialChanges": "Force stop does not roll back changes already written to disk.",
         "activity.jobs": "jobs",
         "activity.threads": "threads",
         "activity.events": "Recent activity",
@@ -677,8 +669,6 @@
         "settings.usePriorityHint": "지원되는 모델을 더 빠르게 실행합니다. 모델과 추론 수준은 유지되며, 사용량이나 비용이 늘어날 수 있습니다.",
         "dashboard.execution.fast": "빠른 처리",
         "dashboard.control.requests": "요청 확인",
-        "dashboard.control.work": "작업 제어",
-        "dashboard.control.stop": "강제 종료",
         "dashboard.control.close": "접기",
         "dashboard.control.empty": "확인할 요청이 없습니다.",
         "settings.fixedNotice": "저장 이후 접수되는 Codex turn에는 이 exact selection이 강제됩니다. 이미 실행 중인 turn은 접수 시점 결정을 유지합니다.",
@@ -819,11 +809,6 @@
         "activity.failed": "실패",
         "activity.previousFailures": "이전 실패 {count}건",
         "activity.empty": "이 대화에는 아직 Activity가 없습니다.",
-        "activity.forceStop": "에이전트 강제 종료…",
-        "activity.forceConfirmTitle": "에이전트의 현재 작업을 강제 종료할까요?",
-        "activity.forceConfirm": "추적 중인 정확한 worker process group에 TERM을 보내고 필요하면 KILL로 자동 승격합니다. 같은 worker의 작업이 함께 중단될 수 있고 파일 변경은 되돌리지 않습니다.",
-        "activity.forceStopping": "에이전트 강제 종료 중…",
-        "activity.forceStopped": "에이전트의 현재 작업 종료를 확인했습니다.",
         "activity.viewDetails": "상세 보기",
         "activity.hideDetails": "상세 닫기",
         "activity.updated": "업데이트",
@@ -838,7 +823,6 @@
         "activity.enrichmentFailed": "Usage or runtime details could not be refreshed. Activity records are still available.",
         "activity.refreshFailedRetained": "Refresh failed; showing the last loaded Activity data.",
         "activity.openLive": "Open live Activity",
-        "activity.partialChanges": "강제 종료는 디스크에 이미 기록된 변경을 되돌리지 않습니다.",
         "activity.jobs": "작업",
         "activity.threads": "스레드",
         "activity.events": "최근 활동",
@@ -1155,8 +1139,6 @@
         "settings.usePriorityHint": "対応モデルをより速く実行します。モデルと推論レベルは維持されますが、使用量や料金が増える場合があります。",
         "dashboard.execution.fast": "高速処理",
         "dashboard.control.requests": "リクエストを確認",
-        "dashboard.control.work": "作業の操作",
-        "dashboard.control.stop": "強制終了",
         "dashboard.control.close": "折りたたむ",
         "dashboard.control.empty": "確認が必要なリクエストはありません。",
         "settings.fixedNotice": "保存後に受け付けた Codex ターンには、この選択が厳密に適用されます。すでに実行中のターンには、受付時の決定が維持されます。",
@@ -1297,11 +1279,6 @@
         "activity.failed": "失敗",
         "activity.previousFailures": "以前の失敗 {count} 件",
         "activity.empty": "この会話にはまだアクティビティがありません。",
-        "activity.forceStop": "エージェントの作業を強制終了…",
-        "activity.forceConfirmTitle": "このエージェントの現在の作業を強制終了しますか？",
-        "activity.forceConfirm": "追跡対象の worker process group に TERM を送り、必要なら KILL に自動昇格します。共有 worker のジョブが中断され、ファイル変更は元に戻りません。",
-        "activity.forceStopping": "エージェントの作業を強制終了中…",
-        "activity.forceStopped": "エージェントの作業終了を確認しました。",
         "activity.viewDetails": "詳細を表示",
         "activity.hideDetails": "詳細を閉じる",
         "activity.updated": "更新日時",
@@ -1316,7 +1293,6 @@
         "activity.enrichmentFailed": "Usage or runtime details could not be refreshed. Activity records are still available.",
         "activity.refreshFailedRetained": "Refresh failed; showing the last loaded Activity data.",
         "activity.openLive": "Open live Activity",
-        "activity.partialChanges": "強制終了しても、ディスクに書き込まれた変更は元に戻りません。",
         "activity.jobs": "ジョブ",
         "activity.threads": "スレッド",
         "activity.events": "最近のアクティビティ",
@@ -1633,8 +1609,6 @@
         "settings.usePriorityHint": "更快地运行支持的模型。模型和推理强度保持不变，用量或费用可能增加。",
         "dashboard.execution.fast": "快速处理",
         "dashboard.control.requests": "查看请求",
-        "dashboard.control.work": "工作控制",
-        "dashboard.control.stop": "强制停止",
         "dashboard.control.close": "收起",
         "dashboard.control.empty": "没有需要查看的请求。",
         "settings.fixedNotice": "保存后接收的 Codex 轮次将严格使用此选择。已在运行的轮次会保留接收时的决定。",
@@ -1775,11 +1749,6 @@
         "activity.failed": "失败",
         "activity.previousFailures": "之前失败 {count} 次",
         "activity.empty": "此对话中还没有活动。",
-        "activity.forceStop": "强制停止智能体任务…",
-        "activity.forceConfirmTitle": "强制停止此智能体的当前任务？",
-        "activity.forceConfirm": "将向被跟踪的准确 worker process group 发送 TERM，并在需要时自动升级为 KILL。共享 worker 的任务可能中断，文件更改不会回滚。",
-        "activity.forceStopping": "正在强制停止智能体任务…",
-        "activity.forceStopped": "已确认智能体任务终止。",
         "activity.viewDetails": "查看详情",
         "activity.hideDetails": "收起详情",
         "activity.updated": "更新时间",
@@ -1794,7 +1763,6 @@
         "activity.enrichmentFailed": "Usage or runtime details could not be refreshed. Activity records are still available.",
         "activity.refreshFailedRetained": "Refresh failed; showing the last loaded Activity data.",
         "activity.openLive": "Open live Activity",
-        "activity.partialChanges": "强制停止不会回滚已写入磁盘的更改。",
         "activity.jobs": "任务",
         "activity.threads": "线程",
         "activity.events": "最近活动",
@@ -2111,8 +2079,6 @@
         "settings.usePriorityHint": "更快地執行支援的模型。模型與推理強度保持不變，用量或費用可能增加。",
         "dashboard.execution.fast": "快速處理",
         "dashboard.control.requests": "查看請求",
-        "dashboard.control.work": "工作控制",
-        "dashboard.control.stop": "強制停止",
         "dashboard.control.close": "收合",
         "dashboard.control.empty": "沒有需要查看的請求。",
         "settings.fixedNotice": "儲存後接收的 Codex 輪次會嚴格套用此選擇。已在執行的輪次會保留接收時的決定。",
@@ -2253,11 +2219,6 @@
         "activity.failed": "失敗",
         "activity.previousFailures": "先前失敗 {count} 次",
         "activity.empty": "此對話中尚無活動。",
-        "activity.forceStop": "強制停止代理程式工作…",
-        "activity.forceConfirmTitle": "強制停止此代理程式目前的工作？",
-        "activity.forceConfirm": "將向追蹤中的正確 worker process group 傳送 TERM，必要時自動升級為 KILL。共用 worker 的工作可能中斷，檔案變更不會復原。",
-        "activity.forceStopping": "正在強制停止代理程式工作…",
-        "activity.forceStopped": "已確認代理程式工作終止。",
         "activity.viewDetails": "檢視詳細資料",
         "activity.hideDetails": "隱藏詳細資料",
         "activity.updated": "更新時間",
@@ -2272,7 +2233,6 @@
         "activity.enrichmentFailed": "Usage or runtime details could not be refreshed. Activity records are still available.",
         "activity.refreshFailedRetained": "Refresh failed; showing the last loaded Activity data.",
         "activity.openLive": "Open live Activity",
-        "activity.partialChanges": "強制停止不會回復已寫入磁碟的變更。",
         "activity.jobs": "工作",
         "activity.threads": "執行緒",
         "activity.events": "最近活動",
@@ -2589,8 +2549,6 @@
         "settings.usePriorityHint": "Ejecuta más rápido los modelos compatibles. El modelo y el nivel de razonamiento se mantienen; el consumo o el coste pueden aumentar.",
         "dashboard.execution.fast": "Rápido",
         "dashboard.control.requests": "Revisar solicitudes",
-        "dashboard.control.work": "Controles de trabajo",
-        "dashboard.control.stop": "Forzar detención",
         "dashboard.control.close": "Contraer",
         "dashboard.control.empty": "No hay solicitudes que requieran revisión.",
         "settings.fixedNotice": "Esta selección exacta se aplica a los turnos de Codex admitidos después de guardar. Un turno ya activo conserva la decisión tomada al admitirse.",
@@ -2731,11 +2689,6 @@
         "activity.failed": "Falló",
         "activity.previousFailures": "Fallos anteriores: {count}",
         "activity.empty": "Aún no hay actividades en esta conversación.",
-        "activity.forceStop": "Forzar detención del trabajo del agente…",
-        "activity.forceConfirmTitle": "¿Forzar la detención del trabajo actual de este agente?",
-        "activity.forceConfirm": "Envía TERM al grupo de procesos worker exacto y escala automáticamente a KILL si es necesario. Pueden interrumpirse tareas que compartan worker y los cambios de archivos no se revierten.",
-        "activity.forceStopping": "Deteniendo por la fuerza el trabajo del agente…",
-        "activity.forceStopped": "Se confirmó la finalización del trabajo del agente.",
         "activity.viewDetails": "Ver detalles",
         "activity.hideDetails": "Ocultar detalles",
         "activity.updated": "Actualizado",
@@ -2750,7 +2703,6 @@
         "activity.enrichmentFailed": "Usage or runtime details could not be refreshed. Activity records are still available.",
         "activity.refreshFailedRetained": "Refresh failed; showing the last loaded Activity data.",
         "activity.openLive": "Open live Activity",
-        "activity.partialChanges": "La detención forzada no revierte los cambios ya escritos en disco.",
         "activity.jobs": "tareas",
         "activity.threads": "hilos",
         "activity.events": "Actividad reciente",
@@ -3067,8 +3019,6 @@
         "settings.usePriorityHint": "Accélère les modèles compatibles. Le modèle et le niveau de raisonnement restent identiques ; la consommation ou les coûts peuvent augmenter.",
         "dashboard.execution.fast": "Rapide",
         "dashboard.control.requests": "Examiner les demandes",
-        "dashboard.control.work": "Contrôles du travail",
-        "dashboard.control.stop": "Forcer l’arrêt",
         "dashboard.control.close": "Replier",
         "dashboard.control.empty": "Aucune demande ne nécessite d’examen.",
         "settings.fixedNotice": "Cette sélection exacte s’applique aux tours Codex admis après l’enregistrement. Un tour déjà actif conserve la décision prise lors de son admission.",
@@ -3209,11 +3159,6 @@
         "activity.failed": "Échec",
         "activity.previousFailures": "Échecs précédents : {count}",
         "activity.empty": "Aucune activité dans cette conversation.",
-        "activity.forceStop": "Forcer l’arrêt du travail de l’agent…",
-        "activity.forceConfirmTitle": "Forcer l’arrêt du travail en cours de cet agent ?",
-        "activity.forceConfirm": "Envoie TERM au groupe de processus worker suivi avec précision et passe automatiquement à KILL si nécessaire. Les tâches partageant ce worker peuvent être interrompues et les modifications de fichiers ne sont pas annulées.",
-        "activity.forceStopping": "Arrêt forcé du travail de l’agent…",
-        "activity.forceStopped": "L’arrêt du travail de l’agent a été confirmé.",
         "activity.viewDetails": "Voir les détails",
         "activity.hideDetails": "Masquer les détails",
         "activity.updated": "Mis à jour",
@@ -3228,7 +3173,6 @@
         "activity.enrichmentFailed": "Usage or runtime details could not be refreshed. Activity records are still available.",
         "activity.refreshFailedRetained": "Refresh failed; showing the last loaded Activity data.",
         "activity.openLive": "Open live Activity",
-        "activity.partialChanges": "L’arrêt forcé n’annule pas les modifications déjà écrites sur le disque.",
         "activity.jobs": "tâches",
         "activity.threads": "fils",
         "activity.events": "Activité récente",
@@ -3545,8 +3489,6 @@
         "settings.usePriorityHint": "Führt unterstützte Modelle schneller aus. Modell und Denkstufe bleiben gleich; Verbrauch oder Kosten können steigen.",
         "dashboard.execution.fast": "Schnell",
         "dashboard.control.requests": "Anfragen prüfen",
-        "dashboard.control.work": "Arbeitssteuerung",
-        "dashboard.control.stop": "Erzwungen stoppen",
         "dashboard.control.close": "Zuklappen",
         "dashboard.control.empty": "Keine Anfragen müssen geprüft werden.",
         "settings.fixedNotice": "Diese genaue Auswahl wird für Codex-Turns erzwungen, die nach dem Speichern angenommen werden. Ein bereits aktiver Turn behält die bei der Annahme getroffene Entscheidung.",
@@ -3687,11 +3629,6 @@
         "activity.failed": "Fehlgeschlagen",
         "activity.previousFailures": "Frühere Fehlschläge: {count}",
         "activity.empty": "Noch keine Aktivitäten in dieser Unterhaltung.",
-        "activity.forceStop": "Agentenarbeit zwangsweise stoppen…",
-        "activity.forceConfirmTitle": "Aktuelle Arbeit dieses Agenten zwangsweise stoppen?",
-        "activity.forceConfirm": "Sendet TERM an die exakt erfasste worker-Prozessgruppe und eskaliert bei Bedarf automatisch zu KILL. Jobs auf demselben worker können unterbrochen werden; Dateiänderungen werden nicht zurückgesetzt.",
-        "activity.forceStopping": "Agentenarbeit wird zwangsweise gestoppt…",
-        "activity.forceStopped": "Die Beendigung der Agentenarbeit wurde bestätigt.",
         "activity.viewDetails": "Details anzeigen",
         "activity.hideDetails": "Details ausblenden",
         "activity.updated": "Aktualisiert",
@@ -3706,7 +3643,6 @@
         "activity.enrichmentFailed": "Usage or runtime details could not be refreshed. Activity records are still available.",
         "activity.refreshFailedRetained": "Refresh failed; showing the last loaded Activity data.",
         "activity.openLive": "Open live Activity",
-        "activity.partialChanges": "Erzwungenes Stoppen setzt bereits geschriebene Änderungen nicht zurück.",
         "activity.jobs": "Jobs",
         "activity.threads": "Threads",
         "activity.events": "Letzte Aktivität",
@@ -4023,8 +3959,6 @@
         "settings.usePriorityHint": "Executa os modelos compatíveis mais rapidamente. O modelo e o nível de raciocínio permanecem iguais; o consumo ou o custo podem aumentar.",
         "dashboard.execution.fast": "Rápido",
         "dashboard.control.requests": "Revisar solicitações",
-        "dashboard.control.work": "Controles de trabalho",
-        "dashboard.control.stop": "Forçar parada",
         "dashboard.control.close": "Recolher",
         "dashboard.control.empty": "Não há solicitações que precisem de revisão.",
         "settings.fixedNotice": "Esta seleção exata é aplicada aos turnos do Codex aceitos após salvar. Um turno já ativo mantém a decisão tomada na admissão.",
@@ -4165,11 +4099,6 @@
         "activity.failed": "Falhou",
         "activity.previousFailures": "Falhas anteriores: {count}",
         "activity.empty": "Ainda não há atividades nesta conversa.",
-        "activity.forceStop": "Forçar parada do trabalho do agente…",
-        "activity.forceConfirmTitle": "Forçar a parada do trabalho atual deste agente?",
-        "activity.forceConfirm": "Envia TERM ao grupo de processos worker rastreado com exatidão e escala automaticamente para KILL quando necessário. Tarefas que compartilham o worker podem ser interrompidas e as alterações em arquivos não são revertidas.",
-        "activity.forceStopping": "Forçando a parada do trabalho do agente…",
-        "activity.forceStopped": "A finalização do trabalho do agente foi confirmada.",
         "activity.viewDetails": "Ver detalhes",
         "activity.hideDetails": "Ocultar detalhes",
         "activity.updated": "Atualizado",
@@ -4184,7 +4113,6 @@
         "activity.enrichmentFailed": "Usage or runtime details could not be refreshed. Activity records are still available.",
         "activity.refreshFailedRetained": "Refresh failed; showing the last loaded Activity data.",
         "activity.openLive": "Open live Activity",
-        "activity.partialChanges": "A parada forçada não reverte alterações já gravadas no disco.",
         "activity.jobs": "tarefas",
         "activity.threads": "threads",
         "activity.events": "Atividade recente",
@@ -8668,55 +8596,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Check the main Markdown document and file selection to import."
+              "value": "Check the SKILL.md content and file selection to import."
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "가져올 메인 Markdown 문서와 파일 선택을 확인해 주세요."
+              "value": "가져올 SKILL.md 본문과 파일 선택을 확인하세요."
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "読み込むメインMarkdown文書とファイルの選択を確認してください。"
+              "value": "読み込む SKILL.md の内容とファイル選択を確認してください。"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "请检查要导入的主 Markdown 文档和文件选择。"
+              "value": "请检查要导入的 SKILL.md 内容和文件选择。"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "請檢查要匯入的主要 Markdown 文件與檔案選擇。"
+              "value": "請檢查要匯入的 SKILL.md 內容與檔案選擇。"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Comprueba el documento Markdown principal y los archivos seleccionados para importar."
+              "value": "Comprueba el contenido de SKILL.md y los archivos seleccionados para importar."
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Vérifiez le document Markdown principal et la sélection de fichiers à importer."
+              "value": "Vérifiez le contenu de SKILL.md et la sélection de fichiers à importer."
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Prüfen Sie das Markdown-Hauptdokument und die Dateiauswahl für den Import."
+              "value": "Prüfen Sie den SKILL.md-Inhalt und die Dateiauswahl für den Import."
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Verifique o documento Markdown principal e a seleção de arquivos para importar."
+              "value": "Verifique o conteúdo do SKILL.md e a seleção de arquivos para importar."
             }
           }
         }
@@ -8726,55 +8654,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Choose as Main or Exclude"
+              "value": "Use as SKILL.md or Exclude"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "메인으로 선택하거나 제외"
+              "value": "SKILL.md로 사용하거나 제외"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "メインに選択するか除外"
+              "value": "SKILL.md として使用するか除外"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "选为主文档或排除"
+              "value": "用作 SKILL.md 或排除"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "選為主要文件或排除"
+              "value": "用作 SKILL.md 或排除"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Elegir como principal o excluir"
+              "value": "Usar como SKILL.md o excluir"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Choisir comme document principal ou exclure"
+              "value": "Utiliser comme SKILL.md ou exclure"
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Als Hauptdokument wählen oder ausschließen"
+              "value": "Als SKILL.md verwenden oder ausschließen"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Escolher como principal ou excluir"
+              "value": "Usar como SKILL.md ou excluir"
             }
           }
         }
@@ -8784,55 +8712,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Choose the main document. Other selected files are saved as attached Markdown with their relative paths preserved."
+              "value": "Choose the file to use as SKILL.md content. Other selected files are saved as Markdown attachments with their relative paths preserved."
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "메인 문서를 선택하세요. 나머지 선택 파일은 상대경로를 유지한 첨부 Markdown으로 저장됩니다."
+              "value": "SKILL.md 본문으로 사용할 파일을 선택하세요. 선택한 다른 파일은 상대 경로를 유지한 Markdown 첨부 파일로 저장됩니다."
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "メイン文書を選択してください。ほかの選択ファイルは相対パスを保った添付Markdownとして保存されます。"
+              "value": "SKILL.md の内容として使用するファイルを選択してください。その他の選択ファイルは相対パスを維持した Markdown 添付ファイルとして保存されます。"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "请选择主文档。其他所选文件将保留相对路径并保存为附加 Markdown。"
+              "value": "选择要用作 SKILL.md 内容的文件。其他所选文件将保留相对路径并保存为 Markdown 附件。"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "請選擇主要文件。其他所選檔案將保留相對路徑並儲存為附加 Markdown。"
+              "value": "選擇要用作 SKILL.md 內容的檔案。其他所選檔案將保留相對路徑並儲存為 Markdown 附件。"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Elige el documento principal. Los demás archivos seleccionados se guardarán como Markdown adjunto conservando sus rutas relativas."
+              "value": "Elige el archivo que se usará como contenido de SKILL.md. Los demás archivos seleccionados se guardan como adjuntos Markdown conservando sus rutas relativas."
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Choisissez le document principal. Les autres fichiers sélectionnés seront enregistrés comme Markdown joints en conservant leurs chemins relatifs."
+              "value": "Choisissez le fichier à utiliser comme contenu de SKILL.md. Les autres fichiers sélectionnés sont enregistrés comme pièces jointes Markdown avec leurs chemins relatifs préservés."
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Wählen Sie das Hauptdokument. Andere ausgewählte Dateien werden als angehängtes Markdown mit ihren relativen Pfaden gespeichert."
+              "value": "Wählen Sie die Datei für den SKILL.md-Inhalt. Andere ausgewählte Dateien werden als Markdown-Anlagen mit ihren relativen Pfaden gespeichert."
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Escolha o documento principal. Os demais arquivos selecionados serão salvos como Markdown anexado, preservando os caminhos relativos."
+              "value": "Escolha o arquivo a ser usado como conteúdo do SKILL.md. Os outros arquivos selecionados são salvos como anexos Markdown, preservando os caminhos relativos."
             }
           }
         }
@@ -9132,55 +9060,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Delete Permanently…"
+              "value": "Delete Permanently"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "영구 삭제…"
+              "value": "영구 삭제"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "完全に削除…"
+              "value": "完全に削除"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "永久删除…"
+              "value": "永久删除"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "永久刪除…"
+              "value": "永久刪除"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Eliminar permanentemente…"
+              "value": "Eliminar permanentemente"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Supprimer définitivement…"
+              "value": "Supprimer définitivement"
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Dauerhaft löschen…"
+              "value": "Dauerhaft löschen"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Excluir permanentemente…"
+              "value": "Excluir permanentemente"
             }
           }
         }
@@ -9480,55 +9408,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Documents"
+              "value": "Skill Files"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "문서"
+              "value": "스킬 파일"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "文書"
+              "value": "スキルファイル"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "文档"
+              "value": "技能文件"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "文件"
+              "value": "技能檔案"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Documentos"
+              "value": "Archivos de la habilidad"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Documents"
+              "value": "Fichiers de la compétence"
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Dokumente"
+              "value": "Skill-Dateien"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Documentos"
+              "value": "Arquivos da habilidade"
             }
           }
         }
@@ -9596,55 +9524,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Export as ZIP…"
+              "value": "Export as ZIP"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "ZIP으로 내보내기…"
+              "value": "ZIP으로 내보내기"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "ZIPとして書き出す…"
+              "value": "ZIPとして書き出す"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "导出为 ZIP…"
+              "value": "导出为 ZIP"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "輸出為 ZIP…"
+              "value": "輸出為 ZIP"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Exportar como ZIP…"
+              "value": "Exportar como ZIP"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Exporter au format ZIP…"
+              "value": "Exporter au format ZIP"
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Als ZIP exportieren…"
+              "value": "Als ZIP exportieren"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Exportar como ZIP…"
+              "value": "Exportar como ZIP"
             }
           }
         }
@@ -9886,55 +9814,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Import Files, Folder, or ZIP…"
+              "value": "Import Files, Folder, or ZIP"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "파일·폴더·ZIP 가져오기…"
+              "value": "파일·폴더·ZIP 가져오기"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "ファイル、フォルダ、ZIPを読み込む…"
+              "value": "ファイル、フォルダ、ZIPを読み込む"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "导入文件、文件夹或 ZIP…"
+              "value": "导入文件、文件夹或 ZIP"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "匯入檔案、資料夾或 ZIP…"
+              "value": "匯入檔案、資料夾或 ZIP"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Importar archivos, carpeta o ZIP…"
+              "value": "Importar archivos, carpeta o ZIP"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Importer des fichiers, un dossier ou un ZIP…"
+              "value": "Importer des fichiers, un dossier ou un ZIP"
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Dateien, Ordner oder ZIP importieren…"
+              "value": "Dateien, Ordner oder ZIP importieren"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Importar arquivos, pasta ou ZIP…"
+              "value": "Importar arquivos, pasta ou ZIP"
             }
           }
         }
@@ -9944,55 +9872,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Import into Current Skill…"
+              "value": "Import into Current Skill"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "현재 스킬로 가져오기…"
+              "value": "현재 스킬로 가져오기"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "現在のスキルに読み込む…"
+              "value": "現在のスキルに読み込む"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "导入到当前技能…"
+              "value": "导入到当前技能"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "匯入目前的技能…"
+              "value": "匯入目前的技能"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Importar en la habilidad actual…"
+              "value": "Importar en la habilidad actual"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Importer dans la compétence actuelle…"
+              "value": "Importer dans la compétence actuelle"
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "In aktuelle Fähigkeit importieren…"
+              "value": "In aktuelle Fähigkeit importieren"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Importar para a habilidade atual…"
+              "value": "Importar para a habilidade atual"
             }
           }
         }
@@ -10118,55 +10046,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Import New Skill from Files, Folder, or ZIP…"
+              "value": "Import New Skill from Files, Folder, or ZIP"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "파일·폴더·ZIP으로 새 스킬 가져오기…"
+              "value": "파일·폴더·ZIP으로 새 스킬 가져오기"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "ファイル、フォルダ、ZIPから新しいスキルを読み込む…"
+              "value": "ファイル、フォルダ、ZIPから新しいスキルを読み込む"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "从文件、文件夹或 ZIP 导入新技能…"
+              "value": "从文件、文件夹或 ZIP 导入新技能"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "從檔案、資料夾或 ZIP 匯入新技能…"
+              "value": "從檔案、資料夾或 ZIP 匯入新技能"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Importar nueva habilidad desde archivos, carpeta o ZIP…"
+              "value": "Importar nueva habilidad desde archivos, carpeta o ZIP"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Importer une nouvelle compétence depuis des fichiers, un dossier ou un ZIP…"
+              "value": "Importer une nouvelle compétence depuis des fichiers, un dossier ou un ZIP"
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Neue Fähigkeit aus Dateien, Ordner oder ZIP importieren…"
+              "value": "Neue Fähigkeit aus Dateien, Ordner oder ZIP importieren"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Importar nova habilidade de arquivos, pasta ou ZIP…"
+              "value": "Importar nova habilidade de arquivos, pasta ou ZIP"
             }
           }
         }
@@ -10234,55 +10162,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Keep Main Document"
+              "value": "Keep Current SKILL.md"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "메인 문서 변경 안 함"
+              "value": "현재 SKILL.md 유지"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "メイン文書を変更しない"
+              "value": "現在の SKILL.md を維持"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "不更改主文档"
+              "value": "保留当前 SKILL.md"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "不變更主要文件"
+              "value": "保留目前的 SKILL.md"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "No cambiar el documento principal"
+              "value": "Conservar el SKILL.md actual"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Ne pas modifier le document principal"
+              "value": "Conserver le SKILL.md actuel"
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Hauptdokument beibehalten"
+              "value": "Aktuelle SKILL.md beibehalten"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Não alterar o documento principal"
+              "value": "Manter o SKILL.md atual"
             }
           }
         }
@@ -10582,55 +10510,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Main Document"
+              "value": "SKILL.md"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "메인 문서"
+              "value": "SKILL.md"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "メイン文書"
+              "value": "SKILL.md"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "主文档"
+              "value": "SKILL.md"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "主要文件"
+              "value": "SKILL.md"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Documento principal"
+              "value": "SKILL.md"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Document principal"
+              "value": "SKILL.md"
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Hauptdokument"
+              "value": "SKILL.md"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Documento principal"
+              "value": "SKILL.md"
             }
           }
         }
@@ -10640,55 +10568,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Main Markdown Document"
+              "value": "SKILL.md Content"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "메인 Markdown 문서"
+              "value": "SKILL.md 본문"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "メインMarkdown文書"
+              "value": "SKILL.md の内容"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "主 Markdown 文档"
+              "value": "SKILL.md 内容"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "主要 Markdown 文件"
+              "value": "SKILL.md 內容"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Documento Markdown principal"
+              "value": "Contenido de SKILL.md"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Document Markdown principal"
+              "value": "Contenu de SKILL.md"
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Markdown-Hauptdokument"
+              "value": "SKILL.md-Inhalt"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Documento Markdown principal"
+              "value": "Conteúdo do SKILL.md"
             }
           }
         }
@@ -10756,55 +10684,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Moving to another document will discard the current Markdown edits."
+              "value": "Moving to another skill file will discard the current Markdown edits."
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "다른 문서로 이동하면 현재 Markdown 편집 내용이 사라집니다."
+              "value": "다른 스킬 파일로 이동하면 현재 Markdown 편집 내용이 사라집니다."
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "別の文書に移動すると、現在のMarkdown編集内容は失われます。"
+              "value": "別のスキルファイルに移動すると、現在の Markdown 編集内容は破棄されます。"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "切换到其他文档将丢弃当前的 Markdown 编辑。"
+              "value": "切换到其他技能文件将丢弃当前的 Markdown 编辑。"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "切換到其他文件將捨棄目前的 Markdown 編輯。"
+              "value": "切換到其他技能檔案將捨棄目前的 Markdown 編輯。"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Al ir a otro documento se descartarán los cambios actuales de Markdown."
+              "value": "Cambiar a otro archivo de la habilidad descartará las ediciones actuales de Markdown."
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Le passage à un autre document supprimera les modifications Markdown actuelles."
+              "value": "Passer à un autre fichier de la compétence supprimera les modifications Markdown actuelles."
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Beim Wechsel zu einem anderen Dokument werden die aktuellen Markdown-Änderungen verworfen."
+              "value": "Beim Wechsel zu einer anderen Skill-Datei werden die aktuellen Markdown-Änderungen verworfen."
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Ao ir para outro documento, as edições atuais de Markdown serão descartadas."
+              "value": "Mudar para outro arquivo da habilidade descartará as edições atuais de Markdown."
             }
           }
         }
@@ -11568,55 +11496,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Rename…"
+              "value": "Rename"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "이름 변경…"
+              "value": "이름 변경"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "名前を変更…"
+              "value": "名前を変更"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "重命名…"
+              "value": "重命名"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "重新命名…"
+              "value": "重新命名"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Cambiar nombre…"
+              "value": "Cambiar nombre"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Renommer…"
+              "value": "Renommer"
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Umbenennen…"
+              "value": "Umbenennen"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Renomear…"
+              "value": "Renomear"
             }
           }
         }
@@ -12264,55 +12192,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Selected files are added or replaced as attachments. The main document is replaced only when you explicitly select one."
+              "value": "Selected files are added or replaced as attachments. SKILL.md content is replaced only when you explicitly select a file for it."
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "선택 파일은 첨부 문서로 추가·교체됩니다. 메인 교체는 메인 문서를 명시적으로 선택한 경우에만 적용됩니다."
+              "value": "선택한 파일은 첨부 파일로 추가되거나 교체됩니다. SKILL.md 본문은 사용할 파일을 명시적으로 선택한 경우에만 교체됩니다."
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "選択したファイルは添付文書として追加または置換されます。メイン文書は明示的に選択した場合にのみ置換されます。"
+              "value": "選択したファイルは添付ファイルとして追加または置換されます。SKILL.md の内容は、使用するファイルを明示的に選択した場合にのみ置換されます。"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "所选文件将作为附件添加或替换。仅在明确选择主文档时才会替换它。"
+              "value": "所选文件将作为附件添加或替换。只有明确选择用于 SKILL.md 的文件时，其内容才会被替换。"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "所選檔案將作為附件加入或取代。只有明確選擇主要文件時才會取代它。"
+              "value": "所選檔案將作為附件新增或取代。只有明確選擇用於 SKILL.md 的檔案時，其內容才會被取代。"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Los archivos seleccionados se añadirán o reemplazarán como adjuntos. El documento principal solo se reemplaza si seleccionas uno expresamente."
+              "value": "Los archivos seleccionados se añaden o reemplazan como adjuntos. El contenido de SKILL.md solo se reemplaza cuando eliges explícitamente un archivo para ello."
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Les fichiers sélectionnés seront ajoutés ou remplacés comme pièces jointes. Le document principal n’est remplacé que si vous en sélectionnez un explicitement."
+              "value": "Les fichiers sélectionnés sont ajoutés ou remplacés comme pièces jointes. Le contenu de SKILL.md est remplacé uniquement si vous choisissez explicitement un fichier pour celui-ci."
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Ausgewählte Dateien werden als Anhänge hinzugefügt oder ersetzt. Das Hauptdokument wird nur ersetzt, wenn Sie ausdrücklich eines auswählen."
+              "value": "Ausgewählte Dateien werden als Anlagen hinzugefügt oder ersetzt. Der SKILL.md-Inhalt wird nur ersetzt, wenn Sie ausdrücklich eine Datei dafür auswählen."
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Os arquivos selecionados serão adicionados ou substituídos como anexos. O documento principal só será substituído se você selecionar um explicitamente."
+              "value": "Os arquivos selecionados são adicionados ou substituídos como anexos. O conteúdo do SKILL.md só é substituído quando você seleciona explicitamente um arquivo para ele."
             }
           }
         }
@@ -12438,55 +12366,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Skill Document File Tree"
+              "value": "Skill Content and File Tree"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "스킬 문서 파일 트리"
+              "value": "스킬 본문 및 파일 트리"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "スキル文書のファイルツリー"
+              "value": "スキル内容とファイルツリー"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "技能文档文件树"
+              "value": "技能内容和文件树"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "技能文件檔案樹"
+              "value": "技能內容與檔案樹"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Árbol de archivos del documento de habilidad"
+              "value": "Contenido y árbol de archivos de la habilidad"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Arborescence des fichiers de la compétence"
+              "value": "Contenu et arborescence de fichiers de la compétence"
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Dateibaum des Fähigkeitsdokuments"
+              "value": "Skill-Inhalt und Dateibaum"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Árvore de arquivos do documento da habilidade"
+              "value": "Conteúdo e árvore de arquivos da habilidade"
             }
           }
         }
@@ -13888,55 +13816,55 @@
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "This copies the main document and the entire attachment tree into a new immutable version."
+              "value": "This copies the SKILL.md content and the entire attachment tree into a new immutable version."
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "메인 문서와 첨부 파일 트리 전체를 복사해 새 불변 버전을 만듭니다."
+              "value": "SKILL.md 본문과 전체 첨부 파일 트리를 새 불변 버전으로 복사합니다."
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "メイン文書と添付ファイルツリー全体をコピーして、新しい不変バージョンを作成します。"
+              "value": "SKILL.md の内容と添付ファイルツリー全体を新しい不変バージョンにコピーします。"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "这会复制主文档和整个附件树，以创建新的不可变版本。"
+              "value": "这会将 SKILL.md 内容和整个附件树复制到新的不可变版本中。"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "這會複製主要文件與整個附件樹，以建立新的不可變版本。"
+              "value": "這會將 SKILL.md 內容與整個附件樹複製到新的不可變版本中。"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Esto copia el documento principal y todo el árbol de adjuntos en una nueva versión inmutable."
+              "value": "Esto copia el contenido de SKILL.md y todo el árbol de adjuntos en una nueva versión inmutable."
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Cette opération copie le document principal et toute l’arborescence des pièces jointes dans une nouvelle version immuable."
+              "value": "Cette action copie le contenu de SKILL.md et toute l’arborescence des pièces jointes dans une nouvelle version immuable."
             }
           },
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Dabei werden das Hauptdokument und der gesamte Anhangsbaum in eine neue unveränderliche Version kopiert."
+              "value": "Dadurch werden der SKILL.md-Inhalt und der gesamte Anlagenbaum in eine neue unveränderliche Version kopiert."
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Isso copia o documento principal e toda a árvore de anexos para uma nova versão imutável."
+              "value": "Isso copia o conteúdo do SKILL.md e toda a árvore de anexos para uma nova versão imutável."
             }
           }
         }
@@ -14285,122 +14213,6 @@
             "stringUnit": {
               "state": "translated",
               "value": "Este formato de compactação ZIP não é compatível."
-            }
-          }
-        }
-      },
-      "macos.skills.toContinueEnterTheExactSkillNameValue": {
-        "localizations": {
-          "en": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "To continue, enter the exact skill name: %@"
-            }
-          },
-          "ko": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "계속하려면 스킬 이름을 정확히 입력하세요: %@"
-            }
-          },
-          "ja": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "続行するには、スキル名を正確に入力してください: %@"
-            }
-          },
-          "zh-Hans": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "要继续，请准确输入技能名称：%@"
-            }
-          },
-          "zh-Hant": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "若要繼續，請正確輸入技能名稱：%@"
-            }
-          },
-          "es": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Para continuar, introduce el nombre exacto de la habilidad: %@"
-            }
-          },
-          "fr": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Pour continuer, saisissez le nom exact de la compétence : %@"
-            }
-          },
-          "de": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Geben Sie zum Fortfahren den genauen Skill-Namen ein: %@"
-            }
-          },
-          "pt": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Para continuar, digite o nome exato da habilidade: %@"
-            }
-          }
-        }
-      },
-      "macos.skills.toDeletePermanentlyEnterTheCurrentSkillNameExactly": {
-        "localizations": {
-          "en": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "To delete permanently, enter the current skill name exactly."
-            }
-          },
-          "ko": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "영구 삭제하려면 현재 스킬 이름을 정확히 입력하세요."
-            }
-          },
-          "ja": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "完全に削除するには、現在のスキル名を正確に入力してください。"
-            }
-          },
-          "zh-Hans": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "要永久删除，请准确输入当前技能名称。"
-            }
-          },
-          "zh-Hant": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "若要永久刪除，請正確輸入目前的技能名稱。"
-            }
-          },
-          "es": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Para eliminarla permanentemente, escribe exactamente el nombre actual de la habilidad."
-            }
-          },
-          "fr": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Pour la supprimer définitivement, saisissez exactement le nom actuel de la compétence."
-            }
-          },
-          "de": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Geben Sie zum dauerhaften Löschen den aktuellen Namen der Fähigkeit exakt ein."
-            }
-          },
-          "pt": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Para excluir permanentemente, digite exatamente o nome atual da habilidade."
             }
           }
         }
@@ -30802,64 +30614,6 @@
           }
         }
       },
-      "macos.opennewagenttasksinthecodexapp": {
-        "localizations": {
-          "de": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Neue Agentenaufgaben in der Codex-App öffnen können?"
-            }
-          },
-          "en": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Open New Agent Tasks in the Codex App?"
-            }
-          },
-          "es": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "¿Permitir que las tareas de agentes nuevas se abran en la app Codex?"
-            }
-          },
-          "fr": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Autoriser l’ouverture des nouvelles tâches d’agent dans l’app Codex ?"
-            }
-          },
-          "ja": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "新しいAgentタスクをCodexアプリで開けるようにしますか？"
-            }
-          },
-          "pt": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Permitir a abertura de novas tarefas de agentes no aplicativo Codex?"
-            }
-          },
-          "zh-Hans": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "允许在 Codex 应用中打开新代理任务？"
-            }
-          },
-          "zh-Hant": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "允許在 Codex 應用中開啟新代理程式任務？"
-            }
-          },
-          "ko": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "새 Agent 작업을 Codex 앱에서 열 수 있게 할까요?"
-            }
-          }
-        }
-      },
       "macos.newversion": {
         "localizations": {
           "de": {
@@ -31322,64 +31076,6 @@
             "stringUnit": {
               "state": "translated",
               "value": "新工作使用所選方式執行，現有工作保留原本的執行方式。"
-            }
-          }
-        }
-      },
-      "macos.enablefornewtasks": {
-        "localizations": {
-          "de": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Für neue Aufgaben aktivieren"
-            }
-          },
-          "en": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Enable for New Tasks"
-            }
-          },
-          "es": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Activar para tareas nuevas"
-            }
-          },
-          "fr": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Activer pour les nouvelles tâches"
-            }
-          },
-          "ja": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "新規タスクから有効化"
-            }
-          },
-          "pt": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Ativar para novas tarefas"
-            }
-          },
-          "zh-Hans": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "对新任务启用"
-            }
-          },
-          "zh-Hant": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "對新任務啟用"
-            }
-          },
-          "ko": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "새 작업부터 켜기"
             }
           }
         }
@@ -50638,64 +50334,6 @@
             "stringUnit": {
               "state": "translated",
               "value": "취소 사유"
-            }
-          }
-        }
-      },
-      "macos.newtasksandfreshcontextswillbekept": {
-        "localizations": {
-          "de": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Wenn diese Option aktiviert ist, werden neue Aufgaben und Kontexte in der Codex-App gespeichert und die Codex-Unterhaltung jedes Agenten kann geöffnet werden. Bestehende temporäre Aufgaben bleiben unverändert."
-            }
-          },
-          "en": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "New tasks and fresh contexts will be kept in the Codex app, where you can open each Agent's Codex conversation. Existing ephemeral tasks are unchanged."
-            }
-          },
-          "es": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Al activarlo, las tareas y los contextos nuevos se conservan en la app Codex, donde se puede abrir la conversación de Codex de cada agente. No se aplica a las tareas temporales existentes."
-            }
-          },
-          "fr": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Lorsque cette option est activée, les nouvelles tâches et les nouveaux contextes sont conservés dans l’app Codex, où la conversation Codex de chaque agent peut être ouverte. Les tâches temporaires existantes ne sont pas modifiées."
-            }
-          },
-          "ja": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "有効にすると、以降の新規タスクと新規コンテキストをCodexアプリに保持し、各AgentのCodex会話を開けるようにします。既存の一時タスクには適用されません。"
-            }
-          },
-          "pt": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Quando ativado, novas tarefas e novos contextos são preservados no aplicativo Codex, onde é possível abrir a conversa de cada agente. As tarefas temporárias existentes não são alteradas."
-            }
-          },
-          "zh-Hans": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "启用后，后续新任务和新上下文将保留在 Codex 应用中，并可打开每个代理的 Codex 对话。此设置不追溯应用于现有临时任务。"
-            }
-          },
-          "zh-Hant": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "啟用後，後續新任務和新上下文將保留在 Codex 應用中，並可開啟每個代理程式的 Codex 對話。此設定不追溯應用於現有臨時任務。"
-            }
-          },
-          "ko": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "켜면 이후 새 작업과 새 컨텍스트를 Codex 앱에 보존하고 각 Agent의 Codex 대화를 열 수 있습니다. 기존 임시 작업에는 소급 적용되지 않습니다."
             }
           }
         }

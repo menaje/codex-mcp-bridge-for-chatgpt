@@ -34,10 +34,10 @@ import {
 } from "./textIntegrity.js";
 
 export const COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-companion";
-/** v8 adds immutable Markdown file trees and path-based file reads. */
-export const COMPANION_PROTOCOL_VERSION = 8;
+/** v9 uses skill/content terminology and removes typed-name deletion confirmation. */
+export const COMPANION_PROTOCOL_VERSION = 9;
 export const COMPANION_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
-// A source-preserved 3 MiB Markdown document can JSON-escape sixfold.
+// Source-preserved 3 MiB Markdown content can JSON-escape sixfold.
 export const COMPANION_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 const COMPANION_MAX_CLIENTS = 8;
 const MAX_UNIX_SOCKET_PATH_BYTES = 100;
@@ -141,11 +141,11 @@ const bridgeSkillCreateParamsSchema = z.strictObject({
   requestId: bridgeSkillMutationRequestIdSchema,
   name: bridgeSkillNameSchema,
   description: bridgeSkillDescriptionSchema.optional(),
-  document: z.string().min(1).max(BRIDGE_SKILL_LIMITS.documentMaxBytes)
-    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.documentMaxBytes, {
-      message: `Skill document must be at most ${BRIDGE_SKILL_LIMITS.documentMaxBytes} UTF-8 bytes.`
+  content: z.string().min(1).max(BRIDGE_SKILL_LIMITS.contentMaxBytes)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.contentMaxBytes, {
+      message: `Skill content must be at most ${BRIDGE_SKILL_LIMITS.contentMaxBytes} UTF-8 bytes.`
     })
-    .refine((value) => !value.includes("\u0000"), { message: "Skill document cannot contain NUL characters." }),
+    .refine((value) => !value.includes("\u0000"), { message: "Skill content cannot contain NUL characters." }),
   files: z.array(bridgeSkillFileSchema).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
 });
 const bridgeSkillUpdateParamsSchema = z.strictObject({
@@ -154,17 +154,17 @@ const bridgeSkillUpdateParamsSchema = z.strictObject({
   expectedVersion: z.string().regex(/^[1-9]\d*$/),
   name: bridgeSkillNameSchema.optional(),
   description: bridgeSkillDescriptionSchema.optional(),
-  document: z.string().min(1).max(BRIDGE_SKILL_LIMITS.documentMaxBytes)
-    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.documentMaxBytes, {
-      message: `Skill document must be at most ${BRIDGE_SKILL_LIMITS.documentMaxBytes} UTF-8 bytes.`
+  content: z.string().min(1).max(BRIDGE_SKILL_LIMITS.contentMaxBytes)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= BRIDGE_SKILL_LIMITS.contentMaxBytes, {
+      message: `Skill content must be at most ${BRIDGE_SKILL_LIMITS.contentMaxBytes} UTF-8 bytes.`
     })
-    .refine((value) => !value.includes("\u0000"), { message: "Skill document cannot contain NUL characters." })
+    .refine((value) => !value.includes("\u0000"), { message: "Skill content cannot contain NUL characters." })
     .optional(),
   files: z.strictObject({
     upsert: z.array(bridgeSkillFileSchema).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional(),
     remove: z.array(bridgeSkillFilePathSchema).max(BRIDGE_SKILL_LIMITS.fileMaxCount).optional()
   }).optional()
-}).refine((value) => value.name !== undefined || value.description !== undefined || value.document !== undefined || value.files !== undefined, {
+}).refine((value) => value.name !== undefined || value.description !== undefined || value.content !== undefined || value.files !== undefined, {
   message: "Provide at least one bridge skill field to update."
 });
 const bridgeSkillRestoreParamsSchema = z.strictObject({
@@ -182,8 +182,7 @@ const bridgeSkillSetEnabledParamsSchema = z.strictObject({
 const bridgeSkillDeleteParamsSchema = z.strictObject({
   requestId: bridgeSkillMutationRequestIdSchema,
   skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
-  expectedVersion: z.string().regex(/^[1-9]\d*$/),
-  confirmName: bridgeSkillNameSchema
+  expectedVersion: z.string().regex(/^[1-9]\d*$/)
 });
 const bridgeSkillPackageUploadParamsSchema = z.strictObject({ uploadId: z.string().uuid() });
 const bridgeSkillPackageChunkParamsSchema = bridgeSkillPackageUploadParamsSchema.extend({

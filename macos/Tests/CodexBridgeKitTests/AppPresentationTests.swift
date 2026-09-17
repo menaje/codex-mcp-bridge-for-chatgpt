@@ -1106,26 +1106,6 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
-    func testDashboardCanEnableCodexThreadPersistenceThroughAutosave() throws {
-        let snapshot = try settingsSnapshot(
-            showBridgeThreadsInCodexApp: false,
-            policy: [
-                "mode": "automatic",
-                "allowedSelections": ["kind": "catalog-visible"],
-                "constraints": ["allowDelegation": true]
-            ],
-            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
-        )
-        let model = AppModel()
-        model.settings = snapshot
-
-        model.enableCodexThreadPersistence()
-
-        XCTAssertEqual(model.generalSettingsSaveState, .pending)
-        model.cancelPendingSettingsAutosave()
-    }
-
-    @MainActor
     func testApplicationShutdownStopsWhenPendingSettingsCannotBeSaved() async throws {
         let root = URL(fileURLWithPath:
             "/tmp/cb-save-\(getpid())-\(UUID().uuidString.prefix(8))",

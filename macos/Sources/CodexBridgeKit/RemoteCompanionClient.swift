@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 public let remoteCompanionProtocolName = "codex-mcp-bridge-remote-companion"
-public let remoteCompanionProtocolVersion = 6
+public let remoteCompanionProtocolVersion = 7
 let remoteCompanionMaximumResponseBytes = bridgeSkillTransportEnvelopeMaxBytes
 
 public enum RemoteCompanionError: LocalizedError, Sendable {
@@ -290,14 +290,14 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
 
     public func readBridgeSkill(
         _ reference: BridgeSkillReference
-    ) async throws -> BridgeSkillDocument {
+    ) async throws -> BridgeSkill {
         try await call("skills.read", params: reference, timeout: 20)
     }
 
     public func readBridgeSkillFile(
         _ reference: BridgeSkillReference,
         path: String
-    ) async throws -> BridgeSkillFileDocument {
+    ) async throws -> BridgeSkillFile {
         try await call("skills.read-file", params: BridgeSkillFileReadRequest(reference: reference, path: path), timeout: 20)
     }
 

@@ -93,14 +93,14 @@ public struct BridgeCompanionClient: Sendable {
 
     public func readBridgeSkill(
         _ reference: BridgeSkillReference
-    ) async throws -> BridgeSkillDocument {
+    ) async throws -> BridgeSkill {
         try await rpc.call("skills.read", params: reference, timeout: 20)
     }
 
     public func readBridgeSkillFile(
         _ reference: BridgeSkillReference,
         path: String
-    ) async throws -> BridgeSkillFileDocument {
+    ) async throws -> BridgeSkillFile {
         try await rpc.call(
             "skills.read-file",
             params: BridgeSkillFileReadRequest(reference: reference, path: path),

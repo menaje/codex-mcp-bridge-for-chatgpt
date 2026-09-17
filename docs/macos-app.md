@@ -156,6 +156,14 @@ dotenv and require runtime replacement. Shared changes save automatically;
 model-description edits keep their explicit Save/Cancel controls. Skill
 management remains only in the separate Skill Library window.
 
+The Skill Library presents the authored body as `SKILL.md` content rather than
+as a generic document. Archive/reactivate and permanent-delete icon actions are
+fixed at the inspector bottom, include tooltips and accessibility labels, and
+stay disabled while an edit is unsaved or a mutation is running. Permanent
+deletion uses one destructive confirmation without typed-name verification;
+the request still carries the exact skill id, expected version, and idempotent
+request id. Legacy `document` and `document.md` records remain readable.
+
 <p align="center">
   <img src="images/macos-settings-sidebar-light-ko.png" alt="Korean native Settings window with a macOS sidebar and grouped General detail" width="820">
 </p>
@@ -425,8 +433,10 @@ user's effective UID. They expose small allowlisted JSON-RPC contracts, not MCP
 and not the old unauthenticated loopback HTTP control surface. Requests and responses are
 bounded. Helper diagnostics retain at most 200 redacted lines.
 
-The helper handshake is bound to the IPC protocol version and exact bundled
-runtime build. Replacement of a reachable LaunchAgent drains its runtime before
+The helper handshake is bound to local companion protocol version 9 and the
+exact bundled runtime build. Remote management uses companion protocol version
+7. A protocol-changing upgrade requires the native client to reconnect or
+restart. Replacement of a reachable LaunchAgent drains its runtime before
 the plist is changed, so a drain timeout leaves the installed helper and plist
 in place for a later retry. If an incompatible helper cannot be reached while
 its runtime lock still exists, automatic replacement fails closed instead of

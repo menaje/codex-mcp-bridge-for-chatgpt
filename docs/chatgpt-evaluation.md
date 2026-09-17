@@ -64,7 +64,7 @@
 
 **#69는 2026-09-08 사용자 수락으로 완료됐다.** [카드 통합 실측](audits/2026-09-08-card-tool-consolidation.md#actual-chatgpt-and-state-verification)의 기존 카드 재열기·질문 초안/제출 확인, [운영 실행](audits/2026-09-08-pr-71-runtime-acceptance.md)의 Activity 카드 없는 완료·결과 회수·GPT 최종 답변·ChatGPT 읽지 않음 표시와 기존 전역 카드 재진입, [제어 검증](audits/2026-09-08-issue-69-final-acceptance.md)의 작업 중단·원본 승인 거부·남은 프로세스 종료를 재사용한다. 마지막 원본 입력의 같은 Job 결과 반영은 [사용자 직접 확인](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/69#issuecomment-5580775771)으로 완료했다. 그 이전의 실패·차단 기록은 당시 이력이며 현행 미완료 조건이 아니다. 이미 끝난 GPT 응답을 깨우는 새 미지원 기능은 #69의 완료 조건에 추가하지 않는다.
 
-자동 검증은 `npm run check`, `npm run test:continuity`, `npm run test:dashboard-scope-browser`, `npm run test:dashboard-summary-browser`, `npm run test:model-descriptions-browser`, `npx tsx scripts/dashboard-stop-browser-regression.ts`와 `npm run macos:check`를 사용한다. 범위·언어·연결·제어·기록에 관한 자동 증거와 실제 기기 증거는 각각 실행 빌드와 결과를 붙여 기록한다.
+자동 검증은 `npm run check`, `npm run test:continuity`, `npm run test:dashboard-scope-browser`, `npm run test:dashboard-summary-browser`, `npm run test:model-descriptions-browser`와 `npm run macos:check`를 사용한다. 범위·언어·연결·응답 요청·기록에 관한 자동 증거와 실제 기기 증거는 각각 실행 빌드와 결과를 붙여 기록한다.
 
 ## 기록 양식
 
