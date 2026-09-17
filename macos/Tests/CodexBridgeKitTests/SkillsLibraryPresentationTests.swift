@@ -150,6 +150,43 @@ final class SkillsLibraryPresentationTests: XCTestCase {
         XCTAssertEqual(files.first(where: { $0.path == "SKILL.md" })?.content, "\u{feff}" + source)
         XCTAssertTrue(review.issues.contains { $0.path == "image.png" && $0.reason == "unsupported-file" })
         XCTAssertTrue(review.issues.contains { $0.path == ".DS_Store" && $0.reason == "macos-metadata" })
+        XCTAssertEqual(review.automaticallyExcludedIssues.map(\.path), [".DS_Store"])
+        XCTAssertEqual(review.warningIssues.map(\.path), ["image.png"])
+        XCTAssertEqual(review.warningSectionTitleKey, "macos.skills.itemsNotImported")
+    }
+
+    func testImportReviewSeparatesAutomaticCleanupFromWarningsAndNamesConflictsOnlyWhenPresent() throws {
+        let metadataOnly = BridgeSkillImportReview(
+            suggestedName: "Finder package",
+            suggestedDescription: nil,
+            payload: .direct([]),
+            suggestedMainPath: nil,
+            issues: [
+                .init(path: "__MACOSX/skill/._SKILL.md", reason: "macos-metadata"),
+                .init(path: "skill/.DS_Store", reason: "macos-metadata")
+            ]
+        )
+        XCTAssertEqual(metadataOnly.automaticallyExcludedIssues.count, 2)
+        XCTAssertTrue(metadataOnly.warningIssues.isEmpty)
+
+        let mixed = BridgeSkillImportReview(
+            suggestedName: "Mixed package",
+            suggestedDescription: nil,
+            payload: .direct([]),
+            suggestedMainPath: nil,
+            issues: metadataOnly.issues + [
+                .init(path: "image.png", reason: "unsupported-file"),
+                .init(path: "SKILL.md", reason: "path-conflict")
+            ]
+        )
+        XCTAssertEqual(mixed.automaticallyExcludedIssues.count, 2)
+        XCTAssertEqual(mixed.warningIssues.map(\.reason), ["unsupported-file", "path-conflict"])
+        XCTAssertEqual(mixed.warningSectionTitleKey, "macos.skills.skippedItemsAndConflicts")
+
+        let source = try String(contentsOf: sourceURL("SkillsLibraryViews.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains("ForEach(review.warningIssues)"))
+        XCTAssertFalse(source.contains("ForEach(review.issues)"))
+        XCTAssertTrue(source.contains("macos.skills.macosMetadataExcludedAutomaticallyCount"))
     }
 
     func testDroppedItemsAlwaysStartANewSkillImport() throws {

@@ -170,6 +170,46 @@ describe("Bridge skill ZIP packages", () => {
     expect(streamingInspection.files.map((file) => file.path)).toEqual([koreanPath, "SKILL.md"]);
   });
 
+  it("keeps Finder metadata out of imported Markdown while retaining diagnostics for UI aggregation", async () => {
+    const root = await temporaryRoot();
+    const archive = path.join(root, "finder-metadata.zip");
+    const wrapper = "skill-library-import-test";
+    const koreanPath = "notes/한글-파일명-테스트.markdown".normalize("NFD");
+    const zip = storedEntriesZip([
+      { path: `${wrapper}/SKILL.md`, content: "# Main\n" },
+      { path: `${wrapper}/${koreanPath}`, content: "# 한글 경로\n" },
+      { path: `${wrapper}/guides/start.md`, content: "# Start\n" },
+      { path: `${wrapper}/references/api.md`, content: "# API\n" },
+      { path: `${wrapper}/references/usage.markdown`, content: "# Usage\n" },
+      { path: `${wrapper}/.DS_Store`, content: "Finder metadata" },
+      { path: `${wrapper}/._SKILL.md`, content: "AppleDouble metadata" },
+      { path: `${wrapper}/notes/._${path.basename(koreanPath)}`, content: "AppleDouble metadata" },
+      { path: `__MACOSX/._${wrapper}`, content: "AppleDouble metadata" },
+      { path: `__MACOSX/${wrapper}/._SKILL.md`, content: "AppleDouble metadata" },
+      { path: `__MACOSX/${wrapper}/notes/._${path.basename(koreanPath)}`, content: "AppleDouble metadata" },
+      { path: `__MACOSX/${wrapper}/._references`, content: "AppleDouble metadata" },
+      { path: `__MACOSX/${wrapper}/references/._api.md`, content: "AppleDouble metadata" },
+      { path: `__MACOSX/${wrapper}/references/._usage.markdown`, content: "AppleDouble metadata" }
+    ], false);
+
+    const memoryInspection = inspectBridgeSkillZip(zip);
+    expect(memoryInspection.strippedWrapper).toBe(wrapper);
+    expect(memoryInspection.suggestedMainPath).toBe("SKILL.md");
+    expect(memoryInspection.files).toHaveLength(5);
+    expect(memoryInspection.files.map((file) => file.path)).toEqual(expect.arrayContaining([
+      "SKILL.md", koreanPath, "guides/start.md", "references/api.md", "references/usage.markdown"
+    ]));
+    expect(memoryInspection.ignored).toHaveLength(9);
+    expect(memoryInspection.ignored.every((file) => file.reason === "macos-metadata")).toBe(true);
+
+    await writeFile(archive, zip);
+    const streamingInspection = await inspectBridgeSkillZipFile(archive);
+    expect(streamingInspection.strippedWrapper).toBe(wrapper);
+    expect(streamingInspection.suggestedMainPath).toBe("SKILL.md");
+    expect(streamingInspection.files).toHaveLength(5);
+    expect(streamingInspection.ignored).toEqual(memoryInspection.ignored);
+  });
+
   it("still rejects malformed path bytes when the ZIP UTF-8 hint is absent", async () => {
     const root = await temporaryRoot();
     const archive = path.join(root, "invalid-path.zip");

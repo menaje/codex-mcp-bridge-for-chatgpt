@@ -8257,6 +8257,64 @@
           }
         }
       },
+      "macos.skills.automaticCleanup": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Automatic Cleanup"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "자동 정리"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "自動クリーンアップ"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "自动清理"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "自動清理"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Limpieza automática"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Nettoyage automatique"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Automatische Bereinigung"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Limpeza automática"
+            }
+          }
+        }
+      },
       "macos.skills.attachedMarkdown": {
         "localizations": {
           "en": {
@@ -10341,6 +10399,122 @@
             "stringUnit": {
               "state": "translated",
               "value": "Carregando arquivo Markdown…"
+            }
+          }
+        }
+      },
+      "macos.skills.itemsNotImported": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Items Not Imported"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "가져오지 않는 항목"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "読み込まない項目"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "未导入的项目"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "未匯入的項目"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Elementos no importados"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Éléments non importés"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Nicht importierte Elemente"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Itens não importados"
+            }
+          }
+        }
+      },
+      "macos.skills.macosMetadataExcludedAutomaticallyCount": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "macOS metadata items excluded automatically: %lld"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "자동으로 제외한 macOS 메타데이터: %lld개"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "自動的に除外したmacOSメタデータ：%lld件"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "已自动排除的 macOS 元数据：%lld 项"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "已自動排除的 macOS 中繼資料：%lld 項"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Metadatos de macOS excluidos automáticamente: %lld"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Métadonnées macOS exclues automatiquement : %lld"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Automatisch ausgeschlossene macOS-Metadaten: %lld"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Metadados do macOS excluídos automaticamente: %lld"
             }
           }
         }

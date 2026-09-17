@@ -1870,6 +1870,20 @@ struct BridgeSkillImportReview: Identifiable, Sendable, Equatable {
         }
     }
 
+    var automaticallyExcludedIssues: [BridgeSkillImportIssue] {
+        issues.filter { $0.reason == "macos-metadata" }
+    }
+
+    var warningIssues: [BridgeSkillImportIssue] {
+        issues.filter { $0.reason != "macos-metadata" }
+    }
+
+    var warningSectionTitleKey: String {
+        warningIssues.contains(where: { $0.reason == "path-conflict" })
+            ? "macos.skills.skippedItemsAndConflicts"
+            : "macos.skills.itemsNotImported"
+    }
+
     func bytes(for path: String) -> Int? {
         switch payload {
         case .direct(let files): files.first(where: { $0.path == path })?.bytes
@@ -2187,10 +2201,26 @@ private struct BridgeSkillImportReviewSheet: View {
                 }
             }
             .frame(minHeight: 220)
-            if !review.issues.isEmpty {
-                GroupBox("macos.skills.skippedItemsAndConflicts") {
+            if !review.automaticallyExcludedIssues.isEmpty {
+                GroupBox("macos.skills.automaticCleanup") {
+                    Label {
+                        Text(verbatim: BridgeAppLocalization.format(
+                            "macos.skills.macosMetadataExcludedAutomaticallyCount",
+                            locale: locale,
+                            review.automaticallyExcludedIssues.count
+                        ))
+                    } icon: {
+                        Image(systemName: "checkmark.circle")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            if !review.warningIssues.isEmpty {
+                GroupBox(LocalizedStringKey(review.warningSectionTitleKey)) {
                     VStack(alignment: .leading, spacing: 5) {
-                        ForEach(review.issues) { issue in
+                        ForEach(review.warningIssues) { issue in
                             Label {
                                 Text(verbatim: "\(issue.path): \(issue.localizedReason(locale: locale))")
                             } icon: {
