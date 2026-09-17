@@ -488,7 +488,7 @@ final class AppModel: ObservableObject {
         if status.phase == "stopped", status.lastError == nil, status.lastProblem == nil { return .healthy }
         if status.phase != "running" || !status.bridge.connected { return .problem(.runtime) }
         if networkAvailable == false || !status.tunnel.connected { return .problem(.tunnel) }
-        guard let auth = authStatus else { return authErrorMessage == nil ? .unknown : .problem(.authentication) }
+        guard let auth = authStatus else { return authErrorMessage == nil ? .unknown : .problem(.authenticationStatus) }
         if !auth.installed { return .problem(.installation) }
         return auth.authenticated ? .healthy : .problem(.authentication)
     }

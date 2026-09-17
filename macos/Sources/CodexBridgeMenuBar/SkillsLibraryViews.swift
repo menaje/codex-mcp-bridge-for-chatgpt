@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class SkillsLibraryWindowState: ObservableObject {
-    @Published var columnVisibility: NavigationSplitViewVisibility = .automatic
+    @Published var columnVisibility: NavigationSplitViewVisibility = .all
     @Published var hasUnsavedChanges = false {
         didSet {
             if hasUnsavedChanges { applicationShutdownDiscardApproved = false }
@@ -110,7 +110,7 @@ func resolveBridgeSkillMarkdownNavigationTarget(
     }
 
     let resolvedPath = segments.joined(separator: "/")
-    if bridgeSkillPathComparisonKey(resolvedPath) == "document.md" { return .main }
+    if isBridgeSkillMainDocumentPath(resolvedPath) { return .main }
     guard let storedPath = availableFilePaths.first(where: {
         bridgeSkillPathComparisonKey($0) == bridgeSkillPathComparisonKey(resolvedPath)
     }) else { return nil }
@@ -124,11 +124,21 @@ func bridgeSkillPathComparisonKey(_ value: String) -> String {
     )) ?? value
 }
 
-enum SkillsLibraryAdaptiveColumns {
-    static let inspectorCompactWidth: CGFloat = 1_050
+func isBridgeSkillMainDocumentPath(_ value: String) -> Bool {
+    let key = bridgeSkillPathComparisonKey(value)
+    return key == "skill.md" || key == "document.md"
+}
 
-    static func shouldCollapseForInspector(isPresented: Bool, contentWidth: CGFloat) -> Bool {
-        isPresented && contentWidth < inspectorCompactWidth
+enum SkillsLibraryAdaptiveLayout {
+    static let documentSidebarMinimumWorkspaceWidth: CGFloat = 680
+    static let inlineInspectorMinimumDetailWidth: CGFloat = 720
+
+    static func showsDocumentSidebar(workspaceWidth: CGFloat, hasSelection: Bool) -> Bool {
+        hasSelection && workspaceWidth >= documentSidebarMinimumWorkspaceWidth
+    }
+
+    static func showsInlineInspector(isPresented: Bool, detailWidth: CGFloat) -> Bool {
+        isPresented && detailWidth >= inlineInspectorMinimumDetailWidth
     }
 }
 
@@ -191,25 +201,23 @@ struct SkillsLibraryWindowView: View {
     @State private var showsRestoreConfirmation = false
     @State private var restoreTarget: BridgeSkillVersionSummary?
     @AppStorage("SkillsLibraryShowsInspectorV2") private var showsInspector = false
-    @AppStorage("SkillsLibraryColumnVisibilityV2") private var savedColumnVisibility = "automatic"
-    @State private var compactInspectorPreviousVisibility: NavigationSplitViewVisibility?
     @State private var sheet: SkillLibrarySheet?
     @State private var isDropTargeted = false
     @State private var importTargetSkillID: String?
+    @State private var expandedSkillFileFolderIDs = Set<String>()
 
     var body: some View {
         NavigationSplitView(columnVisibility: $windowState.columnVisibility) {
             skillSidebar
-                .navigationSplitViewColumnWidth(min: 190, ideal: 250, max: 330)
-                .background(SplitViewAutosaveAnchor(name: "CodexBridgeSkillsNavigationSplit"))
-        } content: {
-            documentSidebar
-                .navigationSplitViewColumnWidth(min: 190, ideal: 275, max: 380)
+                .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 270)
         } detail: {
-            detailWithInspector
+            libraryWorkspace
+                .navigationSplitViewColumnWidth(min: 610, ideal: 820)
         }
         .navigationSplitViewStyle(.balanced)
         .searchable(text: $searchText, placement: .sidebar, prompt: "macos.skills.searchBridgeSkills")
+        .modifier(SkillsDefaultSidebarToolbarRemovalModifier())
+        .background(SkillsTitlebarSanitizerView())
         .toolbar { libraryToolbar }
         .sheet(item: $sheet) { presentedSheet($0) }
         .confirmationDialog(
@@ -237,17 +245,16 @@ struct SkillsLibraryWindowView: View {
             Text("macos.skills.thisCopiesTheMainDocumentAndTheEntireAttachmentTreeIntoANewImmutableVersion")
         }
         .task {
-            compactInspectorPreviousVisibility = nil
-            restoreColumnVisibility()
-            await Task.yield()
-            if showsInspector {
-                synchronizeNavigationForWindowWidth(SkillsLibraryWindowController.shared.contentWidth ?? 1_120)
-            }
+            windowState.columnVisibility = .all
             await model.refreshSkillLibrary()
         }
-        .onChange(of: windowState.columnVisibility) { visibility in saveColumnVisibility(visibility) }
-        .onChange(of: showsInspector) { visible in synchronizeNavigationForInspector(visible) }
-        .onChange(of: model.selectedBridgeSkill?.id) { _ in synchronizeSelectionFromModel() }
+        .onChange(of: windowState.columnVisibility) { visibility in
+            if visibility != .all { windowState.columnVisibility = .all }
+        }
+        .onChange(of: model.selectedBridgeSkill?.id) { _ in
+            expandedSkillFileFolderIDs.removeAll()
+            synchronizeSelectionFromModel()
+        }
         .onChange(of: model.selectedBridgeSkillFile?.id) { _ in synchronizeDraftFromModel() }
         .onChange(of: editorMode) { mode in
             if mode != .preview, !isEditingCurrentSource { synchronizeDraftFromModel() }
@@ -256,11 +263,6 @@ struct SkillsLibraryWindowView: View {
         .onChange(of: draftContent) { _ in updateDirtyState() }
         .onChange(of: draftName) { _ in updateDirtyState() }
         .onChange(of: draftDescription) { _ in updateDirtyState() }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { notification in
-            guard let resizedWindow = notification.object as? NSWindow,
-                  SkillsLibraryWindowController.shared.manages(resizedWindow) else { return }
-            synchronizeNavigationForWindowWidth(resizedWindow.contentLayoutRect.width)
-        }
         .onReceive(NotificationCenter.default.publisher(for: .bridgeSkillCommandNew)) { _ in
             guard !windowState.hasUnsavedChanges else { NSSound.beep(); return }
             sheet = .newSkill
@@ -295,31 +297,55 @@ struct SkillsLibraryWindowView: View {
         }
     }
 
-    @ViewBuilder
-    private var detailWithInspector: some View {
-        if #available(macOS 14.0, *) {
-            documentDetail
-                .frame(minWidth: 390, maxWidth: .infinity, maxHeight: .infinity)
-                .inspector(isPresented: $showsInspector) {
-                    versionInspector
-                        .inspectorColumnWidth(min: 260, ideal: 300, max: 360)
+    private var libraryWorkspace: some View {
+        GeometryReader { geometry in
+            let showsDocumentSidebar = SkillsLibraryAdaptiveLayout.showsDocumentSidebar(
+                workspaceWidth: geometry.size.width,
+                hasSelection: model.selectedBridgeSkill != nil
+            )
+            if showsDocumentSidebar {
+                HStack(spacing: 0) {
+                    documentSidebar
+                        .frame(width: min(250, max(210, geometry.size.width * 0.28)))
+                    Divider()
+                    detailWithInspector(showsDocumentPicker: false)
                 }
-        } else {
-            documentDetail
-                .frame(minWidth: 390, maxWidth: .infinity, maxHeight: .infinity)
-                .overlay(alignment: .trailing) {
-                    if showsInspector {
-                        versionInspector
-                            .frame(width: 300)
-                            .frame(maxHeight: .infinity)
-                            .background(.regularMaterial)
-                            .overlay(alignment: .leading) { Divider() }
-                            .shadow(color: .black.opacity(0.12), radius: 8, x: -2)
-                            .transition(.move(edge: .trailing))
-                    }
-                }
-                .animation(.default, value: showsInspector)
+            } else {
+                detailWithInspector(showsDocumentPicker: model.selectedBridgeSkill != nil)
+            }
         }
+    }
+
+    private func detailWithInspector(showsDocumentPicker: Bool) -> some View {
+        GeometryReader { geometry in
+            let presentsInspector = showsInspector && model.selectedBridgeSkill != nil
+            let showsInlineInspector = SkillsLibraryAdaptiveLayout.showsInlineInspector(
+                isPresented: presentsInspector,
+                detailWidth: geometry.size.width
+            )
+            if showsInlineInspector {
+                HStack(spacing: 0) {
+                    documentDetail(showsDocumentPicker: showsDocumentPicker)
+                    Divider()
+                    versionInspector
+                        .frame(width: 300)
+                }
+            } else {
+                documentDetail(showsDocumentPicker: showsDocumentPicker)
+                    .overlay(alignment: .trailing) {
+                        if presentsInspector {
+                            versionInspector
+                                .frame(width: min(300, max(260, geometry.size.width - 140)))
+                                .frame(maxHeight: .infinity)
+                                .background(.regularMaterial)
+                                .overlay(alignment: .leading) { Divider() }
+                                .shadow(color: .black.opacity(0.12), radius: 8, x: -2)
+                                .transition(.move(edge: .trailing))
+                        }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: showsInspector)
     }
 
     private var skillSidebar: some View {
@@ -374,8 +400,11 @@ struct SkillsLibraryWindowView: View {
                     }
                     if !document.files.isEmpty {
                         Section("macos.skills.attachedMarkdown") {
-                            OutlineGroup(SkillFileTree.nodes(for: document.files), children: \.children) { node in
-                                skillFileTreeRow(node, document: document)
+                            ForEach(SkillFileTree.visibleRows(
+                                for: document.files,
+                                expandedFolderIDs: expandedSkillFileFolderIDs
+                            )) { row in
+                                skillFileTreeRow(row, document: document)
                             }
                         }
                     }
@@ -394,7 +423,7 @@ struct SkillsLibraryWindowView: View {
     }
 
     @ViewBuilder
-    private var documentDetail: some View {
+    private func documentDetail(showsDocumentPicker: Bool) -> some View {
         if let document = model.selectedBridgeSkill {
             VStack(spacing: 0) {
                 if let message = model.skillLibraryErrorMessage ?? model.skillMutationErrorMessage {
@@ -409,7 +438,7 @@ struct SkillsLibraryWindowView: View {
                         locale: locale
                     ))
                 }
-                documentHeader(document)
+                documentHeader(document, showsDocumentPicker: showsDocumentPicker)
                 Divider()
                 sourceWorkspace(document)
             }
@@ -423,28 +452,116 @@ struct SkillsLibraryWindowView: View {
         }
     }
 
-    private func documentHeader(_ document: BridgeSkillDocument) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(verbatim: selectedDocumentTitle(document)).font(.headline)
-                if documentSelection == .main, !document.skill.description.isEmpty {
-                    Text(verbatim: document.skill.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                } else if case .file(let path) = documentSelection {
-                    Text(verbatim: path).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+    private func documentHeader(
+        _ document: BridgeSkillDocument,
+        showsDocumentPicker: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: selectedDocumentTitle(document)).font(.headline)
+                    if documentSelection == .main, !document.skill.description.isEmpty {
+                        Text(verbatim: document.skill.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    } else if case .file(let path) = documentSelection {
+                        Text(verbatim: path)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
                 }
+                Spacer()
+                Text(verbatim: "v\(document.skill.version)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(Text(verbatim: BridgeAppLocalization.format(
+                        "macos.skills.versionValue",
+                        locale: locale,
+                        document.skill.version
+                    )))
             }
-            Spacer()
-            Text(verbatim: "v\(document.skill.version)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .accessibilityLabel(Text(verbatim: BridgeAppLocalization.format(
-                    "macos.skills.versionValue",
-                    locale: locale,
-                    document.skill.version
-                )))
+
+            HStack(spacing: 8) {
+                if showsDocumentPicker {
+                    compactDocumentPicker(document)
+                }
+                Spacer(minLength: 8)
+                Picker("macos.skills.viewMode", selection: $editorMode) {
+                    ForEach(SkillEditorMode.allCases) { mode in
+                        Label(mode.title, systemImage: mode.symbol).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 210)
+                .disabled(!isCurrentVersion(document))
+
+                Button("macos.save", systemImage: "square.and.arrow.down") {
+                    saveCurrentDocument()
+                }
+                .labelStyle(.iconOnly)
+                .help("macos.save")
+                .disabled(
+                    !windowState.hasUnsavedChanges ||
+                    model.skillMutationInProgress ||
+                    !isCurrentVersion(document)
+                )
+
+                versionHistoryMenu(document)
+
+                Button("macos.skills.exportAsZip", systemImage: "square.and.arrow.up") {
+                    export(document)
+                }
+                .labelStyle(.iconOnly)
+                .help("macos.skills.exportAsZip")
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
+    }
+
+    private func compactDocumentPicker(_ document: BridgeSkillDocument) -> some View {
+        Picker(
+            "macos.skills.documents",
+            selection: Binding(
+                get: { documentSelection },
+                set: { requestDocumentSelection($0) }
+            )
+        ) {
+            Label("macos.skills.mainDocument", systemImage: "doc.text")
+                .tag(SkillDocumentSelection.main)
+            ForEach(document.files, id: \.path) { file in
+                Text(verbatim: file.path)
+                    .tag(SkillDocumentSelection.file(file.path))
+            }
+        }
+        .pickerStyle(.menu)
+        .frame(maxWidth: 180)
+    }
+
+    private func versionHistoryMenu(_ document: BridgeSkillDocument) -> some View {
+        Menu {
+            if let history = model.selectedBridgeSkillVersions {
+                ForEach(history.versions) { version in
+                    Button {
+                        requestVersion(version)
+                    } label: {
+                        Label {
+                            Text(verbatim: "v\(version.version) · \(version.createdAt)")
+                        } icon: {
+                            Image(systemName: version.version == document.skill.version ? "checkmark" : "doc")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label("macos.skills.version", systemImage: "clock.arrow.circlepath")
+        }
+        .labelStyle(.iconOnly)
+        .help("macos.skills.versionHistoryAndMetadata")
+        .disabled(model.selectedBridgeSkillVersions == nil)
     }
 
     @ViewBuilder
@@ -503,7 +620,7 @@ struct SkillsLibraryWindowView: View {
 
     @ToolbarContentBuilder
     private var libraryToolbar: some ToolbarContent {
-        ToolbarItem(placement: .automatic) {
+        ToolbarItem(placement: .primaryAction) {
             Menu {
                 Button("macos.newskill", systemImage: "doc.badge.plus") { sheet = .newSkill }
                 Button("macos.skills.newMarkdownFile", systemImage: "doc.badge.plus") { sheet = .newFile }
@@ -523,59 +640,12 @@ struct SkillsLibraryWindowView: View {
             .help("macos.skills.addANewSkillOrMarkdownFile")
             .disabled(windowState.hasUnsavedChanges)
         }
-        ToolbarItem(placement: .automatic) {
-            Button { presentImportPanel(intoCurrentSkill: false) } label: {
-                Label("macos.skills.importNewSkill", systemImage: "square.and.arrow.down")
+        ToolbarItem(placement: .primaryAction) {
+            Button { showsInspector.toggle() } label: {
+                Label("macos.skills.versionsAndInfo", systemImage: "sidebar.trailing")
             }
-                .help("macos.skills.importMarkdownFilesAFolderOrAZip")
-                .disabled(windowState.hasUnsavedChanges)
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Picker("macos.skills.viewMode", selection: $editorMode) {
-                ForEach(SkillEditorMode.allCases) { mode in Label(mode.title, systemImage: mode.symbol).tag(mode) }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 240)
-            .disabled(model.selectedBridgeSkill.map { !isCurrentVersion($0) } ?? true)
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Button("macos.save", systemImage: "square.and.arrow.down") { saveCurrentDocument() }
-                .disabled(!windowState.hasUnsavedChanges || model.skillMutationInProgress ||
-                          model.selectedBridgeSkill.map { !isCurrentVersion($0) } ?? true)
-        }
-        ToolbarItem(placement: .primaryAction) {
-            if let document = model.selectedBridgeSkill,
-               let history = model.selectedBridgeSkillVersions {
-                Menu {
-                    ForEach(history.versions) { version in
-                        Button {
-                            requestVersion(version)
-                        } label: {
-                            Label {
-                                Text(verbatim: "v\(version.version) · \(version.createdAt)")
-                            } icon: {
-                                Image(systemName: version.version == document.skill.version ? "checkmark" : "doc")
-                            }
-                        }
-                    }
-                } label: {
-                    Label {
-                        Text("macos.skills.version") + Text(verbatim: " v\(document.skill.version)")
-                    } icon: {
-                        Image(systemName: "clock.arrow.circlepath")
-                    }
-                }
                 .help("macos.skills.versionHistoryAndMetadata")
-            }
-        }
-        ToolbarItem(placement: .primaryAction) {
-            if let document = model.selectedBridgeSkill {
-                Button("macos.skills.exportAsZip", systemImage: "square.and.arrow.up") { export(document) }
-            }
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Button { setInspectorPresented(!showsInspector) } label: { Label("macos.skills.versionsAndInfo", systemImage: "sidebar.trailing") }
-                .help("macos.skills.versionHistoryAndMetadata")
+                .disabled(model.selectedBridgeSkill == nil)
         }
         ToolbarItem(placement: .primaryAction) {
             Menu {
@@ -733,13 +803,49 @@ struct SkillsLibraryWindowView: View {
     }
 
     @ViewBuilder
-    private func skillFileTreeRow(_ node: SkillFileTree, document: BridgeSkillDocument) -> some View {
+    private func skillFileTreeRow(_ row: SkillFileTreeVisibleRow, document: BridgeSkillDocument) -> some View {
+        let node = row.node
         if let path = node.path {
             Label { Text(verbatim: node.name) } icon: { Image(systemName: "doc.text") }
+                .padding(.leading, CGFloat(row.depth) * 18)
                 .tag(SkillDocumentSelection.file(path))
                 .contextMenu { fileContextMenu(path: path, document: document) }
         } else {
-            Label { Text(verbatim: node.name) } icon: { Image(systemName: "folder") }
+            let isExpanded = expandedSkillFileFolderIDs.contains(node.id)
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    toggleFolder(node.id)
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
+                    Label {
+                        Text(verbatim: node.name)
+                    } icon: {
+                        Image(systemName: "folder")
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, CGFloat(row.depth) * 18)
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(BridgeAppLocalization.string(
+                isExpanded ? "macos.expanded" : "macos.collapsed",
+                locale: locale
+            ))
+        }
+    }
+
+    private func toggleFolder(_ id: String) {
+        if expandedSkillFileFolderIDs.contains(id) {
+            expandedSkillFileFolderIDs.remove(id)
+        } else {
+            expandedSkillFileFolderIDs.insert(id)
         }
     }
 
@@ -776,7 +882,19 @@ struct SkillsLibraryWindowView: View {
         editorMode = .preview
         switch requested {
         case .main: model.selectBridgeSkillMainDocument(); synchronizeDraftFromModel()
-        case .file(let path): Task { await model.loadBridgeSkillFile(path: path) }
+        case .file(let path):
+            expandFolders(containing: path)
+            Task { await model.loadBridgeSkillFile(path: path) }
+        }
+    }
+
+    private func expandFolders(containing path: String) {
+        let folders = path.split(separator: "/").dropLast().map(String.init)
+        guard !folders.isEmpty else { return }
+        var components: [String] = []
+        for folder in folders {
+            components.append(folder)
+            expandedSkillFileFolderIDs.insert("folder:\(components.joined(separator: "/"))")
         }
     }
 
@@ -800,6 +918,7 @@ struct SkillsLibraryWindowView: View {
            model.selectedBridgeSkill?.files.contains(where: { $0.path == path }) == true {
             postMutationDocumentSelection = nil
             documentSelection = requested
+            expandFolders(containing: path)
             editorMode = .preview
             Task { await model.loadBridgeSkillFile(path: path) }
             return
@@ -938,47 +1057,6 @@ struct SkillsLibraryWindowView: View {
         }
     }
 
-    private func setInspectorPresented(_ presented: Bool) {
-        showsInspector = presented
-        synchronizeNavigationForInspector(presented)
-    }
-
-    private func synchronizeNavigationForInspector(_ visible: Bool) {
-        if visible {
-            synchronizeNavigationForWindowWidth(SkillsLibraryWindowController.shared.contentWidth ?? 1_120)
-        } else {
-            restoreNavigationAfterCompactInspector()
-        }
-    }
-
-    private func synchronizeNavigationForWindowWidth(_ contentWidth: CGFloat) {
-        if SkillsLibraryAdaptiveColumns.shouldCollapseForInspector(
-            isPresented: showsInspector,
-            contentWidth: contentWidth
-        ) {
-            adaptNavigationForVisibleInspector(contentWidth: contentWidth)
-        } else {
-            restoreNavigationAfterCompactInspector()
-        }
-    }
-
-    private func adaptNavigationForVisibleInspector(contentWidth: CGFloat? = nil) {
-        guard SkillsLibraryAdaptiveColumns.shouldCollapseForInspector(
-            isPresented: true,
-            contentWidth: contentWidth ?? SkillsLibraryWindowController.shared.contentWidth ?? 1_120
-        ) else { return }
-        if compactInspectorPreviousVisibility == nil {
-            compactInspectorPreviousVisibility = windowState.columnVisibility
-        }
-        if windowState.columnVisibility != .detailOnly { windowState.columnVisibility = .detailOnly }
-    }
-
-    private func restoreNavigationAfterCompactInspector() {
-        guard let previous = compactInspectorPreviousVisibility else { return }
-        compactInspectorPreviousVisibility = nil
-        windowState.columnVisibility = previous
-    }
-
     private func focusSkillSearch() {
         if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
            textView.isEditable {
@@ -987,30 +1065,10 @@ struct SkillsLibraryWindowView: View {
             textView.performFindPanelAction(item)
             return
         }
-        windowState.columnVisibility = .all
         DispatchQueue.main.async {
             guard let root = NSApp.keyWindow?.contentView,
                   let search = firstSubview(of: NSSearchField.self, in: root) else { return }
             NSApp.keyWindow?.makeFirstResponder(search)
-        }
-    }
-
-    private func restoreColumnVisibility() {
-        switch savedColumnVisibility {
-        case "detail": windowState.columnVisibility = .detailOnly
-        case "double": windowState.columnVisibility = .doubleColumn
-        case "all": windowState.columnVisibility = .all
-        default: windowState.columnVisibility = .automatic
-        }
-    }
-
-    private func saveColumnVisibility(_ visibility: NavigationSplitViewVisibility) {
-        guard compactInspectorPreviousVisibility == nil else { return }
-        switch visibility {
-        case .detailOnly: savedColumnVisibility = "detail"
-        case .doubleColumn: savedColumnVisibility = "double"
-        case .automatic: savedColumnVisibility = "automatic"
-        default: savedColumnVisibility = "all"
         }
     }
 
@@ -1111,8 +1169,7 @@ struct SkillsLibraryWindowView: View {
         Task { @MainActor in
             let urls = await BridgeSkillDropLoader.urls(from: providers)
             if !urls.isEmpty {
-                let intoCurrent = model.selectedBridgeSkill.map(isCurrentVersion) ?? false
-                beginImport(urls, intoCurrentSkill: intoCurrent)
+                beginImport(urls, intoCurrentSkill: false)
             }
         }
     }
@@ -1217,6 +1274,113 @@ struct SkillsLibraryWindowView: View {
             do { try data.write(to: url, options: .atomic) }
             catch { model.skillMutationErrorMessage = BridgeAppLocalization.errorDescription(error, locale: locale) }
         }
+    }
+}
+
+private struct SkillsDefaultSidebarToolbarRemovalModifier: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 14.0, *) {
+            content.toolbar(removing: .sidebarToggle)
+        } else {
+            content
+        }
+    }
+}
+
+@MainActor
+private final class SkillsTitlebarSanitizerNSView: NSView {
+    private weak var observedToolbar: NSToolbar?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refresh()
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil, let observedToolbar {
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSToolbar.willAddItemNotification,
+                object: observedToolbar
+            )
+            self.observedToolbar = nil
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    func refresh() {
+        window?.titleVisibility = .hidden
+        observeToolbarIfNeeded()
+        removeSystemSplitViewItems()
+    }
+
+    private func observeToolbarIfNeeded() {
+        guard let toolbar = window?.toolbar, toolbar !== observedToolbar else { return }
+        if let observedToolbar {
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSToolbar.willAddItemNotification,
+                object: observedToolbar
+            )
+        }
+        observedToolbar = toolbar
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(toolbarWillAddItem(_:)),
+            name: NSToolbar.willAddItemNotification,
+            object: toolbar
+        )
+    }
+
+    @objc private func toolbarWillAddItem(_ notification: Notification) {
+        guard let toolbar = notification.object as? NSToolbar,
+              let item = notification.userInfo?.values
+            .compactMap({ $0 as? NSToolbarItem })
+            .first(where: Self.isSystemSplitViewItem) else { return }
+        conceal(item)
+        DispatchQueue.main.async { [weak self, weak toolbar] in
+            self?.removeSystemSplitViewItems(from: toolbar)
+            self?.window?.titleVisibility = .hidden
+        }
+    }
+
+    private func removeSystemSplitViewItems() {
+        removeSystemSplitViewItems(from: observedToolbar)
+    }
+
+    private func removeSystemSplitViewItems(from toolbar: NSToolbar?) {
+        guard let toolbar else { return }
+        let indexes = toolbar.items.indices.filter { index in
+            Self.isSystemSplitViewItem(toolbar.items[index])
+        }
+        for index in indexes.reversed() {
+            conceal(toolbar.items[index])
+            toolbar.removeItem(at: index)
+        }
+        window?.titleVisibility = .hidden
+    }
+
+    private func conceal(_ item: NSToolbarItem) {
+        item.isEnabled = false
+        item.view?.alphaValue = 0
+        item.view?.isHidden = true
+    }
+
+    private static func isSystemSplitViewItem(_ item: NSToolbarItem) -> Bool {
+        let identifier = item.itemIdentifier.rawValue
+        return identifier.contains("navigationSplitView.toggleSidebar")
+            || identifier.contains("splitViewSeparator")
+    }
+}
+
+private struct SkillsTitlebarSanitizerView: NSViewRepresentable {
+    func makeNSView(context: Context) -> SkillsTitlebarSanitizerNSView {
+        SkillsTitlebarSanitizerNSView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: SkillsTitlebarSanitizerNSView, context: Context) {
+        nsView.refresh()
     }
 }
 
@@ -1350,6 +1514,29 @@ private struct SkillFileTree: Identifiable, Hashable {
         }
         return materialize(root, prefix: "")
     }
+
+    static func visibleRows(
+        for files: [BridgeSkillFileSummary],
+        expandedFolderIDs: Set<String>
+    ) -> [SkillFileTreeVisibleRow] {
+        var rows: [SkillFileTreeVisibleRow] = []
+        func append(_ nodes: [SkillFileTree], depth: Int) {
+            for node in nodes {
+                rows.append(SkillFileTreeVisibleRow(node: node, depth: depth))
+                if let children = node.children, expandedFolderIDs.contains(node.id) {
+                    append(children, depth: depth + 1)
+                }
+            }
+        }
+        append(nodes(for: files), depth: 0)
+        return rows
+    }
+}
+
+private struct SkillFileTreeVisibleRow: Identifiable {
+    let node: SkillFileTree
+    let depth: Int
+    var id: String { node.id }
 }
 
 private enum SkillBannerStyle { case warning, archived, error }
@@ -1660,14 +1847,16 @@ enum BridgeSkillImportPayload: Sendable, Equatable {
 
 struct BridgeSkillImportReview: Identifiable, Sendable, Equatable {
     let id = UUID()
-    let sourceName: String
+    let suggestedName: String
+    let suggestedDescription: String?
     let payload: BridgeSkillImportPayload
     let suggestedMainPath: String?
     let issues: [BridgeSkillImportIssue]
 
     static func package(sourceName: String, inspection: BridgeSkillPackageInspection) -> Self {
         .init(
-            sourceName: sourceName,
+            suggestedName: inspection.suggestedName ?? sourceName,
+            suggestedDescription: inspection.suggestedDescription,
             payload: .package(inspection),
             suggestedMainPath: inspection.suggestedMainPath,
             issues: inspection.ignored.map { .init(path: $0.path, reason: $0.reason) }
@@ -1686,6 +1875,74 @@ struct BridgeSkillImportReview: Identifiable, Sendable, Equatable {
         case .direct(let files): files.first(where: { $0.path == path })?.bytes
         case .package(let inspection): inspection.files.first(where: { $0.path == path })?.bytes
         }
+    }
+
+    func initiallySelectedPaths(intoCurrentSkill: Bool) -> Set<String> {
+        let initialMainPath = intoCurrentSkill ? nil : suggestedMainPath
+        let mainKey = initialMainPath.map(bridgeSkillPathComparisonKey)
+        return Set(paths.filter { path in
+            if !isBridgeSkillMainDocumentPath(path) { return true }
+            guard let mainKey else { return false }
+            return bridgeSkillPathComparisonKey(path) == mainKey
+        })
+    }
+}
+
+struct BridgeSkillMetadataSuggestion: Sendable, Equatable {
+    let name: String?
+    let description: String?
+}
+
+enum BridgeSkillMetadataParser {
+    static func parse(_ source: String) -> BridgeSkillMetadataSuggestion {
+        var text = source
+        if text.first == "\u{feff}" { text.removeFirst() }
+        let lines = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        guard lines.first?.trimmingCharacters(in: .whitespacesAndNewlines) == "---",
+              let closing = lines.indices.dropFirst().first(where: {
+                  lines[$0].trimmingCharacters(in: .whitespacesAndNewlines) == "---"
+              }) else {
+            return .init(name: nil, description: nil)
+        }
+
+        var name: String?
+        var description: String?
+        for line in lines[1..<closing] {
+            guard line.first?.isWhitespace != true, let separator = line.firstIndex(of: ":") else { continue }
+            let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = yamlScalar(String(line[line.index(after: separator)...]))
+            switch key {
+            case "name": name = normalizedSuggestion(value, maxCharacters: 120)
+            case "description": description = normalizedSuggestion(value, maxCharacters: 2_000)
+            default: continue
+            }
+        }
+        return .init(name: name, description: description)
+    }
+
+    private static func yamlScalar(_ source: String) -> String {
+        let value = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.count >= 2 else { return value }
+        if value.first == "\"", value.last == "\"",
+           let data = value.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(String.self, from: data) {
+            return decoded
+        }
+        if value.first == "'", value.last == "'" {
+            return String(value.dropFirst().dropLast()).replacingOccurrences(of: "''", with: "'")
+        }
+        return value
+    }
+
+    private static func normalizedSuggestion(_ source: String, maxCharacters: Int) -> String? {
+        let normalized = source.split(whereSeparator: \Character.isWhitespace).joined(separator: " ")
+        guard !normalized.isEmpty, normalized.count <= maxCharacters,
+              !normalized.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { return nil }
+        return normalized
     }
 }
 
@@ -1778,12 +2035,18 @@ enum BridgeSkillImportCollector {
             }
         }
         let sorted = unique.values.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        let skillCandidate = sorted.first { $0.path == "SKILL.md" }
         let documentCandidate = sorted.first { $0.path == "document.md" }
-        let skillCandidate = sorted.filter { $0.path == "SKILL.md" }
-        let suggestion = documentCandidate?.path ??
-            (sorted.count == 1 ? sorted[0].path : skillCandidate.count == 1 ? skillCandidate[0].path : nil)
+        let suggestion = skillCandidate?.path ?? documentCandidate?.path ?? (sorted.count == 1 ? sorted[0].path : nil)
+        let metadata = skillCandidate.map { BridgeSkillMetadataParser.parse($0.content) }
         let sourceName = urls.count == 1 ? urls[0].deletingPathExtension().lastPathComponent : ""
-        return .init(sourceName: sourceName, payload: .direct(sorted), suggestedMainPath: suggestion, issues: issues)
+        return .init(
+            suggestedName: metadata?.name ?? sourceName,
+            suggestedDescription: metadata?.description,
+            payload: .direct(sorted),
+            suggestedMainPath: suggestion,
+            issues: issues
+        )
     }
 
     private static func collectFile(
@@ -1870,15 +2133,10 @@ private struct BridgeSkillImportReviewSheet: View {
         self.review = review
         self.currentSkill = currentSkill
         self.commit = commit
-        _name = State(initialValue: review.sourceName)
+        _name = State(initialValue: review.suggestedName)
+        _description = State(initialValue: review.suggestedDescription ?? "")
         _mainPath = State(initialValue: currentSkill == nil ? review.suggestedMainPath : nil)
-        var initiallySelected = Set(review.paths)
-        if currentSkill != nil {
-            initiallySelected = Set(initiallySelected.filter {
-                bridgeSkillPathComparisonKey($0) != "document.md"
-            })
-        }
-        _selectedPaths = State(initialValue: initiallySelected)
+        _selectedPaths = State(initialValue: review.initiallySelectedPaths(intoCurrentSkill: currentSkill != nil))
     }
 
     var body: some View {
@@ -1897,7 +2155,7 @@ private struct BridgeSkillImportReviewSheet: View {
                     TextField("macos.skills.searchDescriptionOptional", text: $description)
                 }.formStyle(.grouped).frame(height: 120)
             }
-            Picker("macos.skills.mainDocument", selection: $mainPath) {
+            Picker("macos.skills.mainDocument", selection: mainPathSelection) {
                 if currentSkill != nil { Text("macos.skills.keepMainDocument").tag(String?.none) }
                 ForEach(review.paths, id: \.self) { path in Text(verbatim: path).tag(String?.some(path)) }
             }
@@ -1921,7 +2179,7 @@ private struct BridgeSkillImportReviewSheet: View {
                         }) == true {
                             Text("macos.skills.replace").font(.caption).foregroundStyle(.orange)
                         } else if currentSkill != nil,
-                                  bridgeSkillPathComparisonKey(path) == "document.md",
+                                  isBridgeSkillMainDocumentPath(path),
                                   path != mainPath {
                             Text("macos.skills.chooseAsMainOrExclude").font(.caption).foregroundStyle(.orange)
                         }
@@ -1966,7 +2224,7 @@ private struct BridgeSkillImportReviewSheet: View {
                 .disabled(
                     selectedPaths.isEmpty ||
                     (mainPath.map { !selectedPaths.contains($0) } ?? false) ||
-                    selectedRootDocumentConflicts ||
+                    selectedMainDocumentConflicts ||
                     selectionExceedsLimits ||
                     (currentSkill == nil && (mainPath == nil || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
                 )
@@ -1976,9 +2234,24 @@ private struct BridgeSkillImportReviewSheet: View {
         .frame(minWidth: 620, minHeight: 600)
     }
 
-    private var selectedRootDocumentConflicts: Bool {
+    private var mainPathSelection: Binding<String?> {
+        Binding(
+            get: { mainPath },
+            set: { newValue in
+                mainPath = newValue
+                guard let newValue else { return }
+                let newKey = bridgeSkillPathComparisonKey(newValue)
+                selectedPaths = Set(selectedPaths.filter { path in
+                    !isBridgeSkillMainDocumentPath(path) || bridgeSkillPathComparisonKey(path) == newKey
+                })
+                selectedPaths.insert(newValue)
+            }
+        )
+    }
+
+    private var selectedMainDocumentConflicts: Bool {
         selectedPaths.contains(where: {
-            bridgeSkillPathComparisonKey($0) == "document.md" && $0 != mainPath
+            isBridgeSkillMainDocumentPath($0) && $0 != mainPath
         })
     }
 

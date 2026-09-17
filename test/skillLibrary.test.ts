@@ -48,6 +48,30 @@ describe("SkillLibrary", () => {
       ]));
   });
 
+  it("stores new main documents as SKILL.md and still reads legacy document.md versions", async () => {
+    const root = await temporaryRoot();
+    const directory = path.join(root, "bridge-skills");
+    const library = new SkillLibrary({ directory });
+    const source = "# Standard main document\n";
+    const created = await library.createBridgeSkill({
+      requestId: randomUUID(), name: "Standard filename", document: source
+    });
+    const versionDirectory = path.join(directory, created.skillId, "versions", created.version);
+    const indexPath = path.join(directory, "index.json");
+    const index = JSON.parse(await readFile(indexPath, "utf8"));
+
+    expect(index.skills[0].versions[0].documentFile).toBe("SKILL.md");
+    expect(await readFile(path.join(versionDirectory, "SKILL.md"), "utf8")).toBe(source);
+    await expect(stat(path.join(versionDirectory, "document.md"))).rejects.toMatchObject({ code: "ENOENT" });
+
+    await writeFile(path.join(versionDirectory, "document.md"), source, "utf8");
+    await rm(path.join(versionDirectory, "SKILL.md"));
+    index.skills[0].versions[0].documentFile = "document.md";
+    await writeFile(indexPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
+
+    expect((await new SkillLibrary({ directory }).read({ reference: created })).document).toBe(source);
+  });
+
   it("searches authored document text without requiring a structured material bucket", async () => {
     const library = await createLibrary();
     await library.createBridgeSkill({
@@ -178,6 +202,10 @@ describe("SkillLibrary", () => {
     await expect(library.createBridgeSkill({ ...base, files: [{ path: "../escape.md", content: "x" }] }))
       .rejects.toThrow("SKILL_FILE_PATH_INVALID");
     await expect(library.createBridgeSkill({ ...base, requestId: randomUUID(), files: [{ path: "image.png", content: "x" }] }))
+      .rejects.toThrow("SKILL_FILE_TYPE_UNSUPPORTED");
+    await expect(library.createBridgeSkill({ ...base, requestId: randomUUID(), files: [{ path: "SKILL.md", content: "x" }] }))
+      .rejects.toThrow("SKILL_FILE_TYPE_UNSUPPORTED");
+    await expect(library.createBridgeSkill({ ...base, requestId: randomUUID(), files: [{ path: "document.md", content: "x" }] }))
       .rejects.toThrow("SKILL_FILE_TYPE_UNSUPPORTED");
     await expect(library.createBridgeSkill({
       ...base, requestId: randomUUID(), files: [

@@ -1350,6 +1350,51 @@ createInterface({input:process.stdin}).on("line", line => {
     expect(() => readFileSync(invocationFile)).toThrow();
   });
 
+  it("does not report an account read failure as a logged-out Codex account", async () => {
+    const root = temporaryDirectory();
+    const bridgeRoot = path.join(root, "runtime");
+    const configDirectory = path.join(root, "config");
+    const configFile = path.join(configDirectory, ".env");
+    const fakeCodex = path.join(root, "fake-codex.mjs");
+    mkdirSync(configDirectory, { recursive: true, mode: 0o700 });
+    writeFileSync(fakeCodex, `#!/usr/bin/env node
+import ${JSON.stringify(new URL("./fixtures/app-server-schema-fixture.mjs", import.meta.url).href)};
+if (process.argv.includes("--version")) { console.log("codex-cli 0.153.3"); process.exit(0); }
+import {createInterface} from "node:readline";
+createInterface({input:process.stdin}).on("line", line => {
+ const request=JSON.parse(line); if(request.id===undefined)return;
+ if(request.method==="initialize") {
+   process.stdout.write(JSON.stringify({id:request.id,result:{userAgent:"fixture",platformFamily:"unix",platformOs:"macos"}})+"\\n");
+ } else if(request.method==="account/read") {
+   process.stdout.write(JSON.stringify({id:request.id,error:{code:-32000,message:"temporary account read failure"}})+"\\n");
+ } else {
+   process.stdout.write(JSON.stringify({id:request.id,result:{}})+"\\n");
+ }
+});
+`, { mode: 0o700 });
+    writeFileSync(configFile, [
+      "CONTROL_PLANE_API_KEY=sk-supervisor-1234567890123456",
+      "CONTROL_PLANE_TUNNEL_ID=tunnel_oooooooooooooooooooooooooooooooo",
+      `CODEX_MCP_BRIDGE_CODEX=${fakeCodex}`,
+      `CODEX_MCP_BRIDGE_RUNTIME_HOME=${path.join(root, "managed-codex")}`,
+      ""
+    ].join("\n"), { mode: 0o600 });
+    const supervisor = new MacOSBridgeSupervisor({
+      bridgeRoot,
+      envFile: configFile,
+      bridgeSocketPath: path.join(configDirectory, "run", "bridge.sock"),
+      runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
+      autoRestart: false,
+      registeredProjectRoots: () => []
+    });
+
+    await expect(supervisor.authStatus()).rejects.toThrow("CODEX_AUTH_STATUS_UNAVAILABLE");
+    await expect(supervisor.authStatus()).rejects.toThrow("CODEX_AUTH_STATUS_UNAVAILABLE");
+    const diagnostics = supervisor.logs(20).map(entry => entry.message);
+    expect(diagnostics.filter(message => message.includes("Codex login status check failed"))).toHaveLength(1);
+    expect(diagnostics.join("\n")).toContain("temporary account read failure");
+  });
+
   it.runIf(process.platform !== "win32")(
     "stops the tracked Codex login process tree during verified helper shutdown preparation",
     async () => {

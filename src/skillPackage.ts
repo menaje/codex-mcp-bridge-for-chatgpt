@@ -30,6 +30,8 @@ export type BridgeSkillPackageInspection = {
   expiresAt: string;
   files: Array<Omit<BridgeSkillPackageFile, "content">>;
   suggestedMainPath: string | null;
+  suggestedName?: string;
+  suggestedDescription?: string;
   ignored: Array<{ path: string; reason: "macos-metadata" | "unsupported-file" }>;
   strippedWrapper: string | null;
 };
@@ -95,11 +97,14 @@ export class BridgeSkillPackageUploads {
     if (!upload.inspected) {
       if (upload.bytes < 1) throw new Error("SKILL_PACKAGE_EMPTY: Upload at least one ZIP chunk before inspection.");
       const expanded = await inspectBridgeSkillZipFile(upload.file);
+      const metadata = suggestedSkillMetadata(expanded.files, expanded.suggestedMainPath);
       const inspection: BridgeSkillPackageInspection = {
         uploadId,
         expiresAt: new Date(upload.expiresAt).toISOString(),
         files: expanded.files.map(({ content: _content, ...file }) => file),
         suggestedMainPath: expanded.suggestedMainPath,
+        ...(metadata.name === undefined ? {} : { suggestedName: metadata.name }),
+        ...(metadata.description === undefined ? {} : { suggestedDescription: metadata.description }),
         ignored: expanded.ignored,
         strippedWrapper: expanded.strippedWrapper
       };
@@ -150,8 +155,12 @@ export class BridgeSkillPackageUploads {
         .filter((file) => selectedPaths.has(file.path))
         .filter((file) => file.path !== selected?.path)
         .map(({ path: filePath, content }) => ({ path: filePath, content }));
-      if (files.some((file) => packagePathCollisionKey(file.path) === "document.md")) {
-        throw new Error("SKILL_PACKAGE_MAIN_CONFLICT: document.md must be selected as the main document when present at the package root.");
+      const reservedMain = files.find((file) => {
+        const key = packagePathCollisionKey(file.path);
+        return key === "skill.md" || key === "document.md";
+      });
+      if (reservedMain) {
+        throw new Error(`SKILL_PACKAGE_MAIN_CONFLICT: ${reservedMain.path} must be selected as the main document or excluded.`);
       }
       const result = await operation({ ...(selected ? { document: selected.content } : {}), files });
       await this.discard(inspection.uploadId);
@@ -242,9 +251,10 @@ export function inspectBridgeSkillZip(bytes: Uint8Array): {
         : "SKILL_PACKAGE_COMPRESSION_UNSUPPORTED: ZIP uses an unsupported compression method.");
     }
     const nameBytes = buffer.subarray(cursor + 46, cursor + 46 + nameLength);
-    if (!(flags & 0x0800) && nameBytes.some((byte) => byte > 0x7f)) {
-      throw new Error("SKILL_PACKAGE_PATH_ENCODING_INVALID: ZIP paths must be UTF-8.");
-    }
+    // Several macOS ZIP producers store valid UTF-8 names without setting the
+    // advisory language-encoding bit. The strict decoder is the trust
+    // boundary: accept bytes that are actually UTF-8 and still reject every
+    // ambiguous or malformed legacy-encoded path.
     const originalPath = decodeUtf8Strict(nameBytes, "SKILL_PACKAGE_PATH_ENCODING_INVALID: ZIP path");
     const normalizedPath = normalizeArchiveEntryPath(originalPath, originalPath.endsWith("/"));
     const unixMode = madeBy >> 8 === 3 ? external >>> 16 : 0;
@@ -268,8 +278,7 @@ export function inspectBridgeSkillZip(bytes: Uint8Array): {
   }
   if (cursor !== centralOffset + centralSize) throw new Error("SKILL_PACKAGE_INVALID: ZIP central directory size is inconsistent.");
 
-  const wrapper = commonWrapper(entries.map((entry) => entry.path));
-  if (wrapper) for (const entry of entries) entry.path = entry.path.slice(wrapper.length + 1);
+  const wrapper = stripCommonPackageWrapper(entries);
   const ignored: BridgeSkillPackageInspection["ignored"] = [];
   const files: BridgeSkillPackageFile[] = [];
   const keys = new Set<string>();
@@ -306,9 +315,9 @@ export function inspectBridgeSkillZip(bytes: Uint8Array): {
   }
   files.sort((left, right) => left.path.localeCompare(right.path, "en-US", { sensitivity: "variant" }));
   if (files.length === 0) throw new Error("SKILL_PACKAGE_NO_MARKDOWN: ZIP does not contain a supported Markdown file.");
+  const rootSkill = files.find((file) => file.path === "SKILL.md");
   const rootDocument = files.find((file) => file.path === "document.md");
-  const rootSkill = files.filter((file) => file.path === "SKILL.md");
-  const suggestedMainPath = rootDocument?.path ?? (rootSkill.length === 1 ? rootSkill[0]!.path : files.length === 1 ? files[0]!.path : null);
+  const suggestedMainPath = rootSkill?.path ?? rootDocument?.path ?? (files.length === 1 ? files[0]!.path : null);
   return { files, suggestedMainPath, ignored, strippedWrapper: wrapper };
 }
 
@@ -373,9 +382,8 @@ export async function inspectBridgeSkillZipFile(file: string): Promise<{
           : "SKILL_PACKAGE_COMPRESSION_UNSUPPORTED: ZIP uses an unsupported compression method.");
       }
       const nameBytes = await readExactly(handle, cursor + 46, nameLength);
-      if (!(flags & 0x0800) && nameBytes.some((byte) => byte > 0x7f)) {
-        throw new Error("SKILL_PACKAGE_PATH_ENCODING_INVALID: ZIP paths must be UTF-8.");
-      }
+      // Treat the actual byte validity, rather than a frequently omitted ZIP
+      // hint bit, as authoritative. Invalid UTF-8 remains a hard failure.
       const originalPath = decodeUtf8Strict(nameBytes, "SKILL_PACKAGE_PATH_ENCODING_INVALID: ZIP path");
       const directory = originalPath.endsWith("/");
       const normalizedPath = normalizeArchiveEntryPath(originalPath, directory);
@@ -393,8 +401,7 @@ export async function inspectBridgeSkillZipFile(file: string): Promise<{
       throw new Error("SKILL_PACKAGE_INVALID: ZIP central directory size is inconsistent.");
     }
 
-    const wrapper = commonWrapper(entries.map((entry) => entry.path));
-    if (wrapper) for (const entry of entries) entry.path = entry.path.slice(wrapper.length + 1);
+    const wrapper = stripCommonPackageWrapper(entries);
     const ignored: BridgeSkillPackageInspection["ignored"] = [];
     const files: BridgeSkillPackageFile[] = [];
     const keys = new Set<string>();
@@ -431,9 +438,9 @@ export async function inspectBridgeSkillZipFile(file: string): Promise<{
     }
     files.sort((left, right) => left.path.localeCompare(right.path, "en-US", { sensitivity: "variant" }));
     if (files.length === 0) throw new Error("SKILL_PACKAGE_NO_MARKDOWN: ZIP does not contain a supported Markdown file.");
+    const rootSkill = files.find((entry) => entry.path === "SKILL.md");
     const rootDocument = files.find((entry) => entry.path === "document.md");
-    const rootSkill = files.filter((entry) => entry.path === "SKILL.md");
-    const suggestedMainPath = rootDocument?.path ?? (rootSkill.length === 1 ? rootSkill[0]!.path : files.length === 1 ? files[0]!.path : null);
+    const suggestedMainPath = rootSkill?.path ?? rootDocument?.path ?? (files.length === 1 ? files[0]!.path : null);
     return { files, suggestedMainPath, ignored, strippedWrapper: wrapper };
   } finally {
     await handle.close();
@@ -442,9 +449,10 @@ export async function inspectBridgeSkillZipFile(file: string): Promise<{
 
 export function deterministicBridgeSkillZip(
   document: string,
-  files: ReadonlyArray<{ path: string; content: string }>
+  files: ReadonlyArray<{ path: string; content: string }>,
+  mainPath: "SKILL.md" | "document.md" = "SKILL.md"
 ): Buffer {
-  const entries = [{ path: "document.md", content: document }, ...files]
+  const entries = [{ path: mainPath, content: document }, ...files]
     .map((entry) => {
       const filePath = normalizeExportPath(entry.path);
       return { path: filePath, bytes: encodePackageText(entry.content, filePath) };
@@ -640,10 +648,76 @@ function commonWrapper(paths: string[]): string | null {
   return first && segments.every((parts) => parts.length > 1 && parts[0] === first) ? first : null;
 }
 
+function stripCommonPackageWrapper<Entry extends { path: string }>(entries: Entry[]): string | null {
+  // Finder/ditto packages commonly add a parallel __MACOSX tree. It is not
+  // package content and must not prevent the real skill folder from being
+  // recognized as a removable wrapper directory.
+  const contentEntries = entries.filter((entry) => !isMacMetadata(entry.path));
+  const wrapper = commonWrapper(contentEntries.map((entry) => entry.path));
+  if (!wrapper) return null;
+  const prefix = `${wrapper}/`;
+  for (const entry of contentEntries) entry.path = entry.path.slice(prefix.length);
+  return wrapper;
+}
+
 function normalizePackagePath(value: string): string {
   const source = normalizeArchiveEntryPath(value);
   if (!/\.(?:md|markdown)$/iu.test(source)) throw new Error("SKILL_PACKAGE_FILE_UNSUPPORTED: Main selection must be Markdown.");
   return source;
+}
+
+function suggestedSkillMetadata(
+  files: readonly BridgeSkillPackageFile[],
+  suggestedMainPath: string | null
+): { name?: string; description?: string } {
+  if (suggestedMainPath !== "SKILL.md") return {};
+  const source = files.find((file) => file.path === "SKILL.md")?.content;
+  if (source === undefined) return {};
+  return parseSkillFrontmatter(source);
+}
+
+function parseSkillFrontmatter(source: string): { name?: string; description?: string } {
+  const text = source.startsWith("\ufeff") ? source.slice(1) : source;
+  const lines = text.replace(/\r\n?/gu, "\n").split("\n");
+  if (lines[0]?.trim() !== "---") return {};
+  const closing = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+  if (closing < 0) return {};
+  let name: string | undefined;
+  let description: string | undefined;
+  for (const line of lines.slice(1, closing)) {
+    if (/^\s/u.test(line)) continue;
+    const separator = line.indexOf(":");
+    if (separator < 0) continue;
+    const key = line.slice(0, separator).trim();
+    const value = yamlScalar(line.slice(separator + 1));
+    if (key === "name") name = normalizedMetadataSuggestion(value, 120);
+    if (key === "description") description = normalizedMetadataSuggestion(value, 2_000);
+  }
+  return {
+    ...(name === undefined ? {} : { name }),
+    ...(description === undefined ? {} : { description })
+  };
+}
+
+function yamlScalar(source: string): string {
+  const value = source.trim();
+  if (value.length < 2) return value;
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (typeof parsed === "string") return parsed;
+    } catch { /* Fall back to the verbatim scalar. */ }
+  }
+  if (value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replaceAll("''", "'");
+  }
+  return value;
+}
+
+function normalizedMetadataSuggestion(source: string, maxCharacters: number): string | undefined {
+  const normalized = source.replace(/\s+/gu, " ").trim();
+  if (!normalized || [...normalized].length > maxCharacters || /[\u0000-\u001f\u007f]/u.test(normalized)) return undefined;
+  return normalized;
 }
 
 function normalizeArchiveEntryPath(value: string, directory = false): string {
@@ -704,7 +778,9 @@ function encodePackageText(value: string, filePath: string): Buffer {
 }
 
 function isMacMetadata(value: string): boolean {
-  return value === ".DS_Store" || value.startsWith("__MACOSX/") || value.split("/").some((part) => part.startsWith("._"));
+  return value.startsWith("__MACOSX/") || value.split("/").some((part) => (
+    part === ".DS_Store" || part.startsWith("._")
+  ));
 }
 
 function sha256(bytes: Uint8Array): string {

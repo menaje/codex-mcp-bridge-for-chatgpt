@@ -209,7 +209,7 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
     func run() async {
         do {
             let defaults = UserDefaults.standard
-            defaults.removeObject(forKey: "NSWindow Frame CodexBridgeSkillsLibraryWindow")
+            defaults.removeObject(forKey: "NSWindow Frame CodexBridgeSkillsLibraryWindowV4")
             defaults.set(false, forKey: "SkillsLibraryShowsInspectorV2")
             defaults.set("all", forKey: "SkillsLibraryColumnVisibilityV2")
             responses.setMode(.empty)
@@ -235,13 +235,8 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
                 throw AcceptanceError("The production skill window has no content view.")
             }
             let initialWideOutlines = visibleOutlineRows(in: window)
-            let navigationSplitAutosaveNames = subviews(of: NSSplitView.self, in: contentView)
+            let splitAutosaveNames = subviews(of: NSSplitView.self, in: contentView)
                 .compactMap(\.autosaveName)
-            guard navigationSplitAutosaveNames.contains("CodexBridgeSkillsNavigationSplit") else {
-                throw AcceptanceError(
-                    "The production navigation split view has no restoration name: \(navigationSplitAutosaveNames)"
-                )
-            }
             let outlineViews = subviews(of: NSOutlineView.self, in: contentView)
             guard let skillList = outlineViews.first(where: { $0.numberOfRows == 2 })?.enclosingScrollView,
                   let fileTree = outlineViews.first(where: { $0.numberOfRows >= 5 })?.enclosingScrollView else {
@@ -299,21 +294,18 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
                 inspectorResizeStates.append("\(width):\(defaults.bool(forKey: "SkillsLibraryShowsInspectorV2"))")
             }
             try await settle()
-            let compactColumnVisibility = SkillsLibraryWindowController.shared.navigationColumnVisibility
             let compactOutlines = visibleOutlineRows(in: window)
             try capture(window, name: "12-preview-ko-light-compact-inspector")
             setAppearance(window, locale: "ko", dark: false, size: NSSize(width: 1_120, height: 760))
             try await settle()
-            let restoredColumnVisibility = SkillsLibraryWindowController.shared.navigationColumnVisibility
             let restoredWideOutlines = visibleOutlineRows(in: window)
-            guard compactColumnVisibility == .detailOnly,
-                  restoredColumnVisibility == .all,
-                  initialWideOutlines.count >= 2,
+            guard initialWideOutlines.count >= 2,
+                  !compactOutlines.isEmpty,
+                  compactOutlines.count < initialWideOutlines.count,
                   restoredWideOutlines.count >= 2 else {
                 throw AcceptanceError(
-                    "Inspector resize did not collapse and restore navigation columns: " +
+                    "Inspector resize did not keep the skill sidebar while adapting the document column: " +
                     "initial=\(initialWideOutlines), compact=\(compactOutlines), restored=\(restoredWideOutlines), " +
-                    "visibility=\(compactColumnVisibility)/\(restoredColumnVisibility), " +
                     "inspector=\(inspectorResizeStates)"
                 )
             }
@@ -378,7 +370,8 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
             try await settle(milliseconds: 300)
 
             let review = BridgeSkillImportReview(
-                sourceName: "현장-스킬-패키지",
+                suggestedName: "현장-스킬-패키지",
+                suggestedDescription: nil,
                 payload: .direct([
                     .init(path: "SKILL.md", content: "# 현장 스킬\n", bytes: 16),
                     .init(path: "references/api.md", content: "# API\n", bytes: 6),
@@ -478,13 +471,11 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
                     "semanticAccessibilityLabelsDeclaredInProductionSource": true
                 ],
                 "pickerContentTypes": contentTypes,
-                "navigationSplitAutosaveNames": navigationSplitAutosaveNames,
+                "splitAutosaveNames": splitAutosaveNames,
                 "adaptiveColumns": [
                     "initialWideOutlineRows": initialWideOutlines,
                     "compactOutlineRows": compactOutlines,
-                    "restoredWideOutlineRows": restoredWideOutlines,
-                    "compactVisibility": String(describing: compactColumnVisibility),
-                    "restoredVisibility": String(describing: restoredColumnVisibility)
+                    "restoredWideOutlineRows": restoredWideOutlines
                 ],
                 "accessibility": [
                     "searchFields": accessibility.searchFields,
@@ -520,7 +511,15 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
     }
 
     private func skillsWindow() throws -> NSWindow {
-        guard let window = NSApp.windows.first(where: SkillsLibraryWindowController.shared.manages) else {
+        let expectedTitle = BridgeAppLocalization.string(
+            "macos.skilllibrary",
+            locale: model.interfaceLocale
+        )
+        guard let window = NSApp.windows.first(where: {
+            $0.title == expectedTitle &&
+                $0.styleMask.contains(.miniaturizable) &&
+                $0.contentMinSize == NSSize(width: 820, height: 600)
+        }) else {
             throw AcceptanceError("The production SkillsLibraryWindowController did not create a window.")
         }
         return window

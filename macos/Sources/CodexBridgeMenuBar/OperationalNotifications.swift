@@ -6,12 +6,12 @@ import UserNotifications
 
 /// Deliberately accepts operational state only. Codex task/Activity events are not inputs.
 enum OperationalProblem: String, Codable, CaseIterable, Sendable {
-    case runtime, tunnel, configuration, authentication, installation, remoteConnection, remoteSecurity, compatibility
+    case runtime, tunnel, configuration, authentication, authenticationStatus, installation, remoteConnection, remoteSecurity, compatibility
 
     var isSecurity: Bool { self == .remoteSecurity }
     var settingsTab: String {
         switch self {
-        case .authentication, .installation: return "codex"
+        case .authentication, .authenticationStatus, .installation: return "codex"
         default: return "connection"
         }
     }
@@ -21,6 +21,7 @@ enum OperationalProblem: String, Codable, CaseIterable, Sendable {
         case .tunnel: return "macos.thechatgptconnectioncouldnotberestoredcheck"
         case .configuration: return "macos.bridgeconfigurationneedsattentionopenconnectionsettingsto"
         case .authentication: return "macos.codexauthenticationneedsattentioncheckyoursignin"
+        case .authenticationStatus: return "macos.couldnotcheckthecodexloginstatuscheck"
         case .installation: return "macos.nousablecodexwasfoundinstallorselect"
         case .remoteConnection: return "macos.theremoteservercouldnotbereachedcheck"
         case .remoteSecurity: return "macos.theremoteconnectionneedsasecuritycheckreview"

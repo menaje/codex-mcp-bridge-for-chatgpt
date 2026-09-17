@@ -357,10 +357,12 @@ struct DashboardPopoverView: View {
                             .textSelection(.enabled)
                     }
                 }
-                if let account = dashboard.codexAccount {
-                    CodexMenuAccountView(account: account, fallbackWeekly: dashboard.weeklyUsage)
-                } else if let usage = dashboard.weeklyUsage, model.shouldShowCodexWeeklyUsage {
-                    WeeklyUsageView(usage: usage)
+                if model.shouldShowCodexWeeklyUsage {
+                    if let account = dashboard.codexAccount {
+                        CodexMenuAccountView(account: account, fallbackWeekly: dashboard.weeklyUsage)
+                    } else if let usage = dashboard.weeklyUsage {
+                        WeeklyUsageView(usage: usage)
+                    }
                 }
                 DashboardSummary(counts: dashboard.counts)
                 dashboardBackgroundStatus(dashboard)

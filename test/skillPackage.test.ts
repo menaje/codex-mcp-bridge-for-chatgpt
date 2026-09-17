@@ -31,11 +31,44 @@ describe("Bridge skill ZIP packages", () => {
     expect(second.equals(first)).toBe(true);
 
     const inspection = inspectBridgeSkillZip(first);
-    expect(inspection.suggestedMainPath).toBe("document.md");
+    expect(inspection.suggestedMainPath).toBe("SKILL.md");
     expect(inspection.files.map((file) => file.path)).toEqual([
-      "document.md", "examples/use.markdown", "references/api.md"
+      "examples/use.markdown", "references/api.md", "SKILL.md"
     ]);
-    expect(inspection.files.find((file) => file.path === "document.md")?.content).toBe("# Main\n");
+    expect(inspection.files.find((file) => file.path === "SKILL.md")?.content).toBe("# Main\n");
+  });
+
+  it("prefers root SKILL.md and suggests its frontmatter metadata", async () => {
+    const root = await temporaryRoot();
+    const uploads = new BridgeSkillPackageUploads(root);
+    const skill = [
+      "---",
+      'name: "package-import-test"',
+      "description: 'Use SKILL.md metadata before the archive name.'",
+      "---",
+      "",
+      "# Imported skill",
+      ""
+    ].join("\n");
+    const zip = deterministicBridgeSkillZip(
+      "# Bridge document\n",
+      [{ path: "SKILL.md", content: skill }],
+      "document.md"
+    );
+    expect(inspectBridgeSkillZip(zip).suggestedMainPath).toBe("SKILL.md");
+
+    const started = await uploads.begin();
+    await uploads.append({ uploadId: started.uploadId, chunkIndex: 0, data: zip.toString("base64") });
+    const inspection = await uploads.inspect(started.uploadId);
+    expect(inspection).toMatchObject({
+      suggestedMainPath: "SKILL.md",
+      suggestedName: "package-import-test",
+      suggestedDescription: "Use SKILL.md metadata before the archive name."
+    });
+    expect(await uploads.consume(started.uploadId, "SKILL.md", ["SKILL.md"])).toEqual({
+      document: skill,
+      files: []
+    });
   });
 
   it("preserves Unicode path spelling while rejecting canonical path collisions", () => {
@@ -96,8 +129,8 @@ describe("Bridge skill ZIP packages", () => {
       .rejects.toThrow("SKILL_UPLOAD_CHUNK_OUT_OF_ORDER");
     await uploads.append({ uploadId: started.uploadId, chunkIndex: 1, data: zip.subarray(split).toString("base64") });
     const inspection = await uploads.inspect(started.uploadId);
-    expect(inspection.files.map((file) => file.path)).toEqual(["document.md", "refs/info.md"]);
-    const expanded = await uploads.consume(started.uploadId, "document.md");
+    expect(inspection.files.map((file) => file.path)).toEqual(["refs/info.md", "SKILL.md"]);
+    const expanded = await uploads.consume(started.uploadId, "SKILL.md");
     expect(expanded).toEqual({ document: "# Main", files: [{ path: "refs/info.md", content: "details" }] });
     await expect(uploads.inspect(started.uploadId)).rejects.toThrow("SKILL_UPLOAD_NOT_FOUND");
   });
@@ -113,6 +146,43 @@ describe("Bridge skill ZIP packages", () => {
     expect(inspection.files).toMatchObject([{ path: "SKILL.md", content: "# Compressed\n\n안녕\n" }]);
   });
 
+  it("accepts strict UTF-8 names without the ZIP hint and strips wrappers independently of macOS metadata", async () => {
+    const root = await temporaryRoot();
+    const archive = path.join(root, "finder-style.zip");
+    const wrapper = "skill-library-import-test";
+    const koreanPath = "notes/한글-파일명-테스트.markdown".normalize("NFD");
+    const zip = storedEntriesZip([
+      { path: `${wrapper}/SKILL.md`, content: "# Main\n" },
+      { path: `${wrapper}/${koreanPath}`, content: "# 한글 경로\n" },
+      { path: `__MACOSX/${wrapper}/notes/._${path.basename(koreanPath)}`, content: "AppleDouble metadata" }
+    ], false);
+
+    const memoryInspection = inspectBridgeSkillZip(zip);
+    expect(memoryInspection.strippedWrapper).toBe(wrapper);
+    expect(memoryInspection.suggestedMainPath).toBe("SKILL.md");
+    expect(memoryInspection.files.map((file) => file.path)).toEqual([koreanPath, "SKILL.md"]);
+    expect(memoryInspection.ignored).toContainEqual(expect.objectContaining({ reason: "macos-metadata" }));
+
+    await writeFile(archive, zip);
+    const streamingInspection = await inspectBridgeSkillZipFile(archive);
+    expect(streamingInspection.strippedWrapper).toBe(wrapper);
+    expect(streamingInspection.suggestedMainPath).toBe("SKILL.md");
+    expect(streamingInspection.files.map((file) => file.path)).toEqual([koreanPath, "SKILL.md"]);
+  });
+
+  it("still rejects malformed path bytes when the ZIP UTF-8 hint is absent", async () => {
+    const root = await temporaryRoot();
+    const archive = path.join(root, "invalid-path.zip");
+    const zip = storedEntriesZip([{ path: "SKILL.md", content: "# Main\n" }], false);
+    const end = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    const centralOffset = zip.readUInt32LE(end + 16);
+    zip[centralOffset + 46] = 0xff;
+
+    expect(() => inspectBridgeSkillZip(zip)).toThrow("SKILL_PACKAGE_PATH_ENCODING_INVALID");
+    await writeFile(archive, zip);
+    await expect(inspectBridgeSkillZipFile(archive)).rejects.toThrow("SKILL_PACKAGE_PATH_ENCODING_INVALID");
+  });
+
   it("allows only one concurrent consumer for an inspected upload", async () => {
     const root = await temporaryRoot();
     const uploads = new BridgeSkillPackageUploads(root);
@@ -122,8 +192,8 @@ describe("Bridge skill ZIP packages", () => {
     await uploads.inspect(started.uploadId);
 
     const outcomes = await Promise.allSettled([
-      uploads.consume(started.uploadId, "document.md"),
-      uploads.consume(started.uploadId, "document.md")
+      uploads.consume(started.uploadId, "SKILL.md"),
+      uploads.consume(started.uploadId, "SKILL.md")
     ]);
     expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
     const failure = outcomes.find((outcome) => outcome.status === "rejected");
@@ -136,13 +206,13 @@ describe("Bridge skill ZIP packages", () => {
     const zip = deterministicBridgeSkillZip("# Imported", [{ path: "refs/a.md", content: "A" }]);
     const upload = await library.beginBridgeSkillPackageUpload();
     await library.appendBridgeSkillPackageUpload({ uploadId: upload.uploadId, chunkIndex: 0, data: zip.toString("base64") });
-    expect((await library.inspectBridgeSkillPackageUpload(upload.uploadId)).suggestedMainPath).toBe("document.md");
+    expect((await library.inspectBridgeSkillPackageUpload(upload.uploadId)).suggestedMainPath).toBe("SKILL.md");
     const created = await library.createBridgeSkillFromPackage({
-      requestId: randomUUID(), name: "Imported package", uploadId: upload.uploadId, mainPath: "document.md"
+      requestId: randomUUID(), name: "Imported package", uploadId: upload.uploadId, mainPath: "SKILL.md"
     });
     expect((await library.readFile({ reference: created, path: "refs/a.md" })).content).toBe("A");
     const exported = await library.exportBridgeSkillPackage(created);
-    expect(inspectBridgeSkillZip(exported).files.map((file) => file.path)).toEqual(["document.md", "refs/a.md"]);
+    expect(inspectBridgeSkillZip(exported).files.map((file) => file.path)).toEqual(["refs/a.md", "SKILL.md"]);
   });
 
   it("keeps a single-use upload retryable until the version mutation commits", async () => {
@@ -154,12 +224,12 @@ describe("Bridge skill ZIP packages", () => {
     await library.appendBridgeSkillPackageUpload({ uploadId: upload.uploadId, chunkIndex: 0, data: zip.toString("base64") });
 
     await expect(library.createBridgeSkillFromPackage({
-      requestId: randomUUID(), name: "Existing", uploadId: upload.uploadId, mainPath: "document.md"
+      requestId: randomUUID(), name: "Existing", uploadId: upload.uploadId, mainPath: "SKILL.md"
     })).rejects.toThrow("SKILL_NAME_CONFLICT");
     expect((await library.inspectBridgeSkillPackageUpload(upload.uploadId)).files).toHaveLength(1);
 
     const created = await library.createBridgeSkillFromPackage({
-      requestId: randomUUID(), name: "Retry succeeds", uploadId: upload.uploadId, mainPath: "document.md"
+      requestId: randomUUID(), name: "Retry succeeds", uploadId: upload.uploadId, mainPath: "SKILL.md"
     });
     expect(created.name).toBe("Retry succeeds");
     await expect(library.inspectBridgeSkillPackageUpload(upload.uploadId)).rejects.toThrow("SKILL_UPLOAD_NOT_FOUND");
@@ -207,6 +277,55 @@ function deflatedSingleEntryZip(filePath: string, content: string): Buffer {
   end.writeUInt32LE(central.length + name.length, 12);
   end.writeUInt32LE(centralOffset, 16);
   return Buffer.concat([local, name, compressed, central, name, end]);
+}
+
+function storedEntriesZip(
+  entries: ReadonlyArray<{ path: string; content: string }>,
+  utf8Flag = true
+): Buffer {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  const flags = utf8Flag ? 0x0800 : 0;
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.path, "utf8");
+    const content = Buffer.from(entry.content, "utf8");
+    const crc = testCrc32(content);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(flags, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(content.length, 18);
+    local.writeUInt32LE(content.length, 22);
+    local.writeUInt16LE(name.length, 26);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE((3 << 8) | 20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(flags, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(content.length, 20);
+    central.writeUInt32LE(content.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE((0o100600 << 16) >>> 0, 38);
+    central.writeUInt32LE(offset, 42);
+
+    locals.push(local, name, content);
+    centrals.push(central, name);
+    offset += local.length + name.length + content.length;
+  }
+  const centralSize = centrals.reduce((total, entry) => total + entry.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, ...centrals, end]);
 }
 
 function testCrc32(bytes: Uint8Array): number {

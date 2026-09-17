@@ -56,15 +56,28 @@ final class SkillsLibraryPresentationTests: XCTestCase {
     func testFileTreePreservesNestedLogicalPathsWithoutHostPaths() throws {
         let source = try String(contentsOf: sourceURL("SkillsLibraryViews.swift"), encoding: .utf8)
         XCTAssertTrue(source.contains("NavigationSplitView"))
-        XCTAssertTrue(source.contains(".inspector(isPresented: $showsInspector)"))
         XCTAssertTrue(source.contains("SkillsLibraryShowsInspectorV2\") private var showsInspector = false"))
-        XCTAssertTrue(source.contains("compactInspectorPreviousVisibility"))
-        XCTAssertTrue(source.contains("windowState.columnVisibility = .detailOnly"))
-        XCTAssertTrue(source.contains("NSWindow.didResizeNotification"))
+        XCTAssertTrue(source.contains("SkillsLibraryAdaptiveLayout.showsDocumentSidebar"))
+        XCTAssertTrue(source.contains("SkillsLibraryAdaptiveLayout.showsInlineInspector"))
+        XCTAssertTrue(source.contains("SkillsDefaultSidebarToolbarRemovalModifier"))
+        XCTAssertTrue(source.contains("SkillsTitlebarSanitizerView"))
+        XCTAssertTrue(source.contains(".toolbar(removing: .sidebarToggle)"))
+        XCTAssertTrue(source.contains("if visibility != .all"))
+        XCTAssertFalse(source.contains("compactInspectorPreviousVisibility"))
+        XCTAssertFalse(source.contains("windowState.columnVisibility = .detailOnly"))
+        XCTAssertFalse(source.contains(".inspector(isPresented: $showsInspector)"))
         XCTAssertEqual(source.components(separatedBy: "HSplitView").count - 1, 1)
-        XCTAssertTrue(source.contains("OutlineGroup"))
+        XCTAssertTrue(source.contains("ForEach(SkillFileTree.visibleRows("))
+        XCTAssertTrue(source.contains("toggleFolder(node.id)"))
+        XCTAssertTrue(source.contains(".tag(SkillDocumentSelection.file(path))"))
+        XCTAssertTrue(source.contains("expandedSkillFileFolderIDs"))
+        XCTAssertTrue(source.contains("expandFolders(containing: path)"))
+        XCTAssertFalse(source.contains("SkillFileTreeRows"))
+        XCTAssertFalse(source.contains("OutlineGroup("))
         XCTAssertTrue(source.contains(".searchable"))
         XCTAssertTrue(source.contains("SafeMarkdownView"))
+        XCTAssertTrue(source.contains("Picker(\"macos.skills.viewMode\", selection: $editorMode)"))
+        XCTAssertTrue(source.contains(".labelsHidden()"))
         XCTAssertTrue(source.contains("windowState.hasUnsavedChanges"))
         XCTAssertFalse(source.contains("MarkdownLivePreviewBlock"))
         XCTAssertFalse(source.contains("WKWebView"))
@@ -79,6 +92,20 @@ final class SkillsLibraryPresentationTests: XCTestCase {
         XCTAssertFalse(settings.contains("showsStandaloneWindowButton"))
     }
 
+    func testSkillsWindowUsesAStableCompactTitlebarAndFreshDefaultFrame() throws {
+        let application = try String(
+            contentsOf: sourceURL("CodexBridgeMenuBarApp.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(application.contains("CodexBridgeSkillsLibraryWindowV4"))
+        XCTAssertTrue(application.contains("skillsWindow.toolbarStyle = .unifiedCompact"))
+        XCTAssertTrue(application.contains("skillsWindow.titleVisibility = .hidden"))
+        XCTAssertTrue(application.contains("if !skillsWindow.setFrameUsingName(frameAutosaveName)"))
+        XCTAssertTrue(application.contains("skillsWindow.setContentSize(NSSize(width: 1_120, height: 720))"))
+        XCTAssertTrue(application.contains("skillsWindow.setFrameAutosaveName(frameAutosaveName)"))
+    }
+
     func testFinderFolderImportKeepsRelativeMarkdownPathsAndReportsUnsupportedFiles() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("bridge-skill-import-\(UUID().uuidString)", isDirectory: true)
@@ -87,20 +114,46 @@ final class SkillsLibraryPresentationTests: XCTestCase {
             at: root.appendingPathComponent("references", isDirectory: true),
             withIntermediateDirectories: true
         )
-        let source = "# Skill\n\ne\u{301}\n"
+        let source = """
+        ---
+        name: "folder-import-test"
+        description: "Imported from SKILL.md metadata."
+        ---
+
+        # Skill
+
+        e\u{301}
+        """
         try (Data([0xef, 0xbb, 0xbf]) + Data(source.utf8)).write(to: root.appendingPathComponent("SKILL.md"))
+        try Data("# Legacy main\n".utf8).write(to: root.appendingPathComponent("document.md"))
         try Data("# Reference\n".utf8).write(to: root.appendingPathComponent("references/api.markdown"))
         try Data("# Hidden but supported\n".utf8).write(to: root.appendingPathComponent(".notes.md"))
         try Data("metadata".utf8).write(to: root.appendingPathComponent(".DS_Store"))
         try Data([0x89, 0x50, 0x4e, 0x47]).write(to: root.appendingPathComponent("image.png"))
 
         let review = BridgeSkillImportCollector.collect(urls: [root])
-        XCTAssertEqual(review.paths, [".notes.md", "references/api.markdown", "SKILL.md"])
+        XCTAssertEqual(review.paths, [".notes.md", "document.md", "references/api.markdown", "SKILL.md"])
         XCTAssertEqual(review.suggestedMainPath, "SKILL.md")
+        XCTAssertEqual(review.suggestedName, "folder-import-test")
+        XCTAssertEqual(review.suggestedDescription, "Imported from SKILL.md metadata.")
+        XCTAssertEqual(
+            review.initiallySelectedPaths(intoCurrentSkill: false),
+            [".notes.md", "references/api.markdown", "SKILL.md"]
+        )
+        XCTAssertEqual(
+            review.initiallySelectedPaths(intoCurrentSkill: true),
+            [".notes.md", "references/api.markdown"]
+        )
         guard case .direct(let files) = review.payload else { return XCTFail("Expected direct files") }
         XCTAssertEqual(files.first(where: { $0.path == "SKILL.md" })?.content, "\u{feff}" + source)
         XCTAssertTrue(review.issues.contains { $0.path == "image.png" && $0.reason == "unsupported-file" })
         XCTAssertTrue(review.issues.contains { $0.path == ".DS_Store" && $0.reason == "macos-metadata" })
+    }
+
+    func testDroppedItemsAlwaysStartANewSkillImport() throws {
+        let source = try String(contentsOf: sourceURL("SkillsLibraryViews.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains("beginImport(urls, intoCurrentSkill: false)"))
+        XCTAssertFalse(source.contains("let intoCurrent = model.selectedBridgeSkill.map(isCurrentVersion)"))
     }
 
     func testDroppedFileURLsDecodeFromNativeURLAndDataRepresentations() async throws {
@@ -244,6 +297,14 @@ final class SkillsLibraryPresentationTests: XCTestCase {
             ),
             .main
         )
+        XCTAssertEqual(
+            resolveBridgeSkillMarkdownNavigationTarget(
+                linkPath: "skill.md",
+                currentFilePath: nil,
+                availableFilePaths: [storedPath]
+            ),
+            .main
+        )
         XCTAssertNil(resolveBridgeSkillMarkdownNavigationTarget(
             linkPath: "../references/Cafe\u{301}.md",
             currentFilePath: nil,
@@ -251,18 +312,30 @@ final class SkillsLibraryPresentationTests: XCTestCase {
         ))
     }
 
-    func testInspectorAdaptiveColumnPolicyTracksLiveWindowWidth() {
-        XCTAssertFalse(SkillsLibraryAdaptiveColumns.shouldCollapseForInspector(
+    func testAdaptiveLayoutKeepsNarrowWorkspacesUsable() {
+        XCTAssertFalse(SkillsLibraryAdaptiveLayout.showsDocumentSidebar(
+            workspaceWidth: 679,
+            hasSelection: true
+        ))
+        XCTAssertTrue(SkillsLibraryAdaptiveLayout.showsDocumentSidebar(
+            workspaceWidth: 680,
+            hasSelection: true
+        ))
+        XCTAssertFalse(SkillsLibraryAdaptiveLayout.showsDocumentSidebar(
+            workspaceWidth: 1_120,
+            hasSelection: false
+        ))
+        XCTAssertFalse(SkillsLibraryAdaptiveLayout.showsInlineInspector(
+            isPresented: true,
+            detailWidth: 719
+        ))
+        XCTAssertTrue(SkillsLibraryAdaptiveLayout.showsInlineInspector(
+            isPresented: true,
+            detailWidth: 720
+        ))
+        XCTAssertFalse(SkillsLibraryAdaptiveLayout.showsInlineInspector(
             isPresented: false,
-            contentWidth: 820
-        ))
-        XCTAssertTrue(SkillsLibraryAdaptiveColumns.shouldCollapseForInspector(
-            isPresented: true,
-            contentWidth: 820
-        ))
-        XCTAssertFalse(SkillsLibraryAdaptiveColumns.shouldCollapseForInspector(
-            isPresented: true,
-            contentWidth: 1_120
+            detailWidth: 1_120
         ))
     }
 

@@ -1177,6 +1177,8 @@ public struct BridgeSkillPackageInspection: Codable, Sendable, Equatable {
     public let expiresAt: String
     public let files: [BridgeSkillFileSummary]
     public let suggestedMainPath: String?
+    public let suggestedName: String?
+    public let suggestedDescription: String?
     public let ignored: [BridgeSkillPackageIgnoredFile]
     public let strippedWrapper: String?
 }

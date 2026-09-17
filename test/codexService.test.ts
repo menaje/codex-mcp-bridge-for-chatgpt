@@ -1,9 +1,9 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CodexService } from "../src/codexService.js";
+import { CodexService, stableCodexWorkingDirectory } from "../src/codexService.js";
 import { APP_SERVER_CAPABILITIES } from "../src/appServerUpstream.js";
 import { LazyCodexUpstream } from "../src/lazyUpstream.js";
 import { ContextualModelCatalog } from "../src/contextualModelCatalog.js";
@@ -62,6 +62,55 @@ describe("Codex execution context", () => {
     vi.spyOn(JsonRpcProcess.prototype, "close").mockRejectedValue(new Error("fixture close failure"));
     await expect(f.service.readCliAccount()).rejects.toThrow("fixture close failure");
     expect(f.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts the account App Server in a stable home directory", async () => {
+    const f = await fixture();
+    const command = path.join(f.root, "fake-codex-account.mjs");
+    const observation = path.join(f.root, "account-cwd.txt");
+    await writeFile(command, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+writeFileSync(process.env.ACCOUNT_CWD_OBSERVATION, process.cwd());
+createInterface({ input: process.stdin }).on("line", line => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  if (request.method === "initialize") {
+    process.stdout.write(JSON.stringify({ id: request.id, result: { userAgent: "fixture", platformFamily: "unix", platformOs: "test" } }) + "\\n");
+  } else if (request.method === "account/read") {
+    process.stdout.write(JSON.stringify({ id: request.id, result: { account: null, requiresOpenaiAuth: true } }) + "\\n");
+  } else {
+    process.stdout.write(JSON.stringify({ id: request.id, result: {} }) + "\\n");
+  }
+});
+`, { mode: 0o700 });
+    f.environment.PATH = process.env.PATH || "";
+    f.environment.ACCOUNT_CWD_OBSERVATION = observation;
+    vi.spyOn(f.service.cli, "acquire").mockResolvedValue({
+      selection: { id: "fixture", source: "terminal", command, physicalPath: command, version: "99.0.0" },
+      release: async () => {}
+    });
+
+    expect((await f.service.readCliAccount()).authenticated).toBe(false);
+    expect(await readFile(observation, "utf8")).toBe(await realpath(f.root));
+    expect(stableCodexWorkingDirectory(f.environment)).toBe(path.resolve(f.root));
+  });
+
+  it("retains the exact account probe failure until a successful refresh", async () => {
+    const f = await fixture();
+    const failure = new Error("fixture account transport failure");
+    const account = projectCodexAccount({ account: { type: "chatgpt" } }, null);
+    const read = vi.spyOn(f.service, "readCliAccount")
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce(account);
+
+    expect(await f.service.readAccount("app-server")).toBeNull();
+    expect(f.service.accountReadFailure("app-server")).toBe(failure);
+    await mkdir(path.join(f.root, ".codex"));
+    await writeFile(path.join(f.root, ".codex", "auth.json"), JSON.stringify({ auth_mode: "chatgpt" }));
+    expect(await f.service.readAccount("app-server")).toEqual(account);
+    expect(f.service.accountReadFailure("app-server")).toBeNull();
+    expect(read).toHaveBeenCalledTimes(2);
   });
 
   it.each(["mcp-server", "codex-sdk"] as const)("retires %s without rewriting historical credentials or storage", async kind => {

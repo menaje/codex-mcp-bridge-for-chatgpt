@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import { RuntimeLifecycleCoordinator, lifecycleRequestSchema, isLifecycleHandoff, type LifecycleRequest, type LifecycleRecord, type LifecycleSnapshot, type LifecycleReason, type LifecycleReconciliation } from "./runtimeLifecycle.js";
 import { ChangeSignal, changeWaitParamsSchema } from "./changeSignal.js";
-import { CodexService } from "./codexService.js";
+import { CodexService, stableCodexWorkingDirectory } from "./codexService.js";
 import { DiagnosticLog } from "./diagnosticLog.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -412,6 +412,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private cliManager?: CodexRuntimeManager;
   private cliInstallation?: Promise<unknown>;
   private cliUpdateCheck?: Promise<unknown>;
+  private authStatusFailure: string | undefined;
 
   constructor(options: MacOSBridgeSupervisorOptions) {
     this.logEntries = new DiagnosticLog({ maxEntries: HELPER_LOG_LIMIT,
@@ -758,10 +759,28 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     const environment = commandEnvironment(this.envFile);
     const selected = await this.selectedCliManager().resolve(environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX).catch(() => null);
     if (!selected) return { installed: false, authenticated: false, summary: "Choose or install Codex in the bridge settings." };
-    const account = await this.selectedCodexService().readAccount("app-server");
-    return { installed: true, authenticated: account?.authenticated === true,
-      resolvedAuthMode: account && account.authMode !== "unknown" ? account.authMode : null,
-      summary: account?.authenticated ? "Codex login is available." : "Codex login is required." };
+    const service = this.selectedCodexService();
+    const account = await service.readAccount("app-server");
+    // A signed-out App Server still projects an account snapshot with
+    // authenticated=false. Null means the inspection failed or was invalidated.
+    if (!account) {
+      const failure = service.accountReadFailure("app-server");
+      const detail = failure === null
+        ? "The account probe returned no current snapshot."
+        : safeErrorMessage(failure);
+      if (detail !== this.authStatusFailure) {
+        this.authStatusFailure = detail;
+        this.appendLog("helper", `Codex login status check failed: ${detail}`);
+      }
+      throw new Error("CODEX_AUTH_STATUS_UNAVAILABLE: Codex login status could not be checked.");
+    }
+    if (this.authStatusFailure !== undefined) {
+      this.authStatusFailure = undefined;
+      this.appendLog("helper", "Codex login status check recovered.");
+    }
+    return { installed: true, authenticated: account.authenticated,
+      resolvedAuthMode: account.authMode !== "unknown" ? account.authMode : null,
+      summary: account.authenticated ? "Codex login is available." : "Codex login is required." };
   }
 
   startLogin(_kind?: "cli"): Promise<{ started: true }> {
@@ -775,6 +794,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       const { selection: selected, release } = await this.selectedCliManager().acquire(environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX);
       const command = selected.command;
       const child = spawn(command, ["login"], {
+        cwd: stableCodexWorkingDirectory(environment),
         detached: true,
         env: environment,
         stdio: "ignore"

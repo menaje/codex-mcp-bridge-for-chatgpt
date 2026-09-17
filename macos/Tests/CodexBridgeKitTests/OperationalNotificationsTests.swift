@@ -208,6 +208,11 @@ final class OperationalNotificationsTests: XCTestCase {
             model.dashboardErrorMessage = taskState
             XCTAssertEqual(model.operationalObservation, .healthy)
         }
+        model.authStatus = nil
+        model.authErrorMessage = "status failed"
+        XCTAssertEqual(model.operationalObservation, .problem(.authenticationStatus))
+        model.authErrorMessage = nil
+        model.authStatus = try auth()
         model.helperStatus = try helper(tunnel: false)
         XCTAssertEqual(model.operationalObservation, .problem(.tunnel))
         model.helperStatus = try helper(bridge: false)

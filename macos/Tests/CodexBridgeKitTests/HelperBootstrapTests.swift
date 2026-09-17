@@ -3,6 +3,18 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class HelperBootstrapTests: XCTestCase {
+    func testLaunchAgentUsesPersistentConfigurationWorkingDirectory() throws {
+        let configurationDirectory = URL(fileURLWithPath: "/Users/fixture/.config/codex-mcp-bridge")
+        let plist = HelperBootstrap.launchAgentPropertyList(
+            programArguments: ["/fixture/node", "/fixture/helper.js"],
+            workingDirectory: configurationDirectory,
+            environment: ["HOME": "/Users/fixture"]
+        )
+
+        XCTAssertEqual(plist["WorkingDirectory"] as? String, configurationDirectory.path)
+        XCTAssertNotEqual(plist["WorkingDirectory"] as? String, "/fixture/App.app/Contents/Resources/Runtime")
+    }
+
     func testFailedBootoutRestoresDefinitionWithoutStartingReplacement() async throws {
         let fixture = try LaunchAgentFixture(previous: Data("old-definition".utf8))
         defer { fixture.remove() }

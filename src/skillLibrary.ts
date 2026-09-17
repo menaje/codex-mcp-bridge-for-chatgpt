@@ -238,7 +238,8 @@ type MarkdownBridgeSkillVersionRecord = {
   contentDigest: string;
   contentDigestVersion: 3 | 4;
   format: "markdown";
-  documentFile: "document.md";
+  /** New versions use SKILL.md; document.md remains readable for existing immutable versions. */
+  documentFile: "SKILL.md" | "document.md";
   /** Absent on v3 records; v4 stores each entry below files/. */
   files?: SkillFileSummary[];
 };
@@ -350,7 +351,7 @@ export class SkillLibrary {
 
   async readFile(input: { reference: SkillReference; path: string }): Promise<SkillFileDocument> {
     const loaded = await this.store.readVersion(input.reference);
-    const requestedPath = normalizeSkillFilePath(input.path);
+    const requestedPath = normalizePersistedSkillFilePath(input.path);
     const file = loaded.files.find((candidate) => candidate.path === requestedPath);
     if (!file) throw new Error("SKILL_FILE_NOT_FOUND: This file is not part of the requested immutable skill version.");
     return {
@@ -403,9 +404,16 @@ export class SkillLibrary {
 
   async exportBridgeSkillPackage(reference: SkillReference): Promise<Buffer> {
     const loaded = await this.store.readVersion(reference);
+    // Very old Bridge versions could store SKILL.md as an attachment. Keep
+    // those exports lossless by using the legacy main alias only for that
+    // compatibility edge; all current exports use SKILL.md.
+    const mainPath = loaded.files.some((file) => skillFileCollisionKey(file.path) === "skill.md")
+      ? "document.md"
+      : "SKILL.md";
     return deterministicBridgeSkillZip(
       loaded.document,
-      loaded.files.map(({ path: filePath, content }) => ({ path: filePath, content }))
+      loaded.files.map(({ path: filePath, content }) => ({ path: filePath, content })),
+      mainPath
     );
   }
 
@@ -681,7 +689,10 @@ class BridgeSkillStore {
   ): Promise<MarkdownBridgeSkillVersionRecord> {
     const directory = this.versionDirectory(record.skillId, versionValue);
     const staging = `${directory}.staging-${randomUUID()}`;
-    const normalizedFiles = normalizeSkillFiles(files);
+    // Existing immutable versions could contain a root SKILL.md attachment
+    // before that name became reserved for the main document. Keep those
+    // attachments readable/restorable without allowing new ones to be added.
+    const normalizedFiles = normalizeSkillFiles(files, true);
     const fileSummaries = normalizedFiles.map(({ path: filePath, content }) => ({
       path: filePath,
       format: "markdown" as const,
@@ -697,7 +708,7 @@ class BridgeSkillStore {
       contentDigest: markdownDocumentDigest(record.name, record.description, document, fileSummaries),
       contentDigestVersion: 4,
       format: "markdown",
-      documentFile: "document.md",
+      documentFile: "SKILL.md",
       files: fileSummaries
     };
     try {
@@ -1124,7 +1135,8 @@ function normalizeDocument(value: string): string {
 }
 
 function normalizeSkillFiles(
-  files: ReadonlyArray<SkillFileInput | (SkillFileSummary & { content: string })>
+  files: ReadonlyArray<SkillFileInput | (SkillFileSummary & { content: string })>,
+  allowReservedMainPath = false
 ): SkillFileInput[] {
   if (!Array.isArray(files) || files.length > BRIDGE_SKILL_LIMITS.fileMaxCount) {
     throw new Error(`SKILL_FILES_INVALID: A skill can contain at most ${BRIDGE_SKILL_LIMITS.fileMaxCount} Markdown files.`);
@@ -1136,7 +1148,7 @@ function normalizeSkillFiles(
     if (!file || typeof file !== "object" || typeof file.path !== "string" || typeof file.content !== "string") {
       throw new Error("SKILL_FILE_INVALID: Each skill file requires a relative path and Markdown content.");
     }
-    const filePath = normalizeSkillFilePath(file.path);
+    const filePath = normalizeSkillFilePathValue(file.path, allowReservedMainPath);
     let content: string;
     try {
       content = verbatimText(file.content, {
@@ -1177,7 +1189,7 @@ function normalizeSkillFileChanges(value: SkillFileChanges): SkillFileChanges {
   }
   const upsert = normalizeSkillFiles(value.upsert || []);
   if (!Array.isArray(value.remove || [])) throw new Error("SKILL_FILE_CHANGES_INVALID: remove must be a path list.");
-  const remove = (value.remove || []).map(normalizeSkillFilePath);
+  const remove = (value.remove || []).map(normalizePersistedSkillFilePath);
   const removeKeys = new Set(remove.map(skillFileCollisionKey));
   if (removeKeys.size !== remove.length) throw new Error("SKILL_FILE_CHANGES_INVALID: remove contains duplicate paths.");
   const upsertPaths = new Set(upsert.map((file) => skillFileCollisionKey(file.path)));
@@ -1205,10 +1217,18 @@ function applySkillFileChanges(
     if (existing && existing !== file.path) files.delete(existing);
     files.set(file.path, file.content);
   }
-  return normalizeSkillFiles([...files].map(([filePath, content]) => ({ path: filePath, content })));
+  return normalizeSkillFiles([...files].map(([filePath, content]) => ({ path: filePath, content })), true);
 }
 
 export function normalizeSkillFilePath(value: string): string {
+  return normalizeSkillFilePathValue(value, false);
+}
+
+function normalizePersistedSkillFilePath(value: string): string {
+  return normalizeSkillFilePathValue(value, true);
+}
+
+function normalizeSkillFilePathValue(value: string, allowReservedMainPath: boolean): string {
   let source: string;
   try {
     // Logical paths are stored exactly as supplied. Canonicalization is only
@@ -1232,8 +1252,10 @@ export function normalizeSkillFilePath(value: string): string {
   if (segments.length > BRIDGE_SKILL_LIMITS.filePathMaxDepth) {
     throw new Error("SKILL_FILE_PATH_INVALID: The Markdown file path is too deep or too long.");
   }
-  if (!/\.(?:md|markdown)$/iu.test(source) || skillFileCollisionKey(source) === "document.md") {
-    throw new Error("SKILL_FILE_TYPE_UNSUPPORTED: Only .md and .markdown attachments are supported; document.md is reserved for the main document.");
+  const key = skillFileCollisionKey(source);
+  const isReservedMainPath = key === "skill.md" || key === "document.md";
+  if (!/\.(?:md|markdown)$/iu.test(source) || (!allowReservedMainPath && isReservedMainPath)) {
+    throw new Error("SKILL_FILE_TYPE_UNSUPPORTED: Only .md and .markdown attachments are supported; SKILL.md and document.md are reserved for the main document.");
   }
   return source;
 }
@@ -1429,7 +1451,7 @@ function validateBridgeVersion(value: unknown, indexVersion: 1 | 2 | 3 | 4 | 5):
 function validateMarkdownVersion(value: Record<string, unknown>): MarkdownBridgeSkillVersionRecord {
   if (!/^[1-9]\d*$/.test(stringValue(value.version)) || typeof value.createdAt !== "string" || typeof value.name !== "string" ||
     typeof value.description !== "string" || !SHA256.test(stringValue(value.contentDigest)) || ![3, 4].includes(value.contentDigestVersion as number) ||
-    value.format !== "markdown" || value.documentFile !== "document.md") {
+    value.format !== "markdown" || !["SKILL.md", "document.md"].includes(stringValue(value.documentFile))) {
     throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill document version is invalid.");
   }
   const contentDigestVersion = value.contentDigestVersion as 3 | 4;
@@ -1437,7 +1459,8 @@ function validateMarkdownVersion(value: Record<string, unknown>): MarkdownBridge
   return {
     kind: "document", version: stringValue(value.version), createdAt: value.createdAt,
     name: normalizeSkillName(value.name), description: normalizeDescription(value.description, true),
-    contentDigest: stringValue(value.contentDigest), contentDigestVersion, format: "markdown", documentFile: "document.md",
+    contentDigest: stringValue(value.contentDigest), contentDigestVersion, format: "markdown",
+    documentFile: value.documentFile as MarkdownBridgeSkillVersionRecord["documentFile"],
     ...(files === undefined ? {} : { files })
   };
 }
@@ -1455,7 +1478,7 @@ function validateSkillFileSummaries(value: unknown): SkillFileSummary[] {
       (entry.bytes as number) > BRIDGE_SKILL_LIMITS.fileMaxBytes || !SHA256.test(stringValue(entry.contentDigest))) {
       throw new Error("SKILL_LIBRARY_CORRUPT: A bridge skill file inventory entry is invalid.");
     }
-    const filePath = normalizeSkillFilePath(entry.path);
+    const filePath = normalizePersistedSkillFilePath(entry.path);
     const key = skillFileCollisionKey(filePath);
     if (paths.has(filePath) || filesystemKeys.has(key)) {
       throw new Error("SKILL_LIBRARY_CORRUPT: Bridge skill file paths conflict.");

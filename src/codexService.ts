@@ -13,6 +13,23 @@ import { decodeUtf8Strict, parseJsonTextStrict, parseJsonUtf8Strict } from "./te
 export type CodexSessionPolicy = { contextId?: string; visibleInCodexApp: boolean; persistent: boolean; persistence: "persistent" | "ephemeral"; constraint?: "hidden-persistent-unsupported" };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
+/**
+ * Child processes must not inherit the helper's cwd. A packaged helper can
+ * outlive an app-bundle replacement, leaving its inherited cwd attached to an
+ * unlinked Runtime directory even though the same path exists again.
+ */
+export function stableCodexWorkingDirectory(environment: NodeJS.ProcessEnv = process.env): string {
+  const candidates = [environment.HOME, homedir()];
+  for (const candidate of candidates) {
+    if (!candidate?.trim() || !path.isAbsolute(candidate)) continue;
+    const resolved = path.normalize(candidate);
+    try {
+      if (statSync(resolved).isDirectory()) return resolved;
+    } catch { /* Try the system home directory next. */ }
+  }
+  throw new Error("CODEX_WORKING_DIRECTORY_UNAVAILABLE: A stable home directory is required to start Codex.");
+}
+
 /** Shared policy and installation entrypoint for both execution and local management. */
 export class CodexService {
   readonly billing: CodexBilling;
@@ -21,6 +38,7 @@ export class CodexService {
   private accountIdentities = new Map<CodexBackendKind, string>();
   private accounts = new Map<CodexBackendKind, { revision: string; expires: number; request: Promise<CodexAccountSnapshot | null> }>();
   private displayedAccounts = new Map<CodexBackendKind, { revision: string; value: CodexAccountSnapshot }>();
+  private accountFailures = new Map<CodexBackendKind, { revision: string; error: unknown }>();
   constructor(readonly environment: NodeJS.ProcessEnv = process.env, cli?: CodexRuntimeManager) {
     this.cli = cli || new CodexRuntimeManager({ environment });
     this.billing = new CodexBilling(this.cli.root);
@@ -91,9 +109,18 @@ export class CodexService {
     const request = cached?.revision === revision && cached.expires > Date.now() ? cached.request : (async () => {
       if (kind !== "app-server") return null;
       return this.readCliAccount();
-    })().catch(() => null).then(value => {
-      if (revision !== this.cacheRevision()) return null;
-      if (value) this.accountIdentities.set(kind, `${value.authMode}:${value.accountKey}:${value.planType}`);
+    })().catch(error => {
+      this.accountFailures.set(kind, { revision, error });
+      return null;
+    }).then(value => {
+      if (revision !== this.cacheRevision()) {
+        if (this.accountFailures.get(kind)?.revision === revision) this.accountFailures.delete(kind);
+        return null;
+      }
+      if (value) {
+        this.accountIdentities.set(kind, `${value.authMode}:${value.accountKey}:${value.planType}`);
+        if (this.accountFailures.get(kind)?.revision === revision) this.accountFailures.delete(kind);
+      }
       return value;
     });
     if (request !== cached?.request) this.accounts.set(kind, { revision, expires: Date.now() + 15_000, request });
@@ -106,6 +133,11 @@ export class CodexService {
       this.displayedAccounts.set(kind, { revision, value: displayed });
     }
     return value;
+  }
+  /** Exact in-memory failure for local diagnostics; never projected to clients. */
+  accountReadFailure(kind: CodexBackendKind): unknown | null {
+    const failure = this.accountFailures.get(kind);
+    return failure?.revision === this.cacheRevision() ? failure.error : null;
   }
   /** Fast structural refreshes retain only bounded data from the same auth/storage context. */
   cachedAccount(kind: CodexBackendKind): CodexAccountSnapshot | null {
@@ -120,7 +152,8 @@ export class CodexService {
   async readCliAccount(): Promise<CodexAccountSnapshot> {
     const { selection, release } = await this.cli.acquire();
     const rpc = new JsonRpcProcess({ command: selection.command, args: ["app-server", "--listen", "stdio://"],
-      env: this.environment, debugLabel: "Codex account", omitJsonRpcHeader: true });
+      env: this.environment, cwd: stableCodexWorkingDirectory(this.environment),
+      debugLabel: "Codex account", omitJsonRpcHeader: true });
     try {
       const initialized = await rpc.request("initialize", { clientInfo: { name: "codex_bridge_account", version: "1" }, capabilities: { experimentalApi: true } }, { timeoutMs: 15_000 });
       validateInitializeResponse(initialized);

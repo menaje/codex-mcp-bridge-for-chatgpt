@@ -67,9 +67,12 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                         .frame(minWidth: 820, minHeight: 600)
                 )
             )
+            settingsWindow.titleVisibility = .hidden
+            settingsWindow.toolbarStyle = .unifiedCompact
             try await settle(settingsWindow)
             clearSettingsCaptureErrors()
             try await settle(settingsWindow, iterations: 8)
+            try await verifySettingsTitlebarIsClear(settingsWindow)
             try await capture(
                 settingsWindow,
                 named: "settings-sidebar-ko-light.png",
@@ -146,6 +149,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             ]
             for (pane, file, expectedText) in paneChecks {
                 model.requestedSettingsTab = pane.rawValue
+                try await verifySettingsTitlebarIsClear(settingsWindow)
                 try await settle(settingsWindow, iterations: 16)
                 clearSettingsCaptureErrors()
                 try await capture(
@@ -155,25 +159,14 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                     expecting: [expectedText]
                 )
             }
-            guard let visibleSidebarToggleX = sidebarToggleWindowX(settingsWindow) else {
-                throw AcceptanceError("The fixed Settings sidebar toggle is missing")
-            }
             model.requestedSettingsTab = SettingsNavigationPane.general.rawValue
+            try await verifySettingsTitlebarIsClear(settingsWindow)
             try await settle(settingsWindow, iterations: 16)
-            guard let sidebarToggleButton = sidebarToggleButton(settingsWindow) else {
-                throw AcceptanceError("The fixed Settings sidebar toggle is not actionable")
-            }
-            sidebarToggleButton.performClick(nil)
-            try await settle(settingsWindow)
-            guard let hiddenSidebarToggleX = sidebarToggleWindowX(settingsWindow),
-                  abs(hiddenSidebarToggleX - visibleSidebarToggleX) <= 1 else {
-                throw AcceptanceError("The Settings sidebar toggle moved when the sidebar was hidden")
-            }
             try await capture(
                 settingsWindow,
-                named: "settings-sidebar-hidden-en-light.png",
+                named: "settings-titlebar-clean-en-light.png",
                 in: artifacts,
-                expecting: ["Settings", "General", "Manage language"]
+                expecting: ["Settings", "General", "Connection", "Server", "Manage language"]
             )
             settingsWindow.close()
 
@@ -186,6 +179,8 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                         .frame(minWidth: 820, minHeight: 600)
                 )
             )
+            searchWindow.titleVisibility = .hidden
+            searchWindow.toolbarStyle = .unifiedCompact
             try await settle(searchWindow)
             try await capture(
                 searchWindow,
@@ -292,7 +287,8 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                     "settingsDetailBottomReachableAcrossLocales": true,
                     "settingsDestinationsCovered": true,
                     "settingsSearchCovered": true,
-                    "sidebarTogglePositionStable": true,
+                    "settingsSidebarAlwaysVisible": true,
+                    "settingsTitlebarRemainsClearDuringNavigation": true,
                     "setupAndRecoveryStatesCovered": true
                 ],
                 "captures": try captures.map { capture in
@@ -447,26 +443,45 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
         return current + root.subviews.flatMap { allScrollViews(in: $0) }
     }
 
-    private func sidebarToggleWindowX(_ window: NSWindow) -> CGFloat? {
-        guard let view = window.titlebarAccessoryViewControllers
-            .map(\.view)
-            .first(where: {
-                $0.identifier?.rawValue == "settings-sidebar-toggle-accessory"
-            }) else { return nil }
-        return view.convert(view.bounds, to: nil).minX
-    }
-
-    private func sidebarToggleButton(_ window: NSWindow) -> NSButton? {
-        window.titlebarAccessoryViewControllers
-            .map(\.view)
-            .first(where: {
-                $0.identifier?.rawValue == "settings-sidebar-toggle-accessory"
-            })?
-            .subviews
-            .compactMap { $0 as? NSButton }
-            .first(where: {
-                $0.identifier?.rawValue == "settings-sidebar-toggle"
-            })
+    private func verifySettingsTitlebarIsClear(_ window: NSWindow) async throws {
+        for _ in 0..<80 {
+            window.makeKeyAndOrderFront(nil)
+            window.contentView?.layoutSubtreeIfNeeded()
+            guard window.titleVisibility == .hidden else {
+                throw AcceptanceError("Settings title became visible")
+            }
+            if !window.titlebarAccessoryViewControllers.isEmpty {
+                throw AcceptanceError("Settings added an unexpected titlebar accessory")
+            }
+            let visibleSystemItems = window.toolbar?.items.compactMap { item -> String? in
+                let identifier = item.itemIdentifier.rawValue
+                let isSystemSplitViewItem = identifier.contains(
+                    "navigationSplitView.toggleSidebar"
+                ) || identifier.contains("splitViewSeparator")
+                guard isSystemSplitViewItem else { return nil }
+                guard let itemView = item.view else { return identifier }
+                guard !itemView.isHidden, itemView.alphaValue > 0.01 else { return nil }
+                return identifier
+            } ?? []
+            if !visibleSystemItems.isEmpty {
+                throw AcceptanceError(
+                    "Settings exposed system titlebar items: \(visibleSystemItems)"
+                )
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let remainingSystemItems = window.toolbar?.items.compactMap { item -> String? in
+            let identifier = item.itemIdentifier.rawValue
+            return identifier.contains("navigationSplitView.toggleSidebar")
+                || identifier.contains("splitViewSeparator")
+                ? identifier
+                : nil
+        } ?? []
+        if !remainingSystemItems.isEmpty {
+            throw AcceptanceError(
+                "Settings retained system titlebar items: \(remainingSystemItems)"
+            )
+        }
     }
 
     private func captureSetupStages(in artifacts: URL) async throws {

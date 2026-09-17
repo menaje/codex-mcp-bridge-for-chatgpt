@@ -47,7 +47,8 @@ for (const shortcut of ["n", "o", "s", "f", "e"]) {
 }
 for (const windowContract of [
   "styleMask: [.titled, .closable, .miniaturizable, .resizable]",
-  'setFrameAutosaveName("CodexBridgeSkillsLibraryWindow")',
+  'let frameAutosaveName = "CodexBridgeSkillsLibraryWindowV4"',
+  "skillsWindow.setFrameAutosaveName(frameAutosaveName)",
   "skillsWindow.contentMinSize = NSSize(width: 820, height: 600)"
 ]) {
   if (!main.includes(windowContract)) throw new Error(`Production skill window contract is missing: ${windowContract}`);

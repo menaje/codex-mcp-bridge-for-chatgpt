@@ -471,8 +471,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             settingsWindow.isReleasedWhenClosed = false
             settingsWindow.delegate = self
             PrimaryAppWindowPresentation.configure(settingsWindow)
+            settingsWindow.toolbarStyle = .unifiedCompact
             settingsWindow.standardWindowButton(.zoomButton)?.isEnabled = true
-            settingsWindow.toolbarStyle = .unified
             settingsWindow.setFrameAutosaveName("CodexBridgeSettingsWindow")
             settingsWindow.contentMinSize = NSSize(width: 820, height: 600)
             let settingsHostingController = NSHostingController(
@@ -483,6 +483,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                     .frame(minWidth: 820, minHeight: 600)
             )
             settingsWindow.contentViewController = settingsHostingController
+            settingsWindow.titleVisibility = .hidden
             settingsWindow.center()
             window = settingsWindow
         }
@@ -511,14 +512,10 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
     private let windowState = SkillsLibraryWindowState()
     private weak var model: AppModel?
 
-    var contentWidth: CGFloat? { window?.contentLayoutRect.width }
-    var navigationColumnVisibility: NavigationSplitViewVisibility { windowState.columnVisibility }
-
-    func manages(_ candidate: NSWindow) -> Bool { window === candidate }
-
     func show(model: AppModel) {
         self.model = model
         if window == nil {
+            let frameAutosaveName = "CodexBridgeSkillsLibraryWindowV4"
             let skillsWindow = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1_120, height: 760),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -534,8 +531,7 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
             PrimaryAppWindowPresentation.configure(skillsWindow)
             skillsWindow.standardWindowButton(.miniaturizeButton)?.isEnabled = true
             skillsWindow.standardWindowButton(.zoomButton)?.isEnabled = true
-            skillsWindow.toolbarStyle = .unified
-            skillsWindow.setFrameAutosaveName("CodexBridgeSkillsLibraryWindow")
+            skillsWindow.toolbarStyle = .unifiedCompact
             skillsWindow.contentMinSize = NSSize(width: 820, height: 600)
             skillsWindow.contentViewController = NSHostingController(
                 rootView: SkillsLibraryLocalizedRootView()
@@ -543,7 +539,12 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
                     .environmentObject(windowState)
                     .frame(minWidth: 820, minHeight: 600)
             )
-            skillsWindow.center()
+            skillsWindow.titleVisibility = .hidden
+            if !skillsWindow.setFrameUsingName(frameAutosaveName) {
+                skillsWindow.setContentSize(NSSize(width: 1_120, height: 720))
+                skillsWindow.center()
+            }
+            skillsWindow.setFrameAutosaveName(frameAutosaveName)
             window = skillsWindow
         }
         if let window {

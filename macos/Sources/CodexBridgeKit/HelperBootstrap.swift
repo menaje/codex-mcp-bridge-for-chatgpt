@@ -85,6 +85,7 @@ public actor HelperBootstrap: HelperBootstrapping {
                 nodeExecutable: nodeExecutable,
                 helperScript: helperScript,
                 bridgeRoot: bridgeRoot,
+                workingDirectory: paths.configurationDirectory,
                 environmentFile: paths.environmentFile,
                 helperSocket: paths.helperSocket,
                 bridgeSocket: paths.bridgeSocket,
@@ -101,6 +102,7 @@ public actor HelperBootstrap: HelperBootstrapping {
                 nodeExecutable: nodeExecutable,
                 helperScript: helperScript,
                 bridgeRoot: bridgeRoot,
+                workingDirectory: paths.configurationDirectory,
                 environmentFile: paths.environmentFile,
                 helperSocket: paths.helperSocket,
                 bridgeSocket: paths.bridgeSocket,
@@ -204,12 +206,18 @@ public actor HelperBootstrap: HelperBootstrapping {
         nodeExecutable: URL,
         helperScript: URL,
         bridgeRoot: URL,
+        workingDirectory: URL,
         environmentFile: URL,
         helperSocket: URL,
         bridgeSocket: URL,
         runtimeLockDirectory: URL
     ) throws {
         if let process = developmentProcess, process.isRunning { return }
+        try FileManager.default.createDirectory(
+            at: workingDirectory,
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
         let process = Process()
         process.executableURL = nodeExecutable
         process.arguments = helperArguments(
@@ -220,7 +228,7 @@ public actor HelperBootstrap: HelperBootstrapping {
             bridgeSocket: bridgeSocket,
             runtimeLockDirectory: runtimeLockDirectory
         )
-        process.currentDirectoryURL = bridgeRoot
+        process.currentDirectoryURL = workingDirectory
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
@@ -236,6 +244,7 @@ public actor HelperBootstrap: HelperBootstrapping {
         nodeExecutable: URL,
         helperScript: URL,
         bridgeRoot: URL,
+        workingDirectory: URL,
         environmentFile: URL,
         helperSocket: URL,
         bridgeSocket: URL,
@@ -249,13 +258,17 @@ public actor HelperBootstrap: HelperBootstrapping {
         let launchAgents = home.appendingPathComponent("Library/LaunchAgents", isDirectory: true)
         let plistURL = launchAgents.appendingPathComponent("\(Self.launchAgentLabel).plist")
         try FileManager.default.createDirectory(
+            at: workingDirectory,
+            withIntermediateDirectories: true,
+            attributes: nil
+        )
+        try FileManager.default.createDirectory(
             at: launchAgents,
             withIntermediateDirectories: true,
             attributes: nil
         )
-        let plist: [String: Any] = [
-            "Label": Self.launchAgentLabel,
-            "ProgramArguments": [nodeExecutable.path] + helperArguments(
+        let plist = Self.launchAgentPropertyList(
+            programArguments: [nodeExecutable.path] + helperArguments(
                 helperScript: helperScript,
                 bridgeRoot: bridgeRoot,
                 environmentFile: environmentFile,
@@ -263,19 +276,12 @@ public actor HelperBootstrap: HelperBootstrapping {
                 bridgeSocket: bridgeSocket,
                 runtimeLockDirectory: runtimeLockDirectory
             ),
-            "WorkingDirectory": bridgeRoot.path,
-            "RunAtLoad": true,
-            "KeepAlive": true,
-            "ProcessType": "Background",
-            "ThrottleInterval": 10,
-            "ExitTimeOut": 45,
-            "StandardOutPath": "/dev/null",
-            "StandardErrorPath": "/dev/null",
-            "EnvironmentVariables": Self.launchAgentEnvironment(
+            workingDirectory: workingDirectory,
+            environment: Self.launchAgentEnvironment(
                 nodeExecutable: nodeExecutable,
                 home: home
             )
-        ]
+        )
         let data = try PropertyListSerialization.data(
             fromPropertyList: plist,
             format: .xml,
@@ -546,6 +552,28 @@ public actor HelperBootstrap: HelperBootstrapping {
         return [
             "HOME": home.path,
             "PATH": path
+        ]
+    }
+
+    static func launchAgentPropertyList(
+        programArguments: [String],
+        workingDirectory: URL,
+        environment: [String: String]
+    ) -> [String: Any] {
+        [
+            "Label": launchAgentLabel,
+            "ProgramArguments": programArguments,
+            // The app bundle is replaced during development and updates. Keep
+            // the long-lived helper on a directory that survives that swap.
+            "WorkingDirectory": workingDirectory.standardizedFileURL.path,
+            "RunAtLoad": true,
+            "KeepAlive": true,
+            "ProcessType": "Background",
+            "ThrottleInterval": 10,
+            "ExitTimeOut": 45,
+            "StandardOutPath": "/dev/null",
+            "StandardErrorPath": "/dev/null",
+            "EnvironmentVariables": environment
         ]
     }
 

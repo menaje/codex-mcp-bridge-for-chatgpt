@@ -8,7 +8,9 @@ Each immutable version contains one authored main `document` and an optional
 tree of independent `.md` or `.markdown` files. The Bridge stores and returns
 each Markdown source exactly as supplied: it does not add frontmatter, split a
 file into sections or blocks, normalize line endings, or reinterpret the text.
-`name` and optional `description` are discovery metadata only.
+`name` and optional `description` are discovery metadata only. New immutable
+versions store the main source as `SKILL.md`, matching the standard Codex skill
+entry-point filename.
 
 ## Model-facing tools
 
@@ -46,9 +48,15 @@ creates one new immutable version of the entire tree.
 The same import review accepts internally authored Markdown, Finder file or
 folder selection, drag and drop, and ZIP selection or drop. It shows ignored
 files and conflicts before commit, requires an explicit main document for a
-new multi-file skill, and preserves attachment paths. A root `SKILL.md` is only
-a convenient main-document suggestion for importing an existing OpenAI-style
-folder; it does not install, manage, or couple the package to Codex skills.
+new multi-file skill, and preserves attachment paths. File, folder, and ZIP
+drops always start a new-skill import; adding content to the selected skill is
+available only through the explicit **Import into Current Skill** action. A
+root `SKILL.md` takes precedence over `document.md` and other Markdown files as
+the suggested main document. Its valid top-level `name` and `description`
+frontmatter prefill discovery metadata without changing the stored Markdown;
+the selected folder or ZIP name is used only when `name` is absent or invalid.
+This compatibility behavior does not install, manage, or couple the package to
+Codex skills.
 
 Archive hides a document from ordinary discovery but retains every version.
 Permanent deletion is available only through the native companion API and UI;
@@ -68,7 +76,9 @@ or prerequisite metadata. Such a read is marked `legacy: true`.
 Existing v3 main-only records read with an empty file inventory. Existing
 v1/v2 structured records use the lossless legacy Markdown adapter. Updating or
 restoring either older form writes a new v4 free-form Markdown tree version;
-the original immutable version remains available in history.
+the original immutable version remains available in history. Versions already
+stored with the former `document.md` filename remain readable without being
+rewritten; their next edited or restored version uses `SKILL.md`.
 
 ## Bounds and safety
 
@@ -88,7 +98,12 @@ range-reads the central directory and streams bounded entry decompression; it
 rejects traversal, invalid UTF-8, encryption, unsupported compression, nested
 archives, special files, oversized expansion, extreme ratios, and conflicting
 paths. Each immutable version can be exported as a deterministic ZIP rebuilt
-from verified stored files.
+from verified stored files. Current exports name the main document `SKILL.md`;
+imports continue to accept legacy packages whose main document is
+`document.md`. ZIPs from macOS producers are also accepted when a filename's
+UTF-8 flag is missing but its bytes decode as strict UTF-8. Finder metadata is
+ignored before detecting and removing a common wrapper folder; malformed or
+ambiguous non-UTF-8 paths remain rejected.
 
 The native renderer supports headings, paragraphs, lists, quotes, inline links,
 fenced code, rules, and GFM-style tables without a web view. Raw HTML and
