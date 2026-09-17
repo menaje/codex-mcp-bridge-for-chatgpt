@@ -73,6 +73,7 @@
     "test": "vitest run --maxWorkers=4",
     "test:dashboard-scope-browser": "tsx scripts/dashboard-scope-browser-regression.ts",
     "test:dashboard-summary-browser": "tsx scripts/dashboard-summary-browser-regression.ts",
+    "test:issue-125-r1-card": "tsx scripts/issue-125-r1-card-delivery-regression.ts",
     "test:model-descriptions-browser": "tsx scripts/model-description-browser-regression.ts",
     "mcp:conformance": "npm run build && node scripts/mcp-conformance.mjs",
     "check": "npm run build && npm run test",

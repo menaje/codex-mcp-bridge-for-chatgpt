@@ -24,13 +24,21 @@ const statusQueryArguments = z.strictObject({
  */
 const dashboardArguments = z.strictObject({
   scope: z.literal("conversation").optional(),
-  jobId: z.string().uuid().optional()
+  jobId: z.string().uuid().optional(),
+  presentationRef: z.string().regex(/^[a-f0-9]{64}$/).optional()
 }).superRefine((value, context) => {
   if (value.jobId && value.scope !== "conversation") {
     context.addIssue({
       code: "custom",
       path: ["scope"],
       message: "jobId requires the originating conversation scope."
+    });
+  }
+  if (Boolean(value.jobId) !== Boolean(value.presentationRef)) {
+    context.addIssue({
+      code: "custom",
+      path: value.jobId ? ["presentationRef"] : ["jobId"],
+      message: "jobId and presentationRef must be supplied together."
     });
   }
 });

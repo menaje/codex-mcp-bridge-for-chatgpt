@@ -1065,13 +1065,27 @@ describe("current bridge tool contracts", () => {
     expect(renderAction).toMatchObject({
       kind: "tool",
       tool: "codex_dashboard",
-      arguments: { scope: "conversation", jobId: task.jobId },
+      arguments: {
+        scope: "conversation",
+        jobId: task.jobId,
+        presentationRef: expect.stringMatching(/^[a-f0-9]{64}$/)
+      },
       message: expect.stringContaining("originating Dashboard")
     });
     const origin = state.listJobs().find((job) =>
       job.jobId === task.jobId
     );
     expect(origin).toBeDefined();
+
+    const mismatchedDashboardOpen = await client.callTool({
+      name: "codex_dashboard",
+      arguments: {
+        ...renderAction.arguments,
+        presentationRef: "0".repeat(64)
+      },
+      _meta: metadata
+    });
+    expect(mismatchedDashboardOpen.isError).toBe(true);
 
     const dashboardOpen = await client.callTool({
       name: "codex_dashboard",
@@ -1084,9 +1098,41 @@ describe("current bridge tool contracts", () => {
     expect(dashboardOpenMeta["codex/dashboardOpen@1"]).toMatchObject({
       scope: "conversation",
       automatic: true,
+      presentationRef: renderAction.arguments.presentationRef,
       completionDeliveryRoute: "native-notification"
     });
     expect(dashboardOpenMeta["codex/dashboardOpen@1"]).not.toHaveProperty("presentationToken");
+    expect(dashboardOpenMeta["codex/dashboardOpen@1"]).not.toHaveProperty("jobId");
+    expect(dashboardOpenMeta["codex/dashboardOpen@1"]).not.toHaveProperty("scopeId");
+
+    const repeatedDashboardOpen = await client.callTool({
+      name: "codex_dashboard",
+      arguments: renderAction.arguments,
+      _meta: metadata
+    });
+    expect(repeatedDashboardOpen.isError, JSON.stringify(repeatedDashboardOpen)).not.toBe(true);
+    expect((repeatedDashboardOpen._meta as Record<string, any>)["codex/dashboardOpen@1"])
+      .toEqual(dashboardOpenMeta["codex/dashboardOpen@1"]);
+
+    const differentJobWithSameReference = await client.callTool({
+      name: "codex_dashboard",
+      arguments: {
+        ...renderAction.arguments,
+        jobId: randomUUID()
+      },
+      _meta: metadata
+    });
+    expect(differentJobWithSameReference.isError).toBe(true);
+
+    const foreignConversationWithOriginFallback = await client.callTool({
+      name: "codex_dashboard",
+      arguments: {
+        ...renderAction.arguments,
+        scopeId: origin!.scopeId
+      },
+      _meta: { "openai/session": "foreign-tool-contract-test" }
+    });
+    expect(foreignConversationWithOriginFallback.isError).toBe(true);
 
     hold.release();
     await eventually(() => state.listJobs().some((job) =>

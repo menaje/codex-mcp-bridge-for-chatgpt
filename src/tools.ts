@@ -4706,7 +4706,18 @@ export function registerBridgeTools(
     ),
     jobId: z.string().uuid().optional().describe(
       "Exact asynchronous Job from a codex_task Dashboard render action. It may be used only with scope='conversation'."
+    ),
+    presentationRef: z.string().regex(/^[a-f0-9]{64}$/).optional().describe(
+      "Non-authorizing correlation reference paired with jobId by a codex_task Dashboard render action."
     )
+  }).superRefine((value, context) => {
+    if (Boolean(value.jobId) !== Boolean(value.presentationRef)) {
+      context.addIssue({
+        code: "custom",
+        path: value.jobId ? ["presentationRef"] : ["jobId"],
+        message: "jobId and presentationRef must be supplied together."
+      });
+    }
   });
   const dashboardSnapshotInput = z.strictObject({
     problems: problemQuerySchema.optional(),
@@ -4741,7 +4752,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Codex Status`,
       description:
-        "Open the Codex status card. It starts with this conversation when it has Activity or Job records, including completed history; otherwise it shows all conversations. For a codex_task result that supplies a Dashboard render action, call this tool immediately with its scope and jobId before replying; that scoped render mounts the automatic Dashboard in that conversation. The user can switch between this conversation and all work in the card.",
+        "Open the Codex status card. It starts with this conversation when it has Activity or Job records, including completed history; otherwise it shows all conversations. For a codex_task result that supplies a Dashboard render action, call this tool immediately with its scope, jobId, and presentationRef before replying; that scoped render mounts the automatic Dashboard in that conversation. The user can switch between this conversation and all work in the card.",
       inputSchema: codexDashboardInput,
       outputSchema: dashboardModelOutputSchema,
       annotations: {
@@ -4778,6 +4789,11 @@ export function registerBridgeTools(
                 "DASHBOARD_AUTOMATIC_PRESENTATION_UNAVAILABLE: The requested work is unavailable in this conversation."
               );
             }
+            if (args.presentationRef !== dashboardPresentationRef(job)) {
+              throw new Error(
+                "DASHBOARD_AUTOMATIC_PRESENTATION_UNAVAILABLE: Refresh the exact Dashboard render action for this Job."
+              );
+            }
             return true;
           })()
         : false;
@@ -4811,6 +4827,7 @@ export function registerBridgeTools(
           automatic: automaticPresentation,
           ...(automaticPresentation
             ? {
+                presentationRef: args.presentationRef,
                 completionDeliveryRoute
               }
             : {})
@@ -8971,7 +8988,11 @@ function formatJobStatus(
         ...(dashboard.automatic
           ? [{
               tool: "codex_dashboard",
-              arguments: { scope: "conversation", jobId: job.jobId },
+              arguments: {
+                scope: "conversation",
+                jobId: job.jobId,
+                presentationRef: dashboardPresentationRef(job)
+              },
               userPrompt:
                 "Call this render tool before replying so the originating Dashboard is mounted."
             }]
@@ -9052,6 +9073,23 @@ function formatJobStatus(
             : "Codex completed; retrieve the exact Job result for its bounded model-authoritative answer."
           : error?.message || "Codex reached a terminal state."
   };
+}
+
+/**
+ * Correlates the host's Dashboard tool input with its private tool result.
+ * This digest is deliberately not an authorization credential: the render
+ * handler still resolves host scope and verifies exact Job ownership.
+ */
+function dashboardPresentationRef(
+  job: Pick<CodexJob, "jobId" | "scopeId">
+): string {
+  return createHash("sha256")
+    .update("codex-dashboard-presentation-v1", "utf8")
+    .update("\0", "utf8")
+    .update(job.scopeId, "utf8")
+    .update("\0", "utf8")
+    .update(job.jobId, "utf8")
+    .digest("hex");
 }
 
 function dashboardPresentationHint(

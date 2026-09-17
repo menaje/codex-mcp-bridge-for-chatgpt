@@ -428,6 +428,13 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).not.toContain('completion-claim');
     expect(DASHBOARD_CARD_HTML).not.toContain('completion-uncertain');
     expect(DASHBOARD_CARD_HTML).not.toContain('presentationToken');
+    expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/notifications/tool-input"');
+    expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/notifications/tool-result"');
+    expect(DASHBOARD_CARD_HTML).toContain('globals,"toolInput"');
+    expect(DASHBOARD_CARD_HTML).toContain('globals,"toolResponseMetadata"');
+    expect(DASHBOARD_CARD_HTML).toContain('dataset.dashboardPresentation=presentationLinked?"ready"');
+    expect(DASHBOARD_CARD_HTML.indexOf('window.addEventListener("message"'))
+      .toBeLessThan(DASHBOARD_CARD_HTML.indexOf('standardBridgeReady=beginStandardBridge()'));
     expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/resource-teardown"');
     expect(DASHBOARD_CARD_HTML).toContain('tornDown=true;mounted=false');
     expect(DASHBOARD_CARD_HTML).toContain('if(tornDown)return;mounted=true');
