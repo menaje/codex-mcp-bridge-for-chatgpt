@@ -4305,7 +4305,7 @@ export function registerBridgeTools(
     const claims: Omit<UiControlClaims, "version" | "expiresAt"> = {
       widgetInstanceId: args.widgetInstanceId, hostScopeId: host?.scopeId || null, scopeId: agent.scopeId,
       activityId: activity.activityId, generation: activity.cardGeneration, agentId: agent.agentId,
-      agentVersion: agent.version, jobId: job.jobId, jobVersion: job.version, processIds: []
+      agentVersion: agent.version, jobId: job.jobId, jobVersion: job.version
     };
     const card = { kind: "dashboard", token: controlProofs.issue(claims) };
     const detail = { kind: "control", rowKey: args.rowKey, agentId: agent.agentId, agentName: agent.agentName,

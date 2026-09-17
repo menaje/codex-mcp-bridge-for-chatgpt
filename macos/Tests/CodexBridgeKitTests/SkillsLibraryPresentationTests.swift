@@ -141,6 +141,18 @@ final class SkillsLibraryPresentationTests: XCTestCase {
         XCTAssertTrue(settings.contains("showBridgeThreadsInCodexApp"))
     }
 
+    func testVisualAcceptanceFixtureUsesCurrentSkillContentContract() throws {
+        let fixture = try String(
+            contentsOf: repositoryURL("scripts/fixtures/NativeSkillLibraryVisualAcceptance.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(fixture.contains("\"content\": main"))
+        XCTAssertFalse(fixture.contains("\"document\": main"))
+        XCTAssertTrue(fixture.contains("\"sourceSnapshot\": \"versioned-bridge-record\""))
+        XCTAssertTrue(fixture.contains("active ? \"available\" : \"disabled\""))
+    }
+
     func testSkillsWindowUsesAStableCompactTitlebarAndFreshDefaultFrame() throws {
         let application = try String(
             contentsOf: sourceURL("CodexBridgeMenuBarApp.swift"),
@@ -434,5 +446,14 @@ final class SkillsLibraryPresentationTests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("Sources/CodexBridgeMenuBar")
             .appendingPathComponent(name)
+    }
+
+    private func repositoryURL(_ relativePath: String) -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent(relativePath)
     }
 }

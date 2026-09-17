@@ -8,8 +8,7 @@ const claimsSchema = z.strictObject({
   hostScopeId: z.string().uuid().nullable(), scopeId: z.string().uuid(),
   activityId: z.string().uuid(), generation: z.number().int().positive(),
   agentId: z.string().uuid(), agentVersion: z.number().int().positive(),
-  jobId: z.string().nullable(), jobVersion: z.number().int().positive().nullable(),
-  processIds: z.array(z.string().max(200)).max(100)
+  jobId: z.string().nullable(), jobVersion: z.number().int().positive().nullable()
 });
 export type UiControlClaims = z.infer<typeof claimsSchema>;
 /** Shared by MCP sessions that operate on the same registry. Restart invalidates

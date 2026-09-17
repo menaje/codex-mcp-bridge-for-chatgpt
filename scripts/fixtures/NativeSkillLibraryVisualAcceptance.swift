@@ -35,7 +35,7 @@ private final class SkillVisualResponses: @unchecked Sendable {
         case "skills.snapshot":
             result = ["skills": currentMode == .empty ? [] : [summary(active: true), summary(active: false)]]
         case "skills.read":
-            result = document(skillID: skillID, version: version)
+            result = skill(skillID: skillID, version: version)
         case "skills.read-file":
             let path = params["path"] as? String ?? "references/api.md"
             let summary = summary(active: skillID != "bridge_visual_archived", version: version)
@@ -63,11 +63,11 @@ private final class SkillVisualResponses: @unchecked Sendable {
                 ? "보관 및 이전 형식 경고의 현지화 상태를 확인합니다."
                 : "자유형 Markdown 본문과 관련 문서를 함께 제공하는 브리지 스킬입니다.",
             "contentDigest": digest(archived ? "archived" : "active"),
-            "enabled": active, "availability": active ? "available" : "archived"
+            "enabled": active, "availability": active ? "available" : "disabled"
         ]
     }
 
-    private func document(skillID: String, version: String) -> [String: Any] {
+    private func skill(skillID: String, version: String) -> [String: Any] {
         let active = skillID != "bridge_visual_archived"
         let main = active ? """
         # 현장 품질 검토
@@ -101,13 +101,14 @@ private final class SkillVisualResponses: @unchecked Sendable {
             "guides/체크리스트.markdown", "guides/nested/세부절차.md"
         ] : []
         return [
-            "skill": summary(active: active, version: version), "document": main,
+            "skill": summary(active: active, version: version), "content": main,
             "files": filePaths.map { path in
                 let content = fileContent(path)
                 return ["path": path, "format": "markdown", "bytes": Data(content.utf8).count,
                         "contentDigest": digest(path)] as [String: Any]
             },
-            "format": "markdown", "legacy": !active, "sourceSnapshot": main,
+            "format": "markdown", "legacy": !active,
+            "sourceSnapshot": "versioned-bridge-record",
             "warnings": active ? [] : ["archived", "legacy-structured"]
         ]
     }
