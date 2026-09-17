@@ -98,9 +98,11 @@ final class SkillsLibraryPresentationTests: XCTestCase {
             encoding: .utf8
         )
 
-        XCTAssertTrue(application.contains("CodexBridgeSkillsLibraryWindowV4"))
+        XCTAssertTrue(application.contains("CodexBridgeSkillsLibraryWindowV5"))
         XCTAssertTrue(application.contains("skillsWindow.toolbarStyle = .unifiedCompact"))
         XCTAssertTrue(application.contains("skillsWindow.titleVisibility = .hidden"))
+        XCTAssertTrue(application.contains("skillsWindow.contentMinSize = NSSize(width: 900, height: 600)"))
+        XCTAssertTrue(application.contains(".frame(minWidth: 900, minHeight: 600)"))
         XCTAssertTrue(application.contains("if !skillsWindow.setFrameUsingName(frameAutosaveName)"))
         XCTAssertTrue(application.contains("skillsWindow.setContentSize(NSSize(width: 1_120, height: 720))"))
         XCTAssertTrue(application.contains("skillsWindow.setFrameAutosaveName(frameAutosaveName)"))

@@ -209,7 +209,7 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
     func run() async {
         do {
             let defaults = UserDefaults.standard
-            defaults.removeObject(forKey: "NSWindow Frame CodexBridgeSkillsLibraryWindowV4")
+            defaults.removeObject(forKey: "NSWindow Frame CodexBridgeSkillsLibraryWindowV5")
             defaults.set(false, forKey: "SkillsLibraryShowsInspectorV2")
             defaults.set("all", forKey: "SkillsLibraryColumnVisibilityV2")
             responses.setMode(.empty)
@@ -244,6 +244,13 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
             }
             try captureView(skillList, in: window, name: "02a-skill-sidebar-en-light")
             try captureView(fileTree, in: window, name: "02b-document-tree-en-light")
+
+            let minimumViewportLocales = ["en", "es", "fr", "de", "pt", "ko", "ja", "zh-Hans", "zh-Hant"]
+            try await verifyLocalizedMinimumViewportFits(
+                window,
+                locales: minimumViewportLocales,
+                scenario: "inspector-hidden"
+            )
 
             let locales = ["ko", "de", "es", "fr", "ja", "pt", "zh-Hans", "zh-Hant"]
             for (index, locale) in locales.enumerated() {
@@ -285,9 +292,14 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
                 throw AcceptanceError("Could not isolate the production version inspector.")
             }
             try captureView(inspector, in: window, name: "11a-version-inspector-ko-light")
+            try await verifyLocalizedMinimumViewportFits(
+                window,
+                locales: minimumViewportLocales,
+                scenario: "inspector-visible"
+            )
             setAppearance(window, locale: "ko", dark: false, size: NSSize(width: 1_120, height: 760))
             var inspectorResizeStates: [String] = []
-            for width in stride(from: 1_100, through: 820, by: -20) {
+            for width in stride(from: 1_100, through: 900, by: -20) {
                 window.setContentSize(NSSize(width: width, height: max(600, 760 - (1_120 - width) / 2)))
                 window.layoutIfNeeded()
                 try await settle(milliseconds: 45)
@@ -455,6 +467,7 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
                     "emptyState": true,
                     "markdownPreview": true,
                     "allSupportedLocalesRendered": true,
+                    "localizedMinimumViewportFits": true,
                     "lightAndDark": true,
                     "compactInspectorAndWideRestore": true,
                     "localizedErrorAndArchiveWarnings": true,
@@ -471,6 +484,7 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
                     "semanticAccessibilityLabelsDeclaredInProductionSource": true
                 ],
                 "pickerContentTypes": contentTypes,
+                "minimumViewportLocales": minimumViewportLocales,
                 "splitAutosaveNames": splitAutosaveNames,
                 "adaptiveColumns": [
                     "initialWideOutlineRows": initialWideOutlines,
@@ -510,6 +524,69 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
         window.displayIfNeeded()
     }
 
+    private func verifyLocalizedMinimumViewportFits(
+        _ window: NSWindow,
+        locales: [String],
+        scenario: String
+    ) async throws {
+        for locale in locales {
+            setAppearance(window, locale: locale, dark: false, size: NSSize(width: 900, height: 600))
+            try await settle(milliseconds: 180)
+            try verifyVisibleScrollableRegionsFit(window, locale: locale, scenario: scenario)
+        }
+    }
+
+    private func verifyVisibleScrollableRegionsFit(
+        _ window: NSWindow,
+        locale: String,
+        scenario: String
+    ) throws {
+        guard let root = window.contentView else {
+            throw AcceptanceError("The production skill window has no content view.")
+        }
+        root.layoutSubtreeIfNeeded()
+        let rootBounds = root.bounds
+        guard rootBounds.width >= 899, rootBounds.height >= 599 else {
+            throw AcceptanceError(
+                "The minimum skill viewport was not applied for \(locale) (\(scenario)): " +
+                    "\(NSStringFromRect(rootBounds))"
+            )
+        }
+
+        let splitViews = subviews(of: NSSplitView.self, in: root).filter {
+            viewAndAncestorsAreVisible($0) && $0.bounds.width > 1 && $0.bounds.height > 1
+        }
+        let scrollViews = subviews(of: NSScrollView.self, in: root).filter {
+            viewAndAncestorsAreVisible($0) && $0.bounds.width > 1 && $0.bounds.height > 1
+        }
+        guard !splitViews.isEmpty, scrollViews.count >= 2 else {
+            throw AcceptanceError(
+                "The localized skill viewport is missing native scroll structure for \(locale) " +
+                    "(\(scenario)): splits=\(splitViews.count), scrolls=\(scrollViews.count)"
+            )
+        }
+
+        for (kind, views) in [
+            ("split", splitViews.map { $0 as NSView }),
+            ("scroll", scrollViews.map { $0 as NSView })
+        ] {
+            for view in views {
+                let rect = view.convert(view.bounds, to: root)
+                guard contains(rootBounds, rect, tolerance: 1) else {
+                    throw AcceptanceError(
+                        "The \(kind) region exceeds the skill viewport for \(locale) (\(scenario)): " +
+                            "region=\(NSStringFromRect(rect)), viewport=\(NSStringFromRect(rootBounds))"
+                    )
+                }
+            }
+        }
+    }
+
+    private func contains(_ outer: NSRect, _ inner: NSRect, tolerance: CGFloat) -> Bool {
+        inner.minX >= outer.minX - tolerance && inner.minY >= outer.minY - tolerance &&
+            inner.maxX <= outer.maxX + tolerance && inner.maxY <= outer.maxY + tolerance
+    }
+
     private func skillsWindow() throws -> NSWindow {
         let expectedTitle = BridgeAppLocalization.string(
             "macos.skilllibrary",
@@ -518,7 +595,7 @@ private final class SkillLibraryVisualAcceptance: ObservableObject {
         guard let window = NSApp.windows.first(where: {
             $0.title == expectedTitle &&
                 $0.styleMask.contains(.miniaturizable) &&
-                $0.contentMinSize == NSSize(width: 820, height: 600)
+                $0.contentMinSize == NSSize(width: 900, height: 600)
         }) else {
             throw AcceptanceError("The production SkillsLibraryWindowController did not create a window.")
         }
