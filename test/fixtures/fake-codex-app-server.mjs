@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import "./app-server-schema-fixture.mjs";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import readline from "node:readline";
 import { threadPolicyResponse, assertTurnPolicy } from "./app-server-policy-fixture.mjs";
 
@@ -9,6 +9,10 @@ const manifest = JSON.parse(readFileSync(new URL("../../release-manifest.json", 
 if (process.argv.includes("--version")) {
   process.stdout.write(`codex-cli ${manifest.toolchain.codexCli}\n`);
   process.exit(0);
+}
+
+if (process.env.CODEX_TEST_APP_SERVER_CWD_OBSERVATION) {
+  writeFileSync(process.env.CODEX_TEST_APP_SERVER_CWD_OBSERVATION, process.cwd());
 }
 
 const lines = readline.createInterface({ input: process.stdin });

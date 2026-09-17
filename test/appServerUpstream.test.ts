@@ -1,4 +1,6 @@
 import path from "node:path";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -11,6 +13,7 @@ import {
 } from "../src/appServerUpstream.js";
 import { CODEX_CLI_TEST_VERSION } from "../src/appServerCompatibility.js";
 import { BRIDGE_BUILD_INFO } from "../src/buildInfo.js";
+import { stableCodexWorkingDirectory } from "../src/codexService.js";
 import type { JsonRpcProcessIdentity } from "../src/jsonRpcProcess.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
 import type {
@@ -39,6 +42,25 @@ describe("CodexAppServerUpstreamPool", () => {
       version: BRIDGE_BUILD_INFO.version
     });
     expect(Object.isFrozen(APP_SERVER_CLIENT_INFO)).toBe(true);
+  });
+
+  it("starts App Server workers in a stable home directory", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "codex-app-server-cwd-"));
+    const observation = path.join(home, "worker-cwd.txt");
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {
+      environment: {
+        ...process.env,
+        HOME: home,
+        CODEX_TEST_APP_SERVER_CWD_OBSERVATION: observation
+      }
+    });
+    try {
+      await pool.listModels();
+      expect(await readFile(observation, "utf8")).toBe(await realpath(home));
+    } finally {
+      await pool.close();
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it("selects, caches, and invalidates the account-wide seven-day Codex limit", async () => {
@@ -871,6 +893,7 @@ describe("CodexAppServerUpstreamPool", () => {
   it("round-trips command, file, input, and permission requests by exact request ID", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     const interactions: CodexPendingInteraction[] = [];
+    const workerCwdLabel = path.basename(stableCodexWorkingDirectory());
     try {
       const running = pool.callTool("codex", task("interactions"), (progress) => {
         const interaction = progress.event?.details?.interaction;
@@ -881,7 +904,7 @@ describe("CodexAppServerUpstreamPool", () => {
       expect(command.interactionId).toContain("request-command-17");
       expect(command).toMatchObject({
         reason: "Fixture network approval",
-        cwdLabel: path.basename(process.cwd()),
+        cwdLabel: workerCwdLabel,
         networkContext: { host: "example.test", protocol: "https" },
         availableDecisions: ["accept", "acceptForSession", "decline", "cancel"],
         commandActions: [{ type: "read", pathLabel: "fixture.txt" }],
@@ -894,7 +917,7 @@ describe("CodexAppServerUpstreamPool", () => {
 
       const file = await nextInteraction(interactions, "file-approval");
       expect(file.interactionId).toContain("902");
-      expect(file.grantRootLabel).toBe(path.basename(process.cwd()));
+      expect(file.grantRootLabel).toBe(workerCwdLabel);
       await pool.respondToInteraction(file.interactionId, { decision: "decline" });
 
       const input = await nextInteraction(interactions, "user-input");
@@ -907,8 +930,8 @@ describe("CodexAppServerUpstreamPool", () => {
       expect(permission.summary).toContain("Need fixture access");
       expect(permission.requestedPermissions).toMatchObject({
         networkEnabled: true,
-        filesystemRead: [path.basename(process.cwd())],
-        filesystemWrite: [path.basename(process.cwd())]
+        filesystemRead: [workerCwdLabel],
+        filesystemWrite: [workerCwdLabel]
       });
       await pool.respondToInteraction(permission.interactionId, { decision: "acceptForSession" });
 

@@ -67,7 +67,7 @@ export const UI_RESOURCE_MANIFEST = {
       {
         "name": "dashboard",
         "uriVersion": 1,
-        "digest": "1387c1094e63e23589bae581c935d7448152735fc4a9dbbd063055e73aef7242",
+        "digest": "5006e2444b6bab529f01fda7b5b32055dae1c5b1fdc76b03a5c541c585898856",
         "uri": "ui://codex-mcp-bridge/dashboard/v1.html",
         "inventories": [
           "development-current"
@@ -132,7 +132,7 @@ export const UI_RESOURCE_MANIFEST = {
     },
     "dashboard": {
       "uriVersion": 1,
-      "digest": "1387c1094e63e23589bae581c935d7448152735fc4a9dbbd063055e73aef7242",
+      "digest": "5006e2444b6bab529f01fda7b5b32055dae1c5b1fdc76b03a5c541c585898856",
       "uri": "ui://codex-mcp-bridge/dashboard/v1.html",
       "metadata": {
         "descriptor": {

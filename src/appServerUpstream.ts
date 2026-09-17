@@ -30,6 +30,7 @@ import {
   type JsonRpcTerminationResult
 } from "./jsonRpcProcess.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { stableCodexWorkingDirectory } from "./codexService.js";
 import { MCP_APPROVAL_ROUTING_FEATURE, questionOrigin } from "./questionRouting.js";
 import type { BackendCapabilities, ModelSelection } from "./modelPolicy.js";
 import {
@@ -939,6 +940,7 @@ class AppServerConnection {
       command,
       args: ["app-server", "--listen", "stdio://", "-c", `features.${MCP_APPROVAL_ROUTING_FEATURE}=true`],
       ...(protocolOptions.environment ? { env: protocolOptions.environment } : {}),
+      cwd: stableCodexWorkingDirectory(protocolOptions.environment),
       debugLabel: `codex-app:${workerId}:g${generation}`,
       omitJsonRpcHeader: true,
       onNotification: (method, params) => this.onNotification(method, params),

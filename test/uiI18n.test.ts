@@ -429,6 +429,9 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).not.toContain('completion-uncertain');
     expect(DASHBOARD_CARD_HTML).not.toContain('presentationToken');
     expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/resource-teardown"');
+    expect(DASHBOARD_CARD_HTML).toContain('tornDown=true;mounted=false');
+    expect(DASHBOARD_CARD_HTML).toContain('if(tornDown)return;mounted=true');
+    expect(DASHBOARD_CARD_HTML).toContain('if(!tornDown&&document.visibilityState==="visible"');
     expect(SETTINGS_CARD_HTML).toContain('callTool("codex_ui_read"');
     expect(SETTINGS_CARD_HTML).not.toContain('callTool("codex_settings",');
   });
