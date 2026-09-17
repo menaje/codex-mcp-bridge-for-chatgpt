@@ -46,13 +46,12 @@ answer through `codex_answer`. The retired `codex_ask_user`,
 `codex_user_answer`, and `codex_question_action` routes have no replacement
 card API.
 
-`dashboardAutoOpenBackground` controls automatic Dashboard presentation. It
-opens only for a newly admitted background task in its originating conversation;
-foreground work never opens it automatically. Manual Dashboard opening remains
-available.
+`dashboardAutoOpen` controls automatic Dashboard presentation. It opens for a
+newly admitted task in its originating conversation. The task continues even if
+that card or conversation disconnects. Manual Dashboard opening remains available.
 
 `completionFollowUp` enables a local macOS completion notification, independently
-of card state. For a new one-job background Activity without an explicit
+of card state. For a new one-job Activity without an explicit
 completion policy, the bridge uses `notify` plus `sealed-jobs-terminal`; a
 successful terminal completion enters the durable outbox. The local menu-bar
 app claims only opaque `{eventId, outboxId}` receipts over its private Unix

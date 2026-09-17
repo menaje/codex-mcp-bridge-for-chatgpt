@@ -135,7 +135,7 @@ const settingsView = {
     showBridgeThreadsInCodexApp: true,
     uiLocalePreference: "ko",
     maxConcurrentJobs: 2,
-    dashboardAutoOpenBackground: true,
+    dashboardAutoOpen: true,
     completionFollowUp: false,
     projects: []
   },

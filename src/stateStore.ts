@@ -3,7 +3,11 @@ import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { canonicalHumanText, parseJsonTextStrict } from "./textIntegrity.js";
-import { CURRENT_STATE_SCHEMA, CURRENT_STATE_SCHEMA_VERSION } from "./stateSchema.js";
+import {
+  CURRENT_STATE_SCHEMA,
+  CURRENT_STATE_SCHEMA_VERSION,
+  V20_ASYNC_EXECUTION_MIGRATION_SCHEMA
+} from "./stateSchema.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
@@ -45,7 +49,6 @@ import {
 import { QuestionStore, V13_QUESTION_STORE_MIGRATION_SCHEMA } from "./questionStore.js";
 import {
   ACTIVITY_COMPLETION_TRIGGERS,
-  ACTIVITY_EXECUTION_MODES,
   ACTIVITY_HANDOFF_POLICIES,
   ACTIVITY_JOB_STATUSES,
   ACTIVITY_KINDS,
@@ -57,7 +60,6 @@ import {
   isTerminalActivityJobStatus,
   valueIsOneOf,
   type ActivityCompletionTrigger,
-  type ActivityExecutionMode,
   type ActivityHandoffPolicy,
   type ActivityJobCounts,
   type ActivityKind,
@@ -153,7 +155,6 @@ type JobRowInput = {
   sourceThreadId?: string;
   activityId?: string;
   threadId?: string;
-  executionMode?: ActivityExecutionMode;
   backendKind?: string;
   bridgeInstanceId?: string;
   workerId?: string;
@@ -256,7 +257,6 @@ type JobStorageRow = JsonRow & {
   activity_id: string;
   thread_id: string | null;
   source_thread_id: string | null;
-  execution_mode: string;
   backend_kind: string;
   bridge_instance_id: string | null;
   worker_id: string | null;
@@ -314,7 +314,6 @@ type ActivityStorageRow = {
   card_generation: number;
   title: string;
   kind: string;
-  execution_mode: string;
   handoff_policy: string;
   completion_trigger: string;
   lifecycle: string;
@@ -346,7 +345,6 @@ export type CreateActivityInput = {
   continuationOfActivityId?: string;
   title?: string;
   kind?: ActivityKind;
-  executionMode?: ActivityExecutionMode;
   handoffPolicy?: ActivityHandoffPolicy;
   completionTrigger?: ActivityCompletionTrigger;
   legacy?: boolean;
@@ -581,8 +579,9 @@ export class BridgeStateStore {
       if (existingVersion === undefined) {
         this.transaction(() => {
           this.database.exec(CURRENT_STATE_SCHEMA);
+          this.database.exec(V20_ASYNC_EXECUTION_MIGRATION_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
-          this.setMeta("schema_v19_created_at", new Date().toISOString());
+          this.setMeta("schema_v20_created_at", new Date().toISOString());
           this.setMeta("state_migration_catalog_version", String(STATE_MIGRATION_CATALOG_VERSION));
           this.setMeta("state_database_id", randomUUID());
           this.recordSchemaOrigin("fresh");
@@ -888,7 +887,7 @@ export class BridgeStateStore {
     return this.database
       .prepare(`
         SELECT j.payload,j.job_id,j.scope_id,j.request_id,j.activity_id,j.thread_id,
-               j.source_thread_id,j.status,j.execution_mode,j.backend_kind,
+               j.source_thread_id,j.status,j.backend_kind,
                bridge_instance_id, worker_id, worker_generation, upstream_request_id,
                terminal_version,agent_id,context_mode,a.project_id,p.name AS project_name,
                j.cwd,j.sandbox,j.created_at,j.updated_at,j.job_version,j.last_progress_at,
@@ -1126,10 +1125,9 @@ export class BridgeStateStore {
     const activityId = normalizeUuid(input.activityId || randomUUID(), "activityId");
     const scopeId = normalizeUuid(input.scopeId, "scopeId");
     const kind = input.kind || "other";
-    const executionMode = input.executionMode || "background";
     const handoffPolicy = input.handoffPolicy || "none";
     const completionTrigger = input.completionTrigger || "manual";
-    assertActivityPolicy(kind, executionMode, handoffPolicy, completionTrigger);
+    assertActivityPolicy(kind, handoffPolicy, completionTrigger);
     let project = normalizeActivityProjectAdmission(
       input.projectId,
       input.projectName,
@@ -1164,7 +1162,6 @@ export class BridgeStateStore {
         continuationOfActivityId,
         title: canonicalActivityTitle(input.title || "Codex activity"),
         kind,
-        executionMode,
         handoffPolicy,
         completionTrigger,
         legacy: input.legacy || false,
@@ -1178,7 +1175,6 @@ export class BridgeStateStore {
         createdAt: now,
         payload: {
           kind,
-          executionMode,
           handoffPolicy,
           completionTrigger,
           projectId: project?.projectId || null,
@@ -2192,7 +2188,6 @@ export class BridgeStateStore {
     policy: {
       handoffPolicy?: ActivityHandoffPolicy;
       completionTrigger?: ActivityCompletionTrigger;
-      executionMode?: ActivityExecutionMode;
       kind?: ActivityKind;
     },
     now = Date.now()
@@ -2203,27 +2198,26 @@ export class BridgeStateStore {
         throw new Error("Activity policy can only change while the Activity is open.");
       }
       const kind = policy.kind || activity.kind;
-      const executionMode = policy.executionMode || activity.executionMode;
       const handoffPolicy = policy.handoffPolicy || activity.handoffPolicy;
       const completionTrigger = policy.completionTrigger || activity.completionTrigger;
-      assertActivityPolicy(kind, executionMode, handoffPolicy, completionTrigger);
+      assertActivityPolicy(kind, handoffPolicy, completionTrigger);
       const scopeVersion = this.nextScopeVersion(activity.scopeId, now);
       this.database
         .prepare(`
           UPDATE activities
-             SET kind = ?, execution_mode = ?, handoff_policy = ?, completion_trigger = ?,
+             SET kind = ?, handoff_policy = ?, completion_trigger = ?,
                  verification = CASE WHEN ? = 'verify' THEN verification ELSE 'not-required' END,
                  version = version + 1, updated_at = ?
            WHERE activity_id = ?
         `)
-        .run(kind, executionMode, handoffPolicy, completionTrigger, handoffPolicy, now, activityId);
+        .run(kind, handoffPolicy, completionTrigger, handoffPolicy, now, activityId);
       this.insertActivityEvent({
         activityId,
         scopeId: activity.scopeId,
         scopeVersion,
         eventType: "policy-updated",
         createdAt: now,
-        payload: { kind, executionMode, handoffPolicy, completionTrigger }
+        payload: { kind, handoffPolicy, completionTrigger }
       });
       return this.requireActivity(activityId);
     });
@@ -3386,6 +3380,7 @@ export class BridgeStateStore {
     }
     this.runMigration("17", "18", originalSourceSchema, () => this.migrateV17ToV18());
     this.runMigration("18", "19", originalSourceSchema, () => this.migrateV18ToV19());
+    this.runMigration("19", "20", originalSourceSchema, () => this.migrateV19ToV20());
     if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
       throw new Error(`Bridge state migration stopped at unsupported schema version ${this.getMeta("schema_version")}.`);
     }
@@ -4688,6 +4683,25 @@ export class BridgeStateStore {
     }
   }
 
+  private migrateV19ToV20(): void {
+    this.database.pragma("foreign_keys = OFF");
+    try {
+      this.transaction(() => {
+        this.database.exec(V20_ASYNC_EXECUTION_MIGRATION_SCHEMA);
+        const violations = this.database.pragma("foreign_key_check") as unknown[];
+        if (violations.length > 0) {
+          throw new Error("Bridge state schema v20 migration produced foreign-key violations.");
+        }
+        const now = Date.now();
+        this.setMeta("schema_version", "20");
+        this.setMeta("schema_v20_execution_contract", "durable-async-v1");
+        this.setMeta("schema_v20_migrated_at", new Date(now).toISOString());
+      });
+    } finally {
+      this.database.pragma("foreign_keys = ON");
+    }
+  }
+
   private registerBridgeInstance(): void {
     this.transaction(() => {
       const now = Date.now();
@@ -4743,7 +4757,6 @@ export class BridgeStateStore {
       "job activityId"
     );
     const scopeId = normalizeUuid(job.scopeId, "job scopeId");
-    const executionMode = normalizeActivityExecutionMode(job.executionMode || "background");
     const previous = this.database
       .prepare(`
         SELECT j.scope_id,j.activity_id,j.thread_id,j.source_thread_id,j.status,j.backend_kind,j.bridge_instance_id,
@@ -4895,7 +4908,6 @@ export class BridgeStateStore {
         ...(projectCwd ? { projectCwd } : {}),
         title: `Codex job ${job.jobId.slice(0, 8)}`,
         kind: "other",
-        executionMode,
         handoffPolicy: "none",
         completionTrigger: "manual",
         legacy: true,
@@ -4981,7 +4993,6 @@ export class BridgeStateStore {
     job.activityId = activityId;
     job.scopeId = scopeId;
     job.threadId = threadId;
-    job.executionMode = executionMode;
     job.backendKind = backendKind;
     job.agentId = agentId;
     job.contextMode = contextMode;
@@ -4999,14 +5010,11 @@ export class BridgeStateStore {
     this.database
       .prepare(`
         INSERT INTO jobs(
-          job_id,scope_id,request_id,activity_id,thread_id,source_thread_id,status,execution_mode,
-          backend_kind, bridge_instance_id, worker_id, worker_generation, upstream_request_id,
+          job_id,scope_id,request_id,activity_id,thread_id,source_thread_id,status,
+          backend_kind,bridge_instance_id,worker_id,worker_generation,upstream_request_id,
           terminal_version,agent_id,context_mode,cwd,sandbox,created_at,updated_at,archived_at,
           job_version,last_progress_at,last_progress,terminal_origin,cancellation_intent_id,payload
-        ) VALUES (
-          ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,
-          NULL, ?,?,?,?,?,?
-        )
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)
         ON CONFLICT(job_id) DO UPDATE SET
           scope_id = excluded.scope_id,
           request_id = excluded.request_id,
@@ -5014,7 +5022,6 @@ export class BridgeStateStore {
           thread_id = excluded.thread_id,
           source_thread_id = excluded.source_thread_id,
           status = excluded.status,
-          execution_mode = excluded.execution_mode,
           backend_kind = excluded.backend_kind,
           bridge_instance_id = excluded.bridge_instance_id,
           worker_id = excluded.worker_id,
@@ -5042,7 +5049,6 @@ export class BridgeStateStore {
         threadId || null,
         normalizeOptionalString(job.sourceThreadId) || previous?.source_thread_id || null,
         job.status,
-        executionMode,
         backendKind,
         bridgeInstanceId || null,
         normalizeOptionalString(job.workerId) || null,
@@ -5354,7 +5360,6 @@ export class BridgeStateStore {
     continuationOfActivityId?: string;
     title: string;
     kind: ActivityKind;
-    executionMode: ActivityExecutionMode;
     handoffPolicy: ActivityHandoffPolicy;
     completionTrigger: ActivityCompletionTrigger;
     legacy: boolean;
@@ -5372,11 +5377,11 @@ export class BridgeStateStore {
     this.database.prepare(`
       INSERT INTO activities(
         activity_id,scope_id,project_id,pinned_cwd,continuation_of_activity_id,
-        card_generation,title,kind,execution_mode,handoff_policy,completion_trigger,
+        card_generation,title,kind,handoff_policy,completion_trigger,
         lifecycle,waiting_on,verification,version,completion_version,legacy,
         created_at,updated_at,sealed_at,completed_at,total_jobs,running_jobs,
         completed_jobs,failed_jobs,interrupted_jobs,cancelled_jobs,terminal_jobs
-      ) VALUES (?,?,?,?,?,1,?,?,?,?,?,'open',?,'not-required',1,0,?,?,?,NULL,NULL,?,?,?,?,?,?,?)
+      ) VALUES (?,?,?,?,?,1,?,?,?,?,'open',?,'not-required',1,0,?,?,?,NULL,NULL,?,?,?,?,?,?,?)
     `).run(
       input.activityId,
       input.scopeId,
@@ -5385,7 +5390,6 @@ export class BridgeStateStore {
       input.continuationOfActivityId || null,
       canonicalActivityTitle(input.title),
       input.kind,
-      input.executionMode,
       input.handoffPolicy,
       input.completionTrigger,
       input.waitingOn || "none",
@@ -6113,7 +6117,6 @@ function hydrateJobPayload(row: JobStorageRow): unknown {
     threadId: row.thread_id || undefined,
     sourceThreadId: row.source_thread_id || undefined,
     status: row.status,
-    executionMode: normalizeActivityExecutionMode(row.execution_mode),
     backendKind: row.backend_kind,
     ...(row.project_id ? { projectId: row.project_id } : {}),
     ...(row.project_name ? { projectName: row.project_name } : {}),
@@ -6142,11 +6145,6 @@ function hydrateJobPayload(row: JobStorageRow): unknown {
   };
 }
 
-function normalizeActivityExecutionMode(value: unknown): ActivityExecutionMode {
-  if (valueIsOneOf(ACTIVITY_EXECUTION_MODES, value)) return value;
-  throw new Error(`Invalid Activity execution mode: ${String(value)}.`);
-}
-
 function readActivityRow(row: ActivityStorageRow): BridgeActivity {
   if (
     !valueIsOneOf(ACTIVITY_KINDS, row.kind) ||
@@ -6167,7 +6165,6 @@ function readActivityRow(row: ActivityStorageRow): BridgeActivity {
     cardGeneration: row.card_generation,
     title: row.title,
     kind: row.kind,
-    executionMode: normalizeActivityExecutionMode(row.execution_mode),
     handoffPolicy: row.handoff_policy,
     completionTrigger: row.completion_trigger,
     lifecycle: row.lifecycle,
@@ -6288,14 +6285,10 @@ function readActivityAgentRow(row: ActivityAgentStorageRow): ActivityAgentAssign
 
 function assertActivityPolicy(
   kind: unknown,
-  executionMode: unknown,
   handoffPolicy: unknown,
   completionTrigger: unknown
 ): void {
   if (!valueIsOneOf(ACTIVITY_KINDS, kind)) throw new Error("Invalid Activity kind.");
-  if (!valueIsOneOf(ACTIVITY_EXECUTION_MODES, executionMode)) {
-    throw new Error("Invalid Activity execution mode.");
-  }
   if (!valueIsOneOf(ACTIVITY_HANDOFF_POLICIES, handoffPolicy)) {
     throw new Error("Invalid Activity handoff policy.");
   }
@@ -6617,7 +6610,7 @@ function parseStoredJson(value: string, label: string): unknown {
 
 const STRUCTURED_JOB_PAYLOAD_KEYS = [
   "jobId", "scopeId", "requestId", "activityId", "threadId", "sourceThreadId",
-  "status", "executionMode", "backendKind", "bridgeInstanceId", "workerId",
+  "status", "backendKind", "bridgeInstanceId", "workerId",
   "workerGeneration", "upstreamRequestId", "terminalVersion", "agentId", "contextMode",
   "projectId", "projectLabel", "projectName", "projectUuid", "projectNameSnapshot",
   "projectCwdSnapshot", "cwd", "sandbox", "createdAt", "updatedAt",

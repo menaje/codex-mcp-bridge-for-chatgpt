@@ -119,7 +119,7 @@ links that resolve to another file in the same immutable version are followed.
 ## Refresh boundary
 
 This release changes the MCP tool schema, the local companion protocol to
-version 9, and the remote companion protocol to version 7. Native clients must
+version 10, and the remote companion protocol to version 8. Native clients must
 reconnect or restart after upgrading. An installed ChatGPT connector must be
 refreshed once and checked in a new conversation. Later skill/file creates,
 edits, archives, and deletes change runtime library data only, so those changes

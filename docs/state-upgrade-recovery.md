@@ -1,8 +1,8 @@
 # State upgrade and recovery runbook
 
 This runbook owns the release-time contract for the bridge SQLite database.
-The current target is schema 19. Supported source schemas are 3 through 18;
-schemas 1 and 2, databases newer than 19, and the retired standalone Settings,
+The current target is schema 20. Supported source schemas are 3 through 19;
+schemas 1 and 2, databases newer than 20, and the retired standalone Settings,
 session, and Job JSON stores are rejected. `release-manifest.json` and
 `state-migrations.json` are the machine-readable authorities.
 
@@ -53,7 +53,7 @@ Every persistent HTTP and stdio startup follows the same lifecycle:
    product/build, and time. A durable pending record closes the crash window
    between the schema commit and its provenance record.
 6. Validate the complete applied path, database integrity, foreign keys, and
-   schema 19 before registering the runtime owner and opening a transport.
+   schema 20 before registering the runtime owner and opening a transport.
 
 The private status file beside the DB ends in `.migration-status.json` and
 records `preflight`, `backup`, `migrating`, `verifying`, `completed`, or
@@ -74,8 +74,8 @@ For a source schema `S`, the migration creates these mode-0600 files beside the
 database:
 
 ```text
-state.sqlite.pre-vS-to-v19.sqlite
-state.sqlite.migration-vS-to-v19.backup.json
+state.sqlite.pre-vS-to-v20.sqlite
+state.sqlite.migration-vS-to-v20.backup.json
 ```
 
 The JSON sidecar binds the snapshot to the logical and physical source database,
@@ -113,7 +113,7 @@ Stop every bridge/helper process, then inspect the exact pair:
 ```bash
 node dist/stateRecovery.js inspect \
   --database /absolute/path/state.sqlite \
-  --backup /absolute/path/state.sqlite.pre-v18-to-v19.sqlite
+  --backup /absolute/path/state.sqlite.pre-v18-to-v20.sqlite
 ```
 
 Inspection verifies the current target schema, service-open marker, live owners,
@@ -136,7 +136,7 @@ rollback pair. Then run:
 ```bash
 node dist/stateRecovery.js restore \
   --database /absolute/path/state.sqlite \
-  --backup /absolute/path/state.sqlite.pre-v18-to-v19.sqlite \
+  --backup /absolute/path/state.sqlite.pre-v18-to-v20.sqlite \
   --source-product-version 0.3.0 \
   --source-build-id exact-recorded-build-id
 ```
@@ -197,11 +197,13 @@ Schema migration and runtime retention are recorded separately:
   counts for events, result holds, work-history entries, recovery records, and
   incidents.
 
-Migration validation preserves Job request and terminal receipts, valid session
+Schema 20 removes only the retired Activity/Job execution-mode columns and any
+legacy `executionMode` payload member. Migration validation preserves Job request
+hashes and terminal receipts, status/results/events, deduplication state, valid session
 execution contexts, questions and answers, current interactions, undelivered
 outbox records, cancellation records, uncertain steering delivery, recovery
-attempt budgets, and result holds. Settings payload schema 2/3 values migrate to
-schema 4, retired automatic model fallbacks are removed, project JSON is not
+attempt budgets, and result holds. Settings payload schema 2/3 values migrate
+through schema 5, retired automatic model fallbacks are removed, project JSON is not
 turned into a registry identity, and saved full-access intent remains subject to
 the current operator sandbox ceiling.
 
@@ -216,7 +218,7 @@ a new catalogued migration and user transition before release.
 Run the normal schema and lifecycle suites from a clean checkout. Release CI also
 runs `scripts/state-release-audit.ts` against the unpacked npm tarball and the
 mounted arm64 and x64 DMGs. The packaged code opens every supported source schema
-3 through 18 directly, using the three exact source fixtures and the declared
+3 through 19 directly, using the three exact source fixtures and the declared
 derived checkpoints. Each job records the artifact checksum, commit/build, OS and
 architecture, Node and module ABI, `better-sqlite3` and SQLite versions, catalog
 digest, source fixture provenance, migration checkpoints, semantic counts, two

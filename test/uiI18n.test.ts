@@ -125,8 +125,8 @@ describe("human-facing UI localization", () => {
       for (const key of [
         "settings.codexAppThreads",
         "settings.codexAppThreadsHint",
-        "settings.dashboardAutoOpenBackground",
-        "settings.dashboardAutoOpenBackgroundHint",
+        "settings.dashboardAutoOpen",
+        "settings.dashboardAutoOpenHint",
         "settings.completionFollowUp",
         "settings.completionFollowUpHint"
       ] as const) {
@@ -211,10 +211,10 @@ describe("human-facing UI localization", () => {
     );
     expect(UI_TRANSLATIONS.ko["settings.preferredModel"]).toBe("GPT 미지정 시 기본 모델");
     expect(UI_TRANSLATIONS.ko["settings.preferredEffort"]).toBe("GPT 미지정 시 기본 추론 수준");
-    expect(UI_TRANSLATIONS.ko["settings.dashboardAutoOpenBackground"]).toBe(
-      "백그라운드 작업 시 현황 카드 자동 표시"
+    expect(UI_TRANSLATIONS.ko["settings.dashboardAutoOpen"]).toBe(
+      "Codex 작업 시 현황 카드 자동 표시"
     );
-    expect(UI_TRANSLATIONS.ko["settings.completionFollowUp"]).toBe("백그라운드 작업 완료 시 이 Mac에 알림");
+    expect(UI_TRANSLATIONS.ko["settings.completionFollowUp"]).toBe("Codex 작업 완료 시 이 Mac에 알림");
     expect(UI_TRANSLATIONS.ko["settings.codexAppThreads"]).toBe(
       "브리지 스레드를 Codex 앱에 표시"
     );
@@ -388,7 +388,7 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain(PRODUCT_INFO.displayName);
     expect(SETTINGS_CARD_HTML).toContain('document.title=t["settings.title"]');
     expect(DASHBOARD_CARD_HTML).toContain('document.title=t["dashboard.title"]');
-    expect(SETTINGS_CARD_HTML).toContain('id="dashboard-auto-open-background" type="checkbox"');
+    expect(SETTINGS_CARD_HTML).toContain('id="dashboard-auto-open" type="checkbox"');
     expect(SETTINGS_CARD_HTML).toContain('id="completion-follow-up" type="checkbox"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-visibility"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="completion-handoff"');

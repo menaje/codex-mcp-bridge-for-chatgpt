@@ -87,7 +87,7 @@ async function connect(
 }
 
 describe("current task selector contract", () => {
-  it("preserves the admitted v4 record but rejects a stale project selector after restart", async () => {
+  it("preserves the admitted v6 record but rejects a stale project selector after restart", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "task-v3-replay-"));
     const originalCwd = path.join(root, "original");
     const replacementCwd = path.join(root, "replacement");
@@ -132,16 +132,18 @@ describe("current task selector contract", () => {
         projectRef: selected.projectRef,
         projectRevision: selected.projectRevision
       },
-      activity: { mode: "new", title: "Current v5 replay" },
-      agent: { mode: "new", name: "Replay Agent" },
-      executionMode: "foreground"
+      activity: { mode: "new", title: "Current v6 replay" },
+      agent: { mode: "new", name: "Replay Agent" }
     };
-    expect(request.taskContractVersion).toBe("5");
+    expect(request.taskContractVersion).toBe("6");
 
     const admitted = await connection.client.callTool({ name: "codex_task", arguments: request });
     expect(admitted.isError).not.toBe(true);
-    expect(admitted.structuredContent).toMatchObject({ replay: false, state: "completed" });
+    expect(admitted.structuredContent).toMatchObject({ replay: false, state: "running" });
     const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+    await eventually(() => initialStore.listJobs().some((job) =>
+      job.jobId === jobId && job.status === "completed"
+    ));
     await connection.close();
     initialStore.close();
 
@@ -189,3 +191,12 @@ describe("current task selector contract", () => {
     }
   });
 });
+
+async function eventually(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for asynchronous bridge state.");
+}

@@ -18,19 +18,19 @@ const statusQueryArguments = z.strictObject({
 });
 
 /**
- * The Dashboard is a render tool. A background task can ask the model to
+ * The Dashboard is a render tool. An admitted task can ask the model to
  * render the originating conversation with a scoped Job handle, while an
  * ordinary Dashboard opener remains argument-free.
  */
 const dashboardArguments = z.strictObject({
   scope: z.literal("conversation").optional(),
-  backgroundJobId: z.string().uuid().optional()
+  jobId: z.string().uuid().optional()
 }).superRefine((value, context) => {
-  if (value.backgroundJobId && value.scope !== "conversation") {
+  if (value.jobId && value.scope !== "conversation") {
     context.addIssue({
       code: "custom",
       path: ["scope"],
-      message: "backgroundJobId requires the originating conversation scope."
+      message: "jobId requires the originating conversation scope."
     });
   }
 });

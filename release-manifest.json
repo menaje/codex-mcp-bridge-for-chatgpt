@@ -97,7 +97,7 @@
     "releaseCatalogSha256": "c34e05627d8ef4c7113bb70c31bc120c3497d8d4c162248caf1becb559a5f441"
   },
   "stateCompatibility": {
-    "currentSchema": 19,
+    "currentSchema": 20,
     "supportedSourceSchemas": [
       3,
       4,
@@ -114,7 +114,8 @@
       15,
       16,
       17,
-      18
+      18,
+      19
     ],
     "unsupportedSourceSchemas": [
       1,
@@ -126,15 +127,15 @@
       "job-state-json"
     ],
     "migrationCatalog": "state-migrations.json",
-    "migrationCatalogSha256": "810399dee06f768ee70896c69998b3d22c659db0f4dc9beb8baabb62ecad2909",
+    "migrationCatalogSha256": "a92323b676af98561e08b1256ef3dbdf26a3faae30db8c11968e852be36d8d26",
     "stateProfilePolicy": "release-stage-isolated-v1",
     "rollbackPolicy": "verified-original-before-service-open-v1",
     "persistentContracts": {
-      "userSettingsSchema": 4,
-      "taskInputContract": 5,
+      "userSettingsSchema": 5,
+      "taskInputContract": 6,
       "macosHelperProtocol": 2,
-      "localCompanionProtocol": 9,
-      "remoteCompanionProtocol": 7
+      "localCompanionProtocol": 10,
+      "remoteCompanionProtocol": 8
     },
     "contractSources": {
       "databaseSchema": "src/stateSchema.ts#CURRENT_STATE_SCHEMA_VERSION",

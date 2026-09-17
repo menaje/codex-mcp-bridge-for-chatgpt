@@ -240,7 +240,6 @@
               "activity": 1
             },
             "execution": {
-              "mode": "background",
               "backend": "mcp-server",
               "sandbox": "read-only"
             },
@@ -286,7 +285,6 @@
               "activity": 4
             },
             "execution": {
-              "mode": "background",
               "backend": "app-server",
               "sandbox": "workspace-write"
             },
@@ -332,7 +330,6 @@
               "activity": 2
             },
             "execution": {
-              "mode": "background",
               "backend": "app-server",
               "sandbox": "read-only"
             },

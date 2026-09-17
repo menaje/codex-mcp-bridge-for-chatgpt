@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 public let remoteCompanionProtocolName = "codex-mcp-bridge-remote-companion"
-public let remoteCompanionProtocolVersion = 7
+public let remoteCompanionProtocolVersion = 8
 let remoteCompanionMaximumResponseBytes = bridgeSkillTransportEnvelopeMaxBytes
 
 public enum RemoteCompanionError: LocalizedError, Sendable {

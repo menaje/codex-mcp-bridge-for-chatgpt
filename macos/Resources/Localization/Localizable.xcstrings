@@ -11891,118 +11891,118 @@
         }
       }
     },
-    "settings.dashboardAutoOpenBackground": {
+    "settings.dashboardAutoOpen": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Automatically show Dashboard for background work"
+            "value": "Automatically show Dashboard for Codex work"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "백그라운드 작업 시 현황 카드 자동 표시"
+            "value": "Codex 작업 시 현황 카드 자동 표시"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "バックグラウンド作業でダッシュボードを自動表示"
+            "value": "Codex 作業でダッシュボードを自動表示"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "后台工作时自动显示概览卡片"
+            "value": "Codex 工作时自动显示概览卡片"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "背景工作時自動顯示總覽卡片"
+            "value": "Codex 工作時自動顯示總覽卡片"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mostrar automáticamente el panel para el trabajo en segundo plano"
+            "value": "Mostrar automáticamente el panel para el trabajo de Codex"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Afficher automatiquement le tableau de bord pour le travail en arrière-plan"
+            "value": "Afficher automatiquement le tableau de bord pour le travail Codex"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Dashboard bei Hintergrundarbeit automatisch anzeigen"
+            "value": "Dashboard für Codex-Arbeit automatisch anzeigen"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mostrar automaticamente o painel para trabalho em segundo plano"
+            "value": "Mostrar automaticamente o painel para o trabalho do Codex"
           }
         }
       }
     },
-    "settings.dashboardAutoOpenBackgroundHint": {
+    "settings.dashboardAutoOpenHint": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Opens Dashboard only in the conversation that started a background task. Foreground results remain in the original tool response."
+            "value": "Opens Dashboard in the conversation that admitted the Codex task. The task continues independently of that conversation."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "백그라운드 작업을 시작한 이 대화세션에서만 현황 카드를 자동으로 엽니다. 포그라운드 결과는 기존 도구 응답으로 반환됩니다."
+            "value": "Codex 작업을 접수한 대화에서 현황 카드를 엽니다. 작업은 해당 대화와 독립적으로 계속됩니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "バックグラウンド作業を開始した会話でのみダッシュボードを開きます。フォアグラウンドの結果は元のツール応答に残ります。"
+            "value": "Codex タスクを受け付けた会話でダッシュボードを開きます。タスクはその会話とは独立して続行されます。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "仅在启动后台任务的对话中打开概览卡片。前台结果仍保留在原始工具响应中。"
+            "value": "在接收 Codex 任务的对话中打开概览卡片。任务会独立于该对话继续运行。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "僅在啟動背景任務的對話中開啟總覽卡片。前景結果仍保留在原始工具回應中。"
+            "value": "在接收 Codex 任務的對話中開啟總覽卡片。任務會獨立於該對話繼續執行。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Abre el panel solo en la conversación que inició una tarea en segundo plano. Los resultados en primer plano permanecen en la respuesta original de la herramienta."
+            "value": "Abre el panel en la conversación que admitió la tarea de Codex. La tarea continúa independientemente de esa conversación."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ouvre le tableau de bord uniquement dans la conversation qui a lancé une tâche en arrière-plan. Les résultats au premier plan restent dans la réponse d’outil d’origine."
+            "value": "Ouvre le tableau de bord dans la conversation qui a admis la tâche Codex. La tâche continue indépendamment de cette conversation."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Öffnet das Dashboard nur in der Unterhaltung, die eine Hintergrundaufgabe gestartet hat. Vordergrundergebnisse bleiben in der ursprünglichen Werkzeugantwort."
+            "value": "Öffnet das Dashboard in der Unterhaltung, die den Codex-Task angenommen hat. Der Task läuft unabhängig davon weiter."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Abre o painel somente na conversa que iniciou uma tarefa em segundo plano. Os resultados em primeiro plano permanecem na resposta original da ferramenta."
+            "value": "Abre o painel na conversa que admitiu a tarefa do Codex. A tarefa continua independentemente dessa conversa."
           }
         }
       }
@@ -12012,55 +12012,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Notify this Mac when background work completes"
+            "value": "Notify this Mac when Codex work completes"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "백그라운드 작업 완료 시 이 Mac에 알림"
+            "value": "Codex 작업 완료 시 이 Mac에 알림"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "バックグラウンド作業の完了をこの Mac に通知"
+            "value": "Codex 作業の完了をこの Mac に通知"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "后台工作完成时通知此 Mac"
+            "value": "Codex 工作完成时通知此 Mac"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "背景工作完成時通知此 Mac"
+            "value": "Codex 工作完成時通知此 Mac"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Notificar a este Mac al terminar el trabajo en segundo plano"
+            "value": "Notificar a este Mac al terminar el trabajo de Codex"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Notifier ce Mac quand le travail en arrière-plan se termine"
+            "value": "Notifier ce Mac quand le travail Codex se termine"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Diesen Mac nach Abschluss von Hintergrundarbeit benachrichtigen"
+            "value": "Diesen Mac nach Abschluss der Codex-Arbeit benachrichtigen"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Notificar este Mac quando o trabalho em segundo plano terminar"
+            "value": "Notificar este Mac quando o trabalho do Codex terminar"
           }
         }
       }
@@ -12824,55 +12824,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restores access, model, Codex-app thread visibility, background Dashboard display, completion notifications, interface, and concurrency settings. Projects and their order are kept."
+            "value": "Restores access, model, Codex-app thread visibility, automatic Dashboard display, completion notifications, interface, and concurrency settings. Projects and their order are kept."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "접근, 모델, Codex 앱 목록 표시, 백그라운드 현황 카드, 완료 알림, 인터페이스와 동시 작업 수 설정만 복원합니다. 프로젝트와 순서는 유지됩니다."
+            "value": "접근, 모델, Codex 앱 목록 표시, 현황 카드 자동 표시, 완료 알림, 인터페이스와 동시 작업 수 설정만 복원합니다. 프로젝트와 순서는 유지됩니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "アクセス、モデル、Codex アプリでのスレッド表示、バックグラウンドのダッシュボード表示、完了通知、表示言語、同時実行数だけを戻します。プロジェクトと順序は保持されます。"
+            "value": "アクセス、モデル、Codex アプリでのスレッド表示、ダッシュボードの自動表示、完了通知、表示言語、同時実行数だけを戻します。プロジェクトと順序は保持されます。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "仅恢复访问、模型、Codex 应用线程显示、后台概览卡片显示、完成通知、界面和并发数。项目和顺序会保留。"
+            "value": "仅恢复访问、模型、Codex 应用线程显示、概览卡片自动显示、完成通知、界面和并发数。项目和顺序会保留。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "只還原存取、模型、Codex 應用程式執行緒顯示、背景總覽卡片顯示、完成通知、介面與並行數。專案與順序會保留。"
+            "value": "只還原存取、模型、Codex 應用程式執行緒顯示、總覽卡片自動顯示、完成通知、介面與並行數。專案與順序會保留。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restaura solo acceso, modelo, visibilidad de hilos en la app Codex, panel para trabajo en segundo plano, notificaciones de finalización, interfaz y concurrencia. Se conservan los proyectos y su orden."
+            "value": "Restaura solo acceso, modelo, visibilidad de hilos en la app Codex, visualización automática del panel, notificaciones de finalización, interfaz y concurrencia. Se conservan los proyectos y su orden."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Rétablit uniquement l’accès, le modèle, la visibilité des fils dans l’app Codex, le tableau de bord en arrière-plan, les notifications de fin, l’interface et la simultanéité. Les projets et leur ordre sont conservés."
+            "value": "Rétablit uniquement l’accès, le modèle, la visibilité des fils dans l’app Codex, l’affichage automatique du tableau de bord, les notifications de fin, l’interface et la simultanéité. Les projets et leur ordre sont conservés."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Setzt nur Zugriff, Modell, Thread-Sichtbarkeit in der Codex-App, Dashboard für Hintergrundarbeit, Abschlussbenachrichtigungen, Oberfläche und Parallelität zurück. Projekte und Reihenfolge bleiben erhalten."
+            "value": "Setzt nur Zugriff, Modell, Thread-Sichtbarkeit in der Codex-App, automatische Dashboard-Anzeige, Abschlussbenachrichtigungen, Oberfläche und Parallelität zurück. Projekte und Reihenfolge bleiben erhalten."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restaura apenas acesso, modelo, visibilidade de threads no app Codex, painel para trabalho em segundo plano, notificações de conclusão, interface e concorrência. Projetos e ordem são mantidos."
+            "value": "Restaura apenas acesso, modelo, visibilidade de threads no app Codex, exibição automática do painel, notificações de conclusão, interface e concorrência. Projetos e ordem são mantidos."
           }
         }
       }
@@ -13578,55 +13578,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS is retired and ignored. Choose foreground or background explicitly; background returns immediately."
+            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS is retired and ignored. Codex tasks always return after durable asynchronous admission."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS는 폐기되어 무시됩니다. 포그라운드 또는 백그라운드를 직접 선택하세요. 백그라운드는 즉시 반환됩니다."
+            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS는 폐기되어 무시됩니다. Codex 작업은 항상 영속 비동기 접수 후 반환됩니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS は廃止され、無視されます。フォアグラウンドまたはバックグラウンドを明示的に選択してください。バックグラウンドはすぐに応答します。"
+            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS は廃止され、無視されます。Codex タスクは常に永続的な非同期受付後に応答します。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS 已停用并会被忽略。请明确选择前台或后台；后台会立即返回。"
+            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS 已停用并会被忽略。Codex 任务始终在持久异步接收后返回。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS 已停用並會被忽略。請明確選擇前景或背景；背景會立即傳回。"
+            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS 已停用並會被忽略。Codex 任務一律在持久非同步接收後傳回。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS se retiró y se ignora. Elige explícitamente primer o segundo plano; el segundo plano responde de inmediato."
+            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS se retiró y se ignora. Las tareas de Codex siempre responden tras una admisión asíncrona duradera."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS est retiré et ignoré. Choisissez explicitement le premier plan ou l’arrière-plan ; l’arrière-plan répond immédiatement."
+            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS est retiré et ignoré. Les tâches Codex répondent toujours après une admission asynchrone durable."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS wurde eingestellt und wird ignoriert. Wählen Sie Vorder- oder Hintergrund ausdrücklich aus; der Hintergrund antwortet sofort."
+            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS wurde eingestellt und wird ignoriert. Codex-Tasks antworten immer nach dauerhafter asynchroner Annahme."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS foi descontinuado e é ignorado. Escolha explicitamente primeiro ou segundo plano; o segundo plano responde imediatamente."
+            "value": "CODEX_MCP_BRIDGE_FAST_RETURN_MS foi descontinuado e é ignorado. As tarefas do Codex sempre respondem após admissão assíncrona durável."
           }
         }
       }

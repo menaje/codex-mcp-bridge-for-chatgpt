@@ -47,7 +47,7 @@ struct SettingsDraft: Equatable {
     var maxConcurrentJobs: Int
     var historyRetentionDays: Int
     var showBridgeThreadsInCodexApp: Bool
-    var dashboardAutoOpenBackground: Bool
+    var dashboardAutoOpen: Bool
     var completionFollowUp: Bool
     private let originalPolicyState: PolicyState
 
@@ -75,7 +75,7 @@ struct SettingsDraft: Equatable {
         maxConcurrentJobs = settings.maxConcurrentJobs
         historyRetentionDays = settings.historyRetentionDays ?? 30
         showBridgeThreadsInCodexApp = settings.showBridgeThreadsInCodexApp
-        dashboardAutoOpenBackground = settings.dashboardAutoOpenBackground
+        dashboardAutoOpen = settings.dashboardAutoOpen
         completionFollowUp = settings.completionFollowUp
         originalPolicyState = PolicyState(
             mode: policyMode,
@@ -113,7 +113,7 @@ struct SettingsDraft: Equatable {
         rebased.maxConcurrentJobs = maxConcurrentJobs
         rebased.historyRetentionDays = historyRetentionDays
         rebased.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
-        rebased.dashboardAutoOpenBackground = dashboardAutoOpenBackground
+        rebased.dashboardAutoOpen = dashboardAutoOpen
         rebased.completionFollowUp = completionFollowUp
         return rebased
     }
@@ -130,7 +130,7 @@ struct SettingsDraft: Equatable {
             maxConcurrentJobs == other.maxConcurrentJobs &&
             historyRetentionDays == other.historyRetentionDays &&
             showBridgeThreadsInCodexApp == other.showBridgeThreadsInCodexApp &&
-            dashboardAutoOpenBackground == other.dashboardAutoOpenBackground &&
+            dashboardAutoOpen == other.dashboardAutoOpen &&
             completionFollowUp == other.completionFollowUp
     }
 
@@ -2630,7 +2630,7 @@ final class AppModel: ObservableObject {
                 maxConcurrentJobs: draft.maxConcurrentJobs,
                 historyRetentionDays: settings?.settings.historyRetentionDays == nil ? nil : draft.historyRetentionDays,
                 showBridgeThreadsInCodexApp: draft.showBridgeThreadsInCodexApp,
-                dashboardAutoOpenBackground: draft.dashboardAutoOpenBackground,
+                dashboardAutoOpen: draft.dashboardAutoOpen,
                 completionFollowUp: draft.completionFollowUp
             ))
         )

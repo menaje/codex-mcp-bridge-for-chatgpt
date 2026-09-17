@@ -118,6 +118,7 @@ describe("current bridge tool contracts", () => {
   let client: Client;
   let server: BridgeHttpServer;
   let upstream: FixtureUpstream;
+  let endpoint: URL;
 
   beforeEach(async () => {
     root = await mkdtemp(path.join(tmpdir(), "current-tools-"));
@@ -156,7 +157,8 @@ describe("current bridge tool contracts", () => {
     );
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const port = (server.address() as { port: number }).port;
-    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`)));
+    endpoint = new URL(`http://127.0.0.1:${port}/mcp`);
+    await client.connect(new StreamableHTTPClientTransport(endpoint));
   });
 
   afterEach(async () => {
@@ -342,14 +344,13 @@ describe("current bridge tool contracts", () => {
           projectRef: project.projectRef,
           projectRevision: project.projectRevision
         },
-        selection,
-        executionMode: "foreground"
+        selection
       },
       _meta: metadata
     });
 
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
-    expect(upstream.calls).toHaveLength(1);
+    await eventually(() => upstream.calls.length === 1);
     const dispatched = upstream.calls[0]!.args;
     expect(properties).not.toHaveProperty("requiredSkills");
     expect(dispatched.prompt).toBe("Review the local report.");
@@ -371,7 +372,7 @@ describe("current bridge tool contracts", () => {
     const settingsView = result.structuredContent as any;
     expect(settingsView.catalog.models[0]).not.toHaveProperty("defaultServiceTier");
     expect(settingsView.settings).toMatchObject({
-      dashboardAutoOpenBackground: true,
+      dashboardAutoOpen: true,
       completionFollowUp: true
     });
     expect(settingsView.settings).not.toHaveProperty("activityCardVisibility");
@@ -411,8 +412,7 @@ describe("current bridge tool contracts", () => {
           projectRef: project.projectRef,
           projectRevision: project.projectRevision
         },
-        selection,
-        executionMode: "background"
+        selection
       },
       _meta: metadata
     });
@@ -462,24 +462,25 @@ describe("current bridge tool contracts", () => {
     expect(row?.handoff).not.toHaveProperty("reason");
   });
 
-  it("publishes draft-2020-12-compatible v5 task input without retired fields", async () => {
+  it("publishes draft-2020-12-compatible v6 asynchronous task input without retired fields", async () => {
     const tools = await client.listTools();
     const task = tools.tools.find((tool) => tool.name === "codex_task")!;
     const properties = task.inputSchema.properties as Record<string, { const?: string }>;
-    expect(properties.taskContractVersion?.const).toBe("5");
+    expect(properties.taskContractVersion?.const).toBe("6");
     expect(properties.executionEnvelopeRef?.const).toMatch(/^[a-f0-9]{64}$/);
     expect(properties).toHaveProperty("project");
-    for (const retired of ["projectLookup", "sandbox", "executionPolicyRef", "presentationId", "waitToken"]) {
+    for (const retired of ["projectLookup", "sandbox", "executionPolicyRef", "presentationId", "waitToken", "executionMode"]) {
       expect(properties).not.toHaveProperty(retired);
     }
     const status = tools.tools.find((tool) => tool.name === "codex_status")!;
     expect(status.inputSchema.properties).not.toHaveProperty("includeAllScopes");
   });
 
-  it("admits a current v5 task and returns the current terminal result contract", async () => {
+  it("admits a current v6 task and returns the durable asynchronous admission contract", async () => {
     const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
     const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
     const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
     const result = await client.callTool({
       name: "codex_task",
       arguments: {
@@ -489,16 +490,312 @@ describe("current bridge tool contracts", () => {
         executionEnvelopeRef: properties.executionEnvelopeRef?.const,
         prompt: "Complete fixture work.",
         project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
-        selection,
-        executionMode: "foreground"
+        selection
       },
       _meta: metadata
     });
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
-    expect(result.structuredContent).toMatchObject({ contractVersion: "2", state: "completed" });
+    expect(result.structuredContent).toMatchObject({
+      contractVersion: "3",
+      state: "running",
+      terminal: false,
+      jobId: expect.any(String),
+      requestId: expect.any(String),
+      threadId: null,
+      resultAvailability: "pending"
+    });
     expect(result.structuredContent).not.toHaveProperty("waitContext");
     expect(result._meta).not.toHaveProperty("openai/outputTemplate");
+    await hold.started;
     expect(upstream.calls).toHaveLength(1);
+    hold.release();
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === (result.structuredContent as any).jobId && job.status === "completed"
+    ));
+  });
+
+  it("returns durable admission immediately while the admitted Job runs for more than one minute", async () => {
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const requestId = randomUUID();
+    const startedAt = Date.now();
+    let jobId: string | undefined;
+
+    try {
+      const admitted = await client.callTool({
+        name: "codex_task",
+        arguments: {
+          scopeId: "7a7a7a7a-7a7a-4a7a-8a7a-7a7a7a7a7a7a",
+          requestId,
+          taskContractVersion: properties.taskContractVersion?.const,
+          executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+          prompt: "Remain active for the long asynchronous admission acceptance fixture.",
+          project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+          selection
+        },
+        _meta: metadata
+      });
+      const admissionElapsedMs = Date.now() - startedAt;
+      expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+      expect(admissionElapsedMs).toBeLessThan(5_000);
+      jobId = (admitted.structuredContent as { jobId: string }).jobId;
+      await hold.started;
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 61_000));
+
+      expect(state.listJobs().find((job) => job.jobId === jobId)).toMatchObject({
+        requestId,
+        status: "running"
+      });
+      const recovered = await client.callTool({
+        name: "codex_status",
+        arguments: { query: { kind: "request", requestId } },
+        _meta: metadata
+      });
+      expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
+      expect(recovered.structuredContent).toMatchObject({
+        kind: "job",
+        items: [{ id: jobId, state: "running" }]
+      });
+      expect(upstream.calls).toHaveLength(1);
+    } finally {
+      hold.release();
+    }
+
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === jobId && job.status === "completed"
+    ));
+  }, 75_000);
+
+  it("does not admit a task when transport fails before dispatch and admits it once on exact retry", async () => {
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const requestId = randomUUID();
+    const arguments_ = {
+      scopeId: "7b7b7b7b-7b7b-4b7b-8b7b-7b7b7b7b7b7b",
+      requestId,
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Recover a request that was lost before durable admission.",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+      selection
+    };
+    let dropBeforeDispatch = false;
+    const lossyFetch: typeof globalThis.fetch = async (input, init) => {
+      if (
+        dropBeforeDispatch &&
+        typeof init?.body === "string" &&
+        init.body.includes('"name":"codex_task"')
+      ) {
+        dropBeforeDispatch = false;
+        throw new TypeError("simulated pre-admission transport loss");
+      }
+      return globalThis.fetch(input, init);
+    };
+    const lossyClient = new Client(
+      { name: "pre-admission-loss-test", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+    );
+    await lossyClient.connect(new StreamableHTTPClientTransport(endpoint, { fetch: lossyFetch }));
+
+    try {
+      dropBeforeDispatch = true;
+      await expect(lossyClient.callTool({
+        name: "codex_task",
+        arguments: arguments_,
+        _meta: metadata
+      })).rejects.toThrow("simulated pre-admission transport loss");
+      expect(state.listJobs().filter((job) => job.requestId === requestId)).toEqual([]);
+      expect(upstream.calls).toHaveLength(0);
+
+      const missing = await client.callTool({
+        name: "codex_status",
+        arguments: { query: { kind: "request", requestId } },
+        _meta: metadata
+      });
+      expect(missing.isError).toBe(true);
+      expect(JSON.stringify(missing)).toContain("HANDLE_UNAVAILABLE");
+
+      const admitted = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
+      expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+      await eventually(() => state.listJobs().some((job) =>
+        job.requestId === requestId && job.status === "completed"
+      ));
+      expect(state.listJobs().filter((job) => job.requestId === requestId)).toHaveLength(1);
+      expect(upstream.calls).toHaveLength(1);
+    } finally {
+      await lossyClient.close();
+    }
+  });
+
+  it("recovers a durable Job when the admission response is lost in transport", async () => {
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const requestId = randomUUID();
+    const arguments_ = {
+      scopeId: "7c7c7c7c-7c7c-4c7c-8c7c-7c7c7c7c7c7c",
+      requestId,
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Recover this Job after its durable admission response is lost.",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+      selection
+    };
+    let dropTaskResponse = false;
+    const lossyFetch: typeof globalThis.fetch = async (input, init) => {
+      const response = await globalThis.fetch(input, init);
+      if (
+        dropTaskResponse &&
+        typeof init?.body === "string" &&
+        init.body.includes('"name":"codex_task"')
+      ) {
+        dropTaskResponse = false;
+        await response.body?.cancel();
+        throw new TypeError("simulated lost admission response");
+      }
+      return response;
+    };
+    const lossyClient = new Client(
+      { name: "admission-response-loss-test", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+    );
+    await lossyClient.connect(new StreamableHTTPClientTransport(endpoint, { fetch: lossyFetch }));
+    let jobId: string | undefined;
+
+    try {
+      dropTaskResponse = true;
+      await expect(lossyClient.callTool({
+        name: "codex_task",
+        arguments: arguments_,
+        _meta: metadata
+      })).rejects.toThrow("simulated lost admission response");
+      await hold.started;
+      const admitted = state.listJobs().filter((job) => job.requestId === requestId);
+      expect(admitted).toHaveLength(1);
+      expect(admitted[0]).toMatchObject({ status: "running" });
+      jobId = admitted[0]!.jobId;
+
+      const recovered = await client.callTool({
+        name: "codex_status",
+        arguments: { query: { kind: "request", requestId } },
+        _meta: metadata
+      });
+      expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
+      expect(recovered.structuredContent).toMatchObject({
+        kind: "job",
+        items: [{ id: jobId, state: "running" }]
+      });
+
+      const replay = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
+      expect(replay.isError, JSON.stringify(replay)).not.toBe(true);
+      expect(replay.structuredContent).toMatchObject({ jobId, replay: true, state: "running" });
+      expect(upstream.calls).toHaveLength(1);
+    } finally {
+      hold.release();
+      await lossyClient.close();
+    }
+
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === jobId && job.status === "completed"
+    ));
+  });
+
+  it("deduplicates concurrent exact retries into one durable Job and one upstream execution", async () => {
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const requestId = randomUUID();
+    const arguments_ = {
+      scopeId: "7d7d7d7d-7d7d-4d7d-8d7d-7d7d7d7d7d7d",
+      requestId,
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Deduplicate simultaneous durable admission retries.",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+      selection
+    };
+    let jobId: string | undefined;
+
+    try {
+      const [first, second] = await Promise.all([
+        client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata }),
+        client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata })
+      ]);
+      expect(first.isError, JSON.stringify(first)).not.toBe(true);
+      expect(second.isError, JSON.stringify(second)).not.toBe(true);
+      const firstResult = first.structuredContent as { jobId: string; replay: boolean; state: string };
+      const secondResult = second.structuredContent as { jobId: string; replay: boolean; state: string };
+      expect(firstResult.jobId).toBe(secondResult.jobId);
+      expect([firstResult.replay, secondResult.replay].sort()).toEqual([false, true]);
+      expect(firstResult.state).toBe("running");
+      expect(secondResult.state).toBe("running");
+      jobId = firstResult.jobId;
+      await hold.started;
+      expect(state.listJobs().filter((job) => job.requestId === requestId)).toHaveLength(1);
+      expect(upstream.calls).toHaveLength(1);
+    } finally {
+      hold.release();
+    }
+
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === jobId && job.status === "completed"
+    ));
+  });
+
+  it("recovers an admitted Job by requestId and rejects conflicting reuse without redispatch", async () => {
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const requestId = randomUUID();
+    const arguments_ = {
+      scopeId: "79797979-7979-4797-8797-797979797979",
+      requestId,
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Recover this durable admission after a lost response.",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+      selection
+    };
+
+    const admitted = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    await hold.started;
+    const jobId = (admitted.structuredContent as any).jobId as string;
+
+    const recovered = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "request", requestId } },
+      _meta: metadata
+    });
+    expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
+    expect(recovered.structuredContent).toMatchObject({
+      kind: "job",
+      items: [{ id: jobId, state: "running" }]
+    });
+
+    const replay = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
+    expect(replay.isError, JSON.stringify(replay)).not.toBe(true);
+    expect(replay.structuredContent).toMatchObject({ jobId, replay: true, state: "running" });
+    expect(upstream.calls).toHaveLength(1);
+
+    const conflict = await client.callTool({
+      name: "codex_task",
+      arguments: { ...arguments_, prompt: "A different task must not reuse this requestId." },
+      _meta: metadata
+    });
+    expect(conflict.isError).toBe(true);
+    expect(JSON.stringify(conflict)).toContain("requestId was already used");
+    expect(upstream.calls).toHaveLength(1);
+
+    hold.release();
+    await eventually(() => state.listJobs().some((job) => job.jobId === jobId && job.status === "completed"));
   });
 
   it("does not distinguish scope-mismatched handles from missing handles", async () => {
@@ -514,8 +811,7 @@ describe("current bridge tool contracts", () => {
         executionEnvelopeRef: properties.executionEnvelopeRef?.const,
         prompt: "Create handles for the scope-isolation fixture.",
         project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
-        selection,
-        executionMode: "foreground"
+        selection
       },
       _meta: metadata
     });
@@ -531,9 +827,13 @@ describe("current bridge tool contracts", () => {
       jobId: expect.any(String),
       activityId: expect.any(String),
       agentId: expect.any(String),
-      threadId: expect.any(String),
+      threadId: null,
       jobVersion: expect.any(Number)
     });
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === handles.jobId && job.status === "completed" && Boolean(job.threadId)
+    ));
+    const durableHandles = state.listJobs().find((job) => job.jobId === handles.jobId)!;
     const foreignMetadata = { "openai/session": "foreign-tool-contract-test" };
     const errorText = async (name: string, arguments_: Record<string, unknown>): Promise<string> => {
       const result = await client.callTool({ name, arguments: arguments_, _meta: foreignMetadata });
@@ -570,7 +870,7 @@ describe("current bridge tool contracts", () => {
     );
     await expectSameUnavailable(
       "codex_status",
-      { query: { kind: "thread", id: handles.threadId } },
+      { query: { kind: "thread", id: durableHandles.threadId } },
       { query: { kind: "thread", id: "missing-thread" } }
     );
     await expectSameUnavailable(
@@ -585,22 +885,22 @@ describe("current bridge tool contracts", () => {
       "codex_cancel",
       {
         requestId: randomUUID(), target: { kind: "job", id: handles.jobId },
-        expectedVersion: handles.jobVersion, reason: "fixture"
+        expectedVersion: durableHandles.version, reason: "fixture"
       },
       {
         requestId: randomUUID(), target: { kind: "job", id: "missing-job" },
-        expectedVersion: handles.jobVersion, reason: "fixture"
+        expectedVersion: durableHandles.version, reason: "fixture"
       }
     );
     await expectSameUnavailable(
       "codex_activity_update",
       {
         activityId: handles.activityId, expectedVersion: 1,
-        operation: { kind: "set-policy", policy: { executionMode: "foreground" } }
+        operation: { kind: "set-policy", policy: { kind: "review" } }
       },
       {
         activityId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", expectedVersion: 1,
-        operation: { kind: "set-policy", policy: { executionMode: "foreground" } }
+        operation: { kind: "set-policy", policy: { kind: "review" } }
       }
     );
   });
@@ -612,18 +912,18 @@ describe("current bridge tool contracts", () => {
     const hold = upstream.holdNextCall();
     const controller = new AbortController();
     const requestId = randomUUID();
+    const arguments_ = {
+      scopeId: "77777777-7777-4777-8777-777777777777",
+      requestId,
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Keep this task alive while the HTTP response is detached.",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+      selection
+    };
     const pending = client.callTool({
       name: "codex_task",
-      arguments: {
-        scopeId: "77777777-7777-4777-8777-777777777777",
-        requestId,
-        taskContractVersion: properties.taskContractVersion?.const,
-        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
-        prompt: "Keep this task alive while the HTTP response is detached.",
-        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
-        selection,
-        executionMode: "foreground"
-      },
+      arguments: arguments_,
       _meta: metadata
     }, { signal: controller.signal });
     const outcome = pending.then(
@@ -633,22 +933,41 @@ describe("current bridge tool contracts", () => {
     await hold.started;
     controller.abort();
 
-    await eventually(() => state.listTransportObservations("mcp-handler-aborted").length === 1);
+    const disposition = await outcome;
+    expect(["completed", "detached"]).toContain(disposition);
     const admitted = state.listJobs().find((item) =>
       (item as { requestId?: unknown }).requestId === requestId
     ) as { status?: unknown; cancelRequestedAt?: unknown } | undefined;
     expect(admitted).toMatchObject({ status: "running" });
     expect(admitted?.cancelRequestedAt).toBeFalsy();
 
+    const recovered = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "request", requestId } },
+      _meta: metadata
+    });
+    expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
+    expect(recovered.structuredContent).toMatchObject({
+      kind: "job",
+      items: [{ id: (admitted as { jobId: string }).jobId, state: "running" }]
+    });
+    const replay = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
+    expect(replay.isError, JSON.stringify(replay)).not.toBe(true);
+    expect(replay.structuredContent).toMatchObject({
+      jobId: (admitted as { jobId: string }).jobId,
+      replay: true,
+      state: "running"
+    });
+    expect(upstream.calls).toHaveLength(1);
+
     hold.release();
-    expect(await outcome).toBe("detached");
     await eventually(() => state.listJobs().some((item) =>
       (item as { requestId?: unknown; status?: unknown }).requestId === requestId &&
       (item as { status?: unknown }).status === "completed"
     ));
   });
 
-  it("keeps a background admission valid before App Server assigns its thread", async () => {
+  it("keeps an asynchronous admission valid before App Server assigns its thread", async () => {
     const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
     const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
     const project = settings.current.projects[0]!;
@@ -663,8 +982,7 @@ describe("current bridge tool contracts", () => {
         executionEnvelopeRef: properties.executionEnvelopeRef?.const,
         prompt: "Wait for an App Server thread assignment.",
         project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
-        selection,
-        executionMode: "background"
+        selection
       },
       _meta: metadata
     });
@@ -704,7 +1022,7 @@ describe("current bridge tool contracts", () => {
     ));
   });
 
-  it("automatically opens the originating conversation Dashboard only for background work and queues completion delivery", async () => {
+  it("automatically opens the originating conversation Dashboard for admitted work and queues completion delivery", async () => {
     const tools = await client.listTools();
     const descriptor = tools.tools.find((tool) => tool.name === "codex_task")!;
     const dashboardDescriptor = tools.tools.find((tool) => tool.name === "codex_dashboard")!;
@@ -728,8 +1046,7 @@ describe("current bridge tool contracts", () => {
           mode: "new",
           title: "Fixture completion delivery"
         },
-        selection,
-        executionMode: "background"
+        selection
       },
       _meta: metadata
     });
@@ -743,13 +1060,13 @@ describe("current bridge tool contracts", () => {
       action.kind === "tool" &&
       action.tool === "codex_dashboard" &&
       action.arguments.scope === "conversation" &&
-      action.arguments.backgroundJobId === task.jobId
+      action.arguments.jobId === task.jobId
     );
     expect(renderAction).toMatchObject({
       kind: "tool",
       tool: "codex_dashboard",
-      arguments: { scope: "conversation", backgroundJobId: task.jobId },
-      message: expect.stringContaining("originating background Dashboard")
+      arguments: { scope: "conversation", jobId: task.jobId },
+      message: expect.stringContaining("originating Dashboard")
     });
     const origin = state.listJobs().find((job) =>
       job.jobId === task.jobId
@@ -819,7 +1136,7 @@ describe("current bridge tool contracts", () => {
       name: "codex_update_settings",
       arguments: {
         expectedSettingsRevision: settings.current.settingsRevision,
-        operation: { kind: "patch", settings: { dashboardAutoOpenBackground: false } }
+        operation: { kind: "patch", settings: { dashboardAutoOpen: false } }
       },
       _meta: metadata
     });
@@ -834,8 +1151,7 @@ describe("current bridge tool contracts", () => {
         executionEnvelopeRef: properties.executionEnvelopeRef?.const,
         prompt: "Complete hidden background fixture work.",
         project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
-        selection,
-        executionMode: "background"
+        selection
       },
       _meta: metadata
     });

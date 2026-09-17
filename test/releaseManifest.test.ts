@@ -90,12 +90,12 @@ describe("release manifest", () => {
     expect(() => validateReleaseManifest(manifest)).toThrow("manifestVersion must be 6");
   });
 
-  it("publishes one complete schema-3-through-19 compatibility and recovery contract", () => {
+  it("publishes one complete schema-3-through-20 compatibility and recovery contract", () => {
     const manifest = loadReleaseManifest(REPO_ROOT);
     const catalog = readJson(path.join(REPO_ROOT, "state-migrations.json"));
     expect(manifest.stateCompatibility).toMatchObject({
-      currentSchema: 19,
-      supportedSourceSchemas: Array.from({ length: 16 }, (_, index) => index + 3),
+      currentSchema: 20,
+      supportedSourceSchemas: Array.from({ length: 17 }, (_, index) => index + 3),
       unsupportedSourceSchemas: [1, 2],
       retiredLegacyImports: [
         "settings-state-json",
@@ -106,17 +106,17 @@ describe("release manifest", () => {
       stateProfilePolicy: "release-stage-isolated-v1",
       rollbackPolicy: "verified-original-before-service-open-v1",
       persistentContracts: {
-        userSettingsSchema: 4,
-        taskInputContract: 5,
+        userSettingsSchema: 5,
+        taskInputContract: 6,
         macosHelperProtocol: 2,
-        localCompanionProtocol: 9,
-        remoteCompanionProtocol: 7
+        localCompanionProtocol: 10,
+        remoteCompanionProtocol: 8
       }
     });
     expect(catalog).toMatchObject({
       catalogVersion: 1,
       immutabilityPolicy: "append-only-after-release-v1",
-      currentSchema: 19,
+      currentSchema: 20,
       supportedSourceSchemas: manifest.stateCompatibility.supportedSourceSchemas
     });
     expect(catalog.fixtures).toEqual(expect.arrayContaining([
@@ -127,7 +127,7 @@ describe("release manifest", () => {
     for (const source of manifest.stateCompatibility.supportedSourceSchemas) {
       let schema = source;
       const visited = new Set<number>();
-      while (schema !== 19) {
+      while (schema !== 20) {
         expect(visited.has(schema)).toBe(false);
         visited.add(schema);
         const migration = catalog.migrations.find((entry: any) => entry.fromSchema === schema);
@@ -246,8 +246,8 @@ describe("release manifest", () => {
     writeFileSync(
       modelPolicy,
       readFileSync(modelPolicy, "utf8").replace(
-        "MODEL_POLICY_SCHEMA_VERSION = 4",
-        "MODEL_POLICY_SCHEMA_VERSION = 5"
+        "MODEL_POLICY_SCHEMA_VERSION = 5",
+        "MODEL_POLICY_SCHEMA_VERSION = 6"
       )
     );
     expect(() => checkReleaseMetadata(root)).toThrow(
@@ -257,6 +257,22 @@ describe("release manifest", () => {
     writeFileSync(
       modelPolicy,
       readFileSync(path.join(REPO_ROOT, "src/modelPolicy.ts"), "utf8")
+    );
+    const userSettings = path.join(root, "src/userSettings.ts");
+    writeFileSync(
+      userSettings,
+      readFileSync(userSettings, "utf8").replace(
+        "taskInputContract: 6",
+        "taskInputContract: 5"
+      )
+    );
+    expect(() => checkReleaseMetadata(root)).toThrow(
+      /Task execution-envelope input contract drifted/
+    );
+
+    writeFileSync(
+      userSettings,
+      readFileSync(path.join(REPO_ROOT, "src/userSettings.ts"), "utf8")
     );
     const catalogFile = path.join(root, "state-migrations.json");
     const catalog = readJson(catalogFile);
@@ -477,6 +493,7 @@ function fixtureRoot(): string {
     "src/projectRegistry.ts",
     "src/cancellation.ts",
     "src/modelPolicy.ts",
+    "src/userSettings.ts",
     "src/tools.ts",
     "src/macosHelperServer.ts",
     "src/companionServer.ts",

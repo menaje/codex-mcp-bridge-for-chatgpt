@@ -42,7 +42,6 @@ describe("Activity SQLite state", () => {
       scopeId: SCOPE_A,
       title: "Parallel implementation",
       kind: "implementation",
-      executionMode: "background",
       handoffPolicy: "notify",
       completionTrigger: "sealed-jobs-terminal",
       now: 1
@@ -514,7 +513,6 @@ function job(
     activityId,
     status,
     updatedAt,
-    executionMode: "background" as const,
     backendKind: "mcp-server"
   };
 }

@@ -76,8 +76,8 @@ try {
   source = new Database(baseline, { readonly: true, fileMustExist: true });
   const sourceVersion = schemaVersion(source);
   assert.ok(
-    sourceVersion === 18 || sourceVersion === 19,
-    `Restart audit supports source schema 18 or 19, received ${sourceVersion}`
+    sourceVersion >= 18 && sourceVersion <= 20,
+    `Restart audit supports source schemas 18 through 20, received ${sourceVersion}`
   );
   report.sourceSchema = sourceVersion;
   report.sourceCounts = redactedCounts(source);
@@ -106,37 +106,37 @@ try {
 
   const migrated = new Database(copy, { readonly: true, fileMustExist: true });
   try {
-    assert.equal(schemaVersion(migrated), 19);
+    assert.equal(schemaVersion(migrated), 20);
     assert.equal(String(migrated.pragma("integrity_check", { simple: true })), "ok");
     assert.deepEqual(migrated.pragma("foreign_key_check"), []);
-    assertPreservedKeys(preservedKeys, preservationKeys(migrated, 19, auditAt));
-    assert.deepEqual(jobReceiptDigest(migrated, 19), jobReceipts);
+    assertPreservedKeys(preservedKeys, preservationKeys(migrated, 20, auditAt));
+    assert.deepEqual(jobReceiptDigest(migrated, 20), jobReceipts);
     assert.deepEqual(
-      sessionContextDigest(migrated, 19, sessionContexts.threadIds).snapshot,
+      sessionContextDigest(migrated, 20, sessionContexts.threadIds).snapshot,
       sessionContexts.snapshot,
       "Surviving session execution contexts changed during migration"
     );
     assert.deepEqual(
-      agentThreadRelationshipDigest(migrated, 19),
+      agentThreadRelationshipDigest(migrated, 20),
       agentThreadRelationships,
       "Surviving Agent/thread relationships changed during migration"
     );
-    assert.deepEqual(scopeStateDigest(migrated, 19), scopeState,
+    assert.deepEqual(scopeStateDigest(migrated, 20), scopeState,
       "Scope versions or timestamps changed during migration");
-    assert.deepEqual(activityStateDigest(migrated, 19), activityState,
+    assert.deepEqual(activityStateDigest(migrated, 20), activityState,
       "Activity ownership or lifecycle state changed during migration");
-    assert.deepEqual(agentStateDigest(migrated, 19), agentState,
+    assert.deepEqual(agentStateDigest(migrated, 20), agentState,
       "Agent identity or lifecycle state changed during migration");
-    assert.deepEqual(workHistoryStateDigest(migrated, 19), workHistoryState,
+    assert.deepEqual(workHistoryStateDigest(migrated, 20), workHistoryState,
       "Work-history acknowledgement or expiry state changed during migration");
     assert.deepEqual(
       exactCriticalTableSnapshots(migrated),
       criticalPayloads,
       "Critical request, question, cancellation, recovery, or delivery payloads changed during migration"
     );
-    assert.deepEqual(criticalStateCounts(migrated, 19, auditAt), criticalState);
+    assert.deepEqual(criticalStateCounts(migrated, 20, auditAt), criticalState);
     assertCurrentSchema(migrated);
-    report.currentSchema = 19;
+    report.currentSchema = 20;
     report.currentTableCount = tableNames(migrated).length;
     report.currentIndexCount = objectCount(migrated, "index");
     report.currentTriggerCount = objectCount(migrated, "trigger");
@@ -156,6 +156,7 @@ try {
   }
 
   let stableBaseline: Record<string, { count: number; digest: string }> | undefined;
+  let stableBridgeMeta: Record<string, string> | undefined;
   for (let pass = 1; pass <= 2; pass += 1) {
     report.stage = `restart-${pass}`;
     state = new BridgeStateStore({ file: copy });
@@ -225,17 +226,25 @@ try {
 
     const after = stableStateSnapshot(copy, auditAt);
     const changes = stableBaseline ? changedSnapshots(stableBaseline, after) : [];
-    if (stableBaseline) {
-      assert.deepEqual(changes, [], "Business state changed during the second read-only restart");
-    } else {
-      stableBaseline = after;
-    }
+    const currentBridgeMeta = bridgeMetaSnapshot(copy);
+    const changedMetaKeys = stableBridgeMeta
+      ? [...new Set([...Object.keys(stableBridgeMeta), ...Object.keys(currentBridgeMeta)])]
+        .filter((key) => stableBridgeMeta?.[key] !== currentBridgeMeta[key])
+        .sort()
+      : [];
     (report.restartPasses as unknown[]).push({
       pass,
       discoveredToolCount: discovered.length,
       stableAgainstPreviousPass: pass === 1 ? null : changes.length === 0,
-      changedTables: changes
+      changedTables: changes,
+      changedMetaKeys
     });
+    if (stableBaseline) {
+      assert.deepEqual(changes, [], "Business state changed during the second read-only restart");
+    } else {
+      stableBaseline = after;
+      stableBridgeMeta = currentBridgeMeta;
+    }
   }
 
   assert.equal(report.codexCalls, 0);
@@ -433,7 +442,7 @@ function agentThreadRelationshipDigest(db: Database.Database, version: number): 
 }
 
 function scopeStateDigest(db: Database.Database, version: number): Snapshot {
-  const rows = version === 19
+  const rows = version >= 19
     ? allRows(db, "scopes")
     : db.prepare(`SELECT s.scope_id,COALESCE(v.version,0) AS version,s.created_at,
         MAX(s.updated_at,COALESCE(v.updated_at,s.updated_at)) AS updated_at
@@ -442,14 +451,20 @@ function scopeStateDigest(db: Database.Database, version: number): Snapshot {
 }
 
 function activityStateDigest(db: Database.Database, version: number): Snapshot {
-  if (version === 19) return snapshotRows(allRows(db, "activities"));
+  if (version >= 19) {
+    return snapshotRows(db.prepare(`SELECT
+      activity_id,scope_id,project_id,pinned_cwd,continuation_of_activity_id,
+      card_generation,title,kind,handoff_policy,completion_trigger,lifecycle,
+      waiting_on,verification,version,completion_version,legacy,created_at,
+      updated_at,sealed_at,completed_at,total_jobs,running_jobs,completed_jobs,
+      failed_jobs,interrupted_jobs,cancelled_jobs,terminal_jobs
+      FROM activities`).all() as Row[]);
+  }
   const rows = db.prepare(`SELECT
       a.activity_id,a.scope_id,p.project_id,
       CASE WHEN p.project_id IS NOT NULL THEN
         COALESCE(a.project_cwd_snapshot,a.project_cwd,p.cwd) END AS pinned_cwd,
       a.continuation_of_activity_id,a.card_generation,a.title,a.kind,
-      CASE a.execution_mode WHEN 'foreground' THEN 'foreground' ELSE 'background' END
-        AS execution_mode,
       a.handoff_policy,a.completion_trigger,a.lifecycle,a.waiting_on,a.verification,
       a.version,a.completion_version,a.legacy,a.created_at,a.updated_at,a.sealed_at,
       a.completed_at,a.total_jobs,a.running_jobs,a.completed_jobs,a.failed_jobs,
@@ -460,7 +475,7 @@ function activityStateDigest(db: Database.Database, version: number): Snapshot {
 }
 
 function agentStateDigest(db: Database.Database, version: number): Snapshot {
-  if (version === 19) return snapshotRows(allRows(db, "agents"));
+  if (version >= 19) return snapshotRows(allRows(db, "agents"));
   const acceptedThreads = acceptedLegacyContexts(db).agentThreadIds;
   const relationships = new Map(allRows(db, "agent_threads")
     .filter((row) => acceptedThreads.has(String(row.thread_id)))
@@ -499,7 +514,7 @@ function agentStateDigest(db: Database.Database, version: number): Snapshot {
 }
 
 function workHistoryStateDigest(db: Database.Database, version: number): Snapshot {
-  if (version === 19) return snapshotRows(allRows(db, "work_history_state"));
+  if (version >= 19) return snapshotRows(allRows(db, "work_history_state"));
   const rows = db.prepare(`SELECT h.job_id,h.acknowledged_at,h.expired_at,
       CAST((SELECT value FROM bridge_meta
         WHERE key='work_history_review_seq:' || h.job_id) AS INTEGER) AS review_sequence
@@ -602,7 +617,6 @@ function jobReceiptDigest(db: Database.Database, version: number): Snapshot {
       threadId: row.thread_id,
       sourceThreadId: version === 18 ? nullable(payload.sourceThreadId) : row.source_thread_id,
       status: row.status,
-      executionMode: row.execution_mode === "foreground" ? "foreground" : "background",
       backendKind: row.backend_kind,
       bridgeInstanceId: row.bridge_instance_id,
       workerId: row.worker_id,
@@ -643,7 +657,7 @@ function sessionContextDigest(
   version: number,
   selectedThreadIds?: Set<string>
 ): SemanticSnapshot {
-  if (version === 19) {
+  if (version >= 19) {
     const rows = allRows(db, "sessions").filter((row) =>
       selectedThreadIds === undefined || selectedThreadIds.has(String(row.thread_id))
     );
@@ -776,10 +790,23 @@ function stableStateSnapshot(file: string, now: number): Record<string, Snapshot
       const rows = table === "user_questions"
         ? db.prepare("SELECT * FROM user_questions WHERE expires_at>?").all(now)
         : db.prepare(`SELECT * FROM ${identifier(table)}`).all();
-      const values = (rows as Row[]).map(canonical).sort();
+      const stableRows = table === "bridge_meta"
+        ? (rows as Row[]).filter((row) => row.key !== "state_retention_last_run")
+        : rows as Row[];
+      const values = stableRows.map(canonical).sort();
       snapshots[table] = { count: values.length, digest: hash(values) };
     }
     return snapshots;
+  } finally {
+    db.close();
+  }
+}
+
+function bridgeMetaSnapshot(file: string): Record<string, string> {
+  const db = new Database(file, { readonly: true, fileMustExist: true });
+  try {
+    return Object.fromEntries((db.prepare("SELECT key,value FROM bridge_meta ORDER BY key").all() as
+      Array<{ key: string; value: string }>).map((row) => [row.key, row.value]));
   } finally {
     db.close();
   }
@@ -803,7 +830,7 @@ function assertCurrentSchema(db: Database.Database): void {
   assert.ok(!agentColumns.includes("archived_at"));
   assert.ok(!/archived/iu.test(String(objects.find((row) => row.name === "agents")?.sql)));
   for (const table of ["activities", "jobs"]) {
-    assert.ok(!/execution_mode[^]*'auto'/iu.test(String(objects.find((row) => row.name === table)?.sql)));
+    assert.ok(!columnNames(db, table).includes("execution_mode"));
   }
   const duplicated = Number((db.prepare(`SELECT COUNT(*) AS count FROM jobs WHERE
     json_type(payload,'$.projectId') IS NOT NULL OR
@@ -811,7 +838,8 @@ function assertCurrentSchema(db: Database.Database): void {
     json_type(payload,'$.projectName') IS NOT NULL OR
     json_type(payload,'$.cwd') IS NOT NULL OR
     json_type(payload,'$.pendingInteractions') IS NOT NULL OR
-    json_type(payload,'$.publicEvents') IS NOT NULL`).get() as { count: number }).count);
+    json_type(payload,'$.publicEvents') IS NOT NULL OR
+    json_type(payload,'$.executionMode') IS NOT NULL`).get() as { count: number }).count);
   assert.equal(duplicated, 0, "Structured Job fields remain duplicated in payload JSON");
   const unexpectedSummaries = Number((db.prepare(`SELECT COUNT(*) AS count
     FROM jobs,json_each(jobs.summary) entry

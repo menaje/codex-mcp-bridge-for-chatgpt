@@ -27,7 +27,7 @@ export type { ProjectRegistryOperation } from "./projectRegistry.js";
 export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
 const EXECUTION_POLICY_HMAC_SECRET_META_KEY = "execution_policy_hmac_secret_v1";
 const EXECUTION_POLICY_REF_CONTRACT_VERSION = 5;
-const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 5;
+const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 6;
 
 export type BridgeUserSettings = {
   schemaVersion: typeof MODEL_POLICY_SCHEMA_VERSION;
@@ -45,11 +45,10 @@ export type BridgeUserSettings = {
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
   showBridgeThreadsInCodexApp: boolean;
-  /** Automatically open Dashboard only for background work in its origin conversation. */
-  dashboardAutoOpenBackground: boolean;
+  /** Automatically open Dashboard for newly admitted work in its origin conversation. */
+  dashboardAutoOpen: boolean;
   /**
-   * Enables local macOS delivery for eligible background completion events.
-   * The wire key is retained so saved settings migrate without ambiguity.
+   * Enables local macOS delivery for eligible completion events.
    */
   completionFollowUp: boolean;
   historyRetentionDays: HistoryRetentionDays;
@@ -111,7 +110,7 @@ export class UserSettingsStore {
       // Durable context is the default for a new installation. Loaded legacy
       // settings retain their explicit (or historical missing-field) choice.
       showBridgeThreadsInCodexApp: true,
-      dashboardAutoOpenBackground: true,
+      dashboardAutoOpen: true,
       completionFollowUp: false,
       historyRetentionDays: DEFAULT_HISTORY_RETENTION_DAYS
     });
@@ -178,10 +177,10 @@ export class UserSettingsStore {
 
   /**
    * Stable installation-bound reference to the maximum authority and static
-   * wire shape advertised by codex_task contract v5.
+   * wire shape advertised by codex_task contract v6.
    *
    * User settings, projects, and the live model catalog are deliberately not
-   * included: contract v5 declares their runtime-authoritative behavior in a
+   * included: contract v6 declares their runtime-authoritative behavior in a
    * stable schema. A process/operator change can alter the maximum authority
    * or the schema itself and therefore still requires a connection Refresh.
    */
@@ -192,7 +191,7 @@ export class UserSettingsStore {
       )
       .update(canonicalJsonValue({
         contract: TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION,
-        taskInputContract: 5,
+        taskInputContract: 6,
         maxPromptChars: this.config.maxPromptChars,
         operator: canonicalExecutionOperatorEnvelope(this.config)
       }))
@@ -260,7 +259,7 @@ export class UserSettingsStore {
       uiLocalePreference: this.initial.uiLocalePreference,
       maxConcurrentJobs: this.initial.maxConcurrentJobs,
       showBridgeThreadsInCodexApp: this.initial.showBridgeThreadsInCodexApp,
-      dashboardAutoOpenBackground: this.initial.dashboardAutoOpenBackground,
+      dashboardAutoOpen: this.initial.dashboardAutoOpen,
       completionFollowUp: this.initial.completionFollowUp,
       historyRetentionDays: this.initial.historyRetentionDays
     };
@@ -393,8 +392,8 @@ export class UserSettingsStore {
     if (typeof candidate.showBridgeThreadsInCodexApp !== "boolean") {
       throw new Error("Invalid Codex app thread-visibility preference.");
     }
-    if (typeof candidate.dashboardAutoOpenBackground !== "boolean") {
-      throw new Error("Invalid background Dashboard auto-open preference.");
+    if (typeof candidate.dashboardAutoOpen !== "boolean") {
+      throw new Error("Invalid Dashboard auto-open preference.");
     }
     if (typeof candidate.completionFollowUp !== "boolean") {
       throw new Error("Invalid completion follow-up preference.");
@@ -609,7 +608,7 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
-    "dashboardAutoOpenBackground",
+    "dashboardAutoOpen",
     "completionFollowUp",
     "historyRetentionDays"
   ];
@@ -625,6 +624,7 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
       "defaultReasoningEffort",
       "legacyPreferredModel",
       "completionDeliveryMode",
+      "dashboardAutoOpenBackground",
       "activityCardVisibility",
       "completionHandoff",
       "activityCardView",
@@ -650,6 +650,7 @@ function readGeneralSettings(
   const hasMigratablePolicy =
     (
       value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION ||
+      value.schemaVersion === 4 ||
       value.schemaVersion === 3 ||
       value.schemaVersion === 2
     ) &&
@@ -680,8 +681,10 @@ function readGeneralSettings(
     showBridgeThreadsInCodexApp: typeof value.showBridgeThreadsInCodexApp === "boolean"
       ? value.showBridgeThreadsInCodexApp
       : false,
-    dashboardAutoOpenBackground: typeof value.dashboardAutoOpenBackground === "boolean"
-      ? value.dashboardAutoOpenBackground
+    dashboardAutoOpen: typeof value.dashboardAutoOpen === "boolean"
+      ? value.dashboardAutoOpen
+      : typeof value.dashboardAutoOpenBackground === "boolean"
+        ? value.dashboardAutoOpenBackground
       : value.activityCardVisibility !== "never",
     historyRetentionDays: historyRetentionDays(value.historyRetentionDays),
     completionFollowUp: typeof value.completionFollowUp === "boolean"
@@ -757,7 +760,7 @@ function assertSettingsPatchKeys(patch: BridgeUserSettingsPatch): void {
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
-    "dashboardAutoOpenBackground",
+    "dashboardAutoOpen",
     "completionFollowUp",
     "historyRetentionDays"
   ]);

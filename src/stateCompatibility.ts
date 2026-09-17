@@ -38,7 +38,11 @@ export function stateMigrationPath(sourceSchema: number): StateMigrationCatalogE
   let current = sourceSchema;
   while (current !== CURRENT_STATE_DATABASE_SCHEMA) {
     const entry = STATE_MIGRATIONS.find((candidate) => candidate.fromSchema === current);
-    if (!entry) throw new Error(`State migration catalog cannot reach schema 19 from ${sourceSchema}.`);
+    if (!entry) {
+      throw new Error(
+        `State migration catalog cannot reach schema ${CURRENT_STATE_DATABASE_SCHEMA} from ${sourceSchema}.`
+      );
+    }
     path.push(entry);
     current = entry.toSchema;
     if (path.length > STATE_MIGRATIONS.length) {

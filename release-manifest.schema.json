@@ -201,17 +201,18 @@
         "recoveryContract"
       ],
       "properties": {
-        "currentSchema": { "const": 19 },
+        "currentSchema": { "const": 20 },
         "supportedSourceSchemas": {
           "type": "array",
-          "minItems": 16,
-          "maxItems": 16,
+          "minItems": 17,
+          "maxItems": 17,
           "uniqueItems": true,
           "prefixItems": [
             { "const": 3 }, { "const": 4 }, { "const": 5 }, { "const": 6 },
             { "const": 7 }, { "const": 8 }, { "const": 9 }, { "const": 10 },
             { "const": 11 }, { "const": 12 }, { "const": 13 }, { "const": 14 },
-            { "const": 15 }, { "const": 16 }, { "const": 17 }, { "const": 18 }
+            { "const": 15 }, { "const": 16 }, { "const": 17 }, { "const": 18 },
+            { "const": 19 }
           ],
           "items": false
         },
@@ -248,8 +249,8 @@
             "remoteCompanionProtocol"
           ],
           "properties": {
-            "userSettingsSchema": { "const": 4 },
-            "taskInputContract": { "const": 5 },
+            "userSettingsSchema": { "const": 5 },
+            "taskInputContract": { "const": 6 },
             "macosHelperProtocol": { "const": 2 },
             "localCompanionProtocol": { "const": 9 },
             "remoteCompanionProtocol": { "const": 7 }

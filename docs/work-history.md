@@ -13,7 +13,7 @@ Native and card rows use the same time rule: live turns show elapsed work time a
 the last explicit snapshot; terminal turns show recorded duration and relative end time.
 Missing historical timing remains unavailable.
 
-## Automatic recovery and original GPT wait
+## Automatic recovery and asynchronous Job ownership
 
 The bridge performs safe maintenance without asking the user to review every
 failed turn. It freshly rechecks unknown/disconnected state without loading a
@@ -34,26 +34,24 @@ failed. An automatic stop retry requires the existing failed cancellation intent
 same Job/thread/turn/worker generation, and exact version; it never falls back to
 process-group termination. Another conversation's running Job remains untouched.
 
-Task-level GPT judgment is returned only while the original foreground
-`codex_task` callback is still open. Its lease binds the conversation, Job, and
-original task request, and a failure must arise while that callback is observing
-running work. Returning or aborting the callback permanently closes its lease.
-The bridge gives safe recovery a bounded first chance before returning the
-failure receipt. Reading the receipt does not resolve the issue or prove success.
+Every `codex_task` admission durably records the request receipt, Job identity,
+state, versions, and requery handles before it returns. The Job then runs
+independently of the originating GPT response, MCP request, HTTP connection, and
+card. A disconnect is retained only as transport evidence; it is not cancellation.
 
-This integration does not receive a reliable GPT response identity or response-ended
-signal. It therefore does not transfer recovery authority between MCP calls.
-Background task results, task replays, all `codex_status` Job/input waits, overview,
-card, audit and historical reads contain ordinary state/results only, with no
-recovery directive. They never acquire a lease even when they run concurrently
-with the original foreground callback. No continuation token is issued.
-`codex_task` output has no `waitContext`, and `waitToken` is not an accepted
-current input.
+If the admission response is lost, the caller can recover the same receipt with
+`codex_status({query:{kind:"request", requestId}})` in the original scope. An
+identical `codex_task` retry returns that existing Job, while a different payload
+with the same request ID is rejected. Terminal results are read from exact status;
+there is no callback lease, wait token, or continuation authority. A Job reaching
+a terminal state does not by itself close its Activity: Activity sealing,
+completion barriers, verification, and multi-Job policy keep their own lifecycle.
 
-There is no queued GPT recovery, generic future-session handoff, or wake mechanism.
-Once the original callback has ended, safe bridge maintenance continues and
-remaining operational issues stay in the native menu and dashboard. Any GPT retry
-must stay within the original user's task authorization and verify its result.
+Safe maintenance never authorizes ambiguous task replay. After an unexpected
+restart, unfinished persisted Jobs become interrupted for inspection and are not
+submitted again automatically. There is no queued GPT response, generic
+future-session handoff, or wake mechanism; paired GPT result delivery is outside
+this bridge contract. Operational issues remain in the native menu and Dashboard.
 
 A fresh confirmed-to-unknown inspection transition opens a new durable incident,
 even when the Agent, thread and latest Job have not changed. Repeated failed
@@ -67,7 +65,7 @@ display inspection can also close an unresolved inspection incident.
 
 The schema-16-to-17 checkpoint adds persistent incident identities to the
 automatic-action journal. Current upgrades run it under the single private
-pre-schema-19 recovery backup. Existing attempt budgets, failed outcomes and
+pre-schema-20 recovery backup. Existing attempt budgets, failed outcomes and
 cancellation provenance remain unchanged. Automatic records follow history
 retention; unresolved budgets survive while their original work is retained.
 

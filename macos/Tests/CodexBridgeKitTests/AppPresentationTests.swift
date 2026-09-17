@@ -120,11 +120,11 @@ final class AppPresentationTests: XCTestCase {
 
     func testNativeSemanticKeyFallsBackToEnglishInsteadOfDisplayingItsIdentifier() {
         let value = BridgeAppLocalization.string(
-            "settings.dashboardAutoOpenBackground",
+            "settings.dashboardAutoOpen",
             locale: Locale(identifier: "unsupported")
         )
-        XCTAssertEqual(value, "Automatically show Dashboard for background work")
-        XCTAssertNotEqual(value, "settings.dashboardAutoOpenBackground")
+        XCTAssertEqual(value, "Automatically show Dashboard for Codex work")
+        XCTAssertNotEqual(value, "settings.dashboardAutoOpen")
     }
 
     func testReasoningEffortLabelsUseCanonicalLowercaseValuesInEveryLocale() {
@@ -860,10 +860,10 @@ final class AppPresentationTests: XCTestCase {
             catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
         )
         var draft = SettingsDraft(snapshot: snapshot)
-        draft.dashboardAutoOpenBackground = false
+        draft.dashboardAutoOpen = false
         draft.completionFollowUp = true
 
-        XCTAssertFalse(draft.dashboardAutoOpenBackground)
+        XCTAssertFalse(draft.dashboardAutoOpen)
         XCTAssertTrue(draft.completionFollowUp)
     }
 
@@ -1961,7 +1961,7 @@ private func settingsSnapshot(
     settingsRevision: Int = 4,
     accessStrategy: String = "adaptive",
     showBridgeThreadsInCodexApp: Bool = true,
-    dashboardAutoOpenBackground: Bool = true,
+    dashboardAutoOpen: Bool = true,
     completionFollowUp: Bool = false,
     policy: [String: Any],
     legacyPreferredModel: String? = nil,
@@ -1981,7 +1981,7 @@ private func settingsSnapshot(
         "uiLocalePreference": "auto",
         "maxConcurrentJobs": 2,
         "showBridgeThreadsInCodexApp": showBridgeThreadsInCodexApp,
-        "dashboardAutoOpenBackground": dashboardAutoOpenBackground,
+        "dashboardAutoOpen": dashboardAutoOpen,
         "completionFollowUp": completionFollowUp
     ]
     if let legacyPreferredModel {

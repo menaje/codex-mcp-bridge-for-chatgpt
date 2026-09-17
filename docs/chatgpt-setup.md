@@ -111,7 +111,7 @@ Read the model catalog when the current policy requires a model choice:
 allowed model/effort pairs. In fixed mode, omit task `selection`. In automatic
 mode, use an exact listed pair where required.
 
-For a fresh task, use the `taskContractVersion: "3"` and
+For a fresh task, use the `taskContractVersion: "6"` and
 `executionEnvelopeRef` advertised by the current `tools/list` result. Provide a
 new `requestId` for each logical task and the exact registered project
 selector. Reuse that request ID only for an identical retry.
@@ -119,7 +119,7 @@ selector. Reuse that request ID only for an identical retry.
 ```json
 {
   "requestId": "new UUID",
-  "taskContractVersion": "3",
+  "taskContractVersion": "6",
   "executionEnvelopeRef": "exact descriptor constant",
   "prompt": "implement the requested change",
   "project": {
@@ -130,9 +130,12 @@ selector. Reuse that request ID only for an identical retry.
 }
 ```
 
-For an active turn, use `codex_steer`. Use `codex_status` to read an exact
-Job, Activity, thread, project, or bounded input wait. Use `codex_cancel` only
-for explicit stop intent and its required version/idempotency arguments.
+The call returns after the durable admission receipt is saved; it does not wait
+for completion. If that response is lost, query the same `requestId` with
+`codex_status` instead of inventing a new one. For an active turn, use
+`codex_steer`. Use `codex_status` to read an exact request, Job, Activity,
+thread, project, or bounded input wait. Use `codex_cancel` only for explicit
+stop intent and its required version/idempotency arguments.
 
 ## 6. Cards and questions
 
@@ -184,7 +187,7 @@ In a fresh ChatGPT conversation:
 1. Open Settings and register a project.
 2. Open Dashboard; confirm both current cards load.
 3. Call `codex_models` and confirm its one current catalog response.
-4. Start a harmless task with contract version 5 and its exact envelope
+4. Start a harmless task with contract version 6 and its exact envelope
    constant.
 5. Read its status and exact terminal result.
 6. If Codex asks an ordinary question, answer it through the current ChatGPT

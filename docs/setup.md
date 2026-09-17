@@ -304,15 +304,16 @@ later use; a model temporarily missing from the list also keeps its saved text.
 - **Keep new Agent tasks in the Codex app** preserves eligible new App Server threads in Codex. It does not change older tasks.
 - **Run history retention** keeps display history for 7, 30 (default), or 90 days, or indefinitely. Full result retention and connection idle time are separate policies; see [work history](work-history.md).
 
-Settings expose **Automatically show Dashboard for background work** and
-**Notify this Mac when background work completes**. The first applies only to
-newly admitted background work in its originating conversation; foreground work
-never opens Dashboard automatically. The second is independent of cards and
-ChatGPT: the local menu-bar app delivers a generic macOS notification for an
-eligible successful background completion, and opens its Dashboard when clicked.
+Settings expose **Automatically show Dashboard for Codex work** and
+**Notify this Mac when Codex work completes**. The first opens Dashboard in the
+conversation that admitted a new task; the task continues independently of that
+conversation. The second is independent of cards and ChatGPT: the local menu-bar
+app delivers a generic macOS notification for an eligible successful completion,
+and opens its Dashboard when clicked.
 It requires that app to be running and macOS notifications to be allowed. It
-does not add or resume a ChatGPT message. New work uses bounded input waits and
-exact result retrieval in the current GPT response. See [Card tools](card-tools.md).
+does not add or resume a ChatGPT message. New work returns a durable admission
+receipt immediately; later progress and the exact result are read through
+`codex_status`. See [Card tools](card-tools.md).
 
 Values above the normal concurrency range can increase CPU, memory, and API usage substantially.
 

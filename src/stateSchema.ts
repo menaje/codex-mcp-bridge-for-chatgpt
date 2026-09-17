@@ -1,9 +1,10 @@
 /**
- * Schema 19 is the complete schema for a new installation. Upgrade code lives
- * in stateStore.ts; fresh databases must never be assembled by replaying old
- * migrations.
+ * Schema 19 remains the immutable released base DDL used by its recorded
+ * migration. Fresh schema 20 databases apply the small v20 projection below
+ * in the same transaction; older databases use the catalogued 19 -> 20
+ * migration.
  */
-export const CURRENT_STATE_SCHEMA_VERSION = "19";
+export const CURRENT_STATE_SCHEMA_VERSION = "20";
 
 export const CURRENT_STATE_SCHEMA = `
   CREATE TABLE scopes (
@@ -492,4 +493,15 @@ export const CURRENT_STATE_SCHEMA = `
     active INTEGER NOT NULL CHECK(active IN (0,1)),
     updated_at INTEGER NOT NULL
   ) STRICT;
+`;
+
+/** Remove the retired foreground/background execution choice from durable
+ * current state. Request hashes, results, cancellation provenance, and the
+ * scope/request uniqueness key remain untouched. */
+export const V20_ASYNC_EXECUTION_MIGRATION_SCHEMA = `
+  UPDATE jobs
+     SET payload = json_remove(payload, '$.executionMode')
+   WHERE json_type(payload, '$.executionMode') IS NOT NULL;
+  ALTER TABLE activities DROP COLUMN execution_mode;
+  ALTER TABLE jobs DROP COLUMN execution_mode;
 `;

@@ -175,7 +175,7 @@ enum SettingsSearchTarget: String, CaseIterable, Identifiable {
         case .generalLanguage:
             return ["macos.displayandexecution", "macos.withautomaticthemacosappfollowsyourmac"]
         case .generalTaskPresentation:
-            return ["settings.dashboardAutoOpenBackground", "settings.completionFollowUp"]
+            return ["settings.dashboardAutoOpen", "settings.completionFollowUp"]
         case .generalNotifications:
             return ["macos.securityandconnectionapprovalnotifications", "macos.openmacosnotificationsettings"]
         case .generalLaunchAtLogin:
@@ -1643,10 +1643,10 @@ private struct AppGeneralSettingsPane: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Toggle(
-                        "settings.dashboardAutoOpenBackground",
-                        isOn: draft.dashboardAutoOpenBackground
+                        "settings.dashboardAutoOpen",
+                        isOn: draft.dashboardAutoOpen
                     )
-                    Text("settings.dashboardAutoOpenBackgroundHint")
+                    Text("settings.dashboardAutoOpenHint")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if model.isRemoteClient {

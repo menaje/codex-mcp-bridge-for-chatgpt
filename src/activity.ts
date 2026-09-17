@@ -6,7 +6,6 @@ export const ACTIVITY_KINDS = [
   "other"
 ] as const;
 
-export const ACTIVITY_EXECUTION_MODES = ["foreground", "background"] as const;
 export const ACTIVITY_HANDOFF_POLICIES = ["none", "notify", "verify"] as const;
 export const ACTIVITY_COMPLETION_TRIGGERS = ["manual", "sealed-jobs-terminal"] as const;
 export const ACTIVITY_LIFECYCLES = [
@@ -42,7 +41,6 @@ export const ACTIVITY_JOB_STATUSES = [
 ] as const;
 
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
-export type ActivityExecutionMode = (typeof ACTIVITY_EXECUTION_MODES)[number];
 export type ActivityHandoffPolicy = (typeof ACTIVITY_HANDOFF_POLICIES)[number];
 export type ActivityCompletionTrigger = (typeof ACTIVITY_COMPLETION_TRIGGERS)[number];
 export type ActivityLifecycle = (typeof ACTIVITY_LIFECYCLES)[number];
@@ -79,7 +77,6 @@ export type BridgeActivity = {
   cardGeneration: number;
   title: string;
   kind: ActivityKind;
-  executionMode: ActivityExecutionMode;
   handoffPolicy: ActivityHandoffPolicy;
   completionTrigger: ActivityCompletionTrigger;
   lifecycle: ActivityLifecycle;

@@ -5,8 +5,6 @@ import { problemActionSchema, problemActionResultSchema, problemQuerySchema, pro
   type ProblemQuery, type ProblemAction, type ProblemOperation, type ProblemActionResult } from "./problemReview.js";
 import { AutomaticRecoveryController, automaticRecoveryKey,
   type AutomaticRecoveryCandidate, type AutomaticRecoveryResult } from "./automaticRecovery.js";
-import { OriginWaits, liveRecoverySchema,
-  type OriginWaitLease } from "./originWait.js";
 import { projectRecoveryGuidance, projectSelectorRetryAction, type RequestedProjectIdentity } from "./projectGuidance.js";
 import { modelPolicyRecoveryActions } from "./toolGuidance.js";
 import {
@@ -33,14 +31,12 @@ import * as z from "zod/v4";
 import { type McpServer, type Progress, type ToolCallback } from "@modelcontextprotocol/server";
 import {
   ACTIVITY_COMPLETION_TRIGGERS,
-  ACTIVITY_EXECUTION_MODES,
   ACTIVITY_HANDOFF_POLICIES,
   ACTIVITY_JOB_STATUSES,
   ACTIVITY_KINDS,
   isActiveActivityJobStatus,
   isTerminalActivityJobStatus,
   type ActivityCompletionTrigger,
-  type ActivityExecutionMode,
   type ActivityHandoffPolicy,
   type ActivityKind,
   type ActivityVerificationEvidence,
@@ -245,8 +241,8 @@ export const MODEL_PRIMARY_ANSWER_MAX_JSON_BYTES = 24 * 1024;
 /** Complete serialized codex_task descriptor ceiling at maximum bounded choices. */
 export const CODEX_TASK_DESCRIPTOR_MAX_JSON_BYTES = 128 * 1024;
 /** Stable task envelope adopted once; settings/catalog/project values stay runtime-authoritative. */
-/** v5 removes Bridge-skill delivery from Codex task admission. */
-export const CODEX_TASK_INPUT_CONTRACT_VERSION = "5" as const;
+/** v6 exposes one durable asynchronous admission contract. */
+export const CODEX_TASK_INPUT_CONTRACT_VERSION = "6" as const;
 const MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING =
   "The model-authoritative primary answer was truncated by the structured-output byte limit. Request a narrower report only if the missing sections are required.";
 
@@ -258,6 +254,15 @@ type ForceTerminateOptions = {
 };
 
 type JobCompletionCallback = (result: ToolResult) => void | (() => void);
+
+class JobTerminalCommitError extends Error {
+  constructor(cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(`BRIDGE_TERMINAL_COMMIT_FAILED: ${detail}`, { cause });
+    this.name = "JobTerminalCommitError";
+  }
+}
+
 type DeferredJobSettlement =
   | { kind: "resolved"; result: ToolResult; onComplete?: JobCompletionCallback }
   | { kind: "rejected"; error: unknown };
@@ -446,13 +451,12 @@ const dashboardPresentationOutputSchema = z.strictObject({
   openTool: z.literal("codex_dashboard"),
   scope: z.literal("conversation"),
   automatic: z.boolean(),
-  reason: z.enum(["background-enabled", "foreground", "setting-disabled"]),
+  reason: z.enum(["enabled", "setting-disabled"]),
   completionDeliveryRoute: z.enum(["disabled", "native-notification", "pending"])
 });
 
 const codexTaskOutputSchema = z.strictObject({
-  recovery: liveRecoverySchema.nullable().default(null),
-  contractVersion: z.literal("2"),
+  contractVersion: z.literal("3"),
   kind: z.enum(["task"]),
   state: z.enum([...ACTIVITY_JOB_STATUSES, "setup-required"]),
   terminal: z.boolean(),
@@ -466,7 +470,6 @@ const codexTaskOutputSchema = z.strictObject({
   requestId: z.string().nullable(),
   jobVersion: z.number().int().min(1).nullable(),
   activityVersion: z.number().int().min(1).nullable(),
-  executionMode: z.enum(ACTIVITY_EXECUTION_MODES).nullable(),
   backend: z.enum(["mcp-server", "app-server", "codex-sdk"]).nullable(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).nullable(),
   requestedModel: z.string().nullable(),
@@ -503,16 +506,16 @@ const codexTaskOutputSchema = z.strictObject({
     if (!value.terminal || value.delivery !== "none" || value.resultAvailability !== "unavailable" || value.error === null) {
       issue(["state"], "A pre-admission task result must be terminal, unavailable, and carry a structured error.");
     }
-    for (const field of ["activityId", "agentId", "threadId", "requestId", "jobVersion", "activityVersion", "executionMode", "backend", "sandbox"] as const) {
+    for (const field of ["activityId", "agentId", "threadId", "requestId", "jobVersion", "activityVersion", "backend", "sandbox"] as const) {
       if (value[field] !== null) issue([field], "A pre-admission task result cannot contain Job identity or execution fields.");
     }
     return;
   }
-  // A background admission can return before App Server assigns its first
+  // An asynchronous admission can return before App Server assigns its first
   // thread. The Job and Agent are already durable and scoped, while threadId
   // stays null until the assignment callback records it. Do not invent a
   // thread identity merely to satisfy the task envelope.
-  for (const field of ["activityId", "agentId", "requestId", "jobVersion", "executionMode", "backend", "sandbox"] as const) {
+  for (const field of ["activityId", "agentId", "requestId", "jobVersion", "backend", "sandbox"] as const) {
     if (value[field] === null) issue([field], "An admitted Job result requires its current identity and execution fields.");
   }
   if (active) {
@@ -823,7 +826,7 @@ const bridgeUserSettingsOutputSchema = z.strictObject({
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
   showBridgeThreadsInCodexApp: z.boolean(),
-  dashboardAutoOpenBackground: z.boolean(),
+  dashboardAutoOpen: z.boolean(),
   completionFollowUp: z.boolean()
 });
 
@@ -935,7 +938,6 @@ const jobSemanticOutputSchema = z.strictObject({
   activityId: z.string(),
   agentId: z.string().nullable(),
   contextMode: z.enum(AGENT_CONTEXT_MODES).nullable(),
-  executionMode: z.enum(ACTIVITY_EXECUTION_MODES),
   backendKind: z.enum(["mcp-server", "app-server", "codex-sdk"]),
   threadId: z.string().nullable(),
   turnId: z.string().nullable(),
@@ -955,7 +957,6 @@ const jobSemanticOutputSchema = z.strictObject({
     jobId: z.string(),
     agentId: z.string().nullable(),
     projectName: z.string().nullable(),
-    executionMode: z.enum(ACTIVITY_EXECUTION_MODES),
     dashboard: dashboardPresentationOutputSchema
   }),
   createdAt: z.string(),
@@ -1025,7 +1026,6 @@ const statusItemOutputSchema = z.strictObject({
     activity: z.number().int().min(1).nullable()
   }).optional(),
   execution: z.strictObject({
-    mode: z.enum(ACTIVITY_EXECUTION_MODES),
     backend: z.enum(["mcp-server", "app-server", "codex-sdk"]),
     sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"])
   }).optional(),
@@ -1678,11 +1678,11 @@ type CodexRouting = {
   scopeId: string;
   requestId: string;
   requestHash: string;
-  requestHashVersion: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+  requestHashVersion: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
 };
 
-// Version 10 removes Bridge skill selections from Codex task admission.
-const CURRENT_TASK_REQUEST_HASH_VERSION = 10 as const;
+// Version 11 removes foreground/background from execution identity.
+const CURRENT_TASK_REQUEST_HASH_VERSION = 11 as const;
 
 type TaskProjectAdmission = {
   projectId: string;
@@ -1723,7 +1723,6 @@ type CodexJob = {
   agentId?: string;
   contextMode?: AgentContextMode;
   threadId?: string;
-  executionMode: ActivityExecutionMode;
   backendKind: string;
   trackingState: "connected" | "liveness-unknown" | "worker-lost" | "orphaned";
   runtime?: UpstreamWorkerAssignment["runtime"];
@@ -1744,7 +1743,7 @@ type CodexJob = {
   scopeId: string;
   requestId: string;
   requestHash: string;
-  requestHashVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+  requestHashVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
   sourceThreadId?: string;
   selectionKey?: string;
   executionDecision?: ExecutionDecision;
@@ -1775,7 +1774,6 @@ type CodexJobStartInput = Omit<
   | "agentId"
   | "contextMode"
   | "threadId"
-  | "executionMode"
   | "backendKind"
   | "trackingState"
   | "bridgeInstanceId"
@@ -1806,7 +1804,6 @@ type CodexJobStartInput = Omit<
   activityId?: string;
   agentId?: string;
   contextMode?: AgentContextMode;
-  executionMode?: ActivityExecutionMode;
   backendKind?: CodexBackendKind;
 };
 
@@ -1845,7 +1842,6 @@ type SteeringMutationFallbacks = {
 };
 
 export class CodexJobRegistry {
-  readonly originWaits = new OriginWaits();
   private readonly jobs = new Map<string, CodexJob>();
   private readonly waiters = new Map<string, Set<() => void>>();
   private readonly scopeWaiters = new Map<string, Set<() => void>>();
@@ -1881,6 +1877,10 @@ export class CodexJobRegistry {
     { responseHash: string; promise: Promise<CodexJob> }
   >();
   private readonly deferredSettlements = new Map<string, DeferredJobSettlement>();
+  private readonly deferredExecutions = new Map<
+    string,
+    { launch(): void; discard(): void }
+  >();
   private readonly changeListeners = new Set<() => void>();
   private threadController?: ThreadConnectionController;
   private recoveryController?: AutomaticRecoveryController;
@@ -1894,14 +1894,6 @@ export class CodexJobRegistry {
   }
 
   sweepAutomaticRecovery(): Promise<void> { return this.recoveryController?.sweep() || Promise.resolve(); }
-
-  async recoverAwaitedJob(jobId: string): Promise<void> {
-    if (!this.recoveryController) return;
-    const operation = this.recoveryController.recoverJob(jobId);
-    let timer: NodeJS.Timeout | undefined;
-    try { await Promise.race([operation,new Promise<void>(resolve => {timer=setTimeout(resolve,1_500);})]); }
-    finally { if (timer) clearTimeout(timer); }
-  }
 
   configureThreadConnections(upstream: CodexUpstream, idleMs?: number): void {
     if (this.threadController) return;
@@ -2597,7 +2589,6 @@ export class CodexJobRegistry {
     policy: {
       handoffPolicy?: ActivityHandoffPolicy;
       completionTrigger?: ActivityCompletionTrigger;
-      executionMode?: ActivityExecutionMode;
       kind?: ActivityKind;
     }
   ): BridgeActivity {
@@ -2666,7 +2657,8 @@ export class CodexJobRegistry {
     onComplete?: JobCompletionCallback,
     activeLimit = this.maxConcurrentJobs,
     rejectIfSelectionActive = false,
-    onAssigned?: (assignment: UpstreamWorkerAssignment) => void
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void,
+    deferExecution = false
   ): CodexJob {
     this.pruneAndPersist();
     const replay = this.findRequest(input.scopeId, input.requestId, input.requestHash);
@@ -2702,7 +2694,6 @@ export class CodexJobRegistry {
       ...input,
       activityId: input.activityId || randomUUID(),
       threadId: input.sessionDecision.threadId,
-      executionMode: input.executionMode || "background",
       backendKind: input.backendKind || "app-server",
       trackingState: "liveness-unknown",
       bridgeInstanceId: this.activityStore.bridgeInstanceId,
@@ -2724,7 +2715,7 @@ export class CodexJobRegistry {
       this.jobs.delete(job.jobId);
       throw error;
     }
-    job.promise = Promise.resolve()
+    const execute = () => Promise.resolve()
       .then(() =>
         run(
           (progress) => this.recordProgress(job, progress),
@@ -2748,8 +2739,39 @@ export class CodexJobRegistry {
         }
         this.settleRejectedJob(job, error);
       });
+    if (deferExecution) {
+      job.promise = new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const finish = (operation?: () => Promise<void>) => {
+          if (settled) return;
+          settled = true;
+          this.deferredExecutions.delete(job.jobId);
+          if (operation) void operation().then(resolve, reject);
+          else resolve();
+        };
+        this.deferredExecutions.set(job.jobId, {
+          launch: () => finish(execute),
+          discard: () => finish()
+        });
+      });
+    } else {
+      job.promise = execute();
+    }
     this.pruneAndPersist();
     return job;
+  }
+
+  activateDeferredExecution(jobId: string): void {
+    this.deferredExecutions.get(jobId)?.launch();
+  }
+
+  discardDeferredAdmission(jobId: string): void {
+    const deferred = this.deferredExecutions.get(jobId);
+    if (!deferred) return;
+    deferred.discard();
+    this.deferredSettlements.delete(jobId);
+    this.steeringPromptRedactions.delete(jobId);
+    this.jobs.delete(jobId);
   }
 
   private settleResolvedJob(
@@ -2773,33 +2795,37 @@ export class CodexJobRegistry {
     );
     let undo: (() => void) | undefined;
     try {
-      const finish = () => {
+      const next = this.activityStore.transaction(() => {
         undo = onComplete?.(result) || undefined;
-        job.threadId = job.sessionDecision.threadId;
-        job.status = turnStatus === "interrupted" ? "interrupted" : "completed";
-        job.terminalOrigin = turnStatus === "interrupted"
-          ? "app-server-interrupted"
-          : "normal-completion";
-        job.cancellationIntentId = undefined;
-        job.result = retained.result;
-        job.resultBytes = retained.originalBytes;
-        job.resultOmitted = retained.omitted;
-        job.pendingInteractions = [];
-        job.error = turnStatus === "interrupted"
-          ? "The Codex App Server turn was interrupted before normal completion."
-          : undefined;
-        job.updatedAt = Date.now();
-        job.version += 1;
-        this.persistJob(job);
-      };
-      if (this.stateStore) this.stateStore.transaction(finish);
-      else finish();
+        const candidate: CodexJob = {
+          ...job,
+          threadId: job.sessionDecision.threadId,
+          status: turnStatus === "interrupted" ? "interrupted" : "completed",
+          terminalOrigin: turnStatus === "interrupted"
+            ? "app-server-interrupted"
+            : "normal-completion",
+          cancellationIntentId: undefined,
+          result: retained.result,
+          resultBytes: retained.originalBytes,
+          resultOmitted: retained.omitted,
+          pendingInteractions: [],
+          error: turnStatus === "interrupted"
+            ? "The Codex App Server turn was interrupted before normal completion."
+            : undefined,
+          updatedAt: Date.now(),
+          version: job.version + 1
+        };
+        this.persistJob(candidate, [], false);
+        return candidate;
+      });
+      Object.assign(job, next);
       this.steeringPromptRedactions.delete(job.jobId);
       this.notify(job.jobId);
+      this.notifyScope(job.scopeId);
       this.pruneAndPersist();
     } catch (error) {
       undo?.();
-      throw error;
+      throw new JobTerminalCommitError(error);
     }
   }
 
@@ -2817,60 +2843,110 @@ export class CodexJobRegistry {
       this.steeringPromptsFor(job.jobId)
     );
     let undo: (() => void) | undefined;
-    const fail = () => {
-      // A failed turn can still have created or resumed a durable thread. Keep
-      // the same thread/session persistence callback used by successful turns
-      // so a structured upstream error never leaves that execution untracked.
-      undo = onComplete?.(result) || undefined;
-      job.threadId = job.sessionDecision.threadId;
-      job.status = "failed";
-      job.terminalOrigin = "upstream-failure";
-      job.cancellationIntentId = undefined;
-      job.result = retained.result;
-      job.resultBytes = retained.originalBytes;
-      job.resultOmitted = retained.omitted;
-      job.pendingInteractions = [];
-      job.error = sanitizeTextForJob(
-        toolResultErrorMessage(result),
-        job.cwd,
-        this.allowedRoots,
-        this.steeringPromptsFor(job.jobId)
-      ).slice(0, 4_000);
-      job.updatedAt = Date.now();
-      job.version += 1;
-      this.persistJob(job);
-    };
     try {
-      if (this.stateStore) this.stateStore.transaction(fail);
-      else fail();
+      const next = this.activityStore.transaction(() => {
+        // A failed turn can still have created or resumed a durable thread.
+        // Keep the same callback in the atomic terminal transaction.
+        undo = onComplete?.(result) || undefined;
+        const candidate: CodexJob = {
+          ...job,
+          threadId: job.sessionDecision.threadId,
+          status: "failed",
+          terminalOrigin: "upstream-failure",
+          cancellationIntentId: undefined,
+          result: retained.result,
+          resultBytes: retained.originalBytes,
+          resultOmitted: retained.omitted,
+          pendingInteractions: [],
+          error: sanitizeTextForJob(
+            toolResultErrorMessage(result),
+            job.cwd,
+            this.allowedRoots,
+            this.steeringPromptsFor(job.jobId)
+          ).slice(0, 4_000),
+          updatedAt: Date.now(),
+          version: job.version + 1
+        };
+        this.persistJob(candidate, [], false);
+        return candidate;
+      });
+      Object.assign(job, next);
       this.steeringPromptRedactions.delete(job.jobId);
       this.notify(job.jobId);
+      this.notifyScope(job.scopeId);
       this.pruneAndPersist();
     } catch (error) {
       undo?.();
-      throw error;
+      throw new JobTerminalCommitError(error);
     }
   }
 
   private settleRejectedJob(job: CodexJob, error: unknown): void {
     if (job.status !== "running" && job.status !== "termination-failed") return;
+    const terminalCommitFailed = error instanceof JobTerminalCommitError;
     const workerLost =
       error instanceof Error && error.message.startsWith("CODEX_WORKER_LOST:");
-    job.status = workerLost ? "interrupted" : "failed";
-    job.terminalOrigin = workerLost ? "worker-loss" : "upstream-failure";
-    if (workerLost) job.trackingState = "worker-lost";
-    job.cancellationIntentId = undefined;
-    job.result = undefined;
-    job.resultBytes = undefined;
-    job.resultOmitted = undefined;
-    job.pendingInteractions = [];
-    job.error = sanitizeTextForJob(
-      error instanceof Error ? error.message : String(error),
-      job.cwd,
-      this.allowedRoots,
-      this.steeringPromptsFor(job.jobId)
-    ).slice(0, 4_000);
-    this.recordChange(job);
+    const candidate: CodexJob = {
+      ...job,
+      status: workerLost ? "interrupted" : "failed",
+      terminalOrigin: terminalCommitFailed
+        ? undefined
+        : workerLost
+          ? "worker-loss"
+          : "upstream-failure",
+      trackingState: workerLost ? "worker-lost" : job.trackingState,
+      cancellationIntentId: undefined,
+      result: undefined,
+      resultBytes: undefined,
+      resultOmitted: undefined,
+      pendingInteractions: [],
+      error: sanitizeTextForJob(
+        error instanceof Error ? error.message : String(error),
+        job.cwd,
+        this.allowedRoots,
+        this.steeringPromptsFor(job.jobId)
+      ).slice(0, 4_000),
+      updatedAt: Date.now(),
+      version: job.version + 1
+    };
+    try {
+      this.activityStore.transaction(() => this.persistJob(candidate, [], false));
+      Object.assign(job, candidate);
+    } catch (commitError) {
+      const failure = new JobTerminalCommitError(commitError);
+      const fallback: CodexJob = {
+        ...job,
+        status: "failed",
+        terminalOrigin: undefined,
+        cancellationIntentId: undefined,
+        result: undefined,
+        resultBytes: undefined,
+        resultOmitted: undefined,
+        pendingInteractions: [],
+        error: sanitizeTextForJob(
+          failure.message,
+          job.cwd,
+          this.allowedRoots,
+          this.steeringPromptsFor(job.jobId)
+        ).slice(0, 4_000),
+        updatedAt: Date.now(),
+        version: job.version + 1
+      };
+      try {
+        this.activityStore.transaction(() => this.persistJob(fallback, [], false));
+      } catch {
+        // The durable running receipt remains authoritative. Never publish a
+        // terminal state from memory when neither the intended terminal nor
+        // its explicit persistence-failure receipt could be committed.
+        this.pruneAndPersist();
+        return;
+      }
+      Object.assign(job, fallback);
+    }
+    this.steeringPromptRedactions.delete(job.jobId);
+    this.notify(job.jobId);
+    this.notifyScope(job.scopeId);
+    this.pruneAndPersist();
   }
 
   private flushDeferredSettlement(job: CodexJob): void {
@@ -3550,20 +3626,15 @@ export class CodexJobRegistry {
       .map(({ promise: _promise, ...job }) => job);
   }
 
-  private persistJob(job: CodexJob, removed: string[] = []): void {
-    if (!this.stateStore) {
-      this.persist();
-      this.notifyScope(job.scopeId);
-      return;
-    }
+  private persistJob(job: CodexJob, removed: string[] = [], notifyScope = true): void {
     const { promise: _promise, ...persisted } = job;
-    this.stateStore.transaction(() => {
-      this.stateStore?.upsertJob(persisted);
-      for (const jobId of removed) this.stateStore?.deleteJob(jobId);
+    this.activityStore.transaction(() => {
+      this.activityStore.upsertJob(persisted);
+      for (const jobId of removed) this.activityStore.deleteJob(jobId);
     });
     this.lastPersistedAt = Date.now();
     this.persistenceWarningShown = false;
-    this.notifyScope(job.scopeId);
+    if (notifyScope) this.notifyScope(job.scopeId);
   }
 
   private persistJobBestEffort(job: CodexJob, removed: string[] = []): boolean {
@@ -4633,8 +4704,8 @@ export function registerBridgeTools(
     scope: z.enum(["conversation", "all"]).optional().describe(
       "Open a conversation-scoped Dashboard when the host identifies this conversation, or open all retained work."
     ),
-    backgroundJobId: z.string().uuid().optional().describe(
-      "Exact background Job from a codex_task Dashboard render action. It may be used only with scope='conversation'."
+    jobId: z.string().uuid().optional().describe(
+      "Exact asynchronous Job from a codex_task Dashboard render action. It may be used only with scope='conversation'."
     )
   });
   const dashboardSnapshotInput = z.strictObject({
@@ -4670,7 +4741,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Codex Status`,
       description:
-        "Open the Codex status card. It starts with this conversation when it has Activity or Job records, including completed history; otherwise it shows all conversations. For a background codex_task result that supplies a Dashboard render action, call this tool immediately with its scope and backgroundJobId before replying; that scoped render mounts the automatic Dashboard in that conversation. The user can switch between this conversation and all work in the card.",
+        "Open the Codex status card. It starts with this conversation when it has Activity or Job records, including completed history; otherwise it shows all conversations. For a codex_task result that supplies a Dashboard render action, call this tool immediately with its scope and jobId before replying; that scoped render mounts the automatic Dashboard in that conversation. The user can switch between this conversation and all work in the card.",
       inputSchema: codexDashboardInput,
       outputSchema: dashboardModelOutputSchema,
       annotations: {
@@ -4689,33 +4760,29 @@ export function registerBridgeTools(
       if (args.scope === "conversation" && !scope) {
         throw new Error("DASHBOARD_CONVERSATION_UNAVAILABLE: Reopen the Dashboard in its conversation.");
       }
-      const automaticPresentation = args.backgroundJobId
+      const automaticPresentation = args.jobId
         ? (() => {
             if (args.scope !== "conversation" || !scope) {
               throw new Error(
                 "DASHBOARD_AUTOMATIC_PRESENTATION_UNAVAILABLE: Render the Dashboard in the originating conversation."
               );
             }
-            if (!userSettings.current.dashboardAutoOpenBackground) {
+            if (!userSettings.current.dashboardAutoOpen) {
               throw new Error(
-                "DASHBOARD_AUTO_OPEN_DISABLED: Enable background Dashboard auto-open before rendering this presentation."
+                "DASHBOARD_AUTO_OPEN_DISABLED: Enable automatic Dashboard display before rendering this presentation."
               );
             }
-            const job = jobs.get(args.backgroundJobId);
-            if (
-              !job ||
-              job.scopeId !== scope.scopeId ||
-              job.executionMode !== "background"
-            ) {
+            const job = jobs.get(args.jobId);
+            if (!job || job.scopeId !== scope.scopeId) {
               throw new Error(
-                "DASHBOARD_AUTOMATIC_PRESENTATION_UNAVAILABLE: The requested background work is unavailable in this conversation."
+                "DASHBOARD_AUTOMATIC_PRESENTATION_UNAVAILABLE: The requested work is unavailable in this conversation."
               );
             }
             return true;
           })()
         : false;
-      const completionJob = args.backgroundJobId
-        ? jobs.get(args.backgroundJobId)
+      const completionJob = args.jobId
+        ? jobs.get(args.jobId)
         : undefined;
       const completionActivity = completionJob
         ? jobs.getActivity(completionJob.activityId)
@@ -4729,7 +4796,7 @@ export function registerBridgeTools(
           })
         : "disabled" as const;
       const summary = automaticPresentation
-        ? "The originating conversation Dashboard is open for this background Codex job."
+        ? "The originating conversation Dashboard is open for this Codex job."
         : args.scope === "conversation"
         ? "The Codex status card is open for this conversation."
         : "The Codex status card is open. The card loads current retained work, starting with this conversation when it has records and otherwise showing all conversations.";
@@ -4843,6 +4910,17 @@ export function registerBridgeTools(
     (query) => query.waitMs === undefined || query.waitFor !== undefined,
     "waitFor is required whenever waitMs is sent."
   ).describe("Read one exact Job, optionally waiting for a change or terminal state.");
+  const statusRequestQueryInput = z.strictObject({
+    kind: z.literal("request"),
+    requestId: scopeIdSchema().describe(
+      "Logical codex_task requestId. Use this after an admission response is lost to recover the one existing Job without starting another execution."
+    ),
+    waitFor: statusJobWaitForInput.optional(),
+    waitMs: statusJobWaitMsInput
+  }).refine(
+    (query) => query.waitMs === undefined || query.waitFor !== undefined,
+    "waitFor is required whenever waitMs is sent."
+  ).describe("Resolve one exact retained Job by its scope-bound logical requestId.");
   const statusInputQueryInput = z.strictObject({
     kind: z.literal("input"),
     ...codexInputs.questionInputSchema.shape
@@ -4853,6 +4931,7 @@ export function registerBridgeTools(
   });
   const codexStatusQueryInput = z.union([
     statusJobQueryInput,
+    statusRequestQueryInput,
     statusInputQueryInput,
     statusActivityQueryInput,
     statusThreadQueryInput,
@@ -4889,7 +4968,7 @@ export function registerBridgeTools(
         const { kind, ...input } = query;
         return codexInputs.readInput(input, extra);
       }
-      const jobQuery = query?.kind === "job" ? query : undefined;
+      const jobQuery = query?.kind === "job" || query?.kind === "request" ? query : undefined;
       const activityQuery = query?.kind === "activity" ? query : undefined;
       const threadQuery = query?.kind === "thread" ? query : undefined;
       const pageQuery = query?.kind === "page" ? query : undefined;
@@ -4913,7 +4992,9 @@ export function registerBridgeTools(
             "Job lookup requires conversation metadata or an explicit scopeId."
           );
         }
-        const initial = jobs.get(jobQuery.id);
+        const initial = jobQuery.kind === "job"
+          ? jobs.get(jobQuery.id)
+          : jobs.peekRequest(scopeId, jobQuery.requestId);
         if (!initial || initial.scopeId !== scopeId) throw scopedHandleUnavailable("job");
         let wait: CodexJobWaitResult | undefined;
         if (jobQuery.waitFor) {
@@ -4934,7 +5015,7 @@ export function registerBridgeTools(
           signal?.addEventListener("abort", onAbort, { once: true });
           try {
             wait = await jobs.wait(
-              jobQuery.id,
+              initial.jobId,
               jobQuery.waitFor,
               jobQuery.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS,
               signal
@@ -5800,7 +5881,6 @@ export function registerBridgeTools(
   });
   const activityPolicyPatchInput = z.strictObject({
     kind: z.enum(ACTIVITY_KINDS).optional(),
-    executionMode: z.enum(ACTIVITY_EXECUTION_MODES).optional(),
     handoff: z.enum(ACTIVITY_HANDOFF_POLICIES).optional(),
     completion: z.enum(ACTIVITY_COMPLETION_TRIGGERS).optional()
   }).refine(
@@ -5883,7 +5963,7 @@ export function registerBridgeTools(
       const operation = args.operation;
       if (
         operation.kind === "set-policy" &&
-        !["kind", "executionMode", "handoff", "completion"].some((key) =>
+        !["kind", "handoff", "completion"].some((key) =>
           Object.prototype.hasOwnProperty.call(operation.policy, key)
         )
       ) {
@@ -5931,7 +6011,6 @@ export function registerBridgeTools(
           case "set-policy":
             activity = jobs.setActivityPolicy(args.activityId, {
               kind: operation.policy.kind,
-              executionMode: operation.policy.executionMode,
               handoffPolicy: operation.policy.handoff,
               completionTrigger: operation.policy.completion
             });
@@ -6305,7 +6384,7 @@ export function registerBridgeTools(
     uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
     maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
     showBridgeThreadsInCodexApp: z.boolean().optional(),
-    dashboardAutoOpenBackground: z.boolean().optional(),
+    dashboardAutoOpen: z.boolean().optional(),
     completionFollowUp: z.boolean().optional(),
     projectOperations: z.array(projectRegistryOperationInput)
       .min(1)
@@ -6352,7 +6431,7 @@ export function registerBridgeTools(
         "uiLocalePreference",
         "maxConcurrentJobs",
         "showBridgeThreadsInCodexApp",
-        "dashboardAutoOpenBackground",
+        "dashboardAutoOpen",
         "completionFollowUp",
         "projectOperations"
       ] as const;
@@ -6368,7 +6447,7 @@ export function registerBridgeTools(
         "uiLocalePreference",
         "maxConcurrentJobs",
         "showBridgeThreadsInCodexApp",
-        "dashboardAutoOpenBackground",
+        "dashboardAutoOpen",
         "completionFollowUp"
       ] as const) {
         if (settings[key] !== undefined) {
@@ -6534,7 +6613,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Run or continue one Codex turn in the current conversation using the selected project and saved bridge settings. When a background start returns a codex_dashboard next action, call that render tool immediately before any prose response so the originating conversation Dashboard mounts. When macOS background-completion notifications are enabled, a new one-job background Activity automatically queues its native notification after successful terminal completion. Multi-job or explicit Activity policies remain under the caller's control.",
+        "Durably admit one asynchronous Codex turn in the current conversation and return its exact Job identity without waiting for completion. When the result supplies a codex_dashboard next action, call that render tool immediately before any prose response so the originating conversation Dashboard mounts. When macOS completion notifications are enabled, a new one-job Activity automatically queues its native notification after successful terminal completion. Multi-job or explicit Activity policies remain under the caller's control.",
       inputSchema: codexTaskInputSchema(config, taskExecutionEnvelopeRef()),
       outputSchema: codexTaskOutputSchema,
       annotations: codexTaskEnvelopeAnnotations(config)
@@ -6544,27 +6623,10 @@ export function registerBridgeTools(
       let releaseRuntimeAdmission: (() => void) | undefined;
       let admittedForCall = false;
       let taskScopeId: string | undefined;
-      let originWait: OriginWaitLease | undefined;
       const onTaskAdmitted = () => {
         admittedForCall = true;
-        const job = taskScopeId ? jobs.peekRequest(taskScopeId,args.requestId) : undefined;
-        if (job?.executionMode === "foreground") originWait = jobs.originWaits.beginTask(job,extra.mcpReq.id,extra.mcpReq.signal);
         releaseRuntimeAdmission?.();
         releaseRuntimeAdmission = undefined;
-      };
-      const finishOriginTask = async (result: ToolResult): Promise<ToolResult> => {
-        const job = taskScopeId ? jobs.peekRequest(taskScopeId,args.requestId) : undefined;
-        if (!job || !originWait) return result;
-        if (["failed","interrupted","termination-failed"].includes(job.status)) await jobs.recoverAwaitedJob(job.jobId);
-        const recovery = jobs.originWaits.finish(originWait,job,jobs.admissionStateStore.automaticRecovery.list(job.scopeId));
-        if (Object.keys(recovery).length === 0) return result;
-        const structured = result.structuredContent &&
-          typeof result.structuredContent === "object" &&
-          !Array.isArray(result.structuredContent)
-          ? result.structuredContent as Record<string, unknown>
-          : {};
-        return {...result,...contractedToolResult(result.isError ? taskErrorResultContract : taskStateResultContract,
-          job,{...structured,...recovery},{content:result.content},{isError:result.isError})};
       };
       try {
         const _meta = extra.mcpReq._meta;
@@ -6578,16 +6640,16 @@ export function registerBridgeTools(
         );
         taskScopeId = scope.scopeId;
         const onAbort = () => {
-          const running = jobs.peekRequest(scope.scopeId, args.requestId);
-          if (!running || running.executionMode !== "foreground") return;
+          const admitted = jobs.peekRequest(scope.scopeId, args.requestId);
+          if (!admitted) return;
           jobs.recordTransportObservation({
             kind: "mcp-handler-aborted",
             scopeId: scope.scopeId,
-            jobId: running.jobId,
-            activityId: running.activityId,
+            jobId: admitted.jobId,
+            activityId: admitted.activityId,
             toolName: "codex_task",
             callerRequestDigest: correlationDigest("mcp-request", extra.mcpReq.id),
-            reasonCode: "foreground-call-detached"
+            reasonCode: "task-call-detached"
           });
         };
         signal?.addEventListener("abort", onAbort, { once: true });
@@ -6629,10 +6691,8 @@ export function registerBridgeTools(
           activityRequest: requestedActivity,
           agentResolution
         });
-        const executionMode = resolveTaskExecutionMode(requestedActivity, jobs);
-        const activityRequest = applyBackgroundCompletionNotificationPolicy(
+        const activityRequest = applyCompletionNotificationPolicy(
           requestedActivity,
-          executionMode,
           preferences
         );
 
@@ -6711,7 +6771,6 @@ export function registerBridgeTools(
             sandbox,
             operation: "start",
             backendKind: config.defaultBackend,
-            executionMode,
             effectiveSelection: decision.effectiveSelection,
             agentId: agentResolution.agent?.agentId,
             contextMode: "fresh",
@@ -6725,10 +6784,9 @@ export function registerBridgeTools(
           if (replay) {
             return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
           }
-          return await finishOriginTask(await startNewSession({
+          return await startNewSession({
             args,
             routing,
-            executionMode,
             requestedMode: "new",
             reason: activityRequest.activityId ? "activity-no-compatible" : "activity-new",
             config,
@@ -6754,7 +6812,7 @@ export function registerBridgeTools(
             },
             preflightDone: true,
             onAdmitted: onTaskAdmitted
-          }));
+          });
         }
 
         if (!agentResolution.agent) {
@@ -6830,7 +6888,6 @@ export function registerBridgeTools(
           sandbox: session.sandbox,
           operation: agentResolution.contextMode === "continue" ? "continue" : "start",
           backendKind: session.backendKind,
-          executionMode,
           effectiveSelection: executionDecision.effectiveSelection,
           agentId: agentResolution.agent.agentId,
           contextMode: agentResolution.contextMode,
@@ -6845,11 +6902,10 @@ export function registerBridgeTools(
           return resultForJob(replay, config.jobStaleAfterMs, preferences, jobs);
         }
         if (agentResolution.contextMode === "fork") {
-          return await finishOriginTask(await forkTrackedSession({
+          return await forkTrackedSession({
             prompt: args.prompt,
             session,
             routing,
-            executionMode,
             config,
             upstream,
             sessions,
@@ -6865,15 +6921,14 @@ export function registerBridgeTools(
             executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
             projectRequest: args.project,
             onAdmitted: onTaskAdmitted
-          }));
+          });
         }
-        return await finishOriginTask(await continueTrackedSession({
+        return await continueTrackedSession({
           prompt: args.prompt,
           requestedMode: "continue",
           reason: "activity-compatible",
           session,
           routing,
-          executionMode,
           config,
           upstream,
           sessions,
@@ -6890,10 +6945,10 @@ export function registerBridgeTools(
           executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
           projectRequest: args.project,
           onAdmitted: onTaskAdmitted
-        }));
+        });
       } catch (error) {
         const admitted = admittedForCall && taskScopeId ? jobs.peekRequest(taskScopeId, args.requestId) : undefined;
-        if (admitted) return await finishOriginTask(resultForJob(admitted, config.jobStaleAfterMs, userSettings.current, jobs, false));
+        if (admitted) return resultForJob(admitted, config.jobStaleAfterMs, userSettings.current, jobs, false);
         if (error instanceof ExecutionPolicyChangedError) {
           return executionPolicyChangedResult(error);
         }
@@ -6934,7 +6989,6 @@ export function registerBridgeTools(
         }
         return taskPreflightErrorResult(errorFromException(error));
       } finally {
-        jobs.originWaits.abandon(originWait);
         releaseRuntimeAdmission?.();
         removeTaskAbortObserver?.();
       }
@@ -7144,7 +7198,6 @@ type CodexTaskArgs = {
   project?: ProjectSelection;
   activity?: CodexTaskActivityInput;
   agent?: CodexTaskAgentInput;
-  executionMode?: ActivityExecutionMode;
   selection?: ModelChoice;
   /** Normalized private fields derived solely from the current nested input. */
   activityId?: string;
@@ -7417,34 +7470,22 @@ type ActivityTaskRequest = Pick<
   | "continuationOfActivityId"
   | "activityTitle"
   | "activityKind"
-  | "executionMode"
   | "handoffPolicy"
   | "completionTrigger"
 >;
 
-function resolveTaskExecutionMode(
-  request: ActivityTaskRequest,
-  jobs: CodexJobRegistry
-): ActivityExecutionMode {
-  if (request.executionMode) return request.executionMode;
-  if (!request.activityId) return "background";
-  return jobs.getActivity(request.activityId)?.executionMode || "background";
-}
-
 /**
- * A new one-job background Activity is the unit a native completion alert can
+ * A new one-job Activity is the unit a native completion alert can
  * safely represent. Existing and linked Activities retain their explicit
  * lifecycle policy; multi-job callers still choose their own barrier.
  */
-function applyBackgroundCompletionNotificationPolicy(
+function applyCompletionNotificationPolicy(
   request: ActivityTaskRequest,
-  executionMode: ActivityExecutionMode,
   preferences: Pick<BridgeUserSettings, "completionFollowUp">
 ): ActivityTaskRequest {
   if (
     request.activityId !== undefined ||
     request.continuationOfActivityId !== undefined ||
-    executionMode !== "background" ||
     preferences.completionFollowUp !== true ||
     request.handoffPolicy !== undefined ||
     request.completionTrigger !== undefined
@@ -7795,7 +7836,6 @@ function validateActivityTaskRequest(
     continuationOfActivityId: args.continuationOfActivityId,
     activityTitle: args.activityTitle,
     activityKind: args.activityKind,
-    executionMode: args.executionMode,
     handoffPolicy: args.handoffPolicy,
     completionTrigger: args.completionTrigger
   };
@@ -7845,7 +7885,6 @@ function resolveActivityForTask(
     continuationOfActivityId: validated.continuationOfActivityId,
     title: validated.activityTitle,
     kind: validated.activityKind,
-    executionMode: validated.executionMode,
     handoffPolicy: validated.handoffPolicy,
     completionTrigger: validated.completionTrigger
   });
@@ -7925,7 +7964,6 @@ function recordAdmittedThread(input: {
 async function startNewSession(input: {
   args: CodexTaskArgs;
   routing: CodexRouting;
-  executionMode: ActivityExecutionMode;
   requestedMode: SessionMode;
   reason: SessionDecision["reason"];
   config: BridgeConfig;
@@ -7993,7 +8031,6 @@ async function startNewSession(input: {
     rejectIfSelectionActive: input.rejectIfSelectionActive,
     sessionDecision,
     activityRequest: input.activityRequest,
-    executionMode: input.executionMode,
     agent: input.agent,
     newAgentName: input.newAgentName,
     contextMode: input.contextMode,
@@ -8102,7 +8139,6 @@ async function continueTrackedSession(input: {
   reason: SessionDecision["reason"];
   session: TrackedCodexSession;
   routing: CodexRouting;
-  executionMode: ActivityExecutionMode;
   config: BridgeConfig;
   upstream: CodexUpstream;
   sessions: SessionRegistry;
@@ -8152,7 +8188,6 @@ async function continueTrackedSession(input: {
     rejectIfSelectionActive: input.rejectIfSelectionActive,
     sessionDecision: decision,
     activityRequest: input.activityRequest,
-    executionMode: input.executionMode,
     agent: input.agent,
     contextMode: input.contextMode,
     agentRole: input.agentRole,
@@ -8251,7 +8286,6 @@ async function forkTrackedSession(input: {
   prompt: string;
   session: TrackedCodexSession;
   routing: CodexRouting;
-  executionMode: ActivityExecutionMode;
   config: BridgeConfig;
   upstream: CodexUpstream;
   sessions: SessionRegistry;
@@ -8302,7 +8336,6 @@ async function forkTrackedSession(input: {
     executionDecision: input.executionDecision,
     sessionDecision,
     activityRequest: input.activityRequest,
-    executionMode: input.executionMode,
     agent: input.agent,
     contextMode: "fork",
     agentRole: input.agentRole,
@@ -8389,7 +8422,6 @@ async function runCodex(input: {
   routing: CodexRouting;
   sessionDecision: SessionDecision;
   activityRequest: ActivityTaskRequest;
-  executionMode: ActivityExecutionMode;
   agent?: BridgeAgent;
   newAgentName?: string;
   contextMode: AgentContextMode;
@@ -8415,6 +8447,7 @@ async function runCodex(input: {
     throw new Error("Codex task admission requires an existing Agent or a new Agent name.");
   }
   let job!: CodexJob;
+  let deferredAdmissionJobId: string | undefined;
   const admit = () => input.jobs.activityTransaction(() => {
     const replay = input.jobs.findRequest(
       input.routing.scopeId,
@@ -8478,7 +8511,6 @@ async function runCodex(input: {
         projectRequest: input.projectRequest,
         agentId: agent.agentId,
         contextMode: input.contextMode,
-        executionMode: input.executionMode,
         cwd: input.cwd,
         sandbox: input.sandbox,
         scopeId: input.routing.scopeId,
@@ -8517,49 +8549,49 @@ async function runCodex(input: {
       input.rejectIfSelectionActive,
       input.onAssigned
         ? (assignment) => input.onAssigned?.(assignment, agent)
-        : undefined
+        : undefined,
+      true
     );
-    if (shouldSealOneJobCompletionActivity(input.activityRequest, activity, job.executionMode)) {
+    deferredAdmissionJobId = job.jobId;
+    if (shouldSealOneJobCompletionActivity(input.activityRequest, activity)) {
       // A newly declared notify/sealed Activity represents one admitted
-      // background Job. Seal it after the Job exists so terminal settlement
+      // asynchronous Job. Seal it after the Job exists so terminal settlement
       // can atomically create the durable completion outbox record.
       input.jobs.sealActivity(activity.activityId);
     }
   });
-  if (input.userSettings && input.projectRequest) {
-    input.userSettings.admissionTransaction(admit);
-  } else {
-    admit();
+  try {
+    if (input.userSettings && input.projectRequest) {
+      input.userSettings.admissionTransaction(admit);
+    } else {
+      admit();
+    }
+  } catch (error) {
+    if (deferredAdmissionJobId) {
+      input.jobs.discardDeferredAdmission(deferredAdmissionJobId);
+    }
+    throw error;
+  }
+  if (deferredAdmissionJobId) {
+    input.jobs.activateDeferredExecution(deferredAdmissionJobId);
   }
   input.onAdmitted?.();
-  if (job.executionMode === "background") {
-    return taskResultForJob(
-      job,
-      input.config.jobStaleAfterMs,
-      input.preferences,
-      input.jobs,
-      false
-    );
-  }
-  await job.promise;
-  if (job.status === "completed" && job.result) {
-    return forwardResult(job.result, job, input.preferences, input.jobs, false);
-  }
-  if (job.status === "failed" && job.result?.isError) {
-    return forwardResult(job.result, job, input.preferences, input.jobs, false);
-  }
-  throw new Error(job.error || "Codex job failed.");
+  return taskResultForJob(
+    job,
+    input.config.jobStaleAfterMs,
+    input.preferences,
+    input.jobs,
+    false
+  );
 }
 
 function shouldSealOneJobCompletionActivity(
   request: ActivityTaskRequest,
-  activity: BridgeActivity,
-  executionMode: ActivityExecutionMode
+  activity: BridgeActivity
 ): boolean {
   return (
     request.activityId === undefined &&
     request.continuationOfActivityId === undefined &&
-    executionMode === "background" &&
     activity.handoffPolicy === "notify" &&
     activity.completionTrigger === "sealed-jobs-terminal"
   );
@@ -8876,7 +8908,7 @@ function formatJobStatus(
   job: CodexJob,
   staleAfterMs: number,
   wait?: CodexJobWaitResult,
-  preferences?: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">,
+  preferences?: Pick<BridgeUserSettings, "dashboardAutoOpen" | "completionFollowUp">,
   registry?: CodexJobRegistry,
   replay = false
 ): Record<string, unknown> {
@@ -8905,11 +8937,13 @@ function formatJobStatus(
   const error = job.status === "failed" || job.status === "interrupted" || job.status === "cancelled"
     ? normalizeStructuredError(
         retainedError || {
-          code: job.status === "cancelled"
-            ? "JOB_CANCELLED"
-            : job.status === "interrupted"
-              ? "JOB_INTERRUPTED"
-              : "JOB_FAILED",
+          code: job.error?.startsWith("BRIDGE_TERMINAL_COMMIT_FAILED:")
+            ? "BRIDGE_TERMINAL_COMMIT_FAILED"
+            : job.status === "cancelled"
+              ? "JOB_CANCELLED"
+              : job.status === "interrupted"
+                ? "JOB_INTERRUPTED"
+                : "JOB_FAILED",
           message:
             job.error ||
             (job.status === "interrupted"
@@ -8937,9 +8971,9 @@ function formatJobStatus(
         ...(dashboard.automatic
           ? [{
               tool: "codex_dashboard",
-              arguments: { scope: "conversation", backgroundJobId: job.jobId },
+              arguments: { scope: "conversation", jobId: job.jobId },
               userPrompt:
-                "Call this render tool before replying so the originating background Dashboard is mounted."
+                "Call this render tool before replying so the originating Dashboard is mounted."
             }]
           : [])
       ]
@@ -8954,7 +8988,6 @@ function formatJobStatus(
     activityId: job.activityId,
     agentId: job.agentId || null,
     contextMode: job.contextMode || null,
-    executionMode: job.executionMode,
     backendKind: job.backendKind,
     ...(job.runtime ? { runtime: safeRuntimeMetadata(job.runtime) } : {}),
     threadId: job.threadId || job.sessionDecision.threadId || null,
@@ -8980,7 +9013,6 @@ function formatJobStatus(
       jobId: job.jobId,
       agentId: job.agentId || null,
       projectName: job.projectName || null,
-      executionMode: job.executionMode,
       dashboard
     },
     createdAt: new Date(job.createdAt).toISOString(),
@@ -9013,7 +9045,7 @@ function formatJobStatus(
           ? "Codex is terminating; refresh authoritative status until it reaches a terminal state."
           : job.status === "termination-failed"
             ? "Codex termination is unconfirmed; refresh status and retry the explicit cancellation if needed."
-            : "Codex is running. Keep this GPT response active through bounded input waits, handle ordinary questions, and retrieve the exact terminal Job result."
+            : "Codex is running independently. Query this exact Job when needed, handle any pending input, and retrieve its terminal result before reporting completion."
         : job.status === "completed"
           ? resultOmitted
             ? "Codex completed, but the primary result exceeded the configured retention limit and was omitted."
@@ -9023,15 +9055,13 @@ function formatJobStatus(
 }
 
 function dashboardPresentationHint(
-  job: Pick<CodexJob, "activityId" | "executionMode">,
-  preferences?: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">,
+  job: Pick<CodexJob, "activityId">,
+  preferences?: Pick<BridgeUserSettings, "dashboardAutoOpen" | "completionFollowUp">,
   registry?: CodexJobRegistry
 ) {
-  const automatic = job.executionMode === "background" &&
-    preferences?.dashboardAutoOpenBackground !== false;
+  const automatic = preferences?.dashboardAutoOpen !== false;
   const activity = registry?.getActivity(job.activityId);
-  const completionDeliveryRoute = job.executionMode === "background" &&
-    preferences?.completionFollowUp === true &&
+  const completionDeliveryRoute = preferences?.completionFollowUp === true &&
     activity?.handoffPolicy === "notify" &&
     activity.completionTrigger === "sealed-jobs-terminal"
     ? selectCompletionDeliveryRoute({ nativeNotificationDispatcher: true })
@@ -9041,11 +9071,7 @@ function dashboardPresentationHint(
     openTool: "codex_dashboard",
     scope: "conversation",
     automatic,
-    reason: automatic
-      ? "background-enabled" as const
-      : job.executionMode === "foreground"
-        ? "foreground" as const
-        : "setting-disabled" as const,
+    reason: automatic ? "enabled" as const : "setting-disabled" as const,
     completionDeliveryRoute
   };
 }
@@ -9057,7 +9083,6 @@ function formatJobSummary(job: CodexJob, staleAfterMs: number): Record<string, u
     agentId: job.agentId || null,
     contextMode: job.contextMode || null,
     status: job.status,
-    executionMode: job.executionMode,
     backendKind: job.backendKind,
     threadId: job.threadId || job.sessionDecision.threadId || null,
     turnId: appServerTurnId(job) || null,
@@ -9144,7 +9169,6 @@ function formatActivitySummary(activity: BridgeActivity): Record<string, unknown
     cardGeneration: activity.cardGeneration,
     title: activity.title,
     kind: activity.kind,
-    executionMode: activity.executionMode,
     handoffPolicy: activity.handoffPolicy,
     completionTrigger: activity.completionTrigger,
     lifecycle: activity.lifecycle,
@@ -9315,7 +9339,7 @@ export type BridgeSettingsPatchInput = {
   uiLocalePreference?: UiLocalePreference;
   maxConcurrentJobs?: number;
   showBridgeThreadsInCodexApp?: boolean;
-  dashboardAutoOpenBackground?: boolean;
+  dashboardAutoOpen?: boolean;
   completionFollowUp?: boolean;
   projectOperations?: ProjectRegistryOperation[];
 };
@@ -11913,8 +11937,6 @@ function codexTaskInputSchema(
     "Unique idempotency UUID for one logical Codex call. Reuse it only for an exact retry. Never reuse it to group different tasks or multiple calls in one GPT response."
   );
   const prompt = verbatimInput(config.maxPromptChars, "Codex prompt").describe("Instruction for Codex.");
-  const executionMode = z.enum(ACTIVITY_EXECUTION_MODES).optional()
-    .describe("Controls Codex execution timing. Use background for an immediate tracked job or foreground to wait for the terminal result. Omit it to retain an existing Activity mode or default a new Activity to background.");
   const project = currentProjectSelectionZod().optional().describe(
     "Exact current selector for new/fresh work. Omit for continue/fork; never send a path or private project ID."
   );
@@ -11933,7 +11955,6 @@ function codexTaskInputSchema(
     project,
     activity: activity.optional(),
     agent: agent.optional(),
-    executionMode,
     selection: modelChoiceZod().optional().describe(
       "Exact model/reasoning choice discovered through codex_models. Required at runtime for automatic-policy new Activity, new Agent, and fresh context; automatic continue/fork may omit it to inherit the thread selection. Fixed policy must omit it."
     )
@@ -12001,7 +12022,6 @@ type TaskRequestHashInput = {
   sandbox: SandboxMode;
   operation: CodexJobOperation;
   backendKind: CodexBackendKind;
-  executionMode: ActivityExecutionMode;
   effectiveSelection: ModelSelection;
   agentId?: string;
   contextMode: AgentContextMode;
@@ -12018,7 +12038,6 @@ function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
     : {
         title: canonicalActivityTitle(input.activityRequest.activityTitle || "Codex activity"),
         kind: input.activityRequest.activityKind || "other",
-        executionMode: input.executionMode,
         handoffPolicy: input.activityRequest.handoffPolicy || "none",
         completionTrigger: input.activityRequest.completionTrigger || "manual"
       };
@@ -12073,7 +12092,6 @@ function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
           backendKind: input.backendKind,
           cwd: input.cwd,
           sandbox: input.sandbox,
-          executionMode: input.executionMode,
           modelSelection: {
             model: input.effectiveSelection.model,
             reasoningEffort: input.effectiveSelection.reasoningEffort,
@@ -12913,10 +12931,6 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     typeof value.activityId === "string" && SCOPE_ID_PATTERN.test(value.activityId)
       ? value.activityId.toLowerCase()
       : undefined;
-  const executionMode =
-    value.executionMode === "foreground" || value.executionMode === "background"
-      ? value.executionMode
-      : "background";
   const backendKind =
     typeof value.backendKind === "string" && value.backendKind ? value.backendKind : "mcp-server";
   const trackingState = readTrackingState(value.trackingState) ||
@@ -13026,7 +13040,8 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
       requestHashVersion !== 7 &&
       requestHashVersion !== 8 &&
       requestHashVersion !== 9 &&
-      requestHashVersion !== 10) ||
+      requestHashVersion !== 10 &&
+      requestHashVersion !== 11) ||
     !isOptionalString(value.selectionKey) ||
     !Array.isArray(value.exclusiveKeys) ||
     !value.exclusiveKeys.every((entry) => typeof entry === "string") ||
@@ -13070,7 +13085,6 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     agentId: value.agentId,
     contextMode: value.contextMode as AgentContextMode | undefined,
     threadId: value.threadId || sessionDecision.threadId,
-    executionMode,
     backendKind,
     trackingState,
     runtime: safeRuntimeMetadata(value.runtime),
@@ -13487,7 +13501,7 @@ function codexTaskEnvelopeAnnotations(config: BridgeConfig) {
 function forwardResult(
   result: ToolResult,
   job: CodexJob,
-  preferences: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">,
+  preferences: Pick<BridgeUserSettings, "dashboardAutoOpen" | "completionFollowUp">,
   registry?: CodexJobRegistry,
   replay = false
 ): ToolResult {
@@ -13556,7 +13570,7 @@ function forwardResult(
 function taskResultForJob(
   job: CodexJob,
   staleAfterMs: number,
-  preferences: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">,
+  preferences: Pick<BridgeUserSettings, "dashboardAutoOpen" | "completionFollowUp">,
   registry: CodexJobRegistry | undefined,
   replay: boolean
 ): ToolResult {
@@ -13579,7 +13593,7 @@ function taskResultForJob(
 
 function taskProjectionForJob(
   job: CodexJob,
-  preferences: Pick<BridgeUserSettings, "dashboardAutoOpenBackground" | "completionFollowUp">,
+  preferences: Pick<BridgeUserSettings, "dashboardAutoOpen" | "completionFollowUp">,
   registry: CodexJobRegistry | undefined,
   replay: boolean,
   staleAfterMs = registry?.staleThresholdMs || 1
@@ -13600,7 +13614,7 @@ function taskProjectionForJob(
     ? modelPrimaryAnswer(job.result)
     : undefined;
   const structured = codexTaskOutputSchema.parse({
-    contractVersion: "2",
+    contractVersion: "3",
     kind: "task",
     state: semantic.status,
     terminal: semantic.terminal,
@@ -13614,7 +13628,6 @@ function taskProjectionForJob(
     requestId: semantic.requestId,
     jobVersion: semantic.versions.job,
     activityVersion: semantic.versions.activity ?? null,
-    executionMode: semantic.executionMode,
     backend: semantic.backendKind,
     sandbox: semantic.sandbox,
     requestedModel: semantic.executionAudit?.requested?.model ?? null,
@@ -13634,7 +13647,7 @@ function taskProjectionForJob(
       ...semantic.nextActions.map(modelNextActionProjection),
       ...(semantic.terminal
         ? []
-        : [guidance("Keep this GPT response active while Codex works. Use bounded input waits, answer questions, then retrieve each exact terminal Job result before reporting completion.")])
+        : [guidance("This Job continues independently of the current GPT response. Query the exact Job when needed, answer pending questions, and retrieve its terminal result before reporting completion.")])
     ]
   });
   return { structured };
@@ -13829,11 +13842,9 @@ function statusItemProjection(
           : undefined
       }
     : undefined;
-  const execution = typeof input.executionMode === "string" &&
-    typeof input.backendKind === "string" &&
+  const execution = typeof input.backendKind === "string" &&
     typeof input.sandbox === "string"
     ? {
-        mode: input.executionMode,
         backend: input.backendKind,
         sandbox: input.sandbox
       }
@@ -14437,7 +14448,7 @@ function taskPreflightErrorResult(
   const nextActions = structuredErrorNextActions(errorValue);
   const error = normalizeStructuredError(errorValue);
   const structured = codexTaskOutputSchema.parse({
-    contractVersion: "2",
+    contractVersion: "3",
     kind: "task",
     state: status,
     terminal: true,
@@ -14451,7 +14462,6 @@ function taskPreflightErrorResult(
     requestId: null,
     jobVersion: null,
     activityVersion: null,
-    executionMode: null,
     backend: null,
     sandbox: null,
     requestedModel: null,

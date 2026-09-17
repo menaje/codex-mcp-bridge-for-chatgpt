@@ -134,6 +134,23 @@ final class RemoteConnectionTests: XCTestCase {
             serverId: hello.server.id,
             certificateSha256: hello.server.certificateSha256
         ))
+        let previousProtocol = RemoteCompanionHello(
+            protocol: RemoteServerProtocolInfo(
+                name: remoteCompanionProtocolName,
+                version: remoteCompanionProtocolVersion - 1
+            ),
+            server: hello.server,
+            bridge: hello.bridge,
+            capabilities: hello.capabilities
+        )
+        XCTAssertThrowsError(try previousProtocol.validate(
+            serverId: hello.server.id,
+            certificateSha256: hello.server.certificateSha256
+        )) { error in
+            guard case RemoteCompanionError.incompatibleProtocol = error else {
+                return XCTFail("Expected incompatibleProtocol, got \(error)")
+            }
+        }
         XCTAssertThrowsError(try hello.validate(
             serverId: "22222222-2222-4222-8222-222222222222",
             certificateSha256: hello.server.certificateSha256

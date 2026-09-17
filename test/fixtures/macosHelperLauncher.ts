@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import { COMPANION_PROTOCOL_VERSION } from "../../src/companionServer.js";
 
 export function writeFakeLauncher(
   file: string,
@@ -136,7 +137,7 @@ const server = createServer((socket) => {
       return;
     }
     const result = request.method === "companion.hello" ? {
-      protocol: { name: "codex-mcp-bridge-companion", version: 9 },
+      protocol: { name: "codex-mcp-bridge-companion", version: ${COMPANION_PROTOCOL_VERSION} },
       bridge: { buildId: "development" }
     } : {
       acceptingNewJobs,

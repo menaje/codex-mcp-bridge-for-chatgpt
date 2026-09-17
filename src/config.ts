@@ -144,7 +144,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   }
   if (normalizeOptional(read("FAST_RETURN_MS"))) {
     startupWarnings.push(
-      "CODEX_MCP_BRIDGE_FAST_RETURN_MS is retired and ignored. Choose foreground or background explicitly; background returns immediately."
+      "CODEX_MCP_BRIDGE_FAST_RETURN_MS is retired and ignored. codex_task now uses one durable asynchronous admission contract and does not wait for a fixed return timer."
     );
   }
   const retiredMcpSettings = [

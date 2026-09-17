@@ -10,12 +10,12 @@ There is no hidden parser for a previous tool generation.
 
 ## Task admission
 
-`codex_task` uses input contract version 5. A new logical task needs:
+`codex_task` uses input contract version 6. A new logical task needs:
 
 ```json
 {
   "requestId": "a UUID for this logical task",
-  "taskContractVersion": "5",
+  "taskContractVersion": "6",
   "executionEnvelopeRef": "the exact 64-hex value from tools/list",
   "prompt": "the user's requested work",
   "project": {
@@ -28,8 +28,17 @@ There is no hidden parser for a previous tool generation.
 
 The project selector is required for fresh work and is checked again at
 admission. Continuations use the retained Agent context and its admission-time
-project. `requestId` is idempotency state for the logical work; reuse it only
-for an identical retry. It is distinct from the MCP request ID.
+project. `requestId` is durable idempotency state for the logical work; reuse it
+only for an identical retry. It is distinct from the MCP request ID. If the
+admission response is lost, recover the receipt with
+`codex_status({"query":{"kind":"request","requestId":"..."}})` in the same
+scope. Reusing the ID with different task input is a conflict.
+
+All new work uses one asynchronous admission path. The bridge persists the Job,
+request receipt, versions, and requery handles before returning. It does not wait
+for Codex completion in the task call, and losing the MCP or HTTP connection does
+not cancel the admitted Job. Read progress and the terminal result with
+`codex_status`; use `codex_cancel` only for explicit stop intent.
 
 The bridge owns access policy, the permitted execution envelope, project
 authorization, and any App Server capability checks. Callers cannot pass a
@@ -59,8 +68,8 @@ requires one. A later policy change is rechecked at admission.
 
 ## Read, mutation, and card inputs
 
-`codex_status` has closed query variants for an exact Job, Activity, thread,
-project, or bounded input wait. `codex_cancel` and state-changing tools require
+`codex_status` has closed query variants for an exact request receipt, Job,
+Activity, thread, project, or bounded input wait. `codex_cancel` and state-changing tools require
 their own idempotency UUID and exact version. An out-of-date version, a
 different retry payload, or a scope/ownership mismatch is a rejection, not a
 best-effort mutation.
@@ -84,8 +93,8 @@ settings record.
 Do not send:
 
 - model-catalog `contractVersion`;
-- Task contract version 2, a legacy project selector, `projectLookup`, or
-  retired execution/UI fields;
+- Task contract versions 2 through 5, a legacy project selector,
+  `projectLookup`, `executionMode`, or other retired execution/UI fields;
 - `requiredSkills` or any Bridge-document reference in `codex_task`;
 - legacy cancellation and Activity-update shapes;
 - a compatibility tool name, card resource URI, or session identifier.

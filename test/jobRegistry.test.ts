@@ -134,6 +134,127 @@ describe("CodexJobRegistry persistence", () => {
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
   });
 
+  it("does not publish an in-memory completion when the atomic terminal commit fails", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
+    const store = registry.admissionStateStore;
+    const originalUpsert = store.upsertJob.bind(store);
+    let injected = false;
+    vi.spyOn(store, "upsertJob").mockImplementation((value) => {
+      if (!injected && (value as { status?: unknown }).status === "completed") {
+        injected = true;
+        throw new Error("injected terminal persistence failure");
+      }
+      return originalUpsert(value);
+    });
+
+    const job = registry.start(jobInput(root), async () => result("commit-failure-thread"));
+    await job.promise;
+
+    expect(injected).toBe(true);
+    expect(registry.get(job.jobId)).toMatchObject({
+      status: "failed",
+      terminalOrigin: undefined,
+      error: expect.stringContaining("BRIDGE_TERMINAL_COMMIT_FAILED")
+    });
+    expect(store.listJobs()).toEqual([
+      expect.objectContaining({
+        jobId: job.jobId,
+        status: "failed",
+        error: expect.stringContaining("BRIDGE_TERMINAL_COMMIT_FAILED")
+      })
+    ]);
+    expect(store.listJobs()[0]).not.toHaveProperty("terminalOrigin");
+    expect(store.listJobEvents(job.jobId).map((event) => event.eventType)).toEqual([
+      "job-started",
+      "job-failed"
+    ]);
+    expect(store.listCompletionOutbox(job.activityId)).toEqual([]);
+  });
+
+  it("does not start deferred execution when the enclosing admission transaction rolls back", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
+    const run = vi.fn(async () => result("must-not-run"));
+    let job: ReturnType<CodexJobRegistry["start"]> | undefined;
+
+    expect(() => registry.activityTransaction(() => {
+      job = registry.start(jobInput(root), run, undefined, 4, false, undefined, true);
+      throw new Error("injected admission commit failure");
+    })).toThrow("injected admission commit failure");
+    registry.discardDeferredAdmission(job!.jobId);
+    await job!.promise;
+
+    expect(run).not.toHaveBeenCalled();
+    expect(registry.get(job!.jobId)).toBeUndefined();
+    expect(registry.admissionStateStore.listJobs()).toEqual([]);
+  });
+
+  it("makes a rejected-turn terminal commit failure explicit instead of publishing the upstream failure", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
+    const store = registry.admissionStateStore;
+    const originalUpsert = store.upsertJob.bind(store);
+    let injected = false;
+    vi.spyOn(store, "upsertJob").mockImplementation((value) => {
+      if (!injected && (value as { status?: unknown }).status === "failed") {
+        injected = true;
+        throw new Error("injected rejected-turn persistence failure");
+      }
+      return originalUpsert(value);
+    });
+
+    const job = registry.start(jobInput(root), async () => {
+      throw new Error("ordinary upstream failure");
+    });
+    await job.promise;
+
+    expect(registry.get(job.jobId)).toMatchObject({
+      status: "failed",
+      terminalOrigin: undefined,
+      error: expect.stringContaining("BRIDGE_TERMINAL_COMMIT_FAILED")
+    });
+    expect(store.listJobs()).toEqual([
+      expect.objectContaining({
+        jobId: job.jobId,
+        status: "failed",
+        error: expect.stringContaining("BRIDGE_TERMINAL_COMMIT_FAILED")
+      })
+    ]);
+  });
+
+  it("keeps the durable running receipt authoritative when every terminal commit fails", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
+    const store = registry.admissionStateStore;
+    const originalUpsert = store.upsertJob.bind(store);
+    vi.spyOn(store, "upsertJob").mockImplementation((value) => {
+      if ((value as { status?: unknown }).status !== "running") {
+        throw new Error("persistent terminal persistence failure");
+      }
+      return originalUpsert(value);
+    });
+
+    const job = registry.start(jobInput(root), async () => result("uncommitted-terminal-thread"));
+    await job.promise;
+
+    expect(registry.get(job.jobId)).toMatchObject({
+      status: "running",
+      version: 1
+    });
+    expect(registry.get(job.jobId)).not.toHaveProperty("terminalOrigin");
+    expect(store.listJobs()).toEqual([
+      expect.objectContaining({
+        jobId: job.jobId,
+        status: "running",
+        version: 1
+      })
+    ]);
+    expect(store.listJobEvents(job.jobId).map((event) => event.eventType)).toEqual([
+      "job-started"
+    ]);
+  });
+
   it("persists retired request-hash version 3 without inventing a project identity", async () => {
     const root = temporaryRoot();
     const stateFile = path.join(root, "private", "state.sqlite");

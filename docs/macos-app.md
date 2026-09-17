@@ -261,7 +261,7 @@ The channel carries only topic names and revision identifiers, accepts at most
 four pending watchers, and releases a watcher when its socket closes. It is not
 exposed through the remote HTTPS application method allowlist.
 
-When **Notify this Mac when background work completes** is enabled on the Bridge
+When **Notify this Mac when Codex work completes** is enabled on the Bridge
 host, the local menu-bar app also watches Dashboard invalidations while its
 popover and Settings window are closed. It claims retryable `notify` completion
 records through the private `completion.claim`/`completion.delivered`/
@@ -433,9 +433,9 @@ user's effective UID. They expose small allowlisted JSON-RPC contracts, not MCP
 and not the old unauthenticated loopback HTTP control surface. Requests and responses are
 bounded. Helper diagnostics retain at most 200 redacted lines.
 
-The helper handshake is bound to local companion protocol version 9 and the
+The helper handshake is bound to local companion protocol version 10 and the
 exact bundled runtime build. Remote management uses companion protocol version
-7. A protocol-changing upgrade requires the native client to reconnect or
+8. A protocol-changing upgrade requires the native client to reconnect or
 restart. Replacement of a reachable LaunchAgent drains its runtime before
 the plist is changed, so a drain timeout leaves the installed helper and plist
 in place for a later retry. If an incompatible helper cannot be reached while

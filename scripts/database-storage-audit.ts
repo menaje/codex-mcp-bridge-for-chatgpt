@@ -70,8 +70,8 @@ try {
   source = new Database(baselineFile, { readonly: true, fileMustExist: true });
   const sourceVersion = version(source);
   assert.ok(
-    sourceVersion === 18 || sourceVersion === 19,
-    `Storage audit supports source schema 18 or 19, received ${sourceVersion}`
+    sourceVersion >= 18 && sourceVersion <= 20,
+    `Storage audit supports source schemas 18 through 20, received ${sourceVersion}`
   );
   const threadIds = representativeThreadIds(source);
   const sourceConnection = connectionAudit(source, sourceVersion, threadIds);
@@ -88,11 +88,11 @@ try {
   const store = new BridgeStateStore({ file: workingFile });
   store.close();
   working = new Database(workingFile, { fileMustExist: true });
-  assert.equal(version(working), 19);
+  assert.equal(version(working), 20);
   assert.equal(String(working.pragma("integrity_check", { simple: true })), "ok");
   assert.deepEqual(working.pragma("foreign_key_check"), []);
 
-  const currentConnection = connectionAudit(working, 19, threadIds);
+  const currentConnection = connectionAudit(working, 20, threadIds);
   assert.deepEqual(
     currentConnection.results,
     sourceConnection.results,
@@ -112,7 +112,7 @@ try {
   report.currentConnectionQuery = publicQueryMetrics(currentConnection);
   report.currentRetentionPlans = retentionPlans;
   report.currentRows = rowTotals(working);
-  const currentSerialization = serializationMetrics(working, 19);
+  const currentSerialization = serializationMetrics(working, 20);
   assert.equal(
     (currentSerialization.interactions as { structuredDuplicateFields: number })
       .structuredDuplicateFields,
@@ -149,7 +149,7 @@ try {
     assert.equal(String(compact.pragma("integrity_check", { simple: true })), "ok");
     assert.deepEqual(compact.pragma("foreign_key_check"), []);
     assert.deepEqual(tableCounts(compact), beforeCompactCounts);
-    assert.equal(version(compact), 19);
+    assert.equal(version(compact), 20);
     report.compactedCapacity = await capacity(compact, compactFile);
   } finally {
     compact.close();

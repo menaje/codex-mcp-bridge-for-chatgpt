@@ -87,8 +87,8 @@ try {
   const tool = (await client.listTools()).tools.find(item => item.name === "codex_interaction_respond")!;
   checks.currentResponderIsAppOnly = JSON.stringify(tool._meta).includes('"visibility":["app"]');
   const started = await client.callTool({ name: "codex_task", arguments: {
-    scopeId, requestId: randomUUID(), taskContractVersion: "3", executionEnvelopeRef: settings.taskExecutionEnvelopeRef(),
-    prompt: "Synthetic question feasibility", executionMode: "background", selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+    scopeId, requestId: randomUUID(), taskContractVersion: "6", executionEnvelopeRef: settings.taskExecutionEnvelopeRef(),
+    prompt: "Synthetic question feasibility", selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
     project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision }
   } });
   assert.notEqual(started.isError, true, JSON.stringify(started));

@@ -49,7 +49,7 @@ its Activity, Agent, Job, result, legacy question, or idempotency records.
   in the admission transaction.
 - The bridge owns sandbox, approval, root, model, concurrency, and execution
   policy. Callers cannot override them per task.
-- `taskContractVersion: "3"` and the exact `executionEnvelopeRef` are required
+- `taskContractVersion: "6"` and the exact `executionEnvelopeRef` are required
   for the current Task input. They bind the stable descriptor generation and
   operator-owned execution envelope; ordinary settings and project changes are
   checked separately at admission.
@@ -77,10 +77,11 @@ Every logical Task, answer, cancellation, and other idempotent mutation has its
 own `requestId`. A JSON-RPC ID is not interchangeable with it. Reusing a
 request ID with different input is rejected. The bridge records a durable
 admission/result or delivery state so an exact retry does not silently start
-duplicate Codex work.
+duplicate Codex work. A caller that loses the admission response can query that
+same request ID through `codex_status` within its scope.
 
 Cancellation is explicit. A transport disconnect, failed card refresh, or
-expired UI does not automatically terminate a background Job. A destructive
+expired UI does not automatically terminate a Job. A destructive
 operation rechecks its target, current version, scope, and any required
 acknowledgement before it reaches Codex.
 

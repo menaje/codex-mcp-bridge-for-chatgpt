@@ -14,8 +14,14 @@ rejected before they cross the wire.
 
 ## Task result
 
-`codex_task` input contract version 5 returns task output contract version 2.
+`codex_task` input contract version 6 returns task output contract version 3.
 The different numbers are intentional: input and output evolve independently.
+
+A successful new admission returns promptly with `state: "running"`, durable
+Job/Activity/Agent identities, current versions, and status requery actions. It
+never waits for the Codex result. A byte-for-byte logical retry can instead
+return the current stored state—including a terminal state—because `replay`
+identifies the same durable request receipt rather than a new execution.
 
 Task output has a strict root with explicitly nullable fields where a state
 does not have a value. Its meaningful states are:
@@ -65,7 +71,7 @@ configuration.
 completed, failed, and cancelled task results; all twelve model-visible tools;
 root expansion; state contradictions; and structured action validation. The
 output-contract audit measures the current model-visible output schemas at
-55,839 UTF-8 JSON bytes. The total descriptor budget is 56,000 bytes and no
+51,204 UTF-8 JSON bytes. The total descriptor budget is 56,000 bytes and no
 single public output schema may exceed 18,000 bytes. These are descriptor
 measurements, not model-token counts or result-payload limits.
 

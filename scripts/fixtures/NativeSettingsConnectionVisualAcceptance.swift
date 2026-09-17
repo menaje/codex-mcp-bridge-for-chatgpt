@@ -695,7 +695,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
 
     nonisolated private static func settingsSnapshot() throws -> SettingsSnapshot {
         let settings: [String: Any] = [
-            "schemaVersion": 1,
+            "schemaVersion": 5,
             "settingsRevision": 4,
             "registryRevision": 2,
             "revision": 4,
@@ -711,7 +711,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             "maxConcurrentJobs": 4,
             "historyRetentionDays": 30,
             "showBridgeThreadsInCodexApp": true,
-            "dashboardAutoOpenBackground": true,
+            "dashboardAutoOpen": true,
             "completionFollowUp": true
         ]
         let object: [String: Any] = [

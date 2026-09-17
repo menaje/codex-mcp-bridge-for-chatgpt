@@ -49,7 +49,7 @@ export const UI_RESOURCE_MANIFEST = {
       {
         "name": "settings",
         "uriVersion": 1,
-        "digest": "87906be7276dd15a2f46783ca84d7bd13e4faef6590e0f4ead0c4744f83f2fc1",
+        "digest": "847c995129191a7ecd89030549002c7eeb7ed8a5db9889a9ec62096bda1074fa",
         "uri": "ui://codex-mcp-bridge/settings/v1.html",
         "inventories": [
           "development-current"
@@ -88,7 +88,7 @@ export const UI_RESOURCE_MANIFEST = {
   "resources": {
     "settings": {
       "uriVersion": 1,
-      "digest": "87906be7276dd15a2f46783ca84d7bd13e4faef6590e0f4ead0c4744f83f2fc1",
+      "digest": "847c995129191a7ecd89030549002c7eeb7ed8a5db9889a9ec62096bda1074fa",
       "uri": "ui://codex-mcp-bridge/settings/v1.html",
       "metadata": {
         "descriptor": {
@@ -105,7 +105,7 @@ export const UI_RESOURCE_MANIFEST = {
             },
             "domain": "https://web-sandbox.oaiusercontent.com"
           },
-          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Codex-app thread visibility, background Dashboard display, macOS completion notifications, interface-language, and concurrency for Codex MCP Bridge for ChatGPT.",
+          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Codex-app thread visibility, automatic Dashboard display, macOS completion notifications, interface-language, and concurrency for Codex MCP Bridge for ChatGPT.",
           "openai/widgetPrefersBorder": false,
           "openai/widgetCSP": {
             "connect_domains": [],

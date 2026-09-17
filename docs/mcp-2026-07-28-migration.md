@@ -43,9 +43,11 @@ The tool contract is also current-only:
 - `codex_models` accepts only `{ "refresh": true }` when a refresh is wanted;
   it always returns the selection policy and permitted model catalog from one
   snapshot.
-- `codex_task` requires `taskContractVersion: "3"` and the exact
+- `codex_task` requires `taskContractVersion: "6"` and the exact
   `executionEnvelopeRef` advertised by `tools/list`. The task output contract
-  is version 2.
+  is version 3. New admissions return only after durable Job/request state is
+  saved, without waiting for completion; retrieve later state through
+  `codex_status`.
 - Task, status, and mutation results use a closed structured `nextActions`
   union. A suggested action is either an allow-listed read/opener with validated
   arguments or a non-executable guidance message.

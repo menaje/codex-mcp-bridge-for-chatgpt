@@ -67,7 +67,7 @@ const RELEASE_ASSET_NAMES = [
   "macos-x64-app",
   "release-checksums"
 ];
-const STATE_SOURCE_SCHEMAS = Array.from({ length: 16 }, (_, index) => index + 3);
+const STATE_SOURCE_SCHEMAS = Array.from({ length: 17 }, (_, index) => index + 3);
 const STATE_MIGRATION_DEFINITIONS = [
   [3, 4, "migrateV3ToV4", "a49f5314925897e254c6f34dd9c956cbf31eb1d8", [
     ["src/stateStore.ts", "stableUuid"], ["src/stateStore.ts", "normalizeOptionalString"],
@@ -120,6 +120,9 @@ const STATE_MIGRATION_DEFINITIONS = [
     ["src/stateStore.ts", "nonNegativeInteger"],
     ["src/stateStore.ts", "optionalNonNegativeInteger"],
     ["src/stateStore.ts", "sqlIdentifier"]
+  ]],
+  [19, 20, "migrateV19ToV20", "7e7b0c53fc553afe2e3d3297b127a44e77246460", [
+    ["src/stateSchema.ts", "V20_ASYNC_EXECUTION_MIGRATION_SCHEMA"]
   ]]
 ];
 const STATE_FIXTURE_DEFINITIONS = [
@@ -132,7 +135,8 @@ const STATE_DERIVED_CHECKPOINTS = [
     const schema = index + 4;
     return [schema, 3, `bridge-state-${schema - 1}-to-${schema}`];
   }),
-  [17, 16, "bridge-state-16-to-17"]
+  [17, 16, "bridge-state-16-to-17"],
+  [19, 18, "bridge-state-18-to-19"]
 ];
 
 export function loadReleaseManifest(repoRoot = DEFAULT_REPO_ROOT) {
@@ -322,7 +326,7 @@ export function validateReleaseManifest(value) {
     ],
     "stateCompatibility"
   );
-  if (stateCompatibility.currentSchema !== 19) fail("stateCompatibility.currentSchema must be 19");
+  if (stateCompatibility.currentSchema !== 20) fail("stateCompatibility.currentSchema must be 20");
   if (
     !Array.isArray(stateCompatibility.supportedSourceSchemas) ||
     stateCompatibility.supportedSourceSchemas.length !== STATE_SOURCE_SCHEMAS.length ||
@@ -369,11 +373,11 @@ export function validateReleaseManifest(value) {
     "stateCompatibility.persistentContracts"
   );
   const requiredContracts = {
-    userSettingsSchema: 4,
-    taskInputContract: 5,
+    userSettingsSchema: 5,
+    taskInputContract: 6,
     macosHelperProtocol: 2,
-    localCompanionProtocol: 9,
-    remoteCompanionProtocol: 7
+    localCompanionProtocol: 10,
+    remoteCompanionProtocol: 8
   };
   for (const [name, expected] of Object.entries(requiredContracts)) {
     if (persistentContracts[name] !== expected) {
@@ -661,7 +665,7 @@ export function expectedStateMigrationCatalog(repoRoot = DEFAULT_REPO_ROOT) {
   return {
     catalogVersion: 1,
     immutabilityPolicy: "append-only-after-release-v1",
-    currentSchema: 19,
+    currentSchema: 20,
     supportedSourceSchemas: [...STATE_SOURCE_SCHEMAS],
     unsupportedSourceSchemas: [1, 2],
     retiredLegacyImports: [
@@ -717,6 +721,12 @@ export function checkStateCompatibility(repoRoot, manifest) {
       /CODEX_TASK_INPUT_CONTRACT_VERSION\s*=\s*["'](\d+)["']/,
       "CODEX_TASK_INPUT_CONTRACT_VERSION"
     ),
+    taskExecutionEnvelopeInputContract: sourceInteger(
+      repoRoot,
+      "src/userSettings.ts",
+      /taskInputContract:\s*(\d+)/,
+      "task execution-envelope input contract"
+    ),
     macosHelperProtocol: sourceInteger(
       repoRoot,
       "src/macosHelperServer.ts",
@@ -749,6 +759,11 @@ export function checkStateCompatibility(repoRoot, manifest) {
     if (runtimeContracts[name] !== manifest.stateCompatibility.persistentContracts[name]) {
       throw new Error(`${name} runtime constant drifted from release-manifest.json.`);
     }
+  }
+  if (runtimeContracts.taskExecutionEnvelopeInputContract !== runtimeContracts.taskInputContract) {
+    throw new Error(
+      "Task execution-envelope input contract drifted from CODEX_TASK_INPUT_CONTRACT_VERSION."
+    );
   }
   return expectedCatalog;
 }

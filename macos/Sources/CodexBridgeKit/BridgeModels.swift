@@ -318,9 +318,9 @@ public struct BridgeSettings: Codable, Sendable {
     public let uiLocalePreference: String
     public let maxConcurrentJobs: Int
     public let showBridgeThreadsInCodexApp: Bool
-    /// Automatically opens Dashboard only for background work in the origin conversation.
-    public let dashboardAutoOpenBackground: Bool
-    /// Enables native macOS completion notifications for eligible background work.
+    /// Automatically opens Dashboard for newly admitted Codex work in the origin conversation.
+    public let dashboardAutoOpen: Bool
+    /// Enables native macOS completion notifications for eligible Codex work.
     public let completionFollowUp: Bool
 }
 
@@ -579,7 +579,7 @@ public struct SettingsPatch: Encodable, Sendable {
     public var maxConcurrentJobs: Int?
     public var historyRetentionDays: Int?
     public var showBridgeThreadsInCodexApp: Bool?
-    public var dashboardAutoOpenBackground: Bool?
+    public var dashboardAutoOpen: Bool?
     public var completionFollowUp: Bool?
     public var projectOperations: [ProjectOperation]?
 
@@ -592,7 +592,7 @@ public struct SettingsPatch: Encodable, Sendable {
         maxConcurrentJobs: Int? = nil,
         historyRetentionDays: Int? = nil,
         showBridgeThreadsInCodexApp: Bool? = nil,
-        dashboardAutoOpenBackground: Bool? = nil,
+        dashboardAutoOpen: Bool? = nil,
         completionFollowUp: Bool? = nil,
         projectOperations: [ProjectOperation]? = nil
     ) {
@@ -604,7 +604,7 @@ public struct SettingsPatch: Encodable, Sendable {
         self.maxConcurrentJobs = maxConcurrentJobs
         self.historyRetentionDays = historyRetentionDays
         self.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
-        self.dashboardAutoOpenBackground = dashboardAutoOpenBackground
+        self.dashboardAutoOpen = dashboardAutoOpen
         self.completionFollowUp = completionFollowUp
         self.projectOperations = projectOperations
     }

@@ -323,7 +323,7 @@ function auditSchemaCommitInterruption(): Record<string, unknown> {
   }
   const resumed = new currentStateModule.BridgeStateStore({ file: databaseFile });
   try {
-    assert.equal(resumed.schemaVersion, 19);
+    assert.equal(resumed.schemaVersion, runtimeCatalog.currentSchema);
     assert.equal(resumed.getMeta("state_migration_pending"), undefined);
     assert.match(
       String(resumed.getMeta("state_migration:bridge-state-18-to-19")),
@@ -336,7 +336,7 @@ function auditSchemaCommitInterruption(): Record<string, unknown> {
     sourceSchema: 18,
     committedSchemaBeforeProvenance: 19,
     pendingRecordObserved: true,
-    resumedSchema: 19,
+    resumedSchema: runtimeCatalog.currentSchema,
     provenanceFinalized: true
   };
 }
@@ -369,8 +369,8 @@ function seedSchema(schema: number, databaseFile: string): void {
 
 function removeMigrationArtifacts(databaseFile: string, originalSourceSchema: number): void {
   for (const candidate of [
-    `${databaseFile}.pre-v${originalSourceSchema}-to-v19.sqlite`,
-    `${databaseFile}.migration-v${originalSourceSchema}-to-v19.backup.json`,
+    `${databaseFile}.pre-v${originalSourceSchema}-to-v${runtimeCatalog.currentSchema}.sqlite`,
+    `${databaseFile}.migration-v${originalSourceSchema}-to-v${runtimeCatalog.currentSchema}.backup.json`,
     `${databaseFile}.migration-status.json`,
     `${databaseFile}.migration-lock.json`
   ]) rmSync(candidate, { force: true });
@@ -436,7 +436,7 @@ async function auditMigrationCase(
       checkpoints.push({ id: progress.migrationId, targetSchema: progress.targetSchema });
     }
   });
-  assert.equal(state.schemaVersion, 19);
+  assert.equal(state.schemaVersion, runtimeCatalog.currentSchema);
   assert.equal(state.getMeta("schema_v19_source_version"), String(sourceSchema));
   const migratedDatabase = new RuntimeDatabase(databaseFile, { readonly: true, fileMustExist: true });
   const migratedCounts = semanticCounts(migratedDatabase);
@@ -480,7 +480,7 @@ async function auditMigrationCase(
     retiredPreferredSelectionRemoved: !("preferredSelection" in settings.current.modelPolicy),
     registeredProjectCount: settings.current.projects.length
   };
-  assert.equal(settingsContract.schemaVersion, 4);
+  assert.equal(settingsContract.schemaVersion, 5);
   assert.equal(settingsContract.retiredPreferredSelectionRemoved, true);
   if (sourceSchema === 3) {
     assert.equal(settingsContract.accessStrategy, "always-full");
@@ -493,7 +493,7 @@ async function auditMigrationCase(
   state = new currentStateModule.BridgeStateStore({ file: databaseFile });
   state.close();
 
-  const backupFile = `${databaseFile}.pre-v${sourceSchema}-to-v19.sqlite`;
+  const backupFile = `${databaseFile}.pre-v${sourceSchema}-to-v${runtimeCatalog.currentSchema}.sqlite`;
   const eligibility = currentRecoveryModule.inspectStateRecovery({ databaseFile, backupFile });
   assert.equal(eligibility.eligible, true);
   const restored = currentRecoveryModule.restoreStateDatabase({
@@ -519,7 +519,7 @@ async function auditMigrationCase(
     previousRuntime = "state-read-then-health-opened-and-cleanly-stopped-with-published-v0.3.0";
   }
 
-  const metadataFile = `${databaseFile}.migration-v${sourceSchema}-to-v19.backup.json`;
+  const metadataFile = `${databaseFile}.migration-v${sourceSchema}-to-v${runtimeCatalog.currentSchema}.backup.json`;
   const metadata = readJson(metadataFile);
   return {
     sourceSchema,

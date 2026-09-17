@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
+import { COMPANION_PROTOCOL_NAME, COMPANION_PROTOCOL_VERSION } from "../src/companionServer.js";
 
 it.each(["cli", "stdio"])("starts native and remote app connections in the built %s entrypoint", async (entrypoint) => {
   const root = mkdtempSync(path.join(tmpdir(), "cb-cli-"));
@@ -43,7 +44,9 @@ it.each(["cli", "stdio"])("starts native and remote app connections in the built
     }
     expect(existsSync(socketPath), output).toBe(true);
     expect(lstatSync(socketPath).mode & 0o777).toBe(0o600);
-    expect(await rpc(socketPath, "companion.hello")).toMatchObject({ protocol: { name: "codex-mcp-bridge-companion", version: 9 } });
+    expect(await rpc(socketPath, "companion.hello")).toMatchObject({
+      protocol: { name: COMPANION_PROTOCOL_NAME, version: COMPANION_PROTOCOL_VERSION }
+    });
     expect(await rpc(socketPath, "remote.status")).toMatchObject({ enabled: false, listening: false });
     const native = await rpc(socketPath, "dashboard.snapshot", { enrich: false });
     expect(native).toMatchObject({ enrichment: { state: "structural" }, counts: { trackedConversations: 0 } });

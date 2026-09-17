@@ -75,19 +75,19 @@ describe("user settings and project registry", () => {
     const config = configFor();
     const first = persistentSettings(config, databaseFile);
     expect(first.settings.current).toMatchObject({
-      dashboardAutoOpenBackground: true,
+      dashboardAutoOpen: true,
       completionFollowUp: false
     });
-    first.settings.update({ dashboardAutoOpenBackground: false, completionFollowUp: true }, 0);
+    first.settings.update({ dashboardAutoOpen: false, completionFollowUp: true }, 0);
     first.stateStore.close();
 
     const persisted = persistentSettings(config, databaseFile);
     expect(persisted.settings.current).toMatchObject({
-      dashboardAutoOpenBackground: false,
+      dashboardAutoOpen: false,
       completionFollowUp: true
     });
     const legacy = persisted.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
-    delete legacy.dashboardAutoOpenBackground;
+    delete legacy.dashboardAutoOpen;
     delete legacy.completionFollowUp;
     legacy.activityCardVisibility = "never";
     legacy.completionHandoff = "auto-handoff";
@@ -96,13 +96,14 @@ describe("user settings and project registry", () => {
 
     const migrated = persistentSettings(config, databaseFile);
     expect(migrated.settings.current).toMatchObject({
-      dashboardAutoOpenBackground: false,
+      dashboardAutoOpen: false,
       completionFollowUp: true
     });
     const rewritten = migrated.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
     expect(rewritten).not.toHaveProperty("activityCardVisibility");
     expect(rewritten).not.toHaveProperty("completionHandoff");
     rewritten.dashboardAutoOpenBackground = true;
+    delete rewritten.dashboardAutoOpen;
     rewritten.completionFollowUp = false;
     rewritten.activityCardVisibility = "never";
     rewritten.completionHandoff = "auto-handoff";
@@ -111,7 +112,7 @@ describe("user settings and project registry", () => {
 
     const explicit = persistentSettings(config, databaseFile);
     expect(explicit.settings.current).toMatchObject({
-      dashboardAutoOpenBackground: true,
+      dashboardAutoOpen: true,
       completionFollowUp: false
     });
     explicit.stateStore.close();
@@ -159,7 +160,7 @@ describe("user settings and project registry", () => {
   it("starts without a default project, slug, or implicit selection", () => {
     const store = new UserSettingsStore(configFor());
     expect(store.current).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       settingsRevision: 0,
       registryRevision: 0,
       projects: [],
@@ -675,7 +676,7 @@ describe("user settings and project registry", () => {
 
     const restored = persistentSettings(config, databaseFile, () => 5_000);
     expect(restored.settings.current).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       settingsRevision: 2,
       modelPolicy: {
         mode: "automatic",

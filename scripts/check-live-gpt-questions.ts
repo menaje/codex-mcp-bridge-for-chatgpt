@@ -62,9 +62,9 @@ for (const arg of process.argv.slice(3).filter(value => !["--native-input", "--a
       assert.notEqual(result.isError, true, JSON.stringify(result)); return result.structuredContent;
     };
     const selected = settings.current.projects[0];
-    const task = await call("codex_task", { requestId: randomUUID(), taskContractVersion: "3", executionEnvelopeRef: settings.taskExecutionEnvelopeRef(),
+    const task = await call("codex_task", { requestId: randomUUID(), taskContractVersion: "6", executionEnvelopeRef: settings.taskExecutionEnvelopeRef(),
       project: { name: selected.name, projectRef: selected.projectRef, projectRevision: selected.projectRevision },
-      selection: { model: "gpt-6-astra", reasoningEffort: "low" }, executionMode: "background",
+      selection: { model: "gpt-6-astra", reasoningEffort: "low" },
       prompt: approvalProbe
         ? "This is an isolated approval-boundary test. Call the MCP question_approval_probe.approval_probe tool exactly once. Its destructive annotation should request user approval. The client will DECLINE the approval. After that denial finish with PROBE_APPROVAL_DECLINED. Do no file, shell, browser, network or other tool work. Do not retry the action or try another route. If the tool is unavailable, finish immediately with PROBE_UNAVAILABLE."
         : nativeInput
