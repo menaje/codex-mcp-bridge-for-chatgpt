@@ -67529,6 +67529,124 @@
         }
       }
     },
+    "macos.quitanddiscardmemoryonlycontexts": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beenden und Nur-Speicher-Kontexte verwerfen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quit and Discard Memory-Only Contexts"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salir y descartar contextos solo en memoria"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitter et supprimer les contextes en mémoire"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メモリ専用コンテキストを破棄して終了"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sair e descartar contextos apenas em memória"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退出并丢弃仅内存上下文"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "退出並捨棄僅記憶體內容"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "메모리 전용 컨텍스트를 버리고 종료"
+          }
+        }
+      }
+    },
+    "macos.memoryonlycodexcontextswillnotremainresumable": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nach diesem Vorgang können %d nur im Arbeitsspeicher vorhandene Codex-Kontexte nicht mehr fortgesetzt werden. Arbeitsverlauf und Projektdateien bleiben erhalten."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After this operation, %d memory-only Codex contexts can no longer be resumed. Work history and project files remain."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Después de esta operación, no se podrán reanudar %d contextos de Codex que solo están en memoria. El historial de trabajo y los archivos del proyecto se conservarán."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Après cette opération, %d contextes Codex conservés uniquement en mémoire ne pourront plus être repris. L’historique du travail et les fichiers du projet seront conservés."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この操作後は、メモリ専用のCodexコンテキスト%d件を再開できません。作業履歴とプロジェクトファイルは保持されます。"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Após esta operação, %d contextos do Codex mantidos apenas na memória não poderão mais ser retomados. O histórico de trabalho e os arquivos do projeto serão preservados."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此操作后，将无法继续 %d 个仅存于内存的 Codex 上下文。工作历史记录和项目文件会保留。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此操作後，將無法繼續 %d 個僅存於記憶體的 Codex 上下文。工作歷程記錄和專案檔案會保留。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 작업 후 메모리 전용 Codex 컨텍스트 %d개는 이어서 사용할 수 없습니다. 작업 기록과 프로젝트 파일은 유지됩니다."
+          }
+        }
+      }
+    },
     "macos.stopafterfinishingwork": {
       "localizations": {
         "de": {

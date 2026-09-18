@@ -228,6 +228,10 @@ export type MacOSHelperStatus = {
     acceptingNewJobs: boolean | null;
     activeJobs: number | null;
     pendingAdmissions: number | null;
+    pendingInteractions?: number | null;
+    memoryOnlyThreads?: number | null;
+    protectedMemoryOnlyThreads?: number | null;
+    discardableMemoryOnlyThreads?: number | null;
     backgroundProcessState: "confirmed" | "unknown" | null;
     backgroundProcesses: number | null;
     backgroundProcessAgents: number | null;
@@ -489,6 +493,10 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         acceptingNewJobs: bridgeAdmission?.acceptingNewJobs ?? null,
         activeJobs: bridgeAdmission?.activeJobs ?? null,
         pendingAdmissions: bridgeAdmission?.pendingAdmissions ?? null,
+        pendingInteractions: bridgeAdmission?.pendingInteractions ?? null,
+        memoryOnlyThreads: bridgeAdmission?.memoryOnlyThreads ?? null,
+        protectedMemoryOnlyThreads: bridgeAdmission?.protectedMemoryOnlyThreads ?? null,
+        discardableMemoryOnlyThreads: bridgeAdmission?.discardableMemoryOnlyThreads ?? null,
         backgroundProcessState: bridgeAdmission?.backgroundProcessState ?? null,
         backgroundProcesses: bridgeAdmission?.backgroundProcesses ?? null,
         backgroundProcessAgents: bridgeAdmission?.backgroundProcessAgents ?? null,
@@ -930,7 +938,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     const reasons: LifecycleReason[] = [];
     for (const [code, count] of [
       ["active-jobs", impact.activeJobs], ["pending-admissions", impact.pendingAdmissions],
-      ["pending-interactions", impact.pendingInteractions], ["memory-only-threads", impact.memoryOnlyThreads],
+      ["pending-interactions", impact.pendingInteractions],
+      ["memory-only-threads", protectedMemoryOnlyThreadCount(impact)],
       ["background-processes", impact.backgroundProcesses]
     ] as const) if ((count || 0) > 0) reasons.push({ code, count });
     if (impact.backgroundProcessState !== "confirmed" || impact.backgroundProcessUnknownAgents > 0) reasons.push({ code: "background-state-unknown" });
@@ -1103,7 +1112,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (!this.isManagedRuntimeRunning()) return;
     const impact = await readBridgeAdmission(this.bridgeSocketPath);
     if (!impact) throw new Error("CODEX_APPLY_PENDING: The running bridge could not be inspected. Its environment was preserved.");
-    if ((impact.memoryOnlyThreads || 0) > 0) throw new Error("CODEX_MEMORY_THREADS_ACTIVE: Memory-only conversations still require the running environment. Wait for their connections to release or use force after reviewing the Dashboard. The current environment was preserved.");
+    if (protectedMemoryOnlyThreadCount(impact) > 0) throw new Error("CODEX_MEMORY_THREADS_ACTIVE: Memory-only conversations with unfinished work still require the running environment. Wait for their work to finish or use force after reviewing the Dashboard. The current environment was preserved.");
     if ((impact.pendingInteractions || 0) > 0) throw new Error("CODEX_INTERACTIONS_PENDING: Resolve the pending approvals or questions before applying a runtime change.");
   }
 
@@ -1369,8 +1378,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
           { inspectBackgroundProcesses: true },
           15_000
         );
-        if (options.protectMemory && ((impact.memoryOnlyThreads || 0) > 0 || (impact.pendingInteractions || 0) > 0)) {
-          throw new Error("CODEX_APPLY_PENDING: Memory-only conversations or pending interactions still require the running environment. Wait for their connections to release or resolve the interactions before applying this change.");
+        if (options.protectMemory && (protectedMemoryOnlyThreadCount(impact) > 0 || (impact.pendingInteractions || 0) > 0)) {
+          throw new Error("CODEX_APPLY_PENDING: Memory-only conversations with unfinished work or pending interactions still require the running environment. Wait for the work to finish or resolve the interactions before applying this change.");
         }
         if (
           impact.backgroundProcessState !== "confirmed" ||
@@ -1870,11 +1879,17 @@ type RuntimeAdmissionSnapshot = {
   pendingAdmissions: number;
   pendingInteractions?: number;
   memoryOnlyThreads?: number;
+  protectedMemoryOnlyThreads?: number;
+  discardableMemoryOnlyThreads?: number;
   backgroundProcessState: "confirmed" | "unknown";
   backgroundProcesses: number;
   backgroundProcessAgents: number;
   backgroundProcessUnknownAgents: number;
 };
+
+function protectedMemoryOnlyThreadCount(impact: RuntimeAdmissionSnapshot): number {
+  return impact.protectedMemoryOnlyThreads ?? impact.memoryOnlyThreads ?? 0;
+}
 
 type CompanionHello = z.infer<typeof companionHelloSchema>;
 

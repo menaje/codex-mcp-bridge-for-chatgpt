@@ -46,6 +46,10 @@ final class AppPresentationTests: XCTestCase {
         func impact(
             activeJobs: Int = 0,
             pendingAdmissions: Int = 0,
+            pendingInteractions: Int = 0,
+            memoryOnlyThreads: Int = 0,
+            protectedMemoryOnlyThreads: Int? = nil,
+            discardableMemoryOnlyThreads: Int? = nil,
             backgroundProcessState: String = "confirmed",
             backgroundProcesses: Int = 0,
             backgroundProcessUnknownAgents: Int = 0
@@ -54,6 +58,10 @@ final class AppPresentationTests: XCTestCase {
                 acceptingNewJobs: true,
                 activeJobs: activeJobs,
                 pendingAdmissions: pendingAdmissions,
+                pendingInteractions: pendingInteractions,
+                memoryOnlyThreads: memoryOnlyThreads,
+                protectedMemoryOnlyThreads: protectedMemoryOnlyThreads,
+                discardableMemoryOnlyThreads: discardableMemoryOnlyThreads,
                 backgroundProcessState: backgroundProcessState,
                 backgroundProcesses: backgroundProcesses,
                 backgroundProcessAgents: backgroundProcesses > 0 ? 1 : 0,
@@ -73,6 +81,29 @@ final class AppPresentationTests: XCTestCase {
             for: impact(pendingAdmissions: 1),
             refreshFailed: false
         ))
+        XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: impact(pendingInteractions: 1),
+            refreshFailed: false
+        ))
+        XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: impact(memoryOnlyThreads: 1),
+            refreshFailed: false
+        ))
+        let completedMemoryOnly = impact(
+            memoryOnlyThreads: 2,
+            protectedMemoryOnlyThreads: 0,
+            discardableMemoryOnlyThreads: 2
+        )
+        XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
+            for: completedMemoryOnly,
+            refreshFailed: false
+        ))
+        XCTAssertEqual(
+            ApplicationQuitConfirmationPolicy.protectedMemoryOnlyThreadCount(
+                for: completedMemoryOnly
+            ),
+            0
+        )
         XCTAssertTrue(ApplicationQuitConfirmationPolicy.requiresConfirmation(
             for: impact(backgroundProcesses: 1),
             refreshFailed: false

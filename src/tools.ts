@@ -23,6 +23,7 @@ import {
 } from "./completionDelivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ThreadConnectionController, type ThreadConnectionRecord } from "./threadConnections.js";
+import { classifyMemoryOnlyThreadImpact } from "./runtimeAdmission.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
 import { registerCodexInputTools, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS } from "./questionTools.js";
 import path from "node:path";
@@ -3889,14 +3890,17 @@ export function registerBridgeTools(
     if (options.inspectBackgroundProcesses) {
       backgroundProcessImpact = await inspectBridgeBackgroundProcessImpact(jobs, upstream);
     }
+    const memoryOnlyImpact = classifyMemoryOnlyThreadImpact(
+      sessions.list(),
+      (threadId, backendKind) => upstream.canResumeThread?.(threadId, backendKind) === true,
+      threadId => jobs.admissionStateStore.threadConnections.hasUnfinishedWork(threadId)
+    );
     return {
       acceptingNewJobs: runtimeAdmission.acceptingNewJobs,
       activeJobs: jobs.runningCount(),
       pendingAdmissions: runtimeAdmission.pendingAdmissions,
       pendingInteractions: jobs.list(config.maxRetainedJobs).reduce((count, job) => count + job.pendingInteractions.length, 0),
-      memoryOnlyThreads: sessions.list().filter(session => session.backendKind === "app-server" &&
-        (session.persistence === "ephemeral" || session.persistence !== "persistent" && session.visibleInCodexApp === false) &&
-        upstream.canResumeThread?.(session.threadId, session.backendKind) === true).length,
+      ...memoryOnlyImpact,
       backgroundProcessState: backgroundProcessImpact.state,
       backgroundProcesses: backgroundProcessImpact.processes,
       backgroundProcessAgents: backgroundProcessImpact.agents,
@@ -9562,6 +9566,8 @@ export type BridgeRuntimeAdmissionSnapshot = {
   pendingAdmissions: number;
   pendingInteractions?: number;
   memoryOnlyThreads?: number;
+  protectedMemoryOnlyThreads?: number;
+  discardableMemoryOnlyThreads?: number;
   backgroundProcessState: "confirmed" | "unknown";
   backgroundProcesses: number;
   backgroundProcessAgents: number;

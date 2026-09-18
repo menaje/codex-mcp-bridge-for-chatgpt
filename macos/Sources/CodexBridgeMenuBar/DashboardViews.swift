@@ -3,6 +3,18 @@ import CodexBridgeKit
 import SwiftUI
 
 enum ApplicationQuitConfirmationPolicy {
+    static func memoryOnlyThreadCount(for impact: RuntimeAdmissionSnapshot) -> Int {
+        max(
+            impact.memoryOnlyThreads ?? 0,
+            (impact.protectedMemoryOnlyThreads ?? 0) +
+                (impact.discardableMemoryOnlyThreads ?? 0)
+        )
+    }
+
+    static func protectedMemoryOnlyThreadCount(for impact: RuntimeAdmissionSnapshot) -> Int {
+        impact.protectedMemoryOnlyThreads ?? impact.memoryOnlyThreads ?? 0
+    }
+
     static func requiresConfirmation(
         for impact: RuntimeAdmissionSnapshot?,
         refreshFailed: Bool
@@ -10,6 +22,8 @@ enum ApplicationQuitConfirmationPolicy {
         guard !refreshFailed, let impact else { return true }
         return impact.activeJobs > 0 ||
             impact.pendingAdmissions > 0 ||
+            (impact.pendingInteractions ?? 0) > 0 ||
+            memoryOnlyThreadCount(for: impact) > 0 ||
             impact.backgroundProcesses > 0 ||
             impact.backgroundProcessUnknownAgents > 0 ||
             impact.backgroundProcessState != "confirmed"
@@ -113,8 +127,10 @@ struct DashboardPopoverView: View {
             "macos.quittheappandallrelatedprocesses",
             isPresented: $showApplicationQuitConfirmation
         ) {
-            Button("macos.quitafterfinishingwork") {
+            Button {
                 shutdownAndQuit(force: false)
+            } label: {
+                Text(verbatim: applicationQuitSafeActionTitle)
             }
             Button("macos.forcequit", role: .destructive) {
                 shutdownAndQuit(force: true)
@@ -718,6 +734,48 @@ struct DashboardPopoverView: View {
             model.helperStatus?.bridge.backgroundProcessUnknownAgents ?? 0
     }
 
+    private var pendingInteractionCount: Int {
+        model.runtimeImpact?.pendingInteractions ??
+            model.helperStatus?.bridge.pendingInteractions ?? 0
+    }
+
+    private var memoryOnlyThreadCount: Int {
+        if let impact = model.runtimeImpact {
+            return ApplicationQuitConfirmationPolicy.memoryOnlyThreadCount(for: impact)
+        }
+        let bridge = model.helperStatus?.bridge
+        return max(
+            bridge?.memoryOnlyThreads ?? 0,
+            (bridge?.protectedMemoryOnlyThreads ?? 0) +
+                (bridge?.discardableMemoryOnlyThreads ?? 0)
+        )
+    }
+
+    private var protectedMemoryOnlyThreadCount: Int {
+        if let impact = model.runtimeImpact {
+            return ApplicationQuitConfirmationPolicy.protectedMemoryOnlyThreadCount(for: impact)
+        }
+        return model.helperStatus?.bridge.protectedMemoryOnlyThreads ??
+            model.helperStatus?.bridge.memoryOnlyThreads ?? 0
+    }
+
+    private var applicationQuitSafeActionTitle: String {
+        let discardsOnlyCompletedContexts = memoryOnlyThreadCount > 0 &&
+            protectedMemoryOnlyThreadCount == 0 &&
+            activeJobCount == 0 &&
+            pendingInteractionCount == 0 &&
+            backgroundProcessCount == 0 &&
+            backgroundProcessUnknownAgents == 0 &&
+            model.runtimeImpact?.backgroundProcessState == "confirmed" &&
+            model.runtimeImpactErrorMessage == nil
+        return BridgeAppLocalization.string(
+            discardsOnlyCompletedContexts
+                ? "macos.quitanddiscardmemoryonlycontexts"
+                : "macos.quitafterfinishingwork",
+            locale: model.interfaceLocale
+        )
+    }
+
     private func forceImpactMessage(restarting: Bool) -> String {
         var messages = [BridgeAppLocalization.format(
             "macos.activetasksandbackgroundprocessesmaybeinterrupted",
@@ -730,6 +788,13 @@ struct DashboardPopoverView: View {
                 "macos.thebackgroundstateofagentscouldnotbe",
                 locale: model.interfaceLocale,
                 backgroundProcessUnknownAgents
+            ))
+        }
+        if memoryOnlyThreadCount > 0 {
+            messages.append(BridgeAppLocalization.format(
+                "macos.memoryonlycodexcontextswillnotremainresumable",
+                locale: model.interfaceLocale,
+                memoryOnlyThreadCount
             ))
         }
         if model.runtimeImpactErrorMessage != nil {
@@ -765,6 +830,13 @@ struct DashboardPopoverView: View {
                 "macos.thebackgroundstateofagentscouldnotbe",
                 locale: model.interfaceLocale,
                 backgroundProcessUnknownAgents
+            ))
+        }
+        if memoryOnlyThreadCount > 0 {
+            messages.append(BridgeAppLocalization.format(
+                "macos.memoryonlycodexcontextswillnotremainresumable",
+                locale: model.interfaceLocale,
+                memoryOnlyThreadCount
             ))
         }
         if model.runtimeImpactErrorMessage != nil {

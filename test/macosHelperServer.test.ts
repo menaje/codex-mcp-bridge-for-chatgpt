@@ -53,21 +53,38 @@ describe("central runtime lifecycle reservations", () => {
   }, 75_000);
 
   it.each(["restart", "stop", "configure", "repair", "shutdown", "mode-switch", "helper-replace"] as const)(
-    "preserves memory-only conversations for %s and lets the user cancel", async kind => {
+    "preserves memory-only conversations with unfinished work for %s and lets the user cancel", async kind => {
       const f = await lifecycleFixture();
       try {
         const original = await f.supervisor.start();
-        f.update({ activeJobs: 0, memoryOnlyThreads: 1 });
+        f.update({ activeJobs: 0, memoryOnlyThreads: 1, protectedMemoryOnlyThreads: 1,
+          discardableMemoryOnlyThreads: 0 });
         const intent = await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind, force: false,
           ...(kind === "configure" ? { configuration: { maximumAccess: "workspace-write" as const } } : {}),
           ...(kind === "helper-replace" ? { targetBuildId: "next-build" } : {}) });
         await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("blocked"));
         expect((await f.supervisor.health()).pid).toBe(original.pid);
         expect(f.supervisor.cancelLifecycle(intent.requestId).phase).toBe("cancelled");
-        f.update({ activeJobs: 0, memoryOnlyThreads: 0 });
+        f.update({ activeJobs: 0, memoryOnlyThreads: 0, protectedMemoryOnlyThreads: 0,
+          discardableMemoryOnlyThreads: 0 });
         expect((await f.supervisor.health()).pid).toBe(original.pid);
       } finally { await f.supervisor.close({ runtime: "force-stop" }); }
     });
+
+  it("allows a safe restart when only completed memory-only contexts remain", async () => {
+    const f = await lifecycleFixture();
+    try {
+      const original = await f.supervisor.start();
+      f.update({ activeJobs: 0, memoryOnlyThreads: 2, protectedMemoryOnlyThreads: 0,
+        discardableMemoryOnlyThreads: 2 });
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("completed"), {
+        timeout: 6000,
+        interval: 50
+      });
+      expect((await f.supervisor.health()).pid).not.toBe(original.pid);
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
 
   it("rejects a superseded CLI target and leaves the old runtime running", async () => {
     const f = await lifecycleFixture();

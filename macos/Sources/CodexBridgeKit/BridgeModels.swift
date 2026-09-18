@@ -646,10 +646,40 @@ public struct RuntimeAdmissionSnapshot: Codable, Sendable {
     public let acceptingNewJobs: Bool
     public let activeJobs: Int
     public let pendingAdmissions: Int
+    public let pendingInteractions: Int?
+    public let memoryOnlyThreads: Int?
+    public let protectedMemoryOnlyThreads: Int?
+    public let discardableMemoryOnlyThreads: Int?
     public let backgroundProcessState: String
     public let backgroundProcesses: Int
     public let backgroundProcessAgents: Int
     public let backgroundProcessUnknownAgents: Int
+
+    public init(
+        acceptingNewJobs: Bool,
+        activeJobs: Int,
+        pendingAdmissions: Int,
+        pendingInteractions: Int? = nil,
+        memoryOnlyThreads: Int? = nil,
+        protectedMemoryOnlyThreads: Int? = nil,
+        discardableMemoryOnlyThreads: Int? = nil,
+        backgroundProcessState: String,
+        backgroundProcesses: Int,
+        backgroundProcessAgents: Int,
+        backgroundProcessUnknownAgents: Int
+    ) {
+        self.acceptingNewJobs = acceptingNewJobs
+        self.activeJobs = activeJobs
+        self.pendingAdmissions = pendingAdmissions
+        self.pendingInteractions = pendingInteractions
+        self.memoryOnlyThreads = memoryOnlyThreads
+        self.protectedMemoryOnlyThreads = protectedMemoryOnlyThreads
+        self.discardableMemoryOnlyThreads = discardableMemoryOnlyThreads
+        self.backgroundProcessState = backgroundProcessState
+        self.backgroundProcesses = backgroundProcesses
+        self.backgroundProcessAgents = backgroundProcessAgents
+        self.backgroundProcessUnknownAgents = backgroundProcessUnknownAgents
+    }
 }
 
 public struct RuntimeSnapshotParameters: Codable, Sendable {
@@ -735,6 +765,10 @@ public struct HelperBridgeStatus: Codable, Sendable {
     public let acceptingNewJobs: Bool?
     public let activeJobs: Int?
     public let pendingAdmissions: Int?
+    public let pendingInteractions: Int?
+    public let memoryOnlyThreads: Int?
+    public let protectedMemoryOnlyThreads: Int?
+    public let discardableMemoryOnlyThreads: Int?
     public let backgroundProcessState: String?
     public let backgroundProcesses: Int?
     public let backgroundProcessAgents: Int?
