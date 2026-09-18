@@ -8,7 +8,8 @@ import {
   CURRENT_STATE_SCHEMA_VERSION,
   V20_ASYNC_EXECUTION_MIGRATION_SCHEMA,
   V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA,
-  V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA
+  V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA,
+  V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA
 } from "./stateSchema.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { PRODUCT_INFO } from "./productInfo.js";
@@ -469,6 +470,8 @@ export type JobCompletionDeliveryRecord = {
   acceptanceUnknownAt?: number;
   resultReadAt?: number;
   resultReadSource?: JobCompletionResultReadSource;
+  completionResultOfferedAt?: number;
+  directResultOfferedAt?: number;
   createdAt: number;
   updatedAt: number;
 };
@@ -621,9 +624,11 @@ export class BridgeStateStore {
           this.database.exec(V20_ASYNC_EXECUTION_MIGRATION_SCHEMA);
           this.database.exec(V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA);
           this.database.exec(V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA);
+          this.database.exec(V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
           this.setMeta("schema_v21_created_at", new Date().toISOString());
           this.setMeta("schema_v22_created_at", new Date().toISOString());
+          this.setMeta("schema_v23_created_at", new Date().toISOString());
           this.setMeta("state_migration_catalog_version", String(STATE_MIGRATION_CATALOG_VERSION));
           this.setMeta("state_database_id", randomUUID());
           this.recordSchemaOrigin("fresh");
@@ -1077,7 +1082,9 @@ export class BridgeStateStore {
     // A merely pending event must not defeat the configured history-retention
     // policy forever when no live card exists. Protect only an event that has
     // crossed into an active or ambiguous host-delivery attempt.
-    if (this.database.prepare("SELECT 1 FROM job_completion_deliveries WHERE job_id=? AND state NOT IN ('pending','result-read') LIMIT 1").get(jobId)) reasons.push("undelivered-chatgpt-result");
+    if (this.database.prepare(`SELECT 1 FROM job_completion_deliveries
+      WHERE job_id=? AND state NOT IN ('pending','result-read')
+        AND completion_result_offered_at IS NULL LIMIT 1`).get(jobId)) reasons.push("undelivered-chatgpt-result");
     const steering = this.uncertainResultState(jobId);
     const review = this.eventRetention.summary(jobId).uncertainResponseReview as {count?:number;latestUpdateAt?:number} | undefined;
     if (steering.pending || steering.count > 0 && (review?.count !== steering.count || review.latestUpdateAt !== steering.latestUpdateAt)) reasons.push("uncertain-response");
@@ -2842,6 +2849,44 @@ export class BridgeStateStore {
     });
   }
 
+  recordJobCompletionResultOffer(input: {
+    scopeId: string;
+    source: JobCompletionResultReadSource;
+    jobId?: string;
+    receipt?: string;
+    now?: number;
+  }): JobCompletionDeliveryRecord | undefined {
+    const scopeId = normalizeUuid(input.scopeId, "completion delivery scopeId");
+    const timestamp = normalizeEventTimestamp(input.now ?? Date.now());
+    if (input.source === "completion-receipt") {
+      if (!input.receipt || input.jobId) {
+        throw new Error("COMPLETION_RESULT_OFFER_INVALID: Receipt offer requires only an exact receipt.");
+      }
+      const receipt = normalizeJobCompletionReceipt(input.receipt);
+      const result = this.database.prepare(`
+        UPDATE job_completion_deliveries
+           SET completion_result_offered_at=COALESCE(completion_result_offered_at,?),
+               updated_at=CASE WHEN completion_result_offered_at IS NULL THEN ? ELSE updated_at END
+         WHERE receipt=? AND scope_id=?
+      `).run(timestamp, timestamp, receipt, scopeId);
+      if (result.changes !== 1) {
+        throw new Error("COMPLETION_DELIVERY_UNAVAILABLE: Exact completion delivery is unavailable.");
+      }
+      return this.getJobCompletionDeliveryByReceipt(receipt, scopeId);
+    }
+    if (!input.jobId || input.receipt) {
+      throw new Error("COMPLETION_RESULT_OFFER_INVALID: Direct offer requires only an exact Job.");
+    }
+    const jobId = normalizeUuid(input.jobId, "completion delivery jobId");
+    this.database.prepare(`
+      UPDATE job_completion_deliveries
+         SET direct_result_offered_at=COALESCE(direct_result_offered_at,?),
+             updated_at=CASE WHEN direct_result_offered_at IS NULL THEN ? ELSE updated_at END
+       WHERE job_id=? AND scope_id=?
+    `).run(timestamp, timestamp, jobId, scopeId);
+    return this.getJobCompletionDelivery(jobId, scopeId);
+  }
+
   listCompletionOutbox(activityId?: string): CompletionOutboxRecord[] {
     const rows = activityId
       ? this.database
@@ -3633,6 +3678,7 @@ export class BridgeStateStore {
     this.runMigration("19", "20", originalSourceSchema, () => this.migrateV19ToV20());
     this.runMigration("20", "21", originalSourceSchema, () => this.migrateV20ToV21());
     this.runMigration("21", "22", originalSourceSchema, () => this.migrateV21ToV22());
+    this.runMigration("22", "23", originalSourceSchema, () => this.migrateV22ToV23());
     if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
       throw new Error(`Bridge state migration stopped at unsupported schema version ${this.getMeta("schema_version")}.`);
     }
@@ -4986,6 +5032,25 @@ export class BridgeStateStore {
         this.setMeta("schema_version", "22");
         this.setMeta("schema_v22_completion_result_source", "direct-result-consumption-v1");
         this.setMeta("schema_v22_migrated_at", new Date(now).toISOString());
+      });
+    } finally {
+      this.database.pragma("foreign_keys = ON");
+    }
+  }
+
+  private migrateV22ToV23(): void {
+    this.database.pragma("foreign_keys = OFF");
+    try {
+      this.transaction(() => {
+        this.database.exec(V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA);
+        const violations = this.database.pragma("foreign_key_check") as unknown[];
+        if (violations.length > 0) {
+          throw new Error("Bridge state schema v23 migration produced foreign-key violations.");
+        }
+        const now = Date.now();
+        this.setMeta("schema_version", "23");
+        this.setMeta("schema_v23_completion_result_offer", "server-offer-not-receipt-v1");
+        this.setMeta("schema_v23_migrated_at", new Date(now).toISOString());
       });
     } finally {
       this.database.pragma("foreign_keys = ON");
@@ -6877,6 +6942,8 @@ function readJobCompletionDeliveryRow(
     acceptanceUnknownAt: optionalNumber(row.acceptance_unknown_at),
     resultReadAt: optionalNumber(row.result_read_at),
     resultReadSource,
+    completionResultOfferedAt: optionalNumber(row.completion_result_offered_at),
+    directResultOfferedAt: optionalNumber(row.direct_result_offered_at),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at)
   };
