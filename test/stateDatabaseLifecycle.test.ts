@@ -28,12 +28,12 @@ describe("state database lifecycle", () => {
     expect(() => prepareStateDatabaseUpgrade(file, { availableBytes: 0 }))
       .toThrow(/Insufficient space/);
     expect(readFileSync(file)).toEqual(before);
-    expect(existsSync(`${file}.pre-v18-to-v22.sqlite`)).toBe(false);
+    expect(existsSync(`${file}.pre-v18-to-v23.sqlite`)).toBe(false);
     expect(existsSync(`${file}.migration-lock.json`)).toBe(false);
     expect(readStateMigrationStatus(file)).toMatchObject({
       phase: "failed",
       sourceSchema: 18,
-      targetSchema: 22
+      targetSchema: 23
     });
   });
 
@@ -46,7 +46,7 @@ describe("state database lifecycle", () => {
     expect(() => prepareStateDatabaseUpgrade(file, { writable: false }))
       .toThrow(/permission preflight reported a read-only database or directory/);
     expect(readFileSync(file)).toEqual(before);
-    expect(existsSync(`${file}.pre-v18-to-v22.sqlite`)).toBe(false);
+    expect(existsSync(`${file}.pre-v18-to-v23.sqlite`)).toBe(false);
     expect(existsSync(`${file}.migration-lock.json`)).toBe(false);
   });
 
@@ -132,7 +132,7 @@ describe("state database lifecycle", () => {
 
     expect(() => new BridgeStateStore({ file })).toThrow(/requires every database owner to stop/);
     expect(inspectStateDatabase(file).schemaVersion).toBe(18);
-    expect(existsSync(`${file}.pre-v18-to-v22.sqlite`)).toBe(false);
+    expect(existsSync(`${file}.pre-v18-to-v23.sqlite`)).toBe(false);
   });
 
   it("derives every supported intermediate start from real committed checkpoints", () => {
@@ -142,7 +142,7 @@ describe("state database lifecycle", () => {
       if (targetSchema === 16) {
         createSchema16Fixture(file);
         const direct = new BridgeStateStore({ file });
-        expect(direct.schemaVersion).toBe(22);
+        expect(direct.schemaVersion).toBe(23);
         expect(direct.getMeta("schema_v19_source_version")).toBe("16");
         direct.close();
         continue;
@@ -160,7 +160,7 @@ describe("state database lifecycle", () => {
       checkpoint.close();
 
       const resumed = new BridgeStateStore({ file });
-      expect(resumed.schemaVersion).toBe(22);
+      expect(resumed.schemaVersion).toBe(23);
       expect(resumed.getMeta("schema_v19_source_version")).toBe(String(targetSchema));
       resumed.close();
     }
@@ -177,12 +177,12 @@ describe("state database lifecycle", () => {
     });
     store.close();
 
-    expect(checkpoints).toEqual([19, 20, 21, 22]);
+    expect(checkpoints).toEqual([19, 20, 21, 22, 23]);
     expect(readStateMigrationStatus(file)).toMatchObject({
       phase: "completed",
       sourceSchema: 18,
-      currentSchema: 22,
-      migrationId: "bridge-state-21-to-22"
+      currentSchema: 23,
+      migrationId: "bridge-state-22-to-23"
     });
   });
 

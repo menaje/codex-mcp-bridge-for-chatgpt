@@ -2803,52 +2803,6 @@ export class BridgeStateStore {
     });
   }
 
-  markJobCompletionResultRead(
-    receipt: string,
-    scopeId: string,
-    now = Date.now()
-  ): JobCompletionDeliveryRecord {
-    const normalizedReceipt = normalizeJobCompletionReceipt(receipt);
-    const normalizedScopeId = normalizeUuid(scopeId, "completion delivery scopeId");
-    const timestamp = normalizeEventTimestamp(now);
-    return this.transaction(() => {
-      const result = this.database.prepare(`
-        UPDATE job_completion_deliveries
-           SET state='result-read', next_attempt_at=NULL, lease_owner=NULL,
-               lease_expires_at=NULL, result_read_at=COALESCE(result_read_at,?),
-               result_read_source=COALESCE(result_read_source,'completion-receipt'),
-               updated_at=?
-         WHERE receipt=? AND scope_id=?
-      `).run(timestamp, timestamp, normalizedReceipt, normalizedScopeId);
-      if (result.changes !== 1) {
-        throw new Error("COMPLETION_DELIVERY_UNAVAILABLE: Exact completion delivery is unavailable.");
-      }
-      const record = this.getJobCompletionDeliveryByReceipt(normalizedReceipt, normalizedScopeId);
-      if (!record) throw new Error("COMPLETION_DELIVERY_UNAVAILABLE: Exact completion delivery is unavailable.");
-      return record;
-    });
-  }
-
-  markJobCompletionDirectResultRead(
-    jobId: string,
-    scopeId: string,
-    now = Date.now()
-  ): JobCompletionDeliveryRecord | undefined {
-    const normalizedJobId = normalizeUuid(jobId, "completion delivery jobId");
-    const normalizedScopeId = normalizeUuid(scopeId, "completion delivery scopeId");
-    const timestamp = normalizeEventTimestamp(now);
-    return this.transaction(() => {
-      this.database.prepare(`
-        UPDATE job_completion_deliveries
-           SET state='result-read', next_attempt_at=NULL, lease_owner=NULL,
-               lease_expires_at=NULL, result_read_at=COALESCE(result_read_at,?),
-               result_read_source='direct-job-query', updated_at=?
-         WHERE job_id=? AND scope_id=? AND state IN ('pending','host-rejected')
-      `).run(timestamp, timestamp, normalizedJobId, normalizedScopeId);
-      return this.getJobCompletionDelivery(normalizedJobId, normalizedScopeId);
-    });
-  }
-
   recordJobCompletionResultOffer(input: {
     scopeId: string;
     source: JobCompletionResultReadSource;

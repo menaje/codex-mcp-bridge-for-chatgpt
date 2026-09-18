@@ -65,7 +65,7 @@ display inspection can also close an unresolved inspection incident.
 
 The schema-16-to-17 checkpoint adds persistent incident identities to the
 automatic-action journal. Current upgrades run it under the single private
-pre-schema-22 recovery backup. Existing attempt budgets, failed outcomes and
+pre-schema-23 recovery backup. Existing attempt budgets, failed outcomes and
 cancellation provenance remain unchanged. Automatic records follow history
 retention; unresolved budgets survive while their original work is retained.
 

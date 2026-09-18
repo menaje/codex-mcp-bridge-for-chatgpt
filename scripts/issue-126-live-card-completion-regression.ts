@@ -107,6 +107,7 @@ function hostHtml(scenario: string): string {
       if(message.method==="ui/message"&&message.id!==undefined){
         window.__messageCount+=1;window.__events.push({frame:frameIndex,type:"message",content:message.params&&message.params.content});
         if(scenario==="timeout-unknown")return;
+        if(scenario==="teardown-during-send"){send(frame,"ui/resource-teardown",{},9100+frameIndex);return}
         if(scenario==="reject-then-accept"&&window.__messageCount===1){reply(frame,message.id,undefined,{code:-32000,message:"model response still active"});return}
         reply(frame,message.id,{});return;
       }
@@ -135,6 +136,7 @@ const scenarios = [
   "accept",
   "reject-then-accept",
   "timeout-unknown",
+  "teardown-during-send",
   "direct-result-read",
   "teardown-before-terminal",
   "mismatch",
@@ -153,12 +155,13 @@ try {
         if(s==="accept")return window.__settled&&window.__messageCount===1;
         if(s==="reject-then-accept")return window.__settled&&window.__messageCount===2;
         if(s==="timeout-unknown")return window.__settled&&datasets[0]?.completionDelivery==="acceptance-unknown";
+        if(s==="teardown-during-send")return datasets[0]?.completionDelivery==="acceptance-unknown";
         if(s==="direct-result-read")return window.__settled&&window.__waitCount===1;
         if(s==="teardown-before-terminal")return window.__events.some(event=>event.operation==="wait")&&datasets[0]?.dashboardPresentation==="ready";
         if(s==="mismatch")return datasets[0]?.dashboardPresentation==="mismatch";
         return s==="duplicate-cards"&&window.__settled&&window.__readyFrames===2;
       },scenario,{timeout:5000}).catch(()=>{});
-      if(["direct-result-read","teardown-before-terminal","mismatch","duplicate-cards","timeout-unknown"].includes(scenario))await page.waitForTimeout(1200);
+      if(["direct-result-read","teardown-before-terminal","teardown-during-send","mismatch","duplicate-cards","timeout-unknown"].includes(scenario))await page.waitForTimeout(1200);
       const frames=page.frames().filter(frame=>frame.url().includes("/card?"));
       const host=await page.evaluate(()=>({events:window.__events,messageCount:window.__messageCount,waitCount:window.__waitCount,settled:window.__settled}));
       return {...host,datasets:await Promise.all(frames.map(frame=>frame.evaluate(()=>({...document.documentElement.dataset})))),errors:(await Promise.all(frames.map(frame=>frame.evaluate(()=>window.__errors)))).flat()};
@@ -185,6 +188,10 @@ try {
     } else if (scenario === "timeout-unknown") {
       assert.equal(observed.messageCount, 1);
       assert.deepEqual(observed.events.filter(event => event.operation).map(event => event.operation), ["wait", "uncertain"]);
+      assert.equal(observed.datasets[0]?.completionDelivery, "acceptance-unknown");
+    } else if (scenario === "teardown-during-send") {
+      assert.equal(observed.messageCount, 1);
+      assert.deepEqual(observed.events.filter(event => event.operation).map(event => event.operation), ["wait"]);
       assert.equal(observed.datasets[0]?.completionDelivery, "acceptance-unknown");
     } else if (scenario === "direct-result-read") {
       assert.equal(observed.messageCount, 0);

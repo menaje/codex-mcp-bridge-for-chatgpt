@@ -1,11 +1,11 @@
 # Bridge database schema and lifecycle
 
-Schema 22 is the current SQLite schema. `src/stateSchema.ts` contains the complete
+Schema 23 is the current SQLite schema. `src/stateSchema.ts` contains the complete
 DDL and projections used for a new installation. `src/stateStore.ts` contains
-upgrade code for schemas 3 through 21; schemas 1 and 2 are rejected. The published v0.2 and
+upgrade code for schemas 3 through 22; schemas 1 and 2 are rejected. The published v0.2 and
 v0.3 line used schema 3, and the pre-change development installation used schema
 18. Every supported upgrade ends with the same tables, columns, constraints,
-indexes, and triggers as direct schema-22 creation.
+indexes, and triggers as direct schema-23 creation.
 
 The database is the only bridge state authority. Settings, projects, retained
 sessions, and Jobs no longer have parallel JSON files or JSON mirrors. SQLite
@@ -45,7 +45,7 @@ input state. There is no `job_summaries` table, and progress events do not write
 full Job document. `scopes.version` is the one scope CAS/event sequence; there is
 no `scope_versions` mirror.
 
-## Complete schema-22 table matrix
+## Complete schema-23 table matrix
 
 The retention column describes bridge cleanup. SQLite free pages are reusable but
 remain allocated until an offline compaction; physical erasure is therefore a
@@ -56,8 +56,10 @@ Schema 20 removes the retired `execution_mode` columns from `activities` and
 Admission has one durable asynchronous execution path; Job lifecycle remains
 authoritative in `status`, versions, terminal provenance, and the retained
 result/error receipt. Schema 21 adds exact live-Dashboard completion delivery;
-schema 22 records whether its terminal result was consumed through the automatic
-completion receipt or an authenticated direct Job/request query.
+schema 22 records the legacy path that marked a terminal result as read. Schema
+23 adds separate completion-receipt and direct-query result-offer timestamps.
+Creating a tool response is no longer treated as proof that ChatGPT received it,
+and a direct query no longer consumes a pending live-card delivery.
 
 | Table | Current consumer and authoritative fields | Decision and retention |
 | --- | --- | --- |
@@ -160,7 +162,7 @@ copy, not end-to-end service latency or evidence of a live replacement.
 
 ## Upgrade and legacy-data rules
 
-A fresh database creates schema 22 directly. A persistent supported older database
+A fresh database creates schema 23 directly. A persistent supported older database
 is inspected before a writable SQLite connection opens. The canonical-file lock,
 live-owner check, integrity and foreign-key checks, permissions, free-space
 calculation, verified backup, sequential conversion, and final verification all
@@ -169,7 +171,7 @@ Development and candidate packages use separate default state profiles; selectin
 the stable DB requires an explicit profile or absolute-file override.
 
 The upgrade gets one private, mode-0600 backup named
-`state.sqlite.pre-v<SOURCE>-to-v22.sqlite` and a bound metadata sidecar. The
+`state.sqlite.pre-v<SOURCE>-to-v23.sqlite` and a bound metadata sidecar. The
 sidecar records the logical/physical database identity, source and target runtime
 facts, migration path/checksums, snapshot checksum, integrity/foreign-key results,
 and a digest of table row counts. Retrying the same upgrade reuses and fully
@@ -188,6 +190,10 @@ request hashes, Job status/results, events, or deduplication receipts. Schema 21
 adds one completion-delivery row only when a Job becomes terminal after that
 contract is active; it does not backfill old terminal Jobs. Schema 22 adds and
 backfills only the result-read source for already consumed schema-21 deliveries.
+Schema 23 projects those historical rows into result-offer evidence and adds
+separate offer timestamps for new completion-receipt and direct-query responses.
+It does not infer receipt from response construction and does not replay legacy
+`result-read` rows whose transport outcome cannot be reconstructed.
 An
 interrupted or invalid conversion rolls its transaction back and can be retried
 after the source problem is corrected. The full operational and restore procedure is in the
@@ -205,8 +211,8 @@ relationship. Migration never creates a project from a slug, name, cwd, or old
 snapshot.
 
 The supported schema-3 fixture is taken from the published v0.3.0 implementation
-and passes every fixed checkpoint through schema 22. Exact deployed-development
-fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 21 are generated
+and passes every fixed checkpoint through schema 23. Exact deployed-development
+fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 22 are generated
 only as named, committed checkpoints from those sources. `state-migrations.json` binds
 their provenance and hashes to the shipped implementation. Schemas 1 and 2 are
 outside the supported release floor and are rejected before a backup or mutation.
@@ -235,7 +241,7 @@ ends and the upgraded database has survived normal restarts, remove older backup
 as a deliberate operator action. Backups contain the same private material as the
 source database and require the same access controls. The bridge does not silently
 delete them because release and rollback policy belong to the operator. Keep each
-backup with its `.migration-v<SOURCE>-to-v22.backup.json` sidecar. Supported
+backup with its `.migration-v<SOURCE>-to-v23.backup.json` sidecar. Supported
 snapshot restore is allowed only while the migrated DB records that neither HTTP
 nor stdio service-open occurred; after that boundary, preserve current state and
 use forward repair or explicit data reconciliation. See the

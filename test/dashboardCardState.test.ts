@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { reconcileDashboardPageCaches } from "../src/dashboardCard.js";
+import {
+  completionMessageErrorDisposition,
+  reconcileDashboardPageCaches
+} from "../src/dashboardCard.js";
 
 type Row = { id: string };
 type Page = { offset: number; returned: number; total: number; hasNext: boolean };
@@ -17,6 +20,25 @@ const mergeRows = (current: Row[], incoming: Row[]): Row[] => {
   return [...merged.values()];
 };
 const rowKey = (row: Row): string => row.id;
+
+describe("Dashboard completion message outcomes", () => {
+  it("retries only a resolved explicit host rejection", () => {
+    expect(completionMessageErrorDisposition({ code: "COMPLETION_HOST_REJECTED" }))
+      .toBe("rejected");
+    expect(completionMessageErrorDisposition({ code: "MCP_RPC_RESPONSE_ERROR" }))
+      .toBe("rejected");
+  });
+
+  it("preserves timeout, disconnect, teardown, and unknown throws as uncertain", () => {
+    expect(completionMessageErrorDisposition({ code: "COMPLETION_MESSAGE_TIMEOUT" }))
+      .toBe("uncertain");
+    expect(completionMessageErrorDisposition({ code: "ECONNRESET" }))
+      .toBe("uncertain");
+    expect(completionMessageErrorDisposition(new Error("Codex overview unmounted")))
+      .toBe("uncertain");
+    expect(completionMessageErrorDisposition(undefined)).toBe("uncertain");
+  });
+});
 
 describe("Dashboard independent page caches", () => {
   it("preserves recent rows when idle load-more appends its next page", () => {

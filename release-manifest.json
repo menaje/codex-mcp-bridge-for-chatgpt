@@ -97,7 +97,7 @@
     "releaseCatalogSha256": "56a20b4eb7c2777c7b2b257042b60707fa58f58e90fcbd0b84ce2f8db4210c3e"
   },
   "stateCompatibility": {
-    "currentSchema": 22,
+    "currentSchema": 23,
     "supportedSourceSchemas": [
       3,
       4,
@@ -117,7 +117,8 @@
       18,
       19,
       20,
-      21
+      21,
+      22
     ],
     "unsupportedSourceSchemas": [
       1,
@@ -129,7 +130,7 @@
       "job-state-json"
     ],
     "migrationCatalog": "state-migrations.json",
-    "migrationCatalogSha256": "ddcb7502d70f97f98e7c2e9482ac4accfce4b2c442d963bd062c1fdf37adaa2e",
+    "migrationCatalogSha256": "3ad03286d41113c4dfea212d5f7bee94ccb9655fdd841eb689948c7ae8bead30",
     "stateProfilePolicy": "release-stage-isolated-v1",
     "rollbackPolicy": "verified-original-before-service-open-v1",
     "persistentContracts": {

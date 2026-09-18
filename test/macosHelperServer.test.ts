@@ -23,6 +23,7 @@ import {
 } from "../src/macosHelperServer.js";
 import { startPrivateJsonLineServer, type BridgeCompanionServer } from "../src/companionServer.js";
 import { CodexRuntimeManager } from "../src/codexRuntime.js";
+import { BridgeStateStore } from "../src/stateStore.js";
 import { writeManagedRuntimeStatus } from "../scripts/runtime-status.mjs";
 import { updateRuntimeEnvFile } from "../scripts/runtime-env.mjs";
 import { acquireRuntimeLock } from "../scripts/runtime-lock.mjs";
@@ -84,6 +85,81 @@ describe("central runtime lifecycle reservations", () => {
       });
       expect((await f.supervisor.health()).pid).not.toBe(original.pid);
     } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
+  it("preserves an unconfirmed completion and its exact result across a safe helper restart", async () => {
+    const root = temporaryDirectory();
+    const stateFile = path.join(root, "state.sqlite");
+    const scopeId = "12800000-0000-4000-8000-000000000001";
+    const jobId = "12800000-0000-4000-8000-000000000002";
+    const requestId = "12800000-0000-4000-8000-000000000003";
+    const owner = "12800000-0000-4000-8000-000000000004";
+    const original = new BridgeStateStore({ file: stateFile });
+    original.upsertJob({
+      jobId,
+      scopeId,
+      requestId,
+      status: "completed",
+      updatedAt: 2,
+      result: { content: [{ type: "text", text: "retained after helper restart" }] }
+    } as any);
+    const completion = original.getJobCompletionDelivery(jobId, scopeId)!;
+    original.claimJobCompletionDelivery(jobId, scopeId, owner, 1_000, 10);
+    original.markJobCompletionAcceptanceUnknown({
+      jobId,
+      scopeId,
+      receipt: completion.receipt,
+      leaseOwner: owner,
+      now: 11
+    });
+    original.close();
+
+    const f = await lifecycleFixture();
+    try {
+      const runtime = await f.supervisor.start();
+      f.update({ activeJobs: 0, memoryOnlyThreads: 1, protectedMemoryOnlyThreads: 0,
+        discardableMemoryOnlyThreads: 1 });
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("completed"), {
+        timeout: 6_000,
+        interval: 50
+      });
+      expect((await f.supervisor.health()).pid).not.toBe(runtime.pid);
+
+      const restarted = new BridgeStateStore({ file: stateFile });
+      try {
+        expect(restarted.getJobCompletionDelivery(jobId, scopeId)).toMatchObject({
+          receipt: completion.receipt,
+          state: "acceptance-unknown",
+          attemptCount: 1,
+          completionResultOfferedAt: undefined,
+          directResultOfferedAt: undefined
+        });
+        expect(restarted.countJobs()).toBe(1);
+        expect(restarted.listJobs()).toEqual([
+          expect.objectContaining({
+            jobId,
+            requestId,
+            result: { content: [{ type: "text", text: "retained after helper restart" }] }
+          })
+        ]);
+        restarted.recordJobCompletionResultOffer({
+          scopeId,
+          source: "direct-job-query",
+          jobId,
+          now: 12
+        });
+        expect(restarted.getJobCompletionDelivery(jobId, scopeId)).toMatchObject({
+          state: "acceptance-unknown",
+          directResultOfferedAt: 12
+        });
+        expect(restarted.countJobs()).toBe(1);
+      } finally {
+        restarted.close();
+      }
+    } finally {
+      await f.supervisor.close({ runtime: "force-stop" });
+    }
   });
 
   it("rejects a superseded CLI target and leaves the old runtime running", async () => {
@@ -193,23 +269,23 @@ describe("macOS runtime helper RPC", () => {
       await schema3.close({ runtime: "force-stop" });
     }
 
-    const futureFile = path.join(root, "schema-23.sqlite");
+    const futureFile = path.join(root, "schema-24.sqlite");
     createSeededSchema3Fixture(futureFile);
     const futureDatabase = new Database(futureFile);
-    futureDatabase.prepare("UPDATE bridge_meta SET value = '23' WHERE key = 'schema_version'").run();
+    futureDatabase.prepare("UPDATE bridge_meta SET value = '24' WHERE key = 'schema_version'").run();
     futureDatabase.close();
-    const futureEnvFile = path.join(root, "schema-23", ".env");
+    const futureEnvFile = path.join(root, "schema-24", ".env");
     writeStateBackedRuntimeEnv(futureEnvFile, futureFile);
     const future = new MacOSBridgeSupervisor({
       bridgeRoot: path.join(root, "runtime"),
       envFile: futureEnvFile,
-      bridgeSocketPath: path.join(root, "schema-23.sock"),
-      runtimeLockDirectory: path.join(root, "schema-23-run", "launcher.lock")
+      bridgeSocketPath: path.join(root, "schema-24.sock"),
+      runtimeLockDirectory: path.join(root, "schema-24-run", "launcher.lock")
     });
     try {
       expect((await future.health()).configuration).toMatchObject({
         valid: false,
-        issue: expect.stringContaining("state schema 23")
+        issue: expect.stringContaining("state schema 24")
       });
     } finally {
       await future.close({ runtime: "force-stop" });

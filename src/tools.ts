@@ -5085,10 +5085,11 @@ export function registerBridgeTools(
           job,
           config.maxJobResultBytes
         );
-        jobs.admissionStateStore.markJobCompletionResultRead(
-          completionQuery.receipt,
-          completionScopeId
-        );
+        jobs.admissionStateStore.recordJobCompletionResultOffer({
+          scopeId: completionScopeId,
+          source: "completion-receipt",
+          receipt: completionQuery.receipt
+        });
         return result;
       }
       if (jobQuery) {
@@ -5145,10 +5146,14 @@ export function registerBridgeTools(
           (item) => item.type === "job" && item.id === job.jobId
         )?.result?.availability === "delivered";
         if (scopeResolution?.source === "host-metadata" && deliveredResult) {
-          // A successful same-conversation direct result read wins only while
-          // the live card has not crossed the send boundary. The store leaves
-          // leased, accepted, uncertain, and already-consumed rows untouched.
-          jobs.admissionStateStore.markJobCompletionDirectResultRead(job.jobId, scopeId);
+          // Constructing a same-conversation tool response is not evidence that
+          // ChatGPT received it. Record the offer for audit, but never consume
+          // the pending live-card delivery or steal its lease.
+          jobs.admissionStateStore.recordJobCompletionResultOffer({
+            scopeId,
+            source: "direct-job-query",
+            jobId: job.jobId
+          });
         }
         return result;
       }

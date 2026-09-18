@@ -423,7 +423,8 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).toContain('rpcRequest("ui/message"');
     expect(DASHBOARD_CARD_HTML).toContain('standardToolCall("codex_ui_completion"');
     expect(DASHBOARD_CARD_HTML).toContain('completionIdentity("wait"');
-    expect(DASHBOARD_CARD_HTML).toContain('uncertain?"uncertain":"rejected"');
+    expect(DASHBOARD_CARD_HTML).toContain('completionMessageErrorDisposition(error)');
+    expect(DASHBOARD_CARD_HTML).toContain('error.code="MCP_RPC_RESPONSE_ERROR"');
     expect(DASHBOARD_CARD_HTML).not.toContain('presentationToken');
     expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/notifications/tool-input"');
     expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/notifications/tool-result"');

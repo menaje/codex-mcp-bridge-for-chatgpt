@@ -1183,6 +1183,7 @@ describe("current bridge tool contracts", () => {
     expect(directReadAfterLease.isError, JSON.stringify(directReadAfterLease)).not.toBe(true);
     expect(state.getJobCompletionDelivery(origin!.jobId, origin!.scopeId)).toMatchObject({
       state: "leased",
+      directResultOfferedAt: expect.any(Number),
       resultReadSource: undefined
     });
     const foreignCompletion = await client.callTool({
@@ -1231,8 +1232,9 @@ describe("current bridge tool contracts", () => {
       items: [expect.objectContaining({ id: origin!.jobId, state: "completed" })]
     });
     expect(state.getJobCompletionDelivery(origin!.jobId, origin!.scopeId)).toMatchObject({
-      state: "result-read",
-      resultReadSource: "completion-receipt"
+      state: "host-accepted",
+      completionResultOfferedAt: expect.any(Number),
+      resultReadSource: undefined
     });
     expect(state.listPendingCompletionOutbox(origin!.scopeId)).toEqual([]);
 
@@ -1322,6 +1324,7 @@ describe("current bridge tool contracts", () => {
     expect(explicitScopeRead.isError, JSON.stringify(explicitScopeRead)).not.toBe(true);
     expect(state.getJobCompletionDelivery(secondJob!.jobId, secondJob!.scopeId)).toMatchObject({
       state: "pending",
+      directResultOfferedAt: undefined,
       resultReadSource: undefined
     });
     const authenticatedDirectRead = await client.callTool({
@@ -1331,11 +1334,12 @@ describe("current bridge tool contracts", () => {
     });
     expect(authenticatedDirectRead.isError, JSON.stringify(authenticatedDirectRead)).not.toBe(true);
     expect(state.getJobCompletionDelivery(secondJob!.jobId, secondJob!.scopeId)).toMatchObject({
-      state: "result-read",
-      resultReadSource: "direct-job-query",
+      state: "pending",
+      directResultOfferedAt: expect.any(Number),
+      resultReadSource: undefined,
       attemptCount: 0
     });
-    const settledAfterDirectRead = await client.callTool({
+    const claimedAfterDirectOffer = await client.callTool({
       name: "codex_ui_completion",
       arguments: {
         operation: "wait",
@@ -1345,12 +1349,12 @@ describe("current bridge tool contracts", () => {
       },
       _meta: metadata
     });
-    expect(settledAfterDirectRead.isError, JSON.stringify(settledAfterDirectRead)).not.toBe(true);
-    expect(settledAfterDirectRead.structuredContent).toMatchObject({
-      state: "settled",
-      deliveryState: "result-read"
+    expect(claimedAfterDirectOffer.isError, JSON.stringify(claimedAfterDirectOffer)).not.toBe(true);
+    expect(claimedAfterDirectOffer.structuredContent).toMatchObject({
+      state: "claimed",
+      deliveryState: "leased",
+      receipt: expect.stringMatching(/^completion-[0-9a-f]{64}$/)
     });
-    expect(settledAfterDirectRead.structuredContent).not.toHaveProperty("receipt");
   });
 });
 
