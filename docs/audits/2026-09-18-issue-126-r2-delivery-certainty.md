@@ -64,8 +64,33 @@ process를 안전 재시작하도록 했다. 재시작 뒤 같은 파일을 다�
 - direct result offer 기록 뒤에도 acceptance-unknown 상태 유지
 - protected memory-only context 0, discardable context 1일 때 안전 재시작 완료
 
-이는 실제 App Server와 운영 DB를 사용한 사용자 환경 재현은 아니다. production
-앱의 실제 완료 memory-only context 종료 예약은 별도 실환경 항목으로 구분한다.
+위 결정적 검사는 실제 App Server와 운영 DB를 사용한 사용자 환경 재현이
+아니다. 이어지는 production 실환경 결과와 별도 증거로 구분한다.
+
+## production 앱·helper 실환경 확인
+
+결정적 검사와 별도로, 사용자 Mac의 실제 앱·helper·App Server·운영 SQLite로
+다음 경계를 확인했다.
+
+1. 교체 전 구 runtime은 원래 #128 장애와 같은 완료 memory-only context 8개를
+   보유했다. 이때 active Job, pending admission/interaction, blocking interaction,
+   pending cancellation, background process는 모두 0이었다.
+2. 커밋된 production 앱(`09c58504f7c6:65c323c21ddc`)으로 교체한 뒤 운영 DB가
+   schema 21에서 23으로 이관됐다. 이관 전후 Job 749개, retained result 8개,
+   completion delivery 8개가 유지됐다.
+3. 실제 bridge를 통해 파일·명령 실행을 금지한 짧은 validation Job 하나를
+   memory-only App Server context로 완료했다. runtime snapshot은
+   `memoryOnlyThreads=1`, `protectedMemoryOnlyThreads=0`,
+   `discardableMemoryOnlyThreads=1`을 반환했고 completion delivery는
+   `pending`, attempt 0으로 저장됐다.
+4. 같은 앱에서 force 없는 runtime restart가 완료되어 runtime PID가 바뀌었다.
+   재시작 뒤 memory-only count는 0이 되었지만 Job 수는 750개로 유지됐고,
+   receipt·pending delivery·retained exact result를 새 Job 생성 없이 다시
+   조회했다.
+
+따라서 완료 context 폐기 허용과 SQLite 결과 보존을 실제 운영 조합에서도
+확인했다. 이 검사는 ChatGPT 카드의 `ui/message` 수신을 포함하지 않으므로
+schema 23 connector 종단 증거로 계산하지 않는다.
 
 ## 결정적 검증
 
@@ -82,6 +107,7 @@ process를 안전 재시작하도록 했다. 재시작 뒤 같은 파일을 다�
 | App Server schema 호환 | CLI 0.153.3, 416 JSON / 827 TypeScript PASS |
 | #125 수신 순서 회귀 | 6/6 PASS |
 | production 앱 bundle/codesign | 별도 staging 경로 build/sign/strict verify PASS |
+| production 앱/helper의 discardable context 안전 재시작 | PASS (force 없음, PID 변경, exact result 보존) |
 | schema 23 실제 connector 새 대화 | 미실행 |
 
 브라우저 경계에는 host accept, 명시적 reject 뒤 retry, timeout uncertainty,
