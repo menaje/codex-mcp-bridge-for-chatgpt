@@ -2,6 +2,11 @@
 
 관련 이슈: [#126](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/126), [#128](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/128)
 
+> **R3 보완:** 아래 R2 기록은 당시 증거로 보존한다. 도구 설명·운영 문서의
+> 구형 `result-read` 계약, 완료 결과의 보존 경계, 그리고 최종 빌드 connector
+> 확인은 이 문서의 [R3 계약 정합성·보존 정책](#r3-계약-정합성보존-정책)과
+> [R3 최종 빌드 connector 재검증](#r3-최종-빌드-connector-재검증)을 따른다.
+
 ## 결론
 
 schema 22의 정상 자동 전달은 유지하되, 서버가 도구 결과를 만들었다는 사실을
@@ -133,6 +138,106 @@ schema 23 계약상 receipt 응답은 result offer 증거이며 delivery state�
 ChatGPT host의 정상 경로 반복 재현 증거이며, 장시간 실행이나 장애 주입 신뢰성을
 대신하지 않는다.
 
+## R3 계약 정합성·보존 정책
+
+커밋 `fc988a7956dd79b95e797a8f332855ee41e58801`에서 실행 코드, GPT가 읽는
+`codex_status` 설명, 카드 도구 문서, DB·운영·보관 문서를 schema 23 계약으로
+일치시켰다.
+
+- 일반 Job/request 조회와 completion receipt 조회는 각각 서버가 exact result를
+  응답에 포함해 **제공한 최초 시각**만 기록한다.
+- 어느 offer도 GPT 수신이나 최종 사용자 보고를 증명하지 않으며, 직접 조회만으로
+  live-card completion을 종료하거나 lease를 소비하지 않는다.
+- live-card 자동 발송 자체는 한 terminal event에 대해 중복 시도를 억제한다. 일반
+  조회까지 포함한 전체 대화의 exactly-once 또는 GPT 최종 보고 exactly-once는
+  주장하지 않는다.
+- `ui/message` 본문은 DB에 저장하지 않는다. 저장 대상은 exact Job result와
+  receipt·상태·시각·시도 수로 이루어진 소형 전달 원장뿐이다.
+
+보존은 기존 **Agent 작업 기록 보존 기간**에 연동하며 별도 사용자 설정을 만들지
+않는다.
+
+| 상태 | exact Job result 보호 |
+| --- | --- |
+| `pending`(실제 전송 경계 미진입) | 일반 result retention만 적용 |
+| `leased`, `host-rejected`, receipt offer 전 `host-accepted`, `acceptance-unknown` | 선택된 작업 기록 보존 기간까지 보호; `0`(무기한)이면 무기한 |
+| `completion_result_offered_at` 기록 뒤 | 응답 유실 복구를 위해 일반 result retention 한 창을 새로 보장; 현재 기본값 6시간 |
+| 전달 원장 행 | 작업 기록 만료 때 삭제; Job의 최소 replay receipt/terminal outcome은 기존 정책대로 유지 |
+
+이 정책은 성공 메시지 본문이나 Codex memory context를 장기간 보존하는 정책이
+아니다. 수락 불명확·응답 유실 때 새 Job 없이 exact result를 회수할 수 있게 하는
+유한 복구 정책이다.
+
+## R3 최종 빌드 connector 재검증
+
+위 커밋의 clean bundle을 실행했다. 디스크 bundle을 빌드하는 동안 이미 메모리에
+올라와 있던 구 runtime(`09c58504f7c6:65c323c21ddc`)은 active Job 0, pending
+admission 0, background process 0을 확인한 뒤 정지했다. 구 helper의 마지막 handoff가
+bundle identity 불일치로 실패해 runtime과 Tunnel이 이미 멈춘 상태에서 메뉴바 앱과
+LaunchAgent만 명시적으로 내리고 새 bundle을 실행했다. 프로젝트 파일과 운영 DB는
+변경하지 않았다.
+
+최종 실행 식별자는 다음과 같다.
+
+| 항목 | 값 |
+| --- | --- |
+| Git commit | `fc988a7956dd79b95e797a8f332855ee41e58801` |
+| runtime build ID | `fc988a7956dd:531d0d60f855` |
+| source hash | `531d0d60f855659d8002958b120ee1e6a2e469c6cc259bd70460ba39919d63d3` |
+| build dirty | `false` |
+| 운영 DB | stable profile, schema 23 |
+| Dashboard resource | `ui://codex-mcp-bridge/dashboard/v2.html` |
+| Dashboard contract source | generation 34 |
+
+실행 중 helper의 build ID와 clean bundle의 build ID가 일치하고 Bridge와 Tunnel이
+연결된 상태에서 Codex 인앱 브라우저의 ChatGPT Work 새 대화 세 곳마다 connector를
+새로 선택했다. 각 대화는 `LIVE-R3-1`, `LIVE-R3-2`, `LIVE-R3-3`만 반환하는 새
+Activity·Agent·Job을 만들었고, 최초 요청 뒤 추가 사용자 입력·카드 새로고침·진단
+버튼·직접 Job 조회 없이 다음 순서를 3/3 통과했다.
+
+```text
+exact Job 접수
+  → dashboard/v2 render
+  → 카드의 terminal event 관측
+  → ui/message 자동 전송
+  → ChatGPT 자동 재개
+  → completion receipt exact result offer
+  → LIVE-R3-n 최종 보고
+```
+
+브라우저는 세 대화 모두 실제 `dashboard/v2` sandbox와 최종 문자열을 표시했다.
+generation 34는 host 화면이 독립적으로 숫자를 노출했다는 주장이 아니라, 위 exact
+build가 제공한 resource descriptor와 Dashboard 소스의 계약 세대를 연결한 식별이다.
+
+운영 SQLite 대조 결과는 다음과 같다. 공개 기록에는 원시 conversation·scope·Job·
+receipt·Codex thread ID를 남기지 않는다.
+
+| 항목 | 결과 |
+| --- | --- |
+| 서로 다른 conversation scope | 3/3 |
+| terminal Job 상태·origin | `completed` / `normal-completion` 3/3 |
+| completion delivery 상태 | `host-accepted` 3/3 |
+| 자동 전송 시도 수 | 각 1회 |
+| `completion_result_offered_at` | 3/3 기록 |
+| `direct_result_offered_at` | 3/3 미기록 |
+| retained exact result | `LIVE-R3-1/2/3` 모두 일치 |
+| 실제 ChatGPT 최종 보고 | `LIVE-R3-1/2/3` 모두 일치 |
+
+R3 코드와 최종 bundle 검증은 다음을 통과했다.
+
+| 검사 | 결과 |
+| --- | --- |
+| 전체 TypeScript 테스트 | 86 files / 766 tests PASS |
+| #126 production Dashboard 브라우저 회귀 | 8/8 PASS |
+| `npm run build` | PASS |
+| `npm run macos:check` | 202 tests PASS, opt-in live 2개 의도적 skip |
+| clean app bundle·strict codesign | PASS |
+| schema 23 최종 connector 새 대화 | 3/3 PASS |
+
+R3 3/3은 설명·보존 수정이 포함된 exact build의 정상 자동 경로 재현 증거다. 실제
+network fault injection, 장시간 Job, 긴 사용자 응답과의 동시 충돌, 카드 없는 상태,
+navigation/teardown 뒤 원래 대화 자동 재개를 새로 통과했다는 뜻은 아니다.
+
 ## 결정적 검증
 
 | 검사 | 결과 |
@@ -143,7 +248,7 @@ ChatGPT host의 정상 경로 반복 재현 증거이며, 장시간 실행이나
 | helper child-process 안전 재시작 + 실제 SQLite 보존 | PASS |
 | production Dashboard 브라우저 경계 | 8/8 PASS |
 | `npm run build` 및 release manifest | PASS |
-| 전체 `npm run check` | 86 files / 764 tests PASS |
+| 전체 `npm run check` | 86 files / 764 tests PASS (R2 당시) |
 | 전체 `npm run macos:check` | 202 tests PASS, opt-in live 2개 의도적 skip |
 | App Server schema 호환 | CLI 0.153.3, 416 JSON / 827 TypeScript PASS |
 | #125 수신 순서 회귀 | 6/6 PASS |
