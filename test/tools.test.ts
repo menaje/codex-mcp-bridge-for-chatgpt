@@ -1022,7 +1022,12 @@ describe("current bridge tool contracts", () => {
   it("automatically opens the originating conversation Dashboard for admitted work and queues completion delivery", async () => {
     const tools = await client.listTools();
     const descriptor = tools.tools.find((tool) => tool.name === "codex_task")!;
+    const statusDescriptor = tools.tools.find((tool) => tool.name === "codex_status")!;
     const dashboardDescriptor = tools.tools.find((tool) => tool.name === "codex_dashboard")!;
+    expect(statusDescriptor.description).toContain(
+      "does not prove GPT received the result and does not settle or cancel live-card delivery"
+    );
+    expect(statusDescriptor.description).not.toContain("settles any still-pending live-card follow-up");
     const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
     const project = settings.current.projects[0]!;
     expect((dashboardDescriptor._meta as Record<string, any>)["openai/outputTemplate"])

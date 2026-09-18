@@ -3549,16 +3549,19 @@ export class CodexJobRegistry {
 
   private prune(): string[] {
     const removed: string[] = [];
-    const cutoff = Date.now() - this.ttlMs;
+    const now = Date.now();
+    const cutoff = now - this.ttlMs;
     for (const [jobId, job] of this.jobs) {
-      if (!isActiveActivityJobStatus(job.status) && job.updatedAt < cutoff && !this.activityStore.retentionProtection(jobId).length) {
+      if (!isActiveActivityJobStatus(job.status) && job.updatedAt < cutoff &&
+        !this.activityStore.retentionProtection(jobId, now, this.ttlMs).length) {
         this.jobs.delete(jobId);
         removed.push(jobId);
       }
     }
     if (this.jobs.size <= this.maxJobs) return removed;
     const sorted = [...this.jobs.values()].sort((a, b) => a.updatedAt - b.updatedAt);
-    for (const job of sorted.filter((entry) => !isActiveActivityJobStatus(entry.status) && !this.activityStore.retentionProtection(entry.jobId).length).slice(0, this.jobs.size - this.maxJobs)) {
+    for (const job of sorted.filter((entry) => !isActiveActivityJobStatus(entry.status) &&
+      !this.activityStore.retentionProtection(entry.jobId, now, this.ttlMs).length).slice(0, this.jobs.size - this.maxJobs)) {
       this.jobs.delete(job.jobId);
       removed.push(job.jobId);
     }
@@ -5008,7 +5011,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read project selectors and Codex work state, ordinary questions, and results in the current conversation. An authenticated exact Job or request query that returns a retained final answer settles any still-pending live-card follow-up for that Job; an explicit compatibility scopeId does not. For an automatic live-card completion message, call query kind='completion' with its opaque receipt; the authenticated conversation scope is still required and the receipt never authorizes cross-conversation access.",
+        "Read project selectors and Codex work state, ordinary questions, and results in the current conversation. An authenticated exact Job or request query records only that the server offered a retained result; it does not prove GPT received the result and does not settle or cancel live-card delivery. For an automatic live-card completion message, call query kind='completion' with its opaque receipt; that response is also offer evidence, the authenticated conversation scope is still required, and the receipt never authorizes cross-conversation access.",
       inputSchema: codexStatusInput,
       outputSchema: MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status,
       annotations: {

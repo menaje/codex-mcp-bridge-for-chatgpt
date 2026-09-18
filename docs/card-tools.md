@@ -62,20 +62,30 @@ reference all agree can claim its bounded lease through
 `codex_ui_completion`. The card then sends standard `ui/message`. Definite host
 rejection is retryable with backoff; acceptance uncertainty is terminal for
 automatic sending so a reconnect cannot duplicate a message merely because an
-acknowledgement was lost. A server receipt is correlation, never authorization.
+acknowledgement was lost. The message contains an opaque receipt and lookup
+instruction, not the Job result. The Bridge stores only the small delivery
+record, not a copy of the generated message. A server receipt is correlation,
+never authorization.
 
 The automatic message tells GPT to call `codex_status` once with
 `query.kind="completion"`. That read requires current authenticated ChatGPT
 conversation metadata, rechecks the receipt's exact retained Job and scope, and
-marks the result consumed. Supplying a scope ID explicitly cannot authorize
-this lookup. If the same authenticated conversation instead reads the exact
-retained result first through an ordinary Job or request query, the server
-atomically changes only a `pending` or retryable `host-rejected` delivery to
-`result-read`; the Dashboard then observes a settled event and sends no duplicate
-message. Once a card has leased the event, or the host has accepted it or left
-acceptance uncertain, the direct read does not roll that delivery back. Card
-teardown permanently stops that instance; cardless and post-navigation wake are
-intentionally unsupported. Codex execution and normal history retention remain
+records that the server offered the result. An ordinary authenticated exact Job
+or request query records a separate direct offer. Neither offer proves that GPT
+received or reported the result, changes the completion-delivery state, or
+cancels a live-card send. Supplying a scope ID explicitly cannot authorize a
+lookup. The automatic path prevents duplicate card sends for one completion;
+it does not claim exactly-once reporting across both direct queries and automatic
+messages.
+
+After a card crosses the send boundary, an unresolved completion protects the
+exact Job result only through the selected run-history retention period. A
+merely pending event with no live card follows ordinary result retention. A receipt offer starts
+one ordinary result-retention recovery window so a response lost at the return
+boundary can be queried again without retaining successful results for the full
+history period. When run history expires, its small completion-delivery record
+also expires. Card teardown permanently stops that instance; cardless and
+post-navigation wake are intentionally unsupported. Codex execution remains
 independent of card liveness.
 
 The Activity `completion_outbox` remains a different local macOS notification

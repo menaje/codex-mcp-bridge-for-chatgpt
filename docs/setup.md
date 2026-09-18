@@ -302,7 +302,7 @@ later use; a model temporarily missing from the list also keeps its saved text.
 - **App and card language** applies one explicit language to both surfaces. Automatic follows the Mac language in the app and the ChatGPT display language in cards, so they may differ.
 - **Concurrent Agent jobs** limits how many jobs may run at once; it is not the number of registered Agents.
 - **Keep new Agent tasks in the Codex app** preserves eligible new App Server threads in Codex. It does not change older tasks.
-- **Run history retention** keeps display history for 7, 30 (default), or 90 days, or indefinitely. Full result retention and connection idle time are separate policies; see [work history](work-history.md).
+- **Run history retention** keeps display history for 7, 30 (default), or 90 days, or indefinitely. Full result retention and connection idle time are separate policies; after a live card crosses the send boundary, an unresolved ChatGPT completion result is protected only through the selected history period. See [work history](work-history.md).
 
 Dashboard creation and completion delivery are not settings. Every newly
 admitted orchestration Job returns an exact Dashboard render action, and GPT

@@ -1072,19 +1072,50 @@ export class BridgeStateStore {
     });
   }
 
-  retentionProtection(jobId: string, now = Date.now()): string[] {
-    const row = this.database.prepare("SELECT status,activity_id FROM jobs WHERE job_id=?").get(jobId) as {status:string;activity_id:string} | undefined;
+  retentionProtection(
+    jobId: string,
+    now = Date.now(),
+    completionResultRecoveryMs = 0
+  ): string[] {
+    const row = this.database.prepare("SELECT status,activity_id,updated_at FROM jobs WHERE job_id=?").get(jobId) as {
+      status:string;activity_id:string;updated_at:number;
+    } | undefined;
     if (!row) return [];
     const reasons: string[] = [];
     if (isActiveActivityJobStatus(row.status)) reasons.push("active-work");
     if (this.database.prepare("SELECT 1 FROM job_interactions WHERE job_id=? AND is_blocking=1 LIMIT 1").get(jobId)) reasons.push("pending-interaction");
     if (this.database.prepare("SELECT 1 FROM completion_outbox WHERE activity_id=? AND delivered_at IS NULL AND acknowledged_at IS NULL LIMIT 1").get(row.activity_id)) reasons.push("undelivered-result");
-    // A merely pending event must not defeat the configured history-retention
-    // policy forever when no live card exists. Protect only an event that has
-    // crossed into an active or ambiguous host-delivery attempt.
-    if (this.database.prepare(`SELECT 1 FROM job_completion_deliveries
-      WHERE job_id=? AND state NOT IN ('pending','result-read')
-        AND completion_result_offered_at IS NULL LIMIT 1`).get(jobId)) reasons.push("undelivered-chatgpt-result");
+    const completionDelivery = this.database.prepare(`SELECT state,completion_result_offered_at
+      FROM job_completion_deliveries WHERE job_id=?`).get(jobId) as {
+        state:string;completion_result_offered_at:number|null;
+      } | undefined;
+    if (completionDelivery) {
+      const settings = this.getSettingsRecord()?.payload;
+      const retentionDays = historyRetentionDays(
+        isRecord(settings) ? settings.historyRetentionDays : undefined
+      );
+      const withinHistoryRetention = retentionDays === 0 ||
+        now < row.updated_at + retentionDays * 86_400_000;
+      if (
+        !["pending", "result-read"].includes(completionDelivery.state) &&
+        completionDelivery.completion_result_offered_at === null &&
+        withinHistoryRetention
+      ) {
+        // No message body is stored. Keep the exact Job result available only
+        // after a card crossed the send boundary, while delivery remains
+        // unresolved and the selected run-history period has not expired.
+        reasons.push("undelivered-chatgpt-result");
+      } else if (
+        completionDelivery.completion_result_offered_at !== null &&
+        completionResultRecoveryMs > 0 &&
+        now < completionDelivery.completion_result_offered_at + completionResultRecoveryMs
+      ) {
+        // Constructing a receipt response is not proof that ChatGPT received
+        // it. Reuse the ordinary result-retention window as one bounded retry
+        // grace rather than extending successful results to run-history expiry.
+        reasons.push("chatgpt-result-recovery");
+      }
+    }
     const steering = this.uncertainResultState(jobId);
     const review = this.eventRetention.summary(jobId).uncertainResponseReview as {count?:number;latestUpdateAt?:number} | undefined;
     if (steering.pending || steering.count > 0 && (review?.count !== steering.count || review.latestUpdateAt !== steering.latestUpdateAt)) reasons.push("uncertain-response");

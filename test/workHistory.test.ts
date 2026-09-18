@@ -19,6 +19,9 @@ describe("execution history retention",()=>{
     store.workHistory.acknowledge(input.jobId,old+1000);
     expect(store.workHistory.acknowledgedJobIds(scopeId).has(input.jobId)).toBe(true);
     expect(store.maintainRetention(now).historyRemoved).toBe(1);
+    const deliveryDb=new Database(file,{readonly:true});
+    expect((deliveryDb.prepare("SELECT COUNT(*) AS count FROM job_completion_deliveries WHERE job_id=?").get(input.jobId) as {count:number}).count).toBe(0);
+    deliveryDb.close();
     expect(store.listDashboardRetainedJobs()).toEqual([]);
     expect(store.listJobEvents(input.jobId)).toEqual([]);
     expect(store.eventRetention.summary(input.jobId)).toEqual({});

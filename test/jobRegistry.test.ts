@@ -134,6 +134,52 @@ describe("CodexJobRegistry persistence", () => {
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
   });
 
+  it("keeps one result-retention recovery window after a completion receipt offer", async () => {
+    const root = temporaryRoot();
+    const stateStore = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    const clock = vi.spyOn(Date, "now");
+    let now = 1_000;
+    clock.mockImplementation(() => now);
+    const ttlMs = 100;
+    const registry = new CodexJobRegistry({
+      stateStore,
+      allowedRoots: [root],
+      ttlMs,
+      maxJobs: 100
+    });
+    try {
+      const completed = registry.start(jobInput(root), async () => result("recovery-window"));
+      await completed.promise;
+      const delivery = stateStore.getJobCompletionDelivery(completed.jobId, SCOPE_A)!;
+      const owner = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+      stateStore.claimJobCompletionDelivery(completed.jobId, SCOPE_A, owner, 1_000, 1_010);
+      stateStore.markJobCompletionHostAccepted({
+        jobId: completed.jobId,
+        scopeId: SCOPE_A,
+        receipt: delivery.receipt,
+        leaseOwner: owner,
+        now: 1_020
+      });
+      stateStore.recordJobCompletionResultOffer({
+        scopeId: SCOPE_A,
+        source: "completion-receipt",
+        receipt: delivery.receipt,
+        now: 1_050
+      });
+
+      now = 1_101;
+      expect(registry.get(completed.jobId)?.result).toMatchObject({
+        structuredContent: { threadId: "recovery-window" }
+      });
+      now = 1_150;
+      expect(registry.get(completed.jobId)).toBeUndefined();
+      expect(stateStore.listJobs()).toEqual([]);
+    } finally {
+      clock.mockRestore();
+      stateStore.close();
+    }
+  });
+
   it("does not publish an in-memory completion when the atomic terminal commit fails", async () => {
     const root = temporaryRoot();
     const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));

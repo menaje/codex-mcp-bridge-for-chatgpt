@@ -70,6 +70,12 @@ General result pruning protects:
 - A prepared or dispatching response, until dispatch is resolved. An uncertain response protects the result until explicit operator review is acknowledged; its delivery journal remains uncertain and cannot be replayed. Store-level `acknowledgeUncertainResultReview` requires a retained terminal Job, does not clear other protection reasons, and protects again if another uncertain delivery is recorded.
 - Recorded/dispatched cancellation intents, until terminal resolution.
 - An explicit result hold, until release or expiry. Store-level `holdResult` requires a reason and a renewable expiry no more than 30 days away; it cannot restore an already expired result. No end-user hold/review control is added by this change.
+- An unresolved live-card completion that crossed the send boundary, no later
+  than the selected run-history expiry. A merely pending cardless event follows
+  ordinary result retention. The `ui/message` body is not stored. Once the completion receipt has
+  been offered an exact result, one ordinary result-retention window remains for
+  a lost-return retry; successful results are not extended to the full history
+  period. The small delivery row expires with run history.
 
 Protected results can exceed the ordinary count/time retention policy, but do not remove diagnostic size limits or the individual result limit. Operators should resolve outstanding delivery/response states rather than clear provenance or replay an uncertain response. Reserved request IDs, cancellation/steering journals, question delivery records, Agent identities, project pins and fork identities are not diagnostic garbage.
 

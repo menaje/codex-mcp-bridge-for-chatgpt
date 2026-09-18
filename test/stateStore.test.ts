@@ -198,7 +198,7 @@ describe("BridgeStateStore", () => {
         now: 5_021
       });
       expect(accepted).toMatchObject({ state: "host-accepted", hostAcceptedAt: 5_021 });
-      expect(store.retentionProtection(jobId)).toContain("undelivered-chatgpt-result");
+      expect(store.retentionProtection(jobId, 5_021)).toContain("undelivered-chatgpt-result");
 
       expect(store.recordJobCompletionResultOffer({
         scopeId: SCOPE_A,
@@ -211,7 +211,55 @@ describe("BridgeStateStore", () => {
         resultReadAt: undefined,
         resultReadSource: undefined
       });
-      expect(store.retentionProtection(jobId)).not.toContain("undelivered-chatgpt-result");
+      expect(store.retentionProtection(jobId, 5_022)).not.toContain("undelivered-chatgpt-result");
+      expect(store.retentionProtection(jobId, 5_022, 6_000))
+        .toContain("chatgpt-result-recovery");
+      expect(store.retentionProtection(jobId, 11_022, 6_000))
+        .not.toContain("chatgpt-result-recovery");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("bounds unresolved ChatGPT completion results by run-history retention", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const jobId = "34343434-3434-4434-8434-343434343434";
+    const requestId = "35353535-3535-4535-8535-353535353535";
+    const owner = "36363636-3636-4636-8636-363636363636";
+    const terminalAt = 1_800_000_000_000;
+    const day = 86_400_000;
+    const recoveryMs = 6 * 60 * 60_000;
+    try {
+      store.writeSettings({ historyRetentionDays: 7 }, 0, terminalAt);
+      store.upsertJob({ ...job(jobId, requestId), updatedAt: terminalAt });
+      const delivery = store.getJobCompletionDelivery(jobId, SCOPE_A)!;
+
+      expect(store.retentionProtection(jobId, terminalAt + 1, recoveryMs))
+        .not.toContain("undelivered-chatgpt-result");
+      store.claimJobCompletionDelivery(jobId, SCOPE_A, owner, 1_000, terminalAt + 1);
+      store.markJobCompletionHostAccepted({
+        jobId,
+        scopeId: SCOPE_A,
+        receipt: delivery.receipt,
+        leaseOwner: owner,
+        now: terminalAt + 2
+      });
+      expect(store.retentionProtection(jobId, terminalAt + 7 * day - 1, recoveryMs))
+        .toContain("undelivered-chatgpt-result");
+      expect(store.retentionProtection(jobId, terminalAt + 7 * day, recoveryMs))
+        .not.toContain("undelivered-chatgpt-result");
+
+      const offeredAt = terminalAt + 7 * day - 1_000;
+      store.recordJobCompletionResultOffer({
+        scopeId: SCOPE_A,
+        source: "completion-receipt",
+        receipt: delivery.receipt,
+        now: offeredAt
+      });
+      expect(store.retentionProtection(jobId, terminalAt + 7 * day, recoveryMs))
+        .toContain("chatgpt-result-recovery");
+      expect(store.retentionProtection(jobId, offeredAt + recoveryMs, recoveryMs))
+        .not.toContain("chatgpt-result-recovery");
     } finally {
       store.close();
     }
@@ -280,6 +328,8 @@ describe("BridgeStateStore", () => {
         directResultOfferedAt: 32,
         resultReadSource: undefined
       });
+      expect(store.retentionProtection(rejectedJobId, 32))
+        .toContain("undelivered-chatgpt-result");
 
       store.upsertJob(job(unknownJobId, "32323232-3232-4232-8232-323232323232"));
       const unknown = store.claimJobCompletionDelivery(unknownJobId, SCOPE_A, owner, 1_000, 40)!;
@@ -300,6 +350,8 @@ describe("BridgeStateStore", () => {
         directResultOfferedAt: 42,
         resultReadSource: undefined
       });
+      expect(store.retentionProtection(unknownJobId, 42))
+        .toContain("undelivered-chatgpt-result");
     } finally {
       store.close();
     }

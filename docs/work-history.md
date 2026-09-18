@@ -146,11 +146,16 @@ maintenance removes its expired execution/usage/review display summary and
 disposable events. It preserves formal terminal state and timing, a compact
 terminal receipt, and the original
 request reservation to prevent replay. Agent identity, thread linkage, project pins,
-cancellation/delivery journals, original Codex conversations, and project files
-remain intact. Active work, blocking responses, undelivered results, unresolved
-response delivery, pending cancellations, and valid result holds are protected.
+cancellation journals, original Codex conversations, and project files remain
+intact. The exact ChatGPT completion-delivery row expires with this display
+history; its message body was never stored. Active work, blocking responses,
+attempted but unresolved completion delivery within this selected period, unresolved response delivery,
+pending cancellations, and valid result holds are protected.
 Indefinite history retention does not change the existing full-result or raw
-log retention limits documented in [thread-lifecycle.md](thread-lifecycle.md).
+log retention limits for successfully offered results documented in
+[thread-lifecycle.md](thread-lifecycle.md). It does keep an exact ChatGPT result
+whose card crossed the send boundary until the delivery is resolved or the
+setting changes.
 
 Each transaction scans at most 500 terminal rows. A persisted cursor progresses
 past protected batches. Late snapshots cannot resurrect expired display data.

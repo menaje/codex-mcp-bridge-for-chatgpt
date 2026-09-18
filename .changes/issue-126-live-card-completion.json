@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "releaseUnitId": "codex-mcp-bridge",
   "bump": "minor",
-  "summary": "BREAKING: Make every new orchestration Job open an exact live Dashboard and deliver its terminal result through one durable same-conversation follow-up.",
+  "summary": "BREAKING: Make every new orchestration Job open an exact live Dashboard, deliver its terminal result through one durable same-conversation follow-up, and bound unresolved delivery retention by run-history policy.",
   "breaking": true,
-  "migration": "Deploy the matching bridge and macOS app (state schema 23), refresh ChatGPT connector discovery, and stop sending the retired dashboardAutoOpen, completionFollowUp, or activityCardVisibility settings; cardless wake remains unsupported."
+  "migration": "Deploy the matching bridge and macOS app (state schema 23), refresh ChatGPT connector discovery, and stop sending the retired dashboardAutoOpen, completionFollowUp, or activityCardVisibility settings. The Bridge stores no ui/message body; attempted-but-unresolved completion results follow run-history retention, while a completion result offer receives one ordinary recovery window. Cardless wake remains unsupported."
 }

@@ -47,8 +47,9 @@ export type HistoryProblemJob = HistoryJobIdentity & {
   problemKey: string; revision: string;
 };
 
-/** Presentation/outcome retention never removes the authoritative replay receipt,
- * Agent, thread identity, project pins, or cancellation/delivery journals. */
+/** Presentation/outcome retention never removes the authoritative request replay
+ * receipt, Agent/thread identity, project pins, or cancellation journals. Exact
+ * ChatGPT completion-delivery rows expire with their run-history entry. */
 export class WorkHistoryStore {
   constructor(private readonly db: Database.Database) {}
 
@@ -163,6 +164,7 @@ export class WorkHistoryStore {
       this.db.prepare("UPDATE jobs SET payload=? WHERE job_id=?").run(JSON.stringify(receipt),row.job_id);
       this.db.prepare("UPDATE jobs SET summary='{}' WHERE job_id=?").run(row.job_id);
       this.db.prepare("DELETE FROM job_events WHERE job_id=?").run(row.job_id);
+      this.db.prepare("DELETE FROM job_completion_deliveries WHERE job_id=?").run(row.job_id);
       this.db.prepare(`INSERT INTO work_history_state(job_id,expired_at) VALUES (?,?)
         ON CONFLICT(job_id) DO UPDATE SET expired_at=excluded.expired_at`).run(row.job_id,now);
       removed++;
