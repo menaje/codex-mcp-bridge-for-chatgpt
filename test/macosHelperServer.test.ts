@@ -176,23 +176,23 @@ describe("macOS runtime helper RPC", () => {
       await schema3.close({ runtime: "force-stop" });
     }
 
-    const futureFile = path.join(root, "schema-22.sqlite");
+    const futureFile = path.join(root, "schema-23.sqlite");
     createSeededSchema3Fixture(futureFile);
     const futureDatabase = new Database(futureFile);
-    futureDatabase.prepare("UPDATE bridge_meta SET value = '22' WHERE key = 'schema_version'").run();
+    futureDatabase.prepare("UPDATE bridge_meta SET value = '23' WHERE key = 'schema_version'").run();
     futureDatabase.close();
-    const futureEnvFile = path.join(root, "schema-22", ".env");
+    const futureEnvFile = path.join(root, "schema-23", ".env");
     writeStateBackedRuntimeEnv(futureEnvFile, futureFile);
     const future = new MacOSBridgeSupervisor({
       bridgeRoot: path.join(root, "runtime"),
       envFile: futureEnvFile,
-      bridgeSocketPath: path.join(root, "schema-22.sock"),
-      runtimeLockDirectory: path.join(root, "schema-22-run", "launcher.lock")
+      bridgeSocketPath: path.join(root, "schema-23.sock"),
+      runtimeLockDirectory: path.join(root, "schema-23-run", "launcher.lock")
     });
     try {
       expect((await future.health()).configuration).toMatchObject({
         valid: false,
-        issue: expect.stringContaining("state schema 22")
+        issue: expect.stringContaining("state schema 23")
       });
     } finally {
       await future.close({ runtime: "force-stop" });

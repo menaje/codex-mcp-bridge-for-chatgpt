@@ -1073,6 +1073,13 @@ describe("current bridge tool contracts", () => {
       job.jobId === task.jobId
     );
     expect(origin).toBeDefined();
+    const runningStatus = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "job", id: origin!.jobId } },
+      _meta: metadata
+    });
+    expect(runningStatus.isError, JSON.stringify(runningStatus)).not.toBe(true);
+    expect(state.getJobCompletionDelivery(origin!.jobId, origin!.scopeId)).toBeUndefined();
 
     const mismatchedDashboardOpen = await client.callTool({
       name: "codex_dashboard",
@@ -1168,6 +1175,16 @@ describe("current bridge tool contracts", () => {
       attempt: 1,
       deliveryState: "leased"
     });
+    const directReadAfterLease = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "job", id: origin!.jobId } },
+      _meta: metadata
+    });
+    expect(directReadAfterLease.isError, JSON.stringify(directReadAfterLease)).not.toBe(true);
+    expect(state.getJobCompletionDelivery(origin!.jobId, origin!.scopeId)).toMatchObject({
+      state: "leased",
+      resultReadSource: undefined
+    });
     const foreignCompletion = await client.callTool({
       name: "codex_ui_completion",
       arguments: {
@@ -1214,7 +1231,8 @@ describe("current bridge tool contracts", () => {
       items: [expect.objectContaining({ id: origin!.jobId, state: "completed" })]
     });
     expect(state.getJobCompletionDelivery(origin!.jobId, origin!.scopeId)).toMatchObject({
-      state: "result-read"
+      state: "result-read",
+      resultReadSource: "completion-receipt"
     });
     expect(state.listPendingCompletionOutbox(origin!.scopeId)).toEqual([]);
 
@@ -1265,16 +1283,21 @@ describe("current bridge tool contracts", () => {
     expect(secondTask.isError, JSON.stringify(secondTask)).not.toBe(true);
     expect(secondTask._meta).not.toHaveProperty("openai/outputTemplate");
     expect(secondTask._meta).not.toHaveProperty("codex/dashboardOpen@1");
-    expect((secondTask.structuredContent as any).nextActions).toContainEqual(
-      expect.objectContaining({
-        kind: "tool",
-        tool: "codex_dashboard",
-        arguments: expect.objectContaining({
-          scope: "conversation",
-          jobId: (secondTask.structuredContent as any).jobId
-        })
-      })
+    const secondRenderAction = (secondTask.structuredContent as any).nextActions.find(
+      (action: any) =>
+        action.kind === "tool" &&
+        action.tool === "codex_dashboard" &&
+        action.arguments.jobId === (secondTask.structuredContent as any).jobId
     );
+    expect(secondRenderAction).toMatchObject({
+      kind: "tool",
+      tool: "codex_dashboard",
+      arguments: expect.objectContaining({
+        scope: "conversation",
+        jobId: (secondTask.structuredContent as any).jobId,
+        presentationRef: expect.stringMatching(/^[a-f0-9]{64}$/)
+      })
+    });
     const secondJob = state.listJobs().find((job) =>
       job.jobId === (secondTask.structuredContent as any).jobId
     );
@@ -1289,6 +1312,45 @@ describe("current bridge tool contracts", () => {
     expect(state.getJobCompletionDelivery(secondJob!.jobId, secondJob!.scopeId)).toMatchObject({
       state: "pending"
     });
+    const explicitScopeRead = await client.callTool({
+      name: "codex_status",
+      arguments: {
+        scopeId: secondJob!.scopeId,
+        query: { kind: "job", id: secondJob!.jobId }
+      }
+    });
+    expect(explicitScopeRead.isError, JSON.stringify(explicitScopeRead)).not.toBe(true);
+    expect(state.getJobCompletionDelivery(secondJob!.jobId, secondJob!.scopeId)).toMatchObject({
+      state: "pending",
+      resultReadSource: undefined
+    });
+    const authenticatedDirectRead = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "job", id: secondJob!.jobId } },
+      _meta: metadata
+    });
+    expect(authenticatedDirectRead.isError, JSON.stringify(authenticatedDirectRead)).not.toBe(true);
+    expect(state.getJobCompletionDelivery(secondJob!.jobId, secondJob!.scopeId)).toMatchObject({
+      state: "result-read",
+      resultReadSource: "direct-job-query",
+      attemptCount: 0
+    });
+    const settledAfterDirectRead = await client.callTool({
+      name: "codex_ui_completion",
+      arguments: {
+        operation: "wait",
+        jobId: secondJob!.jobId,
+        presentationRef: secondRenderAction.arguments.presentationRef,
+        widgetInstanceId: randomUUID()
+      },
+      _meta: metadata
+    });
+    expect(settledAfterDirectRead.isError, JSON.stringify(settledAfterDirectRead)).not.toBe(true);
+    expect(settledAfterDirectRead.structuredContent).toMatchObject({
+      state: "settled",
+      deliveryState: "result-read"
+    });
+    expect(settledAfterDirectRead.structuredContent).not.toHaveProperty("receipt");
   });
 });
 

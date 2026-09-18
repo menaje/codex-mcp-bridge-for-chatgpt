@@ -46,7 +46,7 @@ read or delete Codex rollout files. Ordinary live maintenance does not run
 [database schema and lifecycle](database-schema.md).
 
 The schema-17-to-18 checkpoint restores every legacy archived Agent in one
-transaction under the single pre-schema-20 recovery backup described above. IDs,
+transaction under the single pre-schema-22 recovery backup described above. IDs,
 names, timestamps, projects, Activity
 assignments, thread links, next-run settings, Jobs, results, history and review
 state remain unchanged. An archived Agent with a retained active Job becomes

@@ -447,6 +447,12 @@ export const JOB_COMPLETION_DELIVERY_STATES = [
   "result-read"
 ] as const;
 export type JobCompletionDeliveryState = (typeof JOB_COMPLETION_DELIVERY_STATES)[number];
+export const JOB_COMPLETION_RESULT_READ_SOURCES = [
+  "completion-receipt",
+  "direct-job-query"
+] as const;
+export type JobCompletionResultReadSource =
+  (typeof JOB_COMPLETION_RESULT_READ_SOURCES)[number];
 export type JobCompletionDeliveryRecord = {
   jobId: string;
   scopeId: string;
@@ -462,6 +468,7 @@ export type JobCompletionDeliveryRecord = {
   hostAcceptedAt?: number;
   acceptanceUnknownAt?: number;
   resultReadAt?: number;
+  resultReadSource?: JobCompletionResultReadSource;
   createdAt: number;
   updatedAt: number;
 };
@@ -613,8 +620,10 @@ export class BridgeStateStore {
           this.database.exec(CURRENT_STATE_SCHEMA);
           this.database.exec(V20_ASYNC_EXECUTION_MIGRATION_SCHEMA);
           this.database.exec(V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA);
+          this.database.exec(V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
           this.setMeta("schema_v21_created_at", new Date().toISOString());
+          this.setMeta("schema_v22_created_at", new Date().toISOString());
           this.setMeta("state_migration_catalog_version", String(STATE_MIGRATION_CATALOG_VERSION));
           this.setMeta("state_database_id", randomUUID());
           this.recordSchemaOrigin("fresh");
@@ -2799,7 +2808,9 @@ export class BridgeStateStore {
       const result = this.database.prepare(`
         UPDATE job_completion_deliveries
            SET state='result-read', next_attempt_at=NULL, lease_owner=NULL,
-               lease_expires_at=NULL, result_read_at=COALESCE(result_read_at,?), updated_at=?
+               lease_expires_at=NULL, result_read_at=COALESCE(result_read_at,?),
+               result_read_source=COALESCE(result_read_source,'completion-receipt'),
+               updated_at=?
          WHERE receipt=? AND scope_id=?
       `).run(timestamp, timestamp, normalizedReceipt, normalizedScopeId);
       if (result.changes !== 1) {
@@ -2808,6 +2819,26 @@ export class BridgeStateStore {
       const record = this.getJobCompletionDeliveryByReceipt(normalizedReceipt, normalizedScopeId);
       if (!record) throw new Error("COMPLETION_DELIVERY_UNAVAILABLE: Exact completion delivery is unavailable.");
       return record;
+    });
+  }
+
+  markJobCompletionDirectResultRead(
+    jobId: string,
+    scopeId: string,
+    now = Date.now()
+  ): JobCompletionDeliveryRecord | undefined {
+    const normalizedJobId = normalizeUuid(jobId, "completion delivery jobId");
+    const normalizedScopeId = normalizeUuid(scopeId, "completion delivery scopeId");
+    const timestamp = normalizeEventTimestamp(now);
+    return this.transaction(() => {
+      this.database.prepare(`
+        UPDATE job_completion_deliveries
+           SET state='result-read', next_attempt_at=NULL, lease_owner=NULL,
+               lease_expires_at=NULL, result_read_at=COALESCE(result_read_at,?),
+               result_read_source='direct-job-query', updated_at=?
+         WHERE job_id=? AND scope_id=? AND state IN ('pending','host-rejected')
+      `).run(timestamp, timestamp, normalizedJobId, normalizedScopeId);
+      return this.getJobCompletionDelivery(normalizedJobId, normalizedScopeId);
     });
   }
 
@@ -3601,6 +3632,7 @@ export class BridgeStateStore {
     this.runMigration("18", "19", originalSourceSchema, () => this.migrateV18ToV19());
     this.runMigration("19", "20", originalSourceSchema, () => this.migrateV19ToV20());
     this.runMigration("20", "21", originalSourceSchema, () => this.migrateV20ToV21());
+    this.runMigration("21", "22", originalSourceSchema, () => this.migrateV21ToV22());
     if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
       throw new Error(`Bridge state migration stopped at unsupported schema version ${this.getMeta("schema_version")}.`);
     }
@@ -6819,6 +6851,16 @@ function readJobCompletionDeliveryRow(
   if (!valueIsOneOf(JOB_COMPLETION_DELIVERY_STATES, state)) {
     throw new Error("Invalid stored Job completion delivery state.");
   }
+  const resultReadSource = optionalString(row.result_read_source);
+  if (
+    resultReadSource !== undefined &&
+    !valueIsOneOf(JOB_COMPLETION_RESULT_READ_SOURCES, resultReadSource)
+  ) {
+    throw new Error("Invalid stored Job completion result-read source.");
+  }
+  if (state === "result-read" && resultReadSource === undefined) {
+    throw new Error("Stored Job completion result-read state has no source.");
+  }
   return {
     jobId: String(row.job_id),
     scopeId: String(row.scope_id),
@@ -6834,6 +6876,7 @@ function readJobCompletionDeliveryRow(
     hostAcceptedAt: optionalNumber(row.host_accepted_at),
     acceptanceUnknownAt: optionalNumber(row.acceptance_unknown_at),
     resultReadAt: optionalNumber(row.result_read_at),
+    resultReadSource,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at)
   };

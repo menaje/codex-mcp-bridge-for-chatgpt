@@ -5004,7 +5004,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read project selectors and Codex work state, ordinary questions, and results in the current conversation. Exact Job queries retrieve retained final answers. For an automatic live-card completion message, call query kind='completion' with its opaque receipt; the authenticated conversation scope is still required and the receipt never authorizes cross-conversation access.",
+        "Read project selectors and Codex work state, ordinary questions, and results in the current conversation. An authenticated exact Job or request query that returns a retained final answer settles any still-pending live-card follow-up for that Job; an explicit compatibility scopeId does not. For an automatic live-card completion message, call query kind='completion' with its opaque receipt; the authenticated conversation scope is still required and the receipt never authorizes cross-conversation access.",
       inputSchema: codexStatusInput,
       outputSchema: MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status,
       annotations: {
@@ -5131,11 +5131,22 @@ export function registerBridgeTools(
           ...formatJobStatus(job, jobs.staleThresholdMs, wait, userSettings.current, jobs),
           inputs: { cursor: codexInputCursor(job), ordinaryQuestions: job.pendingInteractions.filter(ordinaryCodexQuestion).length, approvalRequests: job.pendingInteractions.filter(q => !ordinaryCodexQuestion(q)).length, readTool: "codex_status", queryKind: "input" }
         };
-        return statusToolResult(
-          compactStatusProjection(structured),
+        const projection = compactStatusProjection(structured);
+        const result = statusToolResult(
+          projection,
           job,
           config.maxJobResultBytes
         );
+        const deliveredResult = projection.items.find(
+          (item) => item.type === "job" && item.id === job.jobId
+        )?.result?.availability === "delivered";
+        if (scopeResolution?.source === "host-metadata" && deliveredResult) {
+          // A successful same-conversation direct result read wins only while
+          // the live card has not crossed the send boundary. The store leaves
+          // leased, accepted, uncertain, and already-consumed rows untouched.
+          jobs.admissionStateStore.markJobCompletionDirectResultRead(job.jobId, scopeId);
+        }
+        return result;
       }
       if (activityQuery) {
         if (!scopeId) {

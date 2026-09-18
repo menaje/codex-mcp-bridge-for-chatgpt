@@ -13,7 +13,11 @@ import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { createMigrationBackupMetadata } from "../src/stateBackup.js";
-import { CURRENT_STATE_SCHEMA } from "../src/stateSchema.js";
+import {
+  CURRENT_STATE_SCHEMA,
+  V20_ASYNC_EXECUTION_MIGRATION_SCHEMA,
+  V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA
+} from "../src/stateSchema.js";
 import {
   V18_ACTIVITY_ID,
   V18_AGENT_ID,
@@ -30,7 +34,7 @@ import {
   createSeededSchema3Fixture
 } from "./helpers/stateSchemaFixtures.js";
 
-describe("state schema 21 completion delivery after asynchronous-execution normalization", { timeout: 15_000 }, () => {
+describe("state schema 22 completion delivery after asynchronous-execution normalization", { timeout: 15_000 }, () => {
   it("upgrades schema 19 without losing request dedupe identity or terminal results", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-schema-v19-async-"));
     const file = path.join(root, "state.sqlite");
@@ -85,7 +89,7 @@ describe("state schema 21 completion delivery after asynchronous-execution norma
     database.close();
 
     const store = new BridgeStateStore({ file });
-    expect(store.schemaVersion).toBe(21);
+    expect(store.schemaVersion).toBe(22);
     const [restored] = store.listJobs() as Array<Record<string, unknown>>;
     expect(restored).toMatchObject({
       jobId,
@@ -97,6 +101,7 @@ describe("state schema 21 completion delivery after asynchronous-execution norma
     });
     expect(restored).not.toHaveProperty("executionMode");
     expect(store.getActivity(activityId)).not.toHaveProperty("executionMode");
+    expect(store.getJobCompletionDelivery(jobId, scopeId)).toBeUndefined();
     expect(() => store.upsertJob({
       ...(restored as any),
       jobId: "24242424-2424-4424-8424-242424242424"
@@ -109,7 +114,75 @@ describe("state schema 21 completion delivery after asynchronous-execution norma
     expect(current.prepare("PRAGMA table_info(jobs)").all())
       .not.toContainEqual(expect.objectContaining({ name: "execution_mode" }));
     current.close();
-    expect(existsSync(`${file}.pre-v19-to-v21.sqlite`)).toBe(true);
+    expect(existsSync(`${file}.pre-v19-to-v22.sqlite`)).toBe(true);
+  });
+
+  it("backfills schema 21 receipt consumption without replaying a terminal Job", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-schema-v21-consumption-"));
+    const file = path.join(root, "state.sqlite");
+    const scopeId = "34343434-3434-4434-8434-343434343434";
+    const activityId = "35353535-3535-4535-8535-353535353535";
+    const jobId = "36363636-3636-4636-8636-363636363636";
+    const requestId = "37373737-3737-4737-8737-373737373737";
+    const receipt = `completion-${"d".repeat(64)}`;
+    const database = new Database(file);
+    database.exec("CREATE TABLE bridge_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL) STRICT;");
+    database.exec(CURRENT_STATE_SCHEMA);
+    database.exec(V20_ASYNC_EXECUTION_MIGRATION_SCHEMA);
+    database.exec(V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA);
+    database.prepare("INSERT INTO bridge_meta(key,value) VALUES ('schema_version','21')").run();
+    database.prepare("INSERT INTO bridge_meta(key,value) VALUES ('state_database_id',?)")
+      .run("38383838-3838-4838-8838-383838383838");
+    database.prepare("INSERT INTO scopes(scope_id,version,created_at,updated_at) VALUES (?,?,?,?)")
+      .run(scopeId, 1, 1, 2);
+    database.prepare(`INSERT INTO activities(
+      activity_id,scope_id,title,kind,handoff_policy,completion_trigger,lifecycle,
+      waiting_on,verification,version,created_at,updated_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      activityId, scopeId, "Schema 21 completion", "implementation", "none", "manual",
+      "open", "orchestrator", "not-required", 1, 1, 2
+    );
+    database.prepare(`INSERT INTO jobs(
+      job_id,scope_id,request_id,activity_id,status,backend_kind,terminal_version,cwd,
+      sandbox,created_at,updated_at,job_version,last_progress_at,terminal_origin,payload
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      jobId, scopeId, requestId, activityId, "completed", "mcp-server", 1, root,
+      "workspace-write", 1, 2, 2, 2, "normal-completion", JSON.stringify({
+        jobId,
+        scopeId,
+        requestId,
+        activityId,
+        status: "completed",
+        backendKind: "mcp-server",
+        cwd: root,
+        sandbox: "workspace-write",
+        createdAt: 1,
+        updatedAt: 2,
+        version: 2,
+        lastProgressAt: 2,
+        exclusiveKeys: [],
+        sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" },
+        result: { content: [{ type: "text", text: "schema 21 result" }] }
+      })
+    );
+    database.prepare(`INSERT INTO job_completion_deliveries(
+      job_id,scope_id,terminal_version,receipt,state,attempt_count,result_read_at,
+      created_at,updated_at
+    ) VALUES (?,?,?,?,?,0,?,?,?)`).run(
+      jobId, scopeId, 1, receipt, "result-read", 2, 2, 2
+    );
+    database.close();
+
+    const store = new BridgeStateStore({ file });
+    expect(store.schemaVersion).toBe(22);
+    expect(store.getJobCompletionDelivery(jobId, scopeId)).toMatchObject({
+      state: "result-read",
+      resultReadSource: "completion-receipt",
+      attemptCount: 0
+    });
+    expect(store.getJobCompletionDelivery(jobId, scopeId)?.createdAt).toBe(2);
+    store.close();
+    expect(existsSync(`${file}.pre-v21-to-v22.sqlite`)).toBe(true);
   });
 
   it("creates the current schema directly and matches an authentic schema 18 upgrade", () => {
@@ -123,23 +196,23 @@ describe("state schema 21 completion delivery after asynchronous-execution norma
 
     const freshFile = path.join(root, "fresh.sqlite");
     const fresh = new BridgeStateStore({ file: freshFile });
-    expect(fresh.schemaVersion).toBe(21);
+    expect(fresh.schemaVersion).toBe(22);
     fresh.close();
 
     const upgradedFile = path.join(root, "upgraded.sqlite");
     createSchema18Fixture(upgradedFile, { projectCwd: originalCwd, legacyCwd });
     let upgraded = new BridgeStateStore({ file: upgradedFile });
-    expect(upgraded.schemaVersion).toBe(21);
+    expect(upgraded.schemaVersion).toBe(22);
     expect(upgraded.getMeta("schema_v19_source_version")).toBe("18");
     expect(upgraded.getMeta("schema_v19_upgrade_source")).toBeUndefined();
     expect(schemaInventory(upgradedFile)).toEqual(schemaInventory(freshFile));
     expect(upgraded.getScopeVersion(V18_SCOPE_ID)).toBe(12);
 
-    const backup = `${upgradedFile}.pre-v18-to-v21.sqlite`;
+    const backup = `${upgradedFile}.pre-v18-to-v22.sqlite`;
     expect(existsSync(backup)).toBe(true);
     expect(statSync(backup).mode & 0o777).toBe(0o600);
     expect(readSchemaVersion(backup)).toBe(18);
-    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v21"))).toHaveLength(1);
+    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v22"))).toHaveLength(1);
 
     expect(upgraded.listSessions()).toEqual([
       expect.objectContaining({
@@ -285,9 +358,9 @@ describe("state schema 21 completion delivery after asynchronous-execution norma
 
     upgraded.close();
     upgraded = new BridgeStateStore({ file: upgradedFile });
-    expect(upgraded.schemaVersion).toBe(21);
+    expect(upgraded.schemaVersion).toBe(22);
     upgraded.close();
-    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v21"))).toHaveLength(1);
+    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v22"))).toHaveLength(1);
   });
 
   it("upgrades the published schema 3 fixture through every supported checkpoint", () => {
@@ -296,7 +369,7 @@ describe("state schema 21 completion delivery after asynchronous-execution norma
     createSeededSchema3Fixture(file);
 
     let store = new BridgeStateStore({ file });
-    expect(store.schemaVersion).toBe(21);
+    expect(store.schemaVersion).toBe(22);
     expect(store.getMeta("schema_v19_source_version")).toBe("3");
     expect(store.getMeta("schema_v19_upgrade_source")).toBeUndefined();
     expect(store.listSessions()).toEqual([
@@ -321,16 +394,16 @@ describe("state schema 21 completion delivery after asynchronous-execution norma
         error: "V3_FAILURE: retained failure"
       })
     ]);
-    expect(existsSync(`${file}.pre-v3-to-v21.sqlite`)).toBe(true);
-    expect(readSchemaVersion(`${file}.pre-v3-to-v21.sqlite`)).toBe(3);
+    expect(existsSync(`${file}.pre-v3-to-v22.sqlite`)).toBe(true);
+    expect(readSchemaVersion(`${file}.pre-v3-to-v22.sqlite`)).toBe(3);
     const firstInventory = schemaInventory(file);
     store.close();
 
     store = new BridgeStateStore({ file });
-    expect(store.schemaVersion).toBe(21);
+    expect(store.schemaVersion).toBe(22);
     store.close();
     expect(schemaInventory(file)).toEqual(firstInventory);
-    expect(readdirSync(root).filter((name) => name.includes("pre-v3-to-v21"))).toHaveLength(1);
+    expect(readdirSync(root).filter((name) => name.includes("pre-v3-to-v22"))).toHaveLength(1);
   });
 
   it.each([
@@ -411,27 +484,27 @@ describe("state schema 21 completion delivery after asynchronous-execution norma
     expect(() => new BridgeStateStore({ file })).toThrow(/malformed JSON|Invalid job payload/);
     expect(readSchemaVersion(file)).toBe(18);
     expect(readMeta(file, "schema_v19_upgrade_source")).toBe("18");
-    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v21"))).toHaveLength(1);
+    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v22"))).toHaveLength(1);
     const failed = new Database(file);
     expect(failed.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'legacy_v18_%'").all()).toEqual([]);
     failed.prepare("UPDATE jobs SET payload='{}' WHERE job_id=?").run(V18_RUNNING_JOB_ID);
     failed.close();
 
     let store = new BridgeStateStore({ file });
-    expect(store.schemaVersion).toBe(21);
+    expect(store.schemaVersion).toBe(22);
     expect(store.getMeta("schema_v19_source_version")).toBe("18");
     expect(store.getMeta("schema_v19_upgrade_source")).toBeUndefined();
     store.close();
     store = new BridgeStateStore({ file });
     store.close();
-    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v21"))).toHaveLength(1);
+    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v22"))).toHaveLength(1);
   });
 
   it("replaces a stale same-version backup before beginning a new upgrade", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-schema-stale-backup-"));
     const file = path.join(root, "state.sqlite");
     const stale = path.join(root, "stale.sqlite");
-    const backup = `${file}.pre-v18-to-v21.sqlite`;
+    const backup = `${file}.pre-v18-to-v22.sqlite`;
     createSchema18Fixture(file);
     createSchema18Fixture(stale);
     const current = new Database(file);
@@ -447,14 +520,14 @@ describe("state schema 21 completion delivery after asynchronous-execution norma
 
     expect(readMeta(backup, "backup_probe")).toBe("current");
     expect(readSchemaVersion(backup)).toBe(18);
-    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v21"))).toHaveLength(1);
+    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v22"))).toHaveLength(1);
   });
 
   it("keeps the original recovery point when a multi-checkpoint upgrade resumes", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-schema-multistep-retry-"));
     const file = path.join(root, "state.sqlite");
     const original = path.join(root, "original-v3.sqlite");
-    const originalBackup = `${file}.pre-v3-to-v21.sqlite`;
+    const originalBackup = `${file}.pre-v3-to-v22.sqlite`;
     createSeededSchema3Fixture(original);
     const databaseId = "77777777-7777-4777-8777-777777777777";
     const originalDatabase = new Database(original);
@@ -475,20 +548,20 @@ describe("state schema 21 completion delivery after asynchronous-execution norma
       backupFile: originalBackup,
       databaseId,
       sourceSchema: 3,
-      targetSchema: 21
+      targetSchema: 22
     });
 
     expect(() => new BridgeStateStore({ file })).toThrow(/malformed JSON|Invalid job payload/);
     expect(readSchemaVersion(file)).toBe(18);
     expect(readMeta(file, "schema_v19_upgrade_source")).toBe("3");
     expect(readSchemaVersion(originalBackup)).toBe(3);
-    expect(existsSync(`${file}.pre-v18-to-v21.sqlite`)).toBe(false);
+    expect(existsSync(`${file}.pre-v18-to-v22.sqlite`)).toBe(false);
 
     const repaired = new Database(file);
     repaired.prepare("UPDATE jobs SET payload='{}' WHERE job_id=?").run(V18_RUNNING_JOB_ID);
     repaired.close();
     const store = new BridgeStateStore({ file });
-    expect(store.schemaVersion).toBe(21);
+    expect(store.schemaVersion).toBe(22);
     expect(store.getMeta("schema_v19_source_version")).toBe("3");
     expect(store.getMeta("schema_v19_upgrade_source")).toBeUndefined();
     store.close();

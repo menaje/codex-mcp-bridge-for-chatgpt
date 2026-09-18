@@ -90,12 +90,12 @@ describe("release manifest", () => {
     expect(() => validateReleaseManifest(manifest)).toThrow("manifestVersion must be 6");
   });
 
-  it("publishes one complete schema-3-through-21 compatibility and recovery contract", () => {
+  it("publishes one complete schema-3-through-22 compatibility and recovery contract", () => {
     const manifest = loadReleaseManifest(REPO_ROOT);
     const catalog = readJson(path.join(REPO_ROOT, "state-migrations.json"));
     expect(manifest.stateCompatibility).toMatchObject({
-      currentSchema: 21,
-      supportedSourceSchemas: Array.from({ length: 18 }, (_, index) => index + 3),
+      currentSchema: 22,
+      supportedSourceSchemas: Array.from({ length: 19 }, (_, index) => index + 3),
       unsupportedSourceSchemas: [1, 2],
       retiredLegacyImports: [
         "settings-state-json",
@@ -116,7 +116,7 @@ describe("release manifest", () => {
     expect(catalog).toMatchObject({
       catalogVersion: 1,
       immutabilityPolicy: "append-only-after-release-v1",
-      currentSchema: 21,
+      currentSchema: 22,
       supportedSourceSchemas: manifest.stateCompatibility.supportedSourceSchemas
     });
     expect(catalog.fixtures).toEqual(expect.arrayContaining([
@@ -127,7 +127,7 @@ describe("release manifest", () => {
     for (const source of manifest.stateCompatibility.supportedSourceSchemas) {
       let schema = source;
       const visited = new Set<number>();
-      while (schema !== 21) {
+      while (schema !== 22) {
         expect(visited.has(schema)).toBe(false);
         visited.add(schema);
         const migration = catalog.migrations.find((entry: any) => entry.fromSchema === schema);

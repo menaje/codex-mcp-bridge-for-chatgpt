@@ -71,10 +71,14 @@ requires one. A later policy change is rechecked at admission.
 `codex_status` has closed query variants for an exact request receipt, Job,
 completion receipt, Activity, thread, project, or bounded input wait. Completion
 receipt reads require current ChatGPT conversation metadata; an explicit
-compatibility `scopeId` is not authority. `codex_cancel` and state-changing tools require
-their own idempotency UUID and exact version. An out-of-date version, a
-different retry payload, or a scope/ownership mismatch is a rejection, not a
-best-effort mutation.
+compatibility `scopeId` is not authority. When an authenticated exact Job or
+request query actually returns a retained terminal result before a Dashboard has
+claimed its send lease, that direct read atomically settles the still-pending
+automatic follow-up. A running, omitted, unavailable, explicitly scoped, or
+already leased/accepted/uncertain result does not make that transition.
+`codex_cancel` and state-changing tools require their own idempotency UUID and
+exact version. An out-of-date version, a different retry payload, or a
+scope/ownership mismatch is a rejection, not a best-effort mutation.
 
 App-private tools use card proofs, revisions, and scoped targets where
 applicable. They are current card operations, not public fallback aliases.

@@ -157,7 +157,11 @@ is live, terminal completion uses one server lease and a standard `ui/message`
 to resume the same conversation. The resumed turn reads the exact retained
 result with `codex_status({query:{kind:"completion",receipt:"…"}})`. If the card
 is closed, torn down, or disconnected, the Job remains queryable but automatic
-follow-up is not guaranteed.
+follow-up is not guaranteed. If the current authenticated response has already
+received that exact retained result through a Job or request query before the
+card claims it, the pending automatic follow-up is settled instead of creating a
+duplicate turn. An explicit `scopeId`, a running result, or a delivery that has
+already crossed the card send boundary does not trigger that suppression.
 
 ## 7. Refresh after a release
 

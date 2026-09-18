@@ -13,8 +13,10 @@
 - terminal Job마다 stable opaque receipt와 서버 측 bounded lease를 만들고, 하나의 exact live Dashboard만 전송을 claim한다.
 - 카드는 표준 `ui/message`의 host 수락·거절·불명확 상태를 구분한다. 수락이 불명확하면 자동 재전송하지 않는다.
 - 자동 메시지로 재개된 GPT는 authenticated host scope에서 receipt를 사용해 exact retained result를 한 번 읽는다. receipt 자체와 explicit scope는 권한이 아니다.
+- 같은 authenticated conversation의 일반 Job/request 조회가 exact retained result를 먼저 반환하면 아직 전송 경계를 넘지 않은 완료 사건만 원자적으로 소비하고, 카드는 중복 `ui/message`를 보내지 않는다.
+- schema 21 이전에 이미 종료된 Job에는 완료 사건을 소급 생성하거나 재생하지 않는다.
 
-동일 빌드로 앱·helper·runtime·Tunnel을 재시작하고 실제 ChatGPT connector를 Refresh했다. 서로 다른 새 대화 세 곳에서 사용자나 진단 버튼의 추가 입력 없이 **terminal event → 자동 `ui/message` → GPT 재개 → exact result → final message를 3/3 통과**했다. 이어서 실제 host에서 응답 경계, 수락 뒤 재연결, 새 사용자 turn, 복수 Job, foreign scope, stale ref, replay를 각각 실행했다.
+기본 자동 전달 구현 당시 동일 빌드로 앱·helper·runtime·Tunnel을 재시작하고 실제 ChatGPT connector를 Refresh했다. 서로 다른 새 대화 세 곳에서 사용자나 진단 버튼의 추가 입력 없이 **terminal event → 자동 `ui/message` → GPT 재개 → exact result → final message를 3/3 통과**했다. 이어서 실제 host에서 응답 경계, 수락 뒤 재연결, 새 사용자 turn, 복수 Job, foreign scope, stale ref, replay를 각각 실행했다. 후속 direct-result 중복 억제는 상태 저장소·도구 통합·production Dashboard 브라우저 회귀로 검증했고, 기존 실제 host 증거를 새 실환경 실행으로 과장하지 않는다.
 
 cardless·teardown·navigation 뒤 원래 대화를 서버가 깨우는 경로는 구현하거나 지원한다고 표시하지 않는다. macOS generic 알림도 이 ChatGPT 경로의 대체 성공으로 계산하지 않는다.
 
@@ -133,9 +135,29 @@ A 결과 처리 중 B receipt가 섞이지 않았고, A final 뒤 B가 별도 ex
 
 즉 완료된 카드는 settled 상태를 관측할 뿐 delivery를 다시 claim하지 않았다.
 
+## 직접 결과 조회와 자동 전달의 경합
+
+현재 응답이 authenticated host metadata로 exact Job/request를 조회해 보존된
+terminal result를 실제로 받은 경우, 서버는 `pending` 또는 retry 가능한
+`host-rejected` delivery만 `result-read`로 바꾼다. source는
+`direct-job-query`로 기록되고 이후 Dashboard watcher는 settled 상태를 한 번
+관측한 뒤 메시지를 보내지 않는다.
+
+일반 조회가 먼저 결과를 읽는 경우와 카드 lease가 먼저 획득되는 경우를
+상태 저장소·도구 통합 및 production Dashboard 브라우저 회귀에서 각각
+검증했다. 전자는 attempt 0과 메시지 0건으로 끝났고, 후자는 direct 조회가
+lease를 빼앗거나 host 결과를 되돌리지 않았다. explicit `scopeId`만
+사용한 호환 조회, running result, `host-accepted`, `acceptance-unknown`도 자동
+전달 소비 근거로 사용하지 않는다.
+
+schema 19의 기존 terminal Job은 schema 22로 이관한 뒤에도 completion
+delivery가 생성되지 않았다. schema 21의 기존 `result-read` 행은 새 사건을
+만들지 않고 source만 `completion-receipt`로 보강됐다.
+
 ## 서버 상태 모델
 
-schema 21의 `job_completion_deliveries`는 terminal Job당 한 행을 보존한다.
+schema 22의 `job_completion_deliveries`는 새 계약 아래에서 종료된 Job당 한
+행을 보존한다. 과거 terminal Job을 이관 시점에 backfill하지 않는다.
 
 | 상태 | 의미 |
 | --- | --- |
@@ -144,19 +166,20 @@ schema 21의 `job_completion_deliveries`는 terminal Job당 한 행을 보존한
 | `host-rejected` | host가 명시적으로 거절; bounded backoff 뒤에만 재시도 가능 |
 | `host-accepted` | 표준 `ui/message` host 수락 확인 |
 | `acceptance-unknown` | send 경계를 넘었지만 결과가 불명확; 자동 replay 금지 |
-| `result-read` | authenticated same-conversation GPT가 exact retained result를 읽음 |
+| `result-read` | authenticated same-conversation GPT가 exact retained result를 읽음. `result_read_source`로 `completion-receipt` 또는 `direct-job-query`를 구분 |
 
 lease 만료는 `acceptance-unknown`으로 이동하며 pending으로 되돌리지 않는다. host rejection만 최대 3회 범위에서 재시도한다. 복수 카드가 동시에 있어도 서버의 conditional update가 한 카드만 claim하게 한다.
 
 ## 결정적 브라우저 회귀
 
-[`scripts/issue-126-live-card-completion-regression.ts`](../../scripts/issue-126-live-card-completion-regression.ts)는 production Dashboard HTML을 실제 브라우저에서 실행해 다음 6개 경계를 검사한다.
+[`scripts/issue-126-live-card-completion-regression.ts`](../../scripts/issue-126-live-card-completion-regression.ts)는 production Dashboard HTML을 실제 브라우저에서 실행해 다음 7개 경계를 검사한다.
 
 | scenario | 결과 |
 | --- | --- |
 | host accept | PASS |
 | explicit reject 뒤 bounded retry·accept | PASS |
 | `ui/message` timeout → uncertain, no retry | PASS |
+| authenticated direct result read → settled, no `ui/message` | PASS |
 | teardown before terminal → no send | PASS |
 | mismatched presentation ref → no claim/send | PASS |
 | duplicate live cards → one send/ack | PASS |
@@ -167,10 +190,10 @@ lease 만료는 `acceptance-unknown`으로 이동하며 pending으로 되돌리�
 
 | 검사 | 결과 |
 | --- | --- |
-| `npm run check` | 85 files / 757 tests PASS |
+| `npm run check` | 85 files / 759 tests PASS |
 | `npm run macos:check` | 202 tests PASS, opt-in live tests 2개 의도적 skip |
 | `npm run app-server:compat:check` | CLI 0.153.3 기준 416 JSON / 827 TypeScript schema 일치 |
-| `npm run test:issue-126-live-card` | 6/6 PASS |
+| `npm run test:issue-126-live-card` | 7/7 PASS |
 | `npm run test:issue-125-r1-card` | 6/6 PASS |
 | `npm run macos:bundle` | production app bundle 생성·서명 PASS |
 | 실제 connector Refresh | Dashboard v2/gen 33, Settings v2/gen 22 확인 |

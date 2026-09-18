@@ -1,11 +1,11 @@
 # Bridge database schema and lifecycle
 
-Schema 20 is the current SQLite schema. `src/stateSchema.ts` contains the complete
-DDL used for a new installation. `src/stateStore.ts` contains upgrade code only
-for schemas 3 through 19; schemas 1 and 2 are rejected. The published v0.2 and
+Schema 22 is the current SQLite schema. `src/stateSchema.ts` contains the complete
+DDL and projections used for a new installation. `src/stateStore.ts` contains
+upgrade code for schemas 3 through 21; schemas 1 and 2 are rejected. The published v0.2 and
 v0.3 line used schema 3, and the pre-change development installation used schema
 18. Every supported upgrade ends with the same tables, columns, constraints,
-indexes, and triggers as direct schema-20 creation.
+indexes, and triggers as direct schema-22 creation.
 
 The database is the only bridge state authority. Settings, projects, retained
 sessions, and Jobs no longer have parallel JSON files or JSON mirrors. SQLite
@@ -45,7 +45,7 @@ input state. There is no `job_summaries` table, and progress events do not write
 full Job document. `scopes.version` is the one scope CAS/event sequence; there is
 no `scope_versions` mirror.
 
-## Complete schema-20 table matrix
+## Complete schema-22 table matrix
 
 The retention column describes bridge cleanup. SQLite free pages are reusable but
 remain allocated until an offline compaction; physical erasure is therefore a
@@ -55,7 +55,9 @@ Schema 20 removes the retired `execution_mode` columns from `activities` and
 `jobs`, and removes any legacy `executionMode` member from Job payload JSON.
 Admission has one durable asynchronous execution path; Job lifecycle remains
 authoritative in `status`, versions, terminal provenance, and the retained
-result/error receipt.
+result/error receipt. Schema 21 adds exact live-Dashboard completion delivery;
+schema 22 records whether its terminal result was consumed through the automatic
+completion receipt or an authenticated direct Job/request query.
 
 | Table | Current consumer and authoritative fields | Decision and retention |
 | --- | --- | --- |
@@ -75,7 +77,7 @@ result/error receipt.
 | `activity_events` | Activity cursor/watch and compatibility diagnostics | Bounded diagnostic/control history: at most 50,000 recent rows and seven-day cleanup in batches. Delete with Activity/scope. |
 | `job_events` | Progress projection, usage/reroute summary extraction, status cursors | Bounded diagnostics: 256 per Job, global 50,000 rows/64 MiB payload budget, 8 KiB per payload, seven-day metadata cleanup. Delete with Job. Does not contain a full Job copy. |
 | `completion_outbox` | Durable local completion-notification selection, dispatch, acknowledgement, and retry state | Keep delivery authority independently of Dashboard presentation. The local macOS companion claims only retryable `notify` records through its private socket and acknowledges an exact record only after macOS accepts its generic notification. `verify` records are never sent as success notifications. A failed presentation releases its lease; a crash after presentation can be retried, so the outbox does not claim exactly-once visible delivery. |
-| `job_completion_deliveries` | One exact ChatGPT live-card completion event per terminal Job; stable opaque receipt, bounded lease, host acceptance/rejection/uncertainty, and result-read state | Separate from the native Activity outbox. Only the authenticated originating conversation and exact Dashboard presentation can claim it. Pending records follow normal Job/history retention; an active or ambiguous host attempt protects the result until consumption. Acceptance uncertainty is never replayed automatically. Delete with the Job. |
+| `job_completion_deliveries` | One exact ChatGPT live-card completion event per terminal Job; stable opaque receipt, bounded lease, host acceptance/rejection/uncertainty, result-read state, and `result_read_source` | Separate from the native Activity outbox. Only the authenticated originating conversation and exact Dashboard presentation can claim it. An authenticated exact Job/request read can consume only a pending or retryable host-rejected event before the card crosses the send boundary. Pending records follow normal Job/history retention; an active or ambiguous host attempt protects the result until consumption. Acceptance uncertainty is never replayed automatically. Delete with the Job. |
 | `agent_mutations` | Agent mutation request replay/idempotency; scoped request hash/result | Keep as the durable replay receipt for retained mutation requests. It is not a second Agent state store. |
 | `cancellation_operations` | Root cancellation request idempotency, exact target/proof/result | Keep while request replay and audit provenance are needed. It is protected from generic event cleanup. |
 | `cancellation_intents` | Per-target cancellation dispatch and result provenance | Keep recorded/dispatched intents through restart; terminal evidence remains with the retained request journal. Target indexes serve protection and recovery checks. |
@@ -158,7 +160,7 @@ copy, not end-to-end service latency or evidence of a live replacement.
 
 ## Upgrade and legacy-data rules
 
-A fresh database creates schema 20 directly. A persistent supported older database
+A fresh database creates schema 22 directly. A persistent supported older database
 is inspected before a writable SQLite connection opens. The canonical-file lock,
 live-owner check, integrity and foreign-key checks, permissions, free-space
 calculation, verified backup, sequential conversion, and final verification all
@@ -167,7 +169,7 @@ Development and candidate packages use separate default state profiles; selectin
 the stable DB requires an explicit profile or absolute-file override.
 
 The upgrade gets one private, mode-0600 backup named
-`state.sqlite.pre-v<SOURCE>-to-v20.sqlite` and a bound metadata sidecar. The
+`state.sqlite.pre-v<SOURCE>-to-v22.sqlite` and a bound metadata sidecar. The
 sidecar records the logical/physical database identity, source and target runtime
 facts, migration path/checksums, snapshot checksum, integrity/foreign-key results,
 and a digest of table row counts. Retrying the same upgrade reuses and fully
@@ -182,7 +184,11 @@ step and reconciled if the process stops after the schema transaction but before
 the provenance transaction. No step writes the current-version constant. The
 schema-19 rebuild and its foreign-key check run in one transaction. The following
 schema-20 projection removes execution-mode state without changing request IDs,
-request hashes, Job status/results, events, or deduplication receipts. An
+request hashes, Job status/results, events, or deduplication receipts. Schema 21
+adds one completion-delivery row only when a Job becomes terminal after that
+contract is active; it does not backfill old terminal Jobs. Schema 22 adds and
+backfills only the result-read source for already consumed schema-21 deliveries.
+An
 interrupted or invalid conversion rolls its transaction back and can be retried
 after the source problem is corrected. The full operational and restore procedure is in the
 [state upgrade and recovery runbook](state-upgrade-recovery.md).
@@ -199,8 +205,8 @@ relationship. Migration never creates a project from a slug, name, cwd, or old
 snapshot.
 
 The supported schema-3 fixture is taken from the published v0.3.0 implementation
-and passes every fixed checkpoint through schema 20. Exact deployed-development
-fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 are generated
+and passes every fixed checkpoint through schema 22. Exact deployed-development
+fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 21 are generated
 only as named, committed checkpoints from those sources. `state-migrations.json` binds
 their provenance and hashes to the shipped implementation. Schemas 1 and 2 are
 outside the supported release floor and are rejected before a backup or mutation.
@@ -229,7 +235,7 @@ ends and the upgraded database has survived normal restarts, remove older backup
 as a deliberate operator action. Backups contain the same private material as the
 source database and require the same access controls. The bridge does not silently
 delete them because release and rollback policy belong to the operator. Keep each
-backup with its `.migration-v<SOURCE>-to-v20.backup.json` sidecar. Supported
+backup with its `.migration-v<SOURCE>-to-v22.backup.json` sidecar. Supported
 snapshot restore is allowed only while the migrated DB records that neither HTTP
 nor stdio service-open occurred; after that boundary, preserve current state and
 use forward repair or explicit data reconciliation. See the

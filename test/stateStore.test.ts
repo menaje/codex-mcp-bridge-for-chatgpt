@@ -202,9 +202,74 @@ describe("BridgeStateStore", () => {
 
       expect(store.markJobCompletionResultRead(pending.receipt, SCOPE_A, 5_022)).toMatchObject({
         state: "result-read",
-        resultReadAt: 5_022
+        resultReadAt: 5_022,
+        resultReadSource: "completion-receipt"
       });
       expect(store.retentionProtection(jobId)).not.toContain("undelivered-chatgpt-result");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("lets a direct result read consume only a delivery that has not crossed the send boundary", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const pendingJobId = "24242424-2424-4424-8424-242424242424";
+    const leasedJobId = "26262626-2626-4626-8626-262626262626";
+    const rejectedJobId = "29292929-2929-4929-8929-292929292929";
+    const unknownJobId = "31313131-3131-4131-8131-313131313131";
+    const owner = "33333333-3333-4333-8333-333333333333";
+    try {
+      store.upsertJob(job(pendingJobId, "25252525-2525-4525-8525-252525252525"));
+      expect(store.markJobCompletionDirectResultRead(pendingJobId, SCOPE_A, 10)).toMatchObject({
+        state: "result-read",
+        resultReadAt: 10,
+        resultReadSource: "direct-job-query",
+        attemptCount: 0
+      });
+      expect(store.claimJobCompletionDelivery(pendingJobId, SCOPE_A, owner, 1_000, 11))
+        .toBeUndefined();
+
+      store.upsertJob(job(leasedJobId, "27272727-2727-4727-8727-272727272727"));
+      const leased = store.claimJobCompletionDelivery(leasedJobId, SCOPE_A, owner, 1_000, 20)!;
+      expect(store.markJobCompletionDirectResultRead(leasedJobId, SCOPE_A, 21)).toMatchObject({
+        state: "leased",
+        resultReadSource: undefined
+      });
+      expect(store.markJobCompletionHostAccepted({
+        jobId: leasedJobId,
+        scopeId: SCOPE_A,
+        receipt: leased.receipt,
+        leaseOwner: owner,
+        now: 22
+      })).toMatchObject({ state: "host-accepted" });
+
+      store.upsertJob(job(rejectedJobId, "30303030-3030-4030-8030-303030303030"));
+      const rejected = store.claimJobCompletionDelivery(rejectedJobId, SCOPE_A, owner, 1_000, 30)!;
+      store.markJobCompletionHostRejected({
+        jobId: rejectedJobId,
+        scopeId: SCOPE_A,
+        receipt: rejected.receipt,
+        leaseOwner: owner,
+        now: 31
+      });
+      expect(store.markJobCompletionDirectResultRead(rejectedJobId, SCOPE_A, 32)).toMatchObject({
+        state: "result-read",
+        resultReadSource: "direct-job-query"
+      });
+
+      store.upsertJob(job(unknownJobId, "32323232-3232-4232-8232-323232323232"));
+      const unknown = store.claimJobCompletionDelivery(unknownJobId, SCOPE_A, owner, 1_000, 40)!;
+      store.markJobCompletionAcceptanceUnknown({
+        jobId: unknownJobId,
+        scopeId: SCOPE_A,
+        receipt: unknown.receipt,
+        leaseOwner: owner,
+        now: 41
+      });
+      expect(store.markJobCompletionDirectResultRead(unknownJobId, SCOPE_A, 42)).toMatchObject({
+        state: "acceptance-unknown",
+        resultReadSource: undefined
+      });
     } finally {
       store.close();
     }
@@ -361,7 +426,7 @@ describe("BridgeStateStore", () => {
     expect(readFileSync(file).includes(Buffer.from(rawPrompt))).toBe(false);
 
     const reopened = new BridgeStateStore({ file });
-    expect(reopened.schemaVersion).toBe(21);
+    expect(reopened.schemaVersion).toBe(22);
     expect(reopened.listSteeringDeliveries(SCOPE_A)).toEqual([
       expect.objectContaining({
         requestId,
@@ -429,7 +494,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(21);
+    expect(restored.schemaVersion).toBe(22);
     expect(restored.getActivityProjectAdmission(activityId)?.projectId).toBe(project.id);
     expect(restored.listJobs()).toEqual([
       expect.objectContaining({ projectId: project.id, projectName: "Codex MCP Bridge" })
@@ -682,7 +747,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(21);
+    expect(restored.schemaVersion).toBe(22);
     expect(restored.getCancellationOperation(SCOPE_A, requestId)).toMatchObject({
       source: "model-tool",
       reason: "The user changed direction. Stop the obsolete job."

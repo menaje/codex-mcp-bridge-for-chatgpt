@@ -68,9 +68,15 @@ The automatic message tells GPT to call `codex_status` once with
 `query.kind="completion"`. That read requires current authenticated ChatGPT
 conversation metadata, rechecks the receipt's exact retained Job and scope, and
 marks the result consumed. Supplying a scope ID explicitly cannot authorize
-this lookup. Card teardown permanently stops that instance; cardless and
-post-navigation wake are intentionally unsupported. Codex execution and normal
-history retention remain independent of card liveness.
+this lookup. If the same authenticated conversation instead reads the exact
+retained result first through an ordinary Job or request query, the server
+atomically changes only a `pending` or retryable `host-rejected` delivery to
+`result-read`; the Dashboard then observes a settled event and sends no duplicate
+message. Once a card has leased the event, or the host has accepted it or left
+acceptance uncertain, the direct read does not roll that delivery back. Card
+teardown permanently stops that instance; cardless and post-navigation wake are
+intentionally unsupported. Codex execution and normal history retention remain
+independent of card liveness.
 
 The Activity `completion_outbox` remains a different local macOS notification
 channel. When an explicit Activity policy creates such an event, the menu-bar
