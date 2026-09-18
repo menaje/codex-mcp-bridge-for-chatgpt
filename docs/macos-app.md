@@ -136,21 +136,19 @@ Settings surfaces. The effort field name and description remain localized.
 ### Settings and skill management
 
 The native Settings window uses a resizable macOS sidebar/detail layout. Its
-compact title bar keeps only the standard window controls; the visible title,
-sidebar toggle, and split-view separator are omitted. The localized **Settings**
-name is retained for accessibility, while the detail header identifies the
-selected destination. The sidebar always remains visible because it is the
-window's only settings navigation. Search at the top of the sidebar matches
-individual localized controls as well as destinations; selecting a result
+window title remains **Settings**, while the detail header identifies the selected
+destination without repeating that destination in the title bar. A fixed leading
+toolbar control shows or hides the sidebar. Search at the top of the sidebar
+matches individual localized controls as well as destinations; selecting a result
 opens its destination and scrolls to the related settings group. The sidebar
 exposes **General**, **Models & Execution**, **Projects**, **Codex Account &
 Installation**, **Connection**, and **Server** when each destination applies to
 the current role and connection state. A pinned card at the bottom identifies the
 currently managed Mac or remote server and its health, and opens Connection when
 selected. General contains language, operational/security notifications,
-launch behavior, and app display behavior. It states that exact Dashboard
-creation and live-card completion delivery are always-on orchestration behavior;
-they are not editable settings. Shared access, model, Fast,
+launch behavior, and app display behavior. Live-card creation and completion
+delivery are baseline orchestration behavior, so Settings exposes neither
+switches nor informational notices for them. Shared access, model, Fast,
 concurrency, and retention controls live under Models & Execution. Projects uses
 a list-oriented manager, while the Server destination retains an explicit
 apply-and-restart confirmation because those values are stored in the private

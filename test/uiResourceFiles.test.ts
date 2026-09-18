@@ -47,7 +47,7 @@ describe("single-file UI resource lifecycle", () => {
       }
 
       const initial = syncUiResources(root, manifest);
-      expect(initial.resources.settings.uri).toBe("ui://codex-mcp-bridge/settings/v2.html");
+      expect(initial.resources.settings.uri).toBe("ui://codex-mcp-bridge/settings/v3.html");
       expect(initial.resources.dashboard.uri).toBe("ui://codex-mcp-bridge/dashboard/v2.html");
       expect(sourceFiles(root)).toEqual(["dashboard.html", "settings.html"]);
       expect(packagedFiles(root)).toEqual(["dashboard.html", "settings.html"]);
@@ -87,7 +87,7 @@ function writeRenderer(root: string, marker: string): void {
   const resources = Object.fromEntries(["settings", "dashboard"].map((name) => [
     name,
     {
-      uri: `ui://codex-mcp-bridge/${name}/v2.html`,
+      uri: `ui://codex-mcp-bridge/${name}/${name === "settings" ? "v3" : "v2"}.html`,
       html: `<!doctype html><html><body>${name}-${marker}</body></html>`,
       metadata: {
         descriptor: {

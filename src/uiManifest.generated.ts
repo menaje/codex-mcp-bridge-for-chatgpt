@@ -12,7 +12,7 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "releaseInventory": {
     "catalog": "ui-release-catalog.json",
-    "catalogSha256": "b00f6dbb2a7ca5c8132e853db0c530e6fb267c25394e98d96216cc021cde2478",
+    "catalogSha256": "56a20b4eb7c2777c7b2b257042b60707fa58f58e90fcbd0b84ce2f8db4210c3e",
     "activeResources": [
       "settings",
       "dashboard"
@@ -48,9 +48,9 @@ export const UI_RESOURCE_MANIFEST = {
     "selected": [
       {
         "name": "settings",
-        "uriVersion": 2,
-        "digest": "e6aa9047c5c7899a139a08fe7d4d1c9276519b059ecacddc79bcd281fe7806b0",
-        "uri": "ui://codex-mcp-bridge/settings/v2.html",
+        "uriVersion": 3,
+        "digest": "01cb8c4cf341327b1662dcc127de346651a29eaca8c8c28a008c79a4236482ab",
+        "uri": "ui://codex-mcp-bridge/settings/v3.html",
         "inventories": [
           "development-current"
         ],
@@ -88,9 +88,9 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "resources": {
     "settings": {
-      "uriVersion": 2,
-      "digest": "e6aa9047c5c7899a139a08fe7d4d1c9276519b059ecacddc79bcd281fe7806b0",
-      "uri": "ui://codex-mcp-bridge/settings/v2.html",
+      "uriVersion": 3,
+      "digest": "01cb8c4cf341327b1662dcc127de346651a29eaca8c8c28a008c79a4236482ab",
+      "uri": "ui://codex-mcp-bridge/settings/v3.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -106,14 +106,14 @@ export const UI_RESOURCE_MANIFEST = {
             },
             "domain": "https://web-sandbox.oaiusercontent.com"
           },
-          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Codex-app thread visibility, interface language, history, and concurrency for Codex MCP Bridge for ChatGPT. Dashboard creation and live-card completion delivery are always on for new Jobs.",
+          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Codex-app thread visibility, interface language, history, and concurrency for Codex MCP Bridge for ChatGPT.",
           "openai/widgetPrefersBorder": false,
           "openai/widgetCSP": {
             "connect_domains": [],
             "resource_domains": []
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 22
+          "codex/uiContractGeneration": 23
         }
       },
       "releaseProvenance": {

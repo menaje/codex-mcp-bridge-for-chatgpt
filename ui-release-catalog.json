@@ -7,7 +7,7 @@
   "compatibilityResources": [],
   "currentContracts": {
     "settings": {
-      "uriVersion": 2,
+      "uriVersion": 3,
       "presenterTool": "codex_settings",
       "requiredTools": [
         "codex_settings",

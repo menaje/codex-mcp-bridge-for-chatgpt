@@ -23,7 +23,7 @@ import {
 } from "./uiResources.js";
 
 export const SETTINGS_CARD_URI = currentUiResourceUri("settings");
-export const SETTINGS_CARD_CONTRACT_GENERATION = 22;
+export const SETTINGS_CARD_CONTRACT_GENERATION = 23;
 export const RETAINED_SETTINGS_CARD_CONTRACT_GENERATION = 9;
 export const SETTINGS_CARD_MIME_TYPE = "text/html;profile=mcp-app";
 export const SETTINGS_CARD_HTML_MAX_BYTES = 224 * 1_024;
@@ -39,7 +39,7 @@ export const SETTINGS_CARD_CONTENT_METADATA = {
     domain: "https://web-sandbox.oaiusercontent.com"
   },
   "openai/widgetDescription":
-    `Configure named projects, saved access, model/effort policy, Codex-app thread visibility, interface language, history, and concurrency for ${PRODUCT_INFO.displayName}. Dashboard creation and live-card completion delivery are always on for new Jobs.`,
+    `Configure named projects, saved access, model/effort policy, Codex-app thread visibility, interface language, history, and concurrency for ${PRODUCT_INFO.displayName}.`,
   "openai/widgetPrefersBorder": false,
   "openai/widgetCSP": { connect_domains: [] as string[], resource_domains: [] as string[] },
   "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
@@ -189,7 +189,6 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     .no-projects { margin:10px 0 0; padding:12px; border:1px solid color-mix(in srgb,var(--accent) 35%,var(--border)); border-radius:8px; background:color-mix(in srgb,var(--accent) 7%,transparent); font-size:12px; line-height:1.5; }
     .field-error { display:none; margin:8px 0 0; color:var(--danger); font-size:12px; line-height:1.4; }
     .field-error.show { display:block; }
-    .notice { margin-top:12px; padding:10px; border:1px solid var(--border); border-radius:9px; background:var(--faint); font-size:12px; color:var(--muted); line-height:1.45; }
     .experimental-notice { margin:0 0 14px; border-color:color-mix(in srgb,var(--danger) 45%,transparent); color:var(--danger); }
     .catalog-status { display:flex; align-items:center; gap:7px; margin:0 0 14px; padding:8px 10px; border:1px solid var(--border); border-radius:9px; background:var(--faint); font-size:12px; line-height:1.4; }
     .catalog-status::before { content:""; width:8px; height:8px; flex:0 0 8px; border-radius:50%; background:var(--muted); }
@@ -259,7 +258,6 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
           <p class="field-error" id="project-error" role="alert" aria-live="polite"></p>
         </section>
         <div class="wide"><label class="checkline"><input id="show-bridge-threads-in-codex-app" type="checkbox" /><span data-i18n="settings.codexAppThreads"></span></label><span class="hint" id="codex-app-threads-hint"></span></div>
-        <div class="wide notice"><strong data-i18n="settings.orchestrationDefaults"></strong><div class="hint" data-i18n="settings.orchestrationDefaultsHint"></div></div>
         <label><span data-i18n="settings.language"></span><select id="ui-language"></select><span class="hint" data-i18n="settings.languageHint"></span></label>
         <section class="wide" id="history-settings" hidden><label><span data-i18n="history.period"></span><select id="history-retention"></select></label><p id="history-settings-policy" class="hint" style="white-space:pre-line"></p></section>
         <label><span data-i18n="settings.concurrency"></span><input id="concurrency" type="number" min="1" step="1" required /></label>

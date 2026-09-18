@@ -9,7 +9,7 @@
 #126의 제품 경로와 완료조건을 검증했다.
 
 - 새 `codex_task`는 사용자 설정과 관계없이 exact conversation·Job·`presentationRef` Dashboard render action을 반환한다.
-- Settings 카드와 macOS 앱에서 Dashboard 생성 및 ChatGPT 완료 메시지 전달 토글을 제거했다. 두 화면은 이 동작이 기본 계약이며 live card가 현재 자동 전달의 전제라고 안내한다.
+- Settings 카드와 macOS 앱에서 Dashboard 생성 및 ChatGPT 완료 메시지 전달 토글과 관련 안내를 모두 제거했다. 설정할 수 없는 기본 기능을 설정 항목처럼 표시하지 않는다.
 - terminal Job마다 stable opaque receipt와 서버 측 bounded lease를 만들고, 하나의 exact live Dashboard만 전송을 claim한다.
 - 카드는 표준 `ui/message`의 host 수락·거절·불명확 상태를 구분한다. 수락이 불명확하면 자동 재전송하지 않는다.
 - 자동 메시지로 재개된 GPT는 authenticated host scope에서 receipt를 사용해 exact retained result를 한 번 읽는다. receipt 자체와 explicit scope는 권한이 아니다.
@@ -48,8 +48,8 @@ Refresh 전후 ChatGPT 개발자 화면의 계약은 다음처럼 바뀌었다.
 
 - Dashboard 생성 체크박스 없음.
 - ChatGPT 완료 메시지 전달 체크박스 없음.
+- 두 기능이 항상 사용된다는 별도 안내 블록 없음.
 - 저장 API가 수정할 수 있는 해당 필드 없음.
-- 다음 의미의 안내가 표시됨: 모든 Job은 원래 대화에 exact Dashboard를 열고, live card가 있는 동안 terminal result가 대화를 자동 재개한다. 카드가 닫히거나 연결이 끊기면 Job과 결과는 유지되지만 자동 메시지는 보장하지 않는다.
 - Codex 앱 스레드 보존, 모델, 접근, 언어, 보관, 동시 작업 설정은 독립적으로 유지됨.
 
 ### 실제 macOS 앱
@@ -57,8 +57,9 @@ Refresh 전후 ChatGPT 개발자 화면의 계약은 다음처럼 바뀌었다.
 새 bundle의 native Settings 창을 열어 같은 계약을 확인했다.
 
 - Dashboard 생성과 ChatGPT 완료 메시지 전달 스위치 없음.
-- General 화면의 Codex 앱 스레드 보존 안내에 현황 카드·완료 메시지가 항상 사용된다고 표시됨.
+- Dashboard 생성과 완료 메시지 전달에 관한 별도 안내 행 없음.
 - 별도 macOS 운영·보안 알림 스위치는 유지되지만 ChatGPT 완료 전달 설정으로 표시되지 않음.
+- `2bf4a6b`의 최종 Settings 외형(표시되는 창 제목, 좌측 사이드바, 검색, 하단 연결 상태 카드, 고정 사이드바 토글)을 유지하고 9개 지원 언어에서 상세 영역의 상·하단 스크롤을 다시 검증함.
 
 legacy `dashboardAutoOpen`, `completionFollowUp`, `activityCardVisibility`는 migration 입력에서만 허용하고 저장 결과, Settings UI, native 모델, mutation schema에서는 제거되는 회귀를 통과했다.
 

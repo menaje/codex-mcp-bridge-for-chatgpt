@@ -120,11 +120,11 @@ final class AppPresentationTests: XCTestCase {
 
     func testNativeSemanticKeyFallsBackToEnglishInsteadOfDisplayingItsIdentifier() {
         let value = BridgeAppLocalization.string(
-            "settings.orchestrationDefaults",
+            "settings.codexAppThreads",
             locale: Locale(identifier: "unsupported")
         )
-        XCTAssertEqual(value, "Dashboard and completion delivery are always on")
-        XCTAssertNotEqual(value, "settings.orchestrationDefaults")
+        XCTAssertEqual(value, "Show bridge threads in the Codex app")
+        XCTAssertNotEqual(value, "settings.codexAppThreads")
     }
 
     func testReasoningEffortLabelsUseCanonicalLowercaseValuesInEveryLocale() {

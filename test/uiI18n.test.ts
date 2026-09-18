@@ -124,9 +124,7 @@ describe("human-facing UI localization", () => {
       expect(UI_TRANSLATIONS[locale]["settings.language"]).not.toBe(UI_TRANSLATIONS.en["settings.language"]);
       for (const key of [
         "settings.codexAppThreads",
-        "settings.codexAppThreadsHint",
-        "settings.orchestrationDefaults",
-        "settings.orchestrationDefaultsHint"
+        "settings.codexAppThreadsHint"
       ] as const) {
         expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
       }
@@ -209,12 +207,8 @@ describe("human-facing UI localization", () => {
     );
     expect(UI_TRANSLATIONS.ko["settings.preferredModel"]).toBe("GPT 미지정 시 기본 모델");
     expect(UI_TRANSLATIONS.ko["settings.preferredEffort"]).toBe("GPT 미지정 시 기본 추론 수준");
-    expect(UI_TRANSLATIONS.ko["settings.orchestrationDefaults"]).toBe(
-      "현황 카드와 완료 메시지 전달은 항상 사용됩니다"
-    );
-    expect(UI_TRANSLATIONS.ko["settings.orchestrationDefaultsHint"]).toContain(
-      "카드가 살아 있는 동안"
-    );
+    expect(UI_TRANSLATIONS.ko).not.toHaveProperty("settings.orchestrationDefaults");
+    expect(UI_TRANSLATIONS.ko).not.toHaveProperty("settings.orchestrationDefaultsHint");
     expect(UI_TRANSLATIONS.ko["settings.codexAppThreads"]).toBe(
       "브리지 스레드를 Codex 앱에 표시"
     );
@@ -390,8 +384,8 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).toContain('document.title=t["dashboard.title"]');
     expect(SETTINGS_CARD_HTML).not.toContain('id="dashboard-auto-open"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="completion-follow-up"');
-    expect(SETTINGS_CARD_HTML).toContain('data-i18n="settings.orchestrationDefaults"');
-    expect(SETTINGS_CARD_HTML).toContain('data-i18n="settings.orchestrationDefaultsHint"');
+    expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.orchestrationDefaults"');
+    expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.orchestrationDefaultsHint"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-visibility"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="completion-handoff"');
     expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_read"');
