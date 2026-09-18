@@ -17,14 +17,16 @@ const selection = { model: "gpt-5.6-sol", reasoningEffort: "medium" };
 const metadata = { "openai/session": "current-tool-contract-test" };
 const fixtureThreadId = "99999999-9999-4999-8999-999999999999";
 
+type HeldFixtureCall = {
+  started: () => void;
+  result: Promise<ToolResult>;
+  release: (result: ToolResult) => void;
+  onAssigned?: (assignment: UpstreamWorkerAssignment) => void;
+};
+
 class FixtureUpstream implements CodexUpstream {
   readonly calls: Array<{ name: string; args: Record<string, unknown> }> = [];
-  private heldCall?: {
-    started: () => void;
-    result: Promise<ToolResult>;
-    release: (result: ToolResult) => void;
-    onAssigned?: (assignment: UpstreamWorkerAssignment) => void;
-  };
+  private heldCall?: HeldFixtureCall;
 
   async listTools(): Promise<unknown> {
     return { tools: [{ name: "codex" }] };
@@ -55,7 +57,7 @@ class FixtureUpstream implements CodexUpstream {
     let release!: (result: ToolResult) => void;
     const startedPromise = new Promise<void>((resolve) => { started = resolve; });
     const result = new Promise<ToolResult>((resolve) => { release = resolve; });
-    const heldCall = { started, result, release };
+    const heldCall: HeldFixtureCall = { started, result, release };
     this.heldCall = heldCall;
     return {
       started: startedPromise,

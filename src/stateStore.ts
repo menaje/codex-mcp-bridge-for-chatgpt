@@ -184,6 +184,30 @@ type JobRowInput = {
   cancellationIntentId?: string;
 };
 
+/**
+ * A persisted Job payload hydrated with the canonical columns owned by the
+ * state store. Feature-specific payload fields remain unknown, while callers
+ * can safely inspect the durable handles and lifecycle fields below.
+ */
+export type StoredJobRecord = Record<string, unknown> & {
+  jobId: string;
+  scopeId: string;
+  requestId: string;
+  activityId: string;
+  threadId?: string;
+  sourceThreadId?: string;
+  status: string;
+  backendKind: string;
+  projectId?: string;
+  projectName?: string;
+  cwd: string;
+  sandbox: string;
+  createdAt: number;
+  updatedAt: number;
+  version: number;
+  lastProgressAt: number;
+};
+
 type JobProgressStateInput = {
   updatedAt: number;
   version: number;
@@ -930,7 +954,7 @@ export class BridgeStateStore {
     return Number((row as CountRow).count);
   }
 
-  listJobs(): unknown[] {
+  listJobs(): StoredJobRecord[] {
     return this.database
       .prepare(`
         SELECT j.payload,j.job_id,j.scope_id,j.request_id,j.activity_id,j.thread_id,
@@ -6530,7 +6554,7 @@ function readProjectStorageRow(row: ProjectStorageRow): ProjectTarget {
   };
 }
 
-function hydrateJobPayload(row: JobStorageRow): unknown {
+function hydrateJobPayload(row: JobStorageRow): StoredJobRecord {
   const payload = parseCurrentPayload(row, "job");
   if (!isRecord(payload)) throw new Error("Invalid job payload in the bridge state database: expected an object.");
   return {
