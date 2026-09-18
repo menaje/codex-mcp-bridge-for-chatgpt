@@ -45,12 +45,6 @@ export type BridgeUserSettings = {
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
   showBridgeThreadsInCodexApp: boolean;
-  /** Automatically open Dashboard for newly admitted work in its origin conversation. */
-  dashboardAutoOpen: boolean;
-  /**
-   * Enables local macOS delivery for eligible completion events.
-   */
-  completionFollowUp: boolean;
   historyRetentionDays: HistoryRetentionDays;
 };
 
@@ -110,8 +104,6 @@ export class UserSettingsStore {
       // Durable context is the default for a new installation. Loaded legacy
       // settings retain their explicit (or historical missing-field) choice.
       showBridgeThreadsInCodexApp: true,
-      dashboardAutoOpen: true,
-      completionFollowUp: false,
       historyRetentionDays: DEFAULT_HISTORY_RETENTION_DAYS
     });
     this.settings = cloneGeneralSettings(this.initial);
@@ -259,8 +251,6 @@ export class UserSettingsStore {
       uiLocalePreference: this.initial.uiLocalePreference,
       maxConcurrentJobs: this.initial.maxConcurrentJobs,
       showBridgeThreadsInCodexApp: this.initial.showBridgeThreadsInCodexApp,
-      dashboardAutoOpen: this.initial.dashboardAutoOpen,
-      completionFollowUp: this.initial.completionFollowUp,
       historyRetentionDays: this.initial.historyRetentionDays
     };
     return this.applyConfiguration(patch, [], expectedSettingsRevision, undefined);
@@ -391,12 +381,6 @@ export class UserSettingsStore {
     );
     if (typeof candidate.showBridgeThreadsInCodexApp !== "boolean") {
       throw new Error("Invalid Codex app thread-visibility preference.");
-    }
-    if (typeof candidate.dashboardAutoOpen !== "boolean") {
-      throw new Error("Invalid Dashboard auto-open preference.");
-    }
-    if (typeof candidate.completionFollowUp !== "boolean") {
-      throw new Error("Invalid completion follow-up preference.");
     }
     if (!Number.isInteger(candidate.settingsRevision) || candidate.settingsRevision < 0) {
       throw new Error("Invalid settings revision.");
@@ -608,8 +592,6 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
-    "dashboardAutoOpen",
-    "completionFollowUp",
     "historyRetentionDays"
   ];
   if (required.some((key) => !Object.prototype.hasOwnProperty.call(value, key))) return true;
@@ -625,7 +607,9 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
       "legacyPreferredModel",
       "completionDeliveryMode",
       "dashboardAutoOpenBackground",
+      "dashboardAutoOpen",
       "activityCardVisibility",
+      "completionFollowUp",
       "completionHandoff",
       "activityCardView",
       "taskTimeoutMs",
@@ -650,6 +634,7 @@ function readGeneralSettings(
   const hasMigratablePolicy =
     (
       value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION ||
+      value.schemaVersion === 5 ||
       value.schemaVersion === 4 ||
       value.schemaVersion === 3 ||
       value.schemaVersion === 2
@@ -681,15 +666,7 @@ function readGeneralSettings(
     showBridgeThreadsInCodexApp: typeof value.showBridgeThreadsInCodexApp === "boolean"
       ? value.showBridgeThreadsInCodexApp
       : false,
-    dashboardAutoOpen: typeof value.dashboardAutoOpen === "boolean"
-      ? value.dashboardAutoOpen
-      : typeof value.dashboardAutoOpenBackground === "boolean"
-        ? value.dashboardAutoOpenBackground
-      : value.activityCardVisibility !== "never",
     historyRetentionDays: historyRetentionDays(value.historyRetentionDays),
-    completionFollowUp: typeof value.completionFollowUp === "boolean"
-      ? value.completionFollowUp
-      : value.completionHandoff === "auto-handoff" || value.completionDeliveryMode === "auto-handoff"
   };
 }
 
@@ -760,8 +737,6 @@ function assertSettingsPatchKeys(patch: BridgeUserSettingsPatch): void {
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
-    "dashboardAutoOpen",
-    "completionFollowUp",
     "historyRetentionDays"
   ]);
   const unsupported = Object.keys(patch).find((key) => !allowed.has(key));

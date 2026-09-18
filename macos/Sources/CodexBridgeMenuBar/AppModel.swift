@@ -47,8 +47,6 @@ struct SettingsDraft: Equatable {
     var maxConcurrentJobs: Int
     var historyRetentionDays: Int
     var showBridgeThreadsInCodexApp: Bool
-    var dashboardAutoOpen: Bool
-    var completionFollowUp: Bool
     private let originalPolicyState: PolicyState
 
     private struct PolicyState: Equatable {
@@ -75,8 +73,6 @@ struct SettingsDraft: Equatable {
         maxConcurrentJobs = settings.maxConcurrentJobs
         historyRetentionDays = settings.historyRetentionDays ?? 30
         showBridgeThreadsInCodexApp = settings.showBridgeThreadsInCodexApp
-        dashboardAutoOpen = settings.dashboardAutoOpen
-        completionFollowUp = settings.completionFollowUp
         originalPolicyState = PolicyState(
             mode: policyMode,
             fixedSelectionKey: fixedSelectionKey,
@@ -113,8 +109,6 @@ struct SettingsDraft: Equatable {
         rebased.maxConcurrentJobs = maxConcurrentJobs
         rebased.historyRetentionDays = historyRetentionDays
         rebased.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
-        rebased.dashboardAutoOpen = dashboardAutoOpen
-        rebased.completionFollowUp = completionFollowUp
         return rebased
     }
 
@@ -129,9 +123,7 @@ struct SettingsDraft: Equatable {
             uiLocalePreference == other.uiLocalePreference &&
             maxConcurrentJobs == other.maxConcurrentJobs &&
             historyRetentionDays == other.historyRetentionDays &&
-            showBridgeThreadsInCodexApp == other.showBridgeThreadsInCodexApp &&
-            dashboardAutoOpen == other.dashboardAutoOpen &&
-            completionFollowUp == other.completionFollowUp
+            showBridgeThreadsInCodexApp == other.showBridgeThreadsInCodexApp
     }
 
     private var policyState: PolicyState {
@@ -2629,9 +2621,7 @@ final class AppModel: ObservableObject {
                 uiLocalePreference: draft.uiLocalePreference,
                 maxConcurrentJobs: draft.maxConcurrentJobs,
                 historyRetentionDays: settings?.settings.historyRetentionDays == nil ? nil : draft.historyRetentionDays,
-                showBridgeThreadsInCodexApp: draft.showBridgeThreadsInCodexApp,
-                dashboardAutoOpen: draft.dashboardAutoOpen,
-                completionFollowUp: draft.completionFollowUp
+                showBridgeThreadsInCodexApp: draft.showBridgeThreadsInCodexApp
             ))
         )
         return await performSettingsMutation(

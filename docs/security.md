@@ -67,6 +67,13 @@ request metadata; another host may provide one persistent UUID scope. Scope is
 validated on reads and mutations, but it does not replace project or policy
 authorization.
 
+Live-card completion receipts are correlation identifiers, not bearer tokens.
+The Dashboard lease requires authenticated host scope, the exact retained Job,
+and its presentation reference. The follow-up `codex_status` completion query
+requires current ChatGPT conversation metadata and ignores explicit scope IDs
+as an authorization substitute. Host acceptance uncertainty suppresses replay
+so a lost acknowledgement cannot create an automatic duplicate.
+
 Activity, Agent, Job, and thread IDs are opaque references, not authority. The
 bridge rechecks scope and ownership on every read and mutation. A missing
 reference and a reference copied from another conversation both return the

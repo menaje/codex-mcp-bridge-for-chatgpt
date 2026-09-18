@@ -147,8 +147,10 @@ exposes **General**, **Models & Execution**, **Projects**, **Codex Account &
 Installation**, **Connection**, and **Server** when each destination applies to
 the current role and connection state. A pinned card at the bottom identifies the
 currently managed Mac or remote server and its health, and opens Connection when
-selected. General contains language, notifications,
-launch behavior, and app display behavior. Shared access, model, Fast,
+selected. General contains language, operational/security notifications,
+launch behavior, and app display behavior. It states that exact Dashboard
+creation and live-card completion delivery are always-on orchestration behavior;
+they are not editable settings. Shared access, model, Fast,
 concurrency, and retention controls live under Models & Execution. Projects uses
 a list-oriented manager, while the Server destination retains an explicit
 apply-and-restart confirmation because those values are stored in the private
@@ -261,19 +263,19 @@ The channel carries only topic names and revision identifiers, accepts at most
 four pending watchers, and releases a watcher when its socket closes. It is not
 exposed through the remote HTTPS application method allowlist.
 
-When **Notify this Mac when Codex work completes** is enabled on the Bridge
-host, the local menu-bar app also watches Dashboard invalidations while its
-popover and Settings window are closed. It claims retryable `notify` completion
-records through the private `completion.claim`/`completion.delivered`/
-`completion.release` socket methods, which are deliberately absent from the
-remote HTTPS allowlist. The bridge sends only an opaque event ID and outbox ID;
-the macOS banner has generic text and opens the local Dashboard when clicked.
-It never sends a ChatGPT message or exposes a task prompt, result, project path,
-Activity ID, or conversation ID. The app must be running and macOS notifications
-must be allowed. A failed presentation releases the durable lease; a crash after
-presentation and before acknowledgement can produce a retry, so visible
-delivery is at-least-once rather than exactly once. A remote client cannot enable
-or receive this local-host notification from its General settings form.
+For an explicit Activity policy that creates a local `notify` outbox event, the
+Bridge-host menu-bar app watches Dashboard invalidations while its popover and
+Settings window are closed. It claims retryable records through the private
+`completion.claim`/`completion.delivered`/`completion.release` socket methods,
+which are deliberately absent from the remote HTTPS allowlist. The bridge sends
+only an opaque event ID and outbox ID; the macOS banner has generic text and
+opens the local Dashboard when clicked. It never sends a ChatGPT message or
+exposes a task prompt, result, project path, Activity ID, or conversation ID.
+The app must be running and macOS notifications must be allowed. A failed
+presentation releases the durable lease; a crash after presentation and before
+acknowledgement can produce a retry, so visible delivery is at-least-once rather
+than exactly once. There is no shared or native Settings checkbox for this
+Activity policy, and a remote client cannot receive the local-host notification.
 
 | Information | Refresh policy |
 | --- | --- |

@@ -94,10 +94,10 @@
     ],
     "compatibilityResources": [],
     "releaseCatalog": "ui-release-catalog.json",
-    "releaseCatalogSha256": "c34e05627d8ef4c7113bb70c31bc120c3497d8d4c162248caf1becb559a5f441"
+    "releaseCatalogSha256": "b00f6dbb2a7ca5c8132e853db0c530e6fb267c25394e98d96216cc021cde2478"
   },
   "stateCompatibility": {
-    "currentSchema": 20,
+    "currentSchema": 21,
     "supportedSourceSchemas": [
       3,
       4,
@@ -115,7 +115,8 @@
       16,
       17,
       18,
-      19
+      19,
+      20
     ],
     "unsupportedSourceSchemas": [
       1,
@@ -127,15 +128,15 @@
       "job-state-json"
     ],
     "migrationCatalog": "state-migrations.json",
-    "migrationCatalogSha256": "a92323b676af98561e08b1256ef3dbdf26a3faae30db8c11968e852be36d8d26",
+    "migrationCatalogSha256": "0f2a8829234c6ce4f296c941cc3712981b4e59b56b94a6fee84fdbd886860de7",
     "stateProfilePolicy": "release-stage-isolated-v1",
     "rollbackPolicy": "verified-original-before-service-open-v1",
     "persistentContracts": {
-      "userSettingsSchema": 5,
+      "userSettingsSchema": 6,
       "taskInputContract": 6,
       "macosHelperProtocol": 2,
-      "localCompanionProtocol": 10,
-      "remoteCompanionProtocol": 8
+      "localCompanionProtocol": 11,
+      "remoteCompanionProtocol": 9
     },
     "contractSources": {
       "databaseSchema": "src/stateSchema.ts#CURRENT_STATE_SCHEMA_VERSION",

@@ -11,8 +11,8 @@ integrity checks; it is not part of the file name or URI.
 
 | Card | Source file | Packaged file | Resource URI |
 | --- | --- | --- | --- |
-| Settings | `ui-resources/settings.html` | `dist/ui/settings.html` | `ui://codex-mcp-bridge/settings/v1.html` |
-| Dashboard | `ui-resources/dashboard.html` | `dist/ui/dashboard.html` | `ui://codex-mcp-bridge/dashboard/v1.html` |
+| Settings | `ui-resources/settings.html` | `dist/ui/settings.html` | `ui://codex-mcp-bridge/settings/v2.html` |
+| Dashboard | `ui-resources/dashboard.html` | `dist/ui/dashboard.html` | `ui://codex-mcp-bridge/dashboard/v2.html` |
 
 Activity and Question are retired presentation resources. Their work,
 question, result, settings, authorization, and idempotency state remains in the

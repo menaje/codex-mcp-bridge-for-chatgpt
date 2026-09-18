@@ -47,8 +47,8 @@ describe("single-file UI resource lifecycle", () => {
       }
 
       const initial = syncUiResources(root, manifest);
-      expect(initial.resources.settings.uri).toBe("ui://codex-mcp-bridge/settings/v1.html");
-      expect(initial.resources.dashboard.uri).toBe("ui://codex-mcp-bridge/dashboard/v1.html");
+      expect(initial.resources.settings.uri).toBe("ui://codex-mcp-bridge/settings/v2.html");
+      expect(initial.resources.dashboard.uri).toBe("ui://codex-mcp-bridge/dashboard/v2.html");
       expect(sourceFiles(root)).toEqual(["dashboard.html", "settings.html"]);
       expect(packagedFiles(root)).toEqual(["dashboard.html", "settings.html"]);
       expect(checkUiResources(root, manifest)).toEqual(initial);
@@ -87,7 +87,7 @@ function writeRenderer(root: string, marker: string): void {
   const resources = Object.fromEntries(["settings", "dashboard"].map((name) => [
     name,
     {
-      uri: `ui://codex-mcp-bridge/${name}/v1.html`,
+      uri: `ui://codex-mcp-bridge/${name}/v2.html`,
       html: `<!doctype html><html><body>${name}-${marker}</body></html>`,
       metadata: {
         descriptor: {
@@ -110,8 +110,8 @@ function writeDescriptorSource(root: string): void {
   writeFileSync(
     path.join(root, "src", "tools.ts"),
     [
-      'const SETTINGS_CARD_URI = "ui://codex-mcp-bridge/settings/v1.html";',
-      'const DASHBOARD_CARD_URI = "ui://codex-mcp-bridge/dashboard/v1.html";',
+      'const SETTINGS_CARD_URI = "ui://codex-mcp-bridge/settings/v2.html";',
+      'const DASHBOARD_CARD_URI = "ui://codex-mcp-bridge/dashboard/v2.html";',
       'const settings = { ui: { resourceUri: SETTINGS_CARD_URI }, "openai/outputTemplate": SETTINGS_CARD_URI };',
       'const dashboard = { ui: { resourceUri: DASHBOARD_CARD_URI }, "openai/outputTemplate": DASHBOARD_CARD_URI };'
     ].join("\n"),

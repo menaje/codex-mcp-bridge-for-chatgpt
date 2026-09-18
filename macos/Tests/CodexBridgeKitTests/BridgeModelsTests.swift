@@ -165,9 +165,7 @@ final class BridgeModelsTests: XCTestCase {
                     selection: ModelChoice(model: "gpt-5.6", reasoningEffort: "high"),
                     constraints: ModelPolicyConstraints(allowDelegation: true)
                 ),
-                usePriorityServiceTier: true,
-                dashboardAutoOpen: true,
-                completionFollowUp: true
+                usePriorityServiceTier: true
             ))
         )
 
@@ -181,8 +179,8 @@ final class BridgeModelsTests: XCTestCase {
         let settings = try XCTUnwrap(operation["settings"] as? [String: Any])
         XCTAssertEqual(settings["accessStrategy"] as? String, "adaptive")
         XCTAssertEqual(settings["usePriorityServiceTier"] as? Bool, true)
-        XCTAssertEqual(settings["dashboardAutoOpen"] as? Bool, true)
-        XCTAssertEqual(settings["completionFollowUp"] as? Bool, true)
+        XCTAssertNil(settings["dashboardAutoOpen"])
+        XCTAssertNil(settings["completionFollowUp"])
         XCTAssertNil(settings["activityCard"])
         let policy = try XCTUnwrap(settings["modelPolicy"] as? [String: Any])
         XCTAssertEqual(policy["mode"] as? String, "fixed")

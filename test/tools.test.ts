@@ -131,7 +131,6 @@ describe("current bridge tool contracts", () => {
     });
     settings = new UserSettingsStore(config, { stateStore: state });
     settings.update({
-      completionFollowUp: true,
       modelPolicy: {
         mode: "automatic",
         constraints: { allowDelegation: false },
@@ -371,10 +370,8 @@ describe("current bridge tool contracts", () => {
     expect(JSON.parse(JSON.stringify(result.structuredContent))).toStrictEqual(result.structuredContent);
     const settingsView = result.structuredContent as any;
     expect(settingsView.catalog.models[0]).not.toHaveProperty("defaultServiceTier");
-    expect(settingsView.settings).toMatchObject({
-      dashboardAutoOpen: true,
-      completionFollowUp: true
-    });
+    expect(settingsView.settings).not.toHaveProperty("dashboardAutoOpen");
+    expect(settingsView.settings).not.toHaveProperty("completionFollowUp");
     expect(settingsView.settings).not.toHaveProperty("activityCardVisibility");
     expect(settingsView.settings).not.toHaveProperty("completionHandoff");
     expect(settingsView.capabilities).not.toHaveProperty("availableActivityCardVisibilities");
@@ -1099,7 +1096,7 @@ describe("current bridge tool contracts", () => {
       scope: "conversation",
       automatic: true,
       presentationRef: renderAction.arguments.presentationRef,
-      completionDeliveryRoute: "native-notification"
+      completionDeliveryRoute: "live-card"
     });
     expect(dashboardOpenMeta["codex/dashboardOpen@1"]).not.toHaveProperty("presentationToken");
     expect(dashboardOpenMeta["codex/dashboardOpen@1"]).not.toHaveProperty("jobId");
@@ -1140,14 +1137,87 @@ describe("current bridge tool contracts", () => {
     ));
     const completedActivity = state.getActivity(origin!.activityId);
     expect(completedActivity).toMatchObject({
-      lifecycle: "completed",
-      handoffPolicy: "notify",
-      completionTrigger: "sealed-jobs-terminal"
+      lifecycle: "open",
+      handoffPolicy: "none",
+      completionTrigger: "manual"
     });
-    const [outbox] = state.listPendingCompletionOutbox(origin!.scopeId);
-    expect(outbox).toMatchObject({ activityId: origin!.activityId, channel: "notify" });
-
+    const completionDelivery = state.getJobCompletionDelivery(origin!.jobId, origin!.scopeId)!;
+    expect(completionDelivery).toMatchObject({
+      jobId: origin!.jobId,
+      scopeId: origin!.scopeId,
+      state: "pending",
+      attemptCount: 0,
+      receipt: expect.stringMatching(/^completion-[0-9a-f]{64}$/)
+    });
     const widgetInstanceId = randomUUID();
+    const claimedCompletion = await client.callTool({
+      name: "codex_ui_completion",
+      arguments: {
+        operation: "wait",
+        jobId: origin!.jobId,
+        presentationRef: renderAction.arguments.presentationRef,
+        widgetInstanceId
+      },
+      _meta: metadata
+    });
+    expect(claimedCompletion.isError, JSON.stringify(claimedCompletion)).not.toBe(true);
+    expect(claimedCompletion.structuredContent).toMatchObject({
+      kind: "job-completion-delivery",
+      state: "claimed",
+      receipt: completionDelivery.receipt,
+      attempt: 1,
+      deliveryState: "leased"
+    });
+    const foreignCompletion = await client.callTool({
+      name: "codex_ui_completion",
+      arguments: {
+        operation: "wait",
+        jobId: origin!.jobId,
+        presentationRef: renderAction.arguments.presentationRef,
+        widgetInstanceId: randomUUID()
+      },
+      _meta: { "openai/session": "foreign-completion-contract-test" }
+    });
+    expect(foreignCompletion.isError).toBe(true);
+    const acceptedCompletion = await client.callTool({
+      name: "codex_ui_completion",
+      arguments: {
+        operation: "accepted",
+        jobId: origin!.jobId,
+        presentationRef: renderAction.arguments.presentationRef,
+        widgetInstanceId,
+        receipt: completionDelivery.receipt
+      },
+      _meta: metadata
+    });
+    expect(acceptedCompletion.isError, JSON.stringify(acceptedCompletion)).not.toBe(true);
+    expect(acceptedCompletion.structuredContent).toMatchObject({
+      state: "settled",
+      deliveryState: "host-accepted"
+    });
+    const explicitScopeIsNotAuthority = await client.callTool({
+      name: "codex_status",
+      arguments: {
+        scopeId: origin!.scopeId,
+        query: { kind: "completion", receipt: completionDelivery.receipt }
+      }
+    });
+    expect(explicitScopeIsNotAuthority.isError).toBe(true);
+    const exactCompletion = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "completion", receipt: completionDelivery.receipt } },
+      _meta: metadata
+    });
+    expect(exactCompletion.isError, JSON.stringify(exactCompletion)).not.toBe(true);
+    expect(exactCompletion.structuredContent).toMatchObject({
+      kind: "job",
+      items: [expect.objectContaining({ id: origin!.jobId, state: "completed" })]
+    });
+    expect(state.getJobCompletionDelivery(origin!.jobId, origin!.scopeId)).toMatchObject({
+      state: "result-read"
+    });
+    expect(state.listPendingCompletionOutbox(origin!.scopeId)).toEqual([]);
+
     const dashboard = await client.callTool({
       name: "codex_ui_read",
       arguments: {
@@ -1159,23 +1229,14 @@ describe("current bridge tool contracts", () => {
     });
     expect(dashboard.isError, JSON.stringify(dashboard)).not.toBe(true);
     expect((dashboard.structuredContent as any)).not.toHaveProperty("completionDelivery");
-    expect(state.listPendingCompletionOutbox(origin!.scopeId)).toMatchObject([
-      { outboxId: outbox!.outboxId, attemptCount: 0 }
-    ]);
+    expect(state.listPendingCompletionOutbox(origin!.scopeId)).toEqual([]);
 
     const leaseOwner = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const nativeEvents = await server.applicationService.claimNativeCompletionNotifications!({
       leaseOwner,
       limit: 10
     });
-    expect(nativeEvents).toEqual([
-      { eventId: expect.stringMatching(/^completion-[0-9a-f]{64}$/), outboxId: outbox!.outboxId }
-    ]);
-    expect(Object.keys(nativeEvents[0]!).sort()).toEqual(["eventId", "outboxId"]);
-    await server.applicationService.markNativeCompletionNotificationsDelivered!({
-      leaseOwner,
-      outboxIds: [outbox!.outboxId]
-    });
+    expect(nativeEvents).toEqual([]);
     expect(state.listPendingCompletionOutbox(origin!.scopeId)).toEqual([]);
 
     const settingsUpdate = await client.callTool({
@@ -1186,35 +1247,47 @@ describe("current bridge tool contracts", () => {
       },
       _meta: metadata
     });
-    expect(settingsUpdate.isError, JSON.stringify(settingsUpdate)).not.toBe(true);
+    expect(settingsUpdate.isError).toBe(true);
 
-    const suppressed = await client.callTool({
+    const secondTask = await client.callTool({
       name: "codex_task",
       arguments: {
         scopeId: "99999999-9999-4999-8999-999999999999",
         requestId: randomUUID(),
         taskContractVersion: properties.taskContractVersion?.const,
         executionEnvelopeRef: properties.executionEnvelopeRef?.const,
-        prompt: "Complete hidden background fixture work.",
+        prompt: "Complete another background fixture work.",
         project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
         selection
       },
       _meta: metadata
     });
-    expect(suppressed.isError, JSON.stringify(suppressed)).not.toBe(true);
-    expect(suppressed._meta).not.toHaveProperty("openai/outputTemplate");
-    expect(suppressed._meta).not.toHaveProperty("codex/dashboardOpen@1");
-    expect((suppressed.structuredContent as any).nextActions).not.toContainEqual(
-      expect.objectContaining({ tool: "codex_dashboard" })
+    expect(secondTask.isError, JSON.stringify(secondTask)).not.toBe(true);
+    expect(secondTask._meta).not.toHaveProperty("openai/outputTemplate");
+    expect(secondTask._meta).not.toHaveProperty("codex/dashboardOpen@1");
+    expect((secondTask.structuredContent as any).nextActions).toContainEqual(
+      expect.objectContaining({
+        kind: "tool",
+        tool: "codex_dashboard",
+        arguments: expect.objectContaining({
+          scope: "conversation",
+          jobId: (secondTask.structuredContent as any).jobId
+        })
+      })
     );
-    const suppressedJob = state.listJobs().find((job) =>
-      job.jobId === (suppressed.structuredContent as any).jobId
+    const secondJob = state.listJobs().find((job) =>
+      job.jobId === (secondTask.structuredContent as any).jobId
     );
-    expect(suppressedJob).toBeDefined();
-    await eventually(() => state.getActivity(suppressedJob!.activityId)?.lifecycle === "completed");
-    expect(state.getActivity(suppressedJob!.activityId)).toMatchObject({
-      handoffPolicy: "notify",
-      completionTrigger: "sealed-jobs-terminal"
+    expect(secondJob).toBeDefined();
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === secondJob!.jobId && job.status === "completed"
+    ));
+    expect(state.getActivity(secondJob!.activityId)).toMatchObject({
+      handoffPolicy: "none",
+      completionTrigger: "manual"
+    });
+    expect(state.getJobCompletionDelivery(secondJob!.jobId, secondJob!.scopeId)).toMatchObject({
+      state: "pending"
     });
   });
 });

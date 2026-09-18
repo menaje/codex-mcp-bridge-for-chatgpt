@@ -125,10 +125,8 @@ describe("human-facing UI localization", () => {
       for (const key of [
         "settings.codexAppThreads",
         "settings.codexAppThreadsHint",
-        "settings.dashboardAutoOpen",
-        "settings.dashboardAutoOpenHint",
-        "settings.completionFollowUp",
-        "settings.completionFollowUpHint"
+        "settings.orchestrationDefaults",
+        "settings.orchestrationDefaultsHint"
       ] as const) {
         expect(UI_TRANSLATIONS[locale][key]).not.toBe(UI_TRANSLATIONS.en[key]);
       }
@@ -211,10 +209,12 @@ describe("human-facing UI localization", () => {
     );
     expect(UI_TRANSLATIONS.ko["settings.preferredModel"]).toBe("GPT 미지정 시 기본 모델");
     expect(UI_TRANSLATIONS.ko["settings.preferredEffort"]).toBe("GPT 미지정 시 기본 추론 수준");
-    expect(UI_TRANSLATIONS.ko["settings.dashboardAutoOpen"]).toBe(
-      "Codex 작업 시 현황 카드 자동 표시"
+    expect(UI_TRANSLATIONS.ko["settings.orchestrationDefaults"]).toBe(
+      "현황 카드와 완료 메시지 전달은 항상 사용됩니다"
     );
-    expect(UI_TRANSLATIONS.ko["settings.completionFollowUp"]).toBe("Codex 작업 완료 시 이 Mac에 알림");
+    expect(UI_TRANSLATIONS.ko["settings.orchestrationDefaultsHint"]).toContain(
+      "카드가 살아 있는 동안"
+    );
     expect(UI_TRANSLATIONS.ko["settings.codexAppThreads"]).toBe(
       "브리지 스레드를 Codex 앱에 표시"
     );
@@ -388,8 +388,10 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain(PRODUCT_INFO.displayName);
     expect(SETTINGS_CARD_HTML).toContain('document.title=t["settings.title"]');
     expect(DASHBOARD_CARD_HTML).toContain('document.title=t["dashboard.title"]');
-    expect(SETTINGS_CARD_HTML).toContain('id="dashboard-auto-open" type="checkbox"');
-    expect(SETTINGS_CARD_HTML).toContain('id="completion-follow-up" type="checkbox"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="dashboard-auto-open"');
+    expect(SETTINGS_CARD_HTML).not.toContain('id="completion-follow-up"');
+    expect(SETTINGS_CARD_HTML).toContain('data-i18n="settings.orchestrationDefaults"');
+    expect(SETTINGS_CARD_HTML).toContain('data-i18n="settings.orchestrationDefaultsHint"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-visibility"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="completion-handoff"');
     expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_read"');
@@ -414,7 +416,7 @@ describe("human-facing UI localization", () => {
     expect(staleHtml).not.toContain("<title>Plugin refresh required</title>");
   });
 
-  it("uses the current card bridge without delegating completion delivery to Dashboard", () => {
+  it("uses the standard Apps bridge and delegates exact completion delivery to Dashboard", () => {
     for (const html of [SETTINGS_CARD_HTML, DASHBOARD_CARD_HTML]) {
       expect(html).toContain('dir="auto"');
       expect(html).toContain('"openai/locale"');
@@ -424,9 +426,10 @@ describe("human-facing UI localization", () => {
       expect(html).not.toContain("openai/userLocation");
       expect(html).not.toMatch(/geolocation|navigator\.geolocation/i);
     }
-    expect(DASHBOARD_CARD_HTML).not.toContain('rpcRequest("ui/message"');
-    expect(DASHBOARD_CARD_HTML).not.toContain('completion-claim');
-    expect(DASHBOARD_CARD_HTML).not.toContain('completion-uncertain');
+    expect(DASHBOARD_CARD_HTML).toContain('rpcRequest("ui/message"');
+    expect(DASHBOARD_CARD_HTML).toContain('standardToolCall("codex_ui_completion"');
+    expect(DASHBOARD_CARD_HTML).toContain('completionIdentity("wait"');
+    expect(DASHBOARD_CARD_HTML).toContain('uncertain?"uncertain":"rejected"');
     expect(DASHBOARD_CARD_HTML).not.toContain('presentationToken');
     expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/notifications/tool-input"');
     expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/notifications/tool-result"');
@@ -438,7 +441,7 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/resource-teardown"');
     expect(DASHBOARD_CARD_HTML).toContain('tornDown=true;mounted=false');
     expect(DASHBOARD_CARD_HTML).toContain('if(tornDown)return;mounted=true');
-    expect(DASHBOARD_CARD_HTML).toContain('if(!tornDown&&document.visibilityState==="visible"');
+    expect(DASHBOARD_CARD_HTML).toContain('document.visibilityState==="hidden"');
     expect(SETTINGS_CARD_HTML).toContain('callTool("codex_ui_read"');
     expect(SETTINGS_CARD_HTML).not.toContain('callTool("codex_settings",');
   });

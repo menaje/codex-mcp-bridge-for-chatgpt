@@ -8,6 +8,7 @@ Use ChatGPT to run Codex against projects on your own computer, keep work organi
 - Run and continue local Codex work from a ChatGPT conversation.
 - Organize work as reusable Agents and goal-oriented Activities instead of isolated terminal calls.
 - See running work, requests needing a response, and problems from the native macOS menu-bar app or the ChatGPT status card. Select a summary count to filter current work, or open Run History. The card starts with this conversation when it has retained work, with a switch to all conversations.
+- Every admitted Codex Job opens its exact Dashboard by default. While that originating card remains live, terminal completion sends one scoped follow-up to the same ChatGPT conversation and retrieves the retained exact Job result; a closed or disconnected card is a degraded state, not a configurable mode.
 - Choose which project folders Codex may use, find reusable procedures through the bridge skill library, and control model, reasoning, concurrency, and access policy centrally.
 - Run one Mac as the server and use another Mac as a client for status and settings.
 - Keep the normal starting policy read-only and place an operator-controlled ceiling on broader access.
@@ -105,6 +106,8 @@ Routine computer, app, Bridge, or Tunnel restarts do not require a ChatGPT conne
 ## Settings at a glance
 
 The resizable native Settings window separates General, Models & Execution, Projects, Codex Account & Installation, Connection, and Server in a macOS sidebar. Shared changes save automatically, server limits require an explicit apply and restart, and skill management remains in the separate **Skill Library** window. See [Native macOS app](docs/macos-app.md#settings-and-skill-management) for scope and behavior details.
+
+Dashboard creation and same-conversation live-card completion delivery are orchestration defaults, so neither the native app nor the ChatGPT Settings card exposes an enable/disable checkbox for them. macOS operational notifications remain a separate local app feature.
 
 <p align="center">
   <img src="docs/images/chatgpt-settings-light-en.png" alt="English ChatGPT settings card in light appearance showing access strategy, execution model policy, project registration, interface language, and concurrency" width="645">

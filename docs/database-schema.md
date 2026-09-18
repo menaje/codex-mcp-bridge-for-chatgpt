@@ -75,6 +75,7 @@ result/error receipt.
 | `activity_events` | Activity cursor/watch and compatibility diagnostics | Bounded diagnostic/control history: at most 50,000 recent rows and seven-day cleanup in batches. Delete with Activity/scope. |
 | `job_events` | Progress projection, usage/reroute summary extraction, status cursors | Bounded diagnostics: 256 per Job, global 50,000 rows/64 MiB payload budget, 8 KiB per payload, seven-day metadata cleanup. Delete with Job. Does not contain a full Job copy. |
 | `completion_outbox` | Durable local completion-notification selection, dispatch, acknowledgement, and retry state | Keep delivery authority independently of Dashboard presentation. The local macOS companion claims only retryable `notify` records through its private socket and acknowledges an exact record only after macOS accepts its generic notification. `verify` records are never sent as success notifications. A failed presentation releases its lease; a crash after presentation can be retried, so the outbox does not claim exactly-once visible delivery. |
+| `job_completion_deliveries` | One exact ChatGPT live-card completion event per terminal Job; stable opaque receipt, bounded lease, host acceptance/rejection/uncertainty, and result-read state | Separate from the native Activity outbox. Only the authenticated originating conversation and exact Dashboard presentation can claim it. Pending records follow normal Job/history retention; an active or ambiguous host attempt protects the result until consumption. Acceptance uncertainty is never replayed automatically. Delete with the Job. |
 | `agent_mutations` | Agent mutation request replay/idempotency; scoped request hash/result | Keep as the durable replay receipt for retained mutation requests. It is not a second Agent state store. |
 | `cancellation_operations` | Root cancellation request idempotency, exact target/proof/result | Keep while request replay and audit provenance are needed. It is protected from generic event cleanup. |
 | `cancellation_intents` | Per-target cancellation dispatch and result provenance | Keep recorded/dispatched intents through restart; terminal evidence remains with the retained request journal. Target indexes serve protection and recovery checks. |
@@ -99,7 +100,7 @@ their schema-19 owners rather than by compatibility tables.
 
 ## Index and query contract
 
-The schema defines 42 non-SQLite indexes and three event-budget triggers. The
+The schema defines 43 non-SQLite indexes and three event-budget triggers. The
 indexes below are correctness or bounded-work contracts rather than incidental
 optimizations:
 
@@ -109,7 +110,8 @@ optimizations:
 | Project rename/cwd conflicts and display order | `projects_active_name`, `projects_active_cwd`, `projects_ordered` |
 | Scope/status/Activity Job views | `jobs_scope_recent`, `jobs_status_recent`, `jobs_activity_recent` |
 | Event cursors and per-Job cleanup | `activity_events_*_cursor`, `job_events_*_cursor` |
-| Pending completion delivery | `completion_outbox_pending` |
+| Pending native Activity completion delivery | `completion_outbox_pending` |
+| Claimable exact Job live-card delivery | `job_completion_deliveries_claimable` |
 | History cleanup and review | `jobs_status_recent`, `work_history_state` primary key, `work_history_expired` |
 | Question and hold expiry | `user_questions_expiry`; bounded `result_holds` scan of at most 500 rows |
 | Connection/recovery maintenance | `thread_connections_idle`, `thread_connections_agent`, `automatic_recovery_scope`, `automatic_recovery_job` |

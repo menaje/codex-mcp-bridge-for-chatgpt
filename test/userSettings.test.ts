@@ -70,52 +70,35 @@ describe("user settings and project registry", () => {
     restored.stateStore.close();
   });
 
-  it("migrates legacy card preferences into independent Dashboard and follow-up settings", () => {
+  it("retires legacy Dashboard and completion delivery preferences", () => {
     const databaseFile = path.join(temporaryDirectory("settings-completion-delivery-"), "state.sqlite");
     const config = configFor();
     const first = persistentSettings(config, databaseFile);
-    expect(first.settings.current).toMatchObject({
-      dashboardAutoOpen: true,
-      completionFollowUp: false
-    });
-    first.settings.update({ dashboardAutoOpen: false, completionFollowUp: true }, 0);
-    first.stateStore.close();
-
-    const persisted = persistentSettings(config, databaseFile);
-    expect(persisted.settings.current).toMatchObject({
-      dashboardAutoOpen: false,
-      completionFollowUp: true
-    });
-    const legacy = persisted.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
-    delete legacy.dashboardAutoOpen;
-    delete legacy.completionFollowUp;
+    expect(first.settings.current).not.toHaveProperty("dashboardAutoOpen");
+    expect(first.settings.current).not.toHaveProperty("completionFollowUp");
+    first.settings.update({ uiLocalePreference: "ko" }, first.settings.current.settingsRevision);
+    const legacy = first.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    legacy.schemaVersion = 5;
+    legacy.dashboardAutoOpen = false;
+    legacy.dashboardAutoOpenBackground = true;
+    legacy.completionFollowUp = false;
     legacy.activityCardVisibility = "never";
     legacy.completionHandoff = "auto-handoff";
-    persisted.stateStore.close();
+    first.stateStore.close();
     replaceStoredSettingsPayloadForTest(databaseFile, legacy);
 
     const migrated = persistentSettings(config, databaseFile);
-    expect(migrated.settings.current).toMatchObject({
-      dashboardAutoOpen: false,
-      completionFollowUp: true
-    });
+    expect(migrated.settings.current.schemaVersion).toBe(6);
+    expect(migrated.settings.current).not.toHaveProperty("dashboardAutoOpen");
+    expect(migrated.settings.current).not.toHaveProperty("completionFollowUp");
     const rewritten = migrated.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    expect(rewritten.schemaVersion).toBe(6);
+    expect(rewritten).not.toHaveProperty("dashboardAutoOpen");
+    expect(rewritten).not.toHaveProperty("dashboardAutoOpenBackground");
+    expect(rewritten).not.toHaveProperty("completionFollowUp");
     expect(rewritten).not.toHaveProperty("activityCardVisibility");
     expect(rewritten).not.toHaveProperty("completionHandoff");
-    rewritten.dashboardAutoOpenBackground = true;
-    delete rewritten.dashboardAutoOpen;
-    rewritten.completionFollowUp = false;
-    rewritten.activityCardVisibility = "never";
-    rewritten.completionHandoff = "auto-handoff";
     migrated.stateStore.close();
-    replaceStoredSettingsPayloadForTest(databaseFile, rewritten);
-
-    const explicit = persistentSettings(config, databaseFile);
-    expect(explicit.settings.current).toMatchObject({
-      dashboardAutoOpen: true,
-      completionFollowUp: false
-    });
-    explicit.stateStore.close();
   });
 
   it("persists inactive Ultra selections through restart and restores them when enabled", () => {
@@ -160,7 +143,7 @@ describe("user settings and project registry", () => {
   it("starts without a default project, slug, or implicit selection", () => {
     const store = new UserSettingsStore(configFor());
     expect(store.current).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: 6,
       settingsRevision: 0,
       registryRevision: 0,
       projects: [],
@@ -676,7 +659,7 @@ describe("user settings and project registry", () => {
 
     const restored = persistentSettings(config, databaseFile, () => 5_000);
     expect(restored.settings.current).toMatchObject({
-      schemaVersion: 5,
+      schemaVersion: 6,
       settingsRevision: 2,
       modelPolicy: {
         mode: "automatic",

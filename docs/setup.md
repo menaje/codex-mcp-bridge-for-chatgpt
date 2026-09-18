@@ -304,16 +304,19 @@ later use; a model temporarily missing from the list also keeps its saved text.
 - **Keep new Agent tasks in the Codex app** preserves eligible new App Server threads in Codex. It does not change older tasks.
 - **Run history retention** keeps display history for 7, 30 (default), or 90 days, or indefinitely. Full result retention and connection idle time are separate policies; see [work history](work-history.md).
 
-Settings expose **Automatically show Dashboard for Codex work** and
-**Notify this Mac when Codex work completes**. The first opens Dashboard in the
-conversation that admitted a new task; the task continues independently of that
-conversation. The second is independent of cards and ChatGPT: the local menu-bar
-app delivers a generic macOS notification for an eligible successful completion,
-and opens its Dashboard when clicked.
-It requires that app to be running and macOS notifications to be allowed. It
-does not add or resume a ChatGPT message. New work returns a durable admission
-receipt immediately; later progress and the exact result are read through
-`codex_status`. See [Card tools](card-tools.md).
+Dashboard creation and completion delivery are not settings. Every newly
+admitted orchestration Job returns an exact Dashboard render action, and GPT
+must open it in the originating conversation. While that card remains live, a
+terminal Job claims one bounded server lease, sends one standard `ui/message`,
+and the resumed GPT reads the retained exact result through the opaque receipt.
+Closing or disconnecting the card does not cancel Codex or lose its retained
+result, but automatic follow-up is then not guaranteed. The bridge does not
+revive a torn-down card or wake a cardless conversation.
+
+The macOS app's operational notifications and any explicit Activity-native
+completion notification are separate local channels. They depend on macOS
+notification permission, do not establish ChatGPT delivery, and are not
+controlled by a Dashboard/completion checkbox. See [Card tools](card-tools.md).
 
 Values above the normal concurrency range can increase CPU, memory, and API usage substantially.
 

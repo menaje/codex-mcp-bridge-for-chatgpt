@@ -151,6 +151,14 @@ controls. GPT asks for ordinary user decisions directly in the current ChatGPT
 conversation; original Codex approvals and non-ordinary input remain in the
 Dashboard work detail.
 
+Every new Job's task result includes an exact Dashboard render action. GPT must
+open it immediately; there is no Settings toggle. While that originating card
+is live, terminal completion uses one server lease and a standard `ui/message`
+to resume the same conversation. The resumed turn reads the exact retained
+result with `codex_status({query:{kind:"completion",receipt:"…"}})`. If the card
+is closed, torn down, or disconnected, the Job remains queryable but automatic
+follow-up is not guaranteed.
+
 ## 7. Refresh after a release
 
 Tool descriptors and card resource URIs are deployment metadata. After
@@ -185,11 +193,11 @@ npm test
 In a fresh ChatGPT conversation:
 
 1. Open Settings and register a project.
-2. Open Dashboard; confirm both current cards load.
+2. Open Dashboard; confirm both current cards load and Settings has no card-generation or completion-delivery toggle.
 3. Call `codex_models` and confirm its one current catalog response.
 4. Start a harmless task with contract version 6 and its exact envelope
    constant.
-5. Read its status and exact terminal result.
+5. Confirm the task opens its exact Dashboard and, without a diagnostic button or user message, terminal completion resumes the same conversation and reads the exact result once.
 6. If Codex asks an ordinary question, answer it through the current ChatGPT
    conversation and verify that it reaches the exact active Job.
 7. Restart the bridge, reconnect, and confirm retained work is still visible.

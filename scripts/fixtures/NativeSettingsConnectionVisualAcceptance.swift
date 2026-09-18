@@ -711,8 +711,6 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             "maxConcurrentJobs": 4,
             "historyRetentionDays": 30,
             "showBridgeThreadsInCodexApp": true,
-            "dashboardAutoOpen": true,
-            "completionFollowUp": true
         ]
         let object: [String: Any] = [
             "settings": settings,

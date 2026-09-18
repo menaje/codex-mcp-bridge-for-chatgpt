@@ -11891,234 +11891,118 @@
         }
       }
     },
-    "settings.dashboardAutoOpen": {
+    "settings.orchestrationDefaults": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Automatically show Dashboard for Codex work"
+            "value": "Dashboard and completion delivery are always on"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex 작업 시 현황 카드 자동 표시"
+            "value": "현황 카드와 완료 메시지 전달은 항상 사용됩니다"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex 作業でダッシュボードを自動表示"
+            "value": "ダッシュボードと完了メッセージの配信は常に有効です"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex 工作时自动显示概览卡片"
+            "value": "概览卡片和完成消息始终启用"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex 工作時自動顯示總覽卡片"
+            "value": "總覽卡片與完成訊息一律啟用"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mostrar automáticamente el panel para el trabajo de Codex"
+            "value": "El panel y la entrega de finalización siempre están activados"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Afficher automatiquement le tableau de bord pour le travail Codex"
+            "value": "Le tableau de bord et la remise de fin sont toujours actifs"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Dashboard für Codex-Arbeit automatisch anzeigen"
+            "value": "Dashboard und Abschlusszustellung sind immer aktiv"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mostrar automaticamente o painel para o trabalho do Codex"
+            "value": "O painel e a entrega de conclusão ficam sempre ativos"
           }
         }
       }
     },
-    "settings.dashboardAutoOpenHint": {
+    "settings.orchestrationDefaultsHint": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Opens Dashboard in the conversation that admitted the Codex task. The task continues independently of that conversation."
+            "value": "Every Codex job opens its exact Dashboard in the originating ChatGPT conversation. While that card remains live, completion automatically resumes the conversation with the retained result. If the card is closed or disconnected, the job and result remain available, but automatic follow-up is not guaranteed."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex 작업을 접수한 대화에서 현황 카드를 엽니다. 작업은 해당 대화와 독립적으로 계속됩니다."
+            "value": "모든 Codex Job은 원래 ChatGPT 대화에 정확한 현황 카드를 엽니다. 카드가 살아 있는 동안 작업이 끝나면 보존된 결과로 대화를 자동 재개합니다. 카드가 닫히거나 연결이 끊겨도 Job과 결과는 유지되지만 자동 후속 메시지는 보장되지 않습니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex タスクを受け付けた会話でダッシュボードを開きます。タスクはその会話とは独立して続行されます。"
+            "value": "すべての Codex ジョブは、元の ChatGPT 会話で正確なダッシュボードを開きます。カードが有効な間に完了すると、保存された結果で会話を自動的に再開します。カードが閉じられたり切断されたりしてもジョブと結果は保持されますが、自動フォローアップは保証されません。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "在接收 Codex 任务的对话中打开概览卡片。任务会独立于该对话继续运行。"
+            "value": "每个 Codex 任务都会在原始 ChatGPT 对话中打开对应的概览卡片。卡片保持活动时，任务完成会使用保留的结果自动恢复对话。即使卡片关闭或断开，任务和结果仍会保留，但无法保证自动后续消息。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "在接收 Codex 任務的對話中開啟總覽卡片。任務會獨立於該對話繼續執行。"
+            "value": "每個 Codex 工作都會在原始 ChatGPT 對話中開啟對應的總覽卡片。卡片保持運作時，工作完成會使用保留的結果自動繼續對話。即使卡片關閉或中斷連線，工作與結果仍會保留，但無法保證自動後續訊息。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Abre el panel en la conversación que admitió la tarea de Codex. La tarea continúa independientemente de esa conversación."
+            "value": "Cada trabajo de Codex abre su panel exacto en la conversación de ChatGPT de origen. Mientras la tarjeta siga activa, al finalizar se reanuda automáticamente la conversación con el resultado guardado. Si la tarjeta se cierra o se desconecta, el trabajo y el resultado se conservan, pero no se garantiza el seguimiento automático."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ouvre le tableau de bord dans la conversation qui a admis la tâche Codex. La tâche continue indépendamment de cette conversation."
+            "value": "Chaque tâche Codex ouvre son tableau de bord exact dans la conversation ChatGPT d’origine. Tant que la carte reste active, la fin reprend automatiquement la conversation avec le résultat conservé. Si la carte est fermée ou déconnectée, la tâche et le résultat restent disponibles, mais le suivi automatique n’est pas garanti."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Öffnet das Dashboard in der Unterhaltung, die den Codex-Task angenommen hat. Der Task läuft unabhängig davon weiter."
+            "value": "Jeder Codex-Job öffnet sein exaktes Dashboard in der ursprünglichen ChatGPT-Unterhaltung. Solange die Karte aktiv bleibt, wird die Unterhaltung bei Abschluss automatisch mit dem gespeicherten Ergebnis fortgesetzt. Wird die Karte geschlossen oder getrennt, bleiben Job und Ergebnis erhalten, aber die automatische Fortsetzung ist nicht garantiert."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Abre o painel na conversa que admitiu a tarefa do Codex. A tarefa continua independentemente dessa conversa."
-          }
-        }
-      }
-    },
-    "settings.completionFollowUp": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Notify this Mac when Codex work completes"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codex 작업 완료 시 이 Mac에 알림"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codex 作業の完了をこの Mac に通知"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codex 工作完成时通知此 Mac"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Codex 工作完成時通知此 Mac"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Notificar a este Mac al terminar el trabajo de Codex"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Notifier ce Mac quand le travail Codex se termine"
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Diesen Mac nach Abschluss der Codex-Arbeit benachrichtigen"
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Notificar este Mac quando o trabalho do Codex terminar"
-          }
-        }
-      }
-    },
-    "settings.completionFollowUpHint": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The local macOS menu-bar app sends a generic completion notification and opens Dashboard when clicked. It never adds a ChatGPT message."
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "로컬 macOS 메뉴 막대 앱이 일반 완료 알림을 보내고, 클릭하면 현황을 엽니다. ChatGPT 대화에 메시지를 추가하지 않습니다."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ローカル macOS メニューバーアプリが一般的な完了通知を送り、クリックするとダッシュボードを開きます。ChatGPT 会話にはメッセージを追加しません。"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "本地 macOS 菜单栏应用会发送通用完成通知；点击可打开概览，且不会向 ChatGPT 对话添加消息。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "本機 macOS 選單列 App 會傳送一般完成通知；點按會開啟總覽，且不會在 ChatGPT 對話中新增訊息。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "La app local de la barra de menús de macOS envía una notificación de finalización genérica y abre el panel al hacer clic. No añade mensajes a ChatGPT."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "L’app locale de la barre des menus macOS envoie une notification générique et ouvre le tableau de bord au clic. Elle n’ajoute aucun message à ChatGPT."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Die lokale macOS-Menüleisten-App sendet eine allgemeine Abschlussmitteilung und öffnet beim Anklicken das Dashboard. Sie fügt keine ChatGPT-Nachricht hinzu."
-          }
-        },
-        "pt": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "O app local da barra de menus do macOS envia uma notificação genérica e abre o painel ao clicar. Ele não adiciona uma mensagem ao ChatGPT."
+            "value": "Cada trabalho do Codex abre seu painel exato na conversa de origem do ChatGPT. Enquanto o cartão permanecer ativo, a conclusão retoma automaticamente a conversa com o resultado preservado. Se o cartão for fechado ou desconectado, o trabalho e o resultado continuam disponíveis, mas o acompanhamento automático não é garantido."
           }
         }
       }
@@ -12824,55 +12708,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restores access, model, Codex-app thread visibility, automatic Dashboard display, completion notifications, interface, and concurrency settings. Projects and their order are kept."
+            "value": "Restores access, model, Codex-app thread visibility, interface, and concurrency settings. Projects and their order are kept."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "접근, 모델, Codex 앱 목록 표시, 현황 카드 자동 표시, 완료 알림, 인터페이스와 동시 작업 수 설정만 복원합니다. 프로젝트와 순서는 유지됩니다."
+            "value": "접근, 모델, Codex 앱 목록 표시, 인터페이스와 동시 작업 수 설정만 복원합니다. 프로젝트와 순서는 유지됩니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "アクセス、モデル、Codex アプリでのスレッド表示、ダッシュボードの自動表示、完了通知、表示言語、同時実行数だけを戻します。プロジェクトと順序は保持されます。"
+            "value": "アクセス、モデル、Codex アプリでのスレッド表示、表示言語、同時実行数だけを戻します。プロジェクトと順序は保持されます。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "仅恢复访问、模型、Codex 应用线程显示、概览卡片自动显示、完成通知、界面和并发数。项目和顺序会保留。"
+            "value": "仅恢复访问、模型、Codex 应用线程显示、界面和并发数。项目和顺序会保留。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "只還原存取、模型、Codex 應用程式執行緒顯示、總覽卡片自動顯示、完成通知、介面與並行數。專案與順序會保留。"
+            "value": "只還原存取、模型、Codex 應用程式執行緒顯示、介面與並行數。專案與順序會保留。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restaura solo acceso, modelo, visibilidad de hilos en la app Codex, visualización automática del panel, notificaciones de finalización, interfaz y concurrencia. Se conservan los proyectos y su orden."
+            "value": "Restaura solo acceso, modelo, visibilidad de hilos en la app Codex, interfaz y concurrencia. Se conservan los proyectos y su orden."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Rétablit uniquement l’accès, le modèle, la visibilité des fils dans l’app Codex, l’affichage automatique du tableau de bord, les notifications de fin, l’interface et la simultanéité. Les projets et leur ordre sont conservés."
+            "value": "Rétablit uniquement l’accès, le modèle, la visibilité des fils dans l’app Codex, l’interface et la simultanéité. Les projets et leur ordre sont conservés."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Setzt nur Zugriff, Modell, Thread-Sichtbarkeit in der Codex-App, automatische Dashboard-Anzeige, Abschlussbenachrichtigungen, Oberfläche und Parallelität zurück. Projekte und Reihenfolge bleiben erhalten."
+            "value": "Setzt nur Zugriff, Modell, Thread-Sichtbarkeit in der Codex-App, Oberfläche und Parallelität zurück. Projekte und Reihenfolge bleiben erhalten."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restaura apenas acesso, modelo, visibilidade de threads no app Codex, exibição automática do painel, notificações de conclusão, interface e concorrência. Projetos e ordem são mantidos."
+            "value": "Restaura apenas acesso, modelo, visibilidade de threads no app Codex, interface e concorrência. Projetos e ordem são mantidos."
           }
         }
       }

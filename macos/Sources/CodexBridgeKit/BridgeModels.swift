@@ -318,10 +318,6 @@ public struct BridgeSettings: Codable, Sendable {
     public let uiLocalePreference: String
     public let maxConcurrentJobs: Int
     public let showBridgeThreadsInCodexApp: Bool
-    /// Automatically opens Dashboard for newly admitted Codex work in the origin conversation.
-    public let dashboardAutoOpen: Bool
-    /// Enables native macOS completion notifications for eligible Codex work.
-    public let completionFollowUp: Bool
 }
 
 /// Opaque local-delivery receipt. It deliberately excludes task prompts,
@@ -579,8 +575,6 @@ public struct SettingsPatch: Encodable, Sendable {
     public var maxConcurrentJobs: Int?
     public var historyRetentionDays: Int?
     public var showBridgeThreadsInCodexApp: Bool?
-    public var dashboardAutoOpen: Bool?
-    public var completionFollowUp: Bool?
     public var projectOperations: [ProjectOperation]?
 
     public init(
@@ -592,8 +586,6 @@ public struct SettingsPatch: Encodable, Sendable {
         maxConcurrentJobs: Int? = nil,
         historyRetentionDays: Int? = nil,
         showBridgeThreadsInCodexApp: Bool? = nil,
-        dashboardAutoOpen: Bool? = nil,
-        completionFollowUp: Bool? = nil,
         projectOperations: [ProjectOperation]? = nil
     ) {
         self.accessStrategy = accessStrategy
@@ -604,8 +596,6 @@ public struct SettingsPatch: Encodable, Sendable {
         self.maxConcurrentJobs = maxConcurrentJobs
         self.historyRetentionDays = historyRetentionDays
         self.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
-        self.dashboardAutoOpen = dashboardAutoOpen
-        self.completionFollowUp = completionFollowUp
         self.projectOperations = projectOperations
     }
 }

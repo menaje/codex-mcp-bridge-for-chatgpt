@@ -33,6 +33,7 @@ const CURRENT_TOOL_ORDER = [
   "codex_settings",
   "codex_update_settings",
   "codex_task",
+  "codex_ui_completion",
   "codex_ui_read",
   "codex_ui_problem"
 ] as const;
@@ -321,7 +322,7 @@ describe("MCP 2026-07-28 HTTP server", () => {
         "codex-settings-card"
       ]);
       const dashboard = resources.resources.find((resource) => resource.name === "codex-dashboard-card");
-      expect(dashboard?.uri).toBe("ui://codex-mcp-bridge/dashboard/v1.html");
+      expect(dashboard?.uri).toBe("ui://codex-mcp-bridge/dashboard/v2.html");
       expect((await client.readResource({ uri: dashboard!.uri })).contents).toHaveLength(1);
     } finally {
       await client.close();

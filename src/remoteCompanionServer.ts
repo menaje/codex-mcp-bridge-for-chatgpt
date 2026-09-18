@@ -41,8 +41,8 @@ import { assertJsonTextIntegrity, decodeUtf8Strict, parseJsonUtf8Strict } from "
 import type { BridgeApplicationService } from "./tools.js";
 
 export const REMOTE_COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-remote-companion";
-/** v8 renames the required Dashboard auto-open Settings wire field. */
-export const REMOTE_COMPANION_PROTOCOL_VERSION = 8;
+/** v9 removes retired Dashboard and completion-delivery Settings fields. */
+export const REMOTE_COMPANION_PROTOCOL_VERSION = 9;
 const REMOTE_API_PREFIX = "/remote-companion/v1";
 const REMOTE_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 const REMOTE_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;

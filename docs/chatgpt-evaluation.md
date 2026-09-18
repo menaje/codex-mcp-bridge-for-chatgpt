@@ -12,7 +12,7 @@
 - `codex_dashboard`의 현황 카드는 **이 대화 / 전체 현황**을 전환한다. 완료·보관 기록까지 포함해 현재 대화의 기록이 있으면 이 대화로 시작한다. 실행 중·응답 필요·문제 요약과 목록에 동일한 범위를 적용한다. 전체 현황을 열었다고 GPT의 일반 도구 호출 범위가 넓어지지 않는다.
 - 현황의 선택한 작업 상세에서 원본 승인·입력, 작업 중단과 남은 프로세스 종료를 처리한다. 종료된 실패 이력, 현재 처리 필요 항목, 자동 처리 기록을 구분한다. 선택적 확인은 원래 작업 결과를 바꾸지 않는다.
 - 일반 질문은 `codex_status`의 `input` query로 읽는다. GPT가 판단할 수 있는 질문에는 `codex_answer` 또는 정확한 활성 turn의 `codex_steer`를 사용한다. 사용자 의견이 필요하면 현재 ChatGPT 대화에서 묻고, 답을 받은 뒤 유효한 정확한 질문에만 `codex_answer`를 호출한다. 이는 원본 승인을 허가하지 않는다.
-- Settings에서 모델·Ultra 허용 범위·자동 모드 모델 설명·언어·기록 보존, Codex 작업 Dashboard 자동 표시와 이 Mac 완료 알림 설정을 확인한다. 알림 허용 상태에서 eligible 작업의 generic macOS 알림·Dashboard 열기·outbox acknowledgement를 별도로 기록한다. ChatGPT 원래 대화 자동 재개는 이 기능의 통과 조건이 아니다. 사용자 모델 설명의 명시적 저장·공식 설명 비교·복원, 저장 충돌과 초안 보존을 포함한다.
+- Settings에서 모델·Ultra 허용 범위·자동 모드 모델 설명·언어·기록 보존을 확인하고, 카드 생성·ChatGPT 완료 전달을 끄는 설정이 양쪽 Settings에 없음을 확인한다. 모든 새 Job의 exact Dashboard 기본 생성과 live-card terminal event → 자동 `ui/message` → exact result → final message를 별도 종단 조건으로 검증한다. generic macOS 알림은 명시적 Activity 정책의 독립 보조 채널로만 기록하며 ChatGPT 전달 성공으로 계산하지 않는다. 사용자 모델 설명의 명시적 저장·공식 설명 비교·복원, 저장 충돌과 초안 보존을 포함한다.
 - 현재 리소스는 Settings와 Dashboard뿐이다. 이전 Activity·Question 리소스와 그 카드 전용 설정은 새 평가의 필수 흐름으로 요구하지 않는다.
 
 기준 커밋, 브리지 버전과 빌드 ID, 실제 실행 백엔드/CLI 버전, task 계약, 카드 리소스 세대, ChatGPT 앱/브라우저 버전 및 날짜를 기록한다. 선택적 session/subject/organization metadata는 값 자체 대신 존재 여부만 남긴다. opaque scope는 검증 중 비공개로 대조하고 공개 기록에는 A/B/C 관계만 남긴다.

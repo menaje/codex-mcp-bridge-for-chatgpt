@@ -33,7 +33,7 @@ describe("serialized card runtime compatibility", () => {
       const rendered = htmlForUiResource(name, revision.uri, currentHtml);
       expect(currentFile, revision.uri).toBe(rendered);
       expect(rendered).toContain("<!doctype html>");
-      expect(revision.uri).toBe(`ui://codex-mcp-bridge/${name}/v1.html`);
+      expect(revision.uri).toBe(`ui://codex-mcp-bridge/${name}/v2.html`);
     });
   }
 

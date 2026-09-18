@@ -1,6 +1,6 @@
 # Current tool and card contract
 
-The default MCP discovery surface has 15 tools: 10 model-visible tools and 5
+The default MCP discovery surface has 17 tools: 12 model-visible tools and 5
 app-only tools. Recovery-only tools are opt-in and do not appear in the default
 inventory. There are no compatibility registrations, aliases, Question-card
 presenters, or Activity-card presenters.
@@ -19,6 +19,8 @@ presenters, or Activity-card presenters.
 | `codex_settings` | Open the Settings card. |
 | `codex_agent` | Rename a retained Agent. |
 | `codex_activity_update` | Apply a versioned non-cancelling Activity transition. |
+| `bridge_skill` | Read one Bridge-owned reusable procedure. |
+| `bridge_skill_manage` | Manage the Bridge skill library under its explicit mutation contract. |
 
 ## App-only tools
 
@@ -28,6 +30,7 @@ presenters, or Activity-card presenters.
 | `codex_update_settings` | Commit versioned settings and project changes. |
 | `codex_interaction_respond` | Respond to an original Codex approval or non-ordinary input request. |
 | `codex_ui_problem` | Resolve a verified UI problem. |
+| `codex_ui_completion` | Lease and record one exact live-Dashboard completion delivery attempt. |
 
 Each app-only action has a closed schema and requires its normal mounted
 Dashboard proof, scope, revision, and ownership checks. Model-visible tools do
@@ -46,31 +49,33 @@ answer through `codex_answer`. The retired `codex_ask_user`,
 `codex_user_answer`, and `codex_question_action` routes have no replacement
 card API.
 
-`dashboardAutoOpen` controls automatic Dashboard presentation. It opens for a
-newly admitted task in its originating conversation. The task continues even if
-that card or conversation disconnects. Manual Dashboard opening remains available.
+Dashboard creation and completion delivery are orchestration defaults, not user
+preferences. Every admitted `codex_task` returns an exact
+`scope + jobId + presentationRef` Dashboard render action and instructs GPT to
+call it before prose. Old `dashboardAutoOpen`, `completionFollowUp`, and
+`activityCardVisibility` values are ignored and removed during settings
+migration; neither Settings surface nor the mutation schema exposes them.
 
-`completionFollowUp` enables a local macOS completion notification, independently
-of card state. For a new one-job Activity without an explicit
-completion policy, the bridge uses `notify` plus `sealed-jobs-terminal`; a
-successful terminal completion enters the durable outbox. The local menu-bar
-app claims only opaque `{eventId, outboxId}` receipts over its private Unix
-socket, asks macOS to present a generic notification, then acknowledges the
-exact outbox record. A failed presentation releases its lease for retry.
+The exact terminal Job creates one durable `job_completion_deliveries` record.
+Only a live originating Dashboard whose host metadata, Job, and presentation
+reference all agree can claim its bounded lease through
+`codex_ui_completion`. The card then sends standard `ui/message`. Definite host
+rejection is retryable with backoff; acceptance uncertainty is terminal for
+automatic sending so a reconnect cannot duplicate a message merely because an
+acknowledgement was lost. A server receipt is correlation, never authorization.
 
-The notification contains no prompt, result, path, Activity ID, or ChatGPT
-conversation ID. Clicking it opens the local Dashboard. It never resumes or
-adds a ChatGPT message, and it is unavailable to remote companion clients.
-Dashboard presentation neither claims the outbox nor sends a follow-up message.
-The bridge may retry after a crash between macOS accepting the notification and
-the durable acknowledgement, so this is not an exactly-once user-visible
-delivery guarantee.
+The automatic message tells GPT to call `codex_status` once with
+`query.kind="completion"`. That read requires current authenticated ChatGPT
+conversation metadata, rechecks the receipt's exact retained Job and scope, and
+marks the result consumed. Supplying a scope ID explicitly cannot authorize
+this lookup. Card teardown permanently stops that instance; cardless and
+post-navigation wake are intentionally unsupported. Codex execution and normal
+history retention remain independent of card liveness.
 
-`ui/message` is an MCP Apps bridge request from a mounted component to its
-host; it is not a Question-card or user-answer API. No current Bridge resource
-calls it. The old shared card helper that exposed this request was removed with
-the retired Question and Activity card paths, so ordinary user answers continue
-through the normal ChatGPT conversation only.
+The Activity `completion_outbox` remains a different local macOS notification
+channel. When an explicit Activity policy creates such an event, the menu-bar
+app claims an opaque receipt, presents generic text, and opens the local
+Dashboard when clicked. It never proves or substitutes for ChatGPT follow-up.
 
 ## Retired public routes
 

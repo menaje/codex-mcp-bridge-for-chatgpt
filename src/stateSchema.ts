@@ -1,10 +1,9 @@
 /**
  * Schema 19 remains the immutable released base DDL used by its recorded
- * migration. Fresh schema 20 databases apply the small v20 projection below
- * in the same transaction; older databases use the catalogued 19 -> 20
- * migration.
+ * migration. Fresh databases apply the v20 and v21 projections below in the
+ * same transaction; older databases follow the append-only migration catalog.
  */
-export const CURRENT_STATE_SCHEMA_VERSION = "20";
+export const CURRENT_STATE_SCHEMA_VERSION = "21";
 
 export const CURRENT_STATE_SCHEMA = `
   CREATE TABLE scopes (
@@ -504,4 +503,36 @@ export const V20_ASYNC_EXECUTION_MIGRATION_SCHEMA = `
    WHERE json_type(payload, '$.executionMode') IS NOT NULL;
   ALTER TABLE activities DROP COLUMN execution_mode;
   ALTER TABLE jobs DROP COLUMN execution_mode;
+`;
+
+/**
+ * Exact Job completion delivery is intentionally separate from the Activity
+ * completion_outbox used by the native macOS notification channel. A stable
+ * receipt identifies one terminal Job version but never grants scope access.
+ */
+export const V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA = `
+  CREATE TABLE job_completion_deliveries (
+    job_id TEXT PRIMARY KEY REFERENCES jobs(job_id) ON DELETE CASCADE,
+    scope_id TEXT NOT NULL REFERENCES scopes(scope_id) ON DELETE CASCADE,
+    terminal_version INTEGER NOT NULL CHECK(terminal_version >= 1),
+    receipt TEXT NOT NULL UNIQUE CHECK(length(receipt) = 75),
+    state TEXT NOT NULL CHECK(state IN (
+      'pending','leased','host-rejected','host-accepted','acceptance-unknown','result-read'
+    )),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    next_attempt_at INTEGER,
+    lease_owner TEXT,
+    lease_expires_at INTEGER,
+    last_host_rejected_at INTEGER,
+    last_host_error TEXT,
+    host_accepted_at INTEGER,
+    acceptance_unknown_at INTEGER,
+    result_read_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    CHECK((state = 'leased') = (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)),
+    CHECK(state = 'leased' OR (lease_owner IS NULL AND lease_expires_at IS NULL))
+  ) STRICT;
+  CREATE INDEX job_completion_deliveries_claimable
+    ON job_completion_deliveries(scope_id, state, next_attempt_at, created_at);
 `;

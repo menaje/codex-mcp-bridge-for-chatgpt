@@ -175,7 +175,7 @@ enum SettingsSearchTarget: String, CaseIterable, Identifiable {
         case .generalLanguage:
             return ["macos.displayandexecution", "macos.withautomaticthemacosappfollowsyourmac"]
         case .generalTaskPresentation:
-            return ["settings.dashboardAutoOpen", "settings.completionFollowUp"]
+            return ["settings.orchestrationDefaults", "settings.orchestrationDefaultsHint"]
         case .generalNotifications:
             return ["macos.securityandconnectionapprovalnotifications", "macos.openmacosnotificationsettings"]
         case .generalLaunchAtLogin:
@@ -1642,29 +1642,10 @@ private struct AppGeneralSettingsPane: View {
                     Text("macos.whenenablednewtasksandfreshcontextsare")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Toggle(
-                        "settings.dashboardAutoOpen",
-                        isOn: draft.dashboardAutoOpen
-                    )
-                    Text("settings.dashboardAutoOpenHint")
+                    Label("settings.orchestrationDefaults", systemImage: "rectangle.on.rectangle")
+                    Text("settings.orchestrationDefaultsHint")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if model.isRemoteClient {
-                        Label(
-                            "macos.completionnotificationsaresentbythemenubar",
-                            systemImage: "bell.badge"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    } else {
-                        Toggle(
-                            "settings.completionFollowUp",
-                            isOn: draft.completionFollowUp
-                        )
-                        Text("macos.whenworkcompletesthemenubarappon")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
                     }
                     .id(SettingsSearchTarget.generalLanguage.anchorID)
                 } else {

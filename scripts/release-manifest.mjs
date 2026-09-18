@@ -67,7 +67,7 @@ const RELEASE_ASSET_NAMES = [
   "macos-x64-app",
   "release-checksums"
 ];
-const STATE_SOURCE_SCHEMAS = Array.from({ length: 17 }, (_, index) => index + 3);
+const STATE_SOURCE_SCHEMAS = Array.from({ length: 18 }, (_, index) => index + 3);
 const STATE_MIGRATION_DEFINITIONS = [
   [3, 4, "migrateV3ToV4", "a49f5314925897e254c6f34dd9c956cbf31eb1d8", [
     ["src/stateStore.ts", "stableUuid"], ["src/stateStore.ts", "normalizeOptionalString"],
@@ -123,6 +123,9 @@ const STATE_MIGRATION_DEFINITIONS = [
   ]],
   [19, 20, "migrateV19ToV20", "7e7b0c53fc553afe2e3d3297b127a44e77246460", [
     ["src/stateSchema.ts", "V20_ASYNC_EXECUTION_MIGRATION_SCHEMA"]
+  ]],
+  [20, 21, "migrateV20ToV21", "129ac0a3e4e368bd00d71d92905b2507e5b36a04", [
+    ["src/stateSchema.ts", "V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA"]
   ]]
 ];
 const STATE_FIXTURE_DEFINITIONS = [
@@ -326,7 +329,7 @@ export function validateReleaseManifest(value) {
     ],
     "stateCompatibility"
   );
-  if (stateCompatibility.currentSchema !== 20) fail("stateCompatibility.currentSchema must be 20");
+  if (stateCompatibility.currentSchema !== 21) fail("stateCompatibility.currentSchema must be 21");
   if (
     !Array.isArray(stateCompatibility.supportedSourceSchemas) ||
     stateCompatibility.supportedSourceSchemas.length !== STATE_SOURCE_SCHEMAS.length ||
@@ -373,11 +376,11 @@ export function validateReleaseManifest(value) {
     "stateCompatibility.persistentContracts"
   );
   const requiredContracts = {
-    userSettingsSchema: 5,
+    userSettingsSchema: 6,
     taskInputContract: 6,
     macosHelperProtocol: 2,
-    localCompanionProtocol: 10,
-    remoteCompanionProtocol: 8
+    localCompanionProtocol: 11,
+    remoteCompanionProtocol: 9
   };
   for (const [name, expected] of Object.entries(requiredContracts)) {
     if (persistentContracts[name] !== expected) {
@@ -665,7 +668,7 @@ export function expectedStateMigrationCatalog(repoRoot = DEFAULT_REPO_ROOT) {
   return {
     catalogVersion: 1,
     immutabilityPolicy: "append-only-after-release-v1",
-    currentSchema: 20,
+    currentSchema: 21,
     supportedSourceSchemas: [...STATE_SOURCE_SCHEMAS],
     unsupportedSourceSchemas: [1, 2],
     retiredLegacyImports: [

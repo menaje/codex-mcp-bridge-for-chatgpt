@@ -145,6 +145,96 @@ describe("BridgeStateStore", () => {
     }
   });
 
+  it("leases one exact Job completion and records rejection, acceptance, and result consumption", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const jobId = "14141414-1414-4414-8414-141414141414";
+    const requestId = "15151515-1515-4515-8515-151515151515";
+    const firstOwner = "16161616-1616-4616-8616-161616161616";
+    const secondOwner = "17171717-1717-4717-8717-171717171717";
+    try {
+      store.upsertJob({ ...job(jobId, requestId), status: "running", updatedAt: 1 });
+      expect(store.getJobCompletionDelivery(jobId, SCOPE_A)).toBeUndefined();
+
+      store.upsertJob({ ...job(jobId, requestId), updatedAt: 2 });
+      const pending = store.getJobCompletionDelivery(jobId, SCOPE_A)!;
+      expect(pending).toMatchObject({
+        jobId,
+        scopeId: SCOPE_A,
+        terminalVersion: 1,
+        state: "pending",
+        attemptCount: 0,
+        receipt: expect.stringMatching(/^completion-[0-9a-f]{64}$/)
+      });
+
+      const claimed = store.claimJobCompletionDelivery(jobId, SCOPE_A, firstOwner, 1_000, 10)!;
+      expect(claimed).toMatchObject({ state: "leased", attemptCount: 1, leaseOwner: firstOwner });
+      expect(store.claimJobCompletionDelivery(jobId, SCOPE_A, secondOwner, 1_000, 11))
+        .toBeUndefined();
+
+      const rejected = store.markJobCompletionHostRejected({
+        jobId,
+        scopeId: SCOPE_A,
+        receipt: pending.receipt,
+        leaseOwner: firstOwner,
+        error: "host busy",
+        now: 20
+      });
+      expect(rejected).toMatchObject({
+        state: "host-rejected",
+        attemptCount: 1,
+        nextAttemptAt: 5_020,
+        lastHostError: "host busy"
+      });
+      expect(store.claimJobCompletionDelivery(jobId, SCOPE_A, secondOwner, 1_000, 5_019))
+        .toBeUndefined();
+
+      const retried = store.claimJobCompletionDelivery(jobId, SCOPE_A, secondOwner, 1_000, 5_020)!;
+      expect(retried).toMatchObject({ state: "leased", attemptCount: 2, leaseOwner: secondOwner });
+      const accepted = store.markJobCompletionHostAccepted({
+        jobId,
+        scopeId: SCOPE_A,
+        receipt: pending.receipt,
+        leaseOwner: secondOwner,
+        now: 5_021
+      });
+      expect(accepted).toMatchObject({ state: "host-accepted", hostAcceptedAt: 5_021 });
+      expect(store.retentionProtection(jobId)).toContain("undelivered-chatgpt-result");
+
+      expect(store.markJobCompletionResultRead(pending.receipt, SCOPE_A, 5_022)).toMatchObject({
+        state: "result-read",
+        resultReadAt: 5_022
+      });
+      expect(store.retentionProtection(jobId)).not.toContain("undelivered-chatgpt-result");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("turns an expired completion send lease into uncertainty without replay", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const jobId = "18181818-1818-4818-8818-181818181818";
+    const requestId = "19191919-1919-4919-8919-191919191919";
+    const firstOwner = "20202020-2020-4020-8020-202020202020";
+    const secondOwner = "21212121-2121-4121-8121-212121212121";
+    try {
+      store.upsertJob(job(jobId, requestId));
+      const delivery = store.getJobCompletionDelivery(jobId, SCOPE_A)!;
+      expect(store.claimJobCompletionDelivery(jobId, SCOPE_A, firstOwner, 1_000, 10))
+        .toMatchObject({ state: "leased" });
+      expect(store.claimJobCompletionDelivery(jobId, SCOPE_A, secondOwner, 1_000, 1_010))
+        .toBeUndefined();
+      expect(store.getJobCompletionDeliveryByReceipt(delivery.receipt, SCOPE_A)).toMatchObject({
+        state: "acceptance-unknown",
+        acceptanceUnknownAt: 1_010,
+        leaseOwner: undefined
+      });
+      expect(store.claimJobCompletionDelivery(jobId, SCOPE_A, secondOwner, 1_000, 10_000))
+        .toBeUndefined();
+    } finally {
+      store.close();
+    }
+  });
+
   it("finds retained status-card work and filters archived jobs before applying its limit", () => {
     const store = new BridgeStateStore({ file: ":memory:" });
     const otherScope = "22222222-2222-4222-8222-222222222222";
@@ -271,7 +361,7 @@ describe("BridgeStateStore", () => {
     expect(readFileSync(file).includes(Buffer.from(rawPrompt))).toBe(false);
 
     const reopened = new BridgeStateStore({ file });
-    expect(reopened.schemaVersion).toBe(20);
+    expect(reopened.schemaVersion).toBe(21);
     expect(reopened.listSteeringDeliveries(SCOPE_A)).toEqual([
       expect.objectContaining({
         requestId,
@@ -339,7 +429,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(20);
+    expect(restored.schemaVersion).toBe(21);
     expect(restored.getActivityProjectAdmission(activityId)?.projectId).toBe(project.id);
     expect(restored.listJobs()).toEqual([
       expect.objectContaining({ projectId: project.id, projectName: "Codex MCP Bridge" })
@@ -592,7 +682,7 @@ describe("BridgeStateStore", () => {
     store.close();
 
     const restored = new BridgeStateStore({ file });
-    expect(restored.schemaVersion).toBe(20);
+    expect(restored.schemaVersion).toBe(21);
     expect(restored.getCancellationOperation(SCOPE_A, requestId)).toMatchObject({
       source: "model-tool",
       reason: "The user changed direction. Stop the obsolete job."

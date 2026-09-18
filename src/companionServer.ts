@@ -34,8 +34,8 @@ import {
 } from "./textIntegrity.js";
 
 export const COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-companion";
-/** v10 renames the required Dashboard auto-open Settings wire field. */
-export const COMPANION_PROTOCOL_VERSION = 10;
+/** v11 removes retired Dashboard and completion-delivery Settings fields. */
+export const COMPANION_PROTOCOL_VERSION = 11;
 export const COMPANION_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 // Source-preserved 3 MiB Markdown content can JSON-escape sixfold.
 export const COMPANION_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;

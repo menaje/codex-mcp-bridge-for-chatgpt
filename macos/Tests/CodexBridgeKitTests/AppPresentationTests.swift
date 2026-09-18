@@ -120,11 +120,11 @@ final class AppPresentationTests: XCTestCase {
 
     func testNativeSemanticKeyFallsBackToEnglishInsteadOfDisplayingItsIdentifier() {
         let value = BridgeAppLocalization.string(
-            "settings.dashboardAutoOpen",
+            "settings.orchestrationDefaults",
             locale: Locale(identifier: "unsupported")
         )
-        XCTAssertEqual(value, "Automatically show Dashboard for Codex work")
-        XCTAssertNotEqual(value, "settings.dashboardAutoOpen")
+        XCTAssertEqual(value, "Dashboard and completion delivery are always on")
+        XCTAssertNotEqual(value, "settings.orchestrationDefaults")
     }
 
     func testReasoningEffortLabelsUseCanonicalLowercaseValuesInEveryLocale() {
@@ -848,23 +848,6 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertFalse(draft.isUltraDisabled(ultra))
         XCTAssertTrue(SettingsDraft.selectableChoices(in: snapshot, allowDelegation: true).contains(ultra))
         XCTAssertEqual(draft.explicitSelectionKeys, [ultra.key])
-    }
-
-    func testDashboardPresentationAndCompletionFollowUpAreIndependent() throws {
-        let snapshot = try settingsSnapshot(
-            policy: [
-                "mode": "automatic",
-                "allowedSelections": ["kind": "catalog-visible"],
-                "constraints": ["allowDelegation": true]
-            ],
-            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
-        )
-        var draft = SettingsDraft(snapshot: snapshot)
-        draft.dashboardAutoOpen = false
-        draft.completionFollowUp = true
-
-        XCTAssertFalse(draft.dashboardAutoOpen)
-        XCTAssertTrue(draft.completionFollowUp)
     }
 
     func testModelDescriptionEditKeepsCatalogTextLiveAndOnlySavesDeliberateChanges() {
@@ -1961,8 +1944,6 @@ private func settingsSnapshot(
     settingsRevision: Int = 4,
     accessStrategy: String = "adaptive",
     showBridgeThreadsInCodexApp: Bool = true,
-    dashboardAutoOpen: Bool = true,
-    completionFollowUp: Bool = false,
     policy: [String: Any],
     legacyPreferredModel: String? = nil,
     modelDescriptionOverrides: [String: String]? = nil,
@@ -1980,9 +1961,7 @@ private func settingsSnapshot(
         "projects": [],
         "uiLocalePreference": "auto",
         "maxConcurrentJobs": 2,
-        "showBridgeThreadsInCodexApp": showBridgeThreadsInCodexApp,
-        "dashboardAutoOpen": dashboardAutoOpen,
-        "completionFollowUp": completionFollowUp
+        "showBridgeThreadsInCodexApp": showBridgeThreadsInCodexApp
     ]
     if let legacyPreferredModel {
         settings["legacyPreferredModel"] = legacyPreferredModel

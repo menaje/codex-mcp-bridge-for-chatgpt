@@ -19,7 +19,6 @@ import { DisplayReadPool, waitForDisplay } from "./displayReadPool.js";
 import { uiControlProofs, type UiControlClaims } from "./uiControlProofs.js";
 import {
   nativeCompletionNotification,
-  selectCompletionDeliveryRoute,
   type NativeCompletionNotification
 } from "./completionDelivery.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -450,9 +449,9 @@ const dashboardPresentationOutputSchema = z.strictObject({
   statusTool: z.literal("codex_status"),
   openTool: z.literal("codex_dashboard"),
   scope: z.literal("conversation"),
-  automatic: z.boolean(),
-  reason: z.enum(["enabled", "setting-disabled"]),
-  completionDeliveryRoute: z.enum(["disabled", "native-notification", "pending"])
+  automatic: z.literal(true),
+  reason: z.literal("default"),
+  completionDeliveryRoute: z.literal("live-card")
 });
 
 const codexTaskOutputSchema = z.strictObject({
@@ -720,6 +719,22 @@ const dashboardModelOutputSchema = z.strictObject({
   summary: z.string()
 });
 
+const jobCompletionDeliveryOutputSchema = z.strictObject({
+  kind: z.literal("job-completion-delivery"),
+  state: z.enum(["claimed", "waiting", "settled"]),
+  receipt: z.string().regex(/^completion-[a-f0-9]{64}$/).optional(),
+  attempt: z.number().int().min(1).optional(),
+  leaseExpiresAt: z.iso.datetime().optional(),
+  deliveryState: z.enum([
+    "pending",
+    "leased",
+    "host-rejected",
+    "host-accepted",
+    "acceptance-unknown",
+    "result-read"
+  ]).optional()
+});
+
 const cardEnrichmentOutputSchema = z.strictObject({
   state: z.enum(["structural", "enriched"]),
   runtimeRequests: z.number().int().min(0),
@@ -825,9 +840,7 @@ const bridgeUserSettingsOutputSchema = z.strictObject({
   })),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
-  showBridgeThreadsInCodexApp: z.boolean(),
-  dashboardAutoOpen: z.boolean(),
-  completionFollowUp: z.boolean()
+  showBridgeThreadsInCodexApp: z.boolean()
 });
 
 const catalogModelOutputSchema = z.strictObject({
@@ -1533,6 +1546,7 @@ export const OPERATOR_OUTPUT_SCHEMAS = Object.freeze({
 });
 export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
   codex_ui_read: z.union([dashboardViewOutputSchema, dashboardHistoryDetailOutputSchema, settingsViewOutputSchema, uiControlSummaryOutputSchema]),
+  codex_ui_completion: jobCompletionDeliveryOutputSchema,
   codex_ui_problem: problemActionResultSchema,
   codex_interaction_respond: mutationOutputSchema,
   codex_update_settings: settingsViewOutputSchema
@@ -4119,10 +4133,8 @@ export function registerBridgeTools(
         canOpen: record.phase === "released" && Boolean(record.evidence) };
     },
     async claimNativeCompletionNotifications(input) {
-      // The preference is checked at claim time so a disabled Mac never
-      // consumes durable events. The local app can resume delivery later
-      // without any ChatGPT card or conversation-resume capability.
-      if (!userSettings.current.completionFollowUp) return [];
+      // Native alerts are a separate, explicit Activity channel. They never
+      // stand in for the default live-card ChatGPT completion delivery.
       return jobs.claimNativeCompletionNotifications(input.limit ?? 10, input.leaseOwner)
         .flatMap((record) => record.channel === "notify"
           ? [nativeCompletionNotification({
@@ -4746,6 +4758,40 @@ export function registerBridgeTools(
     scopeId: scopeIdSchema().optional(),
     scope: z.enum(["conversation", "all"])
   });
+  const jobCompletionIdentityInput = {
+    jobId: z.string().uuid(),
+    presentationRef: z.string().regex(/^[a-f0-9]{64}$/),
+    widgetInstanceId: widgetInstanceIdSchema
+  } as const;
+  const jobCompletionReceiptInput = z.string().regex(/^completion-[a-f0-9]{64}$/);
+  const jobCompletionDeliveryInput = z.discriminatedUnion("operation", [
+    z.strictObject({
+      operation: z.literal("wait"),
+      ...jobCompletionIdentityInput,
+      waitMs: z.number().int().min(1).max(10_000).optional()
+    }),
+    z.strictObject({
+      operation: z.literal("accepted"),
+      ...jobCompletionIdentityInput,
+      receipt: jobCompletionReceiptInput
+    }),
+    z.strictObject({
+      operation: z.literal("rejected"),
+      ...jobCompletionIdentityInput,
+      receipt: jobCompletionReceiptInput,
+      error: z.string().max(500).optional()
+    }),
+    z.strictObject({
+      operation: z.literal("uncertain"),
+      ...jobCompletionIdentityInput,
+      receipt: jobCompletionReceiptInput
+    }),
+    z.strictObject({
+      operation: z.literal("release"),
+      ...jobCompletionIdentityInput,
+      receipt: jobCompletionReceiptInput
+    })
+  ]);
 
   server.registerTool(
     "codex_dashboard",
@@ -4778,11 +4824,6 @@ export function registerBridgeTools(
                 "DASHBOARD_AUTOMATIC_PRESENTATION_UNAVAILABLE: Render the Dashboard in the originating conversation."
               );
             }
-            if (!userSettings.current.dashboardAutoOpen) {
-              throw new Error(
-                "DASHBOARD_AUTO_OPEN_DISABLED: Enable automatic Dashboard display before rendering this presentation."
-              );
-            }
             const job = jobs.get(args.jobId);
             if (!job || job.scopeId !== scope.scopeId) {
               throw new Error(
@@ -4797,20 +4838,9 @@ export function registerBridgeTools(
             return true;
           })()
         : false;
-      const completionJob = args.jobId
-        ? jobs.get(args.jobId)
+      const completionDeliveryRoute = automaticPresentation
+        ? "live-card" as const
         : undefined;
-      const completionActivity = completionJob
-        ? jobs.getActivity(completionJob.activityId)
-        : undefined;
-      const completionDeliveryRoute = automaticPresentation &&
-        userSettings.current.completionFollowUp &&
-        completionActivity?.handoffPolicy === "notify" &&
-        completionActivity.completionTrigger === "sealed-jobs-terminal"
-        ? selectCompletionDeliveryRoute({
-            nativeNotificationDispatcher: true
-          })
-        : "disabled" as const;
       const summary = automaticPresentation
         ? "The originating conversation Dashboard is open for this Codex job."
         : args.scope === "conversation"
@@ -4828,7 +4858,7 @@ export function registerBridgeTools(
           ...(automaticPresentation
             ? {
                 presentationRef: args.presentationRef,
-                completionDeliveryRoute
+                completionDeliveryRoute: completionDeliveryRoute!
               }
             : {})
         }
@@ -4938,6 +4968,12 @@ export function registerBridgeTools(
     (query) => query.waitMs === undefined || query.waitFor !== undefined,
     "waitFor is required whenever waitMs is sent."
   ).describe("Resolve one exact retained Job by its scope-bound logical requestId.");
+  const statusCompletionQueryInput = z.strictObject({
+    kind: z.literal("completion"),
+    receipt: z.string().regex(/^completion-[a-f0-9]{64}$/).describe(
+      "Opaque receipt supplied by the live Dashboard completion message. The authenticated conversation scope remains authoritative."
+    )
+  }).describe("Read the exact retained terminal Job selected by a live Dashboard completion receipt.");
   const statusInputQueryInput = z.strictObject({
     kind: z.literal("input"),
     ...codexInputs.questionInputSchema.shape
@@ -4949,6 +4985,7 @@ export function registerBridgeTools(
   const codexStatusQueryInput = z.union([
     statusJobQueryInput,
     statusRequestQueryInput,
+    statusCompletionQueryInput,
     statusInputQueryInput,
     statusActivityQueryInput,
     statusThreadQueryInput,
@@ -4967,7 +5004,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read project selectors and Codex work state, ordinary questions, and results in the current conversation. Exact Job queries retrieve retained final answers.",
+        "Read project selectors and Codex work state, ordinary questions, and results in the current conversation. Exact Job queries retrieve retained final answers. For an automatic live-card completion message, call query kind='completion' with its opaque receipt; the authenticated conversation scope is still required and the receipt never authorizes cross-conversation access.",
       inputSchema: codexStatusInput,
       outputSchema: MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status,
       annotations: {
@@ -4986,6 +5023,7 @@ export function registerBridgeTools(
         return codexInputs.readInput(input, extra);
       }
       const jobQuery = query?.kind === "job" || query?.kind === "request" ? query : undefined;
+      const completionQuery = query?.kind === "completion" ? query : undefined;
       const activityQuery = query?.kind === "activity" ? query : undefined;
       const threadQuery = query?.kind === "thread" ? query : undefined;
       const pageQuery = query?.kind === "page" ? query : undefined;
@@ -5002,6 +5040,52 @@ export function registerBridgeTools(
       }
       if (jobQuery?.waitMs && !jobQuery.waitFor) {
         throw new Error("waitMs requires waitFor='change' or waitFor='terminal'.");
+      }
+      if (completionQuery) {
+        const authenticatedScope = scopeResolver.resolve(
+          _meta as ToolCallMetadata,
+          undefined
+        );
+        if (!authenticatedScope || authenticatedScope.source !== "host-metadata") {
+          throw new Error(
+            "Completion lookup requires authenticated ChatGPT conversation metadata; an explicit scopeId is not authorization."
+          );
+        }
+        const completionScopeId = authenticatedScope.scopeId;
+        const delivery = jobs.admissionStateStore.getJobCompletionDeliveryByReceipt(
+          completionQuery.receipt,
+          completionScopeId
+        );
+        const job = delivery ? jobs.get(delivery.jobId) : undefined;
+        if (
+          !delivery ||
+          !job ||
+          job.scopeId !== completionScopeId ||
+          !isTerminalActivityJobStatus(job.status)
+        ) {
+          throw scopedHandleUnavailable("job");
+        }
+        const structured = {
+          kind: "job" as const,
+          ...formatJobStatus(job, jobs.staleThresholdMs, undefined, userSettings.current, jobs),
+          inputs: {
+            cursor: codexInputCursor(job),
+            ordinaryQuestions: job.pendingInteractions.filter(ordinaryCodexQuestion).length,
+            approvalRequests: job.pendingInteractions.filter(q => !ordinaryCodexQuestion(q)).length,
+            readTool: "codex_status" as const,
+            queryKind: "input" as const
+          }
+        };
+        const result = statusToolResult(
+          compactStatusProjection(structured),
+          job,
+          config.maxJobResultBytes
+        );
+        jobs.admissionStateStore.markJobCompletionResultRead(
+          completionQuery.receipt,
+          completionScopeId
+        );
+        return result;
       }
       if (jobQuery) {
         if (!scopeId) {
@@ -6401,8 +6485,6 @@ export function registerBridgeTools(
     uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
     maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
     showBridgeThreadsInCodexApp: z.boolean().optional(),
-    dashboardAutoOpen: z.boolean().optional(),
-    completionFollowUp: z.boolean().optional(),
     projectOperations: z.array(projectRegistryOperationInput)
       .min(1)
       .max(MAX_REGISTERED_PROJECTS * 2)
@@ -6448,8 +6530,6 @@ export function registerBridgeTools(
         "uiLocalePreference",
         "maxConcurrentJobs",
         "showBridgeThreadsInCodexApp",
-        "dashboardAutoOpen",
-        "completionFollowUp",
         "projectOperations"
       ] as const;
       if (!nestedKeys.some((key) => Object.prototype.hasOwnProperty.call(settings, key))) {
@@ -6463,9 +6543,7 @@ export function registerBridgeTools(
         "historyRetentionDays",
         "uiLocalePreference",
         "maxConcurrentJobs",
-        "showBridgeThreadsInCodexApp",
-        "dashboardAutoOpen",
-        "completionFollowUp"
+        "showBridgeThreadsInCodexApp"
       ] as const) {
         if (settings[key] !== undefined) {
           (patch as Record<string, unknown>)[key] = settings[key];
@@ -6630,7 +6708,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Durably admit one asynchronous Codex turn in the current conversation and return its exact Job identity without waiting for completion. When the result supplies a codex_dashboard next action, call that render tool immediately before any prose response so the originating conversation Dashboard mounts. When macOS completion notifications are enabled, a new one-job Activity automatically queues its native notification after successful terminal completion. Multi-job or explicit Activity policies remain under the caller's control.",
+        "Durably admit one asynchronous Codex turn in the current conversation and return its exact Job identity without waiting for completion. Always call the supplied codex_dashboard render action immediately before any prose response so the originating conversation mounts its exact live Dashboard; while that card remains live, it automatically resumes ChatGPT once with the terminal result. This behavior is not optional in Settings. Explicit Activity policies still control separate native notification and verification channels.",
       inputSchema: codexTaskInputSchema(config, taskExecutionEnvelopeRef()),
       outputSchema: codexTaskOutputSchema,
       annotations: codexTaskEnvelopeAnnotations(config)
@@ -6708,10 +6786,7 @@ export function registerBridgeTools(
           activityRequest: requestedActivity,
           agentResolution
         });
-        const activityRequest = applyCompletionNotificationPolicy(
-          requestedActivity,
-          preferences
-        );
+        const activityRequest = requestedActivity;
 
         if (scope.scopeId === LEGACY_SCOPE_ID && agentResolution.contextMode === "fresh") {
           throw new Error("The legacy scope cannot create a fresh bridge Agent thread.");
@@ -7011,6 +7086,118 @@ export function registerBridgeTools(
       }
     }
   );
+  server.registerTool("codex_ui_completion", {
+    title: "Deliver Exact Job Completion",
+    description:
+      "App-only live Dashboard lease for one exact terminal Job. It coordinates a single standard ui/message attempt and records host acceptance, rejection, or uncertainty without treating the receipt as authorization.",
+    inputSchema: jobCompletionDeliveryInput,
+    outputSchema: jobCompletionDeliveryOutputSchema,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    },
+    _meta: {
+      ui: { visibility: ["app"] },
+      "openai/visibility": "private",
+      "openai/widgetAccessible": true
+    }
+  }, async (args, extra) => {
+    const scope = scopeResolver.require(
+      extra.mcpReq._meta as ToolCallMetadata,
+      undefined,
+      "Dashboard completion delivery"
+    );
+    const widgetInstanceId = mountedWidgetInstanceId(args, extra.mcpReq._meta);
+    if (!widgetInstanceId) {
+      throw new Error("MOUNTED_WIDGET_REQUIRED: Refresh the exact originating Dashboard.");
+    }
+    const current = jobs.get(args.jobId);
+    if (
+      !current ||
+      current.scopeId !== scope.scopeId ||
+      args.presentationRef !== dashboardPresentationRef(current)
+    ) {
+      throw new Error(
+        "COMPLETION_PRESENTATION_MISMATCH: Refresh the exact Dashboard render action for this Job."
+      );
+    }
+    const store = jobs.admissionStateStore;
+    let record;
+    if (args.operation === "wait") {
+      let job = current;
+      if (isActiveActivityJobStatus(job.status)) {
+        const waited = await jobs.wait(
+          job.jobId,
+          "terminal",
+          args.waitMs || 8_000,
+          extra.mcpReq.signal
+        );
+        job = waited.job;
+      }
+      if (isActiveActivityJobStatus(job.status)) {
+        const structured = jobCompletionDeliveryOutputSchema.parse({
+          kind: "job-completion-delivery",
+          state: "waiting"
+        });
+        return { content: [{ type: "text", text: "Completion is not ready." }], structuredContent: structured };
+      }
+      record = store.claimJobCompletionDelivery(
+        job.jobId,
+        scope.scopeId,
+        widgetInstanceId
+      );
+      if (record) {
+        const structured = jobCompletionDeliveryOutputSchema.parse({
+          kind: "job-completion-delivery",
+          state: "claimed",
+          receipt: record.receipt,
+          attempt: record.attemptCount,
+          leaseExpiresAt: new Date(record.leaseExpiresAt!).toISOString(),
+          deliveryState: record.state
+        });
+        return { content: [{ type: "text", text: "Completion delivery lease claimed." }], structuredContent: structured };
+      }
+      const existing = store.getJobCompletionDelivery(job.jobId, scope.scopeId);
+      const settled = Boolean(existing && (
+        existing.state === "host-accepted" ||
+        existing.state === "acceptance-unknown" ||
+        existing.state === "result-read" ||
+        existing.state === "host-rejected" && existing.attemptCount >= 3
+      ));
+      const structured = jobCompletionDeliveryOutputSchema.parse({
+        kind: "job-completion-delivery",
+        state: settled ? "settled" : "waiting",
+        ...(existing ? { deliveryState: existing.state } : {})
+      });
+      return { content: [{ type: "text", text: settled ? "Completion delivery is settled." : "Completion delivery is waiting." }], structuredContent: structured };
+    }
+
+    const mutation = {
+      jobId: current.jobId,
+      scopeId: scope.scopeId,
+      receipt: args.receipt,
+      leaseOwner: widgetInstanceId
+    };
+    record = args.operation === "accepted"
+      ? store.markJobCompletionHostAccepted(mutation)
+      : args.operation === "rejected"
+        ? store.markJobCompletionHostRejected({ ...mutation, error: args.error })
+        : args.operation === "uncertain"
+          ? store.markJobCompletionAcceptanceUnknown(mutation)
+          : store.releaseJobCompletionDelivery(mutation);
+    const structured = jobCompletionDeliveryOutputSchema.parse({
+      kind: "job-completion-delivery",
+      state: record.state === "host-rejected" && record.attemptCount < 3
+        ? "waiting"
+        : record.state === "pending"
+          ? "waiting"
+          : "settled",
+      deliveryState: record.state
+    });
+    return { content: [{ type: "text", text: "Completion delivery state recorded." }], structuredContent: structured };
+  });
   server.registerTool("codex_ui_read", {
     title: "Read Card Data", description: "App-only data reads for Dashboard, Settings, and selected work details. Each view retains its own scope and proof checks.",
     inputSchema: z.union([
@@ -7490,31 +7677,6 @@ type ActivityTaskRequest = Pick<
   | "handoffPolicy"
   | "completionTrigger"
 >;
-
-/**
- * A new one-job Activity is the unit a native completion alert can
- * safely represent. Existing and linked Activities retain their explicit
- * lifecycle policy; multi-job callers still choose their own barrier.
- */
-function applyCompletionNotificationPolicy(
-  request: ActivityTaskRequest,
-  preferences: Pick<BridgeUserSettings, "completionFollowUp">
-): ActivityTaskRequest {
-  if (
-    request.activityId !== undefined ||
-    request.continuationOfActivityId !== undefined ||
-    preferences.completionFollowUp !== true ||
-    request.handoffPolicy !== undefined ||
-    request.completionTrigger !== undefined
-  ) {
-    return request;
-  }
-  return {
-    ...request,
-    handoffPolicy: "notify",
-    completionTrigger: "sealed-jobs-terminal"
-  };
-}
 
 type AgentTaskResolution =
   | {
@@ -8925,7 +9087,7 @@ function formatJobStatus(
   job: CodexJob,
   staleAfterMs: number,
   wait?: CodexJobWaitResult,
-  preferences?: Pick<BridgeUserSettings, "dashboardAutoOpen" | "completionFollowUp">,
+  preferences?: BridgeUserSettings,
   registry?: CodexJobRegistry,
   replay = false
 ): Record<string, unknown> {
@@ -9094,23 +9256,18 @@ function dashboardPresentationRef(
 
 function dashboardPresentationHint(
   job: Pick<CodexJob, "activityId">,
-  preferences?: Pick<BridgeUserSettings, "dashboardAutoOpen" | "completionFollowUp">,
+  _preferences?: BridgeUserSettings,
   registry?: CodexJobRegistry
 ) {
-  const automatic = preferences?.dashboardAutoOpen !== false;
-  const activity = registry?.getActivity(job.activityId);
-  const completionDeliveryRoute = preferences?.completionFollowUp === true &&
-    activity?.handoffPolicy === "notify" &&
-    activity.completionTrigger === "sealed-jobs-terminal"
-    ? selectCompletionDeliveryRoute({ nativeNotificationDispatcher: true })
-    : "disabled" as const;
+  void job;
+  void registry;
   return {
     statusTool: "codex_status",
     openTool: "codex_dashboard",
     scope: "conversation",
-    automatic,
-    reason: automatic ? "enabled" as const : "setting-disabled" as const,
-    completionDeliveryRoute
+    automatic: true as const,
+    reason: "default" as const,
+    completionDeliveryRoute: "live-card" as const
   };
 }
 
@@ -9377,8 +9534,6 @@ export type BridgeSettingsPatchInput = {
   uiLocalePreference?: UiLocalePreference;
   maxConcurrentJobs?: number;
   showBridgeThreadsInCodexApp?: boolean;
-  dashboardAutoOpen?: boolean;
-  completionFollowUp?: boolean;
   projectOperations?: ProjectRegistryOperation[];
 };
 
@@ -13539,7 +13694,7 @@ function codexTaskEnvelopeAnnotations(config: BridgeConfig) {
 function forwardResult(
   result: ToolResult,
   job: CodexJob,
-  preferences: Pick<BridgeUserSettings, "dashboardAutoOpen" | "completionFollowUp">,
+  preferences: BridgeUserSettings,
   registry?: CodexJobRegistry,
   replay = false
 ): ToolResult {
@@ -13608,7 +13763,7 @@ function forwardResult(
 function taskResultForJob(
   job: CodexJob,
   staleAfterMs: number,
-  preferences: Pick<BridgeUserSettings, "dashboardAutoOpen" | "completionFollowUp">,
+  preferences: BridgeUserSettings,
   registry: CodexJobRegistry | undefined,
   replay: boolean
 ): ToolResult {
@@ -13631,7 +13786,7 @@ function taskResultForJob(
 
 function taskProjectionForJob(
   job: CodexJob,
-  preferences: Pick<BridgeUserSettings, "dashboardAutoOpen" | "completionFollowUp">,
+  preferences: BridgeUserSettings,
   registry: CodexJobRegistry | undefined,
   replay: boolean,
   staleAfterMs = registry?.staleThresholdMs || 1
