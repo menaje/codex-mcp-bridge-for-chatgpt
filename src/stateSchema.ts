@@ -536,3 +536,19 @@ export const V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA = `
   CREATE INDEX job_completion_deliveries_claimable
     ON job_completion_deliveries(scope_id, state, next_attempt_at, created_at);
 `;
+
+/**
+ * Record which model-visible read path consumed an exact Job completion.
+ * Existing schema-21 rows could only reach result-read through the opaque
+ * completion receipt, so the migration can backfill that source without
+ * inferring anything from host timing.
+ */
+export const V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA = `
+  ALTER TABLE job_completion_deliveries
+    ADD COLUMN result_read_source TEXT CHECK(result_read_source IN (
+      'completion-receipt','direct-job-query'
+    ));
+  UPDATE job_completion_deliveries
+     SET result_read_source='completion-receipt'
+   WHERE state='result-read';
+`;

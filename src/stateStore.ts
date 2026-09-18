@@ -7,7 +7,8 @@ import {
   CURRENT_STATE_SCHEMA,
   CURRENT_STATE_SCHEMA_VERSION,
   V20_ASYNC_EXECUTION_MIGRATION_SCHEMA,
-  V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA
+  V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA,
+  V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA
 } from "./stateSchema.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { PRODUCT_INFO } from "./productInfo.js";
@@ -4934,6 +4935,25 @@ export class BridgeStateStore {
         this.setMeta("schema_version", "21");
         this.setMeta("schema_v21_completion_delivery_contract", "exact-job-live-card-v1");
         this.setMeta("schema_v21_migrated_at", new Date(now).toISOString());
+      });
+    } finally {
+      this.database.pragma("foreign_keys = ON");
+    }
+  }
+
+  private migrateV21ToV22(): void {
+    this.database.pragma("foreign_keys = OFF");
+    try {
+      this.transaction(() => {
+        this.database.exec(V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA);
+        const violations = this.database.pragma("foreign_key_check") as unknown[];
+        if (violations.length > 0) {
+          throw new Error("Bridge state schema v22 migration produced foreign-key violations.");
+        }
+        const now = Date.now();
+        this.setMeta("schema_version", "22");
+        this.setMeta("schema_v22_completion_result_source", "direct-result-consumption-v1");
+        this.setMeta("schema_v22_migrated_at", new Date(now).toISOString());
       });
     } finally {
       this.database.pragma("foreign_keys = ON");
