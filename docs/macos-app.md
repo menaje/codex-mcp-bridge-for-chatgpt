@@ -136,10 +136,14 @@ Settings surfaces. The effort field name and description remain localized.
 ### Settings and skill management
 
 The native Settings window uses a resizable macOS sidebar/detail layout. Its
-window title remains **Settings**, while the detail header identifies the selected
-destination without repeating that destination in the title bar. A fixed leading
-toolbar control shows or hides the sidebar. Search at the top of the sidebar
-matches individual localized controls as well as destinations; selecting a result
+compact title bar keeps only the standard window controls; the visible title,
+sidebar toggle, and split-view separator are omitted. The localized **Settings**
+name is retained for accessibility, while the detail header identifies the
+selected destination. Its native split-view sidebar uses the same material,
+column sizing, and sidebar search placement as the Skill Library. The sidebar
+always remains visible because it is the window's only settings navigation.
+Search at the top of the sidebar matches
+individual localized controls as well as destinations; selecting a result
 opens its destination and scrolls to the related settings group. The sidebar
 exposes **General**, **Models & Execution**, **Projects**, **Codex Account &
 Installation**, **Connection**, and **Server** when each destination applies to

@@ -356,11 +356,9 @@ struct NativeSettingsView: View {
 
     init(
         onWindowTitleChange: ((String) -> Void)? = nil,
-        initialColumnVisibility: NavigationSplitViewVisibility = .all,
         initialSearchQuery: String = ""
     ) {
         self.onWindowTitleChange = onWindowTitleChange
-        _columnVisibility = State(initialValue: initialColumnVisibility)
         _searchQuery = State(initialValue: initialSearchQuery)
     }
 
@@ -377,23 +375,33 @@ struct NativeSettingsView: View {
     }
 
     private var settingsNavigation: some View {
-        HStack(spacing: 0) {
-            if columnVisibility != .detailOnly {
-                settingsSidebar
-                    .id(settingsSidebarIdentity)
-                    .frame(width: 238)
-                Divider()
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            settingsSidebar
+                .id(settingsSidebarIdentity)
+                .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 270)
+        } detail: {
+            GeometryReader { detailGeometry in
+                settingsDetail
+                    .frame(
+                        width: detailGeometry.size.width,
+                        height: detailGeometry.size.height,
+                        alignment: .top
+                    )
             }
-            settingsDetail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationSplitViewColumnWidth(min: 610, ideal: 720)
         }
-        .animation(.easeInOut(duration: 0.2), value: columnVisibility)
+        .navigationSplitViewStyle(.balanced)
         .modifier(SettingsDefaultSidebarToolbarRemovalModifier())
-        .background(SettingsToolbarCleanupView())
-        .background(SettingsSidebarToggleAccessory(columnVisibility: $columnVisibility))
+        .background(SettingsTitlebarSanitizerView())
+        .searchable(
+            text: $searchQuery,
+            placement: .sidebar,
+            prompt: Text("macos.settings.searchPrompt")
+        )
         .background(Color(nsColor: .windowBackgroundColor))
         .environment(\.locale, model.interfaceLocale)
         .onAppear {
+            columnVisibility = .all
             if !didResolveInitialPane {
                 didResolveInitialPane = true
                 if model.needsSetup, model.requestedSettingsTab == nil {
@@ -410,6 +418,9 @@ struct NativeSettingsView: View {
         }
         .onChange(of: selectedPaneID) { _ in
             normalizeSelection()
+        }
+        .onChange(of: columnVisibility) { visibility in
+            if visibility != .all { columnVisibility = .all }
         }
         .onChange(of: model.requestedSettingsTab) { target in
             if let target {
@@ -505,18 +516,6 @@ struct NativeSettingsView: View {
 
     private var settingsSidebar: some View {
         VStack(spacing: 0) {
-            SettingsSidebarSearchField(
-                text: $searchQuery,
-                placeholder: BridgeAppLocalization.string(
-                    "macos.settings.searchPrompt",
-                    locale: model.interfaceLocale
-                )
-            )
-            .frame(height: 28)
-            .padding(.horizontal, 10)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
-
             ScrollViewReader { scrollProxy in
                 List(selection: selection) {
                     Section {
@@ -796,49 +795,6 @@ struct NativeSettingsView: View {
     }
 }
 
-private struct SettingsSidebarSearchField: NSViewRepresentable {
-    @Binding var text: String
-    let placeholder: String
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
-    }
-
-    func makeNSView(context: Context) -> NSSearchField {
-        let searchField = NSSearchField(frame: .zero)
-        searchField.identifier = NSUserInterfaceItemIdentifier("settings-search-field")
-        searchField.sendsSearchStringImmediately = true
-        searchField.delegate = context.coordinator
-        searchField.placeholderString = placeholder
-        searchField.setAccessibilityLabel(placeholder)
-        return searchField
-    }
-
-    func updateNSView(_ searchField: NSSearchField, context: Context) {
-        context.coordinator.text = $text
-        if searchField.stringValue != text {
-            searchField.stringValue = text
-        }
-        searchField.placeholderString = placeholder
-        searchField.setAccessibilityLabel(placeholder)
-    }
-
-    final class Coordinator: NSObject, NSSearchFieldDelegate {
-        var text: Binding<String>
-
-        init(text: Binding<String>) {
-            self.text = text
-        }
-
-        func controlTextDidChange(_ notification: Notification) {
-            guard let searchField = notification.object as? NSSearchField else { return }
-            if text.wrappedValue != searchField.stringValue {
-                text.wrappedValue = searchField.stringValue
-            }
-        }
-    }
-}
-
 private struct SettingsDefaultSidebarToolbarRemovalModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -851,162 +807,12 @@ private struct SettingsDefaultSidebarToolbarRemovalModifier: ViewModifier {
 }
 
 @MainActor
-private final class SettingsSidebarAccessoryHostView: NSView {
-    var onWindowChange: ((NSWindow?) -> Void)?
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        onWindowChange?(window)
-    }
-}
-
-private struct SettingsSidebarToggleAccessory: NSViewRepresentable {
-    @Environment(\.locale) private var locale
-    @Binding var columnVisibility: NavigationSplitViewVisibility
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(columnVisibility: $columnVisibility, locale: locale)
-    }
-
-    func makeNSView(context: Context) -> SettingsSidebarAccessoryHostView {
-        let view = SettingsSidebarAccessoryHostView(frame: .zero)
-        view.onWindowChange = { [weak coordinator = context.coordinator] window in
-            coordinator?.install(in: window)
-        }
-        return view
-    }
-
-    func updateNSView(_ nsView: SettingsSidebarAccessoryHostView, context: Context) {
-        context.coordinator.update(columnVisibility: $columnVisibility, locale: locale)
-        context.coordinator.install(in: nsView.window)
-    }
-
-    static func dismantleNSView(
-        _ nsView: SettingsSidebarAccessoryHostView,
-        coordinator: Coordinator
-    ) {
-        nsView.onWindowChange = nil
-        coordinator.uninstall()
-    }
-
-    @MainActor
-    final class Coordinator: NSObject {
-        private var columnVisibility: Binding<NavigationSplitViewVisibility>
-        private var locale: Locale
-        private weak var installedWindow: NSWindow?
-        private var accessoryController: NSTitlebarAccessoryViewController?
-        private weak var button: NSButton?
-
-        init(columnVisibility: Binding<NavigationSplitViewVisibility>, locale: Locale) {
-            self.columnVisibility = columnVisibility
-            self.locale = locale
-        }
-
-        func update(
-            columnVisibility: Binding<NavigationSplitViewVisibility>,
-            locale: Locale
-        ) {
-            self.columnVisibility = columnVisibility
-            self.locale = locale
-            updateButtonPresentation()
-        }
-
-        func install(in window: NSWindow?) {
-            guard let window else {
-                uninstall()
-                return
-            }
-            guard window !== installedWindow || accessoryController == nil else {
-                updateButtonPresentation()
-                return
-            }
-
-            uninstall()
-
-            let button = NSButton(
-                image: NSImage(
-                    systemSymbolName: "sidebar.left",
-                    accessibilityDescription: nil
-                ) ?? NSImage(),
-                target: self,
-                action: #selector(toggleSidebar)
-            )
-            button.identifier = NSUserInterfaceItemIdentifier("settings-sidebar-toggle")
-            button.imagePosition = .imageOnly
-            button.bezelStyle = .texturedRounded
-            button.controlSize = .regular
-            button.keyEquivalent = "s"
-            button.keyEquivalentModifierMask = [.command, .control]
-            button.translatesAutoresizingMaskIntoConstraints = false
-
-            let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 42, height: 28))
-            accessoryView.identifier = NSUserInterfaceItemIdentifier(
-                "settings-sidebar-toggle-accessory"
-            )
-            accessoryView.addSubview(button)
-            NSLayoutConstraint.activate([
-                button.centerXAnchor.constraint(equalTo: accessoryView.centerXAnchor),
-                button.centerYAnchor.constraint(equalTo: accessoryView.centerYAnchor),
-                button.widthAnchor.constraint(equalToConstant: 32),
-                button.heightAnchor.constraint(equalToConstant: 28)
-            ])
-
-            let controller = NSTitlebarAccessoryViewController()
-            controller.layoutAttribute = .leading
-            controller.view = accessoryView
-            window.addTitlebarAccessoryViewController(controller)
-
-            installedWindow = window
-            accessoryController = controller
-            self.button = button
-            updateButtonPresentation()
-        }
-
-        func uninstall() {
-            if let window = installedWindow,
-               let accessoryController,
-               let index = window.titlebarAccessoryViewControllers.firstIndex(where: {
-                   $0 === accessoryController
-               }) {
-                window.removeTitlebarAccessoryViewController(at: index)
-            }
-            installedWindow = nil
-            accessoryController = nil
-            button = nil
-        }
-
-        @objc private func toggleSidebar() {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                columnVisibility.wrappedValue = sidebarIsHidden ? .all : .detailOnly
-            }
-            updateButtonPresentation()
-        }
-
-        private var sidebarIsHidden: Bool {
-            columnVisibility.wrappedValue == .detailOnly
-        }
-
-        private func updateButtonPresentation() {
-            let label = BridgeAppLocalization.string(
-                sidebarIsHidden
-                    ? "macos.settings.showSidebar"
-                    : "macos.settings.hideSidebar",
-                locale: locale
-            )
-            button?.toolTip = label
-            button?.setAccessibilityLabel(label)
-        }
-    }
-}
-
-@MainActor
-private final class SettingsToolbarCleanupNSView: NSView {
+private final class SettingsTitlebarSanitizerNSView: NSView {
     private weak var observedToolbar: NSToolbar?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        observeToolbarIfNeeded()
-        scheduleCleanup()
+        refresh()
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -1021,16 +827,10 @@ private final class SettingsToolbarCleanupNSView: NSView {
         super.viewWillMove(toWindow: newWindow)
     }
 
-    func scheduleCleanup() {
-        Task { @MainActor [weak self] in
-            self?.observeToolbarIfNeeded()
-            self?.removeAutomaticSidebarToggle()
-            for delay in [50_000_000, 150_000_000, 400_000_000] as [UInt64] {
-                try? await Task.sleep(nanoseconds: delay)
-                self?.observeToolbarIfNeeded()
-                self?.removeAutomaticSidebarToggle()
-            }
-        }
+    func refresh() {
+        window?.titleVisibility = .hidden
+        observeToolbarIfNeeded()
+        removeSystemSplitViewItems()
     }
 
     private func observeToolbarIfNeeded() {
@@ -1052,32 +852,54 @@ private final class SettingsToolbarCleanupNSView: NSView {
     }
 
     @objc private func toolbarWillAddItem(_ notification: Notification) {
-        Task { @MainActor [weak self] in
-            await Task.yield()
-            self?.removeAutomaticSidebarToggle()
+        guard let toolbar = notification.object as? NSToolbar,
+              let item = notification.userInfo?.values
+            .compactMap({ $0 as? NSToolbarItem })
+            .first(where: Self.isSystemSplitViewItem) else { return }
+        window?.titleVisibility = .hidden
+        conceal(item)
+        DispatchQueue.main.async { [weak self, weak toolbar] in
+            self?.removeSystemSplitViewItems(from: toolbar)
+            self?.window?.titleVisibility = .hidden
         }
     }
 
-    private func removeAutomaticSidebarToggle() {
-        guard let toolbar = window?.toolbar else { return }
+    private func removeSystemSplitViewItems() {
+        removeSystemSplitViewItems(from: observedToolbar)
+    }
+
+    private func removeSystemSplitViewItems(from toolbar: NSToolbar?) {
+        guard let toolbar else { return }
         let indexes = toolbar.items.indices.filter { index in
-            toolbar.items[index].itemIdentifier.rawValue.contains(
-                "navigationSplitView.toggleSidebar"
-            )
+            Self.isSystemSplitViewItem(toolbar.items[index])
         }
         for index in indexes.reversed() {
+            conceal(toolbar.items[index])
             toolbar.removeItem(at: index)
         }
+        window?.titleVisibility = .hidden
+    }
+
+    private func conceal(_ item: NSToolbarItem) {
+        item.isEnabled = false
+        item.view?.alphaValue = 0
+        item.view?.isHidden = true
+    }
+
+    private static func isSystemSplitViewItem(_ item: NSToolbarItem) -> Bool {
+        let identifier = item.itemIdentifier.rawValue
+        return identifier.contains("navigationSplitView.toggleSidebar")
+            || identifier.contains("splitViewSeparator")
     }
 }
 
-private struct SettingsToolbarCleanupView: NSViewRepresentable {
-    func makeNSView(context: Context) -> SettingsToolbarCleanupNSView {
-        SettingsToolbarCleanupNSView(frame: .zero)
+private struct SettingsTitlebarSanitizerView: NSViewRepresentable {
+    func makeNSView(context: Context) -> SettingsTitlebarSanitizerNSView {
+        SettingsTitlebarSanitizerNSView(frame: .zero)
     }
 
-    func updateNSView(_ nsView: SettingsToolbarCleanupNSView, context: Context) {
-        nsView.scheduleCleanup()
+    func updateNSView(_ nsView: SettingsTitlebarSanitizerNSView, context: Context) {
+        nsView.refresh()
     }
 }
 

@@ -45,12 +45,12 @@ if (main.split("@main\nstruct CodexBridgeMenuBarApp").length !== 2) {
   throw new Error("Review the changed production entry point.");
 }
 for (const contract of [
-  "HStack(spacing: 0)",
+  "NavigationSplitView(columnVisibility: $columnVisibility)",
   "ScrollViewReader",
-  "SettingsSidebarSearchField",
+  ".navigationSplitViewStyle(.balanced)",
+  "placement: .sidebar",
   "SettingsDefaultSidebarToolbarRemovalModifier",
-  "SettingsSidebarToggleAccessory",
-  "SettingsToolbarCleanupView",
+  "SettingsTitlebarSanitizerView",
   "SettingsSearchIndex",
   "settingsConnectionStatusCard",
   "ConnectionSetupRequiredPopoverView",
@@ -166,7 +166,7 @@ const expectedCaptures = [
   "settings-codex-en-light.png",
   "settings-connection-en-light.png",
   "settings-server-en-light.png",
-  "settings-sidebar-hidden-en-light.png",
+  "settings-titlebar-clean-en-light.png",
   "settings-search-results-en-light.png",
   "connection-setup-first-run-ko-light.png",
   "connection-setup-first-run-en-light.png",

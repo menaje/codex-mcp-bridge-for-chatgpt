@@ -59,7 +59,7 @@ Refresh 전후 ChatGPT 개발자 화면의 계약은 다음처럼 바뀌었다.
 - Dashboard 생성과 ChatGPT 완료 메시지 전달 스위치 없음.
 - Dashboard 생성과 완료 메시지 전달에 관한 별도 안내 행 없음.
 - 별도 macOS 운영·보안 알림 스위치는 유지되지만 ChatGPT 완료 전달 설정으로 표시되지 않음.
-- `2bf4a6b`의 최종 Settings 외형(표시되는 창 제목, 좌측 사이드바, 검색, 하단 연결 상태 카드, 고정 사이드바 토글)을 유지하고 9개 지원 언어에서 상세 영역의 상·하단 스크롤을 다시 검증함.
+- Skill Library와 같은 native split-view 재질·열 크기·sidebar search를 쓰는 최종 Settings 외형(컴팩트 타이틀바, 시각적으로 숨긴 창 제목, 항상 표시되는 좌측 사이드바, 하단 연결 상태 카드)을 유지하고 9개 지원 언어에서 상세 영역의 상·하단 스크롤을 다시 검증함.
 
 legacy `dashboardAutoOpen`, `completionFollowUp`, `activityCardVisibility`는 migration 입력에서만 허용하고 저장 결과, Settings UI, native 모델, mutation schema에서는 제거되는 회귀를 통과했다.
 

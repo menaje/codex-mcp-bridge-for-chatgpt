@@ -471,8 +471,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             settingsWindow.isReleasedWhenClosed = false
             settingsWindow.delegate = self
             PrimaryAppWindowPresentation.configure(settingsWindow)
+            settingsWindow.toolbarStyle = .unifiedCompact
             settingsWindow.standardWindowButton(.zoomButton)?.isEnabled = true
-            settingsWindow.toolbarStyle = .unified
             settingsWindow.setFrameAutosaveName("CodexBridgeSettingsWindow")
             settingsWindow.contentMinSize = NSSize(width: 820, height: 600)
             let settingsHostingController = NSHostingController(
@@ -483,6 +483,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                     .frame(minWidth: 820, minHeight: 600)
             )
             settingsWindow.contentViewController = settingsHostingController
+            settingsWindow.titleVisibility = .hidden
             settingsWindow.center()
             window = settingsWindow
         }
