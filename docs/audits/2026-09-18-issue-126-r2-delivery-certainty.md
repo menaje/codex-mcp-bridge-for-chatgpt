@@ -92,6 +92,47 @@ process를 안전 재시작하도록 했다. 재시작 뒤 같은 파일을 다�
 확인했다. 이 검사는 ChatGPT 카드의 `ui/message` 수신을 포함하지 않으므로
 schema 23 connector 종단 증거로 계산하지 않는다.
 
+## schema 23 실제 ChatGPT connector 종단 확인
+
+production 앱 재시작과 schema 23 이관 뒤 Codex 인앱 브라우저의 ChatGPT Work에서
+서로 다른 새 대화 3개를 만들고, 각 대화에서 `Codex MCP Bridge for ChatGPT`를
+새로 선택해 실제 connector 종단 경로를 검증했다. 각 실행은 저장된 `메모리`
+프로젝트에서 새 Activity와 새 Agent를 만들었으며 GPT-5.6 Luna low를 사용했다.
+프로젝트 파일 읽기·수정과 shell 명령은 금지하고 각각 `LIVE-R2-1`,
+`LIVE-R2-2`, `LIVE-R2-3`만 반환하도록 제한했다.
+
+각 대화에는 최초 사용자 요청을 한 번만 보냈다. 그 뒤 수동 새로고침, 진단 버튼,
+추가 사용자 메시지, 직접 Job/status 조회 없이 다음 순서가 3/3 반복됐다.
+
+1. `codex_task`가 새 Job과 exact Dashboard render action을 반환했다.
+2. ChatGPT가 같은 최초 응답에서 Dashboard를 렌더링했고, 카드는 해당 대화의
+   exact Job에 연결됐다.
+3. 최초 응답이 Job 시작과 카드 연결을 보고한 뒤, 카드가 terminal completion을
+   관측해 표준 `ui/message`로 opaque completion receipt를 자동 전송했다.
+4. 자동으로 재개된 ChatGPT가 receipt를 한 번 조회하고 retained exact result를
+   회수했다.
+5. 최종 사용자 보고는 각 대화에서 정확히 `LIVE-R2-1`, `LIVE-R2-2`,
+   `LIVE-R2-3`이었다.
+
+운영 SQLite의 같은 세 Job을 대조한 결과도 화면 관측과 일치했다.
+
+| 항목 | 결과 |
+| --- | --- |
+| 서로 다른 conversation scope | 3/3 |
+| terminal Job 상태 | `completed` 3/3 |
+| completion delivery 상태 | `host-accepted` 3/3 |
+| 자동 전송 시도 수 | 각 1회 |
+| `completion_result_offered_at` | 3/3 기록 |
+| `direct_result_offered_at` | 3/3 미기록 |
+| acceptance unknown / host reject | 0 / 0 |
+| retained exact result | `LIVE-R2-1/2/3` 모두 일치 |
+
+schema 23 계약상 receipt 응답은 result offer 증거이며 delivery state를
+`result-read`로 바꾸지 않는다. 따라서 이 세 건이 `host-accepted` 상태를 유지하고
+`completion_result_offered_at`만 기록한 것은 의도한 결과다. 여기서 3/3은 실제
+ChatGPT host의 정상 경로 반복 재현 증거이며, 장시간 실행이나 장애 주입 신뢰성을
+대신하지 않는다.
+
 ## 결정적 검증
 
 | 검사 | 결과 |
@@ -108,7 +149,7 @@ schema 23 connector 종단 증거로 계산하지 않는다.
 | #125 수신 순서 회귀 | 6/6 PASS |
 | production 앱 bundle/codesign | 별도 staging 경로 build/sign/strict verify PASS |
 | production 앱/helper의 discardable context 안전 재시작 | PASS (force 없음, PID 변경, exact result 보존) |
-| schema 23 실제 connector 새 대화 | 미실행 |
+| schema 23 실제 connector 새 대화 | 3/3 PASS (추가 사용자 입력·직접 조회 없음) |
 
 브라우저 경계에는 host accept, 명시적 reject 뒤 retry, timeout uncertainty,
 send 중 teardown uncertainty, legacy result-read settled 호환, terminal 전 teardown,
@@ -123,5 +164,6 @@ host 성공으로 계산하지 않는다.
   최종 사용자 보고를 단독으로 증명하지 않는다.
 - transport outcome이 불명확하면 자동 replay하지 않는다. 사용자는 같은 Job을
   다시 실행하지 않고 exact status 조회로 저장 결과를 회수할 수 있다.
-- schema 23의 실제 connector 종단 검증 전에는 기존 schema 22의 3/3 실환경
-  기록을 최종 빌드의 3/3으로 다시 계산하지 않는다.
+- 이번 schema 23 connector 3/3은 짧은 정상 Job의 재현성 확인이다. 장시간 Job,
+  실제 network/connection fault injection, 자동 메시지와 긴 사용자 응답의 동시
+  충돌, 전송 직후 navigation/teardown은 이 결과만으로 통과했다고 계산하지 않는다.
