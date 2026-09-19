@@ -189,7 +189,7 @@ export class ThreadConnectionController {
   private readonly now: () => number;
 
   constructor(private readonly store: ThreadConnectionStore, private readonly upstream: CodexUpstream,
-    private readonly options: { idleMs?: number; intervalMs?: number; now?: () => number; changed?: () => void; maintain?: () => void } = {}) {
+    private readonly options: { idleMs?: number; intervalMs?: number; now?: () => number; changed?: () => void } = {}) {
     this.now = options.now || Date.now;
   }
 
@@ -230,7 +230,6 @@ export class ThreadConnectionController {
   }
 
   private async runSweep(): Promise<void> {
-    this.options.maintain?.();
     const records = this.store.list();
     const eligible = records.filter(record => record.phase !== "released" && this.eligible(record)).map(record => record.threadId);
     const candidates = records.filter(record => record.phase !== "released" && (record.handoffRequested || eligible.includes(record.threadId)))

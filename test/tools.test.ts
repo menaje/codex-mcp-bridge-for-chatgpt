@@ -1413,15 +1413,15 @@ describe("current bridge tool contracts", () => {
     await hold.started;
     const jobId = (task.structuredContent as { jobId: string }).jobId;
     try {
-      const projectIdentityReads = vi.spyOn(state, "listActivityProjectIdentities");
-      projectIdentityReads.mockClear();
+      const projectRevisionReads = vi.spyOn(state, "getProjectRegistryRevision");
+      projectRevisionReads.mockClear();
       const controller = new AbortController();
       const waiting = client.callTool({
         name: "codex_status",
         arguments: { query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 5_000 } },
         _meta: metadata
       }, { signal: controller.signal });
-      await eventually(() => projectIdentityReads.mock.calls.length > 0);
+      await eventually(() => projectRevisionReads.mock.calls.length > 0);
       controller.abort();
 
       await expect(waiting).rejects.toThrow();

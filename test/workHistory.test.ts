@@ -58,7 +58,10 @@ describe("execution history retention",()=>{
     expect(store.workHistory.expired(result.jobId)).toBe(false);
     expect(store.workHistory.expired(uncertain.jobId)).toBe(false);
     db.prepare("UPDATE completion_outbox SET acknowledged_at=? WHERE activity_id=?").run(now,activity);
-    expect(store.maintainRetention(now).historyRemoved).toBe(1);
+    // A protected candidate is not fanned out through every authority again on
+    // each scheduler tick; it becomes eligible after the bounded backoff.
+    expect(store.maintainRetention(now).historyRemoved).toBe(0);
+    expect(store.maintainRetention(now + 15 * 60_000).historyRemoved).toBe(1);
     expect(store.workHistory.expired(result.jobId)).toBe(true);
     expect(store.getSteeringDelivery(scopeId,requestId)?.status).toBe("uncertain");
     db.close();store.close();

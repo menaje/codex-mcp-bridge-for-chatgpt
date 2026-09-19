@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { THREAD_UNFINISHED_WORK_SQL } from "../src/threadConnections.js";
 
-const [sourceFile, outputFile = "docs/audits/issue-95-database-storage.json"] = process.argv.slice(2);
+const [sourceFile, outputFile = "docs/audits/issue-138-database-storage.json"] = process.argv.slice(2);
 assert.ok(
   sourceFile,
   "Usage: tsx scripts/database-storage-audit.ts /absolute/state.sqlite [report.json]"
@@ -50,7 +50,7 @@ const workingFile = path.join(root, "state.sqlite");
 const compactFile = path.join(root, "state.compact.sqlite");
 const precompactFile = path.join(root, "state.precompact.sqlite");
 const report: Record<string, unknown> = {
-  issue: 95,
+  issue: 138,
   testedAt: new Date().toISOString(),
   source: "read-only metrics plus a consistent disposable SQLite backup",
   productionDatabaseModified: false
@@ -70,8 +70,8 @@ try {
   source = new Database(baselineFile, { readonly: true, fileMustExist: true });
   const sourceVersion = version(source);
   assert.ok(
-    sourceVersion >= 18 && sourceVersion <= 20,
-    `Storage audit supports source schemas 18 through 20, received ${sourceVersion}`
+    sourceVersion >= 18 && sourceVersion <= 24,
+    `Storage audit supports source schemas 18 through 24, received ${sourceVersion}`
   );
   const threadIds = representativeThreadIds(source);
   const sourceConnection = connectionAudit(source, sourceVersion, threadIds);
@@ -85,14 +85,16 @@ try {
   source = undefined;
   await chmod(workingFile, 0o600);
 
-  const store = new BridgeStateStore({ file: workingFile });
-  store.close();
+  if (sourceVersion < 24) {
+    const store = new BridgeStateStore({ file: workingFile });
+    store.close();
+  }
   working = new Database(workingFile, { fileMustExist: true });
-  assert.equal(version(working), 20);
+  assert.equal(version(working), 24);
   assert.equal(String(working.pragma("integrity_check", { simple: true })), "ok");
   assert.deepEqual(working.pragma("foreign_key_check"), []);
 
-  const currentConnection = connectionAudit(working, 20, threadIds);
+  const currentConnection = connectionAudit(working, 24, threadIds);
   assert.deepEqual(
     currentConnection.results,
     sourceConnection.results,
@@ -111,8 +113,22 @@ try {
 
   report.currentConnectionQuery = publicQueryMetrics(currentConnection);
   report.currentRetentionPlans = retentionPlans;
+  report.maintenanceCardinality = {
+    resultHolds: count(working, "result_holds"),
+    archivedHistoryCandidates: Number((working.prepare(`SELECT COUNT(*) AS count FROM jobs
+      WHERE archived_at IS NOT NULL AND status IN ('completed','failed','interrupted','cancelled')
+      AND NOT EXISTS (SELECT 1 FROM work_history_state h
+        WHERE h.job_id=jobs.job_id AND h.expired_at IS NOT NULL)`).get() as {count:number}).count),
+    jobEvents: count(working, "job_events"),
+    decisionSubmissions: count(working, "decision_submissions")
+  };
+  report.maintenancePlanDecision = {
+    resultHoldsExpiryIndex: "deferred: sparse operator-created rows, 500-row slice, 30-day maximum hold",
+    historyCandidateIndex: "deferred: indexed status/range seek plus cursor and 25ms cooperative budget; temporary sort remains audited",
+    oldestEventScan: "accepted: integer-primary-key order with a 500-row slice"
+  };
   report.currentRows = rowTotals(working);
-  const currentSerialization = serializationMetrics(working, 20);
+  const currentSerialization = serializationMetrics(working, 24);
   assert.equal(
     (currentSerialization.interactions as { structuredDuplicateFields: number })
       .structuredDuplicateFields,
@@ -149,7 +165,7 @@ try {
     assert.equal(String(compact.pragma("integrity_check", { simple: true })), "ok");
     assert.deepEqual(compact.pragma("foreign_key_check"), []);
     assert.deepEqual(tableCounts(compact), beforeCompactCounts);
-    assert.equal(version(compact), 20);
+    assert.equal(version(compact), 24);
     report.compactedCapacity = await capacity(compact, compactFile);
   } finally {
     compact.close();
@@ -209,6 +225,7 @@ type Capacity = {
   allocatedBytes: number;
   freePages: number;
   reusableBytes: number;
+  reusablePercent: number;
   btreeUsedBytes: number | null;
   cellPayloadBytes: number | null;
 };
@@ -243,6 +260,7 @@ async function capacity(db: Database.Database, file: string): Promise<Capacity> 
     allocatedBytes: pageSize * pageCount,
     freePages,
     reusableBytes: pageSize * freePages,
+    reusablePercent: pageCount === 0 ? 0 : rounded(100 * freePages / pageCount),
     btreeUsedBytes,
     cellPayloadBytes
   };
@@ -384,6 +402,11 @@ function tableCounts(db: Database.Database): Record<string, number> {
   ]));
 }
 
+function count(db: Database.Database, table: string): number {
+  return Number((db.prepare(`SELECT COUNT(*) AS count FROM ${identifier(table)}`)
+    .get() as {count:number}).count);
+}
+
 function tableNames(db: Database.Database): string[] {
   return (db.prepare(`SELECT name FROM sqlite_master
     WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all() as Array<{ name: string }>)
@@ -464,7 +487,7 @@ function telemetryWritePath(sourceVersion: number): Record<string, unknown> {
       unconditionalThreadConnectionWrites: 1
     },
     current: {
-      sqlWriteStatementsPerOrdinaryPublicProgressEventWithoutInteractions: 7,
+      sqlWriteStatementsPerOrdinaryPublicProgressEventWithoutInteractions: 4,
       sqlWriteStatementsPerThrottledStateOnlyProgressWithoutInteractions: 2,
       fullJobRowUpserts: 0,
       fullJobSerializations: 0,
@@ -473,7 +496,7 @@ function telemetryWritePath(sourceVersion: number): Record<string, unknown> {
       unconditionalThreadConnectionWrites: 0,
       interactionWrites: "one bounded delete plus one insert per current interaction"
     },
-    basis: "static SQL-path count from schema-18 commit b1104aa and current progress persistence; public-event counts include scope/coalescing/retention writes, state-only counts include the Job UPDATE plus interaction DELETE, and both exclude trigger-internal event_budget updates"
+    basis: "static SQL-path count from schema-18 commit b1104aa and current progress persistence; the ordinary path writes Job state, clears the bounded interaction projection, bumps scope with one UPSERT RETURNING, and inserts one event. Coalescing and per-Job retention issue writes only when a matching row or over-limit batch exists. Counts exclude trigger-internal event_budget updates"
   };
 }
 

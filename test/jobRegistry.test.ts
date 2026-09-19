@@ -323,7 +323,7 @@ describe("CodexJobRegistry persistence", () => {
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
   });
 
-  it("keeps one result-retention recovery window after a completion receipt offer", async () => {
+  it("keeps reads pure and expires a result only at an explicit retention boundary", async () => {
     const root = temporaryRoot();
     const stateStore = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
     const clock = vi.spyOn(Date, "now");
@@ -361,6 +361,9 @@ describe("CodexJobRegistry persistence", () => {
         structuredContent: { threadId: "recovery-window" }
       });
       now = 1_150;
+      expect(registry.get(completed.jobId)).toBeDefined();
+      expect(stateStore.listJobs()).toHaveLength(1);
+      expect(registry.maintainRetainedJobs()).toBe(1);
       expect(registry.get(completed.jobId)).toBeUndefined();
       expect(stateStore.listJobs()).toEqual([]);
     } finally {

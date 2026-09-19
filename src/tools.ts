@@ -23,6 +23,7 @@ import {
 } from "./completionDelivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ThreadConnectionController, type ThreadConnectionRecord } from "./threadConnections.js";
+import { StateMaintenanceScheduler } from "./maintenanceScheduler.js";
 import { classifyMemoryOnlyThreadImpact } from "./runtimeAdmission.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
 import { registerCodexInputTools, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS } from "./questionTools.js";
@@ -2118,8 +2119,10 @@ export class CodexJobRegistry {
   >();
   private readonly changeListeners = new Set<() => void>();
   private threadController?: ThreadConnectionController;
+  private maintenanceScheduler?: StateMaintenanceScheduler;
   private recoveryController?: AutomaticRecoveryController;
   private unsubscribeRecovery?: () => void;
+  private projectedProjectRevision = -1;
 
   configureAutomaticRecovery(options: ConstructorParameters<typeof AutomaticRecoveryController>[1]): void {
     if (this.recoveryController) return;
@@ -2133,18 +2136,24 @@ export class CodexJobRegistry {
   configureThreadConnections(upstream: CodexUpstream, idleMs?: number): void {
     if (this.threadController) return;
     this.threadController = new ThreadConnectionController(this.activityStore.threadConnections, upstream, {
-      idleMs, changed: () => { for (const listener of this.changeListeners) listener(); },
-      maintain: () => {
-        const {historyRemoved} = this.activityStore.maintainRetention();
-        this.pruneAndPersist();
-        if (historyRemoved) for (const listener of this.changeListeners) listener();
-      }
+      idleMs, changed: () => { for (const listener of this.changeListeners) listener(); }
     });
     this.threadController.start();
   }
 
+  configureStateMaintenance(intervalMs?: number): void {
+    if (this.maintenanceScheduler) return;
+    this.maintenanceScheduler = new StateMaintenanceScheduler(this.activityStore, {
+      intervalMs,
+      maintainJobs: () => this.maintainRetainedJobs(),
+      changed: () => { for (const listener of this.changeListeners) listener(); }
+    });
+    this.maintenanceScheduler.start();
+  }
+
   async closeThreadConnections(): Promise<void> {
     this.unsubscribeRecovery?.();
+    this.maintenanceScheduler?.close();
     await this.recoveryController?.close();
     await this.threadController?.close();
   }
@@ -2216,7 +2225,6 @@ export class CodexJobRegistry {
   }
 
   get size(): number {
-    this.pruneAndPersist();
     return this.jobs.size;
   }
 
@@ -2228,12 +2236,12 @@ export class CodexJobRegistry {
   }
 
   get(jobId: string): CodexJob | undefined {
-    this.pruneAndPersist();
+    this.refreshProjectIdentities();
     return this.jobs.get(jobId);
   }
 
   list(limit = 20, offset = 0): CodexJob[] {
-    this.pruneAndPersist();
+    this.refreshProjectIdentities();
     return [...this.jobs.values()]
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(Math.max(0, offset), Math.max(0, offset) + Math.max(0, limit));
@@ -2246,12 +2254,10 @@ export class CodexJobRegistry {
   }
 
   sizeForScope(scopeId: string): number {
-    this.pruneAndPersist();
     return [...this.jobs.values()].filter((job) => job.scopeId === scopeId).length;
   }
 
   runningCount(scopeId?: string): number {
-    this.pruneAndPersist();
     return this.observedRunningCount(scopeId);
   }
 
@@ -2263,7 +2269,6 @@ export class CodexJobRegistry {
   }
 
   findRequest(scopeId: string, requestId: string, requestHash: string): CodexJob | undefined {
-    this.pruneAndPersist();
     const job = [...this.jobs.values()].find(
       (entry) => entry.scopeId === scopeId && entry.requestId === requestId
     );
@@ -2274,14 +2279,12 @@ export class CodexJobRegistry {
   }
 
   peekRequest(scopeId: string, requestId: string): CodexJob | undefined {
-    this.pruneAndPersist();
     return [...this.jobs.values()].find(
       (entry) => entry.scopeId === scopeId && entry.requestId === requestId
     );
   }
 
   isThreadActive(threadId: string): boolean {
-    this.pruneAndPersist();
     const exclusiveKey = threadExclusiveKey(threadId);
     return [...this.jobs.values()].some(
       (job) => isActiveActivityJobStatus(job.status) && job.exclusiveKeys.includes(exclusiveKey)
@@ -2289,21 +2292,21 @@ export class CodexJobRegistry {
   }
 
   listForActivity(activityId: string): CodexJob[] {
-    this.pruneAndPersist();
+    this.refreshProjectIdentities();
     return [...this.jobs.values()]
       .filter((job) => job.activityId === activityId)
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
   listForThread(threadId: string, scopeId?: string): CodexJob[] {
-    this.pruneAndPersist();
+    this.refreshProjectIdentities();
     return [...this.jobs.values()]
       .filter((job) => job.threadId === threadId && (!scopeId || job.scopeId === scopeId))
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
   listForAgent(agentId: string): CodexJob[] {
-    this.pruneAndPersist();
+    this.refreshProjectIdentities();
     return [...this.jobs.values()]
       .filter((job) => job.agentId === agentId)
       .sort((a, b) => a.createdAt - b.createdAt);
@@ -3409,8 +3412,8 @@ export class CodexJobRegistry {
           wakeReason = waitFor === "terminal"
             ? await this.waitForTerminal(jobId, remaining, signal)
             : await this.waitForVersion(jobId, current.version, remaining, signal);
-          // The public lookup above performed retention and ownership-adjacent
-          // refresh once. Waiting itself is an in-memory hot path.
+          // The public lookup above checked the project-registry revision once.
+          // Waiting itself is an in-memory hot path with no retention writes.
           current = this.jobs.get(jobId) || current;
         }
       }
@@ -4037,13 +4040,15 @@ export class CodexJobRegistry {
     }
   }
 
-  private pruneAndPersist(): void {
+  /** Explicit Job-retention command used by mutation boundaries and the
+   * independent maintenance scheduler. Registry reads never enter this path. */
+  maintainRetainedJobs(): number {
     const startedAt = performance.now();
     try {
       this.refreshProjectIdentities();
       const beforePrune = new Map(this.jobs);
       const removed = this.prune();
-      if (removed.length === 0) return;
+      if (removed.length === 0) return 0;
       try {
         if (this.stateStore) {
           this.stateStore.transaction(() => {
@@ -4061,13 +4066,21 @@ export class CodexJobRegistry {
           );
           this.persistenceWarningShown = true;
         }
+        return 0;
       }
+      return removed.length;
     } finally {
       this.waitDiagnosticsTracker.pruneAndPersist.record(performance.now() - startedAt);
     }
   }
 
+  private pruneAndPersist(): void {
+    this.maintainRetainedJobs();
+  }
+
   private refreshProjectIdentities(): void {
+    const revision = this.activityStore.getProjectRegistryRevision();
+    if (revision === this.projectedProjectRevision) return;
     const activities = new Map(
       this.activityStore.listActivityProjectIdentities().map((activity) => [
         activity.activityId,
@@ -4084,6 +4097,7 @@ export class CodexJobRegistry {
       job.projectId = activity.projectId;
       job.projectName = activity.projectName;
     }
+    this.projectedProjectRevision = revision;
   }
 
   private isAllowedCwd(cwd: string): boolean {
@@ -10209,7 +10223,6 @@ const CARD_USAGE_CACHE_TTL_MS = 60_000;
 const CARD_USAGE_STALE_TTL_MS = 30 * 60_000;
 const CARD_RUNTIME_CACHE_MAX_ENTRIES = 512;
 const DASHBOARD_HISTORY_LIMIT_PER_AGENT = 12;
-const DASHBOARD_ARCHIVED_JOB_LIMIT = 10_000;
 const dashboardRuntimeCaches = new WeakMap<
   CodexUpstream,
   Map<string, DashboardRuntimeCacheEntry>
@@ -10292,8 +10305,11 @@ function dashboardActivityKey(
     .slice(0, 32);
 }
 
-function dashboardJobTokenUsage(jobs: CodexJobRegistry, jobId: string): { tokenUsage?: z.infer<typeof dashboardTokenUsageOutputSchema> } {
-  const usage = jobs.admissionStateStore.eventRetention.summary(jobId).usage;
+function dashboardJobTokenUsage(
+  jobId: string,
+  summaries: ReadonlyMap<string, Record<string, unknown>>
+): { tokenUsage?: z.infer<typeof dashboardTokenUsageOutputSchema> } {
+  const usage = summaries.get(jobId)?.usage;
   const tokens = isRecord(usage) && usage.basis === "cumulative-difference" ? usage.tokens : undefined;
   const parsed = dashboardTokenUsageOutputSchema.safeParse(tokens);
   return parsed.success ? { tokenUsage: parsed.data } : {};
@@ -11061,6 +11077,7 @@ function buildDashboardHistoryDetail(
   const now = Date.now();
   const catalog = projectionModelCatalog(modelCatalog);
   const cancellations = buildCancellationDisplayIndex(jobs, agent.scopeId).byJobId;
+  let summaryCache = new Map<string, Record<string, unknown>>();
   const activityTitle = (activityId: string): string | null => jobs.getActivity(activityId)?.title || null;
   const turnForJob = (job: CodexJob): DashboardTurn => {
     const execution = dashboardExecutionForJob(job, catalog);
@@ -11070,7 +11087,7 @@ function buildDashboardHistoryDetail(
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
       activityTitle: activityTitle(job.activityId),
       ...(execution ? { execution } : {}),
-      ...dashboardJobTokenUsage(jobs, job.jobId),
+      ...dashboardJobTokenUsage(job.jobId, summaryCache),
       status: dashboardStatusForJob(job),
       startedAt: new Date(job.createdAt).toISOString(),
       updatedAt: new Date(job.updatedAt).toISOString(),
@@ -11088,7 +11105,7 @@ function buildDashboardHistoryDetail(
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
       activityTitle: activityTitle(job.activityId),
       ...(execution ? { execution } : {}),
-      ...dashboardJobTokenUsage(jobs, job.jobId),
+      ...dashboardJobTokenUsage(job.jobId, summaryCache),
       status: job.status as DashboardStatus,
       startedAt: job.createdAt === undefined ? null : new Date(job.createdAt).toISOString(),
       updatedAt: new Date(job.updatedAt).toISOString(),
@@ -11107,9 +11124,17 @@ function buildDashboardHistoryDetail(
   };
   const current = jobs.listForAgent(agent.agentId)
     .filter((job) => job.scopeId === agent.scopeId);
-  const archived = jobs.admissionStateStore
-    .listDashboardRetainedJobs(DASHBOARD_ARCHIVED_JOB_LIMIT, agent.scopeId)
-    .filter((job) => job.agentId === agent.agentId && isTerminalActivityJobStatus(job.status));
+  const archivedProjection = jobs.admissionStateStore.listDashboardAgentRetainedJobs(
+    agent.scopeId,
+    agent.agentId,
+    DASHBOARD_HISTORY_LIMIT_PER_AGENT + 1
+  );
+  const archived = archivedProjection.jobs
+    .filter((job) => isTerminalActivityJobStatus(job.status));
+  summaryCache = jobs.admissionStateStore.dashboardJobSummaries([
+    ...current.map((job) => job.jobId),
+    ...archived.map((job) => job.jobId)
+  ]);
   const entries: HistoryEntry[] = [
     ...current.map((job) => ({
       jobId: job.jobId,
@@ -11143,7 +11168,7 @@ function buildDashboardHistoryDetail(
     kind: "dashboard-history",
     rowKey: options.rowKey,
     history: history.slice(0, DASHBOARD_HISTORY_LIMIT_PER_AGENT).map((entry) => entry.turn()),
-    historyCount: history.length,
+    historyCount: Math.max(0, current.length + archivedProjection.total - (representative ? 1 : 0)),
     ...(representative ? { historyRevision: representative.revision } : {})
   });
 }
@@ -11316,10 +11341,16 @@ async function buildDashboardView(
     displayedCancellationJobIds.add(jobId);
     return cancellation;
   };
-  const archivedJobs = jobs.admissionStateStore.listDashboardRetainedJobs(
-    DASHBOARD_ARCHIVED_JOB_LIMIT,
-    scopeId
+  const archivedProjection = jobs.admissionStateStore.listDashboardArchivedJobsByAgent(
+    scopeId,
+    includeHistory ? DASHBOARD_HISTORY_LIMIT_PER_AGENT + 1 : 1
   );
+  const archivedJobs = archivedProjection.jobs;
+  const archivedCounts = jobs.admissionStateStore.dashboardArchivedCounts(scopeId);
+  const summaryCache = jobs.admissionStateStore.dashboardJobSummaries([
+    ...allJobs.map((job) => job.jobId),
+    ...archivedJobs.map((job) => job.jobId)
+  ]);
   const allAgents = listAllDashboardAgents(jobs, scopeId);
   const allSessions = sessions.list(1_000_000, 0).filter(inScope);
   const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
@@ -11451,7 +11482,7 @@ async function buildDashboardView(
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
       activityTitle: activityFor(job.activityId)?.title || null,
       ...(execution ? { execution } : {}),
-      ...dashboardJobTokenUsage(jobs, job.jobId),
+      ...dashboardJobTokenUsage(job.jobId, summaryCache),
       status: statusForJob(job),
       startedAt: new Date(job.createdAt).toISOString(),
       updatedAt: new Date(job.updatedAt).toISOString(),
@@ -11476,7 +11507,7 @@ async function buildDashboardView(
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
       activityTitle: activityFor(job.activityId)?.title || null,
       ...(execution ? { execution } : {}),
-      ...dashboardJobTokenUsage(jobs, job.jobId),
+      ...dashboardJobTokenUsage(job.jobId, summaryCache),
       status: job.status as DashboardStatus,
       startedAt: job.createdAt === undefined ? null : new Date(job.createdAt).toISOString(),
       updatedAt: new Date(job.updatedAt).toISOString(),
@@ -11542,7 +11573,12 @@ async function buildDashboardView(
       turns: includeHistory
         ? retained.slice(0, DASHBOARD_HISTORY_LIMIT_PER_AGENT).map((entry) => entry.turn())
         : [],
-      total: retained.length
+      total: Math.max(
+        retained.length,
+        (jobsByAgent.get(agentId)?.length || 0) +
+          (archivedProjection.totalsByAgent.get(agentId) || 0) -
+          (representativeJobId ? 1 : 0)
+      )
     };
   };
 
@@ -11577,10 +11613,7 @@ async function buildDashboardView(
     const nextExecution = shouldShowDashboardNextExecution(currentExecution, latestTurn.execution)
       ? currentExecution
       : undefined;
-    const usage = jobs.admissionStateStore.eventRetention.summary(job.jobId).usage;
-    const observed = isRecord(usage) && usage.basis === "cumulative-difference" ? usage.tokens : undefined;
-    const tokenUsage = isRecord(observed) && ["inputTokens", "cachedInputTokens", "outputTokens", "totalTokens"].every(key => typeof observed[key] === "number" && Number.isSafeInteger(observed[key]) && observed[key] >= 0)
-      ? { inputTokens: observed.inputTokens as number, cachedInputTokens: observed.cachedInputTokens as number, outputTokens: observed.outputTokens as number, totalTokens: observed.totalTokens as number } : undefined;
+    const tokenUsage = dashboardJobTokenUsage(job.jobId, summaryCache).tokenUsage;
     const history = historyForAgent(job.agentId, job.jobId);
     const conversationUrl = scopeResolver.conversationUrl(job.scopeId);
     const codexThreadUrl = codexThreadUrlFor(thread, currentSession, trackedSession);
@@ -12061,7 +12094,7 @@ async function buildDashboardView(
     counts: {
       trackedProjects,
       trackedConversations: scopeIds.size,
-      retainedJobs: allJobs.length + archivedJobs.length,
+      retainedJobs: allJobs.length + archivedCounts.total,
       active: currentRows.length,
       running: activeRows.filter((row) => row.status === "running").length,
       inputRequired: activeRows.filter((row) => row.status === "input-required").length,
@@ -12074,10 +12107,10 @@ async function buildDashboardView(
       backgroundProcessAgents,
       runtimeUnknownAgents,
       runtimeProbeSkippedAgents,
-      completed: [...allJobs, ...archivedJobs].filter((job) => job.status === "completed").length,
-      failed: [...allJobs, ...archivedJobs].filter((job) => job.status === "failed").length,
-      interrupted: [...allJobs, ...archivedJobs].filter((job) => job.status === "interrupted").length,
-      cancelled: [...allJobs, ...archivedJobs].filter((job) => job.status === "cancelled").length,
+      completed: allJobs.filter((job) => job.status === "completed").length + archivedCounts.completed,
+      failed: allJobs.filter((job) => job.status === "failed").length + archivedCounts.failed,
+      interrupted: allJobs.filter((job) => job.status === "interrupted").length + archivedCounts.interrupted,
+      cancelled: allJobs.filter((job) => job.status === "cancelled").length + archivedCounts.cancelled,
       idleAgents: idleRows.length,
       orphanedAgents: allAgents.filter(
         (agent) =>
