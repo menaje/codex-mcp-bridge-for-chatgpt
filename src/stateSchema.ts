@@ -1,9 +1,9 @@
 /**
  * Schema 19 remains the immutable released base DDL used by its recorded
- * migration. Fresh databases apply the v20 through v23 projections below in the
+ * migration. Fresh databases apply the v20 through v24 projections below in the
  * same transaction; older databases follow the append-only migration catalog.
  */
-export const CURRENT_STATE_SCHEMA_VERSION = "23";
+export const CURRENT_STATE_SCHEMA_VERSION = "24";
 
 export const CURRENT_STATE_SCHEMA = `
   CREATE TABLE scopes (

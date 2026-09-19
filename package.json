@@ -75,6 +75,7 @@
     "test:dashboard-summary-browser": "tsx scripts/dashboard-summary-browser-regression.ts",
     "test:issue-125-r1-card": "tsx scripts/issue-125-r1-card-delivery-regression.ts",
     "test:issue-126-live-card": "tsx scripts/issue-126-live-card-completion-regression.ts",
+    "test:issue-127-decision-card": "tsx scripts/issue-127-decision-card-regression.ts",
     "test:model-descriptions-browser": "tsx scripts/model-description-browser-regression.ts",
     "mcp:conformance": "npm run build && node scripts/mcp-conformance.mjs",
     "check": "npm run build && npm run test",
@@ -99,6 +100,8 @@
     "@modelcontextprotocol/server": "^2.0.0",
     "better-sqlite3": "^13.0.3",
     "hono": "^4.13.7",
+    "parse5": "^8.0.1",
+    "sanitize-html": "^2.17.7",
     "tar": "7.5.22",
     "zod": "^4.2.0"
   },
@@ -107,9 +110,10 @@
     "@modelcontextprotocol/core": "^2.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.12.0",
+    "@types/sanitize-html": "^2.16.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.15"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=22"

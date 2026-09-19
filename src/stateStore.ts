@@ -50,6 +50,7 @@ import {
   type ThreadPersistence
 } from "./threadConnections.js";
 import { QuestionStore, V13_QUESTION_STORE_MIGRATION_SCHEMA } from "./questionStore.js";
+import { DecisionCardStore, V24_DECISION_CARD_MIGRATION_SCHEMA } from "./decisionCardStore.js";
 import {
   ACTIVITY_COMPLETION_TRIGGERS,
   ACTIVITY_HANDOFF_POLICIES,
@@ -599,6 +600,7 @@ export type StateMigrationProgress = {
  */
 export class BridgeStateStore {
   readonly questions: QuestionStore;
+  readonly decisionCards: DecisionCardStore;
   readonly threadConnections: ThreadConnectionStore;
   readonly eventRetention: EventRetention;
   readonly workHistory: WorkHistoryStore;
@@ -649,10 +651,12 @@ export class BridgeStateStore {
           this.database.exec(V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA);
           this.database.exec(V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA);
           this.database.exec(V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA);
+          this.database.exec(V24_DECISION_CARD_MIGRATION_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
           this.setMeta("schema_v21_created_at", new Date().toISOString());
           this.setMeta("schema_v22_created_at", new Date().toISOString());
           this.setMeta("schema_v23_created_at", new Date().toISOString());
+          this.setMeta("schema_v24_created_at", new Date().toISOString());
           this.setMeta("state_migration_catalog_version", String(STATE_MIGRATION_CATALOG_VERSION));
           this.setMeta("state_database_id", randomUUID());
           this.recordSchemaOrigin("fresh");
@@ -700,6 +704,17 @@ export class BridgeStateStore {
           }));
         }
         return questions;
+      });
+      this.decisionCards = this.transaction(() => {
+        const decisions = new DecisionCardStore(this.database);
+        if (Object.values(decisions.startupMaintenance).some((count) => count > 0)) {
+          this.setMeta("state_decision_maintenance_last", JSON.stringify({
+            reason: "decision-delivery-and-retention-recovery",
+            at: new Date().toISOString(),
+            ...decisions.startupMaintenance
+          }));
+        }
+        return decisions;
       });
       this.workHistory = new WorkHistoryStore(this.database);
       this.automaticRecovery = new AutomaticRecoveryStore(this.database);
@@ -3688,6 +3703,7 @@ export class BridgeStateStore {
     this.runMigration("20", "21", originalSourceSchema, () => this.migrateV20ToV21());
     this.runMigration("21", "22", originalSourceSchema, () => this.migrateV21ToV22());
     this.runMigration("22", "23", originalSourceSchema, () => this.migrateV22ToV23());
+    this.runMigration("23", "24", originalSourceSchema, () => this.migrateV23ToV24());
     if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
       throw new Error(`Bridge state migration stopped at unsupported schema version ${this.getMeta("schema_version")}.`);
     }
@@ -5060,6 +5076,25 @@ export class BridgeStateStore {
         this.setMeta("schema_version", "23");
         this.setMeta("schema_v23_completion_result_offer", "server-offer-not-receipt-v1");
         this.setMeta("schema_v23_migrated_at", new Date(now).toISOString());
+      });
+    } finally {
+      this.database.pragma("foreign_keys = ON");
+    }
+  }
+
+  private migrateV23ToV24(): void {
+    this.database.pragma("foreign_keys = OFF");
+    try {
+      this.transaction(() => {
+        this.database.exec(V24_DECISION_CARD_MIGRATION_SCHEMA);
+        const violations = this.database.pragma("foreign_key_check") as unknown[];
+        if (violations.length > 0) {
+          throw new Error("Bridge state schema v24 migration produced foreign-key violations.");
+        }
+        const now = Date.now();
+        this.setMeta("schema_version", "24");
+        this.setMeta("schema_v24_decision_card_contract", "freeform-decision-card-v1");
+        this.setMeta("schema_v24_migrated_at", new Date(now).toISOString());
       });
     } finally {
       this.database.pragma("foreign_keys = ON");

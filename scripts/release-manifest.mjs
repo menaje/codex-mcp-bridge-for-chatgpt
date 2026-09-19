@@ -67,7 +67,7 @@ const RELEASE_ASSET_NAMES = [
   "macos-x64-app",
   "release-checksums"
 ];
-const STATE_SOURCE_SCHEMAS = Array.from({ length: 20 }, (_, index) => index + 3);
+const STATE_SOURCE_SCHEMAS = Array.from({ length: 21 }, (_, index) => index + 3);
 const STATE_MIGRATION_DEFINITIONS = [
   [3, 4, "migrateV3ToV4", "a49f5314925897e254c6f34dd9c956cbf31eb1d8", [
     ["src/stateStore.ts", "stableUuid"], ["src/stateStore.ts", "normalizeOptionalString"],
@@ -132,6 +132,9 @@ const STATE_MIGRATION_DEFINITIONS = [
   ]],
   [22, 23, "migrateV22ToV23", "100a85d569150138fed8c51f96d5d619f2d634c9", [
     ["src/stateSchema.ts", "V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA"]
+  ]],
+  [23, 24, "migrateV23ToV24", "0000000000000000000000000000000000000000", [
+    ["src/decisionCardStore.ts", "V24_DECISION_CARD_MIGRATION_SCHEMA"]
   ]]
 ];
 const STATE_FIXTURE_DEFINITIONS = [
@@ -335,7 +338,7 @@ export function validateReleaseManifest(value) {
     ],
     "stateCompatibility"
   );
-  if (stateCompatibility.currentSchema !== 23) fail("stateCompatibility.currentSchema must be 23");
+  if (stateCompatibility.currentSchema !== 24) fail("stateCompatibility.currentSchema must be 24");
   if (
     !Array.isArray(stateCompatibility.supportedSourceSchemas) ||
     stateCompatibility.supportedSourceSchemas.length !== STATE_SOURCE_SCHEMAS.length ||
@@ -674,7 +677,7 @@ export function expectedStateMigrationCatalog(repoRoot = DEFAULT_REPO_ROOT) {
   return {
     catalogVersion: 1,
     immutabilityPolicy: "append-only-after-release-v1",
-    currentSchema: 23,
+    currentSchema: 24,
     supportedSourceSchemas: [...STATE_SOURCE_SCHEMAS],
     unsupportedSourceSchemas: [1, 2],
     retiredLegacyImports: [
@@ -1156,7 +1159,11 @@ export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRe
     drift.push(UI_GENERATED_SOURCE);
   }
 
-  const descriptorSource = readTextFile(path.join(repoRoot, "src/tools.ts"), "src/tools.ts");
+  const descriptorFiles = ["src/tools.ts", "src/decisionCard.ts"]
+    .filter((relative) => existsSync(path.join(repoRoot, relative)));
+  const descriptorSource = descriptorFiles.map((relative) =>
+    readTextFile(path.join(repoRoot, relative), relative)
+  ).join("\n");
   const expectedFiles = expectedUiResourceFiles();
   const actualFiles = listUiResourceFiles(repoRoot);
   if (!sameJson(actualFiles, expectedFiles)) drift.push(`${UI_RESOURCE_DIRECTORY} file inventory`);

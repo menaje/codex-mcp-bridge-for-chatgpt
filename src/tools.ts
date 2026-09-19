@@ -118,6 +118,13 @@ import {
   shouldShowDashboardNextExecution,
   registerDashboardCardResource
 } from "./dashboardCard.js";
+import {
+  decisionCardOpenOutputSchema,
+  decisionResultOutputSchema,
+  decisionUiOutputSchema,
+  registerDecisionCardResource,
+  registerDecisionCardTools
+} from "./decisionCard.js";
 import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
 import {
   BridgeStateStore,
@@ -1523,7 +1530,7 @@ const diagnosticsResultContract = toolOutputContract(
 
 // These are JSON descriptor byte limits, measured after Zod emits JSON Schema
 // 2020-12. They are intentionally separate from result payload byte caps.
-export const MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET = 56_000;
+export const MODEL_VISIBLE_OUTPUT_SCHEMA_BYTE_BUDGET = 64_000;
 export const MODEL_VISIBLE_OUTPUT_SCHEMA_PER_TOOL_BYTE_BUDGET = 18_000;
 
 export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
@@ -1532,6 +1539,8 @@ export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
   codex_agent: agentMutationOutputSchema,
   codex_cancel: z.union([cancelMutationOutputSchema, activityCancelMutationOutputSchema]),
   codex_dashboard: dashboardModelOutputSchema,
+  codex_decision: decisionCardOpenOutputSchema,
+  codex_decision_result: decisionResultOutputSchema,
   codex_models: codexModelsOutputSchema,
   bridge_skill: bridgeSkillOutputSchema,
   bridge_skill_manage: bridgeSkillManageOutputSchema,
@@ -1548,6 +1557,7 @@ export const OPERATOR_OUTPUT_SCHEMAS = Object.freeze({
 export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
   codex_ui_read: z.union([dashboardViewOutputSchema, dashboardHistoryDetailOutputSchema, settingsViewOutputSchema, uiControlSummaryOutputSchema]),
   codex_ui_completion: jobCompletionDeliveryOutputSchema,
+  codex_ui_decision: decisionUiOutputSchema,
   codex_ui_problem: problemActionResultSchema,
   codex_interaction_respond: mutationOutputSchema,
   codex_update_settings: settingsViewOutputSchema
@@ -3866,8 +3876,10 @@ export function registerBridgeTools(
   // MCP 2026 list results must be deterministic. Register immutable card
   // resources in URI order; input tools do not add a resource.
   registerDashboardCardResource(server);
+  registerDecisionCardResource(server);
   const codexInputs = registerCodexInputTools(server, jobs, scopeResolver);
   registerSettingsCardResource(server);
+  registerDecisionCardTools(server, jobs.admissionStateStore.decisionCards, scopeResolver);
   const cardPerformance = sharedCardPerformance || new CardPerformanceTracker();
   const effectiveSkillLibrary = skillLibrary || new SkillLibrary({
     directory: config.bridgeSkillsDirectory
@@ -8650,6 +8662,7 @@ async function runCodex(input: {
   }
   let job!: CodexJob;
   let deferredAdmissionJobId: string | undefined;
+  let replayedDuringAdmission = false;
   const admit = () => input.jobs.activityTransaction(() => {
     const replay = input.jobs.findRequest(
       input.routing.scopeId,
@@ -8658,6 +8671,7 @@ async function runCodex(input: {
     );
     if (replay) {
       job = replay;
+      replayedDuringAdmission = true;
       return;
     }
     if (input.userSettings) {
@@ -8783,7 +8797,7 @@ async function runCodex(input: {
     input.config.jobStaleAfterMs,
     input.preferences,
     input.jobs,
-    false
+    replayedDuringAdmission
   );
 }
 

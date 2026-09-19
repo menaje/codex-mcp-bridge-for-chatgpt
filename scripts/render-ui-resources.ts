@@ -10,6 +10,12 @@ import {
   DASHBOARD_CARD_RESOURCE_DESCRIPTOR,
   DASHBOARD_CARD_URI
 } from "../src/dashboardCard.js";
+import {
+  DECISION_CARD_CONTENT_METADATA,
+  DECISION_CARD_HTML,
+  DECISION_CARD_RESOURCE_DESCRIPTOR,
+  DECISION_CARD_URI
+} from "../src/decisionCard.js";
 
 process.stdout.write(JSON.stringify({
   resources: {
@@ -27,6 +33,14 @@ process.stdout.write(JSON.stringify({
       metadata: {
         descriptor: DASHBOARD_CARD_RESOURCE_DESCRIPTOR,
         content: DASHBOARD_CARD_CONTENT_METADATA
+      }
+    },
+    decision: {
+      uri: DECISION_CARD_URI,
+      html: DECISION_CARD_HTML,
+      metadata: {
+        descriptor: DECISION_CARD_RESOURCE_DESCRIPTOR,
+        content: DECISION_CARD_CONTENT_METADATA
       }
     }
   }

@@ -2,7 +2,8 @@
   "catalogVersion": 4,
   "activeResources": [
     "settings",
-    "dashboard"
+    "dashboard",
+    "decision"
   ],
   "compatibilityResources": [],
   "currentContracts": {
@@ -24,6 +25,15 @@
         "codex_ui_problem",
         "codex_ui_read",
         "codex_interaction_respond"
+      ]
+    },
+    "decision": {
+      "uriVersion": 1,
+      "presenterTool": "codex_decision",
+      "requiredTools": [
+        "codex_decision",
+        "codex_decision_result",
+        "codex_ui_decision"
       ]
     }
   },

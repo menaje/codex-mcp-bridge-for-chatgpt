@@ -197,14 +197,15 @@ npm test
 In a fresh ChatGPT conversation:
 
 1. Open Settings and register a project.
-2. Open Dashboard; confirm both current cards load and Settings has no card-generation or completion-delivery toggle.
-3. Call `codex_models` and confirm its one current catalog response.
-4. Start a harmless task with contract version 6 and its exact envelope
+2. Open Dashboard and Settings; confirm both load and Settings has no card-generation or completion-delivery toggle.
+3. Ask for a small comparison decision card; confirm one selection and verify GPT reads its exact semantic result in the same conversation without starting Codex.
+4. Call `codex_models` and confirm its one current catalog response.
+5. Start a harmless task with contract version 6 and its exact envelope
    constant.
-5. Confirm the task opens its exact Dashboard and, without a diagnostic button or user message, terminal completion resumes the same conversation and reads the exact result once.
-6. If Codex asks an ordinary question, answer it through the current ChatGPT
+6. Confirm the task opens its exact Dashboard and, without a diagnostic button or user message, terminal completion resumes the same conversation and reads the exact result once.
+7. If Codex asks an ordinary question, answer it through the current ChatGPT
    conversation and verify that it reaches the exact active Job.
-7. Restart the bridge, reconnect, and confirm retained work is still visible.
+8. Restart the bridge, reconnect, and confirm retained work is still visible.
 
 For release acceptance, also record a real current-protocol discovery, tool
 call, and card open through ChatGPT and Secure MCP Tunnel. A host that cannot

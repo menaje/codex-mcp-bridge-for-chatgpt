@@ -82,22 +82,25 @@
     "hashAlgorithm": "sha256",
     "minimumContractGeneration": {
       "settings": 9,
-      "dashboard": 6
+      "dashboard": 6,
+      "decision": 1
     },
     "resources": [
       "settings",
-      "dashboard"
+      "dashboard",
+      "decision"
     ],
     "activeResources": [
       "settings",
-      "dashboard"
+      "dashboard",
+      "decision"
     ],
     "compatibilityResources": [],
     "releaseCatalog": "ui-release-catalog.json",
-    "releaseCatalogSha256": "56a20b4eb7c2777c7b2b257042b60707fa58f58e90fcbd0b84ce2f8db4210c3e"
+    "releaseCatalogSha256": "eff14a09c7d0a7e599f423d0a08148ce3a025e27f8540c4ba746acf183f868a9"
   },
   "stateCompatibility": {
-    "currentSchema": 23,
+    "currentSchema": 24,
     "supportedSourceSchemas": [
       3,
       4,
@@ -118,7 +121,8 @@
       19,
       20,
       21,
-      22
+      22,
+      23
     ],
     "unsupportedSourceSchemas": [
       1,
@@ -130,7 +134,7 @@
       "job-state-json"
     ],
     "migrationCatalog": "state-migrations.json",
-    "migrationCatalogSha256": "3ad03286d41113c4dfea212d5f7bee94ccb9655fdd841eb689948c7ae8bead30",
+    "migrationCatalogSha256": "edaff1539ac2bc3f462bfbf4621649e0d91558ec9b461d3db0086468b730d09f",
     "stateProfilePolicy": "release-stage-isolated-v1",
     "rollbackPolicy": "verified-original-before-service-open-v1",
     "persistentContracts": {

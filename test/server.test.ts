@@ -20,6 +20,9 @@ import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 const CURRENT_PROTOCOL = "2026-07-28";
 const CURRENT_TOOL_ORDER = [
   "codex_answer",
+  "codex_decision",
+  "codex_decision_result",
+  "codex_ui_decision",
   "bridge_skill",
   "bridge_skill_manage",
   "codex_dashboard",
@@ -319,6 +322,7 @@ describe("MCP 2026-07-28 HTTP server", () => {
       const resources = await client.listResources();
       expect(resources.resources.map((resource) => resource.name).sort()).toEqual([
         "codex-dashboard-card",
+        "codex-decision-card",
         "codex-settings-card"
       ]);
       const dashboard = resources.resources.find((resource) => resource.name === "codex-dashboard-card");

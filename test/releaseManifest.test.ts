@@ -90,12 +90,12 @@ describe("release manifest", () => {
     expect(() => validateReleaseManifest(manifest)).toThrow("manifestVersion must be 6");
   });
 
-  it("publishes one complete schema-3-through-23 compatibility and recovery contract", () => {
+  it("publishes one complete schema-3-through-24 compatibility and recovery contract", () => {
     const manifest = loadReleaseManifest(REPO_ROOT);
     const catalog = readJson(path.join(REPO_ROOT, "state-migrations.json"));
     expect(manifest.stateCompatibility).toMatchObject({
-      currentSchema: 23,
-      supportedSourceSchemas: Array.from({ length: 20 }, (_, index) => index + 3),
+      currentSchema: 24,
+      supportedSourceSchemas: Array.from({ length: 21 }, (_, index) => index + 3),
       unsupportedSourceSchemas: [1, 2],
       retiredLegacyImports: [
         "settings-state-json",
@@ -116,7 +116,7 @@ describe("release manifest", () => {
     expect(catalog).toMatchObject({
       catalogVersion: 1,
       immutabilityPolicy: "append-only-after-release-v1",
-      currentSchema: 23,
+      currentSchema: 24,
       supportedSourceSchemas: manifest.stateCompatibility.supportedSourceSchemas
     });
     expect(catalog.fixtures).toEqual(expect.arrayContaining([
@@ -127,7 +127,7 @@ describe("release manifest", () => {
     for (const source of manifest.stateCompatibility.supportedSourceSchemas) {
       let schema = source;
       const visited = new Set<number>();
-      while (schema !== 23) {
+      while (schema !== 24) {
         expect(visited.has(schema)).toBe(false);
         visited.add(schema);
         const migration = catalog.migrations.find((entry: any) => entry.fromSchema === schema);
@@ -355,6 +355,7 @@ describe("release manifest", () => {
 
     expect(semverOnly.resources.settings.uri).toBe(initial.resources.settings.uri);
     expect(semverOnly.resources.dashboard.uri).toBe(initial.resources.dashboard.uri);
+    expect(semverOnly.resources.decision.uri).toBe(initial.resources.decision.uri);
 
     const metadataChanged = structuredClone(rendered);
     metadataChanged.resources.settings.metadata.content["openai/widgetPrefersBorder"] = true;
@@ -362,6 +363,7 @@ describe("release manifest", () => {
     expect(afterMetadata.resources.settings.uri).toBe(initial.resources.settings.uri);
     expect(afterMetadata.resources.settings.digest).not.toBe(initial.resources.settings.digest);
     expect(afterMetadata.resources.dashboard.digest).toBe(initial.resources.dashboard.digest);
+    expect(afterMetadata.resources.decision.digest).toBe(initial.resources.decision.digest);
 
     const htmlChanged = structuredClone(rendered);
     htmlChanged.resources.dashboard.html += "<!-- compatible change -->";
@@ -379,9 +381,10 @@ describe("release manifest", () => {
     expect(afterBreakingChange.resources.settings.uri).not.toBe(initial.resources.settings.uri);
     expect(afterBreakingChange.resources.settings.digest).toBe(initial.resources.settings.digest);
     expect(afterBreakingChange.resources.dashboard.uri).toBe(initial.resources.dashboard.uri);
+    expect(afterBreakingChange.resources.decision.uri).toBe(initial.resources.decision.uri);
   });
 
-  it("selects only the two current UI files without accumulating revision history", () => {
+  it("selects only the current UI files without accumulating revision history", () => {
     const manifest = loadReleaseManifest(REPO_ROOT);
     const catalog = loadUiReleaseCatalog(REPO_ROOT);
     const lock = readJson(path.join(REPO_ROOT, "ui-manifest.lock.json"));
@@ -390,9 +393,10 @@ describe("release manifest", () => {
     expect(selected).toEqual(lock);
     expect(selected.manifestVersion).toBe(3);
     expect(selected.strategy).toBe("versioned-uri");
-    expect(selected.releaseInventory.selected).toHaveLength(2);
+    expect(selected.releaseInventory.selected).toHaveLength(3);
     expect(selected.resources.settings).not.toHaveProperty("previous");
     expect(selected.resources.dashboard).not.toHaveProperty("previous");
+    expect(selected.resources.decision).not.toHaveProperty("previous");
     expect(selected.releaseInventory.retirement.activity).toMatchObject({
       lifecycle: "historical-revisions-retired",
       newPresentations: false,
@@ -483,6 +487,7 @@ function fixtureRoot(): string {
     "state-migrations.json",
     "src/stateStore.ts",
     "src/stateSchema.ts",
+    "src/decisionCardStore.ts",
     "src/questionStore.ts",
     "src/threadConnections.ts",
     "src/eventRetention.ts",
