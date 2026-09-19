@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { loadConfig } from "../src/config.js";
 import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
@@ -219,9 +219,13 @@ describe("current bridge tool contracts", () => {
     ]) expect(names.has(retired)).toBe(false);
     const bridgeSkill = tools.tools.find((tool) => tool.name === "bridge_skill")!;
     const bridgeSkillManage = tools.tools.find((tool) => tool.name === "bridge_skill_manage")!;
+    const status = tools.tools.find((tool) => tool.name === "codex_status")!;
     expect(JSON.stringify(bridgeSkill.inputSchema)).not.toContain('"project"');
     expect(JSON.stringify(bridgeSkillManage.inputSchema)).toContain('"content"');
     expect(JSON.stringify(bridgeSkillManage.inputSchema)).not.toContain('"document"');
+    expect(JSON.stringify(status.inputSchema)).toContain("defaults to 20000 milliseconds");
+    expect(status.description).toContain("terminal wait wakes only for terminal lifecycle state");
+    expect(status.description).toContain("do not keep a parallel terminal wait");
     expect(tools.tools.some((tool) => "codex/registrationTier" in (tool._meta || {}))).toBe(false);
   });
 
@@ -1382,6 +1386,65 @@ describe("current bridge tool contracts", () => {
       (item as { requestId?: unknown; status?: unknown }).requestId === requestId &&
       (item as { status?: unknown }).status === "completed"
     ));
+  });
+
+  it("records an aborted exact status wait while the same Job keeps running", async () => {
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const task = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        requestId: randomUUID(),
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Stay active while an exact status read is aborted.",
+        project: {
+          name: project.name,
+          projectRef: project.projectRef,
+          projectRevision: project.projectRevision
+        },
+        selection
+      },
+      _meta: metadata
+    });
+    expect(task.isError, JSON.stringify(task)).not.toBe(true);
+    await hold.started;
+    const jobId = (task.structuredContent as { jobId: string }).jobId;
+    try {
+      const projectIdentityReads = vi.spyOn(state, "listActivityProjectIdentities");
+      projectIdentityReads.mockClear();
+      const controller = new AbortController();
+      const waiting = client.callTool({
+        name: "codex_status",
+        arguments: { query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 5_000 } },
+        _meta: metadata
+      }, { signal: controller.signal });
+      await eventually(() => projectIdentityReads.mock.calls.length > 0);
+      controller.abort();
+
+      await expect(waiting).rejects.toThrow();
+      await eventually(() => state.listTransportObservations("status-wait-aborted").length === 1);
+      expect(state.listTransportObservations("status-wait-aborted")).toEqual([
+        expect.objectContaining({
+          kind: "status-wait-aborted",
+          jobId,
+          toolName: "codex_status",
+          reasonCode: "host-aborted-read-wait"
+        })
+      ]);
+      expect(state.listJobs().find((job) => job.jobId === jobId)).toMatchObject({
+        status: "running"
+      });
+      expect(state.listJobs().find((job) => job.jobId === jobId)?.cancelRequestedAt)
+        .toBeUndefined();
+    } finally {
+      hold.release();
+      await eventually(() => state.listJobs().some((job) =>
+        job.jobId === jobId && job.status === "completed"
+      )).catch(() => undefined);
+    }
   });
 
   it("keeps an asynchronous admission valid before App Server assigns its thread", async () => {

@@ -80,6 +80,195 @@ describe("CodexJobRegistry persistence", () => {
     }
   );
 
+  it("keeps terminal waits asleep across progress churn and off the prune hot path", async () => {
+    vi.useFakeTimers();
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    const store = registry.admissionStateStore;
+    let emitProgress: ((progress: CodexProgress) => void) | undefined;
+    let complete: (value: ToolResult) => void = () => undefined;
+    try {
+      const job = registry.start(jobInput(root), async (progress) => {
+        emitProgress = progress;
+        return new Promise<ToolResult>((resolve) => { complete = resolve; });
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const projectIdentityReads = vi.spyOn(store, "listActivityProjectIdentities");
+      const waiting = registry.wait(job.jobId, "terminal", 1_000, undefined, "model-status");
+      await Promise.resolve();
+      projectIdentityReads.mockClear();
+
+      for (let index = 0; index < 100; index += 1) {
+        emitProgress?.({ progress: index / 100 });
+      }
+      expect(projectIdentityReads).not.toHaveBeenCalled();
+      expect(registry.waitDiagnostics()).toMatchObject({
+        exactStatusWaits: 1,
+        wakes: { total: 0, progress: 0, terminal: 0 },
+        active: {
+          total: 1,
+          modelStatus: 1,
+          jobs: [{ jobId: job.jobId, total: 1, terminal: 1, modelStatus: 1 }]
+        }
+      });
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(waiting).resolves.toMatchObject({
+        job: { jobId: job.jobId, status: "running" },
+        waitFor: "terminal",
+        waitTimedOut: true,
+        changed: true
+      });
+      expect(projectIdentityReads).not.toHaveBeenCalled();
+      expect(registry.waitDiagnostics()).toMatchObject({
+        timedOut: 1,
+        wakes: { total: 0, progress: 0, terminal: 0 },
+        active: { total: 0, jobs: [] }
+      });
+
+      complete(result("terminal-timeout-survived"));
+      await job.promise;
+      expect(registry.get(job.jobId)).toMatchObject({ status: "completed" });
+    } finally {
+      vi.useRealTimers();
+      store.close();
+    }
+  });
+
+  it("wakes change waits on progress without waking terminal waits", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    let emitProgress: ((progress: CodexProgress) => void) | undefined;
+    let complete: (value: ToolResult) => void = () => undefined;
+    try {
+      const job = registry.start(jobInput(root), async (progress) => {
+        emitProgress = progress;
+        return new Promise<ToolResult>((resolve) => { complete = resolve; });
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const changed = registry.wait(job.jobId, "change", 5_000);
+      await Promise.resolve();
+      emitProgress?.({ progress: 0.5 });
+      await expect(changed).resolves.toMatchObject({
+        job: { jobId: job.jobId, status: "running" },
+        waitFor: "change",
+        waitTimedOut: false,
+        changed: true
+      });
+      expect(registry.waitDiagnostics()).toMatchObject({
+        started: { total: 1, change: 1, terminal: 0 },
+        wakes: { total: 1, progress: 1, terminal: 0, stateChange: 0 }
+      });
+
+      complete(result("change-wait-completed"));
+      await job.promise;
+    } finally {
+      registry.admissionStateStore.close();
+    }
+  });
+
+  it("bounds simultaneous Dashboard and model terminal watchers under public-event load", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    const store = registry.admissionStateStore;
+    let emitProgress: ((progress: CodexProgress) => void) | undefined;
+    let complete: (value: ToolResult) => void = () => undefined;
+    try {
+      const job = registry.start(jobInput(root), async (progress) => {
+        emitProgress = progress;
+        return new Promise<ToolResult>((resolve) => { complete = resolve; });
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const modelWait = registry.wait(
+        job.jobId, "terminal", 5_000, undefined, "model-status"
+      );
+      const dashboardWait = registry.wait(
+        job.jobId, "terminal", 5_000, undefined, "dashboard-completion"
+      );
+      await Promise.resolve();
+      const projectIdentityReads = vi.spyOn(store, "listActivityProjectIdentities");
+
+      for (let index = 0; index < 100; index += 1) {
+        emitProgress?.({
+          progress: index / 100,
+          event: {
+            eventId: `public-progress-${index}`,
+            type: "command",
+            phase: "updated",
+            createdAt: Date.now(),
+            summary: `Public progress ${index}`
+          }
+        });
+      }
+      expect(projectIdentityReads).not.toHaveBeenCalled();
+      expect(registry.waitDiagnostics()).toMatchObject({
+        exactStatusWaits: 1,
+        sources: { modelStatus: 1, dashboardCompletion: 1 },
+        wakes: { total: 0, progress: 0, terminal: 0 },
+        active: {
+          total: 2,
+          modelStatus: 1,
+          dashboardCompletion: 1,
+          jobs: [{ jobId: job.jobId, total: 2, terminal: 2 }]
+        },
+        maintenance: { telemetryTransaction: { count: 100 } }
+      });
+
+      complete(result("two-watchers-one-terminal"));
+      await job.promise;
+      const [modelResult, dashboardResult] = await Promise.all([modelWait, dashboardWait]);
+      expect(modelResult.job).toMatchObject({ status: "completed" });
+      expect(dashboardResult.job).toMatchObject({ status: "completed" });
+      expect(registry.waitDiagnostics()).toMatchObject({
+        completed: 2,
+        wakes: { total: 2, progress: 0, terminal: 2, stateChange: 0 },
+        active: { total: 0, jobs: [] }
+      });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("treats an aborted exact status wait as a read abort without cancelling the Job", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    let complete: (value: ToolResult) => void = () => undefined;
+    try {
+      const job = registry.start(jobInput(root), async () =>
+        new Promise<ToolResult>((resolve) => { complete = resolve; })
+      );
+      await Promise.resolve();
+      const cancel = vi.spyOn(registry, "cancel");
+      const controller = new AbortController();
+      const waiting = registry.wait(
+        job.jobId, "terminal", 5_000, controller.signal, "model-status"
+      );
+      await Promise.resolve();
+      controller.abort();
+
+      await expect(waiting).rejects.toThrow("cancelled by the host");
+      expect(cancel).not.toHaveBeenCalled();
+      expect(registry.get(job.jobId)).toMatchObject({ status: "running" });
+      expect(registry.get(job.jobId)?.cancelRequestedAt).toBeUndefined();
+      expect(registry.waitDiagnostics()).toMatchObject({
+        hostAborts: { total: 1, modelStatus: 1 },
+        active: { total: 0, jobs: [] }
+      });
+
+      complete(result("abort-did-not-cancel"));
+      await job.promise;
+      expect(registry.get(job.jobId)).toMatchObject({ status: "completed" });
+    } finally {
+      registry.admissionStateStore.close();
+    }
+  });
+
   it("notifies native subscribers when work starts and settles, then unsubscribes", async () => {
     const root = temporaryRoot();
     const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
