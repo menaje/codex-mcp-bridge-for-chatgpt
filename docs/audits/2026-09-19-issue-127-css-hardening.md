@@ -5,6 +5,9 @@ Related issues: [#127](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/is
 [#132](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/132), and
 [#129](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/129)
 
+Network-regression correction:
+[#134](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/134)
+
 ## Conclusion
 
 The CSS-escape bypass reported after the initial #127 merge was reproduced
