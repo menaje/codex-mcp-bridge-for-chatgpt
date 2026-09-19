@@ -3970,28 +3970,34 @@ export class CodexJobRegistry {
     job: CodexJob,
     publicEvent: CodexPublicEvent
   ): boolean {
-    const startedAt = performance.now();
     try {
-      this.activityStore.recordJobTelemetryEvent(
-        job.jobId,
-        `app-${publicEvent.type}-${publicEvent.phase}`,
-        publicEvent,
-        publicEvent.createdAt,
-        publicEvent.type === "approval-required" || publicEvent.type === "input-required"
-          ? publicEvent.phase === "waiting"
-            ? "user"
-            : publicEvent.phase === "completed"
-              ? "codex"
-              : undefined
-          : undefined,
-        {
-          updatedAt: job.updatedAt,
-          version: job.version,
-          lastProgressAt: job.lastProgressAt,
-          lastProgress: job.lastProgress,
-          pendingInteractions: job.pendingInteractions
-        }
-      );
+      const transactionStartedAt = performance.now();
+      try {
+        this.activityStore.recordJobTelemetryEvent(
+          job.jobId,
+          `app-${publicEvent.type}-${publicEvent.phase}`,
+          publicEvent,
+          publicEvent.createdAt,
+          publicEvent.type === "approval-required" || publicEvent.type === "input-required"
+            ? publicEvent.phase === "waiting"
+              ? "user"
+              : publicEvent.phase === "completed"
+                ? "codex"
+                : undefined
+            : undefined,
+          {
+            updatedAt: job.updatedAt,
+            version: job.version,
+            lastProgressAt: job.lastProgressAt,
+            lastProgress: job.lastProgress,
+            pendingInteractions: job.pendingInteractions
+          }
+        );
+      } finally {
+        this.waitDiagnosticsTracker.telemetryTransaction.record(
+          performance.now() - transactionStartedAt
+        );
+      }
       this.lastPersistedAt = Date.now();
       this.persistenceWarningShown = false;
       this.notifyScope(job.scopeId);
@@ -4004,8 +4010,6 @@ export class CodexJobRegistry {
         this.persistenceWarningShown = true;
       }
       return false;
-    } finally {
-      this.waitDiagnosticsTracker.telemetryTransaction.record(performance.now() - startedAt);
     }
   }
 

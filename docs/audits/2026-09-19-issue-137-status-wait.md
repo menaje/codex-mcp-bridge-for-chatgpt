@@ -42,8 +42,8 @@ progress event 100개를 기록한다. 2026-09-19 로컬 실행 결과는 다음
 | terminal-triggered wakes | 2 |
 | progress 구간 project-identity reads | 0 |
 | telemetry transactions | 100 |
-| telemetry p50 / p95 / max | 0.317 / 0.521 / 1.161 ms |
-| `pruneAndPersist` p50 / p95 / max | 0.022 / 0.051 / 0.051 ms |
+| telemetry p50 / p95 / max | 0.331 / 0.640 / 2.026 ms |
+| `pruneAndPersist` p50 / p95 / max | 0.020 / 0.049 / 0.049 ms |
 | terminal 뒤 active waiters | 0 |
 
 latency 수치는 해당 로컬 실행의 관측값이며 제품 threshold로 고정하지 않는다.
