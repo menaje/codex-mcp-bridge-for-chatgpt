@@ -137,6 +137,12 @@ for completion. If that response is lost, query the same `requestId` with
 thread, project, or bounded input wait. Use `codex_cancel` only for explicit
 stop intent and its required version/idempotency arguments.
 
+Exact terminal status waits are bounded to a 20-second default and ignore
+ordinary progress events. If the originating Dashboard is mounted, it already
+watches terminal completion, so do not keep a parallel terminal wait solely for
+the same delivery. A timed-out or host-aborted status read never stops the Job;
+reuse the exact retained Job identity for a later read.
+
 ## 6. Cards and questions
 
 The active immutable cards are:

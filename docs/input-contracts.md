@@ -40,6 +40,13 @@ for Codex completion in the task call, and losing the MCP or HTTP connection doe
 not cancel the admitted Job. Read progress and the terminal result with
 `codex_status`; use `codex_cancel` only for explicit stop intent.
 
+An exact Job/request `codex_status` wait is a bounded read. `waitFor="change"`
+wakes on a Job version change; `waitFor="terminal"` uses a lifecycle-only signal
+and does not wake for ordinary progress. The model-visible default is 20 seconds
+and the maximum remains 60 seconds. Timeout or host abort returns or aborts only
+the read request; neither path creates cancellation provenance, calls upstream
+interrupt, or changes the Job lifecycle.
+
 The bridge owns access policy, the permitted execution envelope, project
 authorization, and any App Server capability checks. Callers cannot pass a
 sandbox, approval policy, working directory, raw thread ID, presentation

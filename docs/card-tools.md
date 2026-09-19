@@ -83,6 +83,15 @@ instruction, not the Job result. The Bridge stores only the small delivery
 record, not a copy of the generated message. A server receipt is correlation,
 never authorization.
 
+The Dashboard's eight-second completion wait and a model-visible exact Job wait
+use the same terminal lifecycle signal but retain separate bounded request
+lifetimes. Ordinary progress does not wake either terminal waiter. A timeout,
+host abort, card teardown, or detached response ends only that read and never
+cancels the Job. Model-visible exact waits default to 20 seconds; when the
+originating Dashboard is mounted, GPT should not keep another terminal wait
+solely to duplicate the card's completion watcher. Exact manual reads and
+bounded input waits remain available.
+
 The automatic message tells GPT to call `codex_status` once with
 `query.kind="completion"`. That read requires current authenticated ChatGPT
 conversation metadata, rechecks the receipt's exact retained Job and scope, and

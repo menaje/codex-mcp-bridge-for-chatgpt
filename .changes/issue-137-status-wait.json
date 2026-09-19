@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Reduce exact Job status-read latency and host-abort sensitivity with lifecycle-only terminal waits, shorter bounded polling, and operator wait diagnostics.",
+  "breaking": false,
+  "migration": null
+}
