@@ -200,7 +200,7 @@
       "fromSchema": 23,
       "toSchema": 24,
       "implementation": "migrateV23ToV24",
-      "introducedCommit": "0000000000000000000000000000000000000000",
+      "introducedCommit": "b1e897a04e6d90128eb01ffc4071783f8d067731",
       "sha256": "96731d77c7829f4b0c3cd889959a1f8214d09537b8651526b774979903fa81b6"
     }
   ],
