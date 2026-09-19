@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
 import type Database from "better-sqlite3";
+import { performance } from "node:perf_hooks";
 import { problemKey, problemRevision } from "./problemReview.js";
 
 export const HISTORY_RETENTION_DAYS = [7, 30, 90, 0] as const;
@@ -15,6 +16,16 @@ export const dashboardHistoryActionInput = z.strictObject({
 });
 export type DashboardHistoryActionInput = z.infer<typeof dashboardHistoryActionInput>;
 export type HistoryJobIdentity = {jobId:string;activityId:string;status:string;updatedAt:number};
+export type HistoryRetentionCandidate = {
+  jobId: string;
+  scopeId: string;
+  requestId: string;
+  activityId: string;
+  status: string;
+  updatedAt: number;
+  archivedAt: number;
+  terminalVersion: number | null;
+};
 export const DEFAULT_HISTORY_RETENTION_DAYS: HistoryRetentionDays = 30;
 export const ISSUE_ATTENTION_DAYS = 7;
 /** Upgrade-only schema introduced at v15. Current databases use stateSchema.ts. */
@@ -51,7 +62,12 @@ export type HistoryProblemJob = HistoryJobIdentity & {
  * receipt, Agent/thread identity, project pins, or cancellation journals. Exact
  * ChatGPT completion-delivery rows expire with their run-history entry. */
 export class WorkHistoryStore {
-  constructor(private readonly db: Database.Database) {}
+  private readonly protectedUntil = new Map<string, number>();
+
+  constructor(
+    private readonly db: Database.Database,
+    private readonly expireProjection: (candidate: HistoryRetentionCandidate, now: number) => void
+  ) {}
 
   latestJob(agentId: string): HistoryJobIdentity | undefined {
     const row = this.db.prepare(`SELECT job_id,activity_id,status,updated_at FROM jobs j WHERE agent_id=?
@@ -140,8 +156,15 @@ export class WorkHistoryStore {
   }
 
   /** Bounded maintenance. Protected results and live work remain intact. */
-  sweep(days: HistoryRetentionDays, isProtected: (jobId: string) => boolean, now = Date.now()): number {
+  sweep(
+    days: HistoryRetentionDays,
+    isProtected: (jobId: string) => boolean,
+    now = Date.now(),
+    options: { maxDurationMs?: number; limit?: number } = {}
+  ): number {
     if (days === 0) return 0;
+    const limit = Math.max(1, Math.min(500, Math.floor(options.limit ?? 500)));
+    const deadline = performance.now() + Math.max(1, options.maxDurationMs ?? 25);
     const cursor = this.db.prepare(`SELECT cursor_updated_at AS at,cursor_job_id AS id
       FROM work_history_control WHERE singleton=1`).get() as {at:number;id:string};
     const candidates = this.db.prepare(`SELECT j.job_id,j.scope_id,j.request_id,j.activity_id,j.status,
@@ -149,26 +172,48 @@ export class WorkHistoryStore {
       WHERE j.archived_at IS NOT NULL AND j.status IN ('completed','failed','interrupted','cancelled')
       AND j.updated_at<? AND (j.updated_at>? OR (j.updated_at=? AND j.job_id>?))
       AND NOT EXISTS (SELECT 1 FROM work_history_state h WHERE h.job_id=j.job_id AND h.expired_at IS NOT NULL)
-      ORDER BY j.updated_at,j.job_id LIMIT 500`).all(now - days * 86400_000,cursor.at,cursor.at,cursor.id) as Array<{
+      ORDER BY j.updated_at,j.job_id LIMIT ?`).all(now - days * 86400_000,cursor.at,cursor.at,cursor.id,limit) as Array<{
         job_id:string;scope_id:string;request_id:string;activity_id:string;status:string;updated_at:number;archived_at:number;terminal_version:number|null;
       }>;
-    const last = candidates.length === 500 ? candidates[candidates.length-1] : undefined;
-    this.db.prepare(`UPDATE work_history_control SET cursor_updated_at=?,cursor_job_id=?
-      WHERE singleton=1`).run(last?.updated_at || 0,last?.job_id || "");
     let removed = 0;
+    let visited = 0;
+    let lastVisited: (typeof candidates)[number] | undefined;
     for (const row of candidates) {
-      if (isProtected(row.job_id)) continue;
-      // Keep the exact request reservation and terminal outcome required for
-      // replay prevention. Remove display details and all disposable events.
-      const receipt = {resultOmitted:true,historyExpired:true};
-      this.db.prepare("UPDATE jobs SET payload=? WHERE job_id=?").run(JSON.stringify(receipt),row.job_id);
-      this.db.prepare("UPDATE jobs SET summary='{}' WHERE job_id=?").run(row.job_id);
-      this.db.prepare("DELETE FROM job_events WHERE job_id=?").run(row.job_id);
-      this.db.prepare("DELETE FROM job_completion_deliveries WHERE job_id=?").run(row.job_id);
+      if (visited > 0 && performance.now() >= deadline) break;
+      visited++;
+      lastVisited = row;
+      const deferredUntil = this.protectedUntil.get(row.job_id) || 0;
+      if (deferredUntil > now) continue;
+      this.protectedUntil.delete(row.job_id);
+      if (isProtected(row.job_id)) {
+        // Protection checks fan out across several durable authorities. Back
+        // off repeated checks while preserving a restart-safe conservative
+        // default: a restart may recheck, but can never expire protected work.
+        this.protectedUntil.set(row.job_id, now + 15 * 60_000);
+        continue;
+      }
+      const candidate: HistoryRetentionCandidate = {
+        jobId: row.job_id,
+        scopeId: row.scope_id,
+        requestId: row.request_id,
+        activityId: row.activity_id,
+        status: row.status,
+        updatedAt: row.updated_at,
+        archivedAt: row.archived_at,
+        terminalVersion: row.terminal_version
+      };
+      this.expireProjection(candidate, now);
       this.db.prepare(`INSERT INTO work_history_state(job_id,expired_at) VALUES (?,?)
         ON CONFLICT(job_id) DO UPDATE SET expired_at=excluded.expired_at`).run(row.job_id,now);
       removed++;
     }
+    const completedBatch = visited === candidates.length;
+    const resetCursor = completedBatch && candidates.length < limit;
+    this.db.prepare(`UPDATE work_history_control SET cursor_updated_at=?,cursor_job_id=?
+      WHERE singleton=1`).run(
+        resetCursor ? 0 : lastVisited?.updated_at || cursor.at,
+        resetCursor ? "" : lastVisited?.job_id || cursor.id
+      );
     if (removed) {
       this.db.prepare(`UPDATE work_history_control SET last_cleanup_at=?,last_cleanup_count=?,
         total_removed=total_removed+? WHERE singleton=1`).run(now,removed,removed);

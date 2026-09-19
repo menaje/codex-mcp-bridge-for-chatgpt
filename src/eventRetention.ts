@@ -20,9 +20,23 @@ export const V14_EVENT_RETENTION_MIGRATION_SCHEMA = `
 type EventInput = { jobId: string; eventType: string; payload: unknown };
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
 
+export type EventRetentionJobRepository = {
+  readSummary(jobId: string): Record<string, unknown>;
+  saveSummary(jobId: string, summary: Record<string, unknown>): void;
+};
+
+export type EventRetentionMaintenanceRepository = {
+  deleteActivityEvents(olderThan: number, batchSize: number, retainedLimit: number): number;
+  deleteExpiredResultHolds(now: number, limit: number): number;
+};
+
 /** Diagnostics are disposable; delivery, cancellation, question and replay authorities live elsewhere. */
 export class EventRetention {
-  constructor(private readonly db: Database.Database) {
+  constructor(
+    private readonly db: Database.Database,
+    private readonly jobs: EventRetentionJobRepository,
+    private readonly maintenance: EventRetentionMaintenanceRepository
+  ) {
     const policy = this.db.prepare("SELECT policy_version FROM event_retention_state WHERE singleton=1")
       .get() as {policy_version:number};
     if (policy.policy_version !== 2) this.db.transaction(() => {
@@ -33,8 +47,7 @@ export class EventRetention {
   }
 
   summary(jobId: string): Record<string, unknown> {
-    const row = this.db.prepare("SELECT summary FROM jobs WHERE job_id=?").get(jobId) as { summary: string } | undefined;
-    return row ? sanitizeRetainedJobSummary(parseStoredJson(row.summary, "job summary")) : {};
+    return this.jobs.readSummary(jobId);
   }
 
   acknowledgeUncertainResultReview(jobId: string, count: number, latestUpdateAt: number, reviewedAt: number): void {
@@ -75,7 +88,9 @@ export class EventRetention {
     if (coalesce && input.eventType.startsWith("app-")) {
       const itemId = typeof details.itemId === "string" ? details.itemId : "";
       const pattern = typeof payload.type === "string" ? `app-${payload.type}-%` : input.eventType;
-      this.db.prepare(`DELETE FROM job_events WHERE job_id=? AND event_type LIKE ?
+      const previous = this.db.prepare(`SELECT 1 FROM job_events WHERE job_id=? AND event_type LIKE ?
+        AND COALESCE(json_extract(payload,'$.details.itemId'),'')=? LIMIT 1`).get(input.jobId, pattern, itemId);
+      if (previous) this.db.prepare(`DELETE FROM job_events WHERE job_id=? AND event_type LIKE ?
         AND COALESCE(json_extract(payload,'$.details.itemId'),'')=?`).run(input.jobId, pattern, itemId);
     }
     const encoded = JSON.stringify(input.payload ?? null);
@@ -94,6 +109,9 @@ export class EventRetention {
       const usage = this.db.prepare("SELECT payload FROM job_events WHERE job_id=? AND event_type LIKE 'app-usage%' ORDER BY event_id DESC LIMIT 1").get(jobId) as {payload:string} | undefined;
       if (usage) this.prepare({jobId,eventType:"app-usage",payload:parseStoredJson(usage.payload, "job event")}, true, false);
     }
+    const count = Number((this.db.prepare("SELECT COUNT(*) AS count FROM job_events WHERE job_id=?")
+      .get(jobId) as {count:number}).count);
+    if (count <= EVENT_RETENTION_LIMITS.perJob) return 0;
     return this.db.prepare(`DELETE FROM job_events WHERE job_id=? AND event_id NOT IN
       (SELECT event_id FROM job_events WHERE job_id=? ORDER BY event_id DESC LIMIT ?)`).run(
         jobId,
@@ -134,7 +152,9 @@ export class EventRetention {
       JOIN jobs j ON j.job_id=e.job_id WHERE e.event_id>? ORDER BY e.event_id LIMIT ?`).all(cursor, EVENT_RETENTION_LIMITS.batch) as Array<{event_id:number;job_id:string;event_type:string;payload:string;archived_at:number|null}>;
     for (const row of rows) {
       const payload = this.prepare({ jobId: row.job_id, eventType: row.event_type, payload: parseStoredJson(row.payload, "job event") }, row.archived_at !== null, false);
-      this.db.prepare("UPDATE job_events SET payload=? WHERE event_id=?").run(payload, row.event_id);
+      if (payload !== row.payload) {
+        this.db.prepare("UPDATE job_events SET payload=? WHERE event_id=?").run(payload, row.event_id);
+      }
     }
     this.db.prepare("UPDATE event_retention_state SET cursor_event_id=? WHERE singleton=1")
       .run(rows.at(-1)?.event_id || cursor);
@@ -146,9 +166,15 @@ export class EventRetention {
         .run(row.event_id).changes;
     }
     // Activity events contain control metadata, never model output. They are also bounded.
-    const activityLimitRemoved = this.db.prepare("DELETE FROM activity_events WHERE event_id IN (SELECT event_id FROM activity_events ORDER BY event_id DESC LIMIT 500 OFFSET 50000)").run().changes;
-    const activityAgeRemoved = this.db.prepare("DELETE FROM activity_events WHERE event_id IN (SELECT event_id FROM activity_events WHERE created_at<? ORDER BY event_id LIMIT 500)").run(now - EVENT_RETENTION_LIMITS.metadataMs).changes;
-    const expiredResultHoldsRemoved = this.db.prepare("DELETE FROM result_holds WHERE job_id IN (SELECT job_id FROM result_holds WHERE expires_at<=? LIMIT 500)").run(now).changes;
+    const expiredActivityEventsRemoved = this.maintenance.deleteActivityEvents(
+      now - EVENT_RETENTION_LIMITS.metadataMs,
+      EVENT_RETENTION_LIMITS.batch,
+      EVENT_RETENTION_LIMITS.rows
+    );
+    const expiredResultHoldsRemoved = this.maintenance.deleteExpiredResultHolds(
+      now,
+      EVENT_RETENTION_LIMITS.batch
+    );
     let perJobEventsRemoved = 0;
     for (const jobId of new Set(rows.map(row => row.job_id))) {
       perJobEventsRemoved += this.enforcePerJob(jobId);
@@ -160,7 +186,7 @@ export class EventRetention {
       ...budget,
       freePages: Number(this.db.pragma("freelist_count", { simple: true })),
       expiredJobEventsRemoved,
-      expiredActivityEventsRemoved: activityLimitRemoved + activityAgeRemoved,
+      expiredActivityEventsRemoved,
       expiredResultHoldsRemoved,
       perJobEventsRemoved,
       budgetEventsRemoved
@@ -168,8 +194,12 @@ export class EventRetention {
   }
 
   private save(jobId: string, summary: Record<string, unknown>): void {
-    this.db.prepare("UPDATE jobs SET summary=? WHERE job_id=?")
-      .run(JSON.stringify(sanitizeRetainedJobSummary(summary)), jobId);
+    this.jobs.saveSummary(jobId, sanitizeRetainedJobSummary(summary));
+  }
+
+  /** Event-domain command used by the state Unit of Work during history expiry. */
+  deleteJobEventsForHistory(jobId: string): number {
+    return this.db.prepare("DELETE FROM job_events WHERE job_id=?").run(jobId).changes;
   }
 }
 

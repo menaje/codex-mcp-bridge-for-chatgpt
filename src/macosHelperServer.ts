@@ -15,21 +15,16 @@ import {
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
-import Database from "better-sqlite3";
 import {
   defaultStateProfile,
   parseStateProfile,
   stateDatabaseFileForProfile
 } from "./config.js";
 import {
-  CURRENT_STATE_DATABASE_SCHEMA,
-  SUPPORTED_STATE_SCHEMA_VERSIONS
-} from "./stateCompatibility.js";
-import {
-  inspectStateDatabase,
   readStateMigrationStatus,
   stateMigrationExtendsStartupDeadline
 } from "./stateDatabaseLifecycle.js";
+import { inspectRegisteredProjectRoots } from "./stateProjectInspection.js";
 import * as z from "zod/v4";
 import {
   commitRuntimeEnvUpdate,
@@ -2561,40 +2556,7 @@ function readRegisteredProjectRoots(
   const stateDatabaseFile = configuredStateDatabaseFile(envFile, options);
   if (existsSync(stateDatabaseFile)) {
     assertRegularStateFile(stateDatabaseFile);
-    const inspection = inspectStateDatabase(stateDatabaseFile);
-    const schemaVersion = inspection.schemaVersion;
-    if (schemaVersion === null || !SUPPORTED_STATE_SCHEMA_VERSIONS.has(schemaVersion)) {
-      throw new Error(
-        `Project registry is unavailable while state schema ${String(schemaVersion)} ` +
-        `is outside the helper's supported state schemas through ${CURRENT_STATE_DATABASE_SCHEMA}.`
-      );
-    }
-    // The UUID project registry was introduced by schema 8. Supported older
-    // schemas intentionally discard their legacy project JSON during upgrade,
-    // so they have no authoritative project roots for the helper to guard.
-    if (schemaVersion < 8) return [];
-    const database = new Database(stateDatabaseFile, {
-      readonly: true,
-      fileMustExist: true
-    });
-    try {
-      const columns = database.pragma("table_info(projects)") as Array<{ name?: unknown }>;
-      if (!columns.some((column) => column.name === "cwd")) {
-        throw new Error("Project registry table is unavailable.");
-      }
-      const hasDeletedAt = columns.some((column) => column.name === "deleted_at");
-      const rows = database.prepare(
-        hasDeletedAt
-          ? "SELECT cwd FROM projects WHERE deleted_at IS NULL"
-          : "SELECT cwd FROM projects"
-      ).all() as Array<{ cwd?: unknown }>;
-      if (rows.some((row) => typeof row.cwd !== "string" || !path.isAbsolute(row.cwd))) {
-        throw new Error("Project registry contains an invalid folder path.");
-      }
-      return [...new Set(rows.map((row) => row.cwd as string))];
-    } finally {
-      database.close();
-    }
+    return inspectRegisteredProjectRoots(stateDatabaseFile);
   }
   return [];
 }

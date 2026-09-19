@@ -241,6 +241,17 @@ export class DecisionCardStore {
     this.startupMaintenance = { expiredLeasesMarkedUnknown, expiredCardsRemoved };
   }
 
+  /** Explicit bounded maintenance. Card and submission queries stay read-only. */
+  maintain(now = Date.now(), limit = 500): {
+    expiredLeasesMarkedUnknown: number;
+    expiredCardsRemoved: number;
+  } {
+    const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+    const expiredLeasesMarkedUnknown = this.refreshExpiredLeases(now, boundedLimit);
+    const expiredCardsRemoved = this.prune(now, boundedLimit);
+    return { expiredLeasesMarkedUnknown, expiredCardsRemoved };
+  }
+
   create(scopeId: string, input: DecisionCardMutationInput): DecisionCardVersionRecord {
     return this.mutate(scopeId, "create", input);
   }
@@ -250,7 +261,6 @@ export class DecisionCardStore {
   }
 
   get(scopeId: string, cardId: string, version?: number): DecisionCardVersionRecord {
-    this.refreshExpiredLeases(Date.now());
     const card = this.cardRow(scopeId, cardId);
     if (!card) throw new Error("DECISION_CARD_UNAVAILABLE: This card is unavailable in the current conversation.");
     const selectedVersion = version ?? card.current_version;
@@ -276,8 +286,8 @@ export class DecisionCardStore {
   ): DecisionSubmissionRecord {
     return this.db.transaction(() => {
       const now = Date.now();
-      this.refreshExpiredLeases(now);
       const card = this.requireCurrentCard(scopeId, proof);
+      this.refreshExpiredCardLease(scopeId, card.cardId, now);
       if (card.expiresAt <= now) throw new Error("DECISION_CARD_EXPIRED: Ask GPT to create a current card.");
       const existingId = this.submissionById(scopeId, input.submissionId);
       const canonical = canonicalizeDecisionSubmission(card.fields, input);
@@ -336,7 +346,7 @@ export class DecisionCardStore {
   }): { send: boolean; submission: DecisionSubmissionRecord } {
     return this.db.transaction(() => {
       const now = Date.now();
-      this.refreshExpiredLeases(now);
+      this.refreshExpiredLease(input.scopeId, input.receipt, now);
       this.requireCurrentCard(input.scopeId, input.proof);
       const current = this.requireSubmission(input.scopeId, input.receipt);
       if (current.cardId !== input.proof.cardId || current.cardVersion !== input.proof.cardVersion) {
@@ -374,7 +384,8 @@ export class DecisionCardStore {
       const card = this.requireCurrentCard(input.scopeId, input.proof);
       const current = this.requireSubmission(input.scopeId, input.receipt);
       if (current.cardId !== card.cardId || current.cardVersion !== card.version ||
-        current.deliveryState !== "leased" || current.leaseOwner !== input.leaseOwner) {
+        current.deliveryState !== "leased" || current.leaseOwner !== input.leaseOwner ||
+        (current.leaseExpiresAt || 0) <= now) {
         throw new Error("DECISION_DELIVERY_STALE: This delivery lease is no longer current.");
       }
       const state: DecisionDeliveryState = input.outcome === "accepted"
@@ -387,14 +398,21 @@ export class DecisionCardStore {
       const lastError = input.outcome === "rejected" && input.error
         ? canonicalHumanText(input.error, { field: "Decision delivery error", maxCharacters: 500, trim: true, collapseWhitespace: true })
         : undefined;
-      this.db.prepare(`
+      const changed = this.db.prepare(`
         UPDATE decision_submissions
            SET delivery_state=?,lease_owner=NULL,lease_expires_at=NULL,last_error=?,
                host_accepted_at=CASE WHEN ?='host-accepted' THEN ? ELSE host_accepted_at END,
                acceptance_unknown_at=CASE WHEN ?='acceptance-unknown' THEN ? ELSE acceptance_unknown_at END,
                updated_at=?
-         WHERE scope_id=? AND receipt=?
-      `).run(state, lastError || null, state, now, state, now, now, input.scopeId, input.receipt);
+         WHERE scope_id=? AND receipt=? AND card_id=? AND card_version=?
+           AND delivery_state='leased' AND lease_owner=? AND lease_expires_at>?
+      `).run(
+        state, lastError || null, state, now, state, now, now,
+        input.scopeId, input.receipt, card.cardId, card.version, input.leaseOwner, now
+      ).changes;
+      if (changed !== 1) {
+        throw new Error("DECISION_DELIVERY_STALE: This delivery lease is no longer current.");
+      }
       this.touchCard(card.cardId, now);
       return this.requireSubmission(input.scopeId, input.receipt);
     })();
@@ -406,7 +424,7 @@ export class DecisionCardStore {
   } {
     return this.db.transaction(() => {
       const now = Date.now();
-      this.refreshExpiredLeases(now);
+      this.refreshExpiredLease(scopeId, receipt, now);
       const submission = this.requireSubmission(scopeId, receipt);
       const card = this.get(scopeId, submission.cardId, submission.cardVersion);
       this.db.prepare(`
@@ -420,13 +438,22 @@ export class DecisionCardStore {
   }
 
   latestSubmission(scopeId: string, cardId: string): DecisionSubmissionRecord | undefined {
-    this.refreshExpiredLeases(Date.now());
     const row = this.db.prepare(`
       SELECT * FROM decision_submissions
        WHERE scope_id=? AND card_id=?
        ORDER BY sequence DESC LIMIT 1
     `).get(scopeId, cardId) as DecisionSubmissionRow | undefined;
-    return row ? decisionSubmissionFromRow(row) : undefined;
+    if (!row) return;
+    const record = decisionSubmissionFromRow(row);
+    if (record.deliveryState === "leased" && (record.leaseExpiresAt || 0) <= Date.now()) {
+      const { leaseOwner: _leaseOwner, leaseExpiresAt: _leaseExpiresAt, ...released } = record;
+      return {
+        ...released,
+        deliveryState: "acceptance-unknown",
+        acceptanceUnknownAt: record.acceptanceUnknownAt || Date.now()
+      };
+    }
+    return record;
   }
 
   private mutate(
@@ -570,24 +597,61 @@ export class DecisionCardStore {
     `).get(scopeId, cardId) as DecisionCardRow | undefined;
   }
 
-  private refreshExpiredLeases(now: number): void {
-    this.db.prepare(`
+  private refreshExpiredLeases(now: number, limit?: number): number {
+    return this.db.prepare(`
       UPDATE decision_submissions
          SET delivery_state='acceptance-unknown',lease_owner=NULL,lease_expires_at=NULL,
              acceptance_unknown_at=COALESCE(acceptance_unknown_at,?),updated_at=?
-       WHERE delivery_state='leased' AND lease_expires_at<=?
-    `).run(now, now, now);
+       WHERE submission_id IN (
+         SELECT submission_id FROM decision_submissions
+          WHERE delivery_state='leased' AND lease_expires_at<=?
+          ORDER BY lease_expires_at,submission_id
+          ${limit === undefined ? "" : "LIMIT ?"}
+       )
+    `).run(...(limit === undefined ? [now, now, now] : [now, now, now, limit])).changes;
+  }
+
+  /** Command-local recovery for the exact delivery being acted on. */
+  private refreshExpiredLease(scopeId: string, receipt: string, now: number): number {
+    return this.db.prepare(`
+      UPDATE decision_submissions
+         SET delivery_state='acceptance-unknown',lease_owner=NULL,lease_expires_at=NULL,
+             acceptance_unknown_at=COALESCE(acceptance_unknown_at,?),updated_at=?
+       WHERE scope_id=? AND receipt=? AND delivery_state='leased' AND lease_expires_at<=?
+    `).run(now, now, scopeId, receipt, now).changes;
+  }
+
+  /** Submission idempotency depends only on the latest delivery for this card,
+   * not on sweeping unrelated expired leases. */
+  private refreshExpiredCardLease(scopeId: string, cardId: string, now: number): number {
+    return this.db.prepare(`
+      UPDATE decision_submissions
+         SET delivery_state='acceptance-unknown',lease_owner=NULL,lease_expires_at=NULL,
+             acceptance_unknown_at=COALESCE(acceptance_unknown_at,?),updated_at=?
+       WHERE submission_id=(
+         SELECT submission_id FROM decision_submissions
+          WHERE scope_id=? AND card_id=? AND delivery_state='leased' AND lease_expires_at<=?
+          ORDER BY sequence DESC LIMIT 1
+       )
+    `).run(now, now, scopeId, cardId, now).changes;
   }
 
   private touchCard(cardId: string, now: number): void {
     this.db.prepare("UPDATE decision_cards SET updated_at=? WHERE card_id=?").run(now, cardId);
   }
 
-  private prune(now: number): number {
+  private prune(now: number, limit?: number): number {
     return this.db.prepare(`
       DELETE FROM decision_cards
-       WHERE expires_at<=? AND updated_at<?
-    `).run(now, now - DECISION_CARD_RETENTION_MS).changes;
+       WHERE card_id IN (
+         SELECT card_id FROM decision_cards
+          WHERE expires_at<=? AND updated_at<?
+          ORDER BY expires_at,card_id
+          ${limit === undefined ? "" : "LIMIT ?"}
+       )
+    `).run(...(limit === undefined
+      ? [now, now - DECISION_CARD_RETENTION_MS]
+      : [now, now - DECISION_CARD_RETENTION_MS, limit])).changes;
   }
 
   private assertCapacity(scopeId: string): void {

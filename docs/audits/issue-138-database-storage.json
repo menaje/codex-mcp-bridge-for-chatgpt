@@ -1,0 +1,238 @@
+{
+  "issue": 138,
+  "testedAt": "2026-09-19T14:42:47.919Z",
+  "source": "read-only metrics plus a consistent disposable SQLite backup",
+  "productionDatabaseModified": false,
+  "sourceCapacity": {
+    "databaseBytes": 196378624,
+    "walBytes": 4276592,
+    "shmBytes": 32768,
+    "pageSize": 4096,
+    "pageCount": 47944,
+    "allocatedBytes": 196378624,
+    "freePages": 46194,
+    "reusableBytes": 189210624,
+    "reusablePercent": 96.35,
+    "btreeUsedBytes": 4794452,
+    "cellPayloadBytes": 4679801
+  },
+  "migrationBackups": {
+    "count": 10,
+    "totalBytes": 264462336,
+    "largestBytes": 189349888
+  },
+  "sourceSchema": 24,
+  "sourceRows": {
+    "tables": 37,
+    "rows": 8045
+  },
+  "sourceSerialization": {
+    "jobs": 774,
+    "storedPayloadBytes": {
+      "total": 150014,
+      "median": 110,
+      "p95": 361,
+      "max": 10139
+    },
+    "structuredDuplicateFields": 0,
+    "summaries": {
+      "rowsWithContent": 683,
+      "storedPayloadBytes": {
+        "total": 244412,
+        "median": 384,
+        "p95": 402,
+        "max": 466
+      },
+      "formalDuplicateFields": 0,
+      "unexpectedTopLevelFields": 0
+    },
+    "interactions": {
+      "rows": 0,
+      "storedPayloadBytes": {
+        "total": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "structuredDuplicateFields": 0
+    }
+  },
+  "beforeConnectionQuery": {
+    "lookups": 201,
+    "totalMs": 0.707,
+    "medianMs": 0.003,
+    "p95Ms": 0.008,
+    "plan": [
+      "COMPOUND QUERY",
+      "LEFT-MOST SUBQUERY",
+      "SEARCH jobs USING INDEX jobs_thread_active (thread_id=?)",
+      "CORRELATED SCALAR SUBQUERY 5",
+      "SEARCH interaction USING COVERING INDEX job_interactions_blocking (job_id=?)",
+      "CORRELATED SCALAR SUBQUERY 6",
+      "MULTI-INDEX OR",
+      "INDEX 1",
+      "SEARCH cancellation USING INDEX cancellation_intents_target_job (target_job_id=?)",
+      "INDEX 2",
+      "SEARCH cancellation USING INDEX cancellation_intents_target_activity (target_activity_id=?)",
+      "UNION ALL",
+      "SEARCH jobs USING INDEX jobs_source_thread_active (source_thread_id=?)",
+      "SEARCH jobs USING INDEX jobs_agent_active (agent_id=?)",
+      "SCALAR SUBQUERY 3",
+      "SEARCH thread_connections USING INDEX sqlite_autoindex_thread_connections_1 (thread_id=?)"
+    ],
+    "positiveResults": 4
+  },
+  "currentConnectionQuery": {
+    "lookups": 201,
+    "totalMs": 0.798,
+    "medianMs": 0.003,
+    "p95Ms": 0.007,
+    "plan": [
+      "COMPOUND QUERY",
+      "LEFT-MOST SUBQUERY",
+      "SEARCH jobs USING INDEX jobs_thread_active (thread_id=?)",
+      "CORRELATED SCALAR SUBQUERY 5",
+      "SEARCH interaction USING COVERING INDEX job_interactions_blocking (job_id=?)",
+      "CORRELATED SCALAR SUBQUERY 6",
+      "MULTI-INDEX OR",
+      "INDEX 1",
+      "SEARCH cancellation USING INDEX cancellation_intents_target_job (target_job_id=?)",
+      "INDEX 2",
+      "SEARCH cancellation USING INDEX cancellation_intents_target_activity (target_activity_id=?)",
+      "UNION ALL",
+      "SEARCH jobs USING INDEX jobs_source_thread_active (source_thread_id=?)",
+      "SEARCH jobs USING INDEX jobs_agent_active (agent_id=?)",
+      "SCALAR SUBQUERY 3",
+      "SEARCH thread_connections USING INDEX sqlite_autoindex_thread_connections_1 (thread_id=?)"
+    ],
+    "positiveResults": 4
+  },
+  "currentRetentionPlans": {
+    "eventByJob": [
+      "SEARCH job_events USING COVERING INDEX job_events_job_cursor (job_id=?)"
+    ],
+    "oldestEventBatch": [
+      "SEARCH job_events USING INTEGER PRIMARY KEY (rowid=?)",
+      "LIST SUBQUERY 1",
+      "SCAN job_events"
+    ],
+    "blockingInteraction": [
+      "SEARCH job_interactions USING COVERING INDEX job_interactions_blocking (job_id=?)"
+    ],
+    "historyCandidates": [
+      "SEARCH j USING INDEX jobs_status_recent (status=? AND updated_at<?)",
+      "CORRELATED SCALAR SUBQUERY 1",
+      "SEARCH h USING INDEX sqlite_autoindex_work_history_state_1 (job_id=?)",
+      "USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "expiredHolds": [
+      "SEARCH result_holds USING COVERING INDEX sqlite_autoindex_result_holds_1 (job_id=?)",
+      "LIST SUBQUERY 1",
+      "SCAN result_holds"
+    ]
+  },
+  "maintenanceCardinality": {
+    "resultHolds": 0,
+    "archivedHistoryCandidates": 756,
+    "jobEvents": 1702,
+    "decisionSubmissions": 5
+  },
+  "maintenancePlanDecision": {
+    "resultHoldsExpiryIndex": "deferred: sparse operator-created rows, 500-row slice, 30-day maximum hold",
+    "historyCandidateIndex": "deferred: indexed status/range seek plus cursor and 25ms cooperative budget; temporary sort remains audited",
+    "oldestEventScan": "accepted: integer-primary-key order with a 500-row slice"
+  },
+  "currentRows": {
+    "tables": 37,
+    "rows": 8045
+  },
+  "currentSerialization": {
+    "jobs": 774,
+    "storedPayloadBytes": {
+      "total": 150014,
+      "median": 110,
+      "p95": 361,
+      "max": 10139
+    },
+    "structuredDuplicateFields": 0,
+    "summaries": {
+      "rowsWithContent": 683,
+      "storedPayloadBytes": {
+        "total": 244412,
+        "median": 384,
+        "p95": 402,
+        "max": 466
+      },
+      "formalDuplicateFields": 0,
+      "unexpectedTopLevelFields": 0
+    },
+    "interactions": {
+      "rows": 0,
+      "storedPayloadBytes": {
+        "total": 0,
+        "median": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "structuredDuplicateFields": 0
+    }
+  },
+  "telemetryWritePath": {
+    "auditedSourceSchema": 24,
+    "comparisonBaseline": {
+      "commit": "b1104aa",
+      "schema": 18,
+      "sqlWriteStatementsPerOrdinaryPublicProgressEventWithoutInteractions": 9,
+      "fullJobRowUpserts": 1,
+      "fullJobSerializations": 1,
+      "unconditionalSummaryWrites": 1,
+      "unconditionalThreadConnectionWrites": 1
+    },
+    "current": {
+      "sqlWriteStatementsPerOrdinaryPublicProgressEventWithoutInteractions": 4,
+      "sqlWriteStatementsPerThrottledStateOnlyProgressWithoutInteractions": 2,
+      "fullJobRowUpserts": 0,
+      "fullJobSerializations": 0,
+      "boundedJobStateUpdates": 1,
+      "unconditionalSummaryWrites": 0,
+      "unconditionalThreadConnectionWrites": 0,
+      "interactionWrites": "one bounded delete plus one insert per current interaction"
+    },
+    "basis": "static SQL-path count from schema-18 commit b1104aa and current progress persistence; the ordinary path writes Job state, clears the bounded interaction projection, bumps scope with one UPSERT RETURNING, and inserts one event. Coalescing and per-Job retention issue writes only when a matching row or over-limit batch exists. Counts exclude trigger-internal event_budget updates"
+  },
+  "currentCapacity": {
+    "databaseBytes": 196378624,
+    "walBytes": 0,
+    "shmBytes": 32768,
+    "pageSize": 4096,
+    "pageCount": 47944,
+    "allocatedBytes": 196378624,
+    "freePages": 46194,
+    "reusableBytes": 189210624,
+    "reusablePercent": 96.35,
+    "btreeUsedBytes": 4794452,
+    "cellPayloadBytes": 4679801
+  },
+  "compactedCapacity": {
+    "databaseBytes": 6275072,
+    "walBytes": 0,
+    "shmBytes": 0,
+    "pageSize": 4096,
+    "pageCount": 1532,
+    "allocatedBytes": 6275072,
+    "freePages": 0,
+    "reusableBytes": 0,
+    "reusablePercent": 0,
+    "btreeUsedBytes": 4791044,
+    "cellPayloadBytes": 4679801
+  },
+  "offlineCompaction": {
+    "sourceStopped": true,
+    "precompactBackupVerified": true,
+    "compactCopyVerifiedBeforeReplacement": true,
+    "rollbackCopyVerified": true,
+    "liveDatabaseReplacementPerformed": false
+  },
+  "passed": true,
+  "temporaryCopiesRemoved": true
+}

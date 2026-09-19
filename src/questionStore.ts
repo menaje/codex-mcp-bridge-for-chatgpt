@@ -43,21 +43,57 @@ export class QuestionStore {
     const dispatchesMarkedUncertain = this.db
       .prepare("UPDATE codex_question_deliveries SET status='uncertain' WHERE status='dispatching'")
       .run().changes;
-    this.startupMaintenance = { dispatchesMarkedUncertain, ...this.prune() };
+    this.startupMaintenance = { dispatchesMarkedUncertain, ...this.prune(Date.now()) };
   }
 
-  private prune(): { expiredQuestionsRemoved: number; deliveredJournalsRemoved: number } {
-    const now = Date.now();
+  /** Explicit bounded maintenance. Query methods never call this path. */
+  maintain(now = Date.now(), limit = 500): {
+    expiredQuestionsRemoved: number;
+    deliveredJournalsRemoved: number;
+    notificationsMarkedUncertain: number;
+  } {
+    const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+    const cleanup = this.prune(now, boundedLimit);
+    const stale = this.db.prepare(`
+      SELECT question_id,scope_id,payload
+        FROM user_questions
+       WHERE json_extract(payload,'$.notification')='dispatching'
+         AND COALESCE(json_extract(payload,'$.notificationStartedAt'),0)<=?
+       ORDER BY expires_at,question_id
+       LIMIT ?
+    `).all(now - 20_000, boundedLimit) as Array<{
+      question_id: string; scope_id: string; payload: string;
+    }>;
+    let notificationsMarkedUncertain = 0;
+    for (const row of stale) {
+      const record = this.fromRow(row);
+      if (!record || record.notification !== "dispatching") continue;
+      record.notification = "uncertain";
+      this.save(record);
+      notificationsMarkedUncertain++;
+    }
+    return { ...cleanup, notificationsMarkedUncertain };
+  }
+
+  private prune(now: number, limit = 500): {
+    expiredQuestionsRemoved: number;
+    deliveredJournalsRemoved: number;
+  } {
     const expiredQuestionsRemoved = this.db
-      .prepare("DELETE FROM user_questions WHERE expires_at <= ?").run(now).changes;
+      .prepare(`DELETE FROM user_questions WHERE question_id IN (
+        SELECT question_id FROM user_questions WHERE expires_at<=?
+        ORDER BY expires_at,question_id LIMIT ?
+      )`).run(now, limit).changes;
     const deliveredJournalsRemoved = this.db
-      .prepare("DELETE FROM codex_question_deliveries WHERE status='delivered' AND created_at < ?")
-      .run(now - 7 * 24 * 60 * 60 * 1000).changes;
+      .prepare(`DELETE FROM codex_question_deliveries WHERE rowid IN (
+        SELECT rowid FROM codex_question_deliveries
+         WHERE status='delivered' AND created_at<?
+         ORDER BY created_at,rowid LIMIT ?
+      )`).run(now - 7 * 24 * 60 * 60 * 1000, limit).changes;
     return { expiredQuestionsRemoved, deliveredJournalsRemoved };
   }
 
   create(scopeId: string, input: { requestId: string; title: string; questions: UserQuestionField[]; expiresInMinutes?: number }): UserQuestionRecord {
-    this.prune();
     const requestHash = questionHash(input);
     const existing = this.fromRow(this.db.prepare("SELECT payload FROM user_questions WHERE scope_id=? AND request_id=?").get(scopeId, input.requestId));
     if (existing) {
@@ -79,12 +115,14 @@ export class QuestionStore {
   }
 
   get(scopeId: string, questionId: string): UserQuestionRecord {
-    this.prune();
     const record = this.fromRow(this.db.prepare("SELECT payload FROM user_questions WHERE scope_id=? AND question_id=?").get(scopeId, questionId));
-    if (!record) throw new Error("QUESTION_UNAVAILABLE: The question expired or is unavailable in this conversation.");
+    if (!record || record.expiresAt <= Date.now()) {
+      throw new Error("QUESTION_UNAVAILABLE: The question expired or is unavailable in this conversation.");
+    }
     if (record.notification === "dispatching" && Date.now() - (record.notificationStartedAt || 0) > 20_000) {
+      // Project the crash-safe state without turning a card refresh into a
+      // SQLite write. The maintenance scheduler persists the same transition.
       record.notification = "uncertain";
-      this.save(record);
     }
     return record;
   }
@@ -121,17 +159,21 @@ export class QuestionStore {
   }
 
   readResponses(scopeId: string, responseRef?: string): UserQuestionRecord[] {
-    this.prune();
+    const now = Date.now();
     const rows = responseRef
-      ? this.db.prepare("SELECT payload FROM user_questions WHERE scope_id=? AND response_ref=?").all(scopeId, responseRef)
-      : this.db.prepare("SELECT payload FROM user_questions WHERE scope_id=? AND response_ref IS NOT NULL ORDER BY rowid DESC LIMIT 100").all(scopeId);
+      ? this.db.prepare("SELECT payload FROM user_questions WHERE scope_id=? AND response_ref=? AND expires_at>?").all(scopeId, responseRef, now)
+      : this.db.prepare("SELECT payload FROM user_questions WHERE scope_id=? AND response_ref IS NOT NULL AND expires_at>? ORDER BY rowid DESC LIMIT 100").all(scopeId, now);
     const records = rows.map(row => this.fromRow(row)!).filter(record => responseRef || !record.consumedAt).slice(0, 20);
     if (responseRef && !records.length) throw new Error("ANSWER_UNAVAILABLE: The answer expired or is unavailable in this conversation.");
-    for (const record of responseRef ? records : []) {
-      record.consumedAt ||= Date.now();
-      this.save(record);
-    }
     return records;
+  }
+
+  /** Semantic acknowledgement command kept separate from response queries. */
+  consumeResponse(scopeId: string, responseRef: string, now = Date.now()): UserQuestionRecord {
+    const [record] = this.readResponses(scopeId, responseRef);
+    record.consumedAt ||= now;
+    this.save(record);
+    return record;
   }
 
   claimNotification(record: UserQuestionRecord): { send: boolean; attempt?: string } {
