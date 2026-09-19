@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { loadConfig } from "../src/config.js";
-import { createHttpServer, type BridgeHttpServer } from "../src/server.js";
+import { BRIDGE_MCP_INSTRUCTIONS, createHttpServer, type BridgeHttpServer } from "../src/server.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
@@ -50,9 +50,16 @@ describe("current Codex input contract", () => {
   });
 
   it("uses codex_status and codex_answer while keeping questions in the host conversation", async () => {
-    const names = new Set((await client.listTools()).tools.map((tool) => tool.name));
+    const tools = (await client.listTools()).tools;
+    const names = new Set(tools.map((tool) => tool.name));
     expect(names.has("codex_status")).toBe(true);
     expect(names.has("codex_answer")).toBe(true);
+    expect(tools.find((tool) => tool.name === "codex_answer")?.description).toMatch(
+      /Refresh codex_status kind=input after any intervening user deliberation or decision card/
+    );
+    expect(BRIDGE_MCP_INSTRUCTIONS).toContain(
+      "Creating, submitting, or reading a card never answers a Codex question"
+    );
     for (const retired of ["codex_ask_user", "codex_user_answer", "codex_question_action"]) {
       expect(names.has(retired)).toBe(false);
     }

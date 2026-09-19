@@ -15,22 +15,32 @@ import {
   DECISION_CARD_MINIMAL_HTML_EXAMPLE,
   DECISION_CARD_URI
 } from "../src/decisionCard.js";
-import type { CodexProgress, CodexUpstream, ToolResult, UpstreamWorkerAssignment } from "../src/upstream.js";
+import type {
+  CodexInteractionResponse,
+  CodexPendingInteraction,
+  CodexProgress,
+  CodexUpstream,
+  ToolResult,
+  UpstreamWorkerAssignment
+} from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 
 const selection = { model: "gpt-5.6-sol", reasoningEffort: "medium" };
 const metadata = { "openai/session": "current-tool-contract-test" };
 const fixtureThreadId = "99999999-9999-4999-8999-999999999999";
+const fixtureTurnId = "fixture-turn";
 
 type HeldFixtureCall = {
   started: () => void;
   result: Promise<ToolResult>;
   release: (result: ToolResult) => void;
+  onProgress?: (progress: CodexProgress) => void;
   onAssigned?: (assignment: UpstreamWorkerAssignment) => void;
 };
 
 class FixtureUpstream implements CodexUpstream {
   readonly calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  readonly interactionResponses: Array<{ interactionId: string; response: CodexInteractionResponse }> = [];
   private heldCall?: HeldFixtureCall;
 
   async listTools(): Promise<unknown> {
@@ -40,13 +50,14 @@ class FixtureUpstream implements CodexUpstream {
   async callTool(
     name: string,
     args: Record<string, unknown>,
-    _onProgress?: (progress: CodexProgress) => void,
+    onProgress?: (progress: CodexProgress) => void,
     onAssigned?: (assignment: UpstreamWorkerAssignment) => void
   ): Promise<ToolResult> {
     this.calls.push({ name, args });
     const held = this.heldCall;
     if (held) {
       this.heldCall = undefined;
+      held.onProgress = onProgress;
       held.onAssigned = onAssigned;
       held.started();
       return held.result;
@@ -57,7 +68,12 @@ class FixtureUpstream implements CodexUpstream {
     };
   }
 
-  holdNextCall(): { started: Promise<void>; assign(threadId: string): void; release(): void } {
+  holdNextCall(): {
+    started: Promise<void>;
+    assign(threadId: string, upstreamRequestId?: string): void;
+    progress(progress: CodexProgress): void;
+    release(): void;
+  } {
     let started!: () => void;
     let release!: (result: ToolResult) => void;
     const startedPromise = new Promise<void>((resolve) => { started = resolve; });
@@ -66,7 +82,7 @@ class FixtureUpstream implements CodexUpstream {
     this.heldCall = heldCall;
     return {
       started: startedPromise,
-      assign: (threadId) => {
+      assign: (threadId, upstreamRequestId = fixtureTurnId) => {
         if (!heldCall.onAssigned) {
           throw new Error("The held upstream call has not registered its assignment callback.");
         }
@@ -74,14 +90,25 @@ class FixtureUpstream implements CodexUpstream {
           backendKind: "app-server",
           workerId: "fixture-worker",
           workerGeneration: 1,
-          threadId
+          threadId,
+          upstreamRequestId
         });
+      },
+      progress: (progress) => {
+        if (!heldCall.onProgress) {
+          throw new Error("The held upstream call has not registered its progress callback.");
+        }
+        heldCall.onProgress(progress);
       },
       release: () => release({
         structuredContent: { threadId: "tool-contract-thread", content: "Completed delayed fixture work." },
         content: [{ type: "text", text: "Completed delayed fixture work." }]
       })
     };
+  }
+
+  async respondToInteraction(interactionId: string, response: CodexInteractionResponse): Promise<void> {
+    this.interactionResponses.push({ interactionId, response });
   }
 
   async close(): Promise<void> {}
@@ -377,6 +404,211 @@ describe("current bridge tool contracts", () => {
     });
     expect((result.content[0] as any).text).toContain("Stop if error rate rises.");
     expect(state.listJobs()).toEqual([]);
+  });
+
+  it("keeps a card decision separate from a live Codex question, execution policy, and answer dispatch", async () => {
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const task = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        requestId: randomUUID(),
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Ask which rollout should be documented, then wait for the exact answer without changing files.",
+        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+        selection
+      },
+      _meta: metadata
+    });
+    expect(task.isError, JSON.stringify(task)).not.toBe(true);
+    const jobId = (task.structuredContent as { jobId: string }).jobId;
+    await hold.started;
+    hold.assign(fixtureThreadId, fixtureTurnId);
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === jobId && job.threadId === fixtureThreadId && job.upstreamRequestId === fixtureTurnId
+    ));
+
+    const question: CodexPendingInteraction = {
+      interactionId: "rollout-question",
+      kind: "user-input",
+      origin: "codex-question",
+      isBlocking: true,
+      threadId: fixtureThreadId,
+      turnId: fixtureTurnId,
+      itemId: "rollout-question-item",
+      summary: "Choose the rollout to document",
+      questions: [{
+        id: "rollout",
+        header: "Rollout",
+        question: "Which rollout should be documented?",
+        isSecret: false,
+        isOther: false,
+        options: [
+          { label: "Staged rollout", description: "Document a reversible staged rollout." },
+          { label: "Direct rollout", description: "Document one immediate transition." }
+        ]
+      }]
+    };
+    hold.progress({
+      progress: 1,
+      event: {
+        eventId: "rollout-question",
+        type: "input-required",
+        phase: "updated",
+        createdAt: Date.now(),
+        summary: question.summary,
+        details: { interaction: question }
+      }
+    });
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === jobId && job.pendingInteractions.some((input) => input.interactionId === question.interactionId)
+    ));
+
+    const beforeInput = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "input", jobId } },
+      _meta: metadata
+    });
+    expect(beforeInput.isError, JSON.stringify(beforeInput)).not.toBe(true);
+    const inputSnapshot = beforeInput.structuredContent as any;
+    expect(inputSnapshot).toMatchObject({
+      kind: "codex-input",
+      active: true,
+      questions: [{
+        questionRef: expect.stringMatching(/^[a-f0-9]{64}$/),
+        questions: [{ id: "rollout", options: [{ label: "Staged rollout" }, { label: "Direct rollout" }] }]
+      }],
+      approvals: []
+    });
+    const questionRef = inputSnapshot.questions[0].questionRef as string;
+    const jobBeforeCard = state.listJobs().find((job) => job.jobId === jobId)!;
+    const activityCount = state.listActivities(jobBeforeCard.scopeId).length;
+    const agentCount = state.listAgents(jobBeforeCard.scopeId).length;
+    const jobCount = state.listJobs().filter((job) => job.scopeId === jobBeforeCard.scopeId).length;
+    const accessStrategy = settings.current.accessStrategy;
+    const executionDecision = structuredClone(jobBeforeCard.executionDecision);
+    expect(jobBeforeCard).toMatchObject({ status: "running", trackingState: "connected", sandbox: "read-only" });
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.args).toMatchObject({ sandbox: "read-only", "approval-policy": "on-request" });
+
+    const opened = await client.callTool({
+      name: "codex_decision",
+      arguments: {
+        operation: "create",
+        requestId: randomUUID(),
+        title: "Choose the rollout to document",
+        html: `
+          <fieldset><legend>Rollout</legend>
+            <label><input type="radio" name="rollout" value="staged" required>Staged rollout</label>
+            <label><input type="radio" name="rollout" value="direct">Direct rollout</label>
+          </fieldset>
+          <label>Documentation condition <textarea name="condition"></textarea></label>
+        `
+      },
+      _meta: metadata
+    });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    const hydration = (opened._meta as any)[DECISION_CARD_METADATA_KEY];
+    const identity = {
+      cardId: hydration.card.cardId,
+      cardVersion: hydration.card.cardVersion,
+      presentationRef: hydration.card.presentationRef,
+      widgetInstanceId: randomUUID()
+    };
+    const submitted = await client.callTool({
+      name: "codex_ui_decision",
+      arguments: {
+        operation: "submit",
+        ...identity,
+        submissionId: randomUUID(),
+        intent: "confirm",
+        fields: [
+          { name: "rollout", values: ["staged"] },
+          { name: "condition", values: ["Documentation only; do not change files."] }
+        ]
+      },
+      _meta: metadata
+    });
+    const receipt = (submitted.structuredContent as any).receipt as string;
+    await client.callTool({
+      name: "codex_ui_decision",
+      arguments: { operation: "claim", ...identity, receipt },
+      _meta: metadata
+    });
+    await client.callTool({
+      name: "codex_ui_decision",
+      arguments: { operation: "outcome", ...identity, receipt, outcome: "accepted" },
+      _meta: metadata
+    });
+    const decision = await client.callTool({
+      name: "codex_decision_result",
+      arguments: { receipt },
+      _meta: metadata
+    });
+    expect(decision.isError, JSON.stringify(decision)).not.toBe(true);
+    expect(decision.structuredContent).toMatchObject({
+      submission: {
+        selections: [
+          expect.objectContaining({ label: "Rollout", values: [{ value: "staged", label: "Staged rollout" }] }),
+          expect.objectContaining({ label: "Documentation condition", values: [{ value: "Documentation only; do not change files.", label: "Documentation only; do not change files." }] })
+        ]
+      },
+      authority: { scope: "same-conversation", executionApproved: false }
+    });
+
+    const afterInput = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "input", jobId, afterCursor: inputSnapshot.cursor, waitMs: 0 } },
+      _meta: metadata
+    });
+    expect(afterInput.structuredContent).toMatchObject({
+      kind: "codex-input",
+      changed: false,
+      active: true,
+      questions: [{ questionRef }],
+      approvals: []
+    });
+    const jobAfterCard = state.listJobs().find((job) => job.jobId === jobId)!;
+    expect(jobAfterCard.pendingInteractions).toEqual([question]);
+    expect(jobAfterCard.sandbox).toBe(jobBeforeCard.sandbox);
+    expect(jobAfterCard.executionDecision).toEqual(executionDecision);
+    expect(settings.current.accessStrategy).toBe(accessStrategy);
+    expect(state.listActivities(jobBeforeCard.scopeId)).toHaveLength(activityCount);
+    expect(state.listAgents(jobBeforeCard.scopeId)).toHaveLength(agentCount);
+    expect(state.listJobs().filter((job) => job.scopeId === jobBeforeCard.scopeId)).toHaveLength(jobCount);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.interactionResponses).toEqual([]);
+
+    const answered = await client.callTool({
+      name: "codex_answer",
+      arguments: {
+        requestId: randomUUID(),
+        jobId,
+        questionRef,
+        answers: { rollout: ["Staged rollout"] }
+      },
+      _meta: metadata
+    });
+    expect(answered.isError, JSON.stringify(answered)).not.toBe(true);
+    expect(answered.structuredContent).toMatchObject({
+      kind: "codex-answer",
+      jobId,
+      questionRef,
+      delivery: "delivered",
+      answersPersisted: false
+    });
+    expect(upstream.interactionResponses).toEqual([{
+      interactionId: question.interactionId,
+      response: { answers: { rollout: ["Staged rollout"] } }
+    }]);
+    expect(state.listJobs().find((job) => job.jobId === jobId)?.pendingInteractions).toEqual([]);
+    expect(upstream.calls).toHaveLength(1);
+
+    hold.release();
+    await eventually(() => state.listJobs().some((job) => job.jobId === jobId && job.status === "completed"));
   });
 
   it("lets GPT search, read, and version Bridge Markdown skills without starting Codex", async () => {
