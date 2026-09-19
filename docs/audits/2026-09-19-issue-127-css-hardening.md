@@ -1,8 +1,9 @@
 # #127 Decision-card CSS and CSP hardening — 2026-09-19
 
 Related issues: [#127](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/127),
-[#129](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/129), and
-[#132](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/132)
+[#131](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/131),
+[#132](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/132), and
+[#129](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/129)
 
 ## Conclusion
 
@@ -78,13 +79,27 @@ property names, mixed safe gradients plus unsafe URLs, SVG paint attributes, and
 
 The production browser regression passes escaped CSS and SVG paint through the
 real sanitizer, mounts the production Decision resource in Chromium, and runs a
-local leak endpoint. The prepared HTML contains no leak URL and the endpoint
-records zero requests.
+local leak endpoint. A post-merge review found that the first version of this
+test embedded port 80 in the two escaped payloads while the detector listened on
+an operating-system-assigned port. The prepared/mounted DOM assertions from that
+run remained valid, but the server's zero counter was not independent evidence
+that Chromium made no request attempt.
+
+The corrected harness starts the detector first and embeds its exact origin,
+including the assigned port, in both malicious values before calling
+`prepareDecisionCardContent`. Browser `request` and `requestfailed` listeners
+are attached before every scenario navigation. A same-browser positive control
+then loads a known stylesheet from the same detector: the observer records its
+exact URL once and the server receives it once. Only after that control succeeds
+does the harness require the sanitized card to produce zero browser attempts,
+zero failed requests, and zero server arrivals. The prepared and mounted HTML
+must also contain no `/leak` value, so DOM and network observations remain
+separate assertions.
 
 | Check | Result |
 | --- | --- |
 | `npx vitest run test/decisionCardContent.test.ts --maxWorkers=1` | 7/7 PASS |
-| `npm run test:issue-127-decision-card` | 12/12 PASS; escaped CSS/SVG leak requests 0 |
+| `npm run test:issue-127-decision-card` | 12/12 PASS; detector control browser/server 1/1; sanitized browser attempts 0, failed requests 0, server arrivals 0 |
 | `npm run check` | 88 files / 779 tests PASS |
 | `npm run app-server:compat:check` | 416 JSON schemas and 827 TypeScript schemas matched Codex CLI 0.153.3 |
 | `npm run mcp:conformance` | 29/29 PASS |
@@ -168,11 +183,15 @@ or private tunnel URL is retained in this audit.
 
 ## Remaining scope
 
-- User comprehension and decision-time claims remain unverified and belong to
-  #129.
+- GPT blind authoring from MCP discovery and validation-error self-correction
+  remain unverified and belong to #131. The CSP exercise required an explicit
+  corrected retry after the first call omitted `operation`; it is not evidence
+  that the authoring contract is already sufficient without hints.
 - The optional case where GPT uses a decision before continuing an existing
   Codex orchestration is outside the independent-card acceptance path and is
   tracked in #132. A card still never grants execution or approval authority.
+- User comprehension and decision-time claims remain unverified and belong to
+  #129.
 - Generated JavaScript, remote assets, canvas hit regions, and coordinate-only
   image decisions remain outside Decision v1.
 - Stable release approval should continue to treat sanitizer tests and host CSP

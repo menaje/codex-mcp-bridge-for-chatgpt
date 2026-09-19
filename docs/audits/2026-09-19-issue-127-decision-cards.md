@@ -94,15 +94,22 @@ calling runtime functions directly.
 
 The malicious comparison fixture also includes a script, iframe, remote image,
 event handler, external link, CSS-escaped resource-loading background, and an
-escaped external SVG paint. The sanitized DOM contained none of them and the
-local leak endpoint observed zero requests.
+escaped external SVG paint. The sanitized DOM contained none of them. The
+initial endpoint counter was later found to use a different port from the two
+escaped payload URLs, so that counter alone did not prove absence of browser
+request attempts. The corrected regression starts the endpoint first, embeds
+its assigned port in the payloads, attaches browser request and failed-request
+observers before navigation, proves both observer and endpoint with one known
+stylesheet request, and then records zero sanitized-card browser attempts,
+failed requests, and server arrivals. See the linked post-merge hardening
+record for the correction and evidence boundary.
 Receipts and presentation proofs never appeared in visible card text.
 
 Observed command:
 
 ```text
 npm run test:issue-127-decision-card
-Issue #127 decision card: 12/12 Chromium scenarios passed.
+Issue #127 decision card: 12/12 Chromium scenarios passed; detector control 1/1, sanitized leak attempts 0.
 ```
 
 ## Same-evidence evaluation
@@ -248,3 +255,18 @@ setting.
   decision in its next natural-language response; actual-host observation is
   required for that claim.
 - Card confirmation never grants Codex or external execution authority.
+
+## Tracked follow-ups
+
+- [#131](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/131):
+  align the GPT authoring contract with MCP discovery and verify blind authoring
+  plus validator-driven self-correction.
+- [#132](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/132):
+  verify that an optional Codex continuation preserves question validity and
+  execution/approval boundaries.
+- [#129](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/129):
+  run the independent-participant comprehension and decision-time study.
+
+These are distinct unverified scopes. Their open status does not undo the
+independent Decision Card v1 implementation, and this audit does not claim they
+have been completed.

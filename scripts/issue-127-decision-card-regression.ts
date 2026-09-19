@@ -18,21 +18,22 @@ const receipt = `decision_${"e".repeat(64)}`;
 const onePixelPng =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
-const rawLayouts = {
-  prose: `
+function buildRawLayouts(leakOrigin: string) {
+  return {
+    prose: `
     <article><h2>Why this choice matters</h2>
       <p>The reversible window lasts seven days. No option is preselected.</p>
       <p><strong>Unknown:</strong> peak traffic during the first hour.</p>
     </article>`,
-  table: `
-    <article style="display:grid;gap:12px;background:u\\72l(http://127.0.0.1/leak-escaped.css)">
+    table: `
+    <article style="display:grid;gap:12px;background:u\\72l(${leakOrigin}/leak-escaped.css)">
       <h2>Release plan</h2>
       <script>fetch('/leak-script')</script>
       <iframe src="/leak-frame"></iframe>
       <img src="/leak-image" onerror="fetch('/leak-error')" alt="blocked remote image">
       <a href="https://example.invalid/escape">external navigation</a>
       <svg viewBox="0 0 20 20" aria-label="Escaped external SVG paint">
-        <rect width="20" height="20" fill="u\\72l(http://127.0.0.1/leak-paint.svg)"></rect>
+        <rect width="20" height="20" fill="u\\72l(${leakOrigin}/leak-paint.svg)"></rect>
       </svg>
       <table><thead><tr><th>Plan</th><th>Downtime</th><th>Rollback</th></tr></thead>
         <tbody><tr><td>Staged transition</td><td>Low</td><td>Checkpointed</td></tr>
@@ -50,7 +51,7 @@ const rawLayouts = {
       <label><input name="compatibility" type="checkbox"> Preserve the existing API</label>
       <label>Plan conditions <textarea name="conditions" maxlength="300"></textarea></label>
     </article>`,
-  visual: `
+    visual: `
     <figure><figcaption>Relative migration risk</figcaption>
       <svg viewBox="0 0 240 72" role="img" aria-label="Staged risk 30, direct risk 70">
         <rect x="0" y="8" width="72" height="20" fill="#16875a"></rect>
@@ -66,45 +67,44 @@ const rawLayouts = {
       <label><input type="radio" name="risk" value="lower" required> Lower risk — staged transition</label>
       <label><input type="radio" name="risk" value="faster"> Faster result — direct migration</label>
     </fieldset>`
-} as const;
+  } as const;
+}
 
-type LayoutName = keyof typeof rawLayouts;
+type RawLayouts = ReturnType<typeof buildRawLayouts>;
+type LayoutName = keyof RawLayouts;
 const preparationMetrics: Array<Record<string, number | string>> = [];
-const preparedLayouts = Object.fromEntries(Object.entries(rawLayouts).map(([name, html]) => {
-  const startedAt = process.hrtime.bigint();
-  const prepared = prepareDecisionCardContent(html);
-  preparationMetrics.push({
-    layout: name,
-    rawBytes: Buffer.byteLength(html, "utf8"),
-    sanitizedBytes: Buffer.byteLength(prepared.html, "utf8"),
-    fields: prepared.fields.length,
-    prepareMicroseconds: Number((process.hrtime.bigint() - startedAt) / 1_000n)
-  });
-  return [name, {
-    kind: "codex/decisionCard",
-    version: 1,
-    card: {
-      cardId,
-      cardVersion: 1,
-      title: name === "prose" ? "Understand the rollout" : name === "table" ? "Choose a release plan" : "Choose a risk posture",
-      html: prepared.html,
-      contentDigest: prepared.contentDigest,
-      fields: prepared.fields,
-      policy: prepared.policy,
-      presentationRef,
-      expiresAt: "2026-09-20T00:00:00.000Z"
-    },
-    latestSubmission: null,
-    compatibilityScopeId: null
-  }];
-})) as Record<LayoutName, any>;
+let preparedLayouts: Record<LayoutName, any>;
 
-assert(!preparedLayouts.table.card.html.includes("script"));
-assert(!preparedLayouts.table.card.html.includes("iframe"));
-assert(!preparedLayouts.table.card.html.includes("/leak"));
-assert(!preparedLayouts.table.card.html.includes("href="));
-assert(preparedLayouts.visual.card.html.includes("<svg"));
-assert(preparedLayouts.visual.card.html.includes("data:image/png"));
+function prepareLayouts(rawLayouts: RawLayouts): Record<LayoutName, any> {
+  return Object.fromEntries(Object.entries(rawLayouts).map(([name, html]) => {
+    const startedAt = process.hrtime.bigint();
+    const prepared = prepareDecisionCardContent(html);
+    preparationMetrics.push({
+      layout: name,
+      rawBytes: Buffer.byteLength(html, "utf8"),
+      sanitizedBytes: Buffer.byteLength(prepared.html, "utf8"),
+      fields: prepared.fields.length,
+      prepareMicroseconds: Number((process.hrtime.bigint() - startedAt) / 1_000n)
+    });
+    return [name, {
+      kind: "codex/decisionCard",
+      version: 1,
+      card: {
+        cardId,
+        cardVersion: 1,
+        title: name === "prose" ? "Understand the rollout" : name === "table" ? "Choose a release plan" : "Choose a risk posture",
+        html: prepared.html,
+        contentDigest: prepared.contentDigest,
+        fields: prepared.fields,
+        policy: prepared.policy,
+        presentationRef,
+        expiresAt: "2026-09-20T00:00:00.000Z"
+      },
+      latestSubmission: null,
+      compatibilityScopeId: null
+    }];
+  })) as Record<LayoutName, any>;
+}
 
 const scenarioDefinitions = [
   { name: "prose-explanation", layout: "prose", frames: 1 },
@@ -238,11 +238,23 @@ async function cli(...args: string[]): Promise<string> {
   return result.stdout.trim();
 }
 
-let blockedNetworkRequests = 0;
+let detectorControlServerRequests = 0;
+const serverLeakArrivals: string[] = [];
 const server = createServer((request, response) => {
-  const url = new URL(request.url || "/", "http://127.0.0.1");
-  if (url.pathname.startsWith("/leak")) {
-    blockedNetworkRequests += 1;
+  const url = new URL(request.url || "/", `http://${request.headers.host || "127.0.0.1"}`);
+  if (url.pathname === "/leak-detector-control.css") {
+    detectorControlServerRequests += 1;
+    response.setHeader("Content-Type", "text/css; charset=utf-8");
+    response.end("body{color:rgb(1,2,3)}");
+    return;
+  }
+  if (url.pathname === "/network-detector-shell") {
+    response.setHeader("Content-Type", "text/html; charset=utf-8");
+    response.end("<!doctype html><title>network detector shell</title>");
+    return;
+  }
+  if (url.pathname.startsWith("/leak-")) {
+    serverLeakArrivals.push(url.href);
     response.statusCode = 500;
     response.end("unexpected generated-content request");
     return;
@@ -261,18 +273,63 @@ const server = createServer((request, response) => {
 });
 await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 const port = (server.address() as { port: number }).port;
+const leakOrigin = `http://127.0.0.1:${port}`;
+const detectorControlUrl = `${leakOrigin}/leak-detector-control.css`;
+const detectorShellUrl = `${leakOrigin}/network-detector-shell`;
+const maliciousResourceUrls = [
+  `${leakOrigin}/leak-escaped.css`,
+  `${leakOrigin}/leak-paint.svg`
+];
+const rawLayouts = buildRawLayouts(leakOrigin);
+for (const resourceUrl of maliciousResourceUrls) {
+  assert(rawLayouts.table.includes(resourceUrl), `malicious fixture does not target the active leak detector: ${resourceUrl}`);
+}
+preparedLayouts = prepareLayouts(rawLayouts);
+
+assert(!preparedLayouts.table.card.html.includes("script"));
+assert(!preparedLayouts.table.card.html.includes("iframe"));
+assert(!preparedLayouts.table.card.html.includes("/leak"));
+assert(!preparedLayouts.table.card.html.includes("href="));
+assert(preparedLayouts.visual.card.html.includes("<svg"));
+assert(preparedLayouts.visual.card.html.includes("data:image/png"));
+
 const results: Array<Record<string, unknown>> = [];
+const browserLeakRequestAttempts: string[] = [];
+const browserFailedLeakRequests: Array<{ url: string; errorText: string | null }> = [];
 
 try {
-  await cli("open", `http://127.0.0.1:${port}/?scenario=${scenarioDefinitions[0].name}`);
-  for (const [scenarioIndex, scenario] of scenarioDefinitions.entries()) {
+  await cli("open", "about:blank");
+  const detectorControl = JSON.parse(await cli("run-code", `async page=>{
+    const controlUrl=${JSON.stringify(detectorControlUrl)},shellUrl=${JSON.stringify(detectorShellUrl)},attempts=[],failures=[];
+    const onRequest=request=>{if(request.url()===controlUrl)attempts.push(request.url())};
+    const onRequestFailed=request=>{if(request.url()===controlUrl)failures.push({url:request.url(),errorText:(request.failure()||{}).errorText||null})};
+    page.on("request",onRequest);page.on("requestfailed",onRequestFailed);
+    try{
+      await page.goto(shellUrl,{waitUntil:"load"});
+      await page.addStyleTag({url:controlUrl});
+      await page.waitForTimeout(50);
+      return{attempts,failures};
+    }finally{
+      page.off("request",onRequest);page.off("requestfailed",onRequestFailed);
+    }
+  }`)) as { attempts: string[]; failures: Array<{ url: string; errorText: string | null }> };
+  assert.deepEqual(detectorControl.attempts, [detectorControlUrl], "browser request observer did not capture the detector control request");
+  assert.deepEqual(detectorControl.failures, [], "detector control request unexpectedly failed");
+  assert.equal(detectorControlServerRequests, 1, "leak detector server did not receive exactly one control request");
+
+  for (const scenario of scenarioDefinitions) {
     const scenarioStartedAt = process.hrtime.bigint();
-    if (scenarioIndex > 0) await cli("goto", `http://127.0.0.1:${port}/?scenario=${scenario.name}`);
     const screenshotPath = ["prose-explanation", "table-accept-offered", "visual-defer"].includes(scenario.name)
       ? path.join(artifacts, `${scenario.name}.png`)
       : null;
     const raw = await cli("run-code", `async page=>{
-      const scenario=${JSON.stringify(scenario.name)},screenshotPath=${JSON.stringify(screenshotPath)};
+      const scenario=${JSON.stringify(scenario.name)},screenshotPath=${JSON.stringify(screenshotPath)},leakOrigin=${JSON.stringify(leakOrigin)};
+      const leakRequestAttempts=[],failedLeakRequests=[];
+      const isLeakRequest=rawUrl=>{try{const url=new URL(rawUrl);return url.origin===leakOrigin&&url.pathname.startsWith("/leak-")&&url.pathname!=="/leak-detector-control.css"}catch{return false}};
+      const onRequest=request=>{if(isLeakRequest(request.url()))leakRequestAttempts.push(request.url())};
+      const onRequestFailed=request=>{if(isLeakRequest(request.url()))failedLeakRequests.push({url:request.url(),errorText:(request.failure()||{}).errorText||null})};
+      page.on("request",onRequest);page.on("requestfailed",onRequestFailed);
+      await page.goto(${JSON.stringify(`${leakOrigin}/?scenario=`)}+encodeURIComponent(scenario),{waitUntil:"load"});
       await page.setViewportSize({width:390,height:900});
       await page.waitForFunction(expected=>{
         const frames=[...document.querySelectorAll("iframe")];
@@ -316,6 +373,7 @@ try {
         await page.waitForFunction(()=>window.__state.submissions.length===2&&window.__state.current.deliveryState==="host-accepted",undefined,{timeout:3000});
       }
       if(scenario==="timeout-unknown")await page.waitForTimeout(500);
+      await page.waitForTimeout(100);
       if(screenshotPath)await page.screenshot({path:screenshotPath,fullPage:true});
       const host=await page.evaluate(()=>JSON.parse(JSON.stringify(window.__state)));
       const cards=await Promise.all(frames.map(async frame=>({
@@ -330,7 +388,8 @@ try {
         overflow:await frame.locator("body").evaluate(body=>({client:body.clientWidth,scroll:body.scrollWidth})),
         errors:await frame.evaluate(()=>window.__errors)
       })));
-      return{host,cards};
+      page.off("request",onRequest);page.off("requestfailed",onRequestFailed);
+      return{host,cards,network:{leakRequestAttempts,failedLeakRequests}};
     }`);
     const observed = JSON.parse(raw) as {
       host: {
@@ -354,7 +413,16 @@ try {
         overflow: { client: number; scroll: number };
         errors: string[];
       }>;
+      network: {
+        leakRequestAttempts: string[];
+        failedLeakRequests: Array<{ url: string; errorText: string | null }>;
+      };
     };
+
+    browserLeakRequestAttempts.push(...observed.network.leakRequestAttempts);
+    browserFailedLeakRequests.push(...observed.network.failedLeakRequests);
+    assert.deepEqual(observed.network.leakRequestAttempts, [], `${scenario.name}: browser attempted a generated-content leak request`);
+    assert.deepEqual(observed.network.failedLeakRequests, [], `${scenario.name}: browser recorded a failed generated-content leak request`);
 
     assert.deepEqual(observed.cards.flatMap((card) => card.errors), [], scenario.name);
     for (const card of observed.cards) {
@@ -437,14 +505,30 @@ try {
       passed: true
     });
   }
-  assert.equal(blockedNetworkRequests, 0, "sanitized generated content attempted an external/local resource request");
+  assert.deepEqual(browserLeakRequestAttempts, [], "browser attempted a generated-content leak request");
+  assert.deepEqual(browserFailedLeakRequests, [], "browser recorded a failed generated-content leak request");
+  assert.deepEqual(serverLeakArrivals, [], "leak detector server received a generated-content resource request");
   writeFileSync(path.join(artifacts, "results.json"), JSON.stringify({
-    blockedNetworkRequests,
+    networkEvidence: {
+      leakOrigin,
+      maliciousResourceUrls,
+      detectorControl: {
+        url: detectorControlUrl,
+        browserRequestAttempts: detectorControl.attempts,
+        browserFailedRequests: detectorControl.failures,
+        serverRequestCount: detectorControlServerRequests
+      },
+      sanitizedCard: {
+        browserRequestAttempts: browserLeakRequestAttempts,
+        browserFailedRequests: browserFailedLeakRequests,
+        serverArrivals: serverLeakArrivals
+      }
+    },
     preparationMetrics,
     results
   }, null, 2));
   writeFileSync(path.join(artifacts, "final.snapshot.txt"), await cli("snapshot"));
-  console.log(`Issue #127 decision card: ${results.length}/${scenarioDefinitions.length} Chromium scenarios passed.`);
+  console.log(`Issue #127 decision card: ${results.length}/${scenarioDefinitions.length} Chromium scenarios passed; detector control 1/1, sanitized leak attempts 0.`);
 } catch (error) {
   writeFileSync(path.join(artifacts, "failure.txt"), String(error));
   throw error;
