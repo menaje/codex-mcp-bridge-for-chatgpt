@@ -136,7 +136,9 @@ capacity limits.
 Parser, storage, migration, scope, version, duplicate, retry, teardown, and
 browser-host simulations are covered by automated tests. See the issue-specific
 [evaluation record](audits/2026-09-19-issue-127-decision-cards.md) for layouts,
-scenarios, commands, and evidence boundaries.
+scenarios, commands, and evidence boundaries, and the
+[CSS/CSP hardening record](audits/2026-09-19-issue-127-css-hardening.md) for the
+escape-normalization regression and CSP-enforced actual-host verification.
 
 The implementation establishes the interaction and measurement path. It does not
 claim that cards already improve comprehension or decision time for real users.

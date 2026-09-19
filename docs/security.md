@@ -159,3 +159,11 @@ For a release that changes MCP or tool descriptors, verify a real ChatGPT +
 Secure MCP Tunnel discovery, tool call, and card open. If the host rejects the
 current protocol or schema, record a deployment blocker. Do not re-enable a
 legacy wire or tool contract.
+
+For a Decision-content or resource-policy change, also run the production
+Decision Chromium regression with escaped CSS/SVG resource payloads. Separately
+enable actual-host CSP enforcement for the acceptance session, verify the host
+installs a policy that excludes unapproved resource/connect destinations, and
+restore the operator's original global setting afterward. A clean sanitizer run
+does not by itself prove host CSP enforcement, and a dependency advisory scan is
+not a security audit of custom sanitization or authorization logic.

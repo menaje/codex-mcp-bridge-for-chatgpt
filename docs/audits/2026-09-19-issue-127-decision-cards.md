@@ -2,6 +2,9 @@
 
 Related issue: [#127](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/127)
 
+Post-merge security remediation:
+[CSS and CSP hardening record](2026-09-19-issue-127-css-hardening.md)
+
 ## Conclusion
 
 The Bridge now has one project- and Job-independent GPT–user Decision resource.
@@ -26,7 +29,9 @@ unconfirmed and must not be presented as a measured benefit.
   SVG/raster visual explanation plus inputs.
 - Generated content is inert. Parser-based allowlists remove scripts, event
   handlers, navigation, frames, external media, SVG links, generated JavaScript,
-  and resource-loading CSS. The resource CSP declares no connect or resource
+  and resource-loading CSS. Inline declarations and SVG paint are parsed after
+  comments and CSS escapes are normalized; exact local SVG `url(#id)` paint is
+  the only retained URL form. The resource CSP declares no connect or resource
   domains. Static inline SVG and bounded raster `data:` images remain available.
 - Every submitted control has a stable name and semantic label. Choices retain
   both stored values and the labels shown to the user. Numeric bounds and steps,
@@ -88,8 +93,9 @@ calling runtime functions directly.
 | stale version | no submit or message | PASS |
 
 The malicious comparison fixture also includes a script, iframe, remote image,
-event handler, external link, and resource-loading CSS. The sanitized DOM
-contained none of them and the local leak endpoint observed zero requests.
+event handler, external link, CSS-escaped resource-loading background, and an
+escaped external SVG paint. The sanitized DOM contained none of them and the
+local leak endpoint observed zero requests.
 Receipts and presentation proofs never appeared in visible card text.
 
 Observed command:
@@ -167,7 +173,7 @@ rendering cost together. That study is tracked separately in
 | Schema/store/tool targeted suite after revision fix | 5 files / 66 tests PASS |
 | macOS helper future-schema integration | 44/44 PASS |
 | Chromium production resource regression | 12/12 PASS |
-| Dependency audit | 0 vulnerabilities |
+| npm dependency advisory audit | 0 reported vulnerabilities |
 
 The final full repository, App Server schema, native Swift, conformance, package,
 and release checks are recorded in the pull request validation summary.
@@ -221,6 +227,13 @@ connect/resource domain declarations. Consequently, the live observation proves
 host rendering and message ordering, while sanitizer, CSP metadata, and leak
 prevention remain established by the deterministic security regression rather
 than by this development-mode host session.
+
+The linked post-merge hardening record supersedes that limitation for the fixed
+runtime: it documents the CSS-escape reproduction and fix, a clean candidate,
+the same malicious input through the actual host with CSP enforcement enabled,
+the installed host policy, zero forbidden request URLs, successful card
+submission/result acknowledgement, and restoration of the original global
+setting.
 
 ## Supported boundary
 
