@@ -174,11 +174,53 @@ and release checks are recorded in the pull request validation summary.
 
 ## Actual ChatGPT host
 
-The actual host observation is recorded after deploying the final candidate and
-refreshing the existing Secure MCP Tunnel connection. Until that section is
-replaced with observed create → render → confirm → message → exact result → GPT
-acknowledgement evidence, deterministic browser success must not be described as
-actual ChatGPT completion.
+On 2026-09-19, the clean signed candidate built from runtime commit
+`4d5c004c24c8fb938ffcd374b4cb40dabadb078b` was launched from the macOS app
+bundle. The launcher reported build
+`4d5c004c24c8:34c67a171e66`; the stable state database migrated to schema 24,
+passed SQLite integrity checking, and the Bridge and Secure MCP Tunnel both
+reported connected with no active or pending Job.
+
+The existing development-mode ChatGPT plugin connection was refreshed. Its
+actual action and template inventory then included `codex_decision`,
+`codex_decision_result`, and
+`ui://codex-mcp-bridge/decision/v1.html`. A new ordinary ChatGPT Work
+conversation used only that plugin. GPT called `codex_decision` without creating
+a project, Activity, Agent, Job, or Codex process. The mounted host card showed
+the comparison table, text-labeled SVG risk graphic, required plan radios,
+bounded `weeks` input, API checkbox, editable condition and note, and the trusted
+outgoing preview.
+
+Two submission boundaries were observed:
+
+1. **After the GPT response ended:** the user path selected staged transition,
+   changed the maximum to `5 weeks`, preserved the API, changed the stop
+   condition, and added separate note and comment text. Confirmation first
+   created sequence 1, then the card reported host acceptance. ChatGPT displayed
+   the standard follow-up message, called `codex_decision_result` exactly once,
+   and acknowledged every stored meaning and edit in the same conversation. The
+   database recorded one delivery attempt, `host-accepted`, and a result offer.
+2. **While a later GPT response was actively streaming:** the same mounted card
+   changed the maximum from 5 to `4 weeks` and changed both note and comment.
+   Sequence 2 was stored with a supersedes link and accepted in one attempt while
+   the response was still active. The in-flight response finished with the prior
+   5-week context; the host then placed the decision message after that response
+   and started a follow-up turn. That turn read sequence 2 exactly once and
+   acknowledged the 4-week revision and new text. This establishes the supported
+   order: an active response does not gain the late decision mid-inference; the
+   accepted message is queued for the next turn.
+
+Both submissions ended `host-accepted` with `resultOfferedAt` present. A
+scope-local database check found zero Activities, Agents, and Jobs. No receipt,
+conversation identifier, or private host URL is retained in this audit.
+
+The installed connector was in development mode and ChatGPT's account-wide
+"enforce CSP in developer mode" switch was off; that unrelated global setting
+was not changed. The refreshed registration did expose this resource's empty
+connect/resource domain declarations. Consequently, the live observation proves
+host rendering and message ordering, while sanitizer, CSP metadata, and leak
+prevention remain established by the deterministic security regression rather
+than by this development-mode host session.
 
 ## Supported boundary
 
