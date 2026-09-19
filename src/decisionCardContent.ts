@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
+import postcss from "postcss";
+import valueParser from "postcss-value-parser";
 import sanitizeHtml from "sanitize-html";
 import { assertJsonTextIntegrity, assertWellFormedUnicode } from "./textIntegrity.js";
 
@@ -81,7 +83,32 @@ export type CanonicalDecision = {
 type HtmlElement = DefaultTreeAdapterMap["element"];
 type HtmlNode = DefaultTreeAdapterMap["node"];
 
-const SAFE_STYLE_VALUE = /^(?!.*(?:url\s*\(|image-set\s*\(|cross-fade\s*\(|element\s*\(|paint\s*\(|expression\s*\(|@import|javascript\s*:|behavior\s*:|-[a-z]+-binding)).{0,500}$/i;
+const DECISION_STYLE_MAX_CHARACTERS = 8_192;
+const DECISION_STYLE_MAX_DECLARATIONS = 64;
+const DECISION_STYLE_VALUE_MAX_CHARACTERS = 500;
+const ALLOWED_STYLE_PROPERTIES = [
+  "align-items", "background", "background-color", "border", "border-color", "border-radius",
+  "border-style", "border-width", "color", "display", "flex", "flex-basis", "flex-direction",
+  "flex-grow", "flex-shrink", "flex-wrap", "font-family", "font-size", "font-style",
+  "font-weight", "gap", "grid-column", "grid-row", "grid-template-columns", "height",
+  "justify-content", "line-height", "margin", "margin-bottom", "margin-left", "margin-right",
+  "margin-top", "max-height", "max-width", "min-height", "min-width", "object-fit", "opacity",
+  "overflow", "overflow-wrap", "padding", "padding-bottom", "padding-left", "padding-right",
+  "padding-top", "text-align", "text-decoration", "vertical-align", "white-space", "width"
+] as const;
+const ALLOWED_STYLE_PROPERTY_SET = new Set<string>(ALLOWED_STYLE_PROPERTIES);
+const SAFE_STYLE_VALUE = /^[\s\S]{0,500}$/;
+const SAFE_CSS_COLOR_FUNCTIONS = new Set([
+  "color", "color-mix", "hsl", "hsla", "hwb", "lab", "lch", "light-dark",
+  "oklab", "oklch", "rgb", "rgba"
+]);
+const SAFE_CSS_STYLE_FUNCTIONS = new Set([
+  ...SAFE_CSS_COLOR_FUNCTIONS,
+  "abs", "calc", "clamp", "conic-gradient", "fit-content", "linear-gradient", "max", "min",
+  "minmax", "mod", "radial-gradient", "rem", "repeat", "repeating-conic-gradient",
+  "repeating-linear-gradient", "repeating-radial-gradient", "round", "sign"
+]);
+const UNSAFE_NORMALIZED_CSS = /(?:\b(?:url|image|image-set|-webkit-image-set|cross-fade|element|paint|expression)\s*\(|@import|javascript\s*:|behavior\s*:|-[a-z0-9-]+-binding)/i;
 const SAFE_DATA_RASTER_IMAGE = /^data:image\/(?:png|jpeg|webp|gif);base64,[a-z0-9+/]+={0,2}$/i;
 const DECISION_FIELD_NAME = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
 const ALLOWED_INPUT_TYPES = new Set([
@@ -101,15 +128,147 @@ const ALLOWED_INPUT_TYPES = new Set([
   "checkbox"
 ]);
 
+function decodeCssEscapes(value: string): string {
+  let decoded = "";
+  for (let index = 0; index < value.length;) {
+    if (value[index] !== "\\") {
+      decoded += value[index];
+      index += 1;
+      continue;
+    }
+    index += 1;
+    if (index >= value.length) {
+      decoded += "\uFFFD";
+      break;
+    }
+    const next = value[index]!;
+    if (next === "\r" || next === "\n" || next === "\f") {
+      if (next === "\r" && value[index + 1] === "\n") index += 1;
+      index += 1;
+      continue;
+    }
+    if (/[0-9a-f]/i.test(next)) {
+      let hex = "";
+      while (index < value.length && hex.length < 6 && /[0-9a-f]/i.test(value[index]!)) {
+        hex += value[index];
+        index += 1;
+      }
+      if (index < value.length && /[\t\n\f\r ]/.test(value[index]!)) {
+        if (value[index] === "\r" && value[index + 1] === "\n") index += 1;
+        index += 1;
+      }
+      const codePoint = Number.parseInt(hex, 16);
+      decoded += codePoint === 0 || codePoint > 0x10FFFF || codePoint >= 0xD800 && codePoint <= 0xDFFF
+        ? "\uFFFD"
+        : String.fromCodePoint(codePoint);
+      continue;
+    }
+    decoded += next;
+    index += 1;
+  }
+  return decoded;
+}
+
+function cssWithoutComments(value: string): string | undefined {
+  const parsed = valueParser(value);
+  let malformed = false;
+  parsed.walk((node) => {
+    if ("unclosed" in node && node.unclosed) malformed = true;
+  });
+  if (malformed) return undefined;
+  return valueParser.stringify(parsed.nodes, (node) => node.type === "comment" ? "" : undefined);
+}
+
+function sanitizeCssValue(
+  rawValue: string,
+  allowedFunctions: ReadonlySet<string>
+): string | undefined {
+  if (rawValue.length > DECISION_STYLE_VALUE_MAX_CHARACTERS) return undefined;
+  const uncommented = cssWithoutComments(rawValue);
+  if (uncommented === undefined) return undefined;
+  const parsed = valueParser(uncommented);
+  let unsafe = false;
+  parsed.walk((node) => {
+    if ("unclosed" in node && node.unclosed) {
+      unsafe = true;
+      return;
+    }
+    if (node.type === "function") {
+      const name = decodeCssEscapes(node.value).toLowerCase();
+      if (!/^[a-z][a-z0-9-]*$/.test(name) || !allowedFunctions.has(name)) {
+        unsafe = true;
+        return;
+      }
+      node.value = name;
+      return;
+    }
+    if (node.type === "word" || node.type === "unicode-range") {
+      const normalizedWord = decodeCssEscapes(node.value);
+      if (/[\u0000-\u0008\u000B\u000E-\u001F\u007F]/.test(normalizedWord) ||
+        UNSAFE_NORMALIZED_CSS.test(normalizedWord)) unsafe = true;
+    }
+  });
+  if (unsafe) return undefined;
+  const canonical = valueParser.stringify(parsed.nodes).trim();
+  if (!canonical || canonical.length > DECISION_STYLE_VALUE_MAX_CHARACTERS) return undefined;
+  const normalized = decodeCssEscapes(canonical);
+  if (UNSAFE_NORMALIZED_CSS.test(normalized)) return undefined;
+  return canonical;
+}
+
+function sanitizeInlineStyle(style: string): string | undefined {
+  if (style.length > DECISION_STYLE_MAX_CHARACTERS) return undefined;
+  try {
+    const root = postcss.parse(`decision-card{${style}}`, { from: undefined });
+    if (root.nodes.length !== 1 || root.first?.type !== "rule" ||
+      root.first.selector !== "decision-card" ||
+      root.first.nodes.length > DECISION_STYLE_MAX_DECLARATIONS) return undefined;
+    const declarations: string[] = [];
+    for (const node of root.first.nodes) {
+      if (node.type !== "decl") continue;
+      const property = decodeCssEscapes(node.prop).trim().toLowerCase();
+      if (!ALLOWED_STYLE_PROPERTY_SET.has(property)) continue;
+      const value = sanitizeCssValue(node.value, SAFE_CSS_STYLE_FUNCTIONS);
+      if (value !== undefined) declarations.push(`${property}:${value}`);
+    }
+    return declarations.join(";") || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function sanitizeStyleAttribute(
+  tagName: string,
+  attributes: sanitizeHtml.Attributes
+): sanitizeHtml.Tag {
+  const attribs: sanitizeHtml.Attributes = { ...attributes };
+  if (attribs.style !== undefined) {
+    const style = sanitizeInlineStyle(attribs.style);
+    if (style) attribs.style = style;
+    else delete attribs.style;
+  }
+  return { tagName, attribs };
+}
+
+function sanitizeSvgPaint(value: string): string | undefined {
+  const uncommented = cssWithoutComments(value);
+  if (uncommented === undefined) return undefined;
+  const normalized = decodeCssEscapes(uncommented).trim();
+  const localReference = /^url\(\s*#([A-Za-z][A-Za-z0-9_.:-]{0,127})\s*\)$/i.exec(normalized);
+  if (localReference) return `url(#${localReference[1]})`;
+  return sanitizeCssValue(value, SAFE_CSS_COLOR_FUNCTIONS);
+}
+
 function sanitizeSvgPaintAttributes(
   tagName: string,
   attributes: sanitizeHtml.Attributes
 ): sanitizeHtml.Tag {
   const attribs: sanitizeHtml.Attributes = {};
   for (const [name, value] of Object.entries(attributes)) {
-    if ((name === "fill" || name === "stroke") && /url\s*\(/i.test(value) &&
-      !/^url\(#[A-Za-z][A-Za-z0-9_.:-]{0,127}\)$/.test(value)) continue;
-    attribs[name] = value;
+    if (name === "fill" || name === "stroke") {
+      const paint = sanitizeSvgPaint(value);
+      if (paint !== undefined) attribs[name] = paint;
+    } else attribs[name] = value;
   }
   return { tagName, attribs };
 }
@@ -167,16 +326,7 @@ const DECISION_HTML_POLICY: sanitizeHtml.IOptions = {
     tspan: ["x", "y", "dx", "dy", "fill", "font-size", "font-weight", "text-anchor"]
   },
   allowedStyles: {
-    "*": Object.fromEntries([
-      "align-items", "background", "background-color", "border", "border-color", "border-radius",
-      "border-style", "border-width", "color", "display", "flex", "flex-basis", "flex-direction",
-      "flex-grow", "flex-shrink", "flex-wrap", "font-family", "font-size", "font-style",
-      "font-weight", "gap", "grid-column", "grid-row", "grid-template-columns", "height",
-      "justify-content", "line-height", "margin", "margin-bottom", "margin-left", "margin-right",
-      "margin-top", "max-height", "max-width", "min-height", "min-width", "object-fit", "opacity",
-      "overflow", "overflow-wrap", "padding", "padding-bottom", "padding-left", "padding-right",
-      "padding-top", "text-align", "text-decoration", "vertical-align", "white-space", "width"
-    ].map((property) => [property, [SAFE_STYLE_VALUE]]))
+    "*": Object.fromEntries(ALLOWED_STYLE_PROPERTIES.map((property) => [property, [SAFE_STYLE_VALUE]]))
   },
   allowedSchemes: ["data"],
   allowedSchemesByTag: { img: ["data"] },
@@ -187,6 +337,7 @@ const DECISION_HTML_POLICY: sanitizeHtml.IOptions = {
   parseStyleAttributes: true,
   exclusiveFilter: (frame) => frame.tag === "img" && !SAFE_DATA_RASTER_IMAGE.test(frame.attribs.src || ""),
   transformTags: {
+    "*": sanitizeStyleAttribute,
     input: (tagName, attributes): sanitizeHtml.Tag => {
       const type = String(attributes.type || "text").toLowerCase();
       if (ALLOWED_INPUT_TYPES.has(type)) {

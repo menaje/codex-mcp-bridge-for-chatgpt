@@ -47,7 +47,10 @@ Generated content is untrusted and inert:
 
 - an HTML parser and allowlist sanitizer remove scripts, event handlers, forms'
   navigation targets, embedded frames/objects, external links, remote media,
-  SVG links, unsafe CSS, and unknown attributes;
+  SVG links, unsafe CSS, and unknown attributes. Inline CSS declarations are
+  parsed, comments are removed, CSS escapes are normalized, and only a small
+  set of non-loading value functions is accepted. SVG `fill` and `stroke`
+  receive the same treatment, except for exact local `url(#id)` references;
 - the resource CSP has no network or resource domains;
 - generated content cannot call MCP tools, post host messages, own delivery,
   read Bridge secrets, or supply JavaScript;

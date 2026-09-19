@@ -25,12 +25,15 @@ const rawLayouts = {
       <p><strong>Unknown:</strong> peak traffic during the first hour.</p>
     </article>`,
   table: `
-    <article style="display:grid;gap:12px;background:url(http://127.0.0.1/leak.css)">
+    <article style="display:grid;gap:12px;background:u\\72l(http://127.0.0.1/leak-escaped.css)">
       <h2>Release plan</h2>
       <script>fetch('/leak-script')</script>
       <iframe src="/leak-frame"></iframe>
       <img src="/leak-image" onerror="fetch('/leak-error')" alt="blocked remote image">
       <a href="https://example.invalid/escape">external navigation</a>
+      <svg viewBox="0 0 20 20" aria-label="Escaped external SVG paint">
+        <rect width="20" height="20" fill="u\\72l(http://127.0.0.1/leak-paint.svg)"></rect>
+      </svg>
       <table><thead><tr><th>Plan</th><th>Downtime</th><th>Rollback</th></tr></thead>
         <tbody><tr><td>Staged transition</td><td>Low</td><td>Checkpointed</td></tr>
         <tr><td>Direct migration</td><td>Medium</td><td>Full restore</td></tr></tbody></table>

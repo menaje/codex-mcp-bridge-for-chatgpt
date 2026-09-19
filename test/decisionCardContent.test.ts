@@ -46,6 +46,69 @@ describe("free-form decision card content", () => {
     });
   });
 
+  it("removes CSS-escaped resource loads from inline styles and SVG paint", () => {
+    const prepared = prepareDecisionCardContent(String.raw`
+      <article style="display:grid;background:u\72l(https://bad.example/style.png);color:#123456">
+        <h2>Escaped CSS</h2>
+        <svg viewBox="0 0 100 20" aria-label="Escaped paint checks">
+          <defs><linearGradient id="safeGradient"><stop offset="0" stop-color="#fff" /></linearGradient></defs>
+          <rect id="blocked-fill" width="30" height="10" fill="u\72l(https://bad.example/fill.svg)" />
+          <path id="blocked-stroke" d="M0 0 L30 10" stroke="\75 rl(https://bad.example/stroke.svg)" />
+          <rect id="safe-fill" x="35" width="30" height="10" fill="url(#safeGradient)" />
+        </svg>
+      </article>
+    `);
+
+    expect(prepared.html).toContain("display:grid");
+    expect(prepared.html).toContain("color:#123456");
+    expect(prepared.html).toContain('id="safe-fill"');
+    expect(prepared.html).toContain('fill="url(#safeGradient)"');
+    expect(prepared.html).not.toContain("bad.example");
+    expect(prepared.html).not.toMatch(/background\s*:/i);
+    expect(prepared.html).not.toMatch(/(?:fill|stroke)="[^\"]*\\/i);
+  });
+
+  it("normalizes CSS tokens before accepting only non-loading value functions", () => {
+    const unsafeBackgrounds = [
+      String.raw`u\72l(https://bad.example/a)`,
+      String.raw`U\000072L(https://bad.example/b)`,
+      String.raw`\75\72\6c(https://bad.example/c)`,
+      String.raw`u/**/rl(https://bad.example/d)`,
+      String.raw`u\72l/**/(https://bad.example/e)`,
+      String.raw`image\2d set(u\72l(https://bad.example/f) 1x)`,
+      String.raw`linear-gradient(#fff,#000),u\72l(https://bad.example/g)`,
+      "var(--host-image)"
+    ];
+    for (const background of unsafeBackgrounds) {
+      const prepared = prepareDecisionCardContent(
+        `<div style="display:grid;background:${background};color:rgb(1 2 3 / .8)">Safe text</div>`
+      );
+      expect(prepared.html, background).toContain("display:grid");
+      expect(prepared.html, background).toContain("color:rgb(1 2 3 / .8)");
+      expect(prepared.html, background).not.toContain("background:");
+      expect(prepared.html, background).not.toContain("bad.example");
+    }
+
+    const escapedProperty = prepareDecisionCardContent(String.raw`
+      <div style="b\61ckground:u\72l(https://bad.example/property.png);c\6flor:#123456;display:grid">
+        Escaped properties
+      </div>
+    `);
+    expect(escapedProperty.html).toContain("color:#123456");
+    expect(escapedProperty.html).toContain("display:grid");
+    expect(escapedProperty.html).not.toContain("background:");
+    expect(escapedProperty.html).not.toContain("bad.example");
+
+    const safe = prepareDecisionCardContent(`
+      <div style="background:linear-gradient(90deg,#fff,#000);width:calc(100% - 1rem);grid-template-columns:repeat(2,minmax(0,1fr))">
+        Safe presentation functions
+      </div>
+    `);
+    expect(safe.html).toContain("background:linear-gradient(90deg,#fff,#000)");
+    expect(safe.html).toContain("width:calc(100% - 1rem)");
+    expect(safe.html).toContain("grid-template-columns:repeat(2,minmax(0,1fr))");
+  });
+
   it("derives semantic labels and rejects values that were never displayed", () => {
     const prepared = prepareDecisionCardContent(`
       <fieldset><legend>Release strategy</legend>

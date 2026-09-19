@@ -45,8 +45,12 @@ The Decision resource is a trusted runtime around untrusted generated content.
 The server parses and allowlist-sanitizes free-form HTML and inline SVG before
 storage and rendering. Scripts, event handlers, frames, objects, navigation,
 external links and media, SVG links, generated JavaScript, unsafe CSS, and unknown
-attributes are removed. Only embedded raster `data:` images and static inline SVG
-are supported; the resource CSP declares no network or resource domains.
+attributes are removed. Inline CSS is parsed as declarations before the normal
+property allowlist is applied; comments and CSS identifier escapes are normalized,
+and unknown or resource-loading value functions are rejected. SVG paint values
+allow plain colors and exact local `url(#id)` references, never external URLs.
+Only embedded raster `data:` images and static inline SVG are supported; the
+resource CSP declares no network or resource domains.
 Generated markup cannot own host messaging or tool calls. Labeled native controls
 are converted to a stored semantic field contract, and the server rejects
 unknown fields, invalid choices, and values outside stored bounds when the trusted
