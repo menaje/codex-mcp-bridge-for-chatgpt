@@ -7,6 +7,7 @@ import {
   defaultStateProfile,
   enforceSandbox,
   findSensitiveFiles,
+  formatSensitiveFileFindings,
   isPathWithinRoot,
   loadConfig,
   requireAllowedCwd
@@ -398,6 +399,42 @@ describe("config policy", () => {
     expect(await findSensitiveFiles(root)).toEqual([]);
   });
 
+  it("allows only the narrowly benign npm settings bundled with generated VS Code runtimes", async () => {
+    const benignRoot = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    writeFileSync(
+      path.join(benignRoot, ".npmrc"),
+      'legacy-peer-deps="true"\ntimeout=180000\n'
+    );
+    expect(await findSensitiveFiles(benignRoot)).toEqual([]);
+
+    const credentialRoot = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    writeFileSync(path.join(credentialRoot, ".npmrc"), "//registry.example/:_authToken=secret\n");
+    expect(await findSensitiveFiles(credentialRoot)).toEqual([
+      path.join(credentialRoot, ".npmrc")
+    ]);
+
+    const unknownRoot = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    writeFileSync(path.join(unknownRoot, ".npmrc"), "registry=https://registry.npmjs.org\n");
+    expect(await findSensitiveFiles(unknownRoot)).toEqual([
+      path.join(unknownRoot, ".npmrc")
+    ]);
+  });
+
+  it("formats bounded project-relative sensitive-file diagnostics", () => {
+    const root = path.join(path.sep, "private", "project");
+    const findings = [
+      path.join(root, "config", ".env"),
+      path.join(root, "certs", "server.pem"),
+      path.join(root, "third.key")
+    ];
+
+    expect(formatSensitiveFileFindings(root, findings, 2)).toBe(
+      '"config/.env", "certs/server.pem" (+1 more)'
+    );
+    expect(formatSensitiveFileFindings(root, [path.join(path.sep, "outside", "secret.key")]))
+      .toBe('"secret.key"');
+  });
+
   it("fails closed when the working directory itself cannot be scanned", async () => {
     const rootFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-root-")), "not-a-directory");
     writeFileSync(rootFile, "plain file\n");
@@ -427,5 +464,14 @@ describe("config policy", () => {
     symlinkSync(target, path.join(root, ".env"));
 
     expect(await findSensitiveFiles(root)).toEqual([path.join(root, ".env")]);
+  });
+
+  it("does not apply the benign npm exception to symlinks", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
+    const target = path.join(root, "generated-npm-settings");
+    writeFileSync(target, 'legacy-peer-deps="true"\ntimeout=180000\n');
+    symlinkSync(target, path.join(root, ".npmrc"));
+
+    expect(await findSensitiveFiles(root)).toEqual([path.join(root, ".npmrc")]);
   });
 });

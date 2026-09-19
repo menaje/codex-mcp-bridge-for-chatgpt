@@ -334,6 +334,17 @@ When settings are opened from a remote client, enter the absolute path as it exi
 
 Do not place `.env`, credentials, or other common secret files inside a registered project. The Bridge intentionally blocks common secret filenames before starting work.
 
+The scan is independent of Git: `.gitignore` does not exclude a path from this
+check. Generated VS Code test runtimes should use the conventional
+`.vscode-test/` directory or a cache outside the registered project instead of
+an `artifacts/` subtree. The Bridge still scans ordinary `artifacts/`
+directories because generated output can accidentally contain copied
+credentials. A `.npmrc` is allowed only when it contains the narrowly recognized
+non-credential settings used by generated VS Code language servers
+(`legacy-peer-deps` and numeric `timeout`); unknown or authentication-related
+settings remain blocked. When admission is refused, the error reports a bounded
+list of project-relative paths without exposing the absolute project root.
+
 ### Server
 
 The Server tab is available only on the Mac that owns the local server:

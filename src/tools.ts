@@ -61,6 +61,7 @@ import { resolveExecutionPolicy, resolveTaskSandbox } from "./executionPolicy.js
 import { executionAccessArguments } from "./executionAccess.js";
 import {
   HARD_MAX_CONCURRENT_JOBS,
+  formatSensitiveFileFindings,
   isCodexBackendKind,
   findSensitiveFiles,
   isPathWithinRoot,
@@ -12829,8 +12830,9 @@ async function enforceSensitiveFilePreflight(
   if (!config.secretScan) return;
   const sensitiveFiles = await findSensitiveFiles(cwd);
   if (sensitiveFiles.length > 0) {
+    const findings = formatSensitiveFileFindings(cwd, sensitiveFiles);
     throw new Error(
-      `Refusing to ${operation} because ${sensitiveFiles.length} sensitive-looking file(s) were found in the project folder. Move them outside the project or set CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN=1 if you accept the risk.`
+      `Refusing to ${operation} because ${sensitiveFiles.length} sensitive-looking file(s) were found in the project folder. Project-relative path(s): ${findings}. Move them outside the project or set CODEX_MCP_BRIDGE_DISABLE_SECRET_SCAN=1 if you accept the risk.`
     );
   }
 }
