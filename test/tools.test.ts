@@ -995,6 +995,83 @@ describe("current bridge tool contracts", () => {
     });
   });
 
+  it("keeps Dashboard summary and deferred history on the same representative beyond the twelve-row boundary", async () => {
+    const scopeId = "80808080-8080-4080-8080-808080808080";
+    const agentId = "81818181-8181-4181-8181-818181818181";
+    const base = Date.now() - 10_000;
+    state.createAgent({
+      scopeId,
+      agentId,
+      agentName: "dashboard-history-boundary",
+      now: base
+    });
+    for (let index = 1; index <= 13; index += 1) {
+      const jobId = `history-boundary-old-${String(index).padStart(2, "0")}`;
+      state.upsertJob({
+        jobId,
+        scopeId,
+        requestId: randomUUID(),
+        status: "failed",
+        agentId,
+        createdAt: base + index,
+        updatedAt: base + 2_000 + index
+      });
+      state.deleteJob(jobId);
+    }
+    state.upsertJob({
+      jobId: "history-boundary-newest-run",
+      scopeId,
+      requestId: randomUUID(),
+      status: "completed",
+      agentId,
+      createdAt: base + 1_000,
+      updatedAt: base + 1_001
+    });
+    state.deleteJob("history-boundary-newest-run");
+
+    const summaryResult = await client.callTool({
+      name: "codex_ui_read",
+      arguments: {
+        view: "dashboard",
+        widgetInstanceId: randomUUID(),
+        scope: "all",
+        statusFilter: "all",
+        enrich: false,
+        includeHistory: true
+      }
+    });
+    expect(summaryResult.isError, JSON.stringify(summaryResult)).not.toBe(true);
+    const summary = (summaryResult.structuredContent as any).terminalRows.find((row: any) =>
+      row.agentName === "dashboard-history-boundary"
+    );
+    expect(summary?.latestTurn).toMatchObject({
+      status: "completed",
+      startedAt: new Date(base + 1_000).toISOString(),
+      updatedAt: new Date(base + 1_001).toISOString()
+    });
+    expect(summary?.historyRevision).toEqual(expect.any(String));
+
+    const detailResult = await client.callTool({
+      name: "codex_ui_read",
+      arguments: {
+        view: "dashboard-history",
+        rowKey: summary.rowKey,
+        widgetInstanceId: randomUUID(),
+        scope: "all"
+      }
+    });
+    expect(detailResult.isError, JSON.stringify(detailResult)).not.toBe(true);
+    const detail = detailResult.structuredContent as any;
+    expect(detail.historyRevision).toBe(summary.historyRevision);
+    expect(detail.historyCount).toBe(13);
+    expect(detail.history).toHaveLength(12);
+    expect(detail.history.map((turn: any) => turn.startedAt)).toEqual(
+      Array.from({length: 12}, (_, index) =>
+        new Date(base + 13 - index).toISOString()
+      )
+    );
+  });
+
   it("publishes draft-2020-12-compatible v6 asynchronous task input without retired fields", async () => {
     const tools = await client.listTools();
     const task = tools.tools.find((tool) => tool.name === "codex_task")!;

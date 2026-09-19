@@ -89,11 +89,15 @@ cross-domain `UPDATE jobs` statements.
   filtered status views preserve the Dashboard's created-time “latest run”
   meaning, while update-time ordering remains available for recent-history
   projection. The remaining history rows retain update-time order.
+- `DashboardReadModel.agentHistory` applies the same split at the Agent-detail
+  boundary: it always returns the exact created-time representative plus at
+  most twelve update-time-ordered rows that explicitly exclude that Job. The
+  representative therefore cannot fall outside the bounded history window.
 - Problem and automatic-recovery pages select their page before hydrating Job
   details. The selected Job IDs are fetched exactly, independently of the
   bounded recent overview, and their summaries are loaded in the same bulk
-  cache used by ordinary rows. `agentHistory` is a direct bounded Agent query
-  and returns the exact total from the same statement.
+  cache used by ordinary rows. `agentHistory` also returns the exact total from
+  the same statement.
 - Dashboard token summaries are fetched once in chunks of at most 500 Job IDs
   and reused for the request. No turn or row performs its own summary SELECT.
 - `StatusReadModel` provides exact Job and scope projections with no writes.

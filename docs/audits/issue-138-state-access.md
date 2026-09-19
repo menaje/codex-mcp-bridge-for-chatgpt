@@ -10,18 +10,21 @@ The disposable scale fixture is recorded in
 
 | Fixture | Overview rows loaded | Overview SQL | Overview time | Agent history rows |
 | --- | ---: | ---: | ---: | ---: |
-| 100 Jobs / 100 Agents | 100 | 1 | 1.351 ms | 1 |
-| 1,000 Jobs / 500 Agents | 500 | 1 | 5.500 ms | 2 |
-| 10,000 Jobs / 1,000 Agents | 1,000 | 1 | 38.471 ms | 10 |
+| 100 Jobs / 100 Agents | 100 | 1 | 2.118 ms | 1 |
+| 1,000 Jobs / 500 Agents | 500 | 1 | 5.788 ms | 2 |
+| 10,000 Jobs / 1,000 Agents | 1,000 | 1 | 46.327 ms | 10 |
 
 Ordinary overview materializes only one representative archived Job per Agent.
-The targeted mixed-order fixture has an older failed Job updated at 100 and a
-newer completed Job updated at 90. Created-time selection returned the newer
-completed Job, update-time selection returned the older failed Job, and an
-exact-ID lookup recovered the older Job's full timestamps and execution summary
-with zero writes. An exact Agent history query loads at most 13 rows and reports
-its complete total from the same SQL statement. Summary projection is one bulk
-query, not one query per row.
+The targeted mixed-order fixture has thirteen older failed Jobs whose update
+times all follow the newest created run. The newest run is therefore fourteenth
+by update time. Created-time overview and deferred detail both selected that
+newest completed Job, while update-time overview selected `old-13`. Deferred
+detail returned `old-13` first and exactly twelve historical rows, so the
+representative did not consume or fall outside the bounded history window. An
+exact-ID lookup also recovered `old-13`'s full timestamps and execution summary
+with zero writes. The Agent history statement reports the complete total while
+materializing at most one representative plus twelve history rows. Summary
+projection is one bulk query, not one query per row.
 
 These timings cover `listDashboardArchivedJobsByAgent()`, not complete
 `dashboardSnapshot()` construction or an MCP round trip. The fixture measures
@@ -64,7 +67,9 @@ documented in [`state-data-access.md`](../state-data-access.md).
 - Dashboard filtered overview uses created-time representative selection even
   when an older failure was updated later. Problem and automatic-recovery rows
   hydrate the selected page by exact retained Job ID, preserving timestamps and
-  summaries that are outside the recent overview window.
+  summaries that are outside the recent overview window. Deferred history uses
+  the same exact representative even when it ranks fourteenth by update time;
+  its `historyRevision` therefore matches the summary row.
 - Job reads no longer perform TTL pruning; explicit Job maintenance preserves
   the previous durable deletion behavior. Runtime slices inspect at most 64
   Jobs, remove at most 32, use a 10 ms cooperative deadline, and resume from a

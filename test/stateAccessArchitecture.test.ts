@@ -115,12 +115,14 @@ describe("state access ownership", () => {
 
       sql.length = 0;
       const overview = store.listDashboardArchivedJobsByAgent(SCOPE, 13);
-      const history = store.listDashboardAgentRetainedJobs(SCOPE, agent.agentId, 13);
-      const summaries = store.dashboardJobSummaries(history.jobs.map((job) => job.jobId));
+      const history = store.listDashboardAgentRetainedJobs(SCOPE, agent.agentId, 12);
+      const loadedHistory = [history.representative!, ...history.history];
+      const summaries = store.dashboardJobSummaries(loadedHistory.map((job) => job.jobId));
       expect(overview.jobs).toHaveLength(13);
       expect(overview.totalsByAgent.get(agent.agentId)).toBe(30);
       expect(history).toMatchObject({ total: 30 });
-      expect(history.jobs).toHaveLength(13);
+      expect(history.representative).toMatchObject({ jobId: "history-29" });
+      expect(history.history).toHaveLength(12);
       expect(summaries.size).toBe(13);
       expect(writes(sql)).toEqual([]);
       expect(sql.filter((statement) => /^\s*(?:WITH|SELECT)\b/iu.test(statement))).toHaveLength(3);
@@ -167,6 +169,49 @@ describe("state access ownership", () => {
           createdAt: 10,
           updatedAt: 100
         })]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("keeps the exact created-time representative outside the top twelve updated history rows", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    try {
+      const agent = store.createAgent({ scopeId: SCOPE, agentName: "History boundary", now: 1 });
+      for (let index = 1; index <= 13; index += 1) {
+        const jobId = `older-${String(index).padStart(2, "0")}`;
+        store.upsertJob({
+          jobId,
+          requestId: `66666666-6666-4666-8${String(index).padStart(3, "0")}-666666666666`,
+          scopeId: SCOPE,
+          agentId: agent.agentId,
+          status: "failed",
+          createdAt: index,
+          updatedAt: 2_000 + index
+        });
+        store.deleteJob(jobId);
+      }
+      store.upsertJob({
+        jobId: "newest-run",
+        requestId: "77777777-7777-4777-8777-777777777777",
+        scopeId: SCOPE,
+        agentId: agent.agentId,
+        status: "completed",
+        createdAt: 1_000,
+        updatedAt: 1_001
+      });
+      store.deleteJob("newest-run");
+
+      const overview = store.listDashboardArchivedJobsByAgent(SCOPE, 1, "created");
+      const detail = store.listDashboardAgentRetainedJobs(SCOPE, agent.agentId, 12);
+      expect(overview.jobs).toEqual([
+        expect.objectContaining({ jobId: "newest-run", status: "completed" })
+      ]);
+      expect(detail.representative).toMatchObject({ jobId: "newest-run", status: "completed" });
+      expect(detail.history.map((job) => job.jobId)).toEqual(
+        Array.from({length: 12}, (_, index) => `older-${String(13 - index).padStart(2, "0")}`)
+      );
+      expect(detail.total).toBe(14);
     } finally {
       store.close();
     }

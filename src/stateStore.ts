@@ -1090,12 +1090,19 @@ export class BridgeStateStore {
     return { jobs: result.rows.map(decodeDashboardArchivedJob), totalsByAgent: result.totalsByAgent };
   }
 
-  listDashboardAgentRetainedJobs(scopeId: string, agentId: string, limit = 13): {
-    jobs: DashboardRetainedJobSummary[];
+  listDashboardAgentRetainedJobs(scopeId: string, agentId: string, historyLimit = 12): {
+    representative?: DashboardRetainedJobSummary;
+    history: DashboardRetainedJobSummary[];
     total: number;
   } {
-    const result = this.dashboardReadModel.agentHistory(scopeId, agentId, limit);
-    return { jobs: result.rows.map(decodeDashboardArchivedJob), total: result.total };
+    const result = this.dashboardReadModel.agentHistory(scopeId, agentId, historyLimit);
+    return {
+      ...(result.representative
+        ? { representative: decodeDashboardArchivedJob(result.representative) }
+        : {}),
+      history: result.history.map(decodeDashboardArchivedJob),
+      total: result.total
+    };
   }
 
   listDashboardRetainedJobsByIds(jobIds: readonly string[], scopeId?: string): DashboardRetainedJobSummary[] {

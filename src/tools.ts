@@ -11165,9 +11165,12 @@ function buildDashboardHistoryDetail(
   const archivedProjection = jobs.admissionStateStore.listDashboardAgentRetainedJobs(
     agent.scopeId,
     agent.agentId,
-    DASHBOARD_HISTORY_LIMIT_PER_AGENT + 1
+    DASHBOARD_HISTORY_LIMIT_PER_AGENT
   );
-  const archived = archivedProjection.jobs
+  const archived = [
+    ...(archivedProjection.representative ? [archivedProjection.representative] : []),
+    ...archivedProjection.history
+  ]
     .filter((job) => isTerminalActivityJobStatus(job.status));
   summaryCache = jobs.admissionStateStore.dashboardJobSummaries([
     ...current.map((job) => job.jobId),

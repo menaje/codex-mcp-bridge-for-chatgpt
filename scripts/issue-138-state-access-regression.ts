@@ -41,22 +41,26 @@ try {
       const overviewMs = performance.now() - started;
       const agentId = `${fixture.name}-agent-0000`;
       const historyStarted = performance.now();
-      const history = store.listDashboardAgentRetainedJobs(fixture.name, agentId, 13);
+      const history = store.listDashboardAgentRetainedJobs(fixture.name, agentId, 12);
       const historyMs = performance.now() - historyStarted;
-      const summaries = store.dashboardJobSummaries(history.jobs.map(job => job.jobId));
+      const loadedHistory = [
+        ...(history.representative ? [history.representative] : []),
+        ...history.history
+      ];
+      const summaries = store.dashboardJobSummaries(loadedHistory.map(job => job.jobId));
       const counts = store.dashboardArchivedCounts(fixture.name);
       const statements = [...sql];
       assert.equal(counts.total, fixture.jobs);
       assert.ok(overview.jobs.length <= fixture.agents);
-      assert.ok(history.jobs.length <= 13);
-      assert.equal(summaries.size, history.jobs.length);
+      assert.ok(history.history.length <= 12);
+      assert.equal(summaries.size, loadedHistory.length);
       assert.equal(writeStatements(statements).length, 0);
       scales.push({
         ...fixture,
         overviewLoadedRows: overview.jobs.length,
         overviewSqlStatements: statements.filter(isQuery).length - 3,
         overviewMs: rounded(overviewMs),
-        agentHistoryLoadedRows: history.jobs.length,
+        agentHistoryLoadedRows: loadedHistory.length,
         agentHistoryTotal: history.total,
         agentHistoryMs: rounded(historyMs),
         completeArchivedCount: counts.total,
@@ -76,35 +80,48 @@ try {
       1,
       "updated"
     );
+    const detailedHistory = store.listDashboardAgentRetainedJobs(
+      "representative-order",
+      "representative-order-agent",
+      12
+    );
     const exactHistorical = store.listDashboardRetainedJobsByIds(
-      ["representative-order-older-failed"],
+      ["representative-order-old-13"],
       "representative-order"
     );
     const exactSummaries = store.dashboardJobSummaries(
       exactHistorical.map(job => job.jobId)
     );
     assert.equal(createdRepresentative.jobs[0]?.jobId, "representative-order-newer-completed");
-    assert.equal(updatedRepresentative.jobs[0]?.jobId, "representative-order-older-failed");
+    assert.equal(updatedRepresentative.jobs[0]?.jobId, "representative-order-old-13");
+    assert.equal(detailedHistory.representative?.jobId, "representative-order-newer-completed");
+    assert.deepEqual(
+      detailedHistory.history.map(job => job.jobId),
+      Array.from({length: 12}, (_, index) => `representative-order-old-${13 - index}`)
+    );
     assert.deepEqual(exactHistorical.map(job => ({
       jobId: job.jobId,
       status: job.status,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt
     })), [{
-      jobId: "representative-order-older-failed",
+      jobId: "representative-order-old-13",
       status: "failed",
-      createdAt: 10,
-      updatedAt: 100
+      createdAt: 13,
+      updatedAt: 2_013
     }]);
     const exactExecution = exactSummaries
-      .get("representative-order-older-failed")?.execution as {model?: string} | undefined;
+      .get("representative-order-old-13")?.execution as {model?: string} | undefined;
     assert.equal(exactExecution?.model, "gpt-5.6-sol");
     assert.equal(writeStatements(sql).length, 0);
     report.dashboardRepresentativeSelection = {
       createdTimeRepresentative: createdRepresentative.jobs[0]?.jobId,
       updatedTimeRepresentative: updatedRepresentative.jobs[0]?.jobId,
+      detailRepresentative: detailedHistory.representative?.jobId,
+      detailHistoryFirst: detailedHistory.history[0]?.jobId,
+      detailHistoryRows: detailedHistory.history.length,
       exactHistoricalRows: exactHistorical.length,
-      exactHistoricalSummaryLoaded: exactSummaries.has("representative-order-older-failed"),
+      exactHistoricalSummaryLoaded: exactSummaries.has("representative-order-old-13"),
       writes: 0
     };
 
@@ -267,19 +284,19 @@ function seedScaleFixture(
     );
     insertActivity.run(representativeActivity, representativeScope);
     for (const job of [
-      {
-        jobId: "representative-order-older-failed",
-        requestId: "representative-order-older-request",
+      ...Array.from({length: 13}, (_, index) => ({
+        jobId: `representative-order-old-${index + 1}`,
+        requestId: `representative-order-old-request-${index + 1}`,
         status: "failed",
-        createdAt: 10,
-        updatedAt: 100
-      },
+        createdAt: index + 1,
+        updatedAt: 2_001 + index
+      })),
       {
         jobId: "representative-order-newer-completed",
         requestId: "representative-order-newer-request",
         status: "completed",
-        createdAt: 20,
-        updatedAt: 90
+        createdAt: 1_000,
+        updatedAt: 1_001
       }
     ]) insertRepresentativeJob.run(
       job.jobId,
