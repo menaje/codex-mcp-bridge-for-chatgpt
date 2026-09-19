@@ -75,6 +75,16 @@ Required fields apply to **Confirm decision**; explanation requests and deferral
 may keep them unanswered. Empty, unknown, missing, duplicate, or newly injected
 fields and options are rejected.
 
+The same minimum contract is present in MCP discovery, so GPT does not need to
+read this document before authoring a card. `codex_decision` describes the
+required `operation`, supported native controls, stable names and visible labels,
+choice meaning, `required`, unit/output attributes, resource boundary, limits,
+and one compact example. The input schema repeats only field-specific guidance;
+this full document remains the canonical detailed contract. The server is still
+authoritative: an enabled `input`, `select`, or `textarea` without a `name` is
+rejected rather than rendered as an editable value that disappears from the
+result, and validation errors retain stable codes plus a concrete repair.
+
 Use ordinary semantic HTML:
 
 ```html

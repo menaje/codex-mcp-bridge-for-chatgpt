@@ -39,6 +39,20 @@ export const DECISION_CARD_MIME_TYPE = "text/html;profile=mcp-app";
 export const DECISION_CARD_STATIC_HTML_MAX_BYTES = 96 * 1_024;
 export const DECISION_CARD_METADATA_KEY = "codex/decisionCard@1";
 
+export const DECISION_CARD_MINIMAL_HTML_EXAMPLE =
+  '<fieldset><legend>Rollout</legend><label><input type="radio" name="plan" value="staged" required>Staged</label><label><input type="radio" name="plan" value="direct">Direct</label></fieldset><label>Duration <input type="number" name="weeks" min="1" max="12" data-decision-unit="weeks" required></label>';
+
+export const DECISION_CARD_AUTHORING_GUIDANCE = [
+  "Always include operation: use create for a new card, or revise with the exact cardId and expectedVersion returned by the current card.",
+  "Author free-form HTML, but collect decisions only with enabled native input, select, or textarea controls.",
+  "Every collected control needs a stable name starting with a letter and a human-visible label; use a wrapping label, label[for], fieldset/legend for radio or multi-checkbox groups, or data-decision-label.",
+  "Give every choice a non-empty value and a descriptive visible option label so the submitted value preserves what the user saw. required applies only when the user confirms.",
+  "Use data-decision-unit for units and data-decision-output-for to mirror a range value when useful.",
+  `HTML is limited to 96 KiB (${DECISION_CARD_HTML_MAX_BYTES} UTF-8 bytes), ${DECISION_CARD_MAX_FIELDS} derived fields, and ${DECISION_CARD_MAX_OPTIONS} options per field.`,
+  "Static inline SVG and base64 raster data images are supported; scripts, event handlers, remote resources, navigation, and generated JavaScript are removed.",
+  `Minimal example: ${DECISION_CARD_MINIMAL_HTML_EXAMPLE}`
+].join(" ");
+
 export const DECISION_CARD_RESOURCE_DESCRIPTOR = {
   title: `${PRODUCT_INFO.displayName} Decision`,
   description: "A trusted decision-card runtime for server-sanitized, free-form HTML and semantic user confirmation.",
@@ -129,24 +143,32 @@ const compatibilityScopeInput = z.string().uuid().optional().describe(
 );
 const cardMutationBase = {
   requestId: z.string().uuid().describe("Unique UUID for this logical card mutation. Reuse only for an identical retry."),
-  title: z.string().min(1).max(200),
+  title: z.string().min(1).max(200).describe("Visible card title, in the user's language, up to 200 characters."),
   html: z.string().min(1).max(DECISION_CARD_HTML_MAX_BYTES)
     .refine((value) => Buffer.byteLength(value, "utf8") <= DECISION_CARD_HTML_MAX_BYTES, {
       message: `HTML must be at most ${DECISION_CARD_HTML_MAX_BYTES} UTF-8 bytes.`
     })
-    .describe("Free-form HTML body. Scripts, event handlers, navigation, and external resources are removed; use labeled native inputs for semantic collection."),
-  expiresInMinutes: z.number().int().min(5).max(DECISION_CARD_MAX_EXPIRY_MINUTES).optional(),
+    .describe(
+      "Free-form sanitized HTML body. Follow the tool's authoring contract and minimal example. " +
+      "Use native input/select/textarea controls with stable names and visible labels; visible choice meanings, values, bounds, required state, and units become the submitted contract."
+    ),
+  expiresInMinutes: z.number().int().min(5).max(DECISION_CARD_MAX_EXPIRY_MINUTES).optional().describe(
+    `Optional lifetime in minutes, from 5 to ${DECISION_CARD_MAX_EXPIRY_MINUTES}.`
+  ),
   scopeId: compatibilityScopeInput
 };
 const decisionCardInputSchema = z.discriminatedUnion("operation", [
-  z.strictObject({ operation: z.literal("create"), ...cardMutationBase }),
   z.strictObject({
-    operation: z.literal("revise"),
+    operation: z.literal("create").describe("Required discriminator for opening a new decision card."),
+    ...cardMutationBase
+  }),
+  z.strictObject({
+    operation: z.literal("revise").describe("Required discriminator for replacing the current open card version."),
     ...cardMutationBase,
-    cardId: z.string().uuid(),
-    expectedVersion: z.number().int().positive()
+    cardId: z.string().uuid().describe("Exact cardId returned by the card being revised."),
+    expectedVersion: z.number().int().positive().describe("Exact current version; stale revisions fail closed.")
   })
-]);
+]).describe("Create or revise one decision card. The operation discriminator is always required.");
 
 const decisionResultInputSchema = z.strictObject({
   receipt: z.string().regex(/^decision_[a-f0-9]{64}$/),
@@ -219,7 +241,9 @@ export function registerDecisionCardTools(
   server.registerTool("codex_decision", {
     title: "Create or Revise a Decision Card",
     description:
-      "Create a free-form HTML decision aid for this GPT conversation, or revise an existing card. Use it when comparison, visual explanation, or editable conditions materially help the user decide; use normal conversation for simple questions. Layout is free-form, while labeled native inputs provide the minimal semantic submission contract. This never creates or runs a Codex task.",
+      "Create a free-form HTML decision aid for this GPT conversation, or revise an existing card. Use it when comparison, visual explanation, or editable conditions materially help the user decide; use normal conversation for simple questions. " +
+      DECISION_CARD_AUTHORING_GUIDANCE +
+      " This tool only opens the card; it never creates or runs a Codex task and confirmation is not execution approval.",
     inputSchema: decisionCardInputSchema,
     outputSchema: decisionCardOpenOutputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },

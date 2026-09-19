@@ -10,7 +10,11 @@ import { createHttpServer, type BridgeHttpServer } from "../src/server.js";
 import { BRIDGE_SKILL_LIMITS } from "../src/skillLibrary.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { DASHBOARD_CARD_URI } from "../src/dashboardCard.js";
-import { DECISION_CARD_METADATA_KEY, DECISION_CARD_URI } from "../src/decisionCard.js";
+import {
+  DECISION_CARD_METADATA_KEY,
+  DECISION_CARD_MINIMAL_HTML_EXAMPLE,
+  DECISION_CARD_URI
+} from "../src/decisionCard.js";
 import type { CodexProgress, CodexUpstream, ToolResult, UpstreamWorkerAssignment } from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 
@@ -192,6 +196,70 @@ describe("current bridge tool contracts", () => {
     expect(JSON.stringify(bridgeSkillManage.inputSchema)).toContain('"content"');
     expect(JSON.stringify(bridgeSkillManage.inputSchema)).not.toContain('"document"');
     expect(tools.tools.some((tool) => "codex/registrationTier" in (tool._meta || {}))).toBe(false);
+  });
+
+  it("publishes a compact, complete decision-card authoring contract in MCP discovery", async () => {
+    const tools = await client.listTools();
+    const decision = tools.tools.find((tool) => tool.name === "codex_decision")!;
+    const discovery = JSON.stringify({ description: decision.description, inputSchema: decision.inputSchema });
+
+    for (const guidance of [
+      "operation", "native input", "stable name", "visible label", "data-decision-label",
+      "data-decision-unit", "data-decision-output-for", "required", "Static inline SVG",
+      "scripts", "remote resources", "96", "64", "100"
+    ]) expect(discovery).toContain(guidance);
+    expect(decision.description).toContain(DECISION_CARD_MINIMAL_HTML_EXAMPLE);
+    expect(Buffer.byteLength(discovery, "utf8")).toBeLessThan(12_000);
+    expect(decision.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+    expect(tools.tools.some((tool) => tool.name === "codex_decision_guide")).toBe(false);
+
+    const branches = (decision.inputSchema as any).oneOf as Array<{ required?: string[] }>;
+    expect(branches).toHaveLength(2);
+    expect(branches.every((branch) => branch.required?.includes("operation"))).toBe(true);
+  });
+
+  it("returns an actionable authoring error and accepts a corrected retry without Codex work", async () => {
+    const requestId = randomUUID();
+    const invalid = await client.callTool({
+      name: "codex_decision",
+      arguments: {
+        operation: "create",
+        requestId,
+        title: "Choose a rollout",
+        html: '<input type="radio" name="plan" value="staged">'
+      },
+      _meta: metadata
+    });
+    expect(invalid.isError).toBe(true);
+    expect(JSON.stringify(invalid)).toMatch(
+      /DECISION_FIELD_LABEL_REQUIRED: plan\..*(wrapping <label>|label for|data-decision-label)/
+    );
+
+    const corrected = await client.callTool({
+      name: "codex_decision",
+      arguments: {
+        operation: "create",
+        requestId,
+        title: "Choose a rollout",
+        html: `
+          <fieldset><legend>Rollout plan</legend>
+            <label><input type="radio" name="plan" value="staged" required>Staged rollout</label>
+            <label><input type="radio" name="plan" value="direct">Direct rollout</label>
+          </fieldset>
+        `
+      },
+      _meta: metadata
+    });
+    expect(corrected.isError, JSON.stringify(corrected)).not.toBe(true);
+    expect(corrected.structuredContent).toMatchObject({ kind: "decision-card", fieldCount: 1 });
+    expect(upstream.calls).toEqual([]);
+    expect(state.listJobs()).toEqual([]);
+    expect(state.listActivities()).toEqual([]);
   });
 
   it("runs a Job-independent decision card through durable submission and same-conversation retrieval", async () => {
