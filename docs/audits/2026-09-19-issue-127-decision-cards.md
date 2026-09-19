@@ -156,7 +156,8 @@ comprehension nor faster decisions were demonstrated. A later participant study
 must randomize or counterbalance condition order, reuse the same facts, and
 measure comprehension questions, critical-condition omissions, corrections,
 decision time, follow-up count, confidence, generation latency/tokens, and
-rendering cost together.
+rendering cost together. That study is tracked separately in
+[#129](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/129).
 
 ## Automated repository verification
 

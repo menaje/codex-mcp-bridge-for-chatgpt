@@ -139,4 +139,5 @@ The implementation establishes the interaction and measurement path. It does not
 claim that cards already improve comprehension or decision time for real users.
 That product hypothesis requires a participant study using the same facts and
 task in prose and card conditions, measuring comprehension, omissions,
-corrections, time, and authoring/rendering overhead together.
+corrections, time, and authoring/rendering overhead together. The study is
+tracked in [#129](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/129).
