@@ -45,8 +45,12 @@ The Decision resource is a trusted runtime around untrusted generated content.
 The server parses and allowlist-sanitizes free-form HTML and inline SVG before
 storage and rendering. Scripts, event handlers, frames, objects, navigation,
 external links and media, SVG links, generated JavaScript, unsafe CSS, and unknown
-attributes are removed. Only embedded raster `data:` images and static inline SVG
-are supported; the resource CSP declares no network or resource domains.
+attributes are removed. Inline CSS is parsed as declarations before the normal
+property allowlist is applied; comments and CSS identifier escapes are normalized,
+and unknown or resource-loading value functions are rejected. SVG paint values
+allow plain colors and exact local `url(#id)` references, never external URLs.
+Only embedded raster `data:` images and static inline SVG are supported; the
+resource CSP declares no network or resource domains.
 Generated markup cannot own host messaging or tool calls. Labeled native controls
 are converted to a stored semantic field contract, and the server rejects
 unknown fields, invalid choices, and values outside stored bounds when the trusted
@@ -155,3 +159,11 @@ For a release that changes MCP or tool descriptors, verify a real ChatGPT +
 Secure MCP Tunnel discovery, tool call, and card open. If the host rejects the
 current protocol or schema, record a deployment blocker. Do not re-enable a
 legacy wire or tool contract.
+
+For a Decision-content or resource-policy change, also run the production
+Decision Chromium regression with escaped CSS/SVG resource payloads. Separately
+enable actual-host CSP enforcement for the acceptance session, verify the host
+installs a policy that excludes unapproved resource/connect destinations, and
+restore the operator's original global setting afterward. A clean sanitizer run
+does not by itself prove host CSP enforcement, and a dependency advisory scan is
+not a security audit of custom sanitization or authorization logic.

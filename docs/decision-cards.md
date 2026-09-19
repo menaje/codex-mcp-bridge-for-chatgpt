@@ -47,7 +47,10 @@ Generated content is untrusted and inert:
 
 - an HTML parser and allowlist sanitizer remove scripts, event handlers, forms'
   navigation targets, embedded frames/objects, external links, remote media,
-  SVG links, unsafe CSS, and unknown attributes;
+  SVG links, unsafe CSS, and unknown attributes. Inline CSS declarations are
+  parsed, comments are removed, CSS escapes are normalized, and only a small
+  set of non-loading value functions is accepted. SVG `fill` and `stroke`
+  receive the same treatment, except for exact local `url(#id)` references;
 - the resource CSP has no network or resource domains;
 - generated content cannot call MCP tools, post host messages, own delivery,
   read Bridge secrets, or supply JavaScript;
@@ -133,7 +136,9 @@ capacity limits.
 Parser, storage, migration, scope, version, duplicate, retry, teardown, and
 browser-host simulations are covered by automated tests. See the issue-specific
 [evaluation record](audits/2026-09-19-issue-127-decision-cards.md) for layouts,
-scenarios, commands, and evidence boundaries.
+scenarios, commands, and evidence boundaries, and the
+[CSS/CSP hardening record](audits/2026-09-19-issue-127-css-hardening.md) for the
+escape-normalization regression and CSP-enforced actual-host verification.
 
 The implementation establishes the interaction and measurement path. It does not
 claim that cards already improve comprehension or decision time for real users.
