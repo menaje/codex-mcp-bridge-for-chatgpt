@@ -10,6 +10,7 @@ import { createHttpServer, type BridgeHttpServer } from "../src/server.js";
 import { BRIDGE_SKILL_LIMITS } from "../src/skillLibrary.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { DASHBOARD_CARD_URI } from "../src/dashboardCard.js";
+import { DECISION_CARD_METADATA_KEY, DECISION_CARD_URI } from "../src/decisionCard.js";
 import type { CodexProgress, CodexUpstream, ToolResult, UpstreamWorkerAssignment } from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 
@@ -172,7 +173,7 @@ describe("current bridge tool contracts", () => {
   it("publishes one current tool surface without compatibility tiers", async () => {
     const tools = await client.listTools();
     const names = new Set(tools.tools.map((tool) => tool.name));
-    for (const current of ["codex_task", "codex_cancel", "codex_models", "codex_settings", "codex_dashboard", "codex_ui_read", "bridge_skill", "bridge_skill_manage"]) {
+    for (const current of ["codex_task", "codex_cancel", "codex_models", "codex_settings", "codex_dashboard", "codex_decision", "codex_decision_result", "codex_ui_decision", "codex_ui_read", "bridge_skill", "bridge_skill_manage"]) {
       expect(names.has(current)).toBe(true);
     }
     for (const retired of [
@@ -191,6 +192,123 @@ describe("current bridge tool contracts", () => {
     expect(JSON.stringify(bridgeSkillManage.inputSchema)).toContain('"content"');
     expect(JSON.stringify(bridgeSkillManage.inputSchema)).not.toContain('"document"');
     expect(tools.tools.some((tool) => "codex/registrationTier" in (tool._meta || {}))).toBe(false);
+  });
+
+  it("runs a Job-independent decision card through durable submission and same-conversation retrieval", async () => {
+    const opened = await client.callTool({
+      name: "codex_decision",
+      arguments: {
+        operation: "create",
+        requestId: randomUUID(),
+        title: "Choose the migration path",
+        html: `
+          <section><h2>Options</h2><table><tr><th>Path</th><th>Risk</th></tr><tr><td>Staged</td><td>Low</td></tr></table>
+          <label>Path <select name="path" required><option value="staged">Staged transition</option><option value="rewrite">Immediate rewrite</option></select></label>
+          <label>Condition <textarea name="condition"></textarea></label></section>
+        `
+      },
+      _meta: metadata
+    });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    expect(opened.structuredContent).toMatchObject({
+      kind: "decision-card",
+      operation: "create",
+      state: "open",
+      fieldCount: 2
+    });
+    const hydration = (opened._meta as any)[DECISION_CARD_METADATA_KEY];
+    expect(hydration).toMatchObject({
+      kind: "codex/decisionCard",
+      card: {
+        html: expect.stringContaining("<table>"),
+        policy: { scripts: "blocked", externalNetwork: "blocked" }
+      }
+    });
+    expect(JSON.stringify(opened.structuredContent)).not.toContain("<table>");
+    expect((await client.listResources()).resources.map((resource) => resource.uri)).toContain(DECISION_CARD_URI);
+    expect(state.listJobs()).toEqual([]);
+    expect(state.listActivities()).toEqual([]);
+
+    const widgetInstanceId = randomUUID();
+    const identity = {
+      cardId: hydration.card.cardId,
+      cardVersion: hydration.card.cardVersion,
+      presentationRef: hydration.card.presentationRef,
+      widgetInstanceId
+    };
+    const submitted = await client.callTool({
+      name: "codex_ui_decision",
+      arguments: {
+        operation: "submit",
+        ...identity,
+        submissionId: randomUUID(),
+        intent: "confirm",
+        fields: [
+          { name: "path", values: ["staged"] },
+          { name: "condition", values: ["Keep the existing API during rollout."] }
+        ],
+        comment: "Stop if error rate rises."
+      },
+      _meta: metadata
+    });
+    expect(submitted.isError, JSON.stringify(submitted)).not.toBe(true);
+    expect(submitted.structuredContent).toMatchObject({
+      kind: "decision-ui",
+      operation: "submit",
+      deliveryState: "stored",
+      send: false,
+      submission: {
+        summary: expect.stringContaining("Path: Staged transition"),
+        attemptCount: 0
+      }
+    });
+    const receipt = (submitted.structuredContent as any).receipt;
+    const claimed = await client.callTool({
+      name: "codex_ui_decision",
+      arguments: { operation: "claim", ...identity, receipt },
+      _meta: metadata
+    });
+    expect(claimed.structuredContent).toMatchObject({
+      deliveryState: "leased",
+      send: true,
+      submission: { attemptCount: 1 }
+    });
+    const accepted = await client.callTool({
+      name: "codex_ui_decision",
+      arguments: { operation: "outcome", ...identity, receipt, outcome: "accepted" },
+      _meta: metadata
+    });
+    expect(accepted.structuredContent).toMatchObject({ deliveryState: "host-accepted" });
+
+    const foreign = await client.callTool({
+      name: "codex_decision_result",
+      arguments: { receipt },
+      _meta: { "openai/session": "foreign-decision-tool-contract-test" }
+    });
+    expect(foreign.isError).toBe(true);
+
+    const result = await client.callTool({
+      name: "codex_decision_result",
+      arguments: { receipt },
+      _meta: metadata
+    });
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      kind: "decision-result",
+      card: { title: "Choose the migration path" },
+      submission: {
+        intent: "confirm",
+        deliveryState: "host-accepted",
+        resultOfferedAt: expect.any(String),
+        selections: [
+          expect.objectContaining({ label: "Path", values: [{ value: "staged", label: "Staged transition" }] }),
+          expect.objectContaining({ label: "Condition", values: [{ value: "Keep the existing API during rollout.", label: "Keep the existing API during rollout." }] })
+        ]
+      },
+      authority: { executionApproved: false }
+    });
+    expect((result.content[0] as any).text).toContain("Stop if error rate rises.");
+    expect(state.listJobs()).toEqual([]);
   });
 
   it("lets GPT search, read, and version Bridge Markdown skills without starting Codex", async () => {

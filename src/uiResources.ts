@@ -28,6 +28,11 @@ const STALE_UI_TRANSLATIONS = Object.fromEntries(
   ])
 );
 
+const STALE_DECISION_LABELS: Record<string, string> = {
+  en: "decision", ko: "의사결정", ja: "意思決定", "zh-Hans": "决策", "zh-Hant": "決策",
+  es: "decisión", fr: "décision", de: "Entscheidung", pt: "decisão"
+};
+
 function activeResource(name: UiResourceName) {
   return (UI_RESOURCE_MANIFEST.resources as Record<string, unknown>)[name] as {
     readonly uriVersion: number;
@@ -102,13 +107,14 @@ function staleUiResourceNotice(name: UiResourceName): string {
   const current = currentUiResourceUri(name);
   return `<!doctype html><html dir="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title></title></head><body><main><h1 id="title"></h1><p id="body"></p><p><span id="current-label"></span> <code id="current"></code></p></main><script>
 const BUNDLES=${JSON.stringify(STALE_UI_TRANSLATIONS).replaceAll("<", "\\u003c")};
+const STALE_DECISION_LABELS=${JSON.stringify(STALE_DECISION_LABELS)};
 const LOCALE_RESOLUTION=${JSON.stringify(UI_LOCALE_RESOLUTION)};
 const resourceName=${JSON.stringify(name)};
 const currentResource=${JSON.stringify(current)};
 const rawLocale=String(navigator.language||"en").replaceAll("_","-").toLowerCase();
 const locale=rawLocale==="ko"||rawLocale.startsWith("ko-")?"ko":rawLocale==="ja"||rawLocale.startsWith("ja-")?"ja":LOCALE_RESOLUTION.traditionalChineseTags.some((tag)=>rawLocale===tag||rawLocale.startsWith(tag+"-"))||LOCALE_RESOLUTION.traditionalChineseRegions.some((region)=>new RegExp("^zh-"+region+"(-|$)").test(rawLocale))?"zh-Hant":rawLocale==="zh"||rawLocale==="zh-hans"||rawLocale.startsWith("zh-")?"zh-Hans":["es","fr","de","pt"].find((entry)=>rawLocale===entry||rawLocale.startsWith(entry+"-"))||"en";
 const t=BUNDLES[locale]||BUNDLES.en;
-const card=t["stale.card."+resourceName]||resourceName;
+const card=resourceName==="decision"?(STALE_DECISION_LABELS[locale]||STALE_DECISION_LABELS.en):(t["stale.card."+resourceName]||resourceName);
 document.documentElement.lang=locale;
 document.title=t["stale.title"];
 document.getElementById("title").textContent=t["stale.title"];

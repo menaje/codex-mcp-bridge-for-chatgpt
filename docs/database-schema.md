@@ -1,11 +1,11 @@
 # Bridge database schema and lifecycle
 
-Schema 23 is the current SQLite schema. `src/stateSchema.ts` contains the complete
+Schema 24 is the current SQLite schema. `src/stateSchema.ts` contains the complete
 DDL and projections used for a new installation. `src/stateStore.ts` contains
-upgrade code for schemas 3 through 22; schemas 1 and 2 are rejected. The published v0.2 and
+upgrade code for schemas 3 through 23; schemas 1 and 2 are rejected. The published v0.2 and
 v0.3 line used schema 3, and the pre-change development installation used schema
 18. Every supported upgrade ends with the same tables, columns, constraints,
-indexes, and triggers as direct schema-23 creation.
+indexes, and triggers as direct schema-24 creation.
 
 The database is the only bridge state authority. Settings, projects, retained
 sessions, and Jobs no longer have parallel JSON files or JSON mirrors. SQLite
@@ -45,7 +45,7 @@ input state. There is no `job_summaries` table, and progress events do not write
 full Job document. `scopes.version` is the one scope CAS/event sequence; there is
 no `scope_versions` mirror.
 
-## Complete schema-23 table matrix
+## Complete schema-24 table matrix
 
 The retention column describes bridge cleanup. SQLite free pages are reusable but
 remain allocated until an offline compaction; physical erasure is therefore a
@@ -59,7 +59,9 @@ result/error receipt. Schema 21 adds exact live-Dashboard completion delivery;
 schema 22 records the legacy path that marked a terminal result as read. Schema
 23 adds separate completion-receipt and direct-query result-offer timestamps.
 Creating a tool response is no longer treated as proof that ChatGPT received it,
-and a direct query no longer consumes a pending live-card delivery.
+and a direct query no longer consumes a pending live-card delivery. Schema 24
+adds Job-independent GPT–user decision cards with immutable sanitized versions,
+idempotent mutations, semantic submissions, and delivery evidence.
 
 | Table | Current consumer and authoritative fields | Decision and retention |
 | --- | --- | --- |
@@ -87,6 +89,10 @@ and a direct query no longer consumes a pending live-card delivery.
 | `transport_observations` | Bounded operational diagnostics for aborted/detached/presentation events | Keep as disposable diagnostics only; it grants no replay or execution authority. It is ordered by the recent index and can be pruned independently. |
 | `user_questions` | Question request/answer state and response reference | Keep until its explicit expiry; startup removes expired rows. Payload is question state, not a Job mirror. |
 | `codex_question_deliveries` | Codex-originated question delivery idempotency | Keep one scoped request/question-reference receipt so restart cannot redeliver the same question as new. |
+| `decision_cards` | Current GPT–user decision-card version, conversation scope, expiry, and latest activity time | Independent of projects, Activities, Agents, and Jobs. Expired inactive cards are deleted after the decision recovery window; scope and installation capacity limits prevent unbounded growth. |
+| `decision_card_versions` | Immutable sanitized HTML, title, semantic field contract, content digest, presentation proof, and per-version expiry | A revision appends a version and advances `decision_cards.current_version`; old mounted versions fail closed. Generated code and remote resources are never stored as executable authority. |
+| `decision_card_requests` | Scoped create/revise request replay; operation digest and exact resulting version | Durable idempotency receipt. Reusing a request ID with changed content or expected version is rejected. Delete with its card. |
+| `decision_submissions` | Canonical intent, label-preserving selections, conditions/comment, semantic digest, revision chain, receipt, lease, host outcome, and result-offer time | Store before same-conversation delivery. Identical semantic double-clicks coalesce; modified resubmissions supersede rather than overwrite. Host acceptance, uncertain acceptance, and result offer remain distinct and never authorize execution. Delete with its card after the recovery window. |
 | `thread_connections` | App Server connection ownership, handoff/release and recovery inspection | Keep current connection evidence independently of `sessions`: a saved execution context does not prove a live connection. Unfinished-work checks join indexed Job/interactions/cancellation fields. |
 | `event_budget` | Trigger-maintained Job-event row and payload-byte counters | Derived singleton. Rebuilt during migration and updated by three triggers; it is not a DB/WAL or backup size limit. |
 | `event_retention_state` | Event cleanup policy generation and restartable event cursor | Keep typed singleton because the cursor has transactional cleanup semantics. Replaces dynamic `bridge_meta` keys. |
@@ -104,7 +110,7 @@ their schema-19 owners rather than by compatibility tables.
 
 ## Index and query contract
 
-The schema defines 43 non-SQLite indexes and three event-budget triggers. The
+The schema defines 47 non-SQLite indexes and three event-budget triggers. The
 indexes below are correctness or bounded-work contracts rather than incidental
 optimizations:
 
@@ -116,6 +122,7 @@ optimizations:
 | Event cursors and per-Job cleanup | `activity_events_*_cursor`, `job_events_*_cursor` |
 | Pending native Activity completion delivery | `completion_outbox_pending` |
 | Claimable exact Job live-card delivery | `job_completion_deliveries_claimable` |
+| Scoped decision cards, versions, and delivery recovery | `decision_cards_scope_recent`, `decision_card_versions_scope_recent`, `decision_submissions_scope_recent`, `decision_submissions_delivery` |
 | History cleanup and review | `jobs_status_recent`, `work_history_state` primary key, `work_history_expired` |
 | Question and hold expiry | `user_questions_expiry`; bounded `result_holds` scan of at most 500 rows |
 | Connection/recovery maintenance | `thread_connections_idle`, `thread_connections_agent`, `automatic_recovery_scope`, `automatic_recovery_job` |
@@ -162,7 +169,7 @@ copy, not end-to-end service latency or evidence of a live replacement.
 
 ## Upgrade and legacy-data rules
 
-A fresh database creates schema 23 directly. A persistent supported older database
+A fresh database creates schema 24 directly. A persistent supported older database
 is inspected before a writable SQLite connection opens. The canonical-file lock,
 live-owner check, integrity and foreign-key checks, permissions, free-space
 calculation, verified backup, sequential conversion, and final verification all
@@ -171,7 +178,7 @@ Development and candidate packages use separate default state profiles; selectin
 the stable DB requires an explicit profile or absolute-file override.
 
 The upgrade gets one private, mode-0600 backup named
-`state.sqlite.pre-v<SOURCE>-to-v23.sqlite` and a bound metadata sidecar. The
+`state.sqlite.pre-v<SOURCE>-to-v24.sqlite` and a bound metadata sidecar. The
 sidecar records the logical/physical database identity, source and target runtime
 facts, migration path/checksums, snapshot checksum, integrity/foreign-key results,
 and a digest of table row counts. Retrying the same upgrade reuses and fully
@@ -193,7 +200,9 @@ backfills only the result-read source for already consumed schema-21 deliveries.
 Schema 23 projects those historical rows into result-offer evidence and adds
 separate offer timestamps for new completion-receipt and direct-query responses.
 It does not infer receipt from response construction and does not replay legacy
-`result-read` rows whose transport outcome cannot be reconstructed.
+`result-read` rows whose transport outcome cannot be reconstructed. Schema 24
+adds the four independent decision-card tables without backfilling or changing
+any Codex Job, Question, completion, or Activity record.
 An
 interrupted or invalid conversion rolls its transaction back and can be retried
 after the source problem is corrected. The full operational and restore procedure is in the
@@ -211,8 +220,8 @@ relationship. Migration never creates a project from a slug, name, cwd, or old
 snapshot.
 
 The supported schema-3 fixture is taken from the published v0.3.0 implementation
-and passes every fixed checkpoint through schema 23. Exact deployed-development
-fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 22 are generated
+and passes every fixed checkpoint through schema 24. Exact deployed-development
+fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 23 are generated
 only as named, committed checkpoints from those sources. `state-migrations.json` binds
 their provenance and hashes to the shipped implementation. Schemas 1 and 2 are
 outside the supported release floor and are rejected before a backup or mutation.
@@ -241,7 +250,7 @@ ends and the upgraded database has survived normal restarts, remove older backup
 as a deliberate operator action. Backups contain the same private material as the
 source database and require the same access controls. The bridge does not silently
 delete them because release and rollback policy belong to the operator. Keep each
-backup with its `.migration-v<SOURCE>-to-v23.backup.json` sidecar. Supported
+backup with its `.migration-v<SOURCE>-to-v24.backup.json` sidecar. Supported
 snapshot restore is allowed only while the migrated DB records that neither HTTP
 nor stdio service-open occurred; after that boundary, preserve current state and
 use forward repair or explicit data reconciliation. See the

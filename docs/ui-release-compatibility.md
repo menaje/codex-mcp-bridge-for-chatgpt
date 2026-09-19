@@ -11,8 +11,9 @@ integrity checks; it is not part of the file name or URI.
 
 | Card | Source file | Packaged file | Resource URI |
 | --- | --- | --- | --- |
-| Settings | `ui-resources/settings.html` | `dist/ui/settings.html` | `ui://codex-mcp-bridge/settings/v2.html` |
+| Settings | `ui-resources/settings.html` | `dist/ui/settings.html` | `ui://codex-mcp-bridge/settings/v3.html` |
 | Dashboard | `ui-resources/dashboard.html` | `dist/ui/dashboard.html` | `ui://codex-mcp-bridge/dashboard/v2.html` |
+| Decision | `ui-resources/decision.html` | `dist/ui/decision.html` | `ui://codex-mcp-bridge/decision/v1.html` |
 
 Activity and Question are retired presentation resources. Their work,
 question, result, settings, authorization, and idempotency state remains in the
@@ -34,7 +35,7 @@ safely. The increment creates a new URI such as `v2.html`; it does not create a
 second source or package file.
 
 Product SemVer and card URI versions are independent. A product release does
-not change a card URI by itself, and the two cards can advance their URI
+not change a card URI by itself, and the three cards can advance their URI
 versions separately.
 
 ## Release rules
@@ -44,12 +45,12 @@ versions separately.
    server contract. If it does not, increment that card's `uriVersion`.
 3. Run `npm run release:sync` and review the stable URI, new SHA-256 digest, and
    generated manifest.
-4. Run `npm run release:check`, build the package, and open both active cards
+4. Run `npm run release:check`, build the package, and open all active cards
    with the current MCP client.
 
 Synchronization removes legacy digest-named files. Release validation rejects
 extra files under `ui-resources/`, a missing current file, mismatched HTML or
-metadata digests, URI drift, and package output other than the two current
+metadata digests, URI drift, and package output other than the three current
 files.
 
 ## ChatGPT cache behavior

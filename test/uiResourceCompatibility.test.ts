@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { DASHBOARD_CARD_HTML } from "../src/dashboardCard.js";
+import { DECISION_CARD_HTML } from "../src/decisionCard.js";
 import { SETTINGS_CARD_HTML, uiBridgeErrorMessage } from "../src/settingsCard.js";
 import { UI_RESOURCE_MANIFEST } from "../src/uiManifest.generated.js";
 import {
@@ -13,7 +14,7 @@ import {
 
 describe("serialized card runtime compatibility", () => {
   it("keeps all serialized card helpers free of compiler helpers", () => {
-    for (const html of [SETTINGS_CARD_HTML, DASHBOARD_CARD_HTML]) {
+    for (const html of [SETTINGS_CARD_HTML, DASHBOARD_CARD_HTML, DECISION_CARD_HTML]) {
       expect(html).not.toContain("__name(");
     }
     const format = runInNewContext(`(${uiBridgeErrorMessage.toString()})`);
@@ -25,8 +26,10 @@ describe("serialized card runtime compatibility", () => {
   });
 
   for (const [name, currentHtml] of Object.entries({
-    settings: SETTINGS_CARD_HTML, dashboard: DASHBOARD_CARD_HTML
-  }) as Array<["settings" | "dashboard", string]>) {
+    settings: SETTINGS_CARD_HTML,
+    dashboard: DASHBOARD_CARD_HTML,
+    decision: DECISION_CARD_HTML
+  }) as Array<["settings" | "dashboard" | "decision", string]>) {
     it(`serves the current ${name} resource file`, () => {
       const revision = currentUiResourceRevision(name);
       const currentFile = readCurrentFile(name);
@@ -34,13 +37,15 @@ describe("serialized card runtime compatibility", () => {
       expect(currentFile, revision.uri).toBe(rendered);
       expect(rendered).toContain("<!doctype html>");
       expect(revision.uri).toBe(
-        `ui://codex-mcp-bridge/${name}/${name === "settings" ? "v3" : "v2"}.html`
+        `ui://codex-mcp-bridge/${name}/${name === "settings" ? "v3" : name === "dashboard" ? "v2" : "v1"}.html`
       );
     });
   }
 
-  it("keeps only Settings and Dashboard in the active resource manifest", () => {
-    expect(Object.keys(UI_RESOURCE_MANIFEST.resources).sort()).toEqual(["dashboard", "settings"]);
+  it("keeps Settings, Dashboard, and Decision in the active resource manifest", () => {
+    expect(Object.keys(UI_RESOURCE_MANIFEST.resources).sort()).toEqual([
+      "dashboard", "decision", "settings"
+    ]);
   });
 
   it("keeps the Settings resource active", () => {

@@ -12,6 +12,10 @@ import {
   groupDashboardRowsByActivity,
   shouldShowDashboardNextExecution
 } from "../src/dashboardCard.js";
+import {
+  DECISION_CARD_HTML,
+  DECISION_CARD_STATIC_HTML_MAX_BYTES
+} from "../src/decisionCard.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
 import { htmlForUiResource } from "../src/uiResources.js";
 import {
@@ -353,7 +357,7 @@ describe("human-facing UI localization", () => {
       .toEqual(["breakthrough", "novel"]);
   });
 
-  it("serializes only the current Settings and Dashboard cards within their byte budgets", () => {
+  it("serializes only the current cards within their byte budgets", () => {
     const serialized = serializedUiTranslations();
     expect(serialized).not.toContain("<");
     const serializedBundles = JSON.parse(serialized) as Record<string, Record<string, string>>;
@@ -379,6 +383,9 @@ describe("human-facing UI localization", () => {
     expect(Buffer.byteLength(DASHBOARD_CARD_HTML, "utf8")).toBeLessThanOrEqual(
       DASHBOARD_CARD_HTML_MAX_BYTES
     );
+    expect(Buffer.byteLength(DECISION_CARD_HTML, "utf8")).toBeLessThanOrEqual(
+      DECISION_CARD_STATIC_HTML_MAX_BYTES
+    );
     expect(SETTINGS_CARD_HTML).toContain(PRODUCT_INFO.displayName);
     expect(SETTINGS_CARD_HTML).toContain('document.title=t["settings.title"]');
     expect(DASHBOARD_CARD_HTML).toContain('document.title=t["dashboard.title"]');
@@ -394,7 +401,8 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).toContain('controlAction("codex_interaction_respond"');
     expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_problem"');
     expect(DASHBOARD_CARD_HTML).not.toContain('callTool("codex_activity"');
-    expect(`${SETTINGS_CARD_HTML}${DASHBOARD_CARD_HTML}${serialized}`).not.toContain("MacBook Air");
+    expect(`${SETTINGS_CARD_HTML}${DASHBOARD_CARD_HTML}${DECISION_CARD_HTML}${serialized}`)
+      .not.toContain("MacBook Air");
   });
 
   it("localizes the stale-card recovery page from the browser locale", () => {
@@ -439,6 +447,12 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).toContain('document.visibilityState==="hidden"');
     expect(SETTINGS_CARD_HTML).toContain('callTool("codex_ui_read"');
     expect(SETTINGS_CARD_HTML).not.toContain('callTool("codex_settings",');
+    expect(DECISION_CARD_HTML).toContain('dir="auto"');
+    expect(DECISION_CARD_HTML).toContain('window.openai&&window.openai.locale');
+    expect(DECISION_CARD_HTML).toContain('rpc("ui/message"');
+    expect(DECISION_CARD_HTML).toContain('standardCall("codex_ui_decision"');
+    expect(DECISION_CARD_HTML).toContain('message.method==="ui/resource-teardown"');
+    expect(DECISION_CARD_HTML).not.toMatch(/geolocation|navigator\.geolocation/i);
   });
 
   it("groups Dashboard rows by Activity identity while preserving nested Agent order", () => {

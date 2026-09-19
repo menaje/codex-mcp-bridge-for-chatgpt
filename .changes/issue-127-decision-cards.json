@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Add independent sanitized free-form GPT–user decision cards with semantic submissions and durable same-conversation delivery.",
+  "breaking": true,
+  "migration": "Deploy the current Bridge (state schema 24), refresh ChatGPT connector discovery to register codex_decision, codex_decision_result, codex_ui_decision, and the Decision v1 resource, then reopen cards. Decision confirmation is scoped data, not Codex execution approval; uncertain host acceptance is never resent automatically."
+}

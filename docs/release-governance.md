@@ -49,7 +49,7 @@ pre-service restore and post-service forward-repair boundary.
 ## Card resource gate at release boundaries
 
 The [UI card release policy](ui-release-compatibility.md) requires one current
-file for each active card: Settings and Dashboard. Compatible card and metadata
+file for each active card: Settings, Dashboard, and Decision. Compatible card and metadata
 updates overwrite those files while preserving their explicit URI versions.
 The catalog has no published baseline or temporary compatibility selection.
 
