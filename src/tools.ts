@@ -2123,6 +2123,7 @@ export class CodexJobRegistry {
   private recoveryController?: AutomaticRecoveryController;
   private unsubscribeRecovery?: () => void;
   private projectedProjectRevision = -1;
+  private retainedJobMaintenanceIterator?: IterableIterator<[string, CodexJob]>;
 
   configureAutomaticRecovery(options: ConstructorParameters<typeof AutomaticRecoveryController>[1]): void {
     if (this.recoveryController) return;
@@ -3747,14 +3748,7 @@ export class CodexJobRegistry {
       job.jobId,
       isTerminalActivityJobStatus(job.status) ? "terminal" : "state-change"
     );
-    const beforePrune = new Map(this.jobs);
-    const removed = this.prune();
-    if (!this.persistJobBestEffort(job, removed)) {
-      for (const jobId of removed) {
-        const previous = beforePrune.get(jobId);
-        if (previous) this.jobs.set(jobId, previous);
-      }
-    }
+    if (this.persistJobBestEffort(job)) this.maintainRetainedJobs();
     if (isTerminalActivityJobStatus(job.status)) {
       this.steeringPromptRedactions.delete(job.jobId);
     }
@@ -3844,7 +3838,9 @@ export class CodexJobRegistry {
     for (const listener of [...(this.scopeWaiters.get(scopeId) || [])]) listener();
   }
 
-  private prune(): string[] {
+  /** One-time startup normalization. Runtime maintenance uses the bounded
+   * resumable slice below. */
+  private pruneLoadedJobsAtStartup(): string[] {
     const removed: string[] = [];
     const now = Date.now();
     const cutoff = now - this.ttlMs;
@@ -3925,7 +3921,7 @@ export class CodexJobRegistry {
       }
       this.jobs.set(job.jobId, job);
     }
-    changed = this.prune().length > 0 || changed || loaded.length !== values.length;
+    changed = this.pruneLoadedJobsAtStartup().length > 0 || changed || loaded.length !== values.length;
     return changed;
   }
 
@@ -4042,24 +4038,66 @@ export class CodexJobRegistry {
 
   /** Explicit Job-retention command used by mutation boundaries and the
    * independent maintenance scheduler. Registry reads never enter this path. */
-  maintainRetainedJobs(): number {
+  maintainRetainedJobs(options: {
+    maxInspected?: number;
+    maxRemoved?: number;
+    maxDurationMs?: number;
+  } = {}): number {
     const startedAt = performance.now();
     try {
       this.refreshProjectIdentities();
-      const beforePrune = new Map(this.jobs);
-      const removed = this.prune();
+      const maxInspected = Math.max(1, Math.min(256, Math.floor(options.maxInspected ?? 64)));
+      const maxRemoved = Math.max(1, Math.min(64, Math.floor(options.maxRemoved ?? 32)));
+      const deadline = performance.now() + Math.max(1, options.maxDurationMs ?? 10);
+      this.retainedJobMaintenanceIterator ||= this.jobs.entries();
+      const inspected: Array<[string, CodexJob]> = [];
+      while (inspected.length < maxInspected) {
+        if (inspected.length > 0 && performance.now() >= deadline) break;
+        const next = this.retainedJobMaintenanceIterator.next();
+        if (next.done) {
+          this.retainedJobMaintenanceIterator = undefined;
+          break;
+        }
+        const [jobId, job] = next.value;
+        if (this.jobs.get(jobId) === job) inspected.push([jobId, job]);
+      }
+
+      const now = Date.now();
+      const cutoff = now - this.ttlMs;
+      const candidates = inspected
+        .filter(([, job]) =>
+          !isActiveActivityJobStatus(job.status) &&
+          (job.updatedAt < cutoff || this.jobs.size > this.maxJobs)
+        )
+        .sort((left, right) =>
+          left[1].updatedAt - right[1].updatedAt || left[0].localeCompare(right[0])
+        );
+      const removed: Array<{
+        jobId: string;
+        job: CodexJob;
+        wake: { version: number; reason: CodexJobWakeReason } | undefined;
+      }> = [];
+      let considered = 0;
+      for (const [jobId, job] of candidates) {
+        if (removed.length >= maxRemoved || considered > 0 && performance.now() >= deadline) break;
+        considered++;
+        if (job.updatedAt >= cutoff && this.jobs.size <= this.maxJobs) continue;
+        if (this.activityStore.retentionProtection(jobId, now, this.ttlMs).length) continue;
+        removed.push({ jobId, job, wake: this.lastWake.get(jobId) });
+        this.jobs.delete(jobId);
+        this.lastWake.delete(jobId);
+      }
       if (removed.length === 0) return 0;
       try {
-        if (this.stateStore) {
-          this.stateStore.transaction(() => {
-            for (const jobId of removed) this.stateStore?.deleteJob(jobId);
-          });
-        } else {
-          this.persist();
-        }
+        this.activityStore.transaction(() => {
+          for (const { jobId } of removed) this.activityStore.deleteJob(jobId);
+        });
       } catch (error) {
-        this.jobs.clear();
-        for (const [jobId, job] of beforePrune) this.jobs.set(jobId, job);
+        for (const { jobId, job, wake } of removed) {
+          this.jobs.set(jobId, job);
+          if (wake) this.lastWake.set(jobId, wake);
+        }
+        this.retainedJobMaintenanceIterator = undefined;
         if (!this.persistenceWarningShown) {
           console.error(
             `Could not persist Codex job pruning: ${error instanceof Error ? error.message : String(error)}`
@@ -11341,9 +11379,16 @@ async function buildDashboardView(
     displayedCancellationJobIds.add(jobId);
     return cancellation;
   };
+  const problemJobRecords = problemQuery
+    ? jobs.admissionStateStore.workHistory.problemJobs(scopeId)
+    : [];
+  const automaticRecords = problemQuery
+    ? jobs.admissionStateStore.automaticRecovery.listForDashboard(scopeId)
+    : [];
   const archivedProjection = jobs.admissionStateStore.listDashboardArchivedJobsByAgent(
     scopeId,
-    includeHistory ? DASHBOARD_HISTORY_LIMIT_PER_AGENT + 1 : 1
+    includeHistory ? DASHBOARD_HISTORY_LIMIT_PER_AGENT + 1 : 1,
+    statusFilter === undefined ? "updated" : "created"
   );
   const archivedJobs = archivedProjection.jobs;
   const archivedCounts = jobs.admissionStateStore.dashboardArchivedCounts(scopeId);
@@ -11899,11 +11944,13 @@ async function buildDashboardView(
     .filter(row => categoryFor(row) === "problems").length;
   let problemCollection: z.infer<typeof dashboardProblemsOutputSchema> | undefined;
   if (problemQuery) {
-    type Entry = Omit<z.infer<typeof dashboardProblemOutputSchema>, "row"> & {projectRow:()=>DashboardRow};
+    type Entry = Omit<z.infer<typeof dashboardProblemOutputSchema>, "row"> & {
+      jobId?: string;
+      projectRow:()=>DashboardRow;
+    };
     const entries: Entry[] = [];
     const fullJobs = new Map(allJobs.map(job => [job.jobId,job]));
     const archivedById = new Map(archivedJobs.map(job => [job.jobId,job]));
-    const automaticRecords = jobs.admissionStateStore.automaticRecovery.list(scopeId);
     const automaticSummary = (record: (typeof automaticRecords)[number] | undefined) => record
       ? {kind:record.kind,state:record.state,attempts:record.attempts,reason:record.reason,...(record.evidence ? {evidence:record.evidence} : {})} : undefined;
     const retainedProblemRow = (retained: DashboardRetainedJobSummary): DashboardRow => {
@@ -11911,14 +11958,16 @@ async function buildDashboardView(
       const thread = currentThreadFor(retained.agentId);
       const session = currentSessionFor(retained.agentId);
       const turn = turnForArchivedJob(retained);
+      const conversationUrl = scopeResolver.conversationUrl(retained.scopeId);
+      const codexThreadUrl = codexThreadUrlFor(thread,session);
       return {rowKey:dashboardRowKey(retained.agentId,retained.jobId),activityKey:turn.activityKey!,
         conversationKey:dashboardConversationKey(retained.scopeId),sessionAlias:dashboardSessionAlias(retained.scopeId),
-        conversationUrl:scopeResolver.conversationUrl(retained.scopeId),codexThreadUrl:codexThreadUrlFor(thread,session),
+        ...(conversationUrl ? {conversationUrl} : {}),...(codexThreadUrl ? {codexThreadUrl} : {}),
         bucket:"recent",...dashboardProjectIdentity(thread),agentName:dashboardAgentName(agent?.agentName),
         activityTitle:turn.activityTitle,status:turn.status,createdAt:turn.startedAt || turn.updatedAt,updatedAt:turn.updatedAt,
         elapsedMs:turn.durationMs || 0,backgroundProcessCount:0,controlKind:null,latestTurn:turn,history:[],historyCount:0};
     };
-    for (const record of jobs.admissionStateStore.workHistory.problemJobs(scopeId)) {
+    for (const record of problemJobRecords) {
       const job = fullJobs.get(record.jobId);
       const acknowledgedAt = record.acknowledgedAt ? new Date(record.acknowledgedAt).toISOString() : null;
       entries.push({problemKey:record.problemKey,revision:record.revision,kind:"failed",source:"execution",
@@ -11926,6 +11975,7 @@ async function buildDashboardView(
         reason:job?.error ? redactSensitiveText(job.error).slice(0,1000) : null,
         automatic:automaticSummary(automaticRecords.find(automatic => automatic.jobId === record.jobId)),
         canAcknowledge:!acknowledgedAt,canUnacknowledge:Boolean(acknowledgedAt),canRecheck:false,canRetryStop:false,
+        jobId:record.jobId,
         projectRow:() => {
           if (job) return {...jobRow(job,"recent"),controlKind:null,history:[],historyCount:0};
           const retained: DashboardRetainedJobSummary = archivedById.get(record.jobId) || {
@@ -11980,16 +12030,17 @@ async function buildDashboardView(
       const agent = agentById.get(record.agentId);
       if (!agent) continue;
       const job = record.jobId ? fullJobs.get(record.jobId) : undefined;
-      const retained = record.jobId ? archivedById.get(record.jobId) : undefined;
-      if (record.jobId && !job && !retained) continue;
       const fallback = rowByAgent.get(dashboardRowKey(record.agentId));
-      if (!job && !retained && !fallback) continue;
+      if (!record.jobId && !fallback) continue;
       entries.push({problemKey:problemKey("automatic",record.key),revision:problemRevision(record),
         kind:record.kind === "retry-stop" ? "termination-failed" : record.kind === "recheck" ? "unknown" : "failed",
         source:"recovery",review:"automatic",acknowledgedAt:null,observedAt:new Date(record.updatedAt).toISOString(),reason:null,
         automatic:automaticSummary(record),canAcknowledge:false,canUnacknowledge:false,canRecheck:false,canRetryStop:false,
+        ...(record.jobId ? {jobId:record.jobId} : {}),
         projectRow:()=>job ? {...jobRow(job,"recent"),controlKind:null,history:[],historyCount:0}
-          : retained ? retainedProblemRow(retained) : {...fallback!,controlKind:null,history:[],historyCount:0}});
+          : record.jobId && archivedById.has(record.jobId)
+            ? retainedProblemRow(archivedById.get(record.jobId)!)
+            : {...fallback!,controlKind:null,history:[],historyCount:0}});
     }
     entries.sort((a,b) => Date.parse(b.observedAt)-Date.parse(a.observedAt) || a.problemKey.localeCompare(b.problemKey));
     const filtered = entries.filter(entry => (problemQuery.view === "actionable" ? entry.source === "runtime" && entry.review === "pending"
@@ -11998,7 +12049,16 @@ async function buildDashboardView(
       (problemQuery.kind === "all" || entry.kind === problemQuery.kind));
     const maximumOffset = filtered.length ? Math.floor((filtered.length-1)/limit)*limit : 0;
     const offset = Math.min(problemQuery.offset,maximumOffset);
-    const page = filtered.slice(offset,offset+limit).map(({projectRow,...entry}) => ({...entry,row:projectRow()}));
+    const selectedEntries = filtered.slice(offset,offset+limit);
+    const selectedJobIds = selectedEntries.flatMap((entry) => entry.jobId ? [entry.jobId] : []);
+    for (const retained of jobs.admissionStateStore.listDashboardRetainedJobsByIds(
+      selectedJobIds,
+      scopeId
+    )) archivedById.set(retained.jobId, retained);
+    for (const [jobId, summary] of jobs.admissionStateStore.dashboardJobSummaries(selectedJobIds)) {
+      summaryCache.set(jobId, summary);
+    }
+    const page = selectedEntries.map(({projectRow,jobId:_jobId,...entry}) => ({...entry,row:projectRow()}));
     problemCollection = {query:{...problemQuery,offset},revision:problemRevision(filtered.map(entry => [entry.problemKey,entry.revision,entry.review])),
       reviewableCount:entries.filter(entry => entry.canAcknowledge).length,
       pendingCount:entries.filter(entry => entry.review === "pending" && (!problemQuery.view || entry.source === "runtime")).length,

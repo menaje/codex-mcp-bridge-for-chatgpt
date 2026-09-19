@@ -883,6 +883,118 @@ describe("current bridge tool contracts", () => {
     expect(row?.handoff).not.toHaveProperty("reason");
   });
 
+  it("keeps created-time representatives and exact historical recovery metadata in bounded Dashboard reads", async () => {
+    const scopeId = "78787878-7878-4787-8787-787878787878";
+    const agentId = "79797979-7979-4797-8797-797979797979";
+    const olderFailedJobId = randomUUID();
+    const newerCompletedJobId = randomUUID();
+    const base = Date.now() - 1_000;
+    state.createAgent({
+      scopeId,
+      agentId,
+      agentName: "dashboard-selection-fixture",
+      now: base
+    });
+    state.upsertJob({
+      jobId: olderFailedJobId,
+      scopeId,
+      requestId: randomUUID(),
+      status: "failed",
+      agentId,
+      createdAt: base + 10,
+      updatedAt: base + 100
+    });
+    state.upsertJob({
+      jobId: newerCompletedJobId,
+      scopeId,
+      requestId: randomUUID(),
+      status: "completed",
+      agentId,
+      createdAt: base + 20,
+      updatedAt: base + 90
+    });
+    state.deleteJob(olderFailedJobId);
+    state.deleteJob(newerCompletedJobId);
+
+    const recovery = state.automaticRecovery.begin({
+      key: "a".repeat(64),
+      scopeId,
+      agentId,
+      jobId: olderFailedJobId,
+      kind: "retry-stop"
+    }, base + 110)!;
+    state.automaticRecovery.finish(recovery.key, recovery.attempts, {
+      resolved: false,
+      reason: "fixture-blocked",
+      retryable: false
+    }, base + 111);
+
+    const bounded = await client.callTool({
+      name: "codex_ui_read",
+      arguments: {
+        view: "dashboard",
+        widgetInstanceId: randomUUID(),
+        scope: "all",
+        statusFilter: "problems",
+        enrich: false,
+        includeHistory: false
+      }
+    });
+    expect(bounded.isError, JSON.stringify(bounded)).not.toBe(true);
+    expect((bounded.structuredContent as any).statusRows.some((row: any) =>
+      row.agentName === "dashboard-selection-fixture"
+    )).toBe(false);
+
+    const result = await client.callTool({
+      name: "codex_ui_read",
+      arguments: {
+        view: "dashboard",
+        widgetInstanceId: randomUUID(),
+        scope: "all",
+        statusFilter: "all",
+        enrich: false,
+        includeHistory: true,
+        problems: {
+          view: "automatic",
+          review: "pending",
+          kind: "all",
+          offset: 0
+        }
+      }
+    });
+
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    const dashboard = result.structuredContent as any;
+    const representative = dashboard.terminalRows.find((row: any) =>
+      row.agentName === "dashboard-selection-fixture"
+    );
+    expect(representative?.latestTurn).toMatchObject({
+      status: "completed",
+      startedAt: new Date(base + 20).toISOString(),
+      updatedAt: new Date(base + 90).toISOString()
+    });
+    expect(dashboard.problems.automaticCount).toBe(1);
+    expect(dashboard.problems.rows).toHaveLength(1);
+    expect(dashboard.problems.rows[0]).toMatchObject({
+      source: "recovery",
+      automatic: {
+        kind: "retry-stop",
+        state: "blocked",
+        reason: "fixture-blocked"
+      },
+      row: {
+        status: "failed",
+        createdAt: new Date(base + 10).toISOString(),
+        updatedAt: new Date(base + 100).toISOString(),
+        latestTurn: {
+          status: "failed",
+          startedAt: new Date(base + 10).toISOString(),
+          updatedAt: new Date(base + 100).toISOString()
+        }
+      }
+    });
+  });
+
   it("publishes draft-2020-12-compatible v6 asynchronous task input without retired fields", async () => {
     const tools = await client.listTools();
     const task = tools.tools.find((tool) => tool.name === "codex_task")!;

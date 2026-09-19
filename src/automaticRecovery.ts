@@ -51,6 +51,23 @@ export class AutomaticRecoveryStore {
       .map(row => this.decode(row as Record<string, unknown>));
   }
 
+  /** Dashboard projection excludes references whose retained Job history has
+   * expired, so the selected page can hydrate exact Job IDs after pagination. */
+  listForDashboard(scopeId?: string): AutomaticRecoveryRecord[] {
+    return this.db.prepare(`SELECT recovery.* FROM automatic_recovery recovery
+      WHERE ${scopeId ? "recovery.scope_id=? AND" : ""}
+        (recovery.job_id IS NULL OR EXISTS (
+          SELECT 1 FROM jobs job WHERE job.job_id=recovery.job_id
+            AND NOT EXISTS (
+              SELECT 1 FROM work_history_state history
+               WHERE history.job_id=job.job_id AND history.expired_at IS NOT NULL
+            )
+        ))
+      ORDER BY recovery.updated_at DESC,recovery.recovery_key`)
+      .all(...(scopeId ? [scopeId] : []))
+      .map(row => this.decode(row as Record<string, unknown>));
+  }
+
   /** Fresh inspection transitions define incidents; retries and cached reads
    * do not. Keep each incident's journal and retry budget across restarts. */
   observeRecheck(candidate: AutomaticRecoveryCandidate, problem: boolean, now: number, evidence?: string): void {

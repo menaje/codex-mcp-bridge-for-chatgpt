@@ -129,6 +129,49 @@ describe("state access ownership", () => {
     }
   });
 
+  it("separates representative execution order from history order and resolves exact problem Jobs", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    try {
+      const agent = store.createAgent({ scopeId: SCOPE, agentName: "Ordering", now: 1 });
+      const olderLateJob = "older-late-failure";
+      const newerJob = "newer-completion";
+      store.upsertJob({
+        jobId: olderLateJob,
+        requestId: "44444444-4444-4444-8444-444444444444",
+        scopeId: SCOPE,
+        agentId: agent.agentId,
+        status: "failed",
+        createdAt: 10,
+        updatedAt: 100
+      });
+      store.deleteJob(olderLateJob);
+      store.upsertJob({
+        jobId: newerJob,
+        requestId: "55555555-5555-4555-8555-555555555555",
+        scopeId: SCOPE,
+        agentId: agent.agentId,
+        status: "completed",
+        createdAt: 20,
+        updatedAt: 90
+      });
+      store.deleteJob(newerJob);
+
+      expect(store.listDashboardArchivedJobsByAgent(SCOPE, 1, "created").jobs)
+        .toEqual([expect.objectContaining({ jobId: newerJob, status: "completed" })]);
+      expect(store.listDashboardArchivedJobsByAgent(SCOPE, 1, "updated").jobs)
+        .toEqual([expect.objectContaining({ jobId: olderLateJob, status: "failed" })]);
+      expect(store.listDashboardRetainedJobsByIds([olderLateJob], SCOPE))
+        .toEqual([expect.objectContaining({
+          jobId: olderLateJob,
+          status: "failed",
+          createdAt: 10,
+          updatedAt: 100
+        })]);
+    } finally {
+      store.close();
+    }
+  });
+
   it("does not rewrite current-policy events during a maintenance sweep", () => {
     const sql: string[] = [];
     const store = new BridgeStateStore({ file: ":memory:", traceSql: statement => sql.push(statement) });

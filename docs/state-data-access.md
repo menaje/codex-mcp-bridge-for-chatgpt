@@ -15,6 +15,9 @@ Unit of Work. A domain store may read another domain to decide eligibility, but
 it must not mutate that domain's authoritative tables through its raw SQLite
 handle. In particular, history expiry calls the central Unit of Work, and event
 retention accesses `jobs.summary` through `EventRetentionJobRepository`.
+Activity-event and result-hold cleanup is scheduled by the event-retention
+slice but executed through `EventRetentionMaintenanceRepository` commands
+implemented by the State Unit of Work.
 
 ## Schema 24 ownership matrix
 
@@ -76,11 +79,21 @@ cross-domain `UPDATE jobs` statements.
   acknowledgement command.
 - `DecisionCardStore.get`, `snapshot`, and `latestSubmission` do not recover
   leases in SQLite. They may project an expired lease as uncertain in memory;
-  the decision maintenance slice persists that transition.
+  the decision maintenance slice persists that transition. Commands that act
+  on one submission recover only that exact expired lease, and delivery outcome
+  updates atomically require the same owner, card/version, leased state, and an
+  unexpired lease.
 - `DashboardReadModel.archivedByAgent` uses a SQL window and materializes at
   most one archived row per Agent for ordinary overview, or thirteen only for
-  the explicitly requested history view. `agentHistory` is a direct bounded
-  Agent query and returns the exact total from the same statement.
+  the explicitly requested history view. Representative selection is explicit:
+  filtered status views preserve the Dashboard's created-time “latest run”
+  meaning, while update-time ordering remains available for recent-history
+  projection. The remaining history rows retain update-time order.
+- Problem and automatic-recovery pages select their page before hydrating Job
+  details. The selected Job IDs are fetched exactly, independently of the
+  bounded recent overview, and their summaries are loaded in the same bulk
+  cache used by ordinary rows. `agentHistory` is a direct bounded Agent query
+  and returns the exact total from the same statement.
 - Dashboard token summaries are fetched once in chunks of at most 500 Job IDs
   and reused for the request. No turn or row performs its own summary SELECT.
 - `StatusReadModel` provides exact Job and scope projections with no writes.
@@ -97,7 +110,11 @@ failure record; the connection controller neither invokes nor owns maintenance.
 | Questions | 500 expirations, journals, and stale notification leases |
 | Decisions | 500 expired leases and 500 expired cards |
 | Recovery | 500 recovery rows and 500 incident rows |
-| In-memory Jobs | configured retained-Job ceiling |
+| In-memory Jobs | 64 inspected, 32 removals, and a 10 ms cooperative deadline per runtime slice; resumable iterator |
+
+The one-time startup load may normalize the complete persisted Job set before
+serving requests. Runtime maintenance never treats the configured retained-Job
+ceiling as a scan bound; each invocation advances the explicit slice above.
 
 Protected history candidates receive a 15-minute in-process backoff before the
 next full multi-table protection check. Losing the cache on restart is safe: it

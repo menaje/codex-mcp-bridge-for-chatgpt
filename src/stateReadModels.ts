@@ -21,6 +21,8 @@ export type DashboardArchivedCounts = {
   cancelled: number;
 };
 
+export type DashboardRepresentativeOrder = "created" | "updated";
+
 const retainedHistoryPredicate = `
   archived_at IS NOT NULL
   AND NOT EXISTS (
@@ -32,30 +34,46 @@ const retainedHistoryPredicate = `
 export class DashboardReadModel {
   constructor(private readonly db: Database.Database) {}
 
-  archivedByAgent(scopeId: string | undefined, perAgentLimit: number): {
+  archivedByAgent(
+    scopeId: string | undefined,
+    perAgentLimit: number,
+    representativeOrder: DashboardRepresentativeOrder = "updated"
+  ): {
     rows: DashboardArchivedJobRow[];
     totalsByAgent: Map<string, number>;
   } {
     const limit = Math.max(1, Math.min(100, Math.floor(perAgentLimit)));
+    const historyLimit = limit - 1;
+    const representativeOrdering = representativeOrder === "created"
+      ? "created_at DESC,updated_at DESC,job_id DESC"
+      : "updated_at DESC,job_id DESC";
     const rows = this.db.prepare(`
-      WITH ranked AS (
+      WITH candidates AS (
         SELECT job_id,scope_id,activity_id,agent_id,backend_kind,status,
                created_at,updated_at,summary,
-               ROW_NUMBER() OVER (
+               FIRST_VALUE(job_id) OVER (
                  PARTITION BY COALESCE(agent_id,'')
-                 ORDER BY updated_at DESC,job_id DESC
-               ) AS agent_rank,
+                 ORDER BY ${representativeOrdering}
+               ) AS representative_job_id,
                COUNT(*) OVER (PARTITION BY COALESCE(agent_id,'')) AS agent_total
           FROM jobs
          WHERE ${retainedHistoryPredicate}
            ${scopeId ? "AND scope_id=?" : ""}
+      ), ranked AS (
+        SELECT *,
+               SUM(CASE WHEN job_id<>representative_job_id THEN 1 ELSE 0 END) OVER (
+                 PARTITION BY COALESCE(agent_id,'')
+                 ORDER BY updated_at DESC,job_id DESC
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+               ) AS history_rank
+          FROM candidates
       )
       SELECT job_id,scope_id,activity_id,agent_id,backend_kind,status,
              created_at,updated_at,summary,agent_total
         FROM ranked
-       WHERE agent_rank<=?
+       WHERE job_id=representative_job_id OR history_rank<=?
        ORDER BY updated_at DESC,job_id DESC
-    `).all(...(scopeId ? [scopeId, limit] : [limit])) as DashboardArchivedJobRow[];
+    `).all(...(scopeId ? [scopeId, historyLimit] : [historyLimit])) as DashboardArchivedJobRow[];
     const totalsByAgent = new Map<string, number>();
     for (const row of rows) {
       if (row.agent_id) totalsByAgent.set(row.agent_id, Number(row.agent_total || 0));
@@ -78,6 +96,27 @@ export class DashboardReadModel {
        LIMIT ?
     `).all(scopeId, agentId, boundedLimit) as DashboardArchivedJobRow[];
     return { rows, total: Number(rows[0]?.agent_total || 0) };
+  }
+
+  /** Exact retained rows for problem and recovery records. Recent overview
+   * selection is never used as a substitute for an explicit Job reference. */
+  archivedByIds(jobIds: readonly string[], scopeId?: string): DashboardArchivedJobRow[] {
+    const rows: DashboardArchivedJobRow[] = [];
+    const uniqueJobIds = [...new Set(jobIds)];
+    for (let offset = 0; offset < uniqueJobIds.length; offset += 500) {
+      const chunk = uniqueJobIds.slice(offset, offset + 500);
+      if (chunk.length === 0) continue;
+      const placeholders = chunk.map(() => "?").join(",");
+      rows.push(...this.db.prepare(`
+        SELECT job_id,scope_id,activity_id,agent_id,backend_kind,status,
+               created_at,updated_at,summary
+          FROM jobs
+         WHERE job_id IN (${placeholders})
+           AND ${retainedHistoryPredicate}
+           ${scopeId ? "AND scope_id=?" : ""}
+      `).all(...(scopeId ? [...chunk, scopeId] : chunk)) as DashboardArchivedJobRow[]);
+    }
+    return rows;
   }
 
   summaries(jobIds: readonly string[]): Map<string, string> {

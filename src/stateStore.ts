@@ -56,7 +56,8 @@ import {
   DashboardReadModel,
   StatusReadModel,
   type DashboardArchivedCounts,
-  type DashboardArchivedJobRow
+  type DashboardArchivedJobRow,
+  type DashboardRepresentativeOrder
 } from "./stateReadModels.js";
 import {
   ACTIVITY_COMPLETION_TRIGGERS,
@@ -733,6 +734,11 @@ export class BridgeStateStore {
       this.eventRetention = new EventRetention(this.database, {
         readSummary: (jobId) => this.readJobSummary(jobId),
         saveSummary: (jobId, summary) => this.saveJobSummary(jobId, summary)
+      }, {
+        deleteActivityEvents: (olderThan, batchSize, retainedLimit) =>
+          this.deleteActivityEventsForRetention(olderThan, batchSize, retainedLimit),
+        deleteExpiredResultHolds: (now, limit) =>
+          this.deleteExpiredResultHoldsForRetention(now, limit)
       });
       this.workHistory = new WorkHistoryStore(
         this.database,
@@ -1068,11 +1074,19 @@ export class BridgeStateStore {
 
   /** Bounded overview projection: at most `perAgentLimit` archived rows are
    * materialized per Agent, while the SQL window keeps exact history totals. */
-  listDashboardArchivedJobsByAgent(scopeId?: string, perAgentLimit = 13): {
+  listDashboardArchivedJobsByAgent(
+    scopeId?: string,
+    perAgentLimit = 13,
+    representativeOrder: DashboardRepresentativeOrder = "updated"
+  ): {
     jobs: DashboardRetainedJobSummary[];
     totalsByAgent: Map<string, number>;
   } {
-    const result = this.dashboardReadModel.archivedByAgent(scopeId, perAgentLimit);
+    const result = this.dashboardReadModel.archivedByAgent(
+      scopeId,
+      perAgentLimit,
+      representativeOrder
+    );
     return { jobs: result.rows.map(decodeDashboardArchivedJob), totalsByAgent: result.totalsByAgent };
   }
 
@@ -1082,6 +1096,10 @@ export class BridgeStateStore {
   } {
     const result = this.dashboardReadModel.agentHistory(scopeId, agentId, limit);
     return { jobs: result.rows.map(decodeDashboardArchivedJob), total: result.total };
+  }
+
+  listDashboardRetainedJobsByIds(jobIds: readonly string[], scopeId?: string): DashboardRetainedJobSummary[] {
+    return this.dashboardReadModel.archivedByIds(jobIds, scopeId).map(decodeDashboardArchivedJob);
   }
 
   dashboardJobSummaries(jobIds: readonly string[]): Map<string, Record<string, unknown>> {
@@ -1298,6 +1316,34 @@ export class BridgeStateStore {
   private saveJobSummary(jobId: string, summary: Record<string, unknown>): void {
     this.database.prepare("UPDATE jobs SET summary=? WHERE job_id=?")
       .run(JSON.stringify(sanitizeRetainedJobSummary(summary)), jobId);
+  }
+
+  private deleteActivityEventsForRetention(
+    olderThan: number,
+    batchSize: number,
+    retainedLimit: number
+  ): number {
+    const limitRemoved = this.database.prepare(`
+      DELETE FROM activity_events WHERE event_id IN (
+        SELECT event_id FROM activity_events
+         ORDER BY event_id DESC LIMIT ? OFFSET ?
+      )
+    `).run(batchSize, retainedLimit).changes;
+    const ageRemoved = this.database.prepare(`
+      DELETE FROM activity_events WHERE event_id IN (
+        SELECT event_id FROM activity_events
+         WHERE created_at<? ORDER BY event_id LIMIT ?
+      )
+    `).run(olderThan, batchSize).changes;
+    return limitRemoved + ageRemoved;
+  }
+
+  private deleteExpiredResultHoldsForRetention(now: number, limit: number): number {
+    return this.database.prepare(`
+      DELETE FROM result_holds WHERE job_id IN (
+        SELECT job_id FROM result_holds WHERE expires_at<=? LIMIT ?
+      )
+    `).run(now, limit).changes;
   }
 
   /** Central Unit-of-Work command for the cross-domain history projection. */

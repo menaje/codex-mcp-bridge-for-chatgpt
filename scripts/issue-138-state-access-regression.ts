@@ -65,6 +65,49 @@ try {
     }
     report.dashboardScale = scales;
 
+    sql.length = 0;
+    const createdRepresentative = store.listDashboardArchivedJobsByAgent(
+      "representative-order",
+      1,
+      "created"
+    );
+    const updatedRepresentative = store.listDashboardArchivedJobsByAgent(
+      "representative-order",
+      1,
+      "updated"
+    );
+    const exactHistorical = store.listDashboardRetainedJobsByIds(
+      ["representative-order-older-failed"],
+      "representative-order"
+    );
+    const exactSummaries = store.dashboardJobSummaries(
+      exactHistorical.map(job => job.jobId)
+    );
+    assert.equal(createdRepresentative.jobs[0]?.jobId, "representative-order-newer-completed");
+    assert.equal(updatedRepresentative.jobs[0]?.jobId, "representative-order-older-failed");
+    assert.deepEqual(exactHistorical.map(job => ({
+      jobId: job.jobId,
+      status: job.status,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt
+    })), [{
+      jobId: "representative-order-older-failed",
+      status: "failed",
+      createdAt: 10,
+      updatedAt: 100
+    }]);
+    const exactExecution = exactSummaries
+      .get("representative-order-older-failed")?.execution as {model?: string} | undefined;
+    assert.equal(exactExecution?.model, "gpt-5.6-sol");
+    assert.equal(writeStatements(sql).length, 0);
+    report.dashboardRepresentativeSelection = {
+      createdTimeRepresentative: createdRepresentative.jobs[0]?.jobId,
+      updatedTimeRepresentative: updatedRepresentative.jobs[0]?.jobId,
+      exactHistoricalRows: exactHistorical.length,
+      exactHistoricalSummaryLoaded: exactSummaries.has("representative-order-older-failed"),
+      writes: 0
+    };
+
     store.upsertJob({
       jobId: "progress-job",
       scopeId: "11111111-1111-4111-8111-111111111111",
@@ -168,6 +211,12 @@ function seedScaleFixture(
       created_at,updated_at,archived_at,job_version,last_progress_at,summary,payload
     ) VALUES (?,?,?,?,'completed','app-server',?,'/tmp','read-only',?,?,?,1,? ,?,?)
   `);
+  const insertRepresentativeJob = database.prepare(`
+    INSERT INTO jobs(
+      job_id,scope_id,request_id,activity_id,status,backend_kind,agent_id,cwd,sandbox,
+      created_at,updated_at,archived_at,job_version,last_progress_at,summary,payload
+    ) VALUES (?,?,?,?,?,'app-server',?,'/tmp','read-only',?,?,?,1,?,?,?)
+  `);
   database.transaction(() => {
     for (const fixture of fixtures) {
       insertScope.run(fixture.name);
@@ -205,6 +254,49 @@ function seedScaleFixture(
         );
       }
     }
+
+    const representativeScope = "representative-order";
+    const representativeAgent = "representative-order-agent";
+    const representativeActivity = "representative-order-activity";
+    insertScope.run(representativeScope);
+    insertAgent.run(
+      representativeAgent,
+      representativeScope,
+      "Representative order Agent",
+      "representative-order-agent"
+    );
+    insertActivity.run(representativeActivity, representativeScope);
+    for (const job of [
+      {
+        jobId: "representative-order-older-failed",
+        requestId: "representative-order-older-request",
+        status: "failed",
+        createdAt: 10,
+        updatedAt: 100
+      },
+      {
+        jobId: "representative-order-newer-completed",
+        requestId: "representative-order-newer-request",
+        status: "completed",
+        createdAt: 20,
+        updatedAt: 90
+      }
+    ]) insertRepresentativeJob.run(
+      job.jobId,
+      representativeScope,
+      job.requestId,
+      representativeActivity,
+      job.status,
+      representativeAgent,
+      job.createdAt,
+      job.updatedAt,
+      job.updatedAt,
+      job.updatedAt,
+      JSON.stringify({
+        execution: { model: "gpt-5.6-sol", reasoningEffort: "high" }
+      }),
+      JSON.stringify({ resultOmitted: true })
+    );
   })();
   database.close();
 }

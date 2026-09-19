@@ -25,11 +25,17 @@ export type EventRetentionJobRepository = {
   saveSummary(jobId: string, summary: Record<string, unknown>): void;
 };
 
+export type EventRetentionMaintenanceRepository = {
+  deleteActivityEvents(olderThan: number, batchSize: number, retainedLimit: number): number;
+  deleteExpiredResultHolds(now: number, limit: number): number;
+};
+
 /** Diagnostics are disposable; delivery, cancellation, question and replay authorities live elsewhere. */
 export class EventRetention {
   constructor(
     private readonly db: Database.Database,
-    private readonly jobs: EventRetentionJobRepository
+    private readonly jobs: EventRetentionJobRepository,
+    private readonly maintenance: EventRetentionMaintenanceRepository
   ) {
     const policy = this.db.prepare("SELECT policy_version FROM event_retention_state WHERE singleton=1")
       .get() as {policy_version:number};
@@ -160,9 +166,15 @@ export class EventRetention {
         .run(row.event_id).changes;
     }
     // Activity events contain control metadata, never model output. They are also bounded.
-    const activityLimitRemoved = this.db.prepare("DELETE FROM activity_events WHERE event_id IN (SELECT event_id FROM activity_events ORDER BY event_id DESC LIMIT 500 OFFSET 50000)").run().changes;
-    const activityAgeRemoved = this.db.prepare("DELETE FROM activity_events WHERE event_id IN (SELECT event_id FROM activity_events WHERE created_at<? ORDER BY event_id LIMIT 500)").run(now - EVENT_RETENTION_LIMITS.metadataMs).changes;
-    const expiredResultHoldsRemoved = this.db.prepare("DELETE FROM result_holds WHERE job_id IN (SELECT job_id FROM result_holds WHERE expires_at<=? LIMIT 500)").run(now).changes;
+    const expiredActivityEventsRemoved = this.maintenance.deleteActivityEvents(
+      now - EVENT_RETENTION_LIMITS.metadataMs,
+      EVENT_RETENTION_LIMITS.batch,
+      EVENT_RETENTION_LIMITS.rows
+    );
+    const expiredResultHoldsRemoved = this.maintenance.deleteExpiredResultHolds(
+      now,
+      EVENT_RETENTION_LIMITS.batch
+    );
     let perJobEventsRemoved = 0;
     for (const jobId of new Set(rows.map(row => row.job_id))) {
       perJobEventsRemoved += this.enforcePerJob(jobId);
@@ -174,7 +186,7 @@ export class EventRetention {
       ...budget,
       freePages: Number(this.db.pragma("freelist_count", { simple: true })),
       expiredJobEventsRemoved,
-      expiredActivityEventsRemoved: activityLimitRemoved + activityAgeRemoved,
+      expiredActivityEventsRemoved,
       expiredResultHoldsRemoved,
       perJobEventsRemoved,
       budgetEventsRemoved
