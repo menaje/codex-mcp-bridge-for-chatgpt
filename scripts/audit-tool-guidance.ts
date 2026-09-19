@@ -42,7 +42,7 @@ const server = createBridgeMcpServer(config, upstream, new SessionRegistry({ sta
 const connection = await connectCurrentMcpServer(server, { name: "offline-tool-guidance-audit", version: "1" });
 const { client } = connection;
 const source: Record<string, { file: string; line: number; descriptionLine?: number }> = {};
-for (const file of ["src/tools.ts", "src/questionTools.ts"]) {
+for (const file of ["src/tools.ts", "src/questionTools.ts", "src/decisionCard.ts"]) {
   const body = await readFile(file, "utf8");
   const tree = ts.createSourceFile(file, body, ts.ScriptTarget.Latest, true);
   const visit = (node: ts.Node): void => {
@@ -100,6 +100,15 @@ try {
       annotations: tool.annotations, input: schemaFacts(tool.inputSchema), output: schemaFacts(tool.outputSchema) };
   });
   const task = inventory.find(t => t.name === "codex_task")!;
+  const decision = inventory.find(t => t.name === "codex_decision")!;
+  assert.ok(decision, "codex_decision must be discoverable.");
+  const decisionDiscovery = JSON.stringify({ description: decision.description, inputSchema: decision.inputSchema });
+  for (const requiredGuidance of [
+    "operation", "native input", "stable name", "visible label", "data-decision-label",
+    "data-decision-unit", "data-decision-output-for", "Static inline SVG", "Minimal example"
+  ]) assert.match(decisionDiscovery, new RegExp(requiredGuidance, "i"));
+  assert.ok(Buffer.byteLength(decisionDiscovery) < 12_000,
+    "Decision authoring guidance should stay compact enough for normal discovery.");
   const properties = task.inputSchema.properties as Record<string, any>;
   const probes: Array<Record<string, unknown>> = [];
   const meta = { "openai/session": "offline-tool-guidance-audit" };
@@ -131,6 +140,15 @@ try {
     requestId: randomUUID(), jobId: "not-an-audit-job", questionRef: "a".repeat(64),
     answers: { audit: ["offline"] }
   });
+  const correctionRequestId = randomUUID();
+  await probe("invalid-decision-authoring", "codex_decision", {
+    operation: "create", requestId: correctionRequestId, title: "Authoring correction probe",
+    html: '<input type="radio" name="plan" value="staged">'
+  });
+  await probe("corrected-decision-authoring", "codex_decision", {
+    operation: "create", requestId: correctionRequestId, title: "Authoring correction probe",
+    html: '<fieldset><legend>Plan</legend><label><input type="radio" name="plan" value="staged" required>Staged</label><label><input type="radio" name="plan" value="direct">Direct</label></fieldset>'
+  });
   const unexpectedRetiredTools = [
     "codex_ask_user", "codex_user_answer", "codex_question_action", "codex_activity",
     "codex_activity_rehydrate", "codex_activity_snapshot", "codex_activity_handoff",
@@ -157,7 +175,7 @@ try {
   })), undefined, settings.current.registryRevision);
   await probe("registered-but-all-archived", "codex_task", withSelection());
   assert.equal(upstreamCalls, 0);
-  const report = { date: "2026-09-14", protocolVersion: "2026-07-28", method: "actual current-protocol tools/list on an isolated bridge plus no-execution contract probes",
+  const report = { date: "2026-09-19", protocolVersion: "2026-07-28", method: "actual current-protocol tools/list on an isolated bridge plus no-execution contract probes",
     realChatGptModelRun: false, installedServiceChanged: false, upstreamCalls,
     totals: { all: summaries.length, public: summaries.filter(t => t.public).length,
       private: summaries.filter(t => !t.public).length,

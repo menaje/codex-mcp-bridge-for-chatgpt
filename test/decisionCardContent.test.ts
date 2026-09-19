@@ -173,12 +173,14 @@ describe("free-form decision card content", () => {
   });
 
   it("requires a visible semantic label for every submitted control", () => {
+    expect(() => prepareDecisionCardContent('<input value="B" />'))
+      .toThrow(/DECISION_FIELD_NAME_REQUIRED:.*stable name/);
     expect(() => prepareDecisionCardContent('<input name="opaque" value="B" />'))
-      .toThrow(/DECISION_FIELD_LABEL_REQUIRED/);
+      .toThrow(/DECISION_FIELD_LABEL_REQUIRED:.*wrapping <label>/);
     expect(() => prepareDecisionCardContent(`
       <label><input type="radio" name="plan" value="a" /> Plan A</label>
       <label><input type="radio" name="plan" value="b" /> Plan B</label>
-    `)).toThrow(/DECISION_FIELD_GROUP_LABEL_REQUIRED/);
+    `)).toThrow(/DECISION_FIELD_GROUP_LABEL_REQUIRED:.*<fieldset><legend>/);
   });
 
   it("allows defer and explanation without a final choice but validates confirmed numeric meaning", () => {

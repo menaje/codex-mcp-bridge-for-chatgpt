@@ -507,17 +507,27 @@ function extractDecisionFields(html: string): DecisionFieldDefinition[] {
     if (!["input", "select", "textarea"].includes(element.tagName)) return;
     if (hasAttribute(element, "disabled")) return;
     const name = attribute(element, "name");
-    if (!name) return;
+    if (!name) {
+      throw new Error(
+        `DECISION_FIELD_NAME_REQUIRED: Every enabled ${element.tagName} needs a stable name starting with a letter so the user's visible input is included in the decision result.`
+      );
+    }
     controlCount += 1;
     if (controlCount > DECISION_CARD_MAX_FIELDS * 2) {
       throw new Error(`DECISION_FIELD_LIMIT: A card can contain at most ${DECISION_CARD_MAX_FIELDS * 2} named controls.`);
     }
     if (!DECISION_FIELD_NAME.test(name)) {
-      throw new Error(`DECISION_FIELD_NAME_INVALID: ${JSON.stringify(name)}.`);
+      throw new Error(
+        `DECISION_FIELD_NAME_INVALID: ${JSON.stringify(name)}. Use 1-64 ASCII letters, digits, underscores, periods, or hyphens, starting with a letter.`
+      );
     }
     if (!fieldPositions.has(name)) fieldPositions.set(name, controlCount);
     const label = fieldLabel(element, labelsByFor);
-    if (!label) throw new Error(`DECISION_FIELD_LABEL_REQUIRED: ${name}.`);
+    if (!label) {
+      throw new Error(
+        `DECISION_FIELD_LABEL_REQUIRED: ${name}. Add a human-visible wrapping <label>, a <label for="..."> matching the control id, or data-decision-label.`
+      );
+    }
 
     if (element.tagName === "input") {
       const type = (attribute(element, "type") || "text").toLowerCase();
@@ -587,12 +597,20 @@ function extractDecisionFields(html: string): DecisionFieldDefinition[] {
     }
     const options = controls.map(({ element, label }) => {
       const value = attribute(element, "value");
-      if (!value) throw new Error(`DECISION_OPTION_VALUE_REQUIRED: ${name}.`);
+      if (!value) {
+        throw new Error(
+          `DECISION_OPTION_VALUE_REQUIRED: ${name}. Give every radio or multi-checkbox option a non-empty value that matches its visible meaning.`
+        );
+      }
       return { value: boundedDecisionText(value, "option value", 500), label };
     });
     validateOptions(name, options);
     const label = groupLabel(controls.map((control) => control.element), labelsByFor);
-    if (!label) throw new Error(`DECISION_FIELD_GROUP_LABEL_REQUIRED: ${name}.`);
+    if (!label) {
+      throw new Error(
+        `DECISION_FIELD_GROUP_LABEL_REQUIRED: ${name}. Wrap radio or multi-checkbox options in <fieldset><legend>Human-visible group label</legend>...</fieldset>, or add data-decision-label.`
+      );
+    }
     ordinary.push({
       name,
       label,

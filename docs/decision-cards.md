@@ -75,6 +75,16 @@ Required fields apply to **Confirm decision**; explanation requests and deferral
 may keep them unanswered. Empty, unknown, missing, duplicate, or newly injected
 fields and options are rejected.
 
+The same minimum contract is present in MCP discovery, so GPT does not need to
+read this document before authoring a card. `codex_decision` describes the
+required `operation`, supported native controls, stable names and visible labels,
+choice meaning, `required`, unit/output attributes, resource boundary, limits,
+and one compact example. The input schema repeats only field-specific guidance;
+this full document remains the canonical detailed contract. The server is still
+authoritative: an enabled `input`, `select`, or `textarea` without a `name` is
+rejected rather than rendered as an editable value that disappears from the
+result, and validation errors retain stable codes plus a concrete repair.
+
 Use ordinary semantic HTML:
 
 ```html
@@ -138,7 +148,10 @@ browser-host simulations are covered by automated tests. See the issue-specific
 [evaluation record](audits/2026-09-19-issue-127-decision-cards.md) for layouts,
 scenarios, commands, and evidence boundaries, and the
 [CSS/CSP hardening record](audits/2026-09-19-issue-127-css-hardening.md) for the
-escape-normalization regression and CSP-enforced actual-host verification.
+escape-normalization regression and CSP-enforced actual-host verification. The
+[authoring-contract record](audits/2026-09-19-issue-131-decision-authoring.md)
+covers MCP discovery alignment, hint-free actual-host authoring, and
+validator-driven GPT self-correction.
 
 The implementation establishes the interaction and measurement path. It does not
 claim that cards already improve comprehension or decision time for real users.
