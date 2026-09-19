@@ -358,7 +358,8 @@ export class TaskProjectAvailabilityProjection {
 }
 
 export const MAX_CODEX_STATUS_WAIT_MS = 60_000;
-export const DEFAULT_CODEX_STATUS_WAIT_MS = 55_000;
+/** Keep model-visible reads comfortably below common 60-second host lifetimes. */
+export const DEFAULT_CODEX_STATUS_WAIT_MS = 20_000;
 const JOB_PROGRESS_PERSIST_INTERVAL_MS = 30_000;
 
 /**
@@ -1290,6 +1291,63 @@ const bridgeSkillManageOutputSchema = z.strictObject({
   message: z.string().min(1)
 });
 
+const durationDiagnosticsOutputSchema = z.strictObject({
+  count: z.number().int().min(0),
+  p50Ms: z.number().min(0),
+  p95Ms: z.number().min(0),
+  maxMs: z.number().min(0)
+});
+
+const jobWaitDiagnosticsOutputSchema = z.strictObject({
+  defaultWaitMs: z.number().int().positive(),
+  exactStatusWaits: z.number().int().min(0),
+  started: z.strictObject({
+    total: z.number().int().min(0),
+    change: z.number().int().min(0),
+    terminal: z.number().int().min(0)
+  }),
+  sources: z.strictObject({
+    modelStatus: z.number().int().min(0),
+    dashboardCompletion: z.number().int().min(0),
+    internal: z.number().int().min(0)
+  }),
+  completed: z.number().int().min(0),
+  timedOut: z.number().int().min(0),
+  waitedMs: durationDiagnosticsOutputSchema,
+  wakes: z.strictObject({
+    total: z.number().int().min(0),
+    progress: z.number().int().min(0),
+    terminal: z.number().int().min(0),
+    stateChange: z.number().int().min(0)
+  }),
+  hostAborts: z.strictObject({
+    total: z.number().int().min(0),
+    modelStatus: z.number().int().min(0),
+    dashboardCompletion: z.number().int().min(0),
+    internal: z.number().int().min(0),
+    recordedStatusWaitAborts: z.number().int().min(0)
+  }),
+  active: z.strictObject({
+    total: z.number().int().min(0),
+    modelStatus: z.number().int().min(0),
+    dashboardCompletion: z.number().int().min(0),
+    internal: z.number().int().min(0),
+    jobs: z.array(z.strictObject({
+      jobId: z.string(),
+      total: z.number().int().min(0),
+      change: z.number().int().min(0),
+      terminal: z.number().int().min(0),
+      modelStatus: z.number().int().min(0),
+      dashboardCompletion: z.number().int().min(0),
+      internal: z.number().int().min(0)
+    }))
+  }),
+  maintenance: z.strictObject({
+    pruneAndPersist: durationDiagnosticsOutputSchema,
+    telemetryTransaction: durationDiagnosticsOutputSchema
+  })
+});
+
 const diagnosticsOutputSchema = z.strictObject({
   kind: z.literal("diagnostics"),
   bridge: z.strictObject({
@@ -1352,6 +1410,7 @@ const diagnosticsOutputSchema = z.strictObject({
       timeouts: z.number().int().min(0),
       cacheHits: z.number().int().min(0)
     })),
+    jobWaits: jobWaitDiagnosticsOutputSchema,
     html: z.strictObject({
       dashboardBytes: z.number().int().min(0),
       dashboardBudgetBytes: z.number().int().positive(),
@@ -1850,6 +1909,154 @@ type CodexJobWaitResult = {
   changed: boolean;
 };
 
+type CodexJobWaitSource = "model-status" | "dashboard-completion" | "internal";
+type CodexJobWakeReason = "progress" | "terminal" | "state-change";
+type ActiveJobWaitCounts = {
+  change: number;
+  terminal: number;
+  modelStatus: number;
+  dashboardCompletion: number;
+  internal: number;
+};
+
+class BoundedDurationDiagnostics {
+  private count = 0;
+  private readonly samples: number[] = [];
+
+  record(durationMs: number): void {
+    this.count += 1;
+    this.samples.push(Math.max(0, durationMs));
+    if (this.samples.length > 256) this.samples.splice(0, this.samples.length - 256);
+  }
+
+  snapshot(): z.infer<typeof durationDiagnosticsOutputSchema> {
+    const values = [...this.samples].sort((left, right) => left - right);
+    const percentile = (fraction: number): number => {
+      if (values.length === 0) return 0;
+      return values[Math.min(values.length - 1, Math.ceil(values.length * fraction) - 1)] || 0;
+    };
+    const rounded = (value: number) => Math.round(value * 1_000) / 1_000;
+    return {
+      count: this.count,
+      p50Ms: rounded(percentile(0.5)),
+      p95Ms: rounded(percentile(0.95)),
+      maxMs: rounded(values.at(-1) || 0)
+    };
+  }
+}
+
+class JobWaitDiagnostics {
+  private readonly started = { change: 0, terminal: 0 };
+  private readonly sources = { modelStatus: 0, dashboardCompletion: 0, internal: 0 };
+  private completed = 0;
+  private timedOut = 0;
+  private readonly wakes = { progress: 0, terminal: 0, stateChange: 0 };
+  private readonly hostAborts = { modelStatus: 0, dashboardCompletion: 0, internal: 0 };
+  private readonly active = new Map<string, ActiveJobWaitCounts>();
+  private readonly waitedMs = new BoundedDurationDiagnostics();
+  readonly pruneAndPersist = new BoundedDurationDiagnostics();
+  readonly telemetryTransaction = new BoundedDurationDiagnostics();
+
+  begin(jobId: string, waitFor: CodexJobWaitMode, source: CodexJobWaitSource): void {
+    this.started[waitFor] += 1;
+    this.sources[this.sourceKey(source)] += 1;
+    const counts = this.active.get(jobId) || {
+      change: 0,
+      terminal: 0,
+      modelStatus: 0,
+      dashboardCompletion: 0,
+      internal: 0
+    };
+    counts[waitFor] += 1;
+    counts[this.sourceKey(source)] += 1;
+    this.active.set(jobId, counts);
+  }
+
+  finish(
+    jobId: string,
+    waitFor: CodexJobWaitMode,
+    source: CodexJobWaitSource,
+    outcome: {
+      waitedMs: number;
+      completed: boolean;
+      timedOut: boolean;
+      aborted: boolean;
+      wakeReason?: CodexJobWakeReason;
+    }
+  ): void {
+    this.waitedMs.record(outcome.waitedMs);
+    if (outcome.completed) this.completed += 1;
+    if (outcome.timedOut) this.timedOut += 1;
+    if (outcome.aborted) this.hostAborts[this.sourceKey(source)] += 1;
+    if (outcome.wakeReason) this.wakes[this.wakeKey(outcome.wakeReason)] += 1;
+
+    const counts = this.active.get(jobId);
+    if (!counts) return;
+    counts[waitFor] = Math.max(0, counts[waitFor] - 1);
+    const sourceKey = this.sourceKey(source);
+    counts[sourceKey] = Math.max(0, counts[sourceKey] - 1);
+    const total = counts.change + counts.terminal;
+    if (total === 0) this.active.delete(jobId);
+  }
+
+  snapshot(recordedStatusWaitAborts: number): z.infer<typeof jobWaitDiagnosticsOutputSchema> {
+    const activeJobs = [...this.active.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([jobId, counts]) => ({
+        jobId,
+        total: counts.change + counts.terminal,
+        ...counts
+      }));
+    const active = activeJobs.reduce(
+      (totals, entry) => ({
+        total: totals.total + entry.total,
+        modelStatus: totals.modelStatus + entry.modelStatus,
+        dashboardCompletion: totals.dashboardCompletion + entry.dashboardCompletion,
+        internal: totals.internal + entry.internal
+      }),
+      { total: 0, modelStatus: 0, dashboardCompletion: 0, internal: 0 }
+    );
+    const totalAborts = this.hostAborts.modelStatus +
+      this.hostAborts.dashboardCompletion + this.hostAborts.internal;
+    const totalWakes = this.wakes.progress + this.wakes.terminal + this.wakes.stateChange;
+    return {
+      defaultWaitMs: DEFAULT_CODEX_STATUS_WAIT_MS,
+      exactStatusWaits: this.sources.modelStatus,
+      started: {
+        total: this.started.change + this.started.terminal,
+        ...this.started
+      },
+      sources: { ...this.sources },
+      completed: this.completed,
+      timedOut: this.timedOut,
+      waitedMs: this.waitedMs.snapshot(),
+      wakes: { total: totalWakes, ...this.wakes },
+      hostAborts: {
+        total: totalAborts,
+        ...this.hostAborts,
+        recordedStatusWaitAborts
+      },
+      active: { ...active, jobs: activeJobs },
+      maintenance: {
+        pruneAndPersist: this.pruneAndPersist.snapshot(),
+        telemetryTransaction: this.telemetryTransaction.snapshot()
+      }
+    };
+  }
+
+  private sourceKey(source: CodexJobWaitSource): keyof JobWaitDiagnostics["sources"] {
+    return source === "model-status"
+      ? "modelStatus"
+      : source === "dashboard-completion"
+        ? "dashboardCompletion"
+        : "internal";
+  }
+
+  private wakeKey(reason: CodexJobWakeReason): keyof JobWaitDiagnostics["wakes"] {
+    return reason === "state-change" ? "stateChange" : reason;
+  }
+}
+
 type SteeringTerminalStatus = Extract<
   SteeringDeliveryRecord["status"],
   "delivered" | "not-delivered" | "uncertain"
@@ -1868,8 +2075,11 @@ type SteeringMutationFallbacks = {
 
 export class CodexJobRegistry {
   private readonly jobs = new Map<string, CodexJob>();
-  private readonly waiters = new Map<string, Set<() => void>>();
+  private readonly waiters = new Map<string, Set<(reason: CodexJobWakeReason) => void>>();
+  private readonly terminalWaiters = new Map<string, Set<() => void>>();
+  private readonly lastWake = new Map<string, { version: number; reason: CodexJobWakeReason }>();
   private readonly scopeWaiters = new Map<string, Set<() => void>>();
+  private readonly waitDiagnosticsTracker = new JobWaitDiagnostics();
   private readonly maxConcurrentJobs: number;
   private readonly ttlMs: number;
   private readonly maxJobs: number;
@@ -2542,6 +2752,12 @@ export class CodexJobRegistry {
     return this.activityStore.listTransportObservations(kind);
   }
 
+  waitDiagnostics(): z.infer<typeof jobWaitDiagnosticsOutputSchema> {
+    return this.waitDiagnosticsTracker.snapshot(
+      this.activityStore.listTransportObservations("status-wait-aborted").length
+    );
+  }
+
   getScopeVersion(scopeId: string): number {
     return this.activityStore.getScopeVersion(scopeId);
   }
@@ -2797,6 +3013,7 @@ export class CodexJobRegistry {
     this.deferredSettlements.delete(jobId);
     this.steeringPromptRedactions.delete(jobId);
     this.jobs.delete(jobId);
+    this.lastWake.delete(jobId);
   }
 
   private settleResolvedJob(
@@ -2845,7 +3062,7 @@ export class CodexJobRegistry {
       });
       Object.assign(job, next);
       this.steeringPromptRedactions.delete(job.jobId);
-      this.notify(job.jobId);
+      this.notify(job.jobId, "terminal");
       this.notifyScope(job.scopeId);
       this.pruneAndPersist();
     } catch (error) {
@@ -2897,7 +3114,7 @@ export class CodexJobRegistry {
       });
       Object.assign(job, next);
       this.steeringPromptRedactions.delete(job.jobId);
-      this.notify(job.jobId);
+      this.notify(job.jobId, "terminal");
       this.notifyScope(job.scopeId);
       this.pruneAndPersist();
     } catch (error) {
@@ -2969,7 +3186,7 @@ export class CodexJobRegistry {
       Object.assign(job, fallback);
     }
     this.steeringPromptRedactions.delete(job.jobId);
-    this.notify(job.jobId);
+    this.notify(job.jobId, "terminal");
     this.notifyScope(job.scopeId);
     this.pruneAndPersist();
   }
@@ -3171,41 +3388,61 @@ export class CodexJobRegistry {
     jobId: string,
     waitFor: CodexJobWaitMode,
     waitMs: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    source: CodexJobWaitSource = "internal"
   ): Promise<CodexJobWaitResult> {
     if (!Number.isInteger(waitMs) || waitMs < 1 || waitMs > MAX_CODEX_STATUS_WAIT_MS) {
       throw new Error(`waitMs must be an integer between 1 and ${MAX_CODEX_STATUS_WAIT_MS}.`);
     }
     const initial = this.get(jobId);
     if (!initial) throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
-    if (signal?.aborted) throw new Error("The status wait was cancelled by the host.");
     const startedAt = Date.now();
     const initialVersion = initial.version;
-    let current = initial;
-    let changed = false;
-
-    if (isActiveActivityJobStatus(current.status)) {
-      const deadline = startedAt + waitMs;
-      do {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) break;
-        const observedVersion = current.version;
-        const didChange = await this.waitForVersion(jobId, observedVersion, remaining, signal);
-        changed ||= didChange;
-        current = this.get(jobId) || current;
-        if (waitFor === "change" && current.version !== initialVersion) break;
-      } while (waitFor === "terminal" && isActiveActivityJobStatus(current.status));
-    }
-
-    return {
-      job: current,
-      waitFor,
-      waitedMs: Date.now() - startedAt,
-      waitTimedOut:
+    let wakeReason: CodexJobWakeReason | undefined;
+    this.waitDiagnosticsTracker.begin(jobId, waitFor, source);
+    try {
+      if (signal?.aborted) throw new Error("The status wait was cancelled by the host.");
+      let current = initial;
+      if (isActiveActivityJobStatus(current.status)) {
+        const remaining = startedAt + waitMs - Date.now();
+        if (remaining > 0) {
+          wakeReason = waitFor === "terminal"
+            ? await this.waitForTerminal(jobId, remaining, signal)
+            : await this.waitForVersion(jobId, current.version, remaining, signal);
+          // The public lookup above performed retention and ownership-adjacent
+          // refresh once. Waiting itself is an in-memory hot path.
+          current = this.jobs.get(jobId) || current;
+        }
+      }
+      const waitedMs = Math.max(0, Date.now() - startedAt);
+      const waitTimedOut =
         isActiveActivityJobStatus(current.status) &&
-        (waitFor === "terminal" || current.version === initialVersion),
-      changed: changed || current.version !== initialVersion
-    };
+        (waitFor === "terminal" || current.version === initialVersion);
+      const result = {
+        job: current,
+        waitFor,
+        waitedMs,
+        waitTimedOut,
+        changed: wakeReason !== undefined || current.version !== initialVersion
+      };
+      this.waitDiagnosticsTracker.finish(jobId, waitFor, source, {
+        waitedMs,
+        completed: true,
+        timedOut: waitTimedOut,
+        aborted: false,
+        wakeReason
+      });
+      return result;
+    } catch (error) {
+      this.waitDiagnosticsTracker.finish(jobId, waitFor, source, {
+        waitedMs: Math.max(0, Date.now() - startedAt),
+        completed: false,
+        timedOut: false,
+        aborted: Boolean(signal?.aborted),
+        wakeReason
+      });
+      throw error;
+    }
   }
 
   async waitForInput(jobId: string, afterCursor?: string, waitMs = 0, signal?: AbortSignal) {
@@ -3265,7 +3502,7 @@ export class CodexJobRegistry {
     job.lastProgressAt = now;
     job.updatedAt = now;
     job.version += 1;
-    this.notify(job.jobId);
+    this.notify(job.jobId, "progress");
     if (publicEvent) {
       this.persistTelemetryBestEffort(job, publicEvent);
     } else if (
@@ -3503,7 +3740,10 @@ export class CodexJobRegistry {
   private recordChange(job: CodexJob): void {
     job.updatedAt = Date.now();
     job.version += 1;
-    this.notify(job.jobId);
+    this.notify(
+      job.jobId,
+      isTerminalActivityJobStatus(job.status) ? "terminal" : "state-change"
+    );
     const beforePrune = new Map(this.jobs);
     const removed = this.prune();
     if (!this.persistJobBestEffort(job, removed)) {
@@ -3522,12 +3762,12 @@ export class CodexJobRegistry {
     version: number,
     waitMs: number,
     signal?: AbortSignal
-  ): Promise<boolean> {
+  ): Promise<CodexJobWakeReason | undefined> {
     return new Promise((resolve, reject) => {
       let settled = false;
-      const listeners = this.waiters.get(jobId) || new Set<() => void>();
+      const listeners = this.waiters.get(jobId) || new Set<(reason: CodexJobWakeReason) => void>();
       this.waiters.set(jobId, listeners);
-      const finish = (changed: boolean, error?: Error) => {
+      const finish = (reason?: CodexJobWakeReason, error?: Error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -3535,21 +3775,65 @@ export class CodexJobRegistry {
         if (listeners.size === 0) this.waiters.delete(jobId);
         signal?.removeEventListener("abort", onAbort);
         if (error) reject(error);
-        else resolve(changed);
+        else resolve(reason);
       };
-      const onChange = () => finish((this.jobs.get(jobId)?.version || version) !== version);
-      const onAbort = () => finish(false, new Error("The status wait was cancelled by the host."));
-      const timer = setTimeout(() => finish(false), waitMs);
+      const onChange = (reason: CodexJobWakeReason) => {
+        finish((this.jobs.get(jobId)?.version || version) !== version ? reason : undefined);
+      };
+      const onAbort = () => finish(undefined, new Error("The status wait was cancelled by the host."));
+      const timer = setTimeout(() => finish(), waitMs);
       listeners.add(onChange);
       signal?.addEventListener("abort", onAbort, { once: true });
-      if ((this.jobs.get(jobId)?.version || version) !== version) finish(true);
+      const currentVersion = this.jobs.get(jobId)?.version || version;
+      if (currentVersion !== version) {
+        const lastWake = this.lastWake.get(jobId);
+        finish(lastWake?.version === currentVersion ? lastWake.reason : "state-change");
+      }
       else if (signal?.aborted) onAbort();
     });
   }
 
-  private notify(jobId: string): void {
+  private waitForTerminal(
+    jobId: string,
+    waitMs: number,
+    signal?: AbortSignal
+  ): Promise<CodexJobWakeReason | undefined> {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const listeners = this.terminalWaiters.get(jobId) || new Set<() => void>();
+      this.terminalWaiters.set(jobId, listeners);
+      const finish = (reason?: CodexJobWakeReason, error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        listeners.delete(onTerminal);
+        if (listeners.size === 0) this.terminalWaiters.delete(jobId);
+        signal?.removeEventListener("abort", onAbort);
+        if (error) reject(error);
+        else resolve(reason);
+      };
+      const onTerminal = () => finish("terminal");
+      const onAbort = () => finish(undefined, new Error("The status wait was cancelled by the host."));
+      const timer = setTimeout(() => finish(), waitMs);
+      listeners.add(onTerminal);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      const current = this.jobs.get(jobId);
+      if (current && isTerminalActivityJobStatus(current.status)) onTerminal();
+      else if (signal?.aborted) onAbort();
+    });
+  }
+
+  private notify(jobId: string, reason: CodexJobWakeReason = "state-change"): void {
+    const current = this.jobs.get(jobId);
+    const effectiveReason = current && isTerminalActivityJobStatus(current.status)
+      ? "terminal"
+      : reason;
+    if (current) this.lastWake.set(jobId, { version: current.version, reason: effectiveReason });
     for (const listener of this.changeListeners) listener();
-    for (const listener of [...(this.waiters.get(jobId) || [])]) listener();
+    for (const listener of [...(this.waiters.get(jobId) || [])]) listener(effectiveReason);
+    if (effectiveReason === "terminal") {
+      for (const listener of [...(this.terminalWaiters.get(jobId) || [])]) listener();
+    }
   }
 
   private notifyScope(scopeId: string): void {
@@ -3565,6 +3849,7 @@ export class CodexJobRegistry {
       if (!isActiveActivityJobStatus(job.status) && job.updatedAt < cutoff &&
         !this.activityStore.retentionProtection(jobId, now, this.ttlMs).length) {
         this.jobs.delete(jobId);
+        this.lastWake.delete(jobId);
         removed.push(jobId);
       }
     }
@@ -3573,6 +3858,7 @@ export class CodexJobRegistry {
     for (const job of sorted.filter((entry) => !isActiveActivityJobStatus(entry.status) &&
       !this.activityStore.retentionProtection(entry.jobId, now, this.ttlMs).length).slice(0, this.jobs.size - this.maxJobs)) {
       this.jobs.delete(job.jobId);
+      this.lastWake.delete(job.jobId);
       removed.push(job.jobId);
     }
     return removed;
@@ -3685,26 +3971,33 @@ export class CodexJobRegistry {
     publicEvent: CodexPublicEvent
   ): boolean {
     try {
-      this.activityStore.recordJobTelemetryEvent(
-        job.jobId,
-        `app-${publicEvent.type}-${publicEvent.phase}`,
-        publicEvent,
-        publicEvent.createdAt,
-        publicEvent.type === "approval-required" || publicEvent.type === "input-required"
-          ? publicEvent.phase === "waiting"
-            ? "user"
-            : publicEvent.phase === "completed"
-              ? "codex"
-              : undefined
-          : undefined,
-        {
-          updatedAt: job.updatedAt,
-          version: job.version,
-          lastProgressAt: job.lastProgressAt,
-          lastProgress: job.lastProgress,
-          pendingInteractions: job.pendingInteractions
-        }
-      );
+      const transactionStartedAt = performance.now();
+      try {
+        this.activityStore.recordJobTelemetryEvent(
+          job.jobId,
+          `app-${publicEvent.type}-${publicEvent.phase}`,
+          publicEvent,
+          publicEvent.createdAt,
+          publicEvent.type === "approval-required" || publicEvent.type === "input-required"
+            ? publicEvent.phase === "waiting"
+              ? "user"
+              : publicEvent.phase === "completed"
+                ? "codex"
+                : undefined
+            : undefined,
+          {
+            updatedAt: job.updatedAt,
+            version: job.version,
+            lastProgressAt: job.lastProgressAt,
+            lastProgress: job.lastProgress,
+            pendingInteractions: job.pendingInteractions
+          }
+        );
+      } finally {
+        this.waitDiagnosticsTracker.telemetryTransaction.record(
+          performance.now() - transactionStartedAt
+        );
+      }
       this.lastPersistedAt = Date.now();
       this.persistenceWarningShown = false;
       this.notifyScope(job.scopeId);
@@ -3745,27 +4038,32 @@ export class CodexJobRegistry {
   }
 
   private pruneAndPersist(): void {
-    this.refreshProjectIdentities();
-    const beforePrune = new Map(this.jobs);
-    const removed = this.prune();
-    if (removed.length === 0) return;
+    const startedAt = performance.now();
     try {
-      if (this.stateStore) {
-        this.stateStore.transaction(() => {
-          for (const jobId of removed) this.stateStore?.deleteJob(jobId);
-        });
-      } else {
-        this.persist();
+      this.refreshProjectIdentities();
+      const beforePrune = new Map(this.jobs);
+      const removed = this.prune();
+      if (removed.length === 0) return;
+      try {
+        if (this.stateStore) {
+          this.stateStore.transaction(() => {
+            for (const jobId of removed) this.stateStore?.deleteJob(jobId);
+          });
+        } else {
+          this.persist();
+        }
+      } catch (error) {
+        this.jobs.clear();
+        for (const [jobId, job] of beforePrune) this.jobs.set(jobId, job);
+        if (!this.persistenceWarningShown) {
+          console.error(
+            `Could not persist Codex job pruning: ${error instanceof Error ? error.message : String(error)}`
+          );
+          this.persistenceWarningShown = true;
+        }
       }
-    } catch (error) {
-      this.jobs.clear();
-      for (const [jobId, job] of beforePrune) this.jobs.set(jobId, job);
-      if (!this.persistenceWarningShown) {
-        console.error(
-          `Could not persist Codex job pruning: ${error instanceof Error ? error.message : String(error)}`
-        );
-        this.persistenceWarningShown = true;
-      }
+    } finally {
+      this.waitDiagnosticsTracker.pruneAndPersist.record(performance.now() - startedAt);
     }
   }
 
@@ -3820,7 +4118,7 @@ export class CardPerformanceTracker {
     this.samples.set(name, entries);
   }
 
-  snapshot(): z.infer<typeof diagnosticsOutputSchema>["performance"] {
+  snapshot(): Omit<z.infer<typeof diagnosticsOutputSchema>["performance"], "jobWaits"> {
     const percentile = (values: number[], fraction: number): number => {
       if (values.length === 0) return 0;
       return values[Math.min(values.length - 1, Math.ceil(values.length * fraction) - 1)] || 0;
@@ -5023,7 +5321,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read project selectors and Codex work state, ordinary questions, and results in the current conversation. An authenticated exact Job or request query records only that the server offered a retained result; it does not prove GPT received the result and does not settle or cancel live-card delivery. For an automatic live-card completion message, call query kind='completion' with its opaque receipt; that response is also offer evidence, the authenticated conversation scope is still required, and the receipt never authorizes cross-conversation access.",
+        "Read project selectors and Codex work state, ordinary questions, and results in the current conversation. Exact Job change/terminal waits are bounded reads; a terminal wait wakes only for terminal lifecycle state, not ordinary progress, and an aborted or timed-out read never cancels the Job. A mounted originating Dashboard already watches terminal completion, so do not keep a parallel terminal wait solely to trigger the same completion delivery; manual exact reads remain supported. An authenticated exact Job or request query records only that the server offered a retained result; it does not prove GPT received the result and does not settle or cancel live-card delivery. For an automatic live-card completion message, call query kind='completion' with its opaque receipt; that response is also offer evidence, the authenticated conversation scope is still required, and the receipt never authorizes cross-conversation access.",
       inputSchema: codexStatusInput,
       outputSchema: MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status,
       annotations: {
@@ -5134,12 +5432,14 @@ export function registerBridgeTools(
             });
           };
           signal?.addEventListener("abort", onAbort, { once: true });
+          if (signal?.aborted) onAbort();
           try {
             wait = await jobs.wait(
               initial.jobId,
               jobQuery.waitFor,
-              jobQuery.waitMs || DEFAULT_CODEX_STATUS_WAIT_MS,
-              signal
+              jobQuery.waitMs ?? DEFAULT_CODEX_STATUS_WAIT_MS,
+              signal,
+              "model-status"
             );
           } finally {
             signal?.removeEventListener("abort", onAbort);
@@ -5370,7 +5670,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Operator Diagnostics`,
       description:
-        "App-only operator diagnostics for build, authentication mode, storage, scope HMAC, pool limits, upstream inventory, descriptor notification/re-list observations, bounded card-stage latency/request/timeout/cache statistics, HTML byte budgets, and forensic warnings. A notification or re-list observation never claims descriptor adoption. Routine model status and unauthenticated health checks intentionally exclude this data.",
+        "App-only operator diagnostics for build, authentication mode, storage, scope HMAC, pool limits, upstream inventory, descriptor notification/re-list observations, bounded card-stage and exact-Job wait statistics, waiter counts, storage-path latency, HTML byte budgets, and forensic warnings. A notification or re-list observation never claims descriptor adoption. Routine model status and unauthenticated health checks intentionally exclude this data.",
       inputSchema: z.strictObject({}),
       outputSchema: diagnosticsOutputSchema,
       annotations: {
@@ -5450,7 +5750,10 @@ export function registerBridgeTools(
           lastObservedNotificationToRelistMs: null,
           adoptionState: "unknown" as const
         },
-        performance: cardPerformance.snapshot(),
+        performance: {
+          ...cardPerformance.snapshot(),
+          jobWaits: jobs.waitDiagnostics()
+        },
         forensics: {
           bridgeInstanceId: jobs.bridgeInstanceId,
           startupWarnings: [
@@ -7166,8 +7469,9 @@ export function registerBridgeTools(
         const waited = await jobs.wait(
           job.jobId,
           "terminal",
-          args.waitMs || 8_000,
-          extra.mcpReq.signal
+          args.waitMs ?? 8_000,
+          extra.mcpReq.signal,
+          "dashboard-completion"
         );
         job = waited.job;
       }
