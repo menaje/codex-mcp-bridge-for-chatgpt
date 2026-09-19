@@ -148,7 +148,10 @@ browser-host simulations are covered by automated tests. See the issue-specific
 [evaluation record](audits/2026-09-19-issue-127-decision-cards.md) for layouts,
 scenarios, commands, and evidence boundaries, and the
 [CSS/CSP hardening record](audits/2026-09-19-issue-127-css-hardening.md) for the
-escape-normalization regression and CSP-enforced actual-host verification.
+escape-normalization regression and CSP-enforced actual-host verification. The
+[authoring-contract record](audits/2026-09-19-issue-131-decision-authoring.md)
+covers MCP discovery alignment, hint-free actual-host authoring, and
+validator-driven GPT self-correction.
 
 The implementation establishes the interaction and measurement path. It does not
 claim that cards already improve comprehension or decision time for real users.
