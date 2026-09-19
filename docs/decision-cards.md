@@ -11,6 +11,14 @@ Job. A later GPT turn may choose to use the decision while planning or while
 driving Codex, but the card itself never starts work and its confirmation is not
 an execution or permission approval.
 
+When a card helps a user deliberate over a live ordinary Codex question, GPT
+must keep the two contracts explicit: read the current question, run the
+independent card flow, refresh `codex_status` with `kind: "input"`, and call
+`codex_answer` only if the exact question remains current and the user separately
+wants it sent. Card creation, submission, and result retrieval do not answer the
+question or continue the Job, and they cannot change its sandbox, access
+strategy, execution decision, or approval state.
+
 ## Public flow
 
 1. GPT calls `codex_decision` with `operation: "create"`, a unique `requestId`,
@@ -151,7 +159,9 @@ scenarios, commands, and evidence boundaries, and the
 escape-normalization regression and CSP-enforced actual-host verification. The
 [authoring-contract record](audits/2026-09-19-issue-131-decision-authoring.md)
 covers MCP discovery alignment, hint-free actual-host authoring, and
-validator-driven GPT self-correction.
+validator-driven GPT self-correction. The Codex orchestration boundary and its
+live-question sequence are covered by the
+[permission-boundary record](audits/2026-09-19-issue-132-decision-codex-boundary.md).
 
 The implementation establishes the interaction and measurement path. It does not
 claim that cards already improve comprehension or decision time for real users.

@@ -30,6 +30,25 @@
 메시지의 `final_answer` phase는 turn 완료 근거가 아니며, 최종 판단은 정확한
 Job 상태와 결과에서 한다.
 
+## 의사결정카드를 함께 쓰는 경우
+
+실행 중인 Codex 질문을 설명하거나 비교하는 데 카드가 유용해도 두 계약은
+결합되지 않는다. 다음 순서를 유지한다.
+
+1. `codex_status`의 input query로 현재 질문과 정확한 `questionRef`를 읽는다.
+2. 필요할 때만 독립적인 `codex_decision` 카드를 만들고, 제출 결과는
+   `codex_decision_result`로 읽는다.
+3. 카드 결과를 받은 뒤 `codex_status`의 input query를 다시 호출해 같은 질문이
+   아직 현재 상태인지 확인한다.
+4. 사용자가 별도로 답변 전송을 원하고 질문이 여전히 유효할 때만 현재
+   `questionRef`로 `codex_answer`를 호출한다.
+
+카드 생성·제출·결과 조회만으로는 Codex 질문에 답하지 않고 Job을 시작하거나
+계속하지 않는다. Job의 sandbox, access strategy, execution decision, Activity,
+Agent, Job 수를 바꾸지 않으며 실행 승인이나 권한 승인도 부여하지 않는다.
+승인 요청은 카드나 `codex_answer`로 해결하지 않고 Dashboard의 원본 승인
+경로를 사용한다.
+
 ## 범위와 재전송 규칙
 
 `codex_answer`는 현재 대화 범위의 활성 Job, 현재 worker/turn, 현재

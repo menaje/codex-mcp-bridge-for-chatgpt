@@ -71,7 +71,7 @@ export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistr
 
   server.registerTool("codex_answer", {
     title: "Answer a Codex Question",
-    description: "Answer a current ordinary Codex question in this conversation. This cannot grant approvals, supply authentication secrets, or start another turn.",
+    description: "Answer a current ordinary Codex question in this conversation. Refresh codex_status kind=input after any intervening user deliberation or decision card and use only the exact questionRef that remains current. This cannot grant approvals, supply authentication secrets, or start another turn.",
     inputSchema: z.strictObject({
       requestId: z.string().uuid().describe("Idempotency UUID for this exact answer. Uncertain delivery must never be automatically resent."),
       jobId: identifier,
