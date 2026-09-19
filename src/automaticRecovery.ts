@@ -51,6 +51,23 @@ export class AutomaticRecoveryStore {
       .map(row => this.decode(row as Record<string, unknown>));
   }
 
+  /** Dashboard projection excludes references whose retained Job history has
+   * expired, so the selected page can hydrate exact Job IDs after pagination. */
+  listForDashboard(scopeId?: string): AutomaticRecoveryRecord[] {
+    return this.db.prepare(`SELECT recovery.* FROM automatic_recovery recovery
+      WHERE ${scopeId ? "recovery.scope_id=? AND" : ""}
+        (recovery.job_id IS NULL OR EXISTS (
+          SELECT 1 FROM jobs job WHERE job.job_id=recovery.job_id
+            AND NOT EXISTS (
+              SELECT 1 FROM work_history_state history
+               WHERE history.job_id=job.job_id AND history.expired_at IS NOT NULL
+            )
+        ))
+      ORDER BY recovery.updated_at DESC,recovery.recovery_key`)
+      .all(...(scopeId ? [scopeId] : []))
+      .map(row => this.decode(row as Record<string, unknown>));
+  }
+
   /** Fresh inspection transitions define incidents; retries and cached reads
    * do not. Keep each incident's journal and retry budget across restarts. */
   observeRecheck(candidate: AutomaticRecoveryCandidate, problem: boolean, now: number, evidence?: string): void {
@@ -131,18 +148,23 @@ export class AutomaticRecoveryStore {
     this.db.prepare("UPDATE automatic_recovery_incidents SET active=0,updated_at=? WHERE recovery_key=?").run(now,key);
   }
 
-  prune(retentionDays: number, now = Date.now()): { recordsRemoved: number; incidentsRemoved: number } {
+  prune(retentionDays: number, now = Date.now(), limit = 500): { recordsRemoved: number; incidentsRemoved: number } {
     if (retentionDays === 0) return { recordsRemoved: 0, incidentsRemoved: 0 };
+    const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
     // Keep every unresolved attempt budget while its original work still exists.
-    const recordsRemoved = this.db.prepare(`DELETE FROM automatic_recovery WHERE updated_at<? AND
-      (state='resolved' OR NOT EXISTS (SELECT 1 FROM agents WHERE agent_id=automatic_recovery.agent_id)
-       OR job_id IS NOT NULL AND EXISTS (SELECT 1 FROM work_history_state WHERE job_id=automatic_recovery.job_id AND expired_at IS NOT NULL))`)
-      .run(now - retentionDays * 86_400_000).changes;
-    const incidentsRemoved = this.db.prepare(`DELETE FROM automatic_recovery_incidents WHERE
-      NOT EXISTS (SELECT 1 FROM agents WHERE agent_id=automatic_recovery_incidents.agent_id)
-      OR updated_at<? AND NOT EXISTS
-        (SELECT 1 FROM automatic_recovery WHERE recovery_key=automatic_recovery_incidents.recovery_key)`)
-      .run(now - retentionDays * 86_400_000).changes;
+    const recordsRemoved = this.db.prepare(`DELETE FROM automatic_recovery WHERE recovery_key IN (
+      SELECT recovery_key FROM automatic_recovery WHERE updated_at<? AND
+        (state='resolved' OR NOT EXISTS (SELECT 1 FROM agents WHERE agent_id=automatic_recovery.agent_id)
+         OR job_id IS NOT NULL AND EXISTS (SELECT 1 FROM work_history_state WHERE job_id=automatic_recovery.job_id AND expired_at IS NOT NULL))
+      ORDER BY updated_at,recovery_key LIMIT ?
+    )`).run(now - retentionDays * 86_400_000, boundedLimit).changes;
+    const incidentsRemoved = this.db.prepare(`DELETE FROM automatic_recovery_incidents WHERE identity_key IN (
+      SELECT identity_key FROM automatic_recovery_incidents WHERE
+        NOT EXISTS (SELECT 1 FROM agents WHERE agent_id=automatic_recovery_incidents.agent_id)
+        OR updated_at<? AND NOT EXISTS
+          (SELECT 1 FROM automatic_recovery WHERE recovery_key=automatic_recovery_incidents.recovery_key)
+      ORDER BY updated_at,identity_key LIMIT ?
+    )`).run(now - retentionDays * 86_400_000, boundedLimit).changes;
     return { recordsRemoved, incidentsRemoved };
   }
 

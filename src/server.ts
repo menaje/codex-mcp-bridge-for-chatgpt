@@ -111,6 +111,7 @@ export function createBridgeMcpServer(
     stateStore: fallbackStateStore
   });
   jobRegistry.configureThreadConnections(upstream, config.threadIdleMs);
+  jobRegistry.configureStateMaintenance();
   if (settingsStore.admissionStateStore !== jobRegistry.admissionStateStore) {
     throw new Error(
       "PROJECT_ADMISSION_STORE_MISMATCH: Project registry and Activity/Agent/Job admission must share one state store."

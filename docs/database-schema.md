@@ -230,6 +230,10 @@ restarts.
 
 ## Capacity, backups, and offline compaction
 
+The schema-24 table/write/read/maintenance ownership matrix and the command,
+query, and bounded scheduler contracts are documented in
+[State data access and maintenance ownership](state-data-access.md).
+
 Treat four measurements separately:
 
 1. Logical data is table row counts and SQLite cell-payload bytes.

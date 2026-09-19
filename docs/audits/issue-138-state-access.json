@@ -1,0 +1,65 @@
+{
+  "issue": 138,
+  "testedAt": "2026-09-19T15:38:45.128Z",
+  "database": "disposable schema-24 fixture",
+  "productionDatabaseModified": false,
+  "dashboardScale": [
+    {
+      "name": "100-jobs-100-agents",
+      "jobs": 100,
+      "agents": 100,
+      "overviewLoadedRows": 100,
+      "overviewSqlStatements": 1,
+      "overviewMs": 1.351,
+      "agentHistoryLoadedRows": 1,
+      "agentHistoryTotal": 1,
+      "agentHistoryMs": 0.161,
+      "completeArchivedCount": 100,
+      "heapDeltaBytes": 690744
+    },
+    {
+      "name": "1000-jobs-500-agents",
+      "jobs": 1000,
+      "agents": 500,
+      "overviewLoadedRows": 500,
+      "overviewSqlStatements": 1,
+      "overviewMs": 5.5,
+      "agentHistoryLoadedRows": 2,
+      "agentHistoryTotal": 2,
+      "agentHistoryMs": 0.253,
+      "completeArchivedCount": 1000,
+      "heapDeltaBytes": 3024376
+    },
+    {
+      "name": "10000-jobs-1000-agents",
+      "jobs": 10000,
+      "agents": 1000,
+      "overviewLoadedRows": 1000,
+      "overviewSqlStatements": 1,
+      "overviewMs": 38.471,
+      "agentHistoryLoadedRows": 10,
+      "agentHistoryTotal": 10,
+      "agentHistoryMs": 1.822,
+      "completeArchivedCount": 10000,
+      "heapDeltaBytes": 5910784
+    }
+  ],
+  "dashboardRepresentativeSelection": {
+    "createdTimeRepresentative": "representative-order-newer-completed",
+    "updatedTimeRepresentative": "representative-order-older-failed",
+    "exactHistoricalRows": 1,
+    "exactHistoricalSummaryLoaded": true,
+    "writes": 0
+  },
+  "progressSqlTrace": {
+    "publicEventWrites": 4,
+    "stateOnlyWrites": 2,
+    "excludesTriggerInternalWrites": true
+  },
+  "statusReadModel": {
+    "sqlStatements": 2,
+    "writes": 0
+  },
+  "passed": true,
+  "temporaryFixtureRemoved": true
+}

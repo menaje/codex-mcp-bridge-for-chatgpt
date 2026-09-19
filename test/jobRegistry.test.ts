@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -323,7 +324,7 @@ describe("CodexJobRegistry persistence", () => {
     expect(statSync(stateFile).mode & 0o777).toBe(0o600);
   });
 
-  it("keeps one result-retention recovery window after a completion receipt offer", async () => {
+  it("keeps reads pure and expires a result only at an explicit retention boundary", async () => {
     const root = temporaryRoot();
     const stateStore = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
     const clock = vi.spyOn(Date, "now");
@@ -361,8 +362,58 @@ describe("CodexJobRegistry persistence", () => {
         structuredContent: { threadId: "recovery-window" }
       });
       now = 1_150;
+      expect(registry.get(completed.jobId)).toBeDefined();
+      expect(stateStore.listJobs()).toHaveLength(1);
+      expect(registry.maintainRetainedJobs()).toBe(1);
       expect(registry.get(completed.jobId)).toBeUndefined();
       expect(stateStore.listJobs()).toEqual([]);
+    } finally {
+      clock.mockRestore();
+      stateStore.close();
+    }
+  });
+
+  it("bounds each retained-Job maintenance slice and resumes on the next call", async () => {
+    const root = temporaryRoot();
+    const stateStore = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    const clock = vi.spyOn(Date, "now");
+    let now = 1_000;
+    clock.mockImplementation(() => now);
+    const registry = new CodexJobRegistry({
+      stateStore,
+      allowedRoots: [root],
+      ttlMs: 100,
+      maxJobs: 1_000
+    });
+    try {
+      for (let index = 0; index < 12; index += 1) {
+        now = 1_000 + index;
+        const completed = registry.start({
+          ...jobInput(root),
+          requestId: randomUUID(),
+          requestHash: index.toString(16).padStart(64, "0")
+        }, async () => result(`bounded-${index}`));
+        await completed.promise;
+      }
+      now = 2_000;
+      const protection = vi.spyOn(stateStore, "retentionProtection").mockReturnValue([]);
+      const before = registry.size;
+      expect(registry.maintainRetainedJobs({
+        maxInspected: 5,
+        maxRemoved: 2,
+        maxDurationMs: 1_000
+      })).toBe(2);
+      expect(registry.size).toBe(before - 2);
+      // Each inspected candidate is checked once by the registry and each
+      // bounded deletion is defensively checked once by the State UoW.
+      expect(protection.mock.calls.length).toBeLessThanOrEqual(7);
+
+      expect(registry.maintainRetainedJobs({
+        maxInspected: 5,
+        maxRemoved: 2,
+        maxDurationMs: 1_000
+      })).toBe(2);
+      expect(registry.size).toBe(before - 4);
     } finally {
       clock.mockRestore();
       stateStore.close();

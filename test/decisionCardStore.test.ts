@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
+import { DECISION_DELIVERY_LEASE_MS } from "../src/decisionCardStore.js";
 
 const SCOPE = "11111111-1111-4111-8111-111111111111";
 const FOREIGN_SCOPE = "22222222-2222-4222-8222-222222222222";
@@ -124,6 +125,52 @@ describe("durable free-form decision cards", () => {
         leaseOwner: retryOwner,
         outcome: "accepted"
       })).toMatchObject({ deliveryState: "host-accepted", hostAcceptedAt: expect.any(Number) });
+    } finally {
+      store.close();
+    }
+  });
+
+  it("rejects a late outcome after lease expiry and never makes it claimable again", () => {
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const store = new BridgeStateStore({ file: ":memory:" });
+    try {
+      const card = store.decisionCards.create(SCOPE, {
+        requestId: randomUUID(), title: "Confirm once", html: "<p>Proceed once?</p>"
+      });
+      const proof = { cardId: card.cardId, cardVersion: card.version, presentationRef: card.presentationRef };
+      const submission = store.decisionCards.submit(SCOPE, proof, {
+        submissionId: randomUUID(), intent: "confirm", fields: []
+      });
+      const owner = randomUUID();
+      expect(store.decisionCards.claimDelivery({
+        scopeId: SCOPE, proof, receipt: submission.receipt, leaseOwner: owner
+      })).toMatchObject({ send: true, submission: { attemptCount: 1, deliveryState: "leased" } });
+
+      now += DECISION_DELIVERY_LEASE_MS;
+      expect(store.decisionCards.latestSubmission(SCOPE, card.cardId)).toMatchObject({
+        attemptCount: 1,
+        deliveryState: "acceptance-unknown"
+      });
+      expect(() => store.decisionCards.recordDeliveryOutcome({
+        scopeId: SCOPE,
+        proof,
+        receipt: submission.receipt,
+        leaseOwner: owner,
+        outcome: "release"
+      })).toThrow(/DECISION_DELIVERY_STALE/);
+
+      const retry = store.decisionCards.claimDelivery({
+        scopeId: SCOPE,
+        proof,
+        receipt: submission.receipt,
+        leaseOwner: randomUUID(),
+        retryRejected: true
+      });
+      expect(retry).toMatchObject({
+        send: false,
+        submission: { attemptCount: 1, deliveryState: "acceptance-unknown" }
+      });
     } finally {
       store.close();
     }
