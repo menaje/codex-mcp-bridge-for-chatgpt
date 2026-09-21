@@ -719,6 +719,10 @@ describe("macOS runtime helper RPC", () => {
       bridgeSocketPath: bridgeSocket,
       launcherPath: launcher,
       runtimeLockDirectory: path.join(root, "runtime-lock", "launcher.lock"),
+      codexRuntimeManager: new CodexRuntimeManager({
+        root: path.join(root, "codex-runtime"),
+        discoverExternal: false
+      }),
       autoRestart: false,
       startTimeoutMs: 5_000
     });

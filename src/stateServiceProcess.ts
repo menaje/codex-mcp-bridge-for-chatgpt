@@ -95,6 +95,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
   private startupReject!: (error: Error) => void;
   private stderr = "";
   private exitHandled = false;
+  private closePromise?: Promise<void>;
   private readonly exited: Promise<OperationalStateProcessError>;
   private exitResolve!: (error: OperationalStateProcessError) => void;
 
@@ -326,18 +327,26 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
     };
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
+  close(): Promise<void> {
+    if (!this.closePromise) this.closePromise = this.closeChild();
+    return this.closePromise;
+  }
+
+  private async closeChild(): Promise<void> {
     this.closed = true;
-    const exit = new Promise<void>(resolve => {
-      if (this.child.exitCode !== null) resolve();
-      else this.child.once("exit", () => resolve());
-    });
+    if (
+      this.exitHandled ||
+      this.child.exitCode !== null ||
+      this.child.signalCode !== null
+    ) return;
     if (this.child.connected) this.child.send({ type: "close" } satisfies ParentCloseMessage);
     const forceTimer = setTimeout(() => this.child.kill("SIGTERM"), 2_000);
     forceTimer.unref();
-    await exit;
-    clearTimeout(forceTimer);
+    try {
+      await this.exited;
+    } finally {
+      clearTimeout(forceTimer);
+    }
   }
 
   private onMessage(message: unknown): void {
@@ -423,6 +432,14 @@ export type SupervisedOperationalStateServiceOptions =
     restartStableMs?: number;
   };
 
+type OperationalStateRestartPolicy = {
+  capacity: number;
+  restartBaseDelayMs: number;
+  restartMaxDelayMs: number;
+  restartMaxAttempts: number;
+  restartStableMs: number;
+};
+
 /**
  * Restarts an unexpectedly exited state owner with bounded exponential backoff.
  * It never replays an uncertain command by itself: the caller must retry the
@@ -443,41 +460,23 @@ export class SupervisedOperationalStateService implements OperationalStateServic
 
   private constructor(
     private readonly options: SupervisedOperationalStateServiceOptions,
-    service: ChildProcessOperationalStateService
+    service: ChildProcessOperationalStateService,
+    policy: OperationalStateRestartPolicy
   ) {
-    this.capacity = boundedPositiveInteger(options.capacity ?? DEFAULT_CAPACITY, 1, 4_096, "capacity");
-    this.restartBaseDelayMs = boundedPositiveInteger(
-      options.restartBaseDelayMs ?? 100,
-      10,
-      60_000,
-      "restartBaseDelayMs"
-    );
-    this.restartMaxDelayMs = boundedPositiveInteger(
-      options.restartMaxDelayMs ?? 5_000,
-      this.restartBaseDelayMs,
-      300_000,
-      "restartMaxDelayMs"
-    );
-    this.restartMaxAttempts = boundedPositiveInteger(
-      options.restartMaxAttempts ?? 5,
-      1,
-      100,
-      "restartMaxAttempts"
-    );
-    this.restartStableMs = boundedPositiveInteger(
-      options.restartStableMs ?? 60_000,
-      100,
-      3_600_000,
-      "restartStableMs"
-    );
+    this.capacity = policy.capacity;
+    this.restartBaseDelayMs = policy.restartBaseDelayMs;
+    this.restartMaxDelayMs = policy.restartMaxDelayMs;
+    this.restartMaxAttempts = policy.restartMaxAttempts;
+    this.restartStableMs = policy.restartStableMs;
     this.adopt(service);
   }
 
   static async start(
     options: SupervisedOperationalStateServiceOptions
   ): Promise<SupervisedOperationalStateService> {
+    const policy = operationalStateRestartPolicy(options);
     const service = await ChildProcessOperationalStateService.start(options);
-    return new SupervisedOperationalStateService(options, service);
+    return new SupervisedOperationalStateService(options, service, policy);
   }
 
   execute(
@@ -739,6 +738,40 @@ function boundedPositiveInteger(value: number, min: number, max: number, name: s
     throw new Error(`${name} must be an integer from ${min} to ${max}.`);
   }
   return value;
+}
+
+function operationalStateRestartPolicy(
+  options: SupervisedOperationalStateServiceOptions
+): OperationalStateRestartPolicy {
+  const capacity = boundedPositiveInteger(options.capacity ?? DEFAULT_CAPACITY, 1, 4_096, "capacity");
+  const restartBaseDelayMs = boundedPositiveInteger(
+    options.restartBaseDelayMs ?? 100,
+    10,
+    60_000,
+    "restartBaseDelayMs"
+  );
+  return {
+    capacity,
+    restartBaseDelayMs,
+    restartMaxDelayMs: boundedPositiveInteger(
+      options.restartMaxDelayMs ?? 5_000,
+      restartBaseDelayMs,
+      300_000,
+      "restartMaxDelayMs"
+    ),
+    restartMaxAttempts: boundedPositiveInteger(
+      options.restartMaxAttempts ?? 5,
+      1,
+      100,
+      "restartMaxAttempts"
+    ),
+    restartStableMs: boundedPositiveInteger(
+      options.restartStableMs ?? 60_000,
+      100,
+      3_600_000,
+      "restartStableMs"
+    )
+  };
 }
 
 function isUuid(value: unknown): value is string {

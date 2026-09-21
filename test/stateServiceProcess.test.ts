@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
@@ -222,6 +222,38 @@ describe("operational state child process", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 10_000);
+
+  it("closes promptly after the child has already exited by signal", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "state-service-signalled-close-"));
+    const service = await ChildProcessOperationalStateService.start({
+      file: path.join(root, "state.sqlite")
+    });
+    try {
+      expect(service.terminate("SIGKILL")).toBe(true);
+      await service.waitForExit();
+      await expect(Promise.race([
+        service.close().then(() => "closed"),
+        delay(1_000).then(() => "timed-out")
+      ])).resolves.toBe("closed");
+    } finally {
+      service.terminate("SIGKILL");
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("validates supervisor restart options before spawning a child", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "state-service-invalid-supervisor-"));
+    try {
+      await expect(SupervisedOperationalStateService.start({
+        file: path.join(root, "state.sqlite"),
+        restartBaseDelayMs: 100,
+        restartMaxDelayMs: 50
+      })).rejects.toThrow(/restartMaxDelayMs must be an integer from 100 to 300000/);
+      expect(readdirSync(root)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 async function waitFor(condition: () => boolean, timeoutMs: number): Promise<void> {
