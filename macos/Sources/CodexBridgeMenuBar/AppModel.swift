@@ -481,6 +481,11 @@ final class AppModel: ObservableObject {
         if status.phase == "running", status.bridge.observation == "timed-out" {
             return .problem(.responseUnconfirmed)
         }
+        if status.phase == "running",
+           let stateServiceStatus = status.bridge.stateServiceStatus,
+           stateServiceStatus != "ready" {
+            return .problem(.responseUnconfirmed)
+        }
         if status.phase != "running" || !status.bridge.connected { return .problem(.runtime) }
         if networkAvailable == false || !status.tunnel.connected { return .problem(.tunnel) }
         guard let auth = authStatus else { return authErrorMessage == nil ? .unknown : .problem(.authenticationStatus) }
@@ -665,7 +670,20 @@ final class AppModel: ObservableObject {
 
     var bridgeResponseUnconfirmed: Bool {
         guard !isRemoteClient, let status = helperStatus else { return false }
-        return status.phase == "running" && status.bridge.observation == "timed-out"
+        guard status.phase == "running" else { return false }
+        if status.bridge.observation == "timed-out" { return true }
+        if let stateServiceStatus = status.bridge.stateServiceStatus {
+            return stateServiceStatus != "ready"
+        }
+        return false
+    }
+
+    /// A read projection failure degrades Dashboard/Settings freshness without
+    /// implying that writes, Codex work, or the Bridge process have failed.
+    var bridgeReadProjectionDelayed: Bool {
+        guard !isRemoteClient, helperStatus?.phase == "running",
+              let status = helperStatus?.bridge.readServiceStatus else { return false }
+        return status != "ready"
     }
 
     var hasRetainedBridgeObservation: Bool {
@@ -767,6 +785,7 @@ final class AppModel: ObservableObject {
         if currentActionRequiredProblem != nil { return .attention }
         if isBridgeConnectionChecking { return .checking }
         if bridgeResponseUnconfirmed { return .attention }
+        if bridgeReadProjectionDelayed { return .attention }
         if isRemoteClient {
             guard activeRemoteProfile != nil, remoteHello != nil else { return .unavailable }
             guard connectionErrorMessage == nil, dashboardErrorMessage == nil else {

@@ -80,6 +80,7 @@
     "test:issue-138-state-access": "tsx scripts/issue-138-state-access-regression.ts",
     "test:issue-143-connection-reliability": "npm run test:issue-143-connection-reliability:characterization",
     "test:issue-143-connection-reliability:characterization": "tsx scripts/issue-143-connection-reliability-regression.ts",
+    "test:issue-143-card-stale": "tsx scripts/issue-143-card-stale-browser-regression.ts",
     "test:model-descriptions-browser": "tsx scripts/model-description-browser-regression.ts",
     "mcp:conformance": "npm run build && node scripts/mcp-conformance.mjs",
     "check": "npm run build && npm run test",

@@ -51,6 +51,7 @@ export type SessionRegistryOptions = {
   allowedRoots?: string[];
   maxSessions?: number;
   now?: () => number;
+  projectionOnly?: boolean;
 };
 
 export class SessionRegistry {
@@ -59,6 +60,7 @@ export class SessionRegistry {
   private readonly allowedRoots: string[];
   private readonly maxSessions: number;
   private readonly now: () => number;
+  private readonly projectionOnly: boolean;
   private projectedProjectRevision: number | undefined;
 
   constructor(options: SessionRegistryOptions = {}) {
@@ -66,6 +68,7 @@ export class SessionRegistry {
     this.allowedRoots = options.allowedRoots || [];
     this.maxSessions = options.maxSessions ?? 1000;
     this.now = options.now || Date.now;
+    this.projectionOnly = options.projectionOnly === true;
     this.load();
   }
 
@@ -249,7 +252,7 @@ export class SessionRegistry {
     const expired = decoded
       .filter((session) => !retained.has(session.threadId))
       .map((session) => session.threadId);
-    if (expired.length > 0) {
+    if (!this.projectionOnly && expired.length > 0) {
       this.stateStore.transaction(() => {
         for (const threadId of expired) this.stateStore?.deleteSession(threadId);
       });

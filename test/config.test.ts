@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -39,6 +39,9 @@ describe("config policy", () => {
       defaultStateProfile() === "stable"
         ? /\.codex-mcp-bridge\/state\.sqlite$/
         : new RegExp(`\\.codex-mcp-bridge/profiles/${defaultStateProfile()}/state\\.sqlite$`)
+    );
+    expect(config.telemetryDatabaseFile).toBe(
+      path.join(path.dirname(config.stateDatabaseFile), "telemetry.sqlite")
     );
     expect(config.bridgeSkillsDirectory).toBe(path.join(path.dirname(config.stateDatabaseFile), "skills"));
     expect(config).not.toHaveProperty("settingsStateFile");
@@ -105,6 +108,7 @@ describe("config policy", () => {
     expect(config.modelCatalogTimeoutMs).toBe(15000);
     expect(config.modelCatalogStateFile).toBe("/tmp/codex-mcp-bridge-test-models.json");
     expect(config.stateDatabaseFile).toBe("/tmp/codex-mcp-bridge-test-state.sqlite");
+    expect(config.telemetryDatabaseFile).toBe("/tmp/telemetry.sqlite");
     expect(config.stateProfile).toBe("explicit");
     expect(config.defaultAccessStrategy).toBe("read-only");
     expect(config).not.toHaveProperty("defaultSessionMode");
@@ -158,6 +162,33 @@ describe("config policy", () => {
         CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: "relative/state.sqlite"
       })
     ).toThrow(/absolute path/);
+  });
+
+  it("keeps diagnostic telemetry in a distinct absolute database", () => {
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE: "relative/telemetry.sqlite"
+    })).toThrow(/telemetry database file.*absolute path/);
+    expect(() => loadConfig({
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: "/tmp/shared.sqlite",
+      CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE: "/tmp/shared.sqlite"
+    })).toThrow(/different database files/);
+
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-db-alias-"));
+    const actual = path.join(root, "actual");
+    const alias = path.join(root, "alias");
+    mkdirSync(actual);
+    symlinkSync(actual, alias, "dir");
+    try {
+      expect(() => loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(actual, "shared.sqlite"),
+        CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE: path.join(alias, "shared.sqlite")
+      })).toThrow(/different database files/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("keeps bridge-owned skills in an explicit private directory when configured", () => {

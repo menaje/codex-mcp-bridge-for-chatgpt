@@ -45,6 +45,8 @@ export type BridgeConfig = {
   modelCatalogTimeoutMs: number;
   modelCatalogStateFile: string;
   stateDatabaseFile: string;
+  /** Best-effort diagnostics only; never used for execution authority. */
+  telemetryDatabaseFile: string;
   /** Bridge-owned, versioned skills. This is never a Codex global skills root. */
   bridgeSkillsDirectory: string;
   stateProfile: StateProfile | "explicit";
@@ -102,6 +104,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     explicitStateDatabaseFile || stateDatabaseFileForProfile(selectedStateProfile),
     "state database file"
   );
+  const telemetryDatabaseFile = parseAbsoluteFilePath(
+    read("TELEMETRY_DATABASE_FILE") || path.join(path.dirname(stateDatabaseFile), "telemetry.sqlite"),
+    "telemetry database file"
+  );
+  if (databaseFilesMayAlias(telemetryDatabaseFile, stateDatabaseFile)) {
+    throw new Error("Telemetry and operational state must use different database files.");
+  }
   const bridgeSkillsDirectory = parseAbsoluteDirectoryPath(
     read("SKILLS_DIRECTORY") || path.join(path.dirname(stateDatabaseFile), "skills"),
     "bridge skills directory"
@@ -235,6 +244,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     modelCatalogTimeoutMs,
     modelCatalogStateFile,
     stateDatabaseFile,
+    telemetryDatabaseFile,
     bridgeSkillsDirectory,
     stateProfile,
     upstreamPoolSize,
@@ -618,6 +628,28 @@ function parseAbsoluteFilePath(raw: string, label: string): string {
     throw new Error(`Invalid ${label}; expected an absolute path.`);
   }
   return path.normalize(raw);
+}
+
+function databaseFilesMayAlias(left: string, right: string): boolean {
+  const canonical = (file: string): string => {
+    try {
+      return realpathSync(file);
+    } catch {
+      try {
+        return path.join(realpathSync(path.dirname(file)), path.basename(file));
+      } catch {
+        return file;
+      }
+    }
+  };
+  if (canonical(left) === canonical(right)) return true;
+  try {
+    const leftStat = statSync(left);
+    const rightStat = statSync(right);
+    return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+  } catch {
+    return false;
+  }
 }
 
 function parseAbsoluteDirectoryPath(raw: string, label: string): string {

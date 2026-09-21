@@ -460,6 +460,22 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testReadProjectionDelayIsPartialAndDoesNotClaimRuntimeOrWritesFailed() throws {
+        let model = AppModel()
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        model.recordLocalConnectionStatus(try helperStatus(readServiceStatus: "read-stale"))
+
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertTrue(model.bridgeReadProjectionDelayed)
+        XCTAssertFalse(model.bridgeResponseUnconfirmed)
+        XCTAssertEqual(model.operationalObservation, .healthy)
+        XCTAssertEqual(model.health, .attention)
+
+        model.recordLocalConnectionStatus(try helperStatus(readServiceStatus: "ready"))
+        XCTAssertFalse(model.bridgeReadProjectionDelayed)
+    }
+
+    @MainActor
     func testTunnelProbeFailureGetsGraceButRuntimeExitDoesNot() throws {
         let model = AppModel()
         model.recordLocalConnectionStatus(try helperStatus(tunnelConnected: false))
@@ -1928,17 +1944,19 @@ private func helperStatus(
     tunnelConnected: Bool = true,
     configurationValid: Bool = true,
     bridgeObservation: String? = nil,
-    bridgeLastSuccessfulAt: String? = nil
+    bridgeLastSuccessfulAt: String? = nil,
+    readServiceStatus: String? = nil
 ) throws -> HelperStatus {
     let bridgeObservationJSON = bridgeObservation.map { ",\"observation\":\"\($0)\"" } ?? ""
     let bridgeLastSuccessfulAtJSON = bridgeLastSuccessfulAt.map { ",\"lastSuccessfulAt\":\"\($0)\"" } ?? ""
+    let readServiceStatusJSON = readServiceStatus.map { ",\"readServiceStatus\":\"\($0)\"" } ?? ""
     let json = #"""
     {
       "kind":"helper-status","generatedAt":"2026-09-03T00:00:00.000Z",
       "phase":"\#(phase)","pid":42,"startedAt":null,"lastExit":null,"lastError":null,
       "restartAttempt":0,
       "configuration":{"path":"/private/.env","exists":true,"valid":\#(configurationValid),"hasApiKey":true,"hasTunnelId":true,"tunnelId":"tunnel_native123","issue":null},
-      "bridge":{"socketPath":"/private/bridge.sock","connected":\#(bridgeConnected)\#(bridgeObservationJSON)\#(bridgeLastSuccessfulAtJSON),"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},
+      "bridge":{"socketPath":"/private/bridge.sock","connected":\#(bridgeConnected)\#(bridgeObservationJSON)\#(bridgeLastSuccessfulAtJSON)\#(readServiceStatusJSON),"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},
       "tunnel":{"phase":"connected","profile":"managed","transport":"stdio","doctorPassed":true,"processRunning":true,"connected":\#(tunnelConnected),"lastCheckedAt":null,"lastError":null}
     }
     """#.data(using: .utf8)!

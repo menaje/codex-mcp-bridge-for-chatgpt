@@ -39,7 +39,18 @@ export class QuestionStore {
     deliveredJournalsRemoved: number;
   };
 
-  constructor(private readonly db: Database.Database) {
+  constructor(
+    private readonly db: Database.Database,
+    options: { readOnly?: boolean } = {}
+  ) {
+    if (options.readOnly) {
+      this.startupMaintenance = {
+        dispatchesMarkedUncertain: 0,
+        expiredQuestionsRemoved: 0,
+        deliveredJournalsRemoved: 0
+      };
+      return;
+    }
     const dispatchesMarkedUncertain = this.db
       .prepare("UPDATE codex_question_deliveries SET status='uncertain' WHERE status='dispatching'")
       .run().changes;

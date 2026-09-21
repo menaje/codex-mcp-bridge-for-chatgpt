@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { createConnection } from "node:net";
-import { tmpdir } from "node:os";
+import { cpus, tmpdir, totalmem } from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,7 @@ import type {
   ModelCatalogOptions
 } from "../src/modelCatalog.js";
 import { createHttpServer } from "../src/server.js";
+import { createIsolatedHttpServer } from "../src/runtimeProcess.js";
 import type { OperationalStateHealth } from "../src/stateService.js";
 import {
   ChildProcessOperationalStateService,
@@ -96,6 +97,8 @@ const CPU_BLOCK_MS = 350;
 const HEALTH_TARGET_MS = 200;
 const EVENT_LOOP_TARGET_MS = 50;
 const RUNTIME_HEALTH_TIMEOUT_MS = 2_000;
+const PRODUCTION_STALL_MS = 30_500;
+const PRODUCTION_PROBE_INTERVAL_MS = 250;
 
 async function runCharacterization(): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), "issue-143-reliability-"));
@@ -126,6 +129,7 @@ async function runCharacterization(): Promise<void> {
     }
 
     const mainThreadCpu = await runCpuFaultCase(child, ready, CPU_BLOCK_MS);
+    const productionLongStall = await runProductionLongStall(root);
     const recoveredHttp = await probeHttp(ready.port, 2_000);
     const recoveredCompanion = await companionRequest(ready.socketPath, "runtime.health", 2_000);
     assert.equal(recoveredHttp.statusCode, 200);
@@ -172,7 +176,8 @@ async function runCharacterization(): Promise<void> {
           currentMainProcess: inProcessSqlite,
           isolatedStatePrototype: isolatedSqlite
         },
-        mainThreadCpu
+        mainThreadCpu,
+        productionLongStall
       },
       recovery: {
         healthzMs: rounded(recoveredHttp.durationMs),
@@ -206,18 +211,20 @@ async function runCharacterization(): Promise<void> {
         "the current in-process path scales Bridge health and event-loop delay with the SQLite lock duration and crosses the macOS two-second timeout",
         "the isolated prototype keeps /healthz, runtime.health, and the Bridge timer responsive while its state-service readiness becomes stale",
         "the 4.9-second case commits below the configured SQLite busy timeout, while a 6.5-second lock produces an explicit state-storage-busy result instead of being inferred from elapsed time",
-        "a synthetic main-thread CPU fault still delays both health paths, so database isolation is necessary but not sufficient"
+        "a synthetic main-thread CPU fault still delays both legacy health paths, so database isolation is necessary but not sufficient",
+        "the production ingress boundary remains live through a 30-second stopped runtime, reports state-stale instead of disconnected, rejects uncertain writes explicitly, and confirms the committed revision after the runtime resumes"
       ],
       limits: [
         "each fault duration is a single deterministic characterization sample, not a p99 load result",
-        "the protocol-v4 isolated state service is ready for every maintenance slice, including registry-planned jobs retention, but production startup does not select it until the remaining command and query callers cross the boundary",
-        "the fixture does not exercise the Secure MCP Tunnel, ChatGPT host, Codex runtime, disk exhaustion, large JSON/GC pressure, queue fairness, or the read-worker design",
+        "the legacy comparison fixture remains a structural attribution test; the separate production-long-stall section is the authoritative current-startup-path result",
+        "the fixture does not exercise the Secure MCP Tunnel or ChatGPT host, and it does not claim external network latency can be shortened",
+        "the 30-second production test samples one controlled process/filesystem scheduling fault and does not claim a fleet-wide percentile",
         "the controlled SQLite fault proves a structural failure mode, not that locking caused every reported incident"
       ],
       failureReproduced: true,
       isolationPrototypeBoundaryVerified: true,
       sqliteBusyBoundaryVerified: true,
-      productionResolutionVerified: false,
+      productionResolutionVerified: productionLongStall.passed,
       temporaryFixtureRemoved: true
     };
   } catch (error) {
@@ -456,6 +463,200 @@ async function runCpuFaultCase(
     availabilityPropagationObserved: true,
     interpretation: "state-process isolation cannot protect health paths from synchronous CPU work that remains on the Bridge event loop"
   };
+}
+
+async function runProductionLongStall(root: string): Promise<Record<string, unknown> & {
+  passed: boolean;
+}> {
+  if (process.platform === "win32") {
+    throw new Error("The production long-stall regression requires POSIX SIGSTOP/SIGCONT support.");
+  }
+  const runtimeRoot = path.join(root, "production-runtime");
+  await mkdir(runtimeRoot, { recursive: true });
+  const stateFile = path.join(runtimeRoot, "state.sqlite");
+  const telemetryFile = path.join(runtimeRoot, "telemetry.sqlite");
+  const environment: NodeJS.ProcessEnv = {
+    ...process.env,
+    CODEX_MCP_BRIDGE_NO_AUTH: "1",
+    CODEX_MCP_BRIDGE_HOST: "127.0.0.1",
+    CODEX_MCP_BRIDGE_CODEX: "/usr/bin/false",
+    CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(runtimeRoot, "runtime"),
+    CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: stateFile,
+    CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE: telemetryFile,
+    CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: path.join(runtimeRoot, "models.json"),
+    CODEX_MCP_BRIDGE_SKILLS_DIRECTORY: path.join(runtimeRoot, "skills")
+  };
+  const spawnedProcessIds: number[] = [];
+  const config = loadConfig(environment);
+  const server = await createIsolatedHttpServer(config, {
+    childEnvironment: environment,
+    onRuntimeProcessSpawn: processId => spawnedProcessIds.push(processId)
+  });
+  let locker: Database.Database | undefined;
+  let lockReleased = false;
+  let runtimeStopped = false;
+  let stoppedProcessId: number | undefined;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        server.removeListener("error", reject);
+        resolve();
+      });
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Production regression HTTP address is unavailable.");
+    }
+    const port = address.port;
+    await waitForProductionReady(port, 10_000);
+    const initial = await server.applicationService.settingsSnapshot();
+    const changedValue = !initial.settings.showBridgeThreadsInCodexApp;
+
+    locker = new Database(stateFile);
+    locker.pragma(`busy_timeout = ${STATE_DATABASE_BUSY_TIMEOUT_MS}`);
+    locker.exec("BEGIN IMMEDIATE");
+    const mutationStartedAt = performance.now();
+    const mutationOutcome = server.applicationService.updateSettings({
+      expectedSettingsRevision: initial.settings.settingsRevision,
+      operation: {
+        kind: "patch",
+        settings: { showBridgeThreadsInCodexApp: changedValue }
+      }
+    }).then(
+      () => ({ outcome: "confirmed" as const, durationMs: performance.now() - mutationStartedAt }),
+      error => ({
+        outcome: "unknown" as const,
+        durationMs: performance.now() - mutationStartedAt,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    );
+
+    await waitForCondition(() => {
+      const operation = server.applicationService.runtimeHealth?.().stateService?.activeOperation;
+      return operation?.access === "write" && operation.phase === "write-lock-wait";
+    }, 3_000, "production runtime to report write-lock-wait");
+    stoppedProcessId = spawnedProcessIds.at(-1);
+    if (!stoppedProcessId) throw new Error("Production runtime process id was not observed.");
+    process.kill(stoppedProcessId, "SIGSTOP");
+    runtimeStopped = true;
+    locker.exec("COMMIT");
+    lockReleased = true;
+
+    const stoppedAt = performance.now();
+    const healthSamples: Array<{ elapsedMs: number; durationMs: number; statusCode: number }> = [];
+    const checkpoints: Array<{
+      requestedAtMs: number;
+      observedAtMs: number;
+      readinessStatus: number;
+      readiness: unknown;
+      runtimeHealth: ReturnType<NonNullable<typeof server.applicationService.runtimeHealth>>;
+    }> = [];
+    const checkpointTargets = [2_250, 10_000, 30_000];
+    let checkpointIndex = 0;
+    while (performance.now() - stoppedAt < PRODUCTION_STALL_MS) {
+      const probe = await probeHttp(port, 2_000);
+      const elapsedMs = performance.now() - stoppedAt;
+      healthSamples.push({
+        elapsedMs: rounded(elapsedMs),
+        durationMs: rounded(probe.durationMs),
+        statusCode: probe.statusCode
+      });
+      while (
+        checkpointIndex < checkpointTargets.length &&
+        elapsedMs >= checkpointTargets[checkpointIndex]!
+      ) {
+        const requestedAtMs = checkpointTargets[checkpointIndex]!;
+        const readiness = await probeReadiness(port, 2_000);
+        const runtimeHealth = server.applicationService.runtimeHealth?.();
+        if (!runtimeHealth) throw new Error("Production runtime health is unavailable.");
+        assert.equal(readiness.statusCode, 503);
+        assert.match(String((readiness.body as { reason?: unknown }).reason), /^state-stale$/u);
+        assert.equal(runtimeHealth.acceptingNewJobs, false);
+        assert.equal(runtimeHealth.backgroundProcessState, "unknown");
+        assert.equal(runtimeHealth.stateService?.status, "state-stale");
+        assert.equal(runtimeHealth.stateService?.activeOperation?.access, "write");
+        assert.equal(runtimeHealth.readService?.status, "read-stale");
+        assert.equal(runtimeHealth.telemetryService?.status, "stale");
+        checkpoints.push({
+          requestedAtMs,
+          observedAtMs: rounded(performance.now() - stoppedAt),
+          readinessStatus: readiness.statusCode,
+          readiness: readiness.body,
+          runtimeHealth
+        });
+        checkpointIndex += 1;
+      }
+      await delay(PRODUCTION_PROBE_INTERVAL_MS);
+    }
+    assert.equal(checkpoints.length, checkpointTargets.length);
+    assert.ok(healthSamples.length >= 100, `Expected at least 100 liveness samples, received ${healthSamples.length}.`);
+    assert.ok(healthSamples.every(sample => sample.statusCode === 200));
+    assert.ok(
+      healthSamples.every(sample => sample.durationMs < 750),
+      `A production /healthz sample exceeded 750 ms: ${Math.max(...healthSamples.map(sample => sample.durationMs))}`
+    );
+    const uncertain = await mutationOutcome;
+    assert.equal(uncertain.outcome, "unknown");
+    assert.match("error" in uncertain ? uncertain.error : "", /RUNTIME_RESPONSE_UNCONFIRMED/u);
+
+    process.kill(stoppedProcessId, "SIGCONT");
+    runtimeStopped = false;
+    const resumedAt = performance.now();
+    await waitForProductionReady(port, 10_000);
+    const recovered = await waitForValue(
+      async () => server.applicationService.settingsSnapshot(),
+      snapshot => snapshot.settings.settingsRevision === initial.settings.settingsRevision + 1,
+      10_000,
+      "committed settings revision after runtime resume"
+    );
+    assert.equal(recovered.settings.showBridgeThreadsInCodexApp, changedValue);
+    const durations = healthSamples.map(sample => sample.durationMs).sort((left, right) => left - right);
+    return {
+      passed: true,
+      injection: "BEGIN IMMEDIATE followed by SIGSTOP of the production runtime child",
+      stoppedProcessId,
+      configuredStallMs: PRODUCTION_STALL_MS,
+      observedStallMs: rounded(resumedAt - stoppedAt),
+      platform: {
+        platform: process.platform,
+        architecture: process.arch,
+        cpu: cpus()[0]?.model || "unknown",
+        logicalCpuCount: cpus().length,
+        totalMemoryBytes: totalmem()
+      },
+      healthz: {
+        samples: healthSamples.length,
+        allStatus200: true,
+        p50Ms: rounded(percentile(durations, 0.5)),
+        p95Ms: rounded(percentile(durations, 0.95)),
+        p99Ms: rounded(percentile(durations, 0.99)),
+        maxMs: rounded(durations.at(-1) || 0)
+      },
+      checkpoints,
+      uncertainWrite: uncertain,
+      recovery: {
+        durationMs: rounded(performance.now() - resumedAt),
+        settingsRevisionBefore: initial.settings.settingsRevision,
+        settingsRevisionAfter: recovered.settings.settingsRevision,
+        committedValueConfirmed: true
+      },
+      interpretation: [
+        "public liveness is independent from the stopped runtime and its database work",
+        "elapsed time changes readiness to state-stale but does not classify a Job as failed, cancelled, or successful",
+        "the original caller receives an outcome-unknown result and authoritative state is resynchronized after recovery"
+      ]
+    };
+  } finally {
+    if (runtimeStopped && stoppedProcessId) {
+      try { process.kill(stoppedProcessId, "SIGCONT"); } catch { /* already exited */ }
+    }
+    if (locker) {
+      if (!lockReleased && locker.inTransaction) locker.exec("ROLLBACK");
+      locker.close();
+    }
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 }
 
 async function runFixtureChild(root: string): Promise<void> {
@@ -709,6 +910,77 @@ function probeHttp(port: number, timeoutMs: number): Promise<{ statusCode: numbe
     request.once("error", reject);
     request.end();
   });
+}
+
+async function probeReadiness(
+  port: number,
+  timeoutMs: number
+): Promise<{ statusCode: number; durationMs: number; body: unknown }> {
+  const started = performance.now();
+  const response = await fetch(`http://127.0.0.1:${port}/readyz`, {
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  return {
+    statusCode: response.status,
+    durationMs: performance.now() - started,
+    body: await response.json()
+  };
+}
+
+async function waitForProductionReady(port: number, timeoutMs: number): Promise<void> {
+  await waitForCondition(async () => {
+    try {
+      return (await probeReadiness(port, Math.min(timeoutMs, 2_000))).statusCode === 200;
+    } catch {
+      return false;
+    }
+  }, timeoutMs, "production runtime readiness");
+}
+
+async function waitForCondition(
+  condition: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+  description: string
+): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
+    if (await condition()) return;
+    await delay(25);
+  }
+  throw new Error(`Timed out waiting for ${description}.`);
+}
+
+async function waitForValue<T>(
+  read: () => Promise<T>,
+  accept: (value: T) => boolean,
+  timeoutMs: number,
+  description: string
+): Promise<T> {
+  const deadline = performance.now() + timeoutMs;
+  let lastError: unknown;
+  while (performance.now() < deadline) {
+    try {
+      const value = await read();
+      if (accept(value)) return value;
+    } catch (error) {
+      lastError = error;
+    }
+    await delay(50);
+  }
+  throw new Error(
+    `Timed out waiting for ${description}.` +
+    (lastError ? ` Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}` : "")
+  );
+}
+
+function percentile(sortedValues: readonly number[], quantile: number): number {
+  if (sortedValues.length === 0) return 0;
+  const index = Math.max(0, Math.ceil(sortedValues.length * quantile) - 1);
+  return sortedValues[Math.min(index, sortedValues.length - 1)]!;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
 function companionRequest(

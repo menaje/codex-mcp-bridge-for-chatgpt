@@ -607,8 +607,15 @@ export type BeginSteeringDeliveryInput = {
 
 export type BridgeStateStoreOptions = {
   file: string;
+  /** Query-only projection connection. It never migrates or registers a writer. */
+  readOnly?: boolean;
   /** Diagnostic SQL trace hook used by bounded-path audits and tests. */
   traceSql?: (sql: string) => void;
+  /**
+   * Privacy-safe transaction boundary used by an enclosing process
+   * supervisor. It never receives SQL, identifiers, payloads, or results.
+   */
+  onTransactionPhase?: (phase: OperationalStateOperationPhase) => void;
   /** Test hook fired in the crash window after schema commit and before provenance commit. */
   onMigrationSchemaCommitted?: (progress: StateMigrationProgress) => void;
   /** Test/diagnostic hook fired after each durable schema checkpoint. */
@@ -644,22 +651,55 @@ export class BridgeStateStore {
   private closed = false;
 
   constructor(private readonly options: BridgeStateStoreOptions) {
-    if (options.file !== ":memory:") {
+    if (!options.readOnly && options.file !== ":memory:") {
       mkdirSync(path.dirname(options.file), { recursive: true, mode: 0o700 });
     }
-    this.databaseLease = prepareStateDatabaseOpen(options.file);
+    this.databaseLease = options.readOnly ? null : prepareStateDatabaseOpen(options.file);
     this.migrationLease = this.databaseLease?.requiresMigration
       ? this.databaseLease as StateMigrationLease
       : null;
     let openedDatabase: Database.Database | undefined;
     try {
       const databaseFile = this.databaseLease?.databaseFile ?? options.file;
-      const databaseOptions = options.traceSql
-        ? { verbose: (message?: unknown) => options.traceSql?.(String(message ?? "")) }
-        : undefined;
+      const databaseOptions = {
+        ...(options.readOnly ? { readonly: true, fileMustExist: true } : {}),
+        ...(options.traceSql
+          ? { verbose: (message?: unknown) => options.traceSql?.(String(message ?? "")) }
+          : {})
+      };
       this.database = new Database(databaseFile, databaseOptions);
       openedDatabase = this.database;
       this.database.pragma(`busy_timeout = ${STATE_DATABASE_BUSY_TIMEOUT_MS}`);
+      if (options.readOnly) {
+        this.database.pragma("query_only = ON");
+        const existingVersion = this.getMeta("schema_version");
+        if (existingVersion !== CURRENT_SCHEMA_VERSION) {
+          throw new Error(
+            `Read projection requires current state schema ${CURRENT_SCHEMA_VERSION}; ` +
+            `found ${existingVersion ?? "unknown"}.`
+          );
+        }
+        this.questions = new QuestionStore(this.database, { readOnly: true });
+        this.decisionCards = new DecisionCardStore(this.database, { readOnly: true });
+        this.eventRetention = new EventRetention(this.database, {
+          readSummary: (jobId) => this.readJobSummary(jobId),
+          saveSummary: (jobId, summary) => this.saveJobSummary(jobId, summary)
+        }, {
+          deleteActivityEvents: (olderThan, batchSize, retainedLimit) =>
+            this.deleteActivityEventsForRetention(olderThan, batchSize, retainedLimit),
+          deleteExpiredResultHolds: (now, limit) =>
+            this.deleteExpiredResultHoldsForRetention(now, limit)
+        }, { readOnly: true });
+        this.workHistory = new WorkHistoryStore(
+          this.database,
+          (candidate, now) => this.expireHistoryProjection(candidate, now)
+        );
+        this.automaticRecovery = new AutomaticRecoveryStore(this.database);
+        this.threadConnections = new ThreadConnectionStore(this.database);
+        this.dashboardReadModel = new DashboardReadModel(this.database);
+        this.statusReadModel = new StatusReadModel(this.database);
+        return;
+      }
       if (this.migrationLease) this.claimExclusiveMigrationConnection();
       this.configureDatabaseConnection();
       this.database.exec(`
@@ -1012,6 +1052,7 @@ export class BridgeStateStore {
     operation: () => T,
     observePhase?: (phase: OperationalStateOperationPhase) => void
   ): T {
+    if (this.options.readOnly) return operation();
     if (this.transactionDepth > 0) {
       this.observeTransactionPhase(observePhase, "executing");
       return operation();
@@ -1024,6 +1065,11 @@ export class BridgeStateStore {
       const result = operation();
       this.observeTransactionPhase(observePhase, "committing");
       this.database.exec("COMMIT");
+      // The per-command observer owns its response boundary because it may
+      // still need to persist/replay a receipt before replying. The enclosing
+      // runtime observer only needs to know that this synchronous transaction
+      // has released SQLite.
+      this.observeTransactionPhase(undefined, "responding");
       return result;
     } catch (error) {
       try {
@@ -1041,6 +1087,11 @@ export class BridgeStateStore {
     observer: ((phase: OperationalStateOperationPhase) => void) | undefined,
     phase: OperationalStateOperationPhase
   ): void {
+    try {
+      this.options.onTransactionPhase?.(phase);
+    } catch {
+      // Diagnostics cannot change transaction semantics.
+    }
     try {
       observer?.(phase);
     } catch {
@@ -3962,6 +4013,11 @@ export class BridgeStateStore {
 
   close(): void {
     if (this.closed) return;
+    if (this.options.readOnly) {
+      this.database.close();
+      this.closed = true;
+      return;
+    }
     const now = Date.now();
     this.database
       .prepare(`

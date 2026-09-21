@@ -29,9 +29,11 @@ import {
   executeOperationalStateCommand,
   type OperationalJobRetentionCommand,
   type OperationalStateCommand,
+  type OperationalStateOperationObservation,
   type OperationalStateResult
 } from "./stateService.js";
 import { classifyMemoryOnlyThreadImpact } from "./runtimeAdmission.js";
+import type { BridgeTelemetryService } from "./telemetryService.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
 import { registerCodexInputTools, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS } from "./questionTools.js";
 import path from "node:path";
@@ -1915,6 +1917,9 @@ export type CodexJobRegistryOptions = {
   maxResultBytes?: number;
   staleAfterMs?: number;
   stateStore?: BridgeStateStore;
+  telemetry?: BridgeTelemetryService;
+  /** Read-worker snapshot: load persisted state without recovery mutations. */
+  projectionOnly?: boolean;
   allowedRoots?: string[];
 };
 
@@ -2103,6 +2108,8 @@ export class CodexJobRegistry {
   private readonly maxResultBytes: number;
   private readonly staleAfterMs: number;
   private readonly stateStore?: BridgeStateStore;
+  private readonly telemetry?: BridgeTelemetryService;
+  private readonly projectionOnly: boolean;
   private readonly activityStore: BridgeStateStore;
   private readonly allowedRoots: string[];
   // HTTP requests and the native companion share one runtime admission gate.
@@ -2146,6 +2153,7 @@ export class CodexJobRegistry {
   private stateMaintenanceClosed = false;
 
   configureAutomaticRecovery(options: ConstructorParameters<typeof AutomaticRecoveryController>[1]): void {
+    if (this.projectionOnly) return;
     if (this.recoveryController) return;
     this.recoveryController = new AutomaticRecoveryController(this.activityStore.automaticRecovery, options);
     this.unsubscribeRecovery = this.subscribeChanges(() => this.recoveryController?.schedule());
@@ -2155,6 +2163,7 @@ export class CodexJobRegistry {
   sweepAutomaticRecovery(): Promise<void> { return this.recoveryController?.sweep() || Promise.resolve(); }
 
   configureThreadConnections(upstream: CodexUpstream, idleMs?: number): void {
+    if (this.projectionOnly) return;
     if (this.threadController) return;
     this.threadController = new ThreadConnectionController(this.activityStore.threadConnections, upstream, {
       idleMs, changed: () => { for (const listener of this.changeListeners) listener(); }
@@ -2163,6 +2172,7 @@ export class CodexJobRegistry {
   }
 
   configureStateMaintenance(intervalMs?: number): void {
+    if (this.projectionOnly) return;
     if (this.maintenanceScheduler || this.stateMaintenanceClosed) return;
     const stateService = new InProcessOperationalStateService(this.activityStore);
     this.maintenanceScheduler = new StateMaintenanceScheduler(stateService, {
@@ -2222,6 +2232,8 @@ export class CodexJobRegistry {
     this.maxResultBytes = options.maxResultBytes ?? 1024 * 1024;
     this.staleAfterMs = options.staleAfterMs ?? 10 * 60 * 1000;
     this.stateStore = options.stateStore;
+    this.telemetry = options.telemetry;
+    this.projectionOnly = options.projectionOnly === true;
     this.activityStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
     this.allowedRoots = options.allowedRoots || [];
     this.load();
@@ -2772,7 +2784,9 @@ export class CodexJobRegistry {
 
   recordTransportObservation(input: Parameters<BridgeStateStore["recordTransportObservation"]>[0]) {
     try {
-      return this.activityStore.recordTransportObservation(input);
+      return this.telemetry
+        ? this.telemetry.recordTransportObservation(input, this.activityStore.bridgeInstanceId)
+        : this.activityStore.recordTransportObservation(input);
     } catch (error) {
       if (process.env.CODEX_MCP_BRIDGE_DEBUG === "1") {
         console.error("Could not persist transport observation:", error);
@@ -2784,12 +2798,14 @@ export class CodexJobRegistry {
   listTransportObservations(
     kind?: Parameters<BridgeStateStore["listTransportObservations"]>[0]
   ) {
-    return this.activityStore.listTransportObservations(kind);
+    return this.telemetry
+      ? this.telemetry.listTransportObservations(kind)
+      : this.activityStore.listTransportObservations(kind);
   }
 
   waitDiagnostics(): z.infer<typeof jobWaitDiagnosticsOutputSchema> {
     return this.waitDiagnosticsTracker.snapshot(
-      this.activityStore.listTransportObservations("status-wait-aborted").length
+      this.listTransportObservations("status-wait-aborted").length
     );
   }
 
@@ -3967,6 +3983,7 @@ export class CodexJobRegistry {
     if (!this.stateStore) return;
     const stored = this.stateStore.listJobs();
     const changed = this.loadJobs(stored);
+    if (this.projectionOnly) return;
     if (changed || this.jobs.size !== stored.length) {
       this.stateStore.replaceJobs(this.persistedJobs());
     }
@@ -3999,6 +4016,10 @@ export class CodexJobRegistry {
         this.jobs.delete(requestConflict.jobId);
       }
       const job: CodexJob = { ...persisted, promise: Promise.resolve() };
+      if (this.projectionOnly) {
+        this.jobs.set(job.jobId, job);
+        continue;
+      }
       if (isActiveActivityJobStatus(job.status)) {
         job.status = "interrupted";
         job.terminalOrigin = "bridge-restart";
@@ -4021,6 +4042,7 @@ export class CodexJobRegistry {
       }
       this.jobs.set(job.jobId, job);
     }
+    if (this.projectionOnly) return changed || loaded.length !== values.length;
     changed = this.pruneLoadedJobsAtStartup().length > 0 || changed || loaded.length !== values.length;
     return changed;
   }
@@ -4404,7 +4426,8 @@ export function registerBridgeTools(
   scopeResolver: ScopeResolver,
   projectAvailability?: TaskProjectAvailabilityProjection,
   sharedCardPerformance?: CardPerformanceTracker,
-  skillLibrary?: SkillLibrary
+  skillLibrary?: SkillLibrary,
+  readProjection?: BridgeReadProjectionService
 ): {
   applicationService: BridgeApplicationService;
   dispose(): void;
@@ -4781,6 +4804,74 @@ export function registerBridgeTools(
       cardPerformance.record("dashboard.serialization", Date.now() - serializationStartedAt);
       return view;
     },
+    async dashboardRuntimePlan(options = {}) {
+      return buildDashboardRuntimePlan(
+        jobs,
+        upstream,
+        modelCatalog,
+        sessions,
+        scopeResolver,
+        config,
+        userSettings.current,
+        options.limit || 12,
+        options.terminalOffset || 0,
+        options.idleOffset || 0,
+        options.scopeId,
+        options.statusFilter,
+        options.problems,
+        options.includeHistory !== false
+      );
+    },
+    async dashboardSnapshotWithEnrichment(options, projectedEnrichment) {
+      const startedAt = Date.now();
+      const view = await buildDashboardView(
+        jobs,
+        upstream,
+        modelCatalog,
+        sessions,
+        scopeResolver,
+        config,
+        userSettings.current,
+        options.limit || 12,
+        options.terminalOffset || 0,
+        options.idleOffset || 0,
+        true,
+        undefined,
+        dashboardEnrichmentInput(projectedEnrichment),
+        options.scopeId,
+        options.statusFilter,
+        options.problems,
+        options.includeHistory !== false
+      );
+      cardPerformance.record("dashboard.enriched.read-projection", Date.now() - startedAt, {
+        requests: view.enrichment.runtimeRequests,
+        timeouts: view.enrichment.timeouts + (view.enrichment.usageTimedOut ? 1 : 0),
+        cacheHits: view.enrichment.cacheHits
+      });
+      const serializationStartedAt = Date.now();
+      for (const row of [
+        ...view.activeRows,
+        ...view.terminalRows,
+        ...view.idleRows,
+        ...(view.statusRows || [])
+      ]) {
+        const threadId = row.codexThreadUrl?.replace("codex://threads/", "");
+        const connection = threadId
+          ? jobs.admissionStateStore.threadConnections.get(threadId)
+          : undefined;
+        if (connection) {
+          row.handoff = {
+            phase: connection.phase,
+            ...(connection.reason !== undefined ? { reason: connection.reason } : {}),
+            requested: connection.handoffRequested,
+            canOpen: connection.phase === "released" && Boolean(connection.evidence)
+          };
+        }
+      }
+      JSON.stringify(view);
+      cardPerformance.record("dashboard.serialization", Date.now() - serializationStartedAt);
+      return view;
+    },
     async dashboardHistoryDetail(options) {
       const startedAt = Date.now();
       const detail = buildDashboardHistoryDetail(jobs, modelCatalog, options);
@@ -4842,6 +4933,49 @@ export function registerBridgeTools(
       return runtimeAdmissionSnapshot();
     }
   };
+  if (readProjection) {
+    applicationService.dashboardSnapshot = async (options = {}) => {
+      if (!options.inspectRuntime) return readProjection.dashboardSnapshot(options);
+      const accountRead = config.codexService
+        ? readAccountForDisplay().catch(() => ({
+            pending: false as const,
+            value: { value: null, failed: true }
+          }))
+        : undefined;
+      const plan = await readProjection.dashboardRuntimePlan(options);
+      const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan);
+      const view = await readProjection.dashboardSnapshotWithEnrichment(
+        options,
+        projectedEnrichment
+      );
+      if (config.codexService) {
+        const service = config.codexService;
+        view.codexAccount = service.cachedAccount(config.defaultBackend);
+        if (accountRead) {
+          const account = await accountRead;
+          view.codexAccount = (!account.pending && account.value.value) ||
+            service.cachedAccount(config.defaultBackend);
+          if (account.pending) {
+            view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + 1;
+          }
+          if (!account.pending && account.value.failed) view.enrichment.usageUnavailable = true;
+        }
+        if (view.codexAccount?.authMode === "api-key") view.weeklyUsage = null;
+        const accountObservedAt = view.codexAccount?.observedAt;
+        if (typeof accountObservedAt === "number") {
+          view.enrichment.oldestObservationAt = [
+            view.enrichment.oldestObservationAt,
+            new Date(accountObservedAt).toISOString()
+          ].filter((date): date is string => Boolean(date)).sort()[0];
+        }
+      }
+      return view;
+    };
+    applicationService.dashboardHistoryDetail = options =>
+      readProjection.dashboardHistoryDetail(options);
+    applicationService.settingsSnapshot = options =>
+      readProjection.settingsSnapshot(options);
+  }
   const currentTaskAdmissionRef = (
     settings: BridgeUserSettings = userSettings.current,
     catalogFingerprint = admissionFingerprintForCatalog(
@@ -10138,6 +10272,46 @@ export type BridgeRuntimeAdmissionSnapshot = {
   backgroundProcesses: number;
   backgroundProcessAgents: number;
   backgroundProcessUnknownAgents: number;
+  /** Memory-only supervisor observation; never a DB-derived claim. */
+  stateService?: {
+    status:
+      | "ready"
+      | "state-starting"
+      | "state-stale"
+      | "state-recovering"
+      | "state-incompatible"
+      | "state-capacity"
+      | "admission-draining";
+    generation?: string;
+    heartbeatAgeMs?: number;
+    activeOperation?: OperationalStateOperationObservation;
+    lastCommitAt?: number;
+  };
+  /** Read-only projection worker; a degraded value does not imply write loss. */
+  readService?: {
+    status: "ready" | "read-starting" | "read-stale" | "read-recovering" | "read-capacity";
+    generation?: string;
+    heartbeatAgeMs?: number;
+    inFlight: number;
+    capacity: number;
+    lastSnapshotAt?: number;
+    activeOperation?: {
+      method: "dashboardSnapshot" | "dashboardHistoryDetail" | "settingsSnapshot";
+      phase: "queue-wait" | "read-snapshot" | "serializing" | "responding";
+      startedAt: number;
+      observedAt: number;
+    };
+  };
+  /** Best-effort diagnostics only; degradation never changes operational truth. */
+  telemetryService?: {
+    status: "ready" | "recovering" | "stale" | "memory-only";
+    queued: number;
+    inFlight: number;
+    retained: number;
+    dropped: number;
+    failed: number;
+    lastPersistedAt?: number;
+  };
 };
 
 export type BridgeRuntimeSnapshotOptions = {
@@ -10165,6 +10339,13 @@ export type BridgeApplicationService = {
   subscribeChanges?(listener: (topic: "dashboard" | "settings" | "enrichment") => void): () => void;
   dashboardSnapshot(options?: BridgeDashboardSnapshotOptions): Promise<DashboardView>;
   dashboardHistoryDetail?(options: BridgeDashboardHistoryDetailOptions): Promise<DashboardHistoryDetail>;
+  /** Internal read-worker planning boundary; never registered as an MCP/native method. */
+  dashboardRuntimePlan?(options?: BridgeDashboardSnapshotOptions): Promise<BridgeDashboardRuntimePlan>;
+  /** Internal read-worker render boundary; enrichment contains no database authority. */
+  dashboardSnapshotWithEnrichment?(
+    options: BridgeDashboardSnapshotOptions,
+    enrichment: BridgeDashboardEnrichment
+  ): Promise<DashboardView>;
   settingsSnapshot(options?: BridgeSettingsSnapshotOptions): Promise<SettingsView>;
   updateSettings(input: BridgeSettingsMutationInput): Promise<SettingsView>;
   runtimeSnapshot(options?: BridgeRuntimeSnapshotOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
@@ -10194,6 +10375,13 @@ export type BridgeApplicationService = {
     fileName: string; mediaType: "application/zip"; bytes: number; contentDigest: string; data: string;
   }>;
 };
+export type BridgeReadProjectionService = Pick<
+  BridgeApplicationService,
+  "dashboardSnapshot" | "settingsSnapshot"
+> & Required<Pick<
+  BridgeApplicationService,
+  "dashboardHistoryDetail" | "dashboardRuntimePlan" | "dashboardSnapshotWithEnrichment"
+>>;
 type CodexWeeklyUsageView = z.infer<typeof codexWeeklyUsageOutputSchema>;
 type CancellationDisplay = z.infer<typeof cancellationDisplayOutputSchema>;
 
@@ -10391,7 +10579,7 @@ async function readCodexWeeklyUsageBounded(
     : { value: result.value.value || fallback, timedOut: false, failed: result.value.failed };
 }
 
-type DashboardRuntimeObservation = {
+export type DashboardRuntimeObservation = {
   state: "confirmed" | "idle" | "not-loaded" | "busy" | "orphaned" | "unknown";
   backgroundProcessState: "confirmed" | "unknown";
   backgroundProcessCount: number;
@@ -10420,11 +10608,22 @@ type DashboardRuntimeCacheEntry = {
   attemptedAt: number;
 };
 
-type DashboardRuntimeCandidate = {
+export type DashboardRuntimeCandidate = {
   agentId: string;
   thread: BridgeAgentThread;
   stamp: string;
   inspectLiveness: boolean;
+};
+
+export type BridgeDashboardRuntimePlan = {
+  candidates: DashboardRuntimeCandidate[];
+};
+
+export type BridgeDashboardEnrichment = {
+  runtimeByAgent: Array<[string, DashboardRuntimeObservation]>;
+  runtimeProbeSkippedAgents: number;
+  weeklyUsage: CodexWeeklyUsageView | null;
+  summary: CardEnrichmentSummary;
 };
 
 type BridgeBackgroundProcessImpact = {
@@ -11049,7 +11248,7 @@ function cacheDashboardRuntime(
   candidate: DashboardRuntimeCandidate,
   result: DashboardRuntimeResult,
   deferred: boolean,
-  jobs: CodexJobRegistry
+  jobs?: CodexJobRegistry
 ): void {
   const cacheKey = dashboardRuntimeCacheKey(candidate.thread);
   const previous = cache.get(cacheKey);
@@ -11089,9 +11288,9 @@ function cacheDashboardRuntime(
       unavailable: !stable || !!(canRetainLiveness && previous.unavailable),
       observedAt: keepPrevious || canRetainLiveness ? previous!.observedAt : Date.now()
     });
-    const agent = jobs.getAgent(candidate.agentId);
-    const latest = jobs.observedLatestJobForAgent(candidate.agentId);
-    if (agent && dashboardRuntimeStamp(agent,latest) === candidate.stamp) {
+    const agent = jobs?.getAgent(candidate.agentId);
+    const latest = jobs?.observedLatestJobForAgent(candidate.agentId);
+    if (jobs && agent && dashboardRuntimeStamp(agent,latest) === candidate.stamp) {
       const current = cache.get(cacheKey)!;
       const confirmed = !current.unavailable && current.observation.backgroundProcessState === "confirmed" &&
         ["confirmed","idle","not-loaded","busy"].includes(current.observation.state);
@@ -11107,9 +11306,9 @@ function cacheDashboardRuntime(
 }
 
 async function inspectDashboardRuntimes(
-  jobs: CodexJobRegistry,
   upstream: CodexUpstream,
-  candidates: ReadonlyArray<DashboardRuntimeCandidate>
+  candidates: ReadonlyArray<DashboardRuntimeCandidate>,
+  jobs?: CodexJobRegistry
 ): Promise<{
   observations: Map<string, DashboardRuntimeObservation>;
   skipped: number;
@@ -11402,6 +11601,168 @@ function buildDashboardHistoryDetail(
   });
 }
 
+async function buildDashboardRuntimePlan(
+  jobs: CodexJobRegistry,
+  upstream: CodexUpstream,
+  modelCatalog: CodexModelCatalogProvider,
+  sessions: SessionRegistry,
+  scopeResolver: ScopeResolver,
+  config: BridgeConfig,
+  preferences: BridgeUserSettings,
+  limit: number,
+  terminalOffset: number,
+  idleOffset: number,
+  scopeId?: string,
+  statusFilter?: DashboardStatusFilter,
+  problemQuery?: ProblemQuery,
+  includeHistory = true
+): Promise<BridgeDashboardRuntimePlan> {
+  if (problemQuery && statusFilter === undefined) statusFilter = "all";
+  const visibleAgentIds = new Set<string>();
+  await buildDashboardView(
+    jobs,
+    upstream,
+    modelCatalog,
+    sessions,
+    scopeResolver,
+    config,
+    preferences,
+    limit,
+    terminalOffset,
+    idleOffset,
+    false,
+    visibleAgentIds,
+    undefined,
+    scopeId,
+    statusFilter,
+    problemQuery,
+    includeHistory
+  );
+  const inScope = (row: { scopeId: string }): boolean => !scopeId || row.scopeId === scopeId;
+  const allAgents = listAllDashboardAgents(jobs, scopeId);
+  const currentThreads = new Map(
+    jobs.listCurrentAgentThreads().map(thread => [thread.agentId, thread])
+  );
+  const latestJobs = new Map<string, CodexJob>();
+  for (const job of jobs.list(Math.max(jobs.size, config.maxRetainedJobs)).filter(inScope)) {
+    if (!job.agentId) continue;
+    const previous = latestJobs.get(job.agentId);
+    if (!previous || previous.createdAt < job.createdAt) latestJobs.set(job.agentId, job);
+  }
+  const candidates = allAgents.flatMap((agent) => {
+    const thread = currentThreads.get(agent.agentId);
+    if (!thread || !backendSupports(thread.backendKind, "supportsThreadInspection")) return [];
+    const latestJob = latestJobs.get(agent.agentId);
+    const resolvedOrphan = agent.lifecycle === "orphaned" && !agent.currentJobId &&
+      jobs.admissionStateStore.workHistory.runtimeResolution(
+        agent.agentId,
+        dashboardRuntimeProblemIdentity(jobs, agent).revision
+      );
+    return [{
+      candidate: {
+        agentId: agent.agentId,
+        thread,
+        stamp: dashboardRuntimeStamp(agent, latestJob),
+        inspectLiveness: !resolvedOrphan && (
+          statusFilter === undefined && visibleAgentIds.has(agent.agentId) ||
+          agent.lifecycle === "active" ||
+          agent.lifecycle === "waiting-input" ||
+          agent.lifecycle === "orphaned" ||
+          Boolean(agent.currentJobId)
+        )
+      } satisfies DashboardRuntimeCandidate,
+      changedAt: Math.max(agent.updatedAt, latestJob?.updatedAt || 0)
+    }];
+  }).sort((left, right) => right.changedAt - left.changedAt)
+    .map(entry => entry.candidate);
+  return { candidates };
+}
+
+async function enrichDashboardRuntimePlan(
+  upstream: CodexUpstream,
+  plan: BridgeDashboardRuntimePlan,
+  jobs?: CodexJobRegistry
+): Promise<BridgeDashboardEnrichment> {
+  const rankedCandidates = plan.candidates;
+  const cache = dashboardRuntimeCaches.get(upstream);
+  const checkedAt = (candidate: DashboardRuntimeCandidate): number => {
+    const entry = cache?.get(dashboardRuntimeCacheKey(candidate.thread));
+    return entry?.stamp === candidate.stamp ? entry.attemptedAt : 0;
+  };
+  // Rank the complete candidate set before limiting it. Limiting by recency
+  // first permanently starved Agent 201 and beyond on every refresh.
+  const fairCandidates = [...rankedCandidates].sort((left, right) =>
+    checkedAt(left) - checkedAt(right)
+  );
+  const livenessCandidates = fairCandidates.filter(candidate => candidate.inspectLiveness);
+  const backgroundCandidates = fairCandidates.filter(candidate => !candidate.inspectLiveness);
+  const backgroundReserve = backgroundCandidates.length === 0
+    ? 0
+    : Math.min(
+        backgroundCandidates.length,
+        Math.max(CARD_RUNTIME_PROBE_CONCURRENCY, Math.floor(CARD_RUNTIME_PROBE_LIMIT / 4))
+      );
+  const selectedLivenessCandidates = livenessCandidates.slice(
+    0,
+    CARD_RUNTIME_PROBE_LIMIT - backgroundReserve
+  );
+  const selectedBackgroundCandidates = backgroundCandidates.slice(
+    0,
+    CARD_RUNTIME_PROBE_LIMIT - selectedLivenessCandidates.length
+  );
+  const candidates: DashboardRuntimeCandidate[] = [
+    ...selectedLivenessCandidates,
+    ...selectedBackgroundCandidates
+  ];
+  const startedAt = Date.now();
+  const [runtimeInspection, usage] = await Promise.all([
+    inspectDashboardRuntimes(upstream, candidates, jobs),
+    readCodexWeeklyUsageBounded(upstream)
+  ]);
+  const observations = cachedDashboardRuntimes(upstream, rankedCandidates);
+  for (const [agentId, observation] of runtimeInspection.observations) {
+    observations.set(agentId, observation);
+  }
+  const selectedIds = new Set(candidates.map(candidate => candidate.agentId));
+  const uncheckedOutsideBatch = rankedCandidates.filter(candidate =>
+    !selectedIds.has(candidate.agentId) && !observations.has(candidate.agentId)
+  ).length;
+  const oldestObservationAt = earliestObservationAt([
+    runtimeInspection.oldestObservationAt,
+    usage.value?.observedAt
+  ]);
+  return {
+    runtimeByAgent: [...observations.entries()],
+    runtimeProbeSkippedAgents: uncheckedOutsideBatch + runtimeInspection.skipped,
+    weeklyUsage: usage.value,
+    summary: {
+      state: "enriched",
+      runtimeRequests: runtimeInspection.requests,
+      cacheHits: runtimeInspection.cacheHits,
+      timeouts: runtimeInspection.timeouts,
+      ...(runtimeInspection.unavailable > 0
+        ? { runtimeUnavailable: runtimeInspection.unavailable }
+        : {}),
+      durationMs: Math.max(0, Date.now() - startedAt),
+      usageTimedOut: usage.timedOut,
+      pendingReads: runtimeInspection.timeouts + (usage.timedOut ? 1 : 0),
+      usageUnavailable: usage.failed,
+      ...(oldestObservationAt ? { oldestObservationAt } : {})
+    }
+  };
+}
+
+function dashboardEnrichmentInput(
+  enrichment: BridgeDashboardEnrichment
+): DashboardEnrichmentInput {
+  return {
+    runtimeByAgent: new Map(enrichment.runtimeByAgent),
+    runtimeProbeSkippedAgents: enrichment.runtimeProbeSkippedAgents,
+    weeklyUsage: enrichment.weeklyUsage,
+    summary: enrichment.summary
+  };
+}
+
 async function buildDashboardView(
   jobs: CodexJobRegistry,
   upstream: CodexUpstream,
@@ -11424,8 +11785,7 @@ async function buildDashboardView(
   if (problemQuery && statusFilter === undefined) statusFilter = "all";
   const inScope = (row: { scopeId: string }): boolean => !scopeId || row.scopeId === scopeId;
   if (inspectRuntime && !enrichment) {
-    const visibleAgentIds = new Set<string>();
-    await buildDashboardView(
+    const plan = await buildDashboardRuntimePlan(
       jobs,
       upstream,
       modelCatalog,
@@ -11436,87 +11796,12 @@ async function buildDashboardView(
       limit,
       terminalOffset,
       idleOffset,
-      false,
-      visibleAgentIds,
-      undefined,
       scopeId,
       statusFilter,
       problemQuery,
       includeHistory
     );
-    const allAgents = listAllDashboardAgents(jobs, scopeId);
-    const currentThreads = new Map(jobs.listCurrentAgentThreads().map(thread => [thread.agentId, thread]));
-    const latestJobs = new Map<string, CodexJob>();
-    for (const job of jobs.list(Math.max(jobs.size, config.maxRetainedJobs)).filter(inScope)) {
-      if (!job.agentId) continue;
-      const previous = latestJobs.get(job.agentId);
-      if (!previous || previous.createdAt < job.createdAt) latestJobs.set(job.agentId, job);
-    }
-    const appServerAgents = allAgents.flatMap((agent) => {
-      const thread = currentThreads.get(agent.agentId);
-      return thread && backendSupports(thread.backendKind, "supportsThreadInspection") ? [{ agent, thread }] : [];
-    });
-    const rankedCandidates = appServerAgents
-      .map(({ agent, thread }) => {
-        const latestJob = latestJobs.get(agent.agentId);
-        const resolvedOrphan = agent.lifecycle === "orphaned" && !agent.currentJobId &&
-          jobs.admissionStateStore.workHistory.runtimeResolution(agent.agentId,dashboardRuntimeProblemIdentity(jobs,agent).revision);
-        return {
-          agentId: agent.agentId,
-          thread,
-          stamp: dashboardRuntimeStamp(agent, latestJob),
-          inspectLiveness: !resolvedOrphan && (
-            statusFilter === undefined && visibleAgentIds.has(agent.agentId) ||
-            agent.lifecycle === "active" ||
-            agent.lifecycle === "waiting-input" ||
-            agent.lifecycle === "orphaned" ||
-            Boolean(agent.currentJobId)),
-          changedAt: Math.max(agent.updatedAt, latestJob?.updatedAt || 0)
-        };
-      })
-      .sort((left, right) => right.changedAt - left.changedAt);
-    const cache = dashboardRuntimeCaches.get(upstream);
-    const checkedAt = (candidate: DashboardRuntimeCandidate): number => {
-      const entry = cache?.get(dashboardRuntimeCacheKey(candidate.thread));
-      return entry?.stamp === candidate.stamp ? entry.attemptedAt : 0;
-    };
-    // Rank the complete candidate set before limiting it. Limiting by recency
-    // first permanently starved Agent 201 and beyond on every refresh.
-    const fairCandidates = [...rankedCandidates].sort((left,right) => checkedAt(left)-checkedAt(right));
-    const livenessCandidates = fairCandidates.filter((candidate) => candidate.inspectLiveness);
-    const backgroundCandidates = fairCandidates.filter((candidate) => !candidate.inspectLiveness);
-    const backgroundReserve = backgroundCandidates.length === 0
-      ? 0
-      : Math.min(
-          backgroundCandidates.length,
-          Math.max(CARD_RUNTIME_PROBE_CONCURRENCY, Math.floor(CARD_RUNTIME_PROBE_LIMIT / 4))
-        );
-    const selectedLivenessCandidates = livenessCandidates.slice(
-      0,
-      CARD_RUNTIME_PROBE_LIMIT - backgroundReserve
-    );
-    const selectedBackgroundCandidates = backgroundCandidates.slice(
-      0,
-      CARD_RUNTIME_PROBE_LIMIT - selectedLivenessCandidates.length
-    );
-    const candidates: DashboardRuntimeCandidate[] = [
-      ...selectedLivenessCandidates,
-      ...selectedBackgroundCandidates
-    ];
-    const startedAt = Date.now();
-    const [runtimeInspection, usage] = await Promise.all([
-      inspectDashboardRuntimes(jobs, upstream, candidates),
-      readCodexWeeklyUsageBounded(upstream)
-    ]);
-    const observations = cachedDashboardRuntimes(upstream, rankedCandidates);
-    for (const [agentId, observation] of runtimeInspection.observations) observations.set(agentId, observation);
-    const selectedIds = new Set(candidates.map(candidate => candidate.agentId));
-    const uncheckedOutsideBatch = rankedCandidates.filter(candidate =>
-      !selectedIds.has(candidate.agentId) && !observations.has(candidate.agentId)).length;
-    const oldestObservationAt = earliestObservationAt([
-      runtimeInspection.oldestObservationAt,
-      usage.value?.observedAt
-    ]);
+    const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan, jobs);
     return buildDashboardView(
       jobs,
       upstream,
@@ -11530,23 +11815,7 @@ async function buildDashboardView(
       idleOffset,
       true,
       visibleAgentIdsOut,
-      {
-        runtimeByAgent: observations,
-        runtimeProbeSkippedAgents: uncheckedOutsideBatch + runtimeInspection.skipped,
-        weeklyUsage: usage.value,
-        summary: {
-          state: "enriched",
-          runtimeRequests: runtimeInspection.requests,
-          cacheHits: runtimeInspection.cacheHits,
-          timeouts: runtimeInspection.timeouts,
-          ...(runtimeInspection.unavailable > 0 ? { runtimeUnavailable: runtimeInspection.unavailable } : {}),
-          durationMs: Math.max(0, Date.now() - startedAt),
-          usageTimedOut: usage.timedOut,
-          pendingReads: runtimeInspection.timeouts + (usage.timedOut ? 1 : 0),
-          usageUnavailable: usage.failed,
-          ...(oldestObservationAt ? { oldestObservationAt } : {})
-        }
-      },
+      dashboardEnrichmentInput(projectedEnrichment),
       scopeId,
       statusFilter,
       problemQuery,

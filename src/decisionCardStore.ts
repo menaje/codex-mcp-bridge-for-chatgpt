@@ -229,7 +229,17 @@ export const V24_DECISION_CARD_MIGRATION_SCHEMA = `
 export class DecisionCardStore {
   readonly startupMaintenance: { expiredLeasesMarkedUnknown: number; expiredCardsRemoved: number };
 
-  constructor(private readonly db: Database.Database) {
+  constructor(
+    private readonly db: Database.Database,
+    options: { readOnly?: boolean } = {}
+  ) {
+    if (options.readOnly) {
+      this.startupMaintenance = {
+        expiredLeasesMarkedUnknown: 0,
+        expiredCardsRemoved: 0
+      };
+      return;
+    }
     const now = Date.now();
     const expiredLeasesMarkedUnknown = this.db.prepare(`
       UPDATE decision_submissions

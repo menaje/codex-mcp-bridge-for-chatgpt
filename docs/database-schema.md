@@ -13,6 +13,13 @@ payloads remain where their contents are inherently variable, but fields used fo
 identity, joins, constraints, state transitions, or indexes are columns and are
 removed from those payloads.
 
+Best-effort transport telemetry is deliberately outside this authority. The
+isolated production runtime stores it in a separate `telemetry.sqlite` database
+with its own WAL, bounded queue, and retention. Telemetry failure is observable
+but cannot change an operational command. The schema-25
+`transport_observations` table remains for rollback and direct in-process
+compatibility; the isolated production path does not write it.
+
 ## Ownership rules
 
 `projects` owns a project's UUID, opaque public reference, revision, current name,
@@ -88,7 +95,7 @@ isolated state mutation so an IPC response-loss retry cannot duplicate work.
 | `cancellation_operations` | Root cancellation request idempotency, exact target/proof/result | Keep while request replay and audit provenance are needed. It is protected from generic event cleanup. |
 | `cancellation_intents` | Per-target cancellation dispatch and result provenance | Keep recorded/dispatched intents through restart; terminal evidence remains with the retained request journal. Target indexes serve protection and recovery checks. |
 | `steering_deliveries` | Steering idempotency and delivery certainty; prompt digest, expected Job version, status/result | Keep prepared/dispatching/uncertain records through restart and retain completed evidence with the request receipt. Prompt text is never stored here. |
-| `transport_observations` | Bounded operational diagnostics for aborted/detached/presentation events | Keep as disposable diagnostics only; it grants no replay or execution authority. It is ordered by the recent index and can be pruned independently. |
+| `transport_observations` | Rollback/direct-runtime compatibility for bounded aborted/detached/presentation diagnostics | Non-authoritative and disposable. Isolated production writes the separate telemetry database instead, so this table grants no replay or execution authority. |
 | `user_questions` | Question request/answer state and response reference | Keep until its explicit expiry; startup removes expired rows. Payload is question state, not a Job mirror. |
 | `codex_question_deliveries` | Codex-originated question delivery idempotency | Keep one scoped request/question-reference receipt so restart cannot redeliver the same question as new. |
 | `decision_cards` | Current GPT–user decision-card version, conversation scope, expiry, and latest activity time | Independent of projects, Activities, Agents, and Jobs. Expired inactive cards are deleted after the decision recovery window; scope and installation capacity limits prevent unbounded growth. |

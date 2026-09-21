@@ -252,6 +252,18 @@ export type MacOSHelperStatus = {
     backgroundProcesses: number | null;
     backgroundProcessAgents: number | null;
     backgroundProcessUnknownAgents: number | null;
+    stateServiceStatus?: string | null;
+    stateServiceAccess?: "read" | "write" | null;
+    stateServicePhase?: string | null;
+    stateServiceObservedAt?: number | null;
+    stateServiceLastCommitAt?: number | null;
+    readServiceStatus?: string | null;
+    readServicePhase?: string | null;
+    readServiceObservedAt?: number | null;
+    readServiceLastSnapshotAt?: number | null;
+    telemetryServiceStatus?: string | null;
+    telemetryDropped?: number | null;
+    telemetryFailed?: number | null;
   };
   tunnel: {
     phase: string;
@@ -526,7 +538,19 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         backgroundProcessState: bridgeAdmission?.backgroundProcessState ?? null,
         backgroundProcesses: bridgeAdmission?.backgroundProcesses ?? null,
         backgroundProcessAgents: bridgeAdmission?.backgroundProcessAgents ?? null,
-        backgroundProcessUnknownAgents: bridgeAdmission?.backgroundProcessUnknownAgents ?? null
+        backgroundProcessUnknownAgents: bridgeAdmission?.backgroundProcessUnknownAgents ?? null,
+        stateServiceStatus: bridgeAdmission?.stateService?.status ?? null,
+        stateServiceAccess: bridgeAdmission?.stateService?.activeOperation?.access ?? null,
+        stateServicePhase: bridgeAdmission?.stateService?.activeOperation?.phase ?? null,
+        stateServiceObservedAt: bridgeAdmission?.stateService?.activeOperation?.observedAt ?? null,
+        stateServiceLastCommitAt: bridgeAdmission?.stateService?.lastCommitAt ?? null,
+        readServiceStatus: bridgeAdmission?.readService?.status ?? null,
+        readServicePhase: bridgeAdmission?.readService?.activeOperation?.phase ?? null,
+        readServiceObservedAt: bridgeAdmission?.readService?.activeOperation?.observedAt ?? null,
+        readServiceLastSnapshotAt: bridgeAdmission?.readService?.lastSnapshotAt ?? null,
+        telemetryServiceStatus: bridgeAdmission?.telemetryService?.status ?? null,
+        telemetryDropped: bridgeAdmission?.telemetryService?.dropped ?? null,
+        telemetryFailed: bridgeAdmission?.telemetryService?.failed ?? null
       },
       tunnel
     };
@@ -1919,6 +1943,28 @@ type RuntimeAdmissionSnapshot = {
   backgroundProcesses: number;
   backgroundProcessAgents: number;
   backgroundProcessUnknownAgents: number;
+  stateService?: {
+    status: string;
+    activeOperation?: {
+      access: "read" | "write";
+      phase: string;
+      observedAt: number;
+    };
+    lastCommitAt?: number;
+  };
+  readService?: {
+    status: string;
+    activeOperation?: {
+      phase: string;
+      observedAt: number;
+    };
+    lastSnapshotAt?: number;
+  };
+  telemetryService?: {
+    status: string;
+    dropped: number;
+    failed: number;
+  };
 };
 
 function protectedMemoryOnlyThreadCount(impact: RuntimeAdmissionSnapshot): number {

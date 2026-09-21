@@ -73,6 +73,27 @@ describe("MCP Apps tool-call fallback", () => {
     await expect(promise).resolves.toBe("recovered");
   });
 
+  it("labels a dispatched timeout so a card can forbid a duplicate fallback", async () => {
+    vi.useFakeTimers();
+    const compatibility = vi.fn(async () => "duplicate");
+    const promise = callUiToolWithFallback(
+      () => new Promise<string>(() => undefined),
+      compatibility,
+      {
+        ...options,
+        shouldFallback: (error) =>
+          (error as { code?: string } | undefined)?.code !== "MCP_TOOL_CALL_DISPATCH_TIMEOUT"
+      }
+    );
+    const rejection = expect(promise).rejects.toMatchObject({
+      code: "MCP_TOOL_CALL_DISPATCH_TIMEOUT"
+    });
+
+    await vi.advanceTimersByTimeAsync(options.standardTimeoutMs);
+    await rejection;
+    expect(compatibility).not.toHaveBeenCalled();
+  });
+
   it("bounds a compatibility alias that stops responding", async () => {
     vi.useFakeTimers();
     const promise = callUiToolWithFallback(

@@ -9,17 +9,23 @@ import { BridgeStateStore } from "./stateStore.js";
 import {
   CodexJobRegistry,
   TaskProjectAvailabilityProjection,
-  type BridgeApplicationService
+  type BridgeApplicationService,
+  type BridgeReadProjectionService
 } from "./tools.js";
 import type { CodexUpstream } from "./upstream.js";
 import { UserSettingsStore } from "./userSettings.js";
 import { assertJsonTextIntegrity, decodeUtf8Strict } from "./textIntegrity.js";
+import type { BridgeTelemetryService } from "./telemetryService.js";
 
 const MAX_STDIO_JSON_LINE_BYTES = 8 * 1024 * 1024;
 
 export type BridgeStdioRuntimeOptions = {
   /** Shared production store; when supplied, its lifecycle remains caller-owned. */
   stateStore?: BridgeStateStore;
+  /** Separate best-effort diagnostic sink; lifecycle remains caller-owned. */
+  telemetry?: BridgeTelemetryService;
+  /** Separate query process for structural Dashboard and Settings reads. */
+  readProjection?: BridgeReadProjectionService;
   /** Optional catalog override used by deterministic integration tests. */
   modelCatalog?: CodexModelCatalogProvider;
   /** Custom streams used by byte-level stdio integration tests. */
@@ -58,6 +64,7 @@ export function createStdioBridgeRuntime(
     maxResultBytes: config.maxJobResultBytes,
     staleAfterMs: config.jobStaleAfterMs,
     stateStore,
+    telemetry: options.telemetry,
     allowedRoots: config.allowedRoots
   });
   const userSettings = new UserSettingsStore(config, { stateStore });
@@ -72,7 +79,10 @@ export function createStdioBridgeRuntime(
     modelCatalog,
     userSettings,
     scopeResolver,
-    projectAvailability
+    projectAvailability,
+    undefined,
+    undefined,
+    options.readProjection
   );
   // The SDK's stock stdio ReadBuffer calls Buffer.toString("utf8"), which
   // replaces malformed bytes. Feed it only complete, prevalidated JSON lines.

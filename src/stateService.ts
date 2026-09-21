@@ -61,9 +61,12 @@ export type OperationalStateResult = {
 };
 
 export const OPERATIONAL_STATE_OPERATION_PHASES = [
+  "queue-wait",
   "write-lock-wait",
+  "read-snapshot",
   "executing",
   "committing",
+  "serializing",
   "responding"
 ] as const;
 
@@ -75,9 +78,10 @@ export type OperationalStateOperationPhase =
  * request, scope, project and Job identifiers as well as command payloads.
  */
 export type OperationalStateOperationObservation = {
-  access: "write";
-  operation: OperationalStateCommand["operation"];
-  slice: StateMaintenanceSlice;
+  access: "read" | "write";
+  /** Bounded semantic category; never a request, project, Job, or SQL value. */
+  operation: string;
+  slice?: StateMaintenanceSlice;
   phase: OperationalStateOperationPhase;
   startedAt: number;
   observedAt: number;

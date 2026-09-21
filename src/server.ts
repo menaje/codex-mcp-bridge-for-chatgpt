@@ -19,7 +19,8 @@ import {
   CodexJobRegistry,
   TaskProjectAvailabilityProjection,
   registerBridgeTools,
-  type BridgeApplicationService
+  type BridgeApplicationService,
+  type BridgeReadProjectionService
 } from "./tools.js";
 import { SessionRegistry } from "./sessionRegistry.js";
 import { ScopeResolver } from "./scopeResolver.js";
@@ -30,6 +31,7 @@ import { PRODUCT_INFO } from "./productInfo.js";
 import { SkillLibrary } from "./skillLibrary.js";
 import { assertJsonTextIntegrity, decodeUtf8Strict } from "./textIntegrity.js";
 import type { OperationalStateOperationObservation } from "./stateService.js";
+import type { BridgeTelemetryService } from "./telemetryService.js";
 
 const MAX_MCP_REQUEST_BYTES = 8 * 1024 * 1024;
 
@@ -82,6 +84,10 @@ export const BRIDGE_MCP_INSTRUCTIONS = [
 export type BridgeHttpRuntimeOptions = {
   /** Shared production store; when supplied, its lifecycle remains caller-owned. */
   stateStore?: BridgeStateStore;
+  /** Separate best-effort diagnostic sink; never used for operational state. */
+  telemetry?: BridgeTelemetryService;
+  /** Separate query process for structural Dashboard and Settings reads. */
+  readProjection?: BridgeReadProjectionService;
   /** Retained for callers that collect their own diagnostics. HTTP health does not expose it. */
   healthDiagnostics?: () => Record<string, unknown>;
   /** Memory-only state-service readiness; it must never perform I/O. */
@@ -113,7 +119,8 @@ export function createBridgeMcpServer(
   scopeResolver?: ScopeResolver,
   projectAvailability?: TaskProjectAvailabilityProjection,
   cardPerformance?: CardPerformanceTracker,
-  skillLibrary?: SkillLibrary
+  skillLibrary?: SkillLibrary,
+  readProjection?: BridgeReadProjectionService
 ): BridgeMcpServer {
   // A directly constructed server has the same single-store admission boundary
   // as an HTTP runtime. HTTP handlers share their explicitly composed store.
@@ -199,7 +206,8 @@ export function createBridgeMcpServer(
     effectiveScopeResolver,
     projectAvailability,
     cardPerformance,
-    effectiveSkillLibrary
+    effectiveSkillLibrary,
+    readProjection
   );
   Object.defineProperty(server, "applicationService", {
     configurable: false,
@@ -243,6 +251,7 @@ export function createHttpServer(
     maxResultBytes: config.maxJobResultBytes,
     staleAfterMs: config.jobStaleAfterMs,
     stateStore,
+    telemetry: runtimeOptions.telemetry,
     allowedRoots: config.allowedRoots
   });
   const modelCatalog = modelCatalogOverride || createModelCatalog(config, upstream);
@@ -271,7 +280,8 @@ export function createHttpServer(
       scopeResolver,
       projectAvailability,
       cardPerformance,
-      skillLibrary
+      skillLibrary,
+      runtimeOptions.readProjection
     );
     if (runtimeOptions.conformanceFixtures) {
       registerMcpConformanceFixtures(server, () => notifyToolsChanged());

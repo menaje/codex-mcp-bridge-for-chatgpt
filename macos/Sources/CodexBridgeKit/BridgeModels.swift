@@ -654,6 +654,9 @@ public struct RuntimeAdmissionSnapshot: Codable, Sendable {
     public let backgroundProcesses: Int
     public let backgroundProcessAgents: Int
     public let backgroundProcessUnknownAgents: Int
+    public let stateService: RuntimeStateServiceSnapshot?
+    public let readService: RuntimeReadServiceSnapshot?
+    public let telemetryService: RuntimeTelemetryServiceSnapshot?
 
     public init(
         acceptingNewJobs: Bool,
@@ -666,7 +669,10 @@ public struct RuntimeAdmissionSnapshot: Codable, Sendable {
         backgroundProcessState: String,
         backgroundProcesses: Int,
         backgroundProcessAgents: Int,
-        backgroundProcessUnknownAgents: Int
+        backgroundProcessUnknownAgents: Int,
+        stateService: RuntimeStateServiceSnapshot? = nil,
+        readService: RuntimeReadServiceSnapshot? = nil,
+        telemetryService: RuntimeTelemetryServiceSnapshot? = nil
     ) {
         self.acceptingNewJobs = acceptingNewJobs
         self.activeJobs = activeJobs
@@ -679,7 +685,53 @@ public struct RuntimeAdmissionSnapshot: Codable, Sendable {
         self.backgroundProcesses = backgroundProcesses
         self.backgroundProcessAgents = backgroundProcessAgents
         self.backgroundProcessUnknownAgents = backgroundProcessUnknownAgents
+        self.stateService = stateService
+        self.readService = readService
+        self.telemetryService = telemetryService
     }
+}
+
+public struct RuntimeStateServiceSnapshot: Codable, Sendable {
+    public struct ActiveOperation: Codable, Sendable {
+        public let access: String
+        public let operation: String
+        public let phase: String
+        public let startedAt: Int64
+        public let observedAt: Int64
+    }
+
+    public let status: String
+    public let generation: String?
+    public let heartbeatAgeMs: Int?
+    public let activeOperation: ActiveOperation?
+    public let lastCommitAt: Int64?
+}
+
+public struct RuntimeReadServiceSnapshot: Codable, Sendable {
+    public struct ActiveOperation: Codable, Sendable {
+        public let method: String
+        public let phase: String
+        public let startedAt: Int64
+        public let observedAt: Int64
+    }
+
+    public let status: String
+    public let generation: String?
+    public let heartbeatAgeMs: Int?
+    public let inFlight: Int
+    public let capacity: Int
+    public let lastSnapshotAt: Int64?
+    public let activeOperation: ActiveOperation?
+}
+
+public struct RuntimeTelemetryServiceSnapshot: Codable, Sendable {
+    public let status: String
+    public let queued: Int
+    public let inFlight: Int
+    public let retained: Int
+    public let dropped: Int
+    public let failed: Int
+    public let lastPersistedAt: Int64?
 }
 
 public struct RuntimeSnapshotParameters: Codable, Sendable {
@@ -777,6 +829,18 @@ public struct HelperBridgeStatus: Codable, Sendable {
     public let backgroundProcesses: Int?
     public let backgroundProcessAgents: Int?
     public let backgroundProcessUnknownAgents: Int?
+    public let stateServiceStatus: String?
+    public let stateServiceAccess: String?
+    public let stateServicePhase: String?
+    public let stateServiceObservedAt: Int64?
+    public let stateServiceLastCommitAt: Int64?
+    public let readServiceStatus: String?
+    public let readServicePhase: String?
+    public let readServiceObservedAt: Int64?
+    public let readServiceLastSnapshotAt: Int64?
+    public let telemetryServiceStatus: String?
+    public let telemetryDropped: Int?
+    public let telemetryFailed: Int?
 }
 
 public struct HelperTunnelStatus: Codable, Sendable {
