@@ -377,33 +377,36 @@ The asynchronous API conversion and physical owner cutover are separate:
 
 ### Current implementation status
 
-The repository now contains protocol-v4 child-process transport, generation
-checks, explicit maintenance-slice capabilities, bounded parent admission,
-deadlines, heartbeats, stale-owner retirement, bounded exponential restart
-supervision, schema-25 durable command receipts, and standalone locked-database,
-response-loss, crash-recovery and stopped-process recovery tests. A stale owner
-is asked to close and force-killed after the bounded grace period; its exit is
-observed before a replacement is started, preserving the single-writer rule.
-An identical command ID and payload is replayed from its original receipt after
-a state-owner restart; a changed payload fails closed. The child now supports
-every maintenance slice, including registry-planned `jobs` retention, and
-reports `ready` for that protocol-v4 maintenance surface. The Job registry sends
-a bounded candidate plan containing stable Job versions, timestamps and its
-known protection set. The state owner revalidates each candidate against the
-authoritative row and durable protection records, archives eligible rows in the
-same transaction, and returns classifications for guarded application to the
-registry cache. An outcome-unknown retry preserves both the command ID and the
-exact plan payload. Only the maintenance semantic operation is implemented
-through this transport. Production startup deliberately continues to use the
-in-process compatibility owner and reports `state-incompatible` from `/readyz`.
-For that implemented maintenance-write surface, the child now emits transaction
-boundary observations and the parent retains active phase, queue depth and last
-commit time even when the child heartbeat becomes stale. A controlled lock test
-requires `state-stale + write-lock-wait` while Bridge liveness remains responsive.
-The child must not be selected until every operational command and query caller
-has crossed the asynchronous boundary and the compatibility owner can be closed
-before child startup. This status is implementation progress, not cutover or
-resolution evidence.
+The issue #143 production boundary now keeps public HTTP, native companion and
+stdio ingress in a SQLite-free supervisor. The complete application runtime and
+its one authoritative `BridgeStateStore` run in one supervised child. Dashboard
+and Settings projections use a separate read-only child, and best-effort
+diagnostics use a separate telemetry child and `telemetry.sqlite`. A blocked
+operational transaction can therefore make application commands unavailable,
+but it cannot occupy public `/healthz` or the native in-memory health listener.
+
+This is intentionally narrower than the full architecture in this document.
+The protocol-v4 operational-state child currently implements maintenance
+commands, durable receipts, generation checks, deadlines and bounded restart,
+but production does not select it because the remaining application repositories
+still use synchronous `BridgeStateStore` calls. Selecting it now would create two
+writers. The full semantic command/query conversion and independent operational
+state owner remain issue #142 work.
+
+The production central writer is consequently serialized by design. Project-
+fair progress admission prevents a noisy project from filling the disposable
+progress queue, and native/control requests retain parent capacity, but neither
+claim can preempt a synchronous SQLite call that has already started. During
+that interval readiness reports the last confirmed `read` or `write` phase and
+callers receive a bounded unconfirmed outcome; public connection liveness stays
+available. This limitation is an accepted issue #143 boundary, not evidence
+that SQLite writes became concurrent.
+
+Storage failures returned by SQLite are now distinct from elapsed time. `BUSY`,
+`FULL`, I/O, corruption and read-only errors make mutation admission fail closed
+and remain visible in readiness until a later authoritative transaction commits.
+Proxied MCP failures include the bounded limitation, retryability and certainty
+class instead of collapsing the condition into a generic disconnect.
 
 Before every physical cutover, create and verify a consistent state backup that
 includes committed WAL content. Do not copy the main file alone and do not run
@@ -414,8 +417,10 @@ conversion. Loss of `telemetry.sqlite` never authorizes rollback of state.
 
 ## Verification gates
 
-The implementation is not complete until all of these pass on disposable
-fixtures and the actual installed app/runtime combination:
+The full issue #142 operational-state-child target is not complete until all of
+these pass on disposable fixtures and the actual installed app/runtime
+combination. Issue #143 may close only against its explicitly narrower
+connection-liveness and truthful-degradation boundary:
 
 - 100 concurrent progress producers, multiple Dashboard readers and every
   maintenance slice while `/healthz` p99 remains under 200 ms;

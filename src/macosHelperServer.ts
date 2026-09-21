@@ -257,6 +257,8 @@ export type MacOSHelperStatus = {
     stateServicePhase?: string | null;
     stateServiceObservedAt?: number | null;
     stateServiceLastCommitAt?: number | null;
+    stateServiceStorageError?: "busy" | "full" | "io" | "corrupt" | "read-only" | null;
+    stateServiceStorageErrorObservedAt?: number | null;
     readServiceStatus?: string | null;
     readServicePhase?: string | null;
     readServiceObservedAt?: number | null;
@@ -544,6 +546,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         stateServicePhase: bridgeAdmission?.stateService?.activeOperation?.phase ?? null,
         stateServiceObservedAt: bridgeAdmission?.stateService?.activeOperation?.observedAt ?? null,
         stateServiceLastCommitAt: bridgeAdmission?.stateService?.lastCommitAt ?? null,
+        stateServiceStorageError: bridgeAdmission?.stateService?.storageError ?? null,
+        stateServiceStorageErrorObservedAt:
+          bridgeAdmission?.stateService?.storageErrorObservedAt ?? null,
         readServiceStatus: bridgeAdmission?.readService?.status ?? null,
         readServicePhase: bridgeAdmission?.readService?.activeOperation?.phase ?? null,
         readServiceObservedAt: bridgeAdmission?.readService?.activeOperation?.observedAt ?? null,
@@ -1951,6 +1956,8 @@ type RuntimeAdmissionSnapshot = {
       observedAt: number;
     };
     lastCommitAt?: number;
+    storageError?: "busy" | "full" | "io" | "corrupt" | "read-only";
+    storageErrorObservedAt?: number;
   };
   readService?: {
     status: string;

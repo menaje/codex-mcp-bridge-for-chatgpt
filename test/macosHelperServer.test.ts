@@ -317,6 +317,54 @@ describe("macOS runtime helper RPC", () => {
     }
   });
 
+  it("projects a state storage failure without marking the companion disconnected", async () => {
+    const root = temporaryDirectory();
+    const socketPath = path.join(root, "bridge.sock");
+    servers.push(await startPrivateJsonLineServer({
+      socketPath,
+      maxRequestBytes: 4096,
+      maxResponseBytes: 4096,
+      async dispatch(line) {
+        const { id } = JSON.parse(line);
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            acceptingNewJobs: false,
+            activeJobs: 0,
+            pendingAdmissions: 0,
+            backgroundProcessState: "confirmed",
+            backgroundProcesses: 0,
+            backgroundProcessAgents: 0,
+            backgroundProcessUnknownAgents: 0,
+            stateService: {
+              status: "state-recovering",
+              storageError: "full",
+              storageErrorObservedAt: 1_790_031_000_000
+            }
+          }
+        };
+      },
+      requestTooLarge: () => ({}),
+      internalError: () => ({})
+    }));
+    const supervisor = new MacOSBridgeSupervisor({
+      bridgeRoot: root,
+      envFile: path.join(root, ".env"),
+      bridgeSocketPath: socketPath,
+      runtimeLockDirectory: path.join(root, "run", "launcher.lock")
+    });
+    const health = await supervisor.health();
+    expect(health.bridge).toMatchObject({
+      connected: true,
+      observation: "fresh",
+      acceptingNewJobs: false,
+      stateServiceStatus: "state-recovering",
+      stateServiceStorageError: "full",
+      stateServiceStorageErrorObservedAt: 1_790_031_000_000
+    });
+  });
+
   it("keeps health independent of installation discovery and account queries", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "helper-health-"));
     const manager = new CodexRuntimeManager({ root: path.join(root, "runtime"), discoverExternal: false });

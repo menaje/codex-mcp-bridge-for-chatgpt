@@ -155,6 +155,10 @@ type PendingRpc = {
 
 type RuntimeTransport = "http" | "stdio";
 
+type RuntimeStorageError = NonNullable<
+  NonNullable<BridgeRuntimeAdmissionSnapshot["stateService"]>["storageError"]
+>;
+
 export type IsolatedStdioRuntime = {
   readonly applicationService: BridgeApplicationService;
   close(): Promise<void>;
@@ -421,11 +425,16 @@ class IsolatedRuntimeController {
     );
     const fresh = connected && heartbeatAgeMs !== undefined && heartbeatAgeMs <= HEARTBEAT_STALE_MS;
     const accepting = fresh && this.lastRuntimeHealth?.acceptingNewJobs === true;
+    const reportedStateStatus = fresh
+      ? this.lastRuntimeHealth?.stateService?.status
+      : undefined;
     const reason = !connected
       ? "state-recovering"
       : !fresh
         ? "state-stale"
-        : !accepting
+        : reportedStateStatus && reportedStateStatus !== "ready"
+          ? reportedStateStatus
+          : !accepting
           ? "admission-draining"
           : this.outstanding >= MAX_PENDING_REQUESTS ||
               this.activeProxyRequests >= MAX_PROXY_REQUESTS ||
@@ -436,13 +445,15 @@ class IsolatedRuntimeController {
       ready: reason === "ready",
       reason,
       limitations: reason === "ready" ? [] : [
-        reason === "state-stale"
-          ? this.activeOperation?.access === "read"
-            ? "state-read-unconfirmed"
-            : this.activeOperation?.access === "write"
-              ? "state-write-unconfirmed"
-              : "state-response-unconfirmed"
-          : reason
+        this.lastRuntimeHealth?.stateService?.storageError
+          ? `state-storage-${this.lastRuntimeHealth.stateService.storageError}`
+          : reason === "state-stale"
+            ? this.activeOperation?.access === "read"
+              ? "state-read-unconfirmed"
+              : this.activeOperation?.access === "write"
+                ? "state-write-unconfirmed"
+                : "state-response-unconfirmed"
+            : reason
       ],
       ...(this.generation ? {
         stateService: {
@@ -453,7 +464,12 @@ class IsolatedRuntimeController {
           queueDepth: Math.max(0, this.outstanding - 1),
           capacity: MAX_PENDING_REQUESTS,
           ...(!fresh && this.activeOperation ? { activeOperation: this.activeOperation } : {}),
-          ...(this.lastCommitAt !== undefined ? { lastCommitAt: this.lastCommitAt } : {})
+          ...(this.lastCommitAt !== undefined ? { lastCommitAt: this.lastCommitAt } : {}),
+          ...(this.lastRuntimeHealth?.stateService?.storageError ? {
+            storageError: this.lastRuntimeHealth.stateService.storageError,
+            storageErrorObservedAt:
+              this.lastRuntimeHealth.stateService.storageErrorObservedAt
+          } : {})
         }
       } : {})
     };
@@ -482,6 +498,7 @@ class IsolatedRuntimeController {
         }
       } : {}),
       stateService: {
+        ...(current.stateService || {}),
         // Admission draining is an execution policy state, not evidence that
         // SQLite or the runtime response boundary is unavailable.
         status: readiness.reason === "admission-draining" ? "ready" : readiness.reason,
@@ -504,14 +521,14 @@ class IsolatedRuntimeController {
     outgoing: import("node:http").ServerResponse
   ): void {
     if (!this.isFresh() || this.port === undefined || !this.child?.connected) {
-      writeUnavailable(outgoing, this.readiness().reason);
+      writeUnavailable(outgoing, this.readiness());
       return;
     }
     if (
       this.outstanding >= MAX_PENDING_REQUESTS ||
       this.activeProxyRequests >= MAX_PROXY_REQUESTS
     ) {
-      writeUnavailable(outgoing, "state-capacity");
+      writeUnavailable(outgoing, this.readiness());
       return;
     }
     const declaredLength = requestContentLength(incoming.headers);
@@ -527,7 +544,7 @@ class IsolatedRuntimeController {
       declaredLength !== undefined &&
       this.activeProxyBytes + declaredLength > MAX_PROXY_BYTES_IN_FLIGHT
     ) {
-      writeUnavailable(outgoing, "state-capacity");
+      writeUnavailable(outgoing, this.readiness());
       return;
     }
     const port = this.port;
@@ -556,7 +573,7 @@ class IsolatedRuntimeController {
             reason
           });
         } else {
-          writeUnavailable(outgoing, reason);
+          writeUnavailable(outgoing, this.readiness());
         }
       } else if (!outgoing.destroyed) {
         outgoing.destroy();
@@ -583,7 +600,7 @@ class IsolatedRuntimeController {
       if (this.isFresh()) return;
       proxied.destroy(new Error("RUNTIME_RESPONSE_UNCONFIRMED"));
       if (!responseStarted && !outgoing.headersSent) {
-        writeUnavailable(outgoing, "state-stale");
+        writeUnavailable(outgoing, this.readiness());
       } else if (!outgoing.destroyed) {
         outgoing.destroy();
       }
@@ -592,7 +609,7 @@ class IsolatedRuntimeController {
     staleWatchdog.unref();
     proxied.once("error", error => {
       if (!outgoing.headersSent) {
-        writeUnavailable(outgoing, this.isFresh() ? "state-recovering" : "state-stale");
+        writeUnavailable(outgoing, this.readiness());
       } else if (!outgoing.destroyed) {
         outgoing.destroy(error);
       }
@@ -853,6 +870,10 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
   let operationStartedAt = 0;
   let observationToken = 0;
   let lastCommitAt: number | undefined;
+  let storageFault: {
+    error: RuntimeStorageError;
+    observedAt: number;
+  } | undefined;
   let closing = false;
   let store: BridgeStateStore | undefined;
   let upstream: ReturnType<typeof createExecutionRuntime> | undefined;
@@ -898,6 +919,16 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         send({ type: "operation-clear", generation });
       });
     }
+  };
+  const observeTransactionFailure = (error: unknown) => {
+    activeOperation = undefined;
+    operationStartedAt = 0;
+    send({ type: "operation-clear", generation });
+    const classified = runtimeStorageError(error);
+    if (classified) storageFault = { error: classified, observedAt: Date.now() };
+  };
+  const observeTransactionCommitted = () => {
+    storageFault = undefined;
   };
   const observeSql = (sql: string) => {
     if (activeOperation?.access === "write") return;
@@ -976,7 +1007,9 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
     store = new BridgeStateStore({
       file: config.stateDatabaseFile,
       traceSql: observeSql,
-      onTransactionPhase: observeTransaction
+      onTransactionPhase: observeTransaction,
+      onTransactionCommitted: observeTransactionCommitted,
+      onTransactionFailure: observeTransactionFailure
     });
     readProjection = await ChildProcessStateReadService.start(
       config.stateDatabaseFile,
@@ -1011,6 +1044,12 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
       await stdioRuntime.start();
       applicationService = stdioRuntime.applicationService;
     }
+    if (
+      process.env.NODE_ENV === "test" &&
+      process.env.CODEX_MCP_BRIDGE_TEST_FREEZE_STATE_PAGE_COUNT === "1"
+    ) {
+      store.freezePageCountForTesting();
+    }
     unsubscribe = applicationService.subscribeChanges?.(topic => {
       send({ type: "change", generation, topic });
     });
@@ -1024,6 +1063,14 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
       const diagnostic = telemetry?.status();
       return {
         ...operational,
+        acceptingNewJobs: operational.acceptingNewJobs && !storageFault,
+        ...(storageFault ? {
+          stateService: {
+            status: storageFault.error === "busy" ? "state-capacity" : "state-recovering",
+            storageError: storageFault.error,
+            storageErrorObservedAt: storageFault.observedAt
+          }
+        } : {}),
         ...(read ? {
           readService: {
             status: read.reason,
@@ -1149,6 +1196,16 @@ function runtimeErrorCode(error: unknown): string {
   return /^([A-Z][A-Z0-9_]+):/.exec(message)?.[1] || "RUNTIME_REQUEST_FAILED";
 }
 
+function runtimeStorageError(error: unknown): RuntimeStorageError | undefined {
+  const code = operationalStateErrorCode(error);
+  if (code === "STATE_STORAGE_BUSY") return "busy";
+  if (code === "STATE_STORAGE_FULL") return "full";
+  if (code === "STATE_STORAGE_IO") return "io";
+  if (code === "STATE_STORAGE_CORRUPT") return "corrupt";
+  if (code === "STATE_STORAGE_READ_ONLY") return "read-only";
+  return undefined;
+}
+
 function isRuntimeChildMessage(value: unknown): value is RuntimeChildMessage {
   if (!value || typeof value !== "object") return false;
   const message = value as Record<string, unknown>;
@@ -1257,14 +1314,20 @@ const HOP_BY_HOP_HEADERS = [
 
 function writeUnavailable(
   response: import("node:http").ServerResponse,
-  reason: string
+  readiness: BridgeReadinessSnapshot
 ): void {
   if (response.headersSent || response.destroyed) return;
   response.setHeader("retry-after", "1");
   writeJson(response, 503, {
     ok: false,
     code: "RUNTIME_RESPONSE_UNCONFIRMED",
-    reason
+    reason: readiness.reason,
+    limitations: readiness.limitations,
+    retryable: true,
+    outcome: readiness.limitations.includes("state-write-unconfirmed")
+      ? "unknown"
+      : "not-observed",
+    ...(readiness.stateService ? { stateService: readiness.stateService } : {})
   });
 }
 

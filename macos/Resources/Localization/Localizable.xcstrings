@@ -51416,6 +51416,65 @@
         }
       }
     },
+    "macos.bridgestoragecannotacceptupdatesexistingworkispreserved": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Bridge-Speicher kann keine Änderungen annehmen. Vorhandene Arbeit bleibt erhalten; neue Arbeit pausiert bis zur Wiederherstellung des Speichers."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge storage cannot accept updates. Existing work is preserved, and new work is paused until storage recovers."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El almacenamiento del puente no puede aceptar cambios. El trabajo existente se conserva y el nuevo se pausa hasta que el almacenamiento se recupere."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le stockage de la passerelle ne peut pas accepter de modifications. Le travail existant est conservé et le nouveau travail est suspendu jusqu’au rétablissement du stockage."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブリッジのストレージは更新を受け付けられません。既存の作業は保持され、ストレージが回復するまで新しい作業は一時停止されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "브리지 저장소에서 변경 사항을 저장할 수 없습니다. 기존 작업은 보존되며 저장소가 복구될 때까지 새 작업은 중단됩니다."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O armazenamento da ponte não pode aceitar alterações. O trabalho existente é preservado e novos trabalhos ficam pausados até a recuperação do armazenamento."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge 存储目前无法接受更新。现有工作会被保留，新工作将暂停，直到存储恢复。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge 儲存空間目前無法接受更新。現有工作會被保留，新工作將暫停，直到儲存空間恢復。"
+          }
+        }
+      }
+    },
     "macos.thebridgeserverdidnotrespondpleasetry": {
       "extractionState": "manual",
       "localizations": {

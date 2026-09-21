@@ -616,6 +616,12 @@ export type BridgeStateStoreOptions = {
    * supervisor. It never receives SQL, identifiers, payloads, or results.
    */
   onTransactionPhase?: (phase: OperationalStateOperationPhase) => void;
+  /**
+   * Storage-boundary observations for fail-closed readiness. Callbacks are
+   * diagnostic only and can never change transaction success or failure.
+   */
+  onTransactionCommitted?: () => void;
+  onTransactionFailure?: (error: unknown) => void;
   /** Test hook fired in the crash window after schema commit and before provenance commit. */
   onMigrationSchemaCommitted?: (progress: StateMigrationProgress) => void;
   /** Test/diagnostic hook fired after each durable schema checkpoint. */
@@ -842,6 +848,16 @@ export class BridgeStateStore {
     return this.currentInstanceId;
   }
 
+  /** Test-only fault injection on the already-open writer connection. */
+  freezePageCountForTesting(): number {
+    if (process.env.NODE_ENV !== "test") {
+      throw new Error("State page-count fault injection is available only in tests.");
+    }
+    const pageCount = Number(this.database.pragma("page_count", { simple: true }));
+    this.database.pragma(`max_page_count = ${pageCount}`);
+    return pageCount;
+  }
+
   /**
    * Apply one semantic state command and persist its compact result atomically.
    * Reusing a command ID with an identical payload returns the first result;
@@ -1058,13 +1074,23 @@ export class BridgeStateStore {
       return operation();
     }
     this.observeTransactionPhase(observePhase, "write-lock-wait");
-    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.exec("BEGIN IMMEDIATE");
+    } catch (error) {
+      this.observeTransactionFailure(error);
+      throw error;
+    }
     this.transactionDepth += 1;
     try {
       this.observeTransactionPhase(observePhase, "executing");
       const result = operation();
       this.observeTransactionPhase(observePhase, "committing");
       this.database.exec("COMMIT");
+      try {
+        this.options.onTransactionCommitted?.();
+      } catch {
+        // Readiness diagnostics cannot change a committed transaction.
+      }
       // The per-command observer owns its response boundary because it may
       // still need to persist/replay a receipt before replying. The enclosing
       // runtime observer only needs to know that this synchronous transaction
@@ -1077,6 +1103,7 @@ export class BridgeStateStore {
       } catch {
         // Preserve the original transaction error.
       }
+      this.observeTransactionFailure(error);
       throw error;
     } finally {
       this.transactionDepth -= 1;
@@ -1096,6 +1123,14 @@ export class BridgeStateStore {
       observer?.(phase);
     } catch {
       // Diagnostics cannot change transaction semantics.
+    }
+  }
+
+  private observeTransactionFailure(error: unknown): void {
+    try {
+      this.options.onTransactionFailure?.(error);
+    } catch {
+      // Readiness diagnostics cannot replace the original transaction error.
     }
   }
 

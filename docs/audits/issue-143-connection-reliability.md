@@ -250,9 +250,59 @@ claim simultaneous writes during a SQLite lock: the central writer may still
 make every operational mutation wait, but that wait is reported as degraded or
 unconfirmed state and no longer consumes public connection liveness.
 
-Current-checkout verification after this change: 96 TypeScript test files / 844
+Current-checkout verification after this change: 96 TypeScript test files / 848
 tests, build and release checks, the long production fault regression, and the
 real companion socket plus production Swift-client contract all pass against
 disposable databases. Applying the candidate to the installed helper, Tunnel,
 and ChatGPT host remains an explicit deployment step rather than evidence
 created by these local fixtures.
+
+## Completion re-audit and corrective boundary (2026-09-22)
+
+Issue #143 was reopened after comparing its closure claim with the checked-in
+implementation and its own unchecked acceptance list. The installed build was
+healthy, but the repository did not contain the full separate operational-state
+owner described by the original target diagram. The production boundary moves
+the whole application and its single writer into a supervised child; it does not
+move every mutation through the maintenance-only state-service prototype.
+
+The correction records two different outcomes instead of treating them as one:
+
+- #143 owns public/native connection liveness, bounded request admission,
+  truthful stale or storage-degraded state, stale presentation preservation and
+  authoritative recovery after the application child resumes.
+- #142 owns the later semantic conversion that would keep critical commands and
+  unrelated application work runnable while the operational writer itself is
+  blocked. The current central writer serializes writes, and issue #143 does not
+  claim otherwise.
+
+The corrective implementation adds a structured degradation response to proxied
+MCP traffic. A stale write reports `state-write-unconfirmed` and `outcome=unknown`;
+capacity or pre-admission degradation reports `outcome=not-observed`. The response
+also carries `retry-after`, the privacy-safe last operation phase and no domain
+identifiers. An actual SQLite `FULL` fault now disables new-Job admission and is
+reported as `state-storage-full` until a later state transaction commits. The
+same fail-closed mapping covers SQLite busy, I/O, corruption and read-only driver
+results; classification comes from the driver code, never elapsed time.
+
+The acceptance evidence is now interpreted as follows:
+
+| Fault or contract | Evidence | #143 result |
+| --- | --- | --- |
+| 30.5 s application/state stall | 121 public health samples, native health checkpoints, exact-once settings recovery | pass |
+| SQLite lock below and beyond `busy_timeout` | committed slow write versus explicit `STATE_STORAGE_BUSY` | pass |
+| SQLite capacity exhaustion | real `SQLITE_FULL` on the runtime writer, fail-closed admission and explicit readiness limitation | pass |
+| proxy saturation and large payload allocation | 112 incomplete requests with native reserve; four bounded 6 MiB JSON bodies with concurrent health probes | pass |
+| progress flood and project fairness | 100 project-A updates, bounded/coalesced disposable queue, project-B fair turn and critical-input bypass | pass within the pre-SQLite queue; no in-flight write preemption claim |
+| read projection stall | bounded read capacity, stale result and independent state write | pass |
+| telemetry lock, flood, capacity and crash | bounded drop/failure accounting and independent operational write | pass |
+| response loss and owner restart | durable command receipt replay, hash conflict rejection and single live writer generation | pass for implemented receipt surface |
+| migration interruption and rollback | checkpoint reconciliation, verified pre-open restore and post-service-open rollback refusal | pass |
+| installed app, Tunnel and ChatGPT card | healthy simultaneous validation exists | pass for healthy deployment; injected installed fault remains the final deployment gate |
+
+Passing the disposable fault suite does not prove Tunnel, ChatGPT-host or Codex
+network latency can be shortened. Those clocks remain external tolerance
+domains. The final #143 closure record must identify the exact installed build,
+run the installed fault without altering the operating database, confirm native
+and card stale behavior, and then synchronize the issue checklist with this
+scope decision.

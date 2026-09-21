@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createConnection, type Socket } from "node:net";
+import { performance } from "node:perf_hooks";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
@@ -31,10 +32,11 @@ afterEach(async () => {
 
 async function start(
   onRuntimeProcessSpawn?: (processId: number) => void,
-  restartStartupTimeoutMs?: number
+  restartStartupTimeoutMs?: number,
+  environmentOverrides: NodeJS.ProcessEnv = {}
 ): Promise<RunningRuntime> {
   const root = await mkdtemp(path.join(tmpdir(), "bridge-runtime-process-"));
-  const environment = runtimeEnvironment(root);
+  const environment = { ...runtimeEnvironment(root), ...environmentOverrides };
   const server = await createIsolatedHttpServer(loadConfig(environment), {
     childEnvironment: environment,
     onRuntimeProcessSpawn,
@@ -110,7 +112,10 @@ async function waitForRuntimeHealth(
     ) return;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
-  throw new Error(`Runtime health did not reach ${stateStatus}.`);
+  throw new Error(
+    `Runtime health did not reach ${stateStatus}: ` +
+    JSON.stringify(applicationService.runtimeHealth?.())
+  );
 }
 
 function openIncompleteMcpRequest(baseUrl: string): Promise<Socket> {
@@ -212,6 +217,29 @@ describe("isolated production runtime", () => {
         }
       });
 
+      const degradedMcp = await fetch(`${runtime.baseUrl}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}"
+      });
+      expect(degradedMcp.status).toBe(503);
+      expect(degradedMcp.headers.get("retry-after")).toBe("1");
+      expect(await degradedMcp.json()).toMatchObject({
+        ok: false,
+        code: "RUNTIME_RESPONSE_UNCONFIRMED",
+        reason: "state-stale",
+        limitations: ["state-write-unconfirmed"],
+        retryable: true,
+        outcome: "unknown",
+        stateService: {
+          activeOperation: {
+            access: "write",
+            operation: "state-transaction",
+            phase: "write-lock-wait"
+          }
+        }
+      });
+
       expect(runtime.server.applicationService.runtimeHealth?.()).toMatchObject({
         acceptingNewJobs: false,
         backgroundProcessState: "unknown",
@@ -295,6 +323,111 @@ describe("isolated production runtime", () => {
     }
   }, 15_000);
 
+  it("fails admission after SQLite reports a full state database", async () => {
+    const runtime = await start(undefined, undefined, {
+      NODE_ENV: "test",
+      CODEX_MCP_BRIDGE_TEST_FREEZE_STATE_PAGE_COUNT: "1"
+    });
+    const current = await runtime.server.applicationService.settingsSnapshot();
+    try {
+      const descriptions = Object.fromEntries(Array.from({ length: 100 }, (_, index) => [
+        `model-${index.toString().padStart(3, "0")}`,
+        `${index}:`.padEnd(600, "x")
+      ]));
+      await expect(runtime.server.applicationService.updateSettings({
+        expectedSettingsRevision: current.settings.settingsRevision,
+        operation: {
+          kind: "patch",
+          settings: { modelDescriptionOverrides: descriptions }
+        }
+      })).rejects.toThrow(/STATE_STORAGE_FULL|database or disk is full/iu);
+
+      await waitForRuntimeHealth(
+        runtime.server.applicationService,
+        "state-recovering",
+        8_000,
+        () => runtime.server.applicationService.runtimeHealth?.().stateService?.storageError ===
+          "full"
+      );
+      expect(runtime.server.applicationService.runtimeHealth?.()).toMatchObject({
+        acceptingNewJobs: false,
+        stateService: {
+          status: "state-recovering",
+          storageError: "full",
+          storageErrorObservedAt: expect.any(Number)
+        }
+      });
+      const degraded = await fetch(`${runtime.baseUrl}/readyz`);
+      expect(degraded.status).toBe(503);
+      await expect(degraded.json()).resolves.toMatchObject({
+        reason: "state-recovering",
+        limitations: ["state-storage-full"],
+        stateService: { storageError: "full" }
+      });
+    } finally {
+      // The disposable fixture is removed by the suite cleanup.
+    }
+  }, 15_000);
+
+  it("reports a SQLite busy failure at transaction admission and clears it after a commit", async () => {
+    const runtime = await start();
+    const current = await runtime.server.applicationService.settingsSnapshot();
+    const locker = new Database(path.join(runtime.root, "state.sqlite"));
+    locker.exec("BEGIN IMMEDIATE");
+
+    const blockedMutation = runtime.server.applicationService.updateSettings({
+      expectedSettingsRevision: current.settings.settingsRevision,
+      operation: {
+        kind: "patch",
+        settings: {
+          showBridgeThreadsInCodexApp: !current.settings.showBridgeThreadsInCodexApp
+        }
+      }
+    }).catch(error => error);
+
+    try {
+      await waitForRuntimeHealth(
+        runtime.server.applicationService,
+        "state-capacity",
+        8_000,
+        () => runtime.server.applicationService.runtimeHealth?.().stateService?.storageError ===
+          "busy"
+      );
+      expect(runtime.server.applicationService.runtimeHealth?.()).toMatchObject({
+        acceptingNewJobs: false,
+        stateService: {
+          status: "state-capacity",
+          storageError: "busy",
+          storageErrorObservedAt: expect.any(Number)
+        }
+      });
+      const degraded = await fetch(`${runtime.baseUrl}/readyz`);
+      expect(degraded.status).toBe(503);
+      await expect(degraded.json()).resolves.toMatchObject({
+        reason: "state-capacity",
+        limitations: ["state-storage-busy"],
+        stateService: { storageError: "busy" }
+      });
+    } finally {
+      locker.exec("ROLLBACK");
+      locker.close();
+    }
+
+    await expect(blockedMutation).resolves.toBeInstanceOf(Error);
+    await expect(runtime.server.applicationService.updateSettings({
+      expectedSettingsRevision: current.settings.settingsRevision,
+      operation: {
+        kind: "patch",
+        settings: {
+          showBridgeThreadsInCodexApp: !current.settings.showBridgeThreadsInCodexApp
+        }
+      }
+    })).resolves.toMatchObject({
+      settings: { settingsRevision: current.settings.settingsRevision + 1 }
+    });
+    await waitUntilReady(runtime.baseUrl);
+  }, 20_000);
+
   it("reserves native control capacity when incomplete MCP requests saturate the proxy", async () => {
     const runtime = await start();
     const sockets: Socket[] = [];
@@ -330,12 +463,45 @@ describe("isolated production runtime", () => {
       expect(rejected.status).toBe(503);
       await expect(rejected.json()).resolves.toMatchObject({
         code: "RUNTIME_RESPONSE_UNCONFIRMED",
-        reason: "state-capacity"
+        reason: "state-capacity",
+        limitations: ["state-capacity"],
+        retryable: true,
+        outcome: "not-observed"
       });
     } finally {
       for (const socket of sockets) socket.destroy();
     }
   }, 20_000);
+
+  it("keeps public liveness responsive while bounded large MCP payloads are parsed", async () => {
+    const runtime = await start();
+    const padding = "x".repeat(6 * 1024 * 1024);
+    const requests = Array.from({ length: 4 }, (_, index) => fetch(`${runtime.baseUrl}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: index + 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: `large-payload-${index}`, version: "1" },
+          padding
+        }
+      })
+    }));
+    const samples = await Promise.all(Array.from({ length: 30 }, async () => {
+      const startedAt = performance.now();
+      const response = await fetch(`${runtime.baseUrl}/healthz`);
+      return { status: response.status, durationMs: performance.now() - startedAt };
+    }));
+    const settled = await Promise.allSettled(requests);
+
+    expect(settled.every(result => result.status === "fulfilled")).toBe(true);
+    expect(samples.every(sample => sample.status === 200)).toBe(true);
+    expect(Math.max(...samples.map(sample => sample.durationMs))).toBeLessThan(750);
+  }, 30_000);
 
   it("recovers a killed runtime without claiming an in-flight write committed", async () => {
     const processIds: number[] = [];
