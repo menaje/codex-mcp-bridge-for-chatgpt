@@ -1,5 +1,8 @@
 {
   "issue": 143,
+  "kind": "failure-characterization",
+  "failureReproduced": true,
+  "resolutionVerified": false,
   "testedAt": "2026-09-21T06:27:34.000Z",
   "checkout": "bd41b788dc38ebb1b9e234bd278bcac7303f62be",
   "productionDatabaseModified": false,

@@ -128,6 +128,25 @@ describe("state access ownership", () => {
     }
   });
 
+  it("does not force scheduled storage work through an active foreground period by default", async () => {
+    let now = 1_000;
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const eventMaintenance = vi.spyOn(store, "maintainEventRetention");
+    const scheduler = new StateMaintenanceScheduler(new InProcessOperationalStateService(store), {
+      now: () => now,
+      shouldDefer: () => true
+    });
+    try {
+      expect(await scheduler.sweep()).toMatchObject({ slice: "events", deferred: true });
+      now += 24 * 60 * 60 * 1_000;
+      expect(await scheduler.sweep()).toMatchObject({ slice: "events", deferred: true });
+      expect(eventMaintenance).not.toHaveBeenCalled();
+    } finally {
+      scheduler.close();
+      store.close();
+    }
+  });
+
   it("commits compatibility maintenance as separate domain transactions", () => {
     const sql: string[] = [];
     const store = new BridgeStateStore({ file: ":memory:", traceSql: statement => sql.push(statement) });

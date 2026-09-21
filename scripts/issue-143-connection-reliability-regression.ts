@@ -29,7 +29,7 @@ type FixtureMessage =
 
 const CHILD_FLAG = "--fixture-child";
 
-async function runRegression(): Promise<void> {
+async function runCharacterization(): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), "issue-143-reliability-"));
   const child = spawn(
     process.execPath,
@@ -90,6 +90,7 @@ async function runRegression(): Promise<void> {
 
       const report = {
         issue: 143,
+        kind: "failure-characterization",
         testedAt: new Date().toISOString(),
         source: "current checkout",
         database: "disposable schema-24 fixture",
@@ -130,7 +131,8 @@ async function runRegression(): Promise<void> {
           "the fixture does not exercise the Secure MCP Tunnel or ChatGPT host round trip",
           "CPU, memory pressure, filesystem stalls, and large JSON work require separate fault cases"
         ],
-        passed: true,
+        failureReproduced: true,
+        resolutionVerified: false,
         temporaryFixtureRemoved: true
       };
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
@@ -344,5 +346,5 @@ if (process.argv.includes(CHILD_FLAG)) {
   if (!rootArgument) throw new Error("Fixture child root is required.");
   await runFixtureChild(rootArgument);
 } else {
-  await runRegression();
+  await runCharacterization();
 }

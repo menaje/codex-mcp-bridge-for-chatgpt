@@ -86,6 +86,7 @@ describe("CodexJobRegistry persistence", () => {
     const root = temporaryRoot();
     const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
     const store = registry.admissionStateStore;
+    const retainedMaintenance = vi.spyOn(registry, "maintainRetainedJobs");
     let emitProgress: ((progress: CodexProgress) => void) | undefined;
     let complete: (value: ToolResult) => void = () => undefined;
     try {
@@ -132,6 +133,7 @@ describe("CodexJobRegistry persistence", () => {
       complete(result("terminal-timeout-survived"));
       await job.promise;
       expect(registry.get(job.jobId)).toMatchObject({ status: "completed" });
+      expect(retainedMaintenance).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
       store.close();

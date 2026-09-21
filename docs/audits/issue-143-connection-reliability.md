@@ -61,6 +61,9 @@ starts the production HTTP and companion servers around a disposable state
 store. A second SQLite connection holds `BEGIN IMMEDIATE` for 3.2 seconds while
 the Bridge process performs a synchronous state write.
 
+This is a failure-characterization test. A green run means the known coupled
+stall was reproduced and measured; it is not a resolution or release gate.
+
 | Observation | Baseline | During contention | After release |
 | --- | ---: | ---: | ---: |
 | `/healthz` | 4.291 ms | 3,252.486 ms | 6.083 ms |

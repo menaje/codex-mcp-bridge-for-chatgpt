@@ -2160,8 +2160,7 @@ export class CodexJobRegistry {
     this.maintenanceScheduler = new StateMaintenanceScheduler(stateService, {
       intervalMs,
       changed: () => { for (const listener of this.changeListeners) listener(); },
-      shouldDefer: () => this.runtimeAdmission.pendingAdmissions > 0 || this.observedRunningCount() > 0,
-      maxDeferMs: 60_000
+      shouldDefer: () => this.runtimeAdmission.pendingAdmissions > 0 || this.observedRunningCount() > 0
     });
     this.maintenanceScheduler.start();
   }
@@ -2923,7 +2922,6 @@ export class CodexJobRegistry {
     onAssigned?: (assignment: UpstreamWorkerAssignment) => void,
     deferExecution = false
   ): CodexJob {
-    this.pruneAndPersist();
     const replay = this.findRequest(input.scopeId, input.requestId, input.requestHash);
     if (replay) return replay;
     this.activityStore.threadConnections.assertAdmission(input.agentId, input.sessionDecision.threadId || input.sourceThreadId);
@@ -3020,7 +3018,6 @@ export class CodexJobRegistry {
     } else {
       job.promise = execute();
     }
-    this.pruneAndPersist();
     return job;
   }
 
@@ -3086,7 +3083,6 @@ export class CodexJobRegistry {
       this.steeringPromptRedactions.delete(job.jobId);
       this.notify(job.jobId, "terminal");
       this.notifyScope(job.scopeId);
-      this.pruneAndPersist();
     } catch (error) {
       undo?.();
       throw new JobTerminalCommitError(error);
@@ -3138,7 +3134,6 @@ export class CodexJobRegistry {
       this.steeringPromptRedactions.delete(job.jobId);
       this.notify(job.jobId, "terminal");
       this.notifyScope(job.scopeId);
-      this.pruneAndPersist();
     } catch (error) {
       undo?.();
       throw new JobTerminalCommitError(error);
@@ -3202,7 +3197,6 @@ export class CodexJobRegistry {
         // The durable running receipt remains authoritative. Never publish a
         // terminal state from memory when neither the intended terminal nor
         // its explicit persistence-failure receipt could be committed.
-        this.pruneAndPersist();
         return;
       }
       Object.assign(job, fallback);
@@ -3210,7 +3204,6 @@ export class CodexJobRegistry {
     this.steeringPromptRedactions.delete(job.jobId);
     this.notify(job.jobId, "terminal");
     this.notifyScope(job.scopeId);
-    this.pruneAndPersist();
   }
 
   private flushDeferredSettlement(job: CodexJob): void {
@@ -3766,7 +3759,7 @@ export class CodexJobRegistry {
       job.jobId,
       isTerminalActivityJobStatus(job.status) ? "terminal" : "state-change"
     );
-    if (this.persistJobBestEffort(job)) this.maintainRetainedJobs();
+    this.persistJobBestEffort(job);
     if (isTerminalActivityJobStatus(job.status)) {
       this.steeringPromptRedactions.delete(job.jobId);
     }
@@ -4128,10 +4121,6 @@ export class CodexJobRegistry {
     } finally {
       this.waitDiagnosticsTracker.pruneAndPersist.record(performance.now() - startedAt);
     }
-  }
-
-  private pruneAndPersist(): void {
-    this.maintainRetainedJobs();
   }
 
   private refreshProjectIdentities(): void {

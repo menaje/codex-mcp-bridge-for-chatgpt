@@ -57,10 +57,12 @@ export class StateMaintenanceScheduler {
     this.pending = true;
     const selected = slice || STATE_MAINTENANCE_SLICES[this.cursor % STATE_MAINTENANCE_SLICES.length]!;
     const startedAt = (this.options.now || Date.now)();
-    const maxDeferMs = Math.max(0, this.options.maxDeferMs ?? 60_000);
+    const maxDeferMs = this.options.maxDeferMs === undefined
+      ? undefined
+      : Math.max(0, this.options.maxDeferMs);
     if (!slice && this.options.shouldDefer?.()) {
       this.deferredSince ??= startedAt;
-      if (startedAt - this.deferredSince < maxDeferMs) {
+      if (maxDeferMs === undefined || startedAt - this.deferredSince < maxDeferMs) {
         this.pending = false;
         return this.record({
           slice: selected,
