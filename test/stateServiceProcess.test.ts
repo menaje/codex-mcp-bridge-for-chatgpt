@@ -13,7 +13,8 @@ import {
 } from "../src/stateServiceProcess.js";
 import {
   OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES,
-  OPERATIONAL_STATE_PROTOCOL_VERSION
+  OPERATIONAL_STATE_PROTOCOL_VERSION,
+  type OperationalJobRetentionCommand
 } from "../src/stateService.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 
@@ -25,8 +26,8 @@ describe("operational state child process", () => {
     });
     try {
       expect(service.health()).toMatchObject({
-        ready: false,
-        reason: "state-incompatible",
+        ready: true,
+        reason: "ready",
         protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
         generation: expect.any(String),
         capacity: 64,
@@ -50,9 +51,17 @@ describe("operational state child process", () => {
           commandId: expect.any(String),
           replayed: false
         });
-      await expect(service.execute({ operation: "maintain", slice: "jobs" }))
-        .rejects.toMatchObject<Partial<OperationalStateProcessError>>({
-          code: "STATE_OPERATION_UNAVAILABLE"
+      await expect(service.execute(jobRetentionCommand()))
+        .resolves.toMatchObject({
+          operation: "maintain",
+          slice: "jobs",
+          changed: 0,
+          jobRetention: {
+            classifications: [],
+            remainingAdmissionReservations: 0
+          },
+          certainty: "committed",
+          replayed: false
         });
     } finally {
       await service.close();
@@ -74,6 +83,101 @@ describe("operational state child process", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 10_000);
+
+  it("classifies and archives bounded Job-retention candidates in the state owner", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "state-service-jobs-"));
+    const file = path.join(root, "state.sqlite");
+    const now = Date.now();
+    const protectedJobId = randomUUID();
+    const removableJobId = randomUUID();
+    const seed = new BridgeStateStore({ file });
+    seed.upsertJob({
+      jobId: protectedJobId,
+      scopeId: "11111111-1111-4111-8111-111111111111",
+      requestId: randomUUID(),
+      status: "completed",
+      updatedAt: now,
+      version: 1
+    });
+    seed.upsertJob({
+      jobId: removableJobId,
+      scopeId: "11111111-1111-4111-8111-111111111111",
+      requestId: randomUUID(),
+      status: "completed",
+      updatedAt: now,
+      version: 1
+    });
+    seed.holdResult(protectedJobId, "test hold", now + 60_000, now);
+    seed.close();
+
+    const fixture = new Database(file);
+    fixture.exec("DELETE FROM completion_outbox; DELETE FROM job_completion_deliveries;");
+    fixture.close();
+
+    const service = await ChildProcessOperationalStateService.start({ file });
+    try {
+      const command = jobRetentionCommand({
+        now: now + 1_000,
+        cutoffAt: now + 500,
+        retentionTarget: 0,
+        admissionReservations: 2,
+        maxRemoved: 2,
+        maxDurationMs: 1_000,
+        candidates: [
+          { jobId: protectedJobId, version: 1, updatedAt: now, knownProtected: false },
+          { jobId: removableJobId, version: 1, updatedAt: now, knownProtected: false }
+        ]
+      });
+      const commandId = randomUUID();
+      await expect(service.execute(command, {
+        commandId,
+        aggregateKey: "maintenance:jobs"
+      })).resolves.toMatchObject({
+        operation: "maintain",
+        slice: "jobs",
+        changed: 1,
+        jobRetention: {
+          classifications: [
+            { jobId: protectedJobId, disposition: "protected" },
+            { jobId: removableJobId, disposition: "removed" }
+          ],
+          remainingAdmissionReservations: 0
+        },
+        certainty: "committed",
+        commandId,
+        replayed: false
+      });
+      await expect(service.execute(command, {
+        commandId,
+        aggregateKey: "maintenance:jobs"
+      })).resolves.toMatchObject({
+        operation: "maintain",
+        slice: "jobs",
+        changed: 1,
+        jobRetention: {
+          classifications: [
+            { jobId: protectedJobId, disposition: "protected" },
+            { jobId: removableJobId, disposition: "removed" }
+          ]
+        },
+        certainty: "committed",
+        commandId,
+        replayed: true
+      });
+      await service.close();
+
+      const verify = new BridgeStateStore({ file });
+      try {
+        expect(verify.listJobs().map(job => job.jobId)).toEqual([protectedJobId]);
+        expect(verify.listDashboardRetainedJobsByIds([removableJobId])).toHaveLength(1);
+      } finally {
+        verify.close();
+      }
+    } finally {
+      await service.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("keeps the parent event loop responsive and reports stale heartbeat while SQLite is locked", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "state-service-lock-"));
@@ -112,7 +216,7 @@ describe("operational state child process", () => {
       locked = false;
       await expect(maintenance).resolves.toMatchObject({ operation: "maintain", slice: "events" });
       await delay(350);
-      expect(service.health()).toMatchObject({ ready: false, reason: "state-incompatible" });
+      expect(service.health()).toMatchObject({ ready: true, reason: "ready" });
     } finally {
       if (locked && locker.inTransaction) locker.exec("ROLLBACK");
       locker.close();
@@ -148,8 +252,8 @@ describe("operational state child process", () => {
       locked = false;
       await delay(350);
       expect(service.health()).toMatchObject({
-        ready: false,
-        reason: "state-incompatible",
+        ready: true,
+        reason: "ready",
         inFlight: 0
       });
     } finally {
@@ -182,8 +286,8 @@ describe("operational state child process", () => {
       locked = false;
       await delay(350);
       expect(service.health()).toMatchObject({
-        ready: false,
-        reason: "state-incompatible",
+        ready: true,
+        reason: "ready",
         inFlight: 0
       });
       await service.close();
@@ -232,7 +336,7 @@ describe("operational state child process", () => {
           service.health().heartbeatAgeMs !== undefined;
       }, 5_000);
 
-      expect(service.health()).toMatchObject({ ready: false, reason: "state-incompatible" });
+      expect(service.health()).toMatchObject({ ready: true, reason: "ready" });
       await expect(service.execute({ operation: "maintain", slice: "events" }))
         .resolves.toMatchObject({ certainty: "committed", replayed: false });
 
@@ -280,8 +384,8 @@ describe("operational state child process", () => {
       }, 8_000);
 
       expect(service.health()).toMatchObject({
-        ready: false,
-        reason: "state-incompatible",
+        ready: true,
+        reason: "ready",
         generation: expect.any(String)
       });
       await expect(uncertain).resolves.toMatchObject({
@@ -350,4 +454,22 @@ async function waitFor(condition: () => boolean, timeoutMs: number): Promise<voi
     if (Date.now() >= deadline) throw new Error("Timed out waiting for state-service recovery.");
     await delay(25);
   }
+}
+
+function jobRetentionCommand(
+  overrides: Partial<OperationalJobRetentionCommand> = {}
+): OperationalJobRetentionCommand {
+  return {
+    operation: "maintain",
+    slice: "jobs",
+    now: 1_000,
+    cutoffAt: 0,
+    completionResultRecoveryMs: 0,
+    retentionTarget: 0,
+    admissionReservations: 0,
+    maxRemoved: 32,
+    maxDurationMs: 10,
+    candidates: [],
+    ...overrides
+  };
 }

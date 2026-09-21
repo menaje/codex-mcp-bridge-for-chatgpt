@@ -24,7 +24,13 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 import { ThreadConnectionController, type ThreadConnectionRecord } from "./threadConnections.js";
 import { STATE_MAINTENANCE_SLICES, StateMaintenanceScheduler } from "./maintenanceScheduler.js";
-import { InProcessOperationalStateService } from "./stateService.js";
+import {
+  InProcessOperationalStateService,
+  executeOperationalStateCommand,
+  type OperationalJobRetentionCommand,
+  type OperationalStateCommand,
+  type OperationalStateResult
+} from "./stateService.js";
 import { classifyMemoryOnlyThreadImpact } from "./runtimeAdmission.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
 import { registerCodexInputTools, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS } from "./questionTools.js";
@@ -2158,13 +2164,13 @@ export class CodexJobRegistry {
 
   configureStateMaintenance(intervalMs?: number): void {
     if (this.maintenanceScheduler || this.stateMaintenanceClosed) return;
-    const stateService = new InProcessOperationalStateService(this.activityStore, {
-      maintainJobs: () => this.maintainRetainedJobs()
-    });
+    const stateService = new InProcessOperationalStateService(this.activityStore);
     this.maintenanceScheduler = new StateMaintenanceScheduler(stateService, {
       intervalMs,
       changed: () => { for (const listener of this.changeListeners) listener(); },
-      shouldDefer: () => this.runtimeAdmission.pendingAdmissions > 0 || this.observedRunningCount() > 0
+      shouldDefer: () => this.runtimeAdmission.pendingAdmissions > 0 || this.observedRunningCount() > 0,
+      command: slice => this.stateMaintenanceCommand(slice),
+      completed: (command, result) => this.applyStateMaintenanceResult(command, result)
     });
     this.maintenanceScheduler.start();
     this.scheduleIdleRetainedJobMaintenance();
@@ -4140,81 +4146,11 @@ export class CodexJobRegistry {
     const startedAt = performance.now();
     try {
       this.refreshProjectIdentities();
-      const maxInspected = Math.max(1, Math.min(256, Math.floor(options.maxInspected ?? 64)));
-      const maxRemoved = Math.max(1, Math.min(64, Math.floor(options.maxRemoved ?? 32)));
-      const deadline = performance.now() + Math.max(1, options.maxDurationMs ?? 10);
-      this.retainedJobMaintenanceIterator ||= this.jobs.entries();
-      const inspected: Array<[string, CodexJob]> = [];
-      while (inspected.length < maxInspected) {
-        if (inspected.length > 0 && performance.now() >= deadline) break;
-        const next = this.retainedJobMaintenanceIterator.next();
-        if (next.done) {
-          this.retainedJobMaintenanceIterator = undefined;
-          break;
-        }
-        const [jobId, job] = next.value;
-        if (this.jobs.get(jobId) === job) inspected.push([jobId, job]);
-      }
-
-      const now = Date.now();
-      const cutoff = now - this.ttlMs;
-      const retentionTarget = Math.min(this.maxJobs, this.retainedJobTarget ?? this.maxJobs);
-      let admissionReservations = this.retainedJobAdmissionReservations();
-      const candidates = inspected
-        .filter(([, job]) =>
-          isTerminalActivityJobStatus(job.status) &&
-          (
-            job.updatedAt < cutoff ||
-            admissionReservations > retentionTarget ||
-            this.retentionProtectedJobs.has(job.jobId)
-          )
-        )
-        .sort((left, right) =>
-          left[1].updatedAt - right[1].updatedAt || left[0].localeCompare(right[0])
-        );
-      const removed: Array<{
-        jobId: string;
-        job: CodexJob;
-        wake: { version: number; reason: CodexJobWakeReason } | undefined;
-      }> = [];
-      let considered = 0;
-      for (const [jobId, job] of candidates) {
-        if (removed.length >= maxRemoved || considered > 0 && performance.now() >= deadline) break;
-        considered++;
-        const wasKnownProtected = this.retentionProtectedJobs.has(jobId);
-        if (this.activityStore.retentionProtection(jobId, now, this.ttlMs).length) {
-          this.retentionProtectedJobs.add(jobId);
-          if (!wasKnownProtected) admissionReservations--;
-          continue;
-        }
-        this.retentionProtectedJobs.delete(jobId);
-        if (wasKnownProtected) admissionReservations++;
-        if (
-          job.updatedAt >= cutoff &&
-          admissionReservations <= retentionTarget
-        ) continue;
-        removed.push({ jobId, job, wake: this.lastWake.get(jobId) });
-        this.jobs.delete(jobId);
-        this.lastWake.delete(jobId);
-        this.retentionProtectedJobs.delete(jobId);
-        admissionReservations--;
-      }
-      if (removed.length === 0) {
-        if (
-          this.retainedJobTarget !== undefined &&
-          admissionReservations <= this.retainedJobTarget
-        ) this.retainedJobTarget = undefined;
-        return 0;
-      }
       try {
-        this.activityStore.transaction(() => {
-          for (const { jobId } of removed) this.activityStore.deleteJob(jobId);
-        });
+        const command = this.retainedJobMaintenanceCommand(options);
+        const result = executeOperationalStateCommand(this.activityStore, command);
+        return this.applyRetainedJobMaintenanceResult(command, result);
       } catch (error) {
-        for (const { jobId, job, wake } of removed) {
-          this.jobs.set(jobId, job);
-          if (wake) this.lastWake.set(jobId, wake);
-        }
         this.retainedJobMaintenanceIterator = undefined;
         if (!this.persistenceWarningShown) {
           console.error(
@@ -4224,14 +4160,144 @@ export class CodexJobRegistry {
         }
         return 0;
       }
-      if (
-        this.retainedJobTarget !== undefined &&
-        admissionReservations <= this.retainedJobTarget
-      ) this.retainedJobTarget = undefined;
-      return removed.length;
     } finally {
       this.waitDiagnosticsTracker.pruneAndPersist.record(performance.now() - startedAt);
     }
+  }
+
+  private stateMaintenanceCommand(slice: (typeof STATE_MAINTENANCE_SLICES)[number]): OperationalStateCommand {
+    return slice === "jobs"
+      ? this.retainedJobMaintenanceCommand()
+      : { operation: "maintain", slice };
+  }
+
+  private applyStateMaintenanceResult(
+    command: OperationalStateCommand,
+    result: OperationalStateResult
+  ): void {
+    if (command.slice === "jobs") this.applyRetainedJobMaintenanceResult(command, result);
+  }
+
+  private retainedJobMaintenanceCommand(options: {
+    maxInspected?: number;
+    maxRemoved?: number;
+    maxDurationMs?: number;
+  } = {}): OperationalJobRetentionCommand {
+    const maxInspected = Math.max(1, Math.min(256, Math.floor(options.maxInspected ?? 64)));
+    const maxRemoved = Math.max(1, Math.min(64, Math.floor(options.maxRemoved ?? 32)));
+    const maxDurationMs = Math.max(1, Math.min(1_000, Math.floor(options.maxDurationMs ?? 10)));
+    const deadline = performance.now() + maxDurationMs;
+    this.retainedJobMaintenanceIterator ||= this.jobs.entries();
+    const inspected: Array<[string, CodexJob]> = [];
+    while (inspected.length < maxInspected) {
+      if (inspected.length > 0 && performance.now() >= deadline) break;
+      const next = this.retainedJobMaintenanceIterator.next();
+      if (next.done) {
+        this.retainedJobMaintenanceIterator = undefined;
+        break;
+      }
+      const [jobId, job] = next.value;
+      if (this.jobs.get(jobId) === job) inspected.push([jobId, job]);
+    }
+
+    const now = Date.now();
+    const cutoffAt = now - this.ttlMs;
+    const retentionTarget = Math.min(this.maxJobs, this.retainedJobTarget ?? this.maxJobs);
+    const admissionReservations = this.retainedJobAdmissionReservations();
+    const candidates = inspected
+      .filter(([, job]) =>
+        isTerminalActivityJobStatus(job.status) &&
+        (
+          job.updatedAt < cutoffAt ||
+          admissionReservations > retentionTarget ||
+          this.retentionProtectedJobs.has(job.jobId)
+        )
+      )
+      .sort((left, right) =>
+        left[1].updatedAt - right[1].updatedAt || left[0].localeCompare(right[0])
+      )
+      .map(([jobId, job]) => ({
+        jobId,
+        version: job.version,
+        updatedAt: job.updatedAt,
+        knownProtected: this.retentionProtectedJobs.has(jobId)
+      }));
+    return {
+      operation: "maintain",
+      slice: "jobs",
+      now,
+      cutoffAt,
+      completionResultRecoveryMs: this.ttlMs,
+      retentionTarget,
+      admissionReservations,
+      maxRemoved,
+      maxDurationMs,
+      candidates
+    };
+  }
+
+  private applyRetainedJobMaintenanceResult(
+    command: OperationalJobRetentionCommand,
+    result: OperationalStateResult
+  ): number {
+    if (
+      result.operation !== "maintain" ||
+      result.slice !== "jobs" ||
+      !result.jobRetention ||
+      !Number.isSafeInteger(result.changed) ||
+      result.changed < 0 ||
+      !Array.isArray(result.jobRetention.classifications) ||
+      result.jobRetention.classifications.length > command.candidates.length ||
+      !Number.isSafeInteger(result.jobRetention.remainingAdmissionReservations) ||
+      result.jobRetention.remainingAdmissionReservations < 0
+    ) {
+      throw new Error("STATE_RESULT_INVALID: Job retention result is missing its classification.");
+    }
+    const classifications = result.jobRetention.classifications;
+    for (const [index, classification] of classifications.entries()) {
+      const candidate = command.candidates[index];
+      if (
+        !candidate ||
+        candidate.jobId !== classification.jobId ||
+        candidate.version !== classification.version ||
+        candidate.updatedAt !== classification.updatedAt ||
+        candidate.knownProtected !== classification.knownProtected ||
+        !["protected", "retained", "removed", "skipped"].includes(classification.disposition)
+      ) {
+        throw new Error("STATE_RESULT_INVALID: Job retention classification does not match its command.");
+      }
+    }
+    if (result.changed !== classifications.filter(
+      classification => classification.disposition === "removed"
+    ).length) {
+      throw new Error("STATE_RESULT_INVALID: Job retention change count does not match its classification.");
+    }
+    let removed = 0;
+    for (const [index, classification] of classifications.entries()) {
+      const candidate = command.candidates[index]!;
+      const current = this.jobs.get(classification.jobId);
+      if (
+        !current ||
+        current.version !== candidate.version ||
+        current.updatedAt !== candidate.updatedAt ||
+        !isTerminalActivityJobStatus(current.status)
+      ) continue;
+      if (classification.disposition === "protected") {
+        this.retentionProtectedJobs.add(classification.jobId);
+      } else if (classification.disposition !== "skipped") {
+        this.retentionProtectedJobs.delete(classification.jobId);
+      }
+      if (classification.disposition !== "removed") continue;
+      this.jobs.delete(classification.jobId);
+      this.lastWake.delete(classification.jobId);
+      this.retentionProtectedJobs.delete(classification.jobId);
+      removed += 1;
+    }
+    if (
+      this.retainedJobTarget !== undefined &&
+      this.retainedJobAdmissionReservations() <= this.retainedJobTarget
+    ) this.retainedJobTarget = undefined;
+    return removed;
   }
 
   private refreshProjectIdentities(): void {

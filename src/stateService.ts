@@ -5,23 +5,55 @@ import {
 import type { BridgeStateStore } from "./stateStore.js";
 
 export const OPERATIONAL_STATE_PROTOCOL = "bridge-state-service" as const;
-export const OPERATIONAL_STATE_PROTOCOL_VERSION = 3 as const;
+export const OPERATIONAL_STATE_PROTOCOL_VERSION = 4 as const;
 export const OPERATIONAL_STATE_REQUIRED_SLICES = STATE_MAINTENANCE_SLICES;
-export const OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES = Object.freeze(
-  STATE_MAINTENANCE_SLICES.filter(
-    (slice): slice is Exclude<StateMaintenanceSlice, "jobs"> => slice !== "jobs"
-  )
-);
+export const OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES = Object.freeze([
+  ...STATE_MAINTENANCE_SLICES
+]);
 
-export type OperationalStateCommand = {
-  operation: "maintain";
-  slice: StateMaintenanceSlice;
+export type OperationalJobRetentionCandidate = {
+  jobId: string;
+  version: number;
+  updatedAt: number;
+  knownProtected: boolean;
 };
+
+export type OperationalJobRetentionDisposition = OperationalJobRetentionCandidate & {
+  disposition: "protected" | "retained" | "removed" | "skipped";
+};
+
+export type OperationalJobRetentionResult = {
+  classifications: OperationalJobRetentionDisposition[];
+  remainingAdmissionReservations: number;
+};
+
+export type OperationalStorageMaintenanceCommand = {
+  operation: "maintain";
+  slice: Exclude<StateMaintenanceSlice, "jobs">;
+};
+
+export type OperationalJobRetentionCommand = {
+  operation: "maintain";
+  slice: "jobs";
+  now: number;
+  cutoffAt: number;
+  completionResultRecoveryMs: number;
+  retentionTarget: number;
+  admissionReservations: number;
+  maxRemoved: number;
+  maxDurationMs: number;
+  candidates: OperationalJobRetentionCandidate[];
+};
+
+export type OperationalStateCommand =
+  | OperationalStorageMaintenanceCommand
+  | OperationalJobRetentionCommand;
 
 export type OperationalStateResult = {
   operation: "maintain";
   slice: StateMaintenanceSlice;
   changed: number;
+  jobRetention?: OperationalJobRetentionResult;
   certainty?: "committed";
   commandId?: string;
   replayed?: boolean;
@@ -82,10 +114,7 @@ export interface OperationalStateService {
 export class InProcessOperationalStateService implements OperationalStateService {
   private tail: Promise<void> = Promise.resolve();
 
-  constructor(
-    private readonly store: BridgeStateStore,
-    private readonly options: { maintainJobs?: () => number } = {}
-  ) {}
+  constructor(private readonly store: BridgeStateStore) {}
 
   execute(
     command: OperationalStateCommand,
@@ -98,41 +127,89 @@ export class InProcessOperationalStateService implements OperationalStateService
   }
 
   private run(command: OperationalStateCommand): OperationalStateResult {
-    return executeOperationalStateCommand(this.store, command, this.options);
+    return executeOperationalStateCommand(this.store, command);
   }
 }
 
 /** Synchronous command body used only inside the isolated state's transaction. */
 export function executeOperationalStateCommand(
   store: BridgeStateStore,
-  command: OperationalStateCommand,
-  options: { maintainJobs?: () => number } = {}
+  command: OperationalStateCommand
 ): OperationalStateResult {
+  if (!isOperationalStateCommand(command)) {
+    throw new Error("STATE_REQUEST_INVALID: Operational state command is invalid.");
+  }
+  if (command.slice === "jobs") {
+    const jobRetention = store.maintainJobRetentionCandidates(command);
+    const changed = jobRetention.classifications.filter(
+      candidate => candidate.disposition === "removed"
+    ).length;
+    return { operation: "maintain", slice: "jobs", changed, jobRetention };
+  }
   let changed: number;
-  const slice = command.slice;
-  if (slice === "events") {
+  if (command.slice === "events") {
     const report = store.maintainEventRetention();
     changed = report.expiredJobEventsRemoved + report.expiredActivityEventsRemoved +
       report.expiredResultHoldsRemoved + report.perJobEventsRemoved + report.budgetEventsRemoved;
-  } else if (slice === "history") {
+  } else if (command.slice === "history") {
     changed = store.maintainHistoryRetention().historyRemoved;
-  } else if (slice === "questions") {
+  } else if (command.slice === "questions") {
     const report = store.maintainQuestionRetention();
     changed = report.expiredQuestionsRemoved + report.deliveredJournalsRemoved +
       report.notificationsMarkedUncertain;
-  } else if (slice === "decisions") {
+  } else if (command.slice === "decisions") {
     const report = store.maintainDecisionRetention();
     changed = report.expiredLeasesMarkedUnknown + report.expiredCardsRemoved;
-  } else if (slice === "recovery") {
+  } else if (command.slice === "recovery") {
     const report = store.maintainRecoveryRetention();
     changed = report.recordsRemoved + report.incidentsRemoved;
-  } else if (slice === "receipts") {
+  } else if (command.slice === "receipts") {
     changed = store.maintainOperationalCommandReceiptRetention().receiptsRemoved;
   } else {
-    if (!options.maintainJobs) {
-      throw new Error("STATE_OPERATION_UNAVAILABLE: Job retention requires the registry compatibility adapter.");
-    }
-    changed = options.maintainJobs();
+    throw new Error("STATE_REQUEST_INVALID: Operational state slice is invalid.");
   }
-  return { operation: "maintain", slice, changed };
+  return { operation: "maintain", slice: command.slice, changed };
+}
+
+export function isOperationalStateCommand(value: unknown): value is OperationalStateCommand {
+  if (!value || typeof value !== "object") return false;
+  const command = value as Record<string, unknown>;
+  if (command.operation !== "maintain" || typeof command.slice !== "string") return false;
+  if (!STATE_MAINTENANCE_SLICES.includes(command.slice as StateMaintenanceSlice)) return false;
+  if (command.slice !== "jobs") return true;
+  if (
+    !nonNegativeSafeInteger(command.now) ||
+    !Number.isSafeInteger(command.cutoffAt) ||
+    !nonNegativeSafeInteger(command.completionResultRecoveryMs) ||
+    !nonNegativeSafeInteger(command.retentionTarget) ||
+    !nonNegativeSafeInteger(command.admissionReservations) ||
+    !Number.isSafeInteger(command.maxRemoved) ||
+    Number(command.maxRemoved) < 1 ||
+    Number(command.maxRemoved) > 64 ||
+    !Number.isSafeInteger(command.maxDurationMs) ||
+    Number(command.maxDurationMs) < 1 ||
+    Number(command.maxDurationMs) > 1_000 ||
+    !Array.isArray(command.candidates) ||
+    command.candidates.length > 256
+  ) return false;
+  const seen = new Set<string>();
+  return command.candidates.every(candidate => {
+    if (!candidate || typeof candidate !== "object") return false;
+    const item = candidate as Record<string, unknown>;
+    if (
+      typeof item.jobId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(item.jobId) ||
+      seen.has(item.jobId) ||
+      !Number.isSafeInteger(item.version) ||
+      Number(item.version) < 1 ||
+      !nonNegativeSafeInteger(item.updatedAt) ||
+      typeof item.knownProtected !== "boolean"
+    ) return false;
+    seen.add(item.jobId);
+    return true;
+  });
+}
+
+function nonNegativeSafeInteger(value: unknown): boolean {
+  return Number.isSafeInteger(value) && Number(value) >= 0;
 }

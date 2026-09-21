@@ -79,20 +79,20 @@ synchronous database call occupies the same event loop.
 ## Latency attribution and isolation comparison
 
 The characterization was extended on 2026-09-21 with four lock durations and
-the same supported `events` maintenance write through the protocol-v3 isolated
+the same supported `events` maintenance write through the protocol-v4 isolated
 state prototype. Each row is one controlled sample, not a percentile claim.
 The state operation remains subject to the injected lock in both designs; the
 comparison asks whether that wait also occupies the Bridge response event loop.
 
 | Lock | Current state op | Current `/healthz` | Current timer | Isolated state op | Isolated `/healthz` | Isolated timer |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 50 ms | 80.129 ms | 80.585 ms | 80.196 ms | 56.739 ms | 2.041 ms | 10.161 ms |
-| 250 ms | 269.236 ms | 273.131 ms | 271.641 ms | 279.127 ms | 1.268 ms | 11.916 ms |
-| 1,000 ms | 1,043.022 ms | 1,046.129 ms | 1,043.444 ms | 1,042.463 ms | 1.307 ms | 10.266 ms |
-| 3,200 ms | 3,271.858 ms | 3,274.566 ms | 3,272.252 ms | 3,284.074 ms | 1.701 ms | 11.364 ms |
+| 50 ms | 80.108 ms | 80.578 ms | 80.180 ms | 87.667 ms | 1.880 ms | 11.377 ms |
+| 250 ms | 285.279 ms | 290.224 ms | 288.359 ms | 280.043 ms | 1.242 ms | 11.962 ms |
+| 1,000 ms | 1,038.728 ms | 1,041.773 ms | 1,039.240 ms | 1,019.101 ms | 1.078 ms | 12.632 ms |
+| 3,200 ms | 3,271.465 ms | 3,274.144 ms | 3,271.821 ms | 3,279.925 ms | 1.961 ms | 11.800 ms |
 
-At 3.2 seconds, current `runtime.health` timed out at 2,003.118 ms. The
-isolated comparison returned it in 1.697 ms while the state service correctly
+At 3.2 seconds, current `runtime.health` timed out at 2,002.743 ms. The
+isolated comparison returned it in 2.036 ms while the state service correctly
 reported `state-stale`, a 2,255 ms heartbeat age, and one in-flight operation.
 This separates a bounded state-availability degradation from Bridge liveness.
 The state command is still delayed and must keep its deadline, capacity and
@@ -100,8 +100,8 @@ outcome-unknown contract; isolation does not make SQLite or storage latency
 disappear.
 
 A separate synthetic 350 ms main-thread CPU fault delayed `/healthz` by
-350.983 ms, `runtime.health` by 350.530 ms, and the event-loop timer by
-350.359 ms. State-process isolation therefore addresses the SQLite propagation
+350.927 ms, `runtime.health` by 350.706 ms, and the event-loop timer by
+350.237 ms. State-process isolation therefore addresses the SQLite propagation
 path but cannot protect the Bridge from synchronous serialization, allocation,
 garbage collection, or other CPU work that remains on its event loop.
 
@@ -116,10 +116,12 @@ The resulting policy is:
 - never permit a state fault to freeze liveness or turn uncertainty into a Job
   success, failure or cancellation.
 
-This verifies the isolation boundary only in a disposable prototype. Production
-startup still uses the in-process owner, the child lacks the registry-owned
-`jobs` slice, and the remaining command/query callers and installed end-to-end
-combination have not crossed or passed the release gate.
+This verifies the isolation boundary only in a disposable prototype. The
+protocol-v4 child now supports all maintenance slices, including bounded
+registry-planned `jobs` retention, and reports `ready` for that surface.
+Production startup still uses the in-process owner, and the remaining
+command/query callers and installed end-to-end combination have not crossed or
+passed the release gate.
 
 ## T1 decision
 

@@ -1,6 +1,10 @@
 import { performance } from "node:perf_hooks";
 import { randomUUID } from "node:crypto";
-import type { OperationalStateService } from "./stateService.js";
+import type {
+  OperationalStateCommand,
+  OperationalStateResult,
+  OperationalStateService
+} from "./stateService.js";
 
 export const STATE_MAINTENANCE_SLICES = [
   "events",
@@ -34,7 +38,10 @@ export class StateMaintenanceScheduler {
   private closed = false;
   private cursor = 0;
   private deferredSince?: number;
-  private readonly uncertainCommandIds = new Map<StateMaintenanceSlice, string>();
+  private readonly uncertainCommands = new Map<
+    StateMaintenanceSlice,
+    { commandId: string; command: OperationalStateCommand }
+  >();
   private readonly observations: StateMaintenanceObservation[] = [];
 
   constructor(
@@ -45,6 +52,11 @@ export class StateMaintenanceScheduler {
       changed?: () => void;
       shouldDefer?: () => boolean;
       maxDeferMs?: number;
+      command?: (slice: StateMaintenanceSlice) => OperationalStateCommand;
+      completed?: (
+        command: OperationalStateCommand,
+        result: OperationalStateResult
+      ) => void;
     } = {}
   ) {}
 
@@ -84,22 +96,32 @@ export class StateMaintenanceScheduler {
     const started = performance.now();
     let changed = 0;
     let failed = false;
-    const commandId = this.uncertainCommandIds.get(selected) ?? randomUUID();
-    const wasUncertain = this.uncertainCommandIds.has(selected);
+    const uncertain = this.uncertainCommands.get(selected);
+    const commandId = uncertain?.commandId ?? randomUUID();
+    const wasUncertain = uncertain !== undefined;
+    let command = uncertain?.command;
+    let committed = false;
     try {
-      changed = (await this.stateService.execute(
-        { operation: "maintain", slice: selected },
+      command ||= this.options.command?.(selected) ?? defaultMaintenanceCommand(selected);
+      const result = await this.stateService.execute(
+        command,
         { commandId, aggregateKey: `maintenance:${selected}` }
-      )).changed;
-      this.uncertainCommandIds.delete(selected);
+      );
+      committed = true;
+      this.options.completed?.(command, result);
+      changed = result.changed;
+      this.uncertainCommands.delete(selected);
       this.lastError = undefined;
       if (changed > 0) this.options.changed?.();
     } catch (error) {
       failed = true;
-      if (wasUncertain || stateProcessErrorCode(error) === "STATE_OUTCOME_UNKNOWN") {
-        this.uncertainCommandIds.set(selected, commandId);
+      if (
+        command &&
+        (wasUncertain || committed || stateProcessErrorCode(error) === "STATE_OUTCOME_UNKNOWN")
+      ) {
+        this.uncertainCommands.set(selected, { commandId, command });
       } else {
-        this.uncertainCommandIds.delete(selected);
+        this.uncertainCommands.delete(selected);
       }
       this.lastError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -131,6 +153,13 @@ export class StateMaintenanceScheduler {
     if (this.observations.length > 120) this.observations.shift();
     return observation;
   }
+}
+
+function defaultMaintenanceCommand(slice: StateMaintenanceSlice): OperationalStateCommand {
+  if (slice === "jobs") {
+    throw new Error("STATE_JOB_RETENTION_PLAN_REQUIRED: Job retention requires a bounded registry plan.");
+  }
+  return { operation: "maintain", slice };
 }
 
 function stateProcessErrorCode(error: unknown): string | undefined {

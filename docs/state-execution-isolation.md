@@ -68,7 +68,7 @@ does not address that failure. The implementation order is therefore:
 ## What isolation changes and what remains
 
 The issue #143 characterization now applies 50, 250, 1,000 and 3,200 ms SQLite
-write locks to both the current in-process state call and the protocol-v3 child
+write locks to both the current in-process state call and the protocol-v4 child
 prototype. At 3,200 ms, both state operations still took about 3.28 seconds.
 Isolation does not shorten an external lock, filesystem stall or `fsync`.
 
@@ -157,7 +157,7 @@ envelope:
 ```ts
 type StateRequestEnvelope = {
   protocol: "bridge-state-service";
-  version: 3;
+  version: 4;
   requestId: string;          // unique IPC attempt UUID
   commandId: string;          // stable UUID for a logical mutation retry
   kind: "command" | "query" | "control";
@@ -341,7 +341,7 @@ The asynchronous API conversion and physical owner cutover are separate:
 
 ### Current implementation status
 
-The repository now contains protocol-v3 child-process transport, generation
+The repository now contains protocol-v4 child-process transport, generation
 checks, explicit maintenance-slice capabilities, bounded parent admission,
 deadlines, heartbeats, stale-owner retirement, bounded exponential restart
 supervision, schema-25 durable command receipts, and standalone locked-database,
@@ -349,12 +349,16 @@ response-loss, crash-recovery and stopped-process recovery tests. A stale owner
 is asked to close and force-killed after the bounded grace period; its exit is
 observed before a replacement is started, preserving the single-writer rule.
 An identical command ID and payload is replayed from its original receipt after
-a state-owner restart; a changed payload fails closed. The child currently
-supports every maintenance slice except registry-owned `jobs`, advertises that
-capability set, and therefore reports `state-incompatible` rather than false
-readiness. Supported slices remain directly fault-testable. Only the maintenance
-semantic operation is implemented through that transport. Production startup
-deliberately continues to use the
+a state-owner restart; a changed payload fails closed. The child now supports
+every maintenance slice, including registry-planned `jobs` retention, and
+reports `ready` for that protocol-v4 maintenance surface. The Job registry sends
+a bounded candidate plan containing stable Job versions, timestamps and its
+known protection set. The state owner revalidates each candidate against the
+authoritative row and durable protection records, archives eligible rows in the
+same transaction, and returns classifications for guarded application to the
+registry cache. An outcome-unknown retry preserves both the command ID and the
+exact plan payload. Only the maintenance semantic operation is implemented
+through this transport. Production startup deliberately continues to use the
 in-process compatibility owner and reports `state-incompatible` from `/readyz`.
 The child must not be selected until every operational command and query caller
 has crossed the asynchronous boundary and the compatibility owner can be closed

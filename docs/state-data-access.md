@@ -120,7 +120,7 @@ failure record; the connection controller neither invokes nor owns maintenance.
 | Decisions | 500 expired leases and 500 expired cards |
 | Recovery | 500 recovery rows and 500 incident rows |
 | Command receipts | 500 expired maintenance receipts; business receipts are preserved |
-| In-memory Jobs | 64 inspected, 32 removals, and a 10 ms cooperative deadline per runtime slice; resumable iterator |
+| Jobs | Registry defaults to 64 inspected candidates and 32 removals (hard caps 256/64) with a 10 ms cooperative planning deadline; the state owner revalidates the transmitted candidates under the same bounded execution deadline before atomically archiving eligible rows |
 
 The one-time startup load may normalize the complete persisted Job set before
 serving requests. Runtime maintenance never treats the configured retained-Job
@@ -130,7 +130,15 @@ that reservation until bounded idle maintenance removes it or verifies a
 durable protection. Admission applies `JOB_RETENTION_CAPACITY` backpressure at
 the ceiling, so foreground deferral cannot create an unbounded terminal-Job
 backlog. Replays of an already admitted request remain available while this
-backpressure is active.
+backpressure is active. Protocol-v4 Job maintenance preserves the exact bounded
+candidate payload and command ID across outcome-unknown recovery. Registry
+memory is changed only after the state owner returns matching Job version and
+timestamp classifications; a stale candidate is skipped rather than archived.
+
+The standalone state child is ready for the complete maintenance surface, but
+production still uses the in-process compatibility owner. Operational admission,
+progress, cancellation, delivery and query callers must cross the asynchronous
+semantic boundary before the single-writer cutover can select the child.
 
 Protected history candidates receive a 15-minute in-process backoff before the
 next full multi-table protection check. Losing the cache on restart is safe: it

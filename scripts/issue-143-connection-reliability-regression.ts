@@ -189,7 +189,7 @@ async function runCharacterization(): Promise<void> {
       ],
       limits: [
         "each fault duration is a single deterministic characterization sample, not a p99 load result",
-        "the isolated state service supports maintenance commands but is not selected by production startup and still reports state-incompatible until the jobs slice and remaining callers cross the boundary",
+        "the protocol-v4 isolated state service is ready for every maintenance slice, including registry-planned jobs retention, but production startup does not select it until the remaining command and query callers cross the boundary",
         "the fixture does not exercise the Secure MCP Tunnel, ChatGPT host, Codex runtime, disk exhaustion, large JSON/GC pressure, queue fairness, or the read-worker design",
         "the controlled SQLite fault proves a structural failure mode, not that locking caused every reported incident"
       ],

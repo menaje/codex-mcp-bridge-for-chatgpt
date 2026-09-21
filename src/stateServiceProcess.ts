@@ -7,6 +7,7 @@ import {
   OPERATIONAL_STATE_PROTOCOL,
   OPERATIONAL_STATE_PROTOCOL_VERSION,
   OPERATIONAL_STATE_REQUIRED_SLICES,
+  isOperationalStateCommand,
   type OperationalStateCommand,
   type OperationalStateExecuteOptions,
   type OperationalStateHealth,
@@ -720,9 +721,7 @@ async function executeChildRequest(
     fail("STATE_DEADLINE", "Operational state request expired before execution.");
     return;
   }
-  if (!OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES.includes(
-    envelope.payload.slice as Exclude<StateMaintenanceSlice, "jobs">
-  )) {
+  if (!OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES.includes(envelope.payload.slice)) {
     fail(
       "STATE_OPERATION_UNAVAILABLE",
       `Operational state child does not support the ${envelope.payload.slice} maintenance slice.`
@@ -767,7 +766,7 @@ function validEnvelope(envelope: OperationalStateRequestEnvelope, generation: st
       Buffer.byteLength(envelope.aggregateKey, "utf8") <= 512) &&
     Number.isSafeInteger(envelope.deadlineAt) &&
     envelope.payload?.operation === envelope.operation &&
-    STATE_MAINTENANCE_SLICES.includes(envelope.payload?.slice as StateMaintenanceSlice) &&
+    isOperationalStateCommand(envelope.payload) &&
     digest(envelope.payload) === envelope.payloadSha256;
 }
 

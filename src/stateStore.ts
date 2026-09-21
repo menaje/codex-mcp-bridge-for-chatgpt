@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import Database from "better-sqlite3";
 import { canonicalHumanText, parseJsonTextStrict } from "./textIntegrity.js";
 import {
@@ -69,6 +70,10 @@ import {
   type DashboardArchivedJobRow,
   type DashboardRepresentativeOrder
 } from "./stateReadModels.js";
+import type {
+  OperationalJobRetentionCommand,
+  OperationalJobRetentionResult
+} from "./stateService.js";
 import {
   ACTIVITY_COMPLETION_TRIGGERS,
   ACTIVITY_HANDOFF_POLICIES,
@@ -1263,9 +1268,74 @@ export class BridgeStateStore {
     this.transaction(() => this.upsertJobInternal(job));
   }
 
-  deleteJob(jobId: string): void {
+  maintainJobRetentionCandidates(
+    command: OperationalJobRetentionCommand
+  ): OperationalJobRetentionResult {
+    return this.transaction(() => {
+      const deadline = performance.now() + command.maxDurationMs;
+      let remainingAdmissionReservations = command.admissionReservations;
+      let removed = 0;
+      const classifications: OperationalJobRetentionResult["classifications"] = [];
+      for (const candidate of command.candidates) {
+        if (
+          removed >= command.maxRemoved ||
+          classifications.length > 0 && performance.now() >= deadline
+        ) break;
+        const row = this.database.prepare(`
+          SELECT status, updated_at, job_version
+            FROM jobs
+           WHERE job_id = ? AND archived_at IS NULL
+        `).get(candidate.jobId) as {
+          status: string;
+          updated_at: number;
+          job_version: number;
+        } | undefined;
+        if (
+          !row ||
+          !isTerminalActivityJobStatus(row.status) ||
+          row.updated_at !== candidate.updatedAt ||
+          row.job_version !== candidate.version
+        ) {
+          classifications.push({ ...candidate, disposition: "skipped" });
+          continue;
+        }
+        if (
+          this.retentionProtection(
+            candidate.jobId,
+            command.now,
+            command.completionResultRecoveryMs
+          ).length > 0
+        ) {
+          if (!candidate.knownProtected) {
+            remainingAdmissionReservations = Math.max(0, remainingAdmissionReservations - 1);
+          }
+          classifications.push({ ...candidate, disposition: "protected" });
+          continue;
+        }
+        if (candidate.knownProtected) remainingAdmissionReservations += 1;
+        if (
+          candidate.updatedAt >= command.cutoffAt &&
+          remainingAdmissionReservations <= command.retentionTarget
+        ) {
+          classifications.push({ ...candidate, disposition: "retained" });
+          continue;
+        }
+        if (this.deleteJob(candidate.jobId, command.now)) {
+          removed += 1;
+          remainingAdmissionReservations = Math.max(0, remainingAdmissionReservations - 1);
+          classifications.push({ ...candidate, disposition: "removed" });
+        } else {
+          classifications.push({ ...candidate, disposition: "protected" });
+        }
+      }
+      return { classifications, remainingAdmissionReservations };
+    });
+  }
+
+  deleteJob(jobId: string, now = Date.now()): boolean {
+    let archived = false;
     this.transaction(() => {
-      if (this.retentionProtection(jobId).length) return;
+      if (this.retentionProtection(jobId, now).length) return;
       const row = this.database
         .prepare(`
           SELECT job_id, scope_id, request_id, status, updated_at, activity_id,
@@ -1285,7 +1355,6 @@ export class BridgeStateStore {
           }
         | undefined;
       if (!row) return;
-      const now = Date.now();
       const scopeVersion = this.nextScopeVersion(row.scope_id, now);
       if (!this.eventRetention.summary(jobId).usage) {
         const usage = this.database.prepare("SELECT payload FROM job_events WHERE job_id=? AND event_type LIKE 'app-usage%' ORDER BY event_id DESC LIMIT 1").get(jobId) as JsonRow | undefined;
@@ -1308,7 +1377,9 @@ export class BridgeStateStore {
       this.touchActivity(row.activity_id, scopeVersion, now, "job-retention-pruned", {
         jobId: row.job_id
       });
+      archived = true;
     });
+    return archived;
   }
 
   retentionProtection(
