@@ -16,6 +16,7 @@ import type {
   ModelCatalogOptions
 } from "../src/modelCatalog.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
+import { OPERATIONAL_STATE_PROTOCOL_VERSION } from "../src/stateService.js";
 
 const CURRENT_PROTOCOL = "2026-07-28";
 const CURRENT_TOOL_ORDER = [
@@ -227,7 +228,7 @@ describe("MCP 2026-07-28 HTTP server", () => {
         reason: "ready",
         limitations: [],
         stateService: {
-          protocolVersion: 1,
+          protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
           generation: "fixture-generation",
           heartbeatAgeMs: 5
         }
@@ -239,7 +240,7 @@ describe("MCP 2026-07-28 HTTP server", () => {
       ok: true,
       reason: "ready",
       stateService: {
-        protocolVersion: 1,
+        protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
         generation: "fixture-generation",
         heartbeatAgeMs: 5
       }
