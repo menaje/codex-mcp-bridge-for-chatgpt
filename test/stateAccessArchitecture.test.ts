@@ -147,6 +147,29 @@ describe("state access ownership", () => {
     }
   });
 
+  it("reuses one logical command ID after an outcome-unknown maintenance response", async () => {
+    const execute = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error("unknown"), {
+        code: "STATE_OUTCOME_UNKNOWN"
+      }))
+      .mockResolvedValueOnce({ operation: "maintain", slice: "events", changed: 0 });
+    const scheduler = new StateMaintenanceScheduler({ execute });
+    try {
+      expect(await scheduler.sweep("events")).toMatchObject({ failed: true });
+      expect(await scheduler.sweep("events")).toMatchObject({ failed: false });
+      expect(execute).toHaveBeenCalledTimes(2);
+      const firstOptions = execute.mock.calls[0]?.[1];
+      const secondOptions = execute.mock.calls[1]?.[1];
+      expect(firstOptions).toMatchObject({
+        commandId: expect.any(String),
+        aggregateKey: "maintenance:events"
+      });
+      expect(secondOptions).toEqual(firstOptions);
+    } finally {
+      scheduler.close();
+    }
+  });
+
   it("commits compatibility maintenance as separate domain transactions", () => {
     const sql: string[] = [];
     const store = new BridgeStateStore({ file: ":memory:", traceSql: statement => sql.push(statement) });

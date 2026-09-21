@@ -310,8 +310,9 @@ The asynchronous API conversion and physical owner cutover are separate:
 ### Current implementation status
 
 The repository now contains the versioned child-process transport, generation
-checks, bounded parent admission, deadlines, heartbeats, schema-25 durable
-command receipts, and standalone locked-database/response-loss isolation tests.
+checks, bounded parent admission, deadlines, heartbeats, bounded exponential
+restart supervision, schema-25 durable command receipts, and standalone locked-
+database/response-loss/crash-recovery isolation tests.
 An identical command ID and payload is replayed from its original receipt after
 a state-owner restart; a changed payload fails closed. Only the maintenance
 semantic operation is implemented through that transport. Production startup

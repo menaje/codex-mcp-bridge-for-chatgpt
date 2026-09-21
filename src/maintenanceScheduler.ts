@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks";
+import { randomUUID } from "node:crypto";
 import type { OperationalStateService } from "./stateService.js";
 
 export const STATE_MAINTENANCE_SLICES = [
@@ -32,6 +33,7 @@ export class StateMaintenanceScheduler {
   private closed = false;
   private cursor = 0;
   private deferredSince?: number;
+  private readonly uncertainCommandIds = new Map<StateMaintenanceSlice, string>();
   private readonly observations: StateMaintenanceObservation[] = [];
 
   constructor(
@@ -81,12 +83,22 @@ export class StateMaintenanceScheduler {
     const started = performance.now();
     let changed = 0;
     let failed = false;
+    const commandId = this.uncertainCommandIds.get(selected) ?? randomUUID();
     try {
-      changed = (await this.stateService.execute({ operation: "maintain", slice: selected })).changed;
+      changed = (await this.stateService.execute(
+        { operation: "maintain", slice: selected },
+        { commandId, aggregateKey: `maintenance:${selected}` }
+      )).changed;
+      this.uncertainCommandIds.delete(selected);
       this.lastError = undefined;
       if (changed > 0) this.options.changed?.();
     } catch (error) {
       failed = true;
+      if (stateProcessErrorCode(error) === "STATE_OUTCOME_UNKNOWN") {
+        this.uncertainCommandIds.set(selected, commandId);
+      } else {
+        this.uncertainCommandIds.delete(selected);
+      }
       this.lastError = error instanceof Error ? error.message : String(error);
     } finally {
       this.pending = false;
@@ -117,4 +129,9 @@ export class StateMaintenanceScheduler {
     if (this.observations.length > 120) this.observations.shift();
     return observation;
   }
+}
+
+function stateProcessErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
 }

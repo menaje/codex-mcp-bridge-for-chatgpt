@@ -8,7 +8,8 @@ import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import {
   ChildProcessOperationalStateService,
-  OperationalStateProcessError
+  OperationalStateProcessError,
+  SupervisedOperationalStateService
 } from "../src/stateServiceProcess.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 
@@ -185,4 +186,48 @@ describe("operational state child process", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 10_000);
+
+  it("restarts a crashed state owner with one live writer generation", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "state-service-supervisor-"));
+    const file = path.join(root, "state.sqlite");
+    const service = await SupervisedOperationalStateService.start({
+      file,
+      restartBaseDelayMs: 25,
+      restartMaxDelayMs: 100,
+      restartStableMs: 1_000
+    });
+    try {
+      const firstPid = service.processId;
+      expect(firstPid).toEqual(expect.any(Number));
+      process.kill(firstPid as number, "SIGKILL");
+      await waitFor(() => {
+        const nextPid = service.processId;
+        return nextPid !== undefined && nextPid !== firstPid && service.health().ready;
+      }, 5_000);
+
+      expect(service.health()).toMatchObject({ ready: true, reason: "ready" });
+      await expect(service.execute({ operation: "maintain", slice: "events" }))
+        .resolves.toMatchObject({ certainty: "committed", replayed: false });
+
+      const database = new Database(file, { readonly: true });
+      try {
+        expect(database.prepare(`
+          SELECT COUNT(*) AS count FROM bridge_instances WHERE stopped_at IS NULL
+        `).get()).toEqual({ count: 1 });
+      } finally {
+        database.close();
+      }
+    } finally {
+      await service.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 10_000);
 });
+
+async function waitFor(condition: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for state-service recovery.");
+    await delay(25);
+  }
+}

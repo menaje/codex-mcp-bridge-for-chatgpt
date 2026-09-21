@@ -94,12 +94,18 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
   private startupResolve!: () => void;
   private startupReject!: (error: Error) => void;
   private stderr = "";
+  private exitHandled = false;
+  private readonly exited: Promise<OperationalStateProcessError>;
+  private exitResolve!: (error: OperationalStateProcessError) => void;
 
   private constructor(
     private readonly child: ChildProcess,
     private readonly capacity: number,
     startupTimeoutMs: number
   ) {
+    this.exited = new Promise(resolve => {
+      this.exitResolve = resolve;
+    });
     this.startup = new Promise<void>((resolve, reject) => {
       this.startupResolve = resolve;
       this.startupReject = reject;
@@ -242,6 +248,18 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
     });
   }
 
+  get processId(): number | undefined {
+    return this.child.pid;
+  }
+
+  waitForExit(): Promise<OperationalStateProcessError> {
+    return this.exited;
+  }
+
+  terminate(signal: NodeJS.Signals = "SIGTERM"): boolean {
+    return this.child.kill(signal);
+  }
+
   health(now = Date.now()): OperationalStateHealth {
     if (this.closed || !this.child.connected) {
       return {
@@ -371,6 +389,11 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
   }
 
   private onExit(error: Error): void {
+    if (this.exitHandled) return;
+    this.exitHandled = true;
+    const processError = error instanceof OperationalStateProcessError
+      ? error
+      : new OperationalStateProcessError("STATE_PROCESS_EXITED", error.message);
     this.failStartup(error);
     this.starting = false;
     this.lastHeartbeatAt = undefined;
@@ -384,10 +407,170 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
     }
     this.pending.clear();
     this.unconfirmed.clear();
+    this.exitResolve(processError);
   }
 
   private get outstanding(): number {
     return this.pending.size + this.unconfirmed.size;
+  }
+}
+
+export type SupervisedOperationalStateServiceOptions =
+  ChildProcessOperationalStateServiceOptions & {
+    restartBaseDelayMs?: number;
+    restartMaxDelayMs?: number;
+    restartMaxAttempts?: number;
+    restartStableMs?: number;
+  };
+
+/**
+ * Restarts an unexpectedly exited state owner with bounded exponential backoff.
+ * It never replays an uncertain command by itself: the caller must retry the
+ * same command ID so the durable receipt can decide whether to apply or replay.
+ */
+export class SupervisedOperationalStateService implements OperationalStateService {
+  private service?: ChildProcessOperationalStateService;
+  private restartTimer?: NodeJS.Timeout;
+  private stableTimer?: NodeJS.Timeout;
+  private restartAttempts = 0;
+  private closed = false;
+  private lastError?: OperationalStateProcessError;
+  private readonly capacity: number;
+  private readonly restartBaseDelayMs: number;
+  private readonly restartMaxDelayMs: number;
+  private readonly restartMaxAttempts: number;
+  private readonly restartStableMs: number;
+
+  private constructor(
+    private readonly options: SupervisedOperationalStateServiceOptions,
+    service: ChildProcessOperationalStateService
+  ) {
+    this.capacity = boundedPositiveInteger(options.capacity ?? DEFAULT_CAPACITY, 1, 4_096, "capacity");
+    this.restartBaseDelayMs = boundedPositiveInteger(
+      options.restartBaseDelayMs ?? 100,
+      10,
+      60_000,
+      "restartBaseDelayMs"
+    );
+    this.restartMaxDelayMs = boundedPositiveInteger(
+      options.restartMaxDelayMs ?? 5_000,
+      this.restartBaseDelayMs,
+      300_000,
+      "restartMaxDelayMs"
+    );
+    this.restartMaxAttempts = boundedPositiveInteger(
+      options.restartMaxAttempts ?? 5,
+      1,
+      100,
+      "restartMaxAttempts"
+    );
+    this.restartStableMs = boundedPositiveInteger(
+      options.restartStableMs ?? 60_000,
+      100,
+      3_600_000,
+      "restartStableMs"
+    );
+    this.adopt(service);
+  }
+
+  static async start(
+    options: SupervisedOperationalStateServiceOptions
+  ): Promise<SupervisedOperationalStateService> {
+    const service = await ChildProcessOperationalStateService.start(options);
+    return new SupervisedOperationalStateService(options, service);
+  }
+
+  execute(
+    command: OperationalStateCommand,
+    options: OperationalStateExecuteOptions = {}
+  ): Promise<OperationalStateResult> {
+    if (!this.service || this.closed) {
+      return Promise.reject(new OperationalStateProcessError(
+        "STATE_RECOVERING",
+        this.lastError?.message || "Operational state owner is recovering.",
+        options.commandId
+      ));
+    }
+    return this.service.execute(command, options);
+  }
+
+  health(now = Date.now()): OperationalStateHealth {
+    if (this.service && !this.closed) return this.service.health(now);
+    return {
+      ready: false,
+      reason: "state-recovering",
+      protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
+      inFlight: 0,
+      capacity: this.capacity
+    };
+  }
+
+  get processId(): number | undefined {
+    return this.service?.processId;
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    if (this.stableTimer) clearTimeout(this.stableTimer);
+    this.restartTimer = undefined;
+    this.stableTimer = undefined;
+    const service = this.service;
+    this.service = undefined;
+    if (service) await service.close();
+  }
+
+  private adopt(service: ChildProcessOperationalStateService): void {
+    this.service = service;
+    this.lastError = undefined;
+    if (this.stableTimer) clearTimeout(this.stableTimer);
+    this.stableTimer = setTimeout(() => {
+      if (!this.closed && this.service === service) this.restartAttempts = 0;
+    }, this.restartStableMs);
+    this.stableTimer.unref();
+    void service.waitForExit().then(error => {
+      if (this.closed || this.service !== service) return;
+      this.service = undefined;
+      this.lastError = error;
+      if (this.stableTimer) clearTimeout(this.stableTimer);
+      this.stableTimer = undefined;
+      this.scheduleRestart();
+    });
+  }
+
+  private scheduleRestart(): void {
+    if (this.closed || this.restartTimer || this.restartAttempts >= this.restartMaxAttempts) return;
+    const delayMs = Math.min(
+      this.restartBaseDelayMs * 2 ** this.restartAttempts,
+      this.restartMaxDelayMs
+    );
+    this.restartAttempts += 1;
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = undefined;
+      void this.restart();
+    }, delayMs);
+    this.restartTimer.unref();
+  }
+
+  private async restart(): Promise<void> {
+    if (this.closed) return;
+    try {
+      const service = await ChildProcessOperationalStateService.start(this.options);
+      if (this.closed) {
+        await service.close();
+        return;
+      }
+      this.adopt(service);
+    } catch (error) {
+      this.lastError = error instanceof OperationalStateProcessError
+        ? error
+        : new OperationalStateProcessError(
+          "STATE_RESTART_FAILED",
+          error instanceof Error ? error.message : String(error)
+        );
+      this.scheduleRestart();
+    }
   }
 }
 
