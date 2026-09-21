@@ -72,7 +72,8 @@ import {
 } from "./stateReadModels.js";
 import type {
   OperationalJobRetentionCommand,
-  OperationalJobRetentionResult
+  OperationalJobRetentionResult,
+  OperationalStateOperationPhase
 } from "./stateService.js";
 import {
   ACTIVITY_COMPLETION_TRIGGERS,
@@ -806,7 +807,8 @@ export class BridgeStateStore {
    */
   executeOperationalCommand<T extends Record<string, unknown>>(
     input: OperationalCommandReceiptInput,
-    apply: () => OperationalCommandApplication<T>
+    apply: () => OperationalCommandApplication<T>,
+    observePhase?: (phase: OperationalStateOperationPhase) => void
   ): OperationalCommandExecution<T> {
     validateOperationalCommandReceiptInput(input);
     return this.transaction(() => {
@@ -881,7 +883,7 @@ export class BridgeStateStore {
         },
         replayed: false
       };
-    });
+    }, observePhase);
   }
 
   getOperationalCommandReceipt<T = unknown>(
@@ -891,6 +893,14 @@ export class BridgeStateStore {
       throw new Error("STATE_COMMAND_RECEIPT_INVALID: commandId must be a UUID.");
     }
     return this.readOperationalCommandReceipt<T>(commandId);
+  }
+
+  getLastOperationalCommandCommitAt(): number | undefined {
+    const row = this.database.prepare(`
+      SELECT MAX(committed_at) AS committed_at
+        FROM operational_command_receipts
+    `).get() as { committed_at: number | null };
+    return row.committed_at === null ? undefined : Number(row.committed_at);
   }
 
   /**
@@ -996,12 +1006,21 @@ export class BridgeStateStore {
     }
   }
 
-  transaction<T>(operation: () => T): T {
-    if (this.transactionDepth > 0) return operation();
+  transaction<T>(
+    operation: () => T,
+    observePhase?: (phase: OperationalStateOperationPhase) => void
+  ): T {
+    if (this.transactionDepth > 0) {
+      this.observeTransactionPhase(observePhase, "executing");
+      return operation();
+    }
+    this.observeTransactionPhase(observePhase, "write-lock-wait");
     this.database.exec("BEGIN IMMEDIATE");
     this.transactionDepth += 1;
     try {
+      this.observeTransactionPhase(observePhase, "executing");
       const result = operation();
+      this.observeTransactionPhase(observePhase, "committing");
       this.database.exec("COMMIT");
       return result;
     } catch (error) {
@@ -1013,6 +1032,17 @@ export class BridgeStateStore {
       throw error;
     } finally {
       this.transactionDepth -= 1;
+    }
+  }
+
+  private observeTransactionPhase(
+    observer: ((phase: OperationalStateOperationPhase) => void) | undefined,
+    phase: OperationalStateOperationPhase
+  ): void {
+    try {
+      observer?.(phase);
+    } catch {
+      // Diagnostics cannot change transaction semantics.
     }
   }
 

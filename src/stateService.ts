@@ -56,7 +56,31 @@ export type OperationalStateResult = {
   jobRetention?: OperationalJobRetentionResult;
   certainty?: "committed";
   commandId?: string;
+  committedAt?: number;
   replayed?: boolean;
+};
+
+export const OPERATIONAL_STATE_OPERATION_PHASES = [
+  "write-lock-wait",
+  "executing",
+  "committing",
+  "responding"
+] as const;
+
+export type OperationalStateOperationPhase =
+  (typeof OPERATIONAL_STATE_OPERATION_PHASES)[number];
+
+/**
+ * Privacy-safe last-confirmed state-owner boundary. It intentionally excludes
+ * request, scope, project and Job identifiers as well as command payloads.
+ */
+export type OperationalStateOperationObservation = {
+  access: "write";
+  operation: OperationalStateCommand["operation"];
+  slice: StateMaintenanceSlice;
+  phase: OperationalStateOperationPhase;
+  startedAt: number;
+  observedAt: number;
 };
 
 export type OperationalStateExecuteOptions = {
@@ -94,8 +118,11 @@ export type OperationalStateHealth = {
   generation?: string;
   heartbeatAgeMs?: number;
   inFlight: number;
+  queueDepth: number;
   capacity: number;
   supportedSlices: readonly StateMaintenanceSlice[];
+  activeOperation?: OperationalStateOperationObservation;
+  lastCommitAt?: number;
 };
 
 /**

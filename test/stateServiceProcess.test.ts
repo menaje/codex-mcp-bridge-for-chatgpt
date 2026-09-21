@@ -30,6 +30,8 @@ describe("operational state child process", () => {
         reason: "ready",
         protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
         generation: expect.any(String),
+        inFlight: 0,
+        queueDepth: 0,
         capacity: 64,
         supportedSlices: OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES
       });
@@ -40,6 +42,7 @@ describe("operational state child process", () => {
           changed: 0,
           certainty: "committed",
           commandId: expect.any(String),
+          committedAt: expect.any(Number),
           replayed: false
         });
       await expect(service.execute({ operation: "maintain", slice: "receipts" }))
@@ -179,10 +182,10 @@ describe("operational state child process", () => {
     }
   });
 
-  it("keeps the parent event loop responsive and reports stale heartbeat while SQLite is locked", async () => {
+  it("keeps the parent responsive and retains the blocked write phase and queue depth", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "state-service-lock-"));
     const file = path.join(root, "state.sqlite");
-    const service = await ChildProcessOperationalStateService.start({ file, capacity: 1 });
+    const service = await ChildProcessOperationalStateService.start({ file, capacity: 2 });
     const locker = new Database(file);
     let locked = false;
     try {
@@ -192,14 +195,27 @@ describe("operational state child process", () => {
         { operation: "maintain", slice: "events" },
         { deadlineMs: 5_000 }
       );
-      await delay(50);
+      await waitFor(() => service.health().activeOperation?.phase === "write-lock-wait", 1_000);
+      const queuedMaintenance = service.execute(
+        { operation: "maintain", slice: "history" },
+        { deadlineMs: 5_000 }
+      );
       expect(service.health()).toMatchObject({
         ready: false,
         reason: "state-capacity",
-        inFlight: 1,
-        capacity: 1
+        inFlight: 2,
+        queueDepth: 1,
+        capacity: 2,
+        activeOperation: {
+          access: "write",
+          operation: "maintain",
+          slice: "events",
+          phase: "write-lock-wait",
+          startedAt: expect.any(Number),
+          observedAt: expect.any(Number)
+        }
       });
-      await expect(service.execute({ operation: "maintain", slice: "history" }))
+      await expect(service.execute({ operation: "maintain", slice: "questions" }))
         .rejects.toMatchObject<Partial<OperationalStateProcessError>>({ code: "STATE_CAPACITY" });
 
       const timerStarted = performance.now();
@@ -209,14 +225,33 @@ describe("operational state child process", () => {
       await delay(2_100);
       expect(service.health()).toMatchObject({
         ready: false,
-        reason: "state-stale"
+        reason: "state-stale",
+        inFlight: 2,
+        queueDepth: 1,
+        activeOperation: {
+          access: "write",
+          slice: "events",
+          phase: "write-lock-wait"
+        }
       });
 
       locker.exec("COMMIT");
       locked = false;
       await expect(maintenance).resolves.toMatchObject({ operation: "maintain", slice: "events" });
+      await expect(queuedMaintenance).resolves.toMatchObject({
+        operation: "maintain",
+        slice: "history"
+      });
       await delay(350);
-      expect(service.health()).toMatchObject({ ready: true, reason: "ready" });
+      const recovered = service.health();
+      expect(recovered).toMatchObject({
+        ready: true,
+        reason: "ready",
+        inFlight: 0,
+        queueDepth: 0,
+        lastCommitAt: expect.any(Number)
+      });
+      expect(recovered).not.toHaveProperty("activeOperation");
     } finally {
       if (locked && locker.inTransaction) locker.exec("ROLLBACK");
       locker.close();
@@ -285,14 +320,18 @@ describe("operational state child process", () => {
       locker.exec("COMMIT");
       locked = false;
       await delay(350);
+      const committedAt = service.health().lastCommitAt;
+      expect(committedAt).toEqual(expect.any(Number));
       expect(service.health()).toMatchObject({
         ready: true,
         reason: "ready",
-        inFlight: 0
+        inFlight: 0,
+        lastCommitAt: expect.any(Number)
       });
       await service.close();
 
       service = await ChildProcessOperationalStateService.start({ file, capacity: 1 });
+      expect(service.health()).toMatchObject({ lastCommitAt: committedAt });
       await expect(service.execute(
         { operation: "maintain", slice: "events" },
         { commandId, aggregateKey: "maintenance:events" }

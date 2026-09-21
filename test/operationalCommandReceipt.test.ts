@@ -25,6 +25,7 @@ describe("operational command receipts", () => {
     const commandId = randomUUID();
     const generation = randomUUID();
     const payloadSha256 = hash({ operation: "probe", value: 1 });
+    const phases: string[] = [];
     const apply = vi.fn(() => {
       store.setMeta("receipt_probe", "committed-once");
       return { result: { value: 7 }, resultingVersion: 3 };
@@ -37,7 +38,7 @@ describe("operational command receipts", () => {
         aggregateKey: "probe:one",
         workerGeneration: generation,
         committedAt: 123
-      }, apply)).toEqual({
+      }, apply, phase => phases.push(phase))).toEqual({
         replayed: false,
         receipt: {
           commandId,
@@ -50,6 +51,7 @@ describe("operational command receipts", () => {
           committedAt: 123
         }
       });
+      expect(phases).toEqual(["write-lock-wait", "executing", "committing"]);
 
       expect(store.executeOperationalCommand({
         commandId,
@@ -90,6 +92,29 @@ describe("operational command receipts", () => {
         payloadSha256: hash({ value: 2 }),
         workerGeneration: generation
       }, () => ({ result: { value: 2 } }))).toThrow(/STATE_COMMAND_CONFLICT/);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("does not let phase-observation failures change transaction semantics", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    try {
+      expect(store.executeOperationalCommand({
+        commandId: randomUUID(),
+        operation: "probe",
+        payloadSha256: hash({ operation: "probe" }),
+        workerGeneration: randomUUID()
+      }, () => {
+        store.setMeta("receipt_observation_probe", "committed");
+        return { result: { committed: true } };
+      }, () => {
+        throw new Error("diagnostic transport unavailable");
+      })).toMatchObject({
+        replayed: false,
+        receipt: { result: { committed: true } }
+      });
+      expect(store.getMeta("receipt_observation_probe")).toBe("committed");
     } finally {
       store.close();
     }

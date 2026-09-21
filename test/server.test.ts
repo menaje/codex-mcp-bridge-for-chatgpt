@@ -230,7 +230,19 @@ describe("MCP 2026-07-28 HTTP server", () => {
         stateService: {
           protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
           generation: "fixture-generation",
-          heartbeatAgeMs: 5
+          heartbeatAgeMs: 5,
+          inFlight: 1,
+          queueDepth: 0,
+          capacity: 64,
+          activeOperation: {
+            access: "write",
+            operation: "maintain",
+            slice: "events",
+            phase: "executing",
+            startedAt: 1_000,
+            observedAt: 1_001
+          },
+          lastCommitAt: 999
         }
       })
     });
@@ -242,7 +254,19 @@ describe("MCP 2026-07-28 HTTP server", () => {
       stateService: {
         protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
         generation: "fixture-generation",
-        heartbeatAgeMs: 5
+        heartbeatAgeMs: 5,
+        inFlight: 1,
+        queueDepth: 0,
+        capacity: 64,
+        activeOperation: {
+          access: "write",
+          operation: "maintain",
+          slice: "events",
+          phase: "executing",
+          startedAt: 1_000,
+          observedAt: 1_001
+        },
+        lastCommitAt: 999
       }
     }));
   });

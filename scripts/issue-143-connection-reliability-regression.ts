@@ -120,6 +120,10 @@ async function runCharacterization(): Promise<void> {
     assert.equal(longestCurrent.runtimeHealth.outcome, "timeout");
     assert.equal(longestIsolated.runtimeHealth.outcome, "ok");
     assert.equal(longestIsolated.stateServiceDuringFault?.reason, "state-stale");
+    assert.equal(
+      longestIsolated.stateServiceDuringFault?.activeOperation?.phase,
+      "write-lock-wait"
+    );
 
     report = {
       issue: 143,
@@ -315,6 +319,18 @@ async function runSqliteFaultCase(
       if (stateHealthMessage) {
         assert.equal(stateHealthMessage.health.reason, "state-stale");
         assert.equal(stateHealthMessage.health.inFlight, 1);
+        assert.equal(stateHealthMessage.health.queueDepth, 0);
+        assert.deepEqual(
+          stateHealthMessage.health.activeOperation,
+          {
+            access: "write",
+            operation: "maintain",
+            slice: "events",
+            phase: "write-lock-wait",
+            startedAt: stateHealthMessage.health.activeOperation?.startedAt,
+            observedAt: stateHealthMessage.health.activeOperation?.observedAt
+          }
+        );
       }
     }
 

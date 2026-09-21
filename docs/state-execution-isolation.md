@@ -273,6 +273,16 @@ read/telemetry availability and feature reason codes. The native helper presents
 PID exit becomes `process-exited`. Recovery becomes healthy only after a current
 generation and fresh authoritative snapshot are observed.
 
+The state child also publishes a privacy-safe operation boundary before and
+during synchronous writer work. The Bridge retains only access class, semantic
+operation, maintenance slice, last confirmed phase (`write-lock-wait`,
+`executing`, `committing`, or `responding`), start/observation times, queue depth and last
+commit time. It never publishes a request, scope, project or Job identifier or
+the command payload through unauthenticated health. A stale heartbeat freezes
+this as the **last confirmed** phase; it is not permission to infer a more
+specific SQLite, filesystem or hardware cause. Read phases and snapshot
+freshness join this contract only when the read worker is implemented.
+
 ## Failure and restart rules
 
 The Bridge supervises both children independently with bounded exponential
@@ -360,6 +370,10 @@ registry cache. An outcome-unknown retry preserves both the command ID and the
 exact plan payload. Only the maintenance semantic operation is implemented
 through this transport. Production startup deliberately continues to use the
 in-process compatibility owner and reports `state-incompatible` from `/readyz`.
+For that implemented maintenance-write surface, the child now emits transaction
+boundary observations and the parent retains active phase, queue depth and last
+commit time even when the child heartbeat becomes stale. A controlled lock test
+requires `state-stale + write-lock-wait` while Bridge liveness remains responsive.
 The child must not be selected until every operational command and query caller
 has crossed the asynchronous boundary and the compatibility owner can be closed
 before child startup. This status is implementation progress, not cutover or

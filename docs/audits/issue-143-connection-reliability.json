@@ -162,6 +162,39 @@
       "productionResolutionVerified": false
     }
   },
+  "stateOperationObservationUpdate": {
+    "testedAt": "2026-09-21T12:41:23.630Z",
+    "baseCheckout": "472b1ce82ad48baffc0efaa3ab056801cc40ae50",
+    "database": "disposable schema-25 fixtures",
+    "lockHoldMs": 3200,
+    "currentMainProcess": {
+      "stateOperationMs": 3280.807,
+      "healthzMs": 3283.294,
+      "runtimeHealthOutcome": "timeout",
+      "runtimeHealthMs": 2001.025,
+      "eventLoopTimerMs": 3281.183
+    },
+    "isolatedStatePrototype": {
+      "stateOperationMs": 3305.486,
+      "healthzMs": 1.113,
+      "runtimeHealthMs": 1.134,
+      "eventLoopTimerMs": 12.752,
+      "stateServiceReason": "state-stale",
+      "stateServiceHeartbeatAgeMs": 2254,
+      "stateServiceInFlight": 1,
+      "stateServiceQueueDepth": 0,
+      "lastConfirmedOperation": {
+        "access": "write",
+        "operation": "maintain",
+        "slice": "events",
+        "phase": "write-lock-wait"
+      },
+      "lastCommitAtPreserved": true
+    },
+    "privacyContract": "no request, scope, project or Job identifier and no command payload",
+    "interpretation": "the phase identifies the last confirmed transaction boundary, not the exact internal SQLite, filesystem or hardware cause",
+    "productionResolutionVerified": false
+  },
   "findings": {
     "directlyObserved": [
       "the installed bridge process remained alive while both the private runtime.health path and public healthz path missed the same two-second interval",

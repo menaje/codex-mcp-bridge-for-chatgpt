@@ -29,6 +29,7 @@ import { CodexBackendRouter } from "./upstreamRouter.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import { SkillLibrary } from "./skillLibrary.js";
 import { assertJsonTextIntegrity, decodeUtf8Strict } from "./textIntegrity.js";
+import type { OperationalStateOperationObservation } from "./stateService.js";
 
 const MAX_MCP_REQUEST_BYTES = 8 * 1024 * 1024;
 
@@ -51,6 +52,11 @@ export type BridgeReadinessSnapshot = {
     protocolVersion: number;
     generation: string;
     heartbeatAgeMs: number;
+    inFlight?: number;
+    queueDepth?: number;
+    capacity?: number;
+    activeOperation?: OperationalStateOperationObservation;
+    lastCommitAt?: number;
   };
 };
 

@@ -7,10 +7,13 @@ import {
   OPERATIONAL_STATE_PROTOCOL,
   OPERATIONAL_STATE_PROTOCOL_VERSION,
   OPERATIONAL_STATE_REQUIRED_SLICES,
+  OPERATIONAL_STATE_OPERATION_PHASES,
   isOperationalStateCommand,
   type OperationalStateCommand,
   type OperationalStateExecuteOptions,
   type OperationalStateHealth,
+  type OperationalStateOperationObservation,
+  type OperationalStateOperationPhase,
   type OperationalStateRequestEnvelope,
   type OperationalStateResult,
   type OperationalStateService
@@ -37,6 +40,7 @@ type ChildReadyMessage = {
   generation: string;
   heartbeatAt: number;
   supportedSlices: StateMaintenanceSlice[];
+  lastCommitAt?: number;
 };
 
 type ChildHeartbeatMessage = {
@@ -44,6 +48,13 @@ type ChildHeartbeatMessage = {
   generation: string;
   heartbeatAt: number;
   inFlight: number;
+};
+
+type ChildOperationMessage = {
+  type: "operation";
+  requestId: string;
+  generation: string;
+  observation: OperationalStateOperationObservation;
 };
 
 type ChildResponseMessage = {
@@ -56,7 +67,12 @@ type ChildResponseMessage = {
 };
 
 type ChildFatalMessage = { type: "fatal"; message: string };
-type StateChildMessage = ChildReadyMessage | ChildHeartbeatMessage | ChildResponseMessage | ChildFatalMessage;
+type StateChildMessage =
+  | ChildReadyMessage
+  | ChildHeartbeatMessage
+  | ChildOperationMessage
+  | ChildResponseMessage
+  | ChildFatalMessage;
 
 type ParentRequestMessage = { type: "request"; envelope: OperationalStateRequestEnvelope };
 type ParentCloseMessage = { type: "close" };
@@ -99,6 +115,11 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
   private starting = true;
   private closed = false;
   private childInFlight = 0;
+  private activeOperation?: {
+    requestId: string;
+    observation: OperationalStateOperationObservation;
+  };
+  private lastCommitAt?: number;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly unconfirmed = new Set<string>();
   private readonly startup: Promise<void>;
@@ -287,7 +308,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         generation: this.generation,
         inFlight: this.outstanding,
         capacity: this.capacity,
-        supportedSlices: this.supportedSlices
+        supportedSlices: this.supportedSlices,
+        ...this.operationHealthDetails()
       };
     }
     if (this.starting || !this.lastHeartbeatAt) {
@@ -298,7 +320,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         generation: this.generation,
         inFlight: this.outstanding,
         capacity: this.capacity,
-        supportedSlices: this.supportedSlices
+        supportedSlices: this.supportedSlices,
+        ...this.operationHealthDetails()
       };
     }
     if (!this.protocolCompatible) {
@@ -310,7 +333,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         heartbeatAgeMs: Math.max(0, now - this.lastHeartbeatAt),
         inFlight: this.outstanding,
         capacity: this.capacity,
-        supportedSlices: this.supportedSlices
+        supportedSlices: this.supportedSlices,
+        ...this.operationHealthDetails()
       };
     }
     const heartbeatAgeMs = Math.max(0, now - this.lastHeartbeatAt);
@@ -323,7 +347,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         heartbeatAgeMs,
         inFlight: this.outstanding,
         capacity: this.capacity,
-        supportedSlices: this.supportedSlices
+        supportedSlices: this.supportedSlices,
+        ...this.operationHealthDetails()
       };
     }
     if (this.outstanding >= this.capacity) {
@@ -335,7 +360,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         heartbeatAgeMs,
         inFlight: this.outstanding,
         capacity: this.capacity,
-        supportedSlices: this.supportedSlices
+        supportedSlices: this.supportedSlices,
+        ...this.operationHealthDetails()
       };
     }
     if (!supportsRequiredSlices(this.supportedSlices)) {
@@ -347,7 +373,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         heartbeatAgeMs,
         inFlight: this.outstanding,
         capacity: this.capacity,
-        supportedSlices: this.supportedSlices
+        supportedSlices: this.supportedSlices,
+        ...this.operationHealthDetails()
       };
     }
     return {
@@ -358,7 +385,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
       heartbeatAgeMs,
       inFlight: Math.max(this.outstanding, this.childInFlight),
       capacity: this.capacity,
-      supportedSlices: this.supportedSlices
+      supportedSlices: this.supportedSlices,
+      ...this.operationHealthDetails()
     };
   }
 
@@ -390,6 +418,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
       this.generation = message.generation;
       this.lastHeartbeatAt = message.heartbeatAt;
       this.supportedSlices = Object.freeze([...message.supportedSlices]);
+      this.lastCommitAt = message.lastCommitAt;
       this.protocolCompatible = message.protocol === OPERATIONAL_STATE_PROTOCOL &&
         message.version === OPERATIONAL_STATE_PROTOCOL_VERSION;
       if (this.protocolCompatible) {
@@ -409,11 +438,26 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
       this.childInFlight = message.inFlight;
       return;
     }
+    if (message.type === "operation") {
+      if (message.generation !== this.generation) return;
+      if (!this.pending.has(message.requestId) && !this.unconfirmed.has(message.requestId)) return;
+      this.activeOperation = {
+        requestId: message.requestId,
+        observation: Object.freeze({ ...message.observation })
+      };
+      return;
+    }
     if (message.type === "fatal") {
       this.failStartup(new OperationalStateProcessError("STATE_START_FAILED", message.message));
       return;
     }
     if (message.generation !== this.generation) return;
+    if (message.ok && message.result?.committedAt !== undefined) {
+      this.lastCommitAt = Math.max(this.lastCommitAt ?? 0, message.result.committedAt);
+    }
+    if (this.activeOperation?.requestId === message.requestId) {
+      this.activeOperation = undefined;
+    }
     if (this.unconfirmed.delete(message.requestId)) return;
     const pending = this.pending.get(message.requestId);
     if (!pending) return;
@@ -442,6 +486,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
     this.failStartup(error);
     this.starting = false;
     this.lastHeartbeatAt = undefined;
+    this.activeOperation = undefined;
     for (const [requestId, pending] of this.pending) {
       clearTimeout(pending.timer);
       pending.reject(new OperationalStateProcessError(
@@ -457,6 +502,18 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
 
   private get outstanding(): number {
     return this.pending.size + this.unconfirmed.size;
+  }
+
+  private operationHealthDetails(): Pick<
+    OperationalStateHealth,
+    "queueDepth" | "activeOperation" | "lastCommitAt"
+  > {
+    const activeOperation = this.activeOperation?.observation;
+    return {
+      queueDepth: Math.max(0, this.outstanding - (activeOperation ? 1 : 0)),
+      ...(activeOperation ? { activeOperation } : {}),
+      ...(this.lastCommitAt !== undefined ? { lastCommitAt: this.lastCommitAt } : {})
+    };
   }
 }
 
@@ -541,6 +598,7 @@ export class SupervisedOperationalStateService implements OperationalStateServic
       reason: "state-recovering",
       protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
       inFlight: 0,
+      queueDepth: 0,
       capacity: this.capacity,
       supportedSlices: []
     };
@@ -651,13 +709,15 @@ async function runChild(file: string): Promise<void> {
     });
     const timer = setInterval(heartbeat, DEFAULT_HEARTBEAT_MS);
     timer.unref();
+    const lastCommitAt = store.getLastOperationalCommandCommitAt();
     sendToParent({
       type: "ready",
       protocol: OPERATIONAL_STATE_PROTOCOL,
       version: OPERATIONAL_STATE_PROTOCOL_VERSION,
       generation,
       heartbeatAt: Date.now(),
-      supportedSlices: [...OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES]
+      supportedSlices: [...OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES],
+      ...(lastCommitAt !== undefined ? { lastCommitAt } : {})
     });
     process.on("message", message => {
       if (!isParentMessage(message) || closing) return;
@@ -671,7 +731,11 @@ async function runChild(file: string): Promise<void> {
         });
         return;
       }
-      const operation = executeChildRequest(store as BridgeStateStore, generation, message.envelope);
+      const operation = Promise.resolve().then(() => executeChildRequest(
+        store as BridgeStateStore,
+        generation,
+        message.envelope
+      ));
       active.add(operation);
       void operation.finally(() => active.delete(operation));
     });
@@ -701,11 +765,11 @@ async function runChild(file: string): Promise<void> {
   }
 }
 
-async function executeChildRequest(
+function executeChildRequest(
   store: BridgeStateStore,
   generation: string,
   envelope: OperationalStateRequestEnvelope
-): Promise<void> {
+): void {
   const fail = (code: string, message: string) => sendToParent({
     type: "response",
     requestId: typeof envelope?.requestId === "string" ? envelope.requestId : "invalid",
@@ -728,6 +792,27 @@ async function executeChildRequest(
     );
     return;
   }
+  const startedAt = Date.now();
+  const observe = (phase: OperationalStateOperationPhase) => {
+    try {
+      sendToParent({
+        type: "operation",
+        requestId: envelope.requestId,
+        generation,
+        observation: {
+          access: "write",
+          operation: envelope.operation,
+          slice: envelope.payload.slice,
+          phase,
+          startedAt,
+          observedAt: Date.now()
+        }
+      });
+    } catch {
+      // Observation delivery must not change command or transaction semantics.
+    }
+  };
+  observe("write-lock-wait");
   try {
     const execution = store.executeOperationalCommand({
       commandId: envelope.commandId,
@@ -735,13 +820,17 @@ async function executeChildRequest(
       payloadSha256: envelope.payloadSha256,
       ...(envelope.aggregateKey !== undefined ? { aggregateKey: envelope.aggregateKey } : {}),
       workerGeneration: generation
-    }, () => ({ result: executeOperationalStateCommand(store, envelope.payload) }));
+    }, () => ({ result: executeOperationalStateCommand(store, envelope.payload) }), phase => {
+      if (phase !== "write-lock-wait") observe(phase);
+    });
     const result: OperationalStateResult = {
       ...execution.receipt.result,
       certainty: "committed",
       commandId: envelope.commandId,
+      committedAt: execution.receipt.committedAt,
       replayed: execution.replayed
     };
+    observe("responding");
     sendToParent({ type: "response", requestId: envelope.requestId, generation, ok: true, result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -779,17 +868,39 @@ function isChildMessage(value: unknown): value is StateChildMessage {
       typeof message.version === "number" &&
       isUuid(message.generation) &&
       Number.isSafeInteger(message.heartbeatAt) &&
+      (message.lastCommitAt === undefined ||
+        Number.isSafeInteger(message.lastCommitAt) && Number(message.lastCommitAt) >= 0) &&
       isMaintenanceSliceList(message.supportedSlices);
   }
   if (message.type === "heartbeat") {
     return isUuid(message.generation) && Number.isSafeInteger(message.heartbeatAt) &&
       Number.isSafeInteger(message.inFlight) && Number(message.inFlight) >= 0;
   }
+  if (message.type === "operation") {
+    return isUuid(message.requestId) && isUuid(message.generation) &&
+      isOperationObservation(message.observation);
+  }
   if (message.type === "response") {
     return isUuid(message.requestId) && isUuid(message.generation) &&
       typeof message.ok === "boolean";
   }
   return false;
+}
+
+function isOperationObservation(value: unknown): value is OperationalStateOperationObservation {
+  if (!value || typeof value !== "object") return false;
+  const observation = value as Record<string, unknown>;
+  return observation.access === "write" &&
+    observation.operation === "maintain" &&
+    typeof observation.slice === "string" &&
+    STATE_MAINTENANCE_SLICES.includes(observation.slice as StateMaintenanceSlice) &&
+    typeof observation.phase === "string" &&
+    OPERATIONAL_STATE_OPERATION_PHASES.includes(
+      observation.phase as OperationalStateOperationPhase
+    ) &&
+    Number.isSafeInteger(observation.startedAt) && Number(observation.startedAt) >= 0 &&
+    Number.isSafeInteger(observation.observedAt) &&
+    Number(observation.observedAt) >= Number(observation.startedAt);
 }
 
 function isParentMessage(value: unknown): value is StateParentMessage {

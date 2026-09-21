@@ -99,6 +99,17 @@ The state command is still delayed and must keep its deadline, capacity and
 outcome-unknown contract; isolation does not make SQLite or storage latency
 disappear.
 
+A follow-up run added a privacy-safe last-confirmed operation observation. With
+the same 3.2 second lock, the isolated state service reported
+`state-stale + write/maintain/events/write-lock-wait`, zero queued requests and
+one in-flight request while `/healthz` and `runtime.health` returned in about
+1.1 ms. The parent retained that phase after the child heartbeat stopped and
+cleared it after the command response, while preserving the last commit time.
+No request, scope, project, Job identifier or payload is included. This narrows
+the blocked boundary to entry into `BEGIN IMMEDIATE`; it does not claim that a
+timer can inspect SQLite internals or distinguish lock-manager, filesystem and
+native-driver time while that synchronous call is blocked.
+
 A separate synthetic 350 ms main-thread CPU fault delayed `/healthz` by
 350.927 ms, `runtime.health` by 350.706 ms, and the event-loop timer by
 350.237 ms. State-process isolation therefore addresses the SQLite propagation
@@ -167,6 +178,9 @@ Direct observations and remaining uncertainty are now separated:
 - Confirmed: moving the same locked operation behind the child-process boundary
   keeps Bridge health responsive while the state service becomes explicitly
   stale; the operation completion time itself is not shortened.
+- Confirmed: the parent can retain the last state-owner write phase, queue depth
+  and prior commit time across a stale heartbeat, distinguishing observed DB
+  work from an unexplained connection timeout without exposing domain data.
 - Confirmed: bounded main-thread CPU occupancy remains a separate coupled
   latency source after state execution is isolated.
 - Unconfirmed: the exact SQL, lock owner, allocation source, or maintenance
