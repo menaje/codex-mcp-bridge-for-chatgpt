@@ -492,6 +492,12 @@ async function runProductionLongStall(root: string): Promise<Record<string, unkn
     childEnvironment: environment,
     onRuntimeProcessSpawn: processId => spawnedProcessIds.push(processId)
   });
+  // macOS limits AF_UNIX paths to roughly 104 bytes. The surrounding
+  // characterization root is intentionally descriptive, so keep this one
+  // generated socket in a separate short, private fixture directory.
+  const companionRoot = await mkdtemp(path.join("/tmp", "i143-companion-"));
+  const companionSocketPath = path.join(companionRoot, "bridge.sock");
+  let companion: Awaited<ReturnType<typeof startBridgeCompanionServer>> | undefined;
   let locker: Database.Database | undefined;
   let lockReleased = false;
   let runtimeStopped = false;
@@ -509,8 +515,28 @@ async function runProductionLongStall(root: string): Promise<Record<string, unkn
       throw new Error("Production regression HTTP address is unavailable.");
     }
     const port = address.port;
+    companion = await startBridgeCompanionServer({
+      socketPath: companionSocketPath,
+      applicationService: server.applicationService
+    });
     await waitForProductionReady(port, 10_000);
     const initial = await server.applicationService.settingsSnapshot();
+    const nativeBaselineHealth = await companionRequest(
+      companionSocketPath,
+      "runtime.health",
+      2_000
+    );
+    const nativeBaselineSettings = await companionRequest(
+      companionSocketPath,
+      "settings.snapshot",
+      5_000
+    );
+    assert.equal(nativeBaselineHealth.ok, true);
+    assert.equal(nativeBaselineSettings.ok, true);
+    assert.equal(
+      readSettingsRevision(nativeBaselineSettings.result),
+      initial.settings.settingsRevision
+    );
     const changedValue = !initial.settings.showBridgeThreadsInCodexApp;
 
     locker = new Database(stateFile);
@@ -544,6 +570,15 @@ async function runProductionLongStall(root: string): Promise<Record<string, unkn
     lockReleased = true;
 
     const stoppedAt = performance.now();
+    // This is the same socket and method used by the native app. Starting the
+    // request immediately after the runtime is stopped proves that either the
+    // fresh-to-stale transition or an already-stale admission returns bounded
+    // uncertainty instead of holding the app connection until recovery.
+    const nativeDegradedSettingsPromise = companionRequest(
+      companionSocketPath,
+      "settings.snapshot",
+      5_000
+    );
     const healthSamples: Array<{ elapsedMs: number; durationMs: number; statusCode: number }> = [];
     const checkpoints: Array<{
       requestedAtMs: number;
@@ -551,6 +586,7 @@ async function runProductionLongStall(root: string): Promise<Record<string, unkn
       readinessStatus: number;
       readiness: unknown;
       runtimeHealth: ReturnType<NonNullable<typeof server.applicationService.runtimeHealth>>;
+      nativeRuntimeHealth: Awaited<ReturnType<typeof companionRequest>>;
     }> = [];
     const checkpointTargets = [2_250, 10_000, 30_000];
     let checkpointIndex = 0;
@@ -570,6 +606,11 @@ async function runProductionLongStall(root: string): Promise<Record<string, unkn
         const readiness = await probeReadiness(port, 2_000);
         const runtimeHealth = server.applicationService.runtimeHealth?.();
         if (!runtimeHealth) throw new Error("Production runtime health is unavailable.");
+        const nativeRuntimeHealth = await companionRequest(
+          companionSocketPath,
+          "runtime.health",
+          2_000
+        );
         assert.equal(readiness.statusCode, 503);
         assert.match(String((readiness.body as { reason?: unknown }).reason), /^state-stale$/u);
         assert.equal(runtimeHealth.acceptingNewJobs, false);
@@ -578,12 +619,22 @@ async function runProductionLongStall(root: string): Promise<Record<string, unkn
         assert.equal(runtimeHealth.stateService?.activeOperation?.access, "write");
         assert.equal(runtimeHealth.readService?.status, "read-stale");
         assert.equal(runtimeHealth.telemetryService?.status, "stale");
+        assert.equal(nativeRuntimeHealth.ok, true);
+        assert.ok(
+          nativeRuntimeHealth.durationMs < 750,
+          `native runtime.health took ${nativeRuntimeHealth.durationMs} ms`
+        );
+        assert.equal(
+          readStateServiceStatus(nativeRuntimeHealth.result),
+          "state-stale"
+        );
         checkpoints.push({
           requestedAtMs,
           observedAtMs: rounded(performance.now() - stoppedAt),
           readinessStatus: readiness.statusCode,
           readiness: readiness.body,
-          runtimeHealth
+          runtimeHealth,
+          nativeRuntimeHealth
         });
         checkpointIndex += 1;
       }
@@ -599,6 +650,14 @@ async function runProductionLongStall(root: string): Promise<Record<string, unkn
     const uncertain = await mutationOutcome;
     assert.equal(uncertain.outcome, "unknown");
     assert.match("error" in uncertain ? uncertain.error : "", /RUNTIME_RESPONSE_UNCONFIRMED/u);
+    const nativeDegradedSettings = await nativeDegradedSettingsPromise;
+    assert.equal(nativeDegradedSettings.ok, false);
+    assert.notEqual(nativeDegradedSettings.error, "timeout");
+    assert.match(nativeDegradedSettings.error || "", /RUNTIME_RESPONSE_UNCONFIRMED/u);
+    assert.ok(
+      nativeDegradedSettings.durationMs < 3_500,
+      `native Settings uncertainty took ${nativeDegradedSettings.durationMs} ms`
+    );
 
     process.kill(stoppedProcessId, "SIGCONT");
     runtimeStopped = false;
@@ -611,6 +670,23 @@ async function runProductionLongStall(root: string): Promise<Record<string, unkn
       "committed settings revision after runtime resume"
     );
     assert.equal(recovered.settings.showBridgeThreadsInCodexApp, changedValue);
+    const nativeRecoveredSettings = await companionRequest(
+      companionSocketPath,
+      "settings.snapshot",
+      5_000
+    );
+    const nativeRecoveredDashboard = await companionRequest(
+      companionSocketPath,
+      "dashboard.snapshot",
+      5_000,
+      { enrich: false }
+    );
+    assert.equal(nativeRecoveredSettings.ok, true);
+    assert.equal(nativeRecoveredDashboard.ok, true);
+    assert.equal(
+      readSettingsRevision(nativeRecoveredSettings.result),
+      recovered.settings.settingsRevision
+    );
     const durations = healthSamples.map(sample => sample.durationMs).sort((left, right) => left - right);
     return {
       passed: true,
@@ -635,6 +711,15 @@ async function runProductionLongStall(root: string): Promise<Record<string, unkn
       },
       checkpoints,
       uncertainWrite: uncertain,
+      nativeCompanion: {
+        socketRemainedAvailable: true,
+        baselineHealthMs: rounded(nativeBaselineHealth.durationMs),
+        baselineSettingsMs: rounded(nativeBaselineSettings.durationMs),
+        degradedSettings: nativeDegradedSettings,
+        recoveredSettingsMs: rounded(nativeRecoveredSettings.durationMs),
+        recoveredDashboardMs: rounded(nativeRecoveredDashboard.durationMs),
+        recoveredSettingsRevision: readSettingsRevision(nativeRecoveredSettings.result)
+      },
       recovery: {
         durationMs: rounded(performance.now() - resumedAt),
         settingsRevisionBefore: initial.settings.settingsRevision,
@@ -655,7 +740,9 @@ async function runProductionLongStall(root: string): Promise<Record<string, unkn
       if (!lockReleased && locker.inTransaction) locker.exec("ROLLBACK");
       locker.close();
     }
+    await companion?.close();
     await new Promise<void>(resolve => server.close(() => resolve()));
+    await rm(companionRoot, { recursive: true, force: true });
   }
 }
 
@@ -986,30 +1073,55 @@ function delay(milliseconds: number): Promise<void> {
 function companionRequest(
   socketPath: string,
   method: string,
-  timeoutMs: number
-): Promise<{ ok: boolean; durationMs: number; error?: string }> {
+  timeoutMs: number,
+  params: Record<string, unknown> = {}
+): Promise<{ ok: boolean; durationMs: number; error?: string; result?: unknown }> {
   return new Promise(resolve => {
     const started = performance.now();
     const socket = createConnection(socketPath);
     let buffer = "";
-    const finish = (ok: boolean, error?: string) => {
+    const finish = (ok: boolean, error?: string, result?: unknown) => {
       clearTimeout(timer);
       socket.destroy();
-      resolve({ ok, durationMs: performance.now() - started, ...(error ? { error } : {}) });
+      resolve({
+        ok,
+        durationMs: performance.now() - started,
+        ...(error ? { error } : {}),
+        ...(result !== undefined ? { result } : {})
+      });
     };
     const timer = setTimeout(() => finish(false, "timeout"), timeoutMs);
     socket.setEncoding("utf8");
     socket.once("error", error => finish(false, error.message));
     socket.once("connect", () => {
-      socket.write(`${JSON.stringify({ jsonrpc: "2.0", id: method, method, params: {} })}\n`);
+      socket.write(`${JSON.stringify({ jsonrpc: "2.0", id: method, method, params })}\n`);
     });
     socket.on("data", chunk => {
       buffer += chunk;
       if (!buffer.includes("\n")) return;
-      const response = JSON.parse(buffer.split("\n")[0]!) as { error?: { message?: string } };
-      finish(!response.error, response.error?.message);
+      const response = JSON.parse(buffer.split("\n")[0]!) as {
+        error?: { message?: string };
+        result?: unknown;
+      };
+      finish(!response.error, response.error?.message, response.result);
     });
   });
+}
+
+function readSettingsRevision(value: unknown): number | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const settings = (value as { settings?: unknown }).settings;
+  if (!settings || typeof settings !== "object") return undefined;
+  const revision = (settings as { settingsRevision?: unknown }).settingsRevision;
+  return typeof revision === "number" ? revision : undefined;
+}
+
+function readStateServiceStatus(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const stateService = (value as { stateService?: unknown }).stateService;
+  if (!stateService || typeof stateService !== "object") return undefined;
+  const status = (stateService as { status?: unknown }).status;
+  return typeof status === "string" ? status : undefined;
 }
 
 function rounded(value: number): number {
