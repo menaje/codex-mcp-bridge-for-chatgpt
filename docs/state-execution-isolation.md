@@ -65,6 +65,34 @@ does not address that failure. The implementation order is therefore:
 5. integrate degraded state and end-to-end recovery in the native app and
    Dashboard.
 
+## What isolation changes and what remains
+
+The issue #143 characterization now applies 50, 250, 1,000 and 3,200 ms SQLite
+write locks to both the current in-process state call and the protocol-v3 child
+prototype. At 3,200 ms, both state operations still took about 3.28 seconds.
+Isolation does not shorten an external lock, filesystem stall or `fsync`.
+
+The availability effect is different. The current path delayed `/healthz` and
+the Bridge event-loop timer by about 3.27 seconds and made the two-second
+`runtime.health` request time out. With the state call in the child, `/healthz`
+and `runtime.health` each returned in about 1.7 ms and the Bridge timer fired in
+about 11 ms. The state service reported `state-stale` with the operation still
+in flight. That is the intended boundary: state readiness can degrade within a
+deadline and outcome-certainty contract without turning into Bridge liveness
+failure.
+
+A separate 350 ms synthetic main-thread CPU fault delayed both health paths and
+the Bridge timer by about 350 ms. Work that stays on the Bridge event loop—large
+serialization, allocation/garbage collection, synchronous file work or other
+CPU-heavy handlers—must therefore be measured, bounded, split or moved even
+after the SQLite cutover. Database isolation is necessary for the reproduced
+failure mode, but it is not a blanket latency fix.
+
+The measurements are deterministic single fault samples, not p99 evidence. The
+full load matrix, queue timing, read worker, telemetry child and installed
+Tunnel/ChatGPT/Codex path remain release gates. Detailed values are retained in
+[the issue #143 audit](audits/issue-143-connection-reliability.md).
+
 ## Database classification
 
 Unclassified or mixed-use data remains in `state.sqlite`. Importance is decided

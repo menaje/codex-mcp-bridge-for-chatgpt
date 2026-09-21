@@ -76,6 +76,51 @@ reproduces the helper's false-disconnection condition even though
 `runtime.health` itself performs no database access: it cannot run while another
 synchronous database call occupies the same event loop.
 
+## Latency attribution and isolation comparison
+
+The characterization was extended on 2026-09-21 with four lock durations and
+the same supported `events` maintenance write through the protocol-v3 isolated
+state prototype. Each row is one controlled sample, not a percentile claim.
+The state operation remains subject to the injected lock in both designs; the
+comparison asks whether that wait also occupies the Bridge response event loop.
+
+| Lock | Current state op | Current `/healthz` | Current timer | Isolated state op | Isolated `/healthz` | Isolated timer |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 50 ms | 80.129 ms | 80.585 ms | 80.196 ms | 56.739 ms | 2.041 ms | 10.161 ms |
+| 250 ms | 269.236 ms | 273.131 ms | 271.641 ms | 279.127 ms | 1.268 ms | 11.916 ms |
+| 1,000 ms | 1,043.022 ms | 1,046.129 ms | 1,043.444 ms | 1,042.463 ms | 1.307 ms | 10.266 ms |
+| 3,200 ms | 3,271.858 ms | 3,274.566 ms | 3,272.252 ms | 3,284.074 ms | 1.701 ms | 11.364 ms |
+
+At 3.2 seconds, current `runtime.health` timed out at 2,003.118 ms. The
+isolated comparison returned it in 1.697 ms while the state service correctly
+reported `state-stale`, a 2,255 ms heartbeat age, and one in-flight operation.
+This separates a bounded state-availability degradation from Bridge liveness.
+The state command is still delayed and must keep its deadline, capacity and
+outcome-unknown contract; isolation does not make SQLite or storage latency
+disappear.
+
+A separate synthetic 350 ms main-thread CPU fault delayed `/healthz` by
+350.983 ms, `runtime.health` by 350.530 ms, and the event-loop timer by
+350.359 ms. State-process isolation therefore addresses the SQLite propagation
+path but cannot protect the Bridge from synchronous serialization, allocation,
+garbage collection, or other CPU work that remains on its event loop.
+
+The resulting policy is:
+
+- optimize normal SQL, payload, serialization, allocation and queue cost;
+- isolate SQLite/storage stalls, Dashboard reads and diagnostic persistence;
+- permit state unavailability, stale presentation and deferred maintenance only
+  through bounded deadlines, explicit reason codes and preserved command IDs;
+- tolerate Tunnel/network/Codex latency through separate clocks, reconnect and
+  authoritative resynchronization;
+- never permit a state fault to freeze liveness or turn uncertainty into a Job
+  success, failure or cancellation.
+
+This verifies the isolation boundary only in a disposable prototype. Production
+startup still uses the in-process owner, the child lacks the registry-owned
+`jobs` slice, and the remaining command/query callers and installed end-to-end
+combination have not crossed or passed the release gate.
+
 ## T1 decision
 
 Direct observations and remaining uncertainty are now separated:
@@ -87,10 +132,15 @@ Direct observations and remaining uncertainty are now separated:
   connection resets in the retained window.
 - Confirmed: an isolated SQLite wait is sufficient to reproduce the coupled
   health failure and no-restart recovery.
+- Confirmed: moving the same locked operation behind the child-process boundary
+  keeps Bridge health responsive while the state service becomes explicitly
+  stale; the operation completion time itself is not shortened.
+- Confirmed: bounded main-thread CPU occupancy remains a separate coupled
+  latency source after state execution is isolated.
 - Unconfirmed: the exact SQL, lock owner, allocation source, or maintenance
   slice responsible for each operating stall.
-- Unconfirmed: that a second database file without execution isolation would
-  improve response availability.
+- Unconfirmed: production cutover behavior across every state caller, queue and
+  read path, and the installed Tunnel/ChatGPT/Codex combination.
 
 T1 therefore supports proceeding to #142 with execution isolation as the first
 architectural boundary. File separation remains a later data-ownership and fault

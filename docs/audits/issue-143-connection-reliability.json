@@ -75,20 +75,109 @@
       "processRestarted": false
     }
   },
+  "latencyAttributionUpdate": {
+    "testedAt": "2026-09-21T10:51:45.270Z",
+    "baseCheckout": "8815f98d6b1cf1477b75e005084694a4bb4e6b47",
+    "database": "disposable schema-25 fixtures",
+    "samplesPerFaultDuration": 1,
+    "percentileClaimed": false,
+    "lockHoldMs": [50, 250, 1000, 3200],
+    "currentMainProcess": [
+      {
+        "lockHoldMs": 50,
+        "stateOperationMs": 80.129,
+        "healthzMs": 80.585,
+        "runtimeHealthOutcome": "ok",
+        "runtimeHealthMs": 80.614,
+        "eventLoopTimerMs": 80.196
+      },
+      {
+        "lockHoldMs": 250,
+        "stateOperationMs": 269.236,
+        "healthzMs": 273.131,
+        "runtimeHealthOutcome": "ok",
+        "runtimeHealthMs": 273.6,
+        "eventLoopTimerMs": 271.641
+      },
+      {
+        "lockHoldMs": 1000,
+        "stateOperationMs": 1043.022,
+        "healthzMs": 1046.129,
+        "runtimeHealthOutcome": "ok",
+        "runtimeHealthMs": 1046.578,
+        "eventLoopTimerMs": 1043.444
+      },
+      {
+        "lockHoldMs": 3200,
+        "stateOperationMs": 3271.858,
+        "healthzMs": 3274.566,
+        "runtimeHealthOutcome": "timeout",
+        "runtimeHealthMs": 2003.118,
+        "eventLoopTimerMs": 3272.252
+      }
+    ],
+    "isolatedStatePrototype": [
+      {
+        "lockHoldMs": 50,
+        "stateOperationMs": 56.739,
+        "healthzMs": 2.041,
+        "runtimeHealthMs": 2.028,
+        "eventLoopTimerMs": 10.161
+      },
+      {
+        "lockHoldMs": 250,
+        "stateOperationMs": 279.127,
+        "healthzMs": 1.268,
+        "runtimeHealthMs": 1.278,
+        "eventLoopTimerMs": 11.916
+      },
+      {
+        "lockHoldMs": 1000,
+        "stateOperationMs": 1042.463,
+        "healthzMs": 1.307,
+        "runtimeHealthMs": 1.266,
+        "eventLoopTimerMs": 10.266
+      },
+      {
+        "lockHoldMs": 3200,
+        "stateOperationMs": 3284.074,
+        "healthzMs": 1.701,
+        "runtimeHealthMs": 1.697,
+        "eventLoopTimerMs": 11.364,
+        "stateServiceReason": "state-stale",
+        "stateServiceHeartbeatAgeMs": 2255,
+        "stateServiceInFlight": 1
+      }
+    ],
+    "mainThreadCpu": {
+      "blockMs": 350,
+      "healthzMs": 350.983,
+      "runtimeHealthMs": 350.53,
+      "eventLoopTimerMs": 350.359
+    },
+    "conclusion": {
+      "stateCompletionLatencyEliminated": false,
+      "sqliteLatencyPropagationPreventedByPrototype": true,
+      "mainThreadCpuStillPropagates": true,
+      "productionResolutionVerified": false
+    }
+  },
   "findings": {
     "directlyObserved": [
       "the installed bridge process remained alive while both the private runtime.health path and public healthz path missed the same two-second interval",
       "the helper repeatedly recovered against the same launcher and bridge process without a runtime restart",
       "tools/call connection_reset 502 records occurred in the same bounded diagnostic window as repeated bridge status timeouts",
       "a post-timeout main-thread sample contained synchronous better-sqlite3 work and substantial minor garbage collection",
-      "a controlled SQLite lock reproduced the same health-path coupling and recovered without a process restart"
+      "a controlled SQLite lock reproduced the same health-path coupling and recovered without a process restart",
+      "the isolated prototype kept both Bridge health paths responsive while the same state operation remained blocked and state readiness became stale",
+      "a synthetic main-thread CPU fault still delayed both Bridge health paths after the state execution boundary was isolated"
     ],
     "notYetProven": [
       "the exact SQL statement or maintenance slice that initiated each installed-runtime stall",
       "whether lock contention, query work, allocation pressure, garbage collection, or a combination dominated each stall",
       "the complete Tunnel and ChatGPT request history outside the bounded helper log",
-      "that splitting the database file alone would prevent recurrence"
+      "production cutover behavior across every state caller, queue and read path, and the installed end-to-end combination"
     ]
   },
-  "result": "T1 evidence complete; proceed to issue 142 architecture contracts"
+  "result": "latency domains separated and the state-process isolation boundary verified on disposable fixtures; production resolution remains unverified"
 }
