@@ -11,6 +11,10 @@ import {
   OperationalStateProcessError,
   SupervisedOperationalStateService
 } from "../src/stateServiceProcess.js";
+import {
+  OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES,
+  OPERATIONAL_STATE_PROTOCOL_VERSION
+} from "../src/stateService.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 
 describe("operational state child process", () => {
@@ -21,11 +25,12 @@ describe("operational state child process", () => {
     });
     try {
       expect(service.health()).toMatchObject({
-        ready: true,
-        reason: "ready",
-        protocolVersion: 2,
+        ready: false,
+        reason: "state-incompatible",
+        protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
         generation: expect.any(String),
-        capacity: 64
+        capacity: 64,
+        supportedSlices: OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES
       });
       await expect(service.execute({ operation: "maintain", slice: "events" }))
         .resolves.toMatchObject({
@@ -44,6 +49,10 @@ describe("operational state child process", () => {
           certainty: "committed",
           commandId: expect.any(String),
           replayed: false
+        });
+      await expect(service.execute({ operation: "maintain", slice: "jobs" }))
+        .rejects.toMatchObject<Partial<OperationalStateProcessError>>({
+          code: "STATE_OPERATION_UNAVAILABLE"
         });
     } finally {
       await service.close();
@@ -103,7 +112,7 @@ describe("operational state child process", () => {
       locked = false;
       await expect(maintenance).resolves.toMatchObject({ operation: "maintain", slice: "events" });
       await delay(350);
-      expect(service.health()).toMatchObject({ ready: true, reason: "ready" });
+      expect(service.health()).toMatchObject({ ready: false, reason: "state-incompatible" });
     } finally {
       if (locked && locker.inTransaction) locker.exec("ROLLBACK");
       locker.close();
@@ -138,7 +147,11 @@ describe("operational state child process", () => {
       locker.exec("COMMIT");
       locked = false;
       await delay(350);
-      expect(service.health()).toMatchObject({ ready: true, reason: "ready", inFlight: 0 });
+      expect(service.health()).toMatchObject({
+        ready: false,
+        reason: "state-incompatible",
+        inFlight: 0
+      });
     } finally {
       if (locked && locker.inTransaction) locker.exec("ROLLBACK");
       locker.close();
@@ -168,7 +181,11 @@ describe("operational state child process", () => {
       locker.exec("COMMIT");
       locked = false;
       await delay(350);
-      expect(service.health()).toMatchObject({ ready: true, inFlight: 0 });
+      expect(service.health()).toMatchObject({
+        ready: false,
+        reason: "state-incompatible",
+        inFlight: 0
+      });
       await service.close();
 
       service = await ChildProcessOperationalStateService.start({ file, capacity: 1 });
@@ -211,10 +228,11 @@ describe("operational state child process", () => {
       process.kill(firstPid as number, "SIGKILL");
       await waitFor(() => {
         const nextPid = service.processId;
-        return nextPid !== undefined && nextPid !== firstPid && service.health().ready;
+        return nextPid !== undefined && nextPid !== firstPid &&
+          service.health().heartbeatAgeMs !== undefined;
       }, 5_000);
 
-      expect(service.health()).toMatchObject({ ready: true, reason: "ready" });
+      expect(service.health()).toMatchObject({ ready: false, reason: "state-incompatible" });
       await expect(service.execute({ operation: "maintain", slice: "events" }))
         .resolves.toMatchObject({ certainty: "committed", replayed: false });
 
@@ -231,6 +249,63 @@ describe("operational state child process", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 10_000);
+
+  it("retires a live but stale state owner before starting its replacement", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "state-service-stale-supervisor-"));
+    const file = path.join(root, "state.sqlite");
+    const service = await SupervisedOperationalStateService.start({
+      file,
+      restartBaseDelayMs: 25,
+      restartMaxDelayMs: 100,
+      restartStableMs: 10_000,
+      staleRestartMs: 2_250
+    });
+    try {
+      const firstPid = service.processId;
+      expect(firstPid).toEqual(expect.any(Number));
+      process.kill(firstPid as number, "SIGSTOP");
+      const commandId = randomUUID();
+      const uncertain = service.execute(
+        { operation: "maintain", slice: "events" },
+        { commandId, deadlineMs: 10_000 }
+      ).then(
+        () => undefined,
+        error => error as OperationalStateProcessError
+      );
+
+      await waitFor(() => {
+        const nextPid = service.processId;
+        return nextPid !== undefined && nextPid !== firstPid &&
+          service.health().heartbeatAgeMs !== undefined;
+      }, 8_000);
+
+      expect(service.health()).toMatchObject({
+        ready: false,
+        reason: "state-incompatible",
+        generation: expect.any(String)
+      });
+      await expect(uncertain).resolves.toMatchObject({
+        code: "STATE_OUTCOME_UNKNOWN",
+        commandId
+      });
+      await expect(service.execute(
+        { operation: "maintain", slice: "events" },
+        { commandId }
+      )).resolves.toMatchObject({ certainty: "committed", commandId, replayed: false });
+
+      const database = new Database(file, { readonly: true });
+      try {
+        expect(database.prepare(`
+          SELECT COUNT(*) AS count FROM bridge_instances WHERE stopped_at IS NULL
+        `).get()).toEqual({ count: 1 });
+      } finally {
+        database.close();
+      }
+    } finally {
+      await service.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 12_000);
 
   it("closes promptly after the child has already exited by signal", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "state-service-signalled-close-"));
@@ -258,6 +333,10 @@ describe("operational state child process", () => {
         restartBaseDelayMs: 100,
         restartMaxDelayMs: 50
       })).rejects.toThrow(/restartMaxDelayMs must be an integer from 100 to 300000/);
+      await expect(SupervisedOperationalStateService.start({
+        file: path.join(root, "state.sqlite"),
+        staleRestartMs: 2_000
+      })).rejects.toThrow(/staleRestartMs must be an integer from 2250 to 300000/);
       expect(readdirSync(root)).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });

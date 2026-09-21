@@ -2134,6 +2134,10 @@ export class CodexJobRegistry {
   private unsubscribeRecovery?: () => void;
   private projectedProjectRevision = -1;
   private retainedJobMaintenanceIterator?: IterableIterator<[string, CodexJob]>;
+  private readonly retentionProtectedJobs = new Set<string>();
+  private retainedJobTarget?: number;
+  private retainedJobMaintenanceTimer?: NodeJS.Timeout;
+  private stateMaintenanceClosed = false;
 
   configureAutomaticRecovery(options: ConstructorParameters<typeof AutomaticRecoveryController>[1]): void {
     if (this.recoveryController) return;
@@ -2153,7 +2157,7 @@ export class CodexJobRegistry {
   }
 
   configureStateMaintenance(intervalMs?: number): void {
-    if (this.maintenanceScheduler) return;
+    if (this.maintenanceScheduler || this.stateMaintenanceClosed) return;
     const stateService = new InProcessOperationalStateService(this.activityStore, {
       maintainJobs: () => this.maintainRetainedJobs()
     });
@@ -2163,11 +2167,15 @@ export class CodexJobRegistry {
       shouldDefer: () => this.runtimeAdmission.pendingAdmissions > 0 || this.observedRunningCount() > 0
     });
     this.maintenanceScheduler.start();
+    this.scheduleIdleRetainedJobMaintenance();
   }
 
   async closeThreadConnections(): Promise<void> {
+    this.stateMaintenanceClosed = true;
     this.unsubscribeRecovery?.();
     this.maintenanceScheduler?.close();
+    if (this.retainedJobMaintenanceTimer) clearTimeout(this.retainedJobMaintenanceTimer);
+    this.retainedJobMaintenanceTimer = undefined;
     await this.recoveryController?.close();
     await this.threadController?.close();
   }
@@ -2200,7 +2208,11 @@ export class CodexJobRegistry {
     }
     this.maxConcurrentJobs = maxConcurrentJobs;
     this.ttlMs = options.ttlMs ?? 6 * 60 * 60 * 1000;
-    this.maxJobs = options.maxJobs ?? 100;
+    const maxJobs = options.maxJobs ?? 100;
+    if (!Number.isInteger(maxJobs) || maxJobs < maxConcurrentJobs) {
+      throw new Error("Codex retained Job capacity must be an integer no lower than concurrency.");
+    }
+    this.maxJobs = maxJobs;
     this.maxResultBytes = options.maxResultBytes ?? 1024 * 1024;
     this.staleAfterMs = options.staleAfterMs ?? 10 * 60 * 1000;
     this.stateStore = options.stateStore;
@@ -2950,6 +2962,12 @@ export class CodexJobRegistry {
         "A compatible Codex context is still starting or running for this Activity. Wait for it, or create another Agent with contextMode='fresh' for deliberate parallel work."
       );
     }
+    if (this.retainedJobAdmissionReservations() >= this.maxJobs) {
+      this.requestRetainedJobHeadroom();
+      throw new Error(
+        "JOB_RETENTION_CAPACITY: Retained Job capacity is reserved by active or not-yet-classified terminal work. Retry after foreground work settles and bounded maintenance catches up."
+      );
+    }
     const now = Date.now();
     const job: CodexJob = {
       ...input,
@@ -3033,6 +3051,8 @@ export class CodexJobRegistry {
     this.steeringPromptRedactions.delete(jobId);
     this.jobs.delete(jobId);
     this.lastWake.delete(jobId);
+    this.retentionProtectedJobs.delete(jobId);
+    this.scheduleIdleRetainedJobMaintenance();
   }
 
   private settleResolvedJob(
@@ -3841,6 +3861,9 @@ export class CodexJobRegistry {
     for (const listener of [...(this.waiters.get(jobId) || [])]) listener(effectiveReason);
     if (effectiveReason === "terminal") {
       for (const listener of [...(this.terminalWaiters.get(jobId) || [])]) listener();
+      if (this.observedRunningCount() === 0) {
+        this.scheduleIdleRetainedJobMaintenance();
+      }
     }
   }
 
@@ -3849,26 +3872,86 @@ export class CodexJobRegistry {
     for (const listener of [...(this.scopeWaiters.get(scopeId) || [])]) listener();
   }
 
+  /**
+   * Active Jobs reserve a retained slot because they can become terminal at
+   * any time. Terminal Jobs count until a bounded maintenance pass either
+   * removes them or confirms a durable retention protection.
+   */
+  private retainedJobAdmissionReservations(): number {
+    let reservations = 0;
+    for (const [jobId, job] of this.jobs) {
+      if (
+        isActiveActivityJobStatus(job.status) ||
+        isTerminalActivityJobStatus(job.status) && !this.retentionProtectedJobs.has(jobId)
+      ) reservations++;
+    }
+    return reservations;
+  }
+
+  private requestRetainedJobHeadroom(): void {
+    const target = Math.max(0, this.maxJobs - 1);
+    this.retainedJobTarget = Math.min(this.retainedJobTarget ?? target, target);
+    this.scheduleIdleRetainedJobMaintenance();
+  }
+
+  private scheduleIdleRetainedJobMaintenance(delayMs = 0): void {
+    if (
+      this.stateMaintenanceClosed ||
+      this.retainedJobMaintenanceTimer ||
+      !this.maintenanceScheduler && this.retainedJobTarget === undefined
+    ) return;
+    this.retainedJobMaintenanceTimer = setTimeout(() => {
+      this.retainedJobMaintenanceTimer = undefined;
+      if (
+        this.runtimeAdmission.pendingAdmissions > 0 ||
+        this.observedRunningCount() > 0
+      ) return;
+      const sweep = this.maintenanceScheduler
+        ? this.maintenanceScheduler.sweep("jobs")
+        : Promise.resolve({ failed: false, changed: this.maintainRetainedJobs() });
+      void sweep.then(observation => {
+        if (
+          this.retainedJobTarget !== undefined &&
+          this.retainedJobAdmissionReservations() > this.retainedJobTarget
+        ) {
+          this.scheduleIdleRetainedJobMaintenance(observation?.failed ? 1_000 : 250);
+        }
+      }, () => this.scheduleIdleRetainedJobMaintenance(1_000));
+    }, Math.max(0, delayMs));
+    this.retainedJobMaintenanceTimer.unref();
+  }
+
   /** One-time startup normalization. Runtime maintenance uses the bounded
    * resumable slice below. */
   private pruneLoadedJobsAtStartup(): string[] {
     const removed: string[] = [];
     const now = Date.now();
     const cutoff = now - this.ttlMs;
-    for (const [jobId, job] of this.jobs) {
-      if (!isActiveActivityJobStatus(job.status) && job.updatedAt < cutoff &&
-        !this.activityStore.retentionProtection(jobId, now, this.ttlMs).length) {
-        this.jobs.delete(jobId);
-        this.lastWake.delete(jobId);
-        removed.push(jobId);
-      }
-    }
-    if (this.jobs.size <= this.maxJobs) return removed;
-    const sorted = [...this.jobs.values()].sort((a, b) => a.updatedAt - b.updatedAt);
-    for (const job of sorted.filter((entry) => !isActiveActivityJobStatus(entry.status) &&
-      !this.activityStore.retentionProtection(entry.jobId, now, this.ttlMs).length).slice(0, this.jobs.size - this.maxJobs)) {
+    const unprotected = [...this.jobs.values()]
+      .filter(job => isTerminalActivityJobStatus(job.status))
+      .sort((left, right) => left.updatedAt - right.updatedAt || left.jobId.localeCompare(right.jobId))
+      .filter(job => {
+        const protectedJob = this.activityStore.retentionProtection(
+          job.jobId,
+          now,
+          this.ttlMs
+        ).length > 0;
+        if (protectedJob) this.retentionProtectedJobs.add(job.jobId);
+        else this.retentionProtectedJobs.delete(job.jobId);
+        return !protectedJob;
+      });
+    const expired = new Set(
+      unprotected.filter(job => job.updatedAt < cutoff).map(job => job.jobId)
+    );
+    const retained = unprotected.filter(job => !expired.has(job.jobId));
+    const overLimit = new Set(
+      retained.slice(0, Math.max(0, retained.length - this.maxJobs)).map(job => job.jobId)
+    );
+    for (const job of unprotected) {
+      if (!expired.has(job.jobId) && !overLimit.has(job.jobId)) continue;
       this.jobs.delete(job.jobId);
       this.lastWake.delete(job.jobId);
+      this.retentionProtectedJobs.delete(job.jobId);
       removed.push(job.jobId);
     }
     return removed;
@@ -4075,10 +4158,16 @@ export class CodexJobRegistry {
 
       const now = Date.now();
       const cutoff = now - this.ttlMs;
+      const retentionTarget = Math.min(this.maxJobs, this.retainedJobTarget ?? this.maxJobs);
+      let admissionReservations = this.retainedJobAdmissionReservations();
       const candidates = inspected
         .filter(([, job]) =>
-          !isActiveActivityJobStatus(job.status) &&
-          (job.updatedAt < cutoff || this.jobs.size > this.maxJobs)
+          isTerminalActivityJobStatus(job.status) &&
+          (
+            job.updatedAt < cutoff ||
+            admissionReservations > retentionTarget ||
+            this.retentionProtectedJobs.has(job.jobId)
+          )
         )
         .sort((left, right) =>
           left[1].updatedAt - right[1].updatedAt || left[0].localeCompare(right[0])
@@ -4092,13 +4181,31 @@ export class CodexJobRegistry {
       for (const [jobId, job] of candidates) {
         if (removed.length >= maxRemoved || considered > 0 && performance.now() >= deadline) break;
         considered++;
-        if (job.updatedAt >= cutoff && this.jobs.size <= this.maxJobs) continue;
-        if (this.activityStore.retentionProtection(jobId, now, this.ttlMs).length) continue;
+        const wasKnownProtected = this.retentionProtectedJobs.has(jobId);
+        if (this.activityStore.retentionProtection(jobId, now, this.ttlMs).length) {
+          this.retentionProtectedJobs.add(jobId);
+          if (!wasKnownProtected) admissionReservations--;
+          continue;
+        }
+        this.retentionProtectedJobs.delete(jobId);
+        if (wasKnownProtected) admissionReservations++;
+        if (
+          job.updatedAt >= cutoff &&
+          admissionReservations <= retentionTarget
+        ) continue;
         removed.push({ jobId, job, wake: this.lastWake.get(jobId) });
         this.jobs.delete(jobId);
         this.lastWake.delete(jobId);
+        this.retentionProtectedJobs.delete(jobId);
+        admissionReservations--;
       }
-      if (removed.length === 0) return 0;
+      if (removed.length === 0) {
+        if (
+          this.retainedJobTarget !== undefined &&
+          admissionReservations <= this.retainedJobTarget
+        ) this.retainedJobTarget = undefined;
+        return 0;
+      }
       try {
         this.activityStore.transaction(() => {
           for (const { jobId } of removed) this.activityStore.deleteJob(jobId);
@@ -4117,6 +4224,10 @@ export class CodexJobRegistry {
         }
         return 0;
       }
+      if (
+        this.retainedJobTarget !== undefined &&
+        admissionReservations <= this.retainedJobTarget
+      ) this.retainedJobTarget = undefined;
       return removed.length;
     } finally {
       this.waitDiagnosticsTracker.pruneAndPersist.record(performance.now() - startedAt);
@@ -14738,7 +14849,8 @@ function errorFromException(error: unknown): z.infer<typeof structuredErrorOutpu
   const code = codeMatch?.[1] || "CODEX_TASK_FAILED";
   return normalizeStructuredError({
     code,
-    message: codeMatch ? rawMessage.slice(codeMatch[0].length) : rawMessage
+    message: codeMatch ? rawMessage.slice(codeMatch[0].length) : rawMessage,
+    ...(code === "JOB_RETENTION_CAPACITY" ? { retryable: true } : {})
   });
 }
 

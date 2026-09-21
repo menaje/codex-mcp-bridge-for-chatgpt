@@ -3,8 +3,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   executeOperationalStateCommand,
+  OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES,
   OPERATIONAL_STATE_PROTOCOL,
   OPERATIONAL_STATE_PROTOCOL_VERSION,
+  OPERATIONAL_STATE_REQUIRED_SLICES,
   type OperationalStateCommand,
   type OperationalStateExecuteOptions,
   type OperationalStateHealth,
@@ -12,6 +14,10 @@ import {
   type OperationalStateResult,
   type OperationalStateService
 } from "./stateService.js";
+import {
+  STATE_MAINTENANCE_SLICES,
+  type StateMaintenanceSlice
+} from "./maintenanceScheduler.js";
 import { BridgeStateStore } from "./stateStore.js";
 
 const CHILD_FLAG = "--operational-state-child";
@@ -19,6 +25,8 @@ const DEFAULT_DEADLINE_MS = 5_000;
 const DEFAULT_CAPACITY = 64;
 const DEFAULT_HEARTBEAT_MS = 250;
 const HEARTBEAT_STALE_MS = 2_000;
+const DEFAULT_STALE_RESTART_MS = 10_000;
+const FORCE_CLOSE_MS = 2_000;
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 
 type ChildReadyMessage = {
@@ -27,6 +35,7 @@ type ChildReadyMessage = {
   version: number;
   generation: string;
   heartbeatAt: number;
+  supportedSlices: StateMaintenanceSlice[];
 };
 
 type ChildHeartbeatMessage = {
@@ -85,6 +94,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
   private generation?: string;
   private lastHeartbeatAt?: number;
   private protocolCompatible = false;
+  private supportedSlices: readonly StateMaintenanceSlice[] = [];
   private starting = true;
   private closed = false;
   private childInFlight = 0;
@@ -170,6 +180,12 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
       return Promise.reject(new OperationalStateProcessError(
         "STATE_INCOMPATIBLE",
         "Operational state protocol is not compatible."
+      ));
+    }
+    if (!this.supportedSlices.includes(command.slice)) {
+      return Promise.reject(new OperationalStateProcessError(
+        "STATE_OPERATION_UNAVAILABLE",
+        `Operational state child does not support the ${command.slice} maintenance slice.`
       ));
     }
     if (this.outstanding >= this.capacity) {
@@ -269,7 +285,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
         generation: this.generation,
         inFlight: this.outstanding,
-        capacity: this.capacity
+        capacity: this.capacity,
+        supportedSlices: this.supportedSlices
       };
     }
     if (this.starting || !this.lastHeartbeatAt) {
@@ -279,7 +296,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
         generation: this.generation,
         inFlight: this.outstanding,
-        capacity: this.capacity
+        capacity: this.capacity,
+        supportedSlices: this.supportedSlices
       };
     }
     if (!this.protocolCompatible) {
@@ -290,7 +308,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         generation: this.generation,
         heartbeatAgeMs: Math.max(0, now - this.lastHeartbeatAt),
         inFlight: this.outstanding,
-        capacity: this.capacity
+        capacity: this.capacity,
+        supportedSlices: this.supportedSlices
       };
     }
     const heartbeatAgeMs = Math.max(0, now - this.lastHeartbeatAt);
@@ -302,7 +321,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         generation: this.generation,
         heartbeatAgeMs,
         inFlight: this.outstanding,
-        capacity: this.capacity
+        capacity: this.capacity,
+        supportedSlices: this.supportedSlices
       };
     }
     if (this.outstanding >= this.capacity) {
@@ -313,7 +333,20 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         generation: this.generation,
         heartbeatAgeMs,
         inFlight: this.outstanding,
-        capacity: this.capacity
+        capacity: this.capacity,
+        supportedSlices: this.supportedSlices
+      };
+    }
+    if (!supportsRequiredSlices(this.supportedSlices)) {
+      return {
+        ready: false,
+        reason: "state-incompatible",
+        protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
+        generation: this.generation,
+        heartbeatAgeMs,
+        inFlight: this.outstanding,
+        capacity: this.capacity,
+        supportedSlices: this.supportedSlices
       };
     }
     return {
@@ -323,7 +356,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
       generation: this.generation,
       heartbeatAgeMs,
       inFlight: Math.max(this.outstanding, this.childInFlight),
-      capacity: this.capacity
+      capacity: this.capacity,
+      supportedSlices: this.supportedSlices
     };
   }
 
@@ -340,7 +374,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
       this.child.signalCode !== null
     ) return;
     if (this.child.connected) this.child.send({ type: "close" } satisfies ParentCloseMessage);
-    const forceTimer = setTimeout(() => this.child.kill("SIGTERM"), 2_000);
+    const forceTimer = setTimeout(() => this.child.kill("SIGKILL"), FORCE_CLOSE_MS);
     forceTimer.unref();
     try {
       await this.exited;
@@ -354,6 +388,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
     if (message.type === "ready") {
       this.generation = message.generation;
       this.lastHeartbeatAt = message.heartbeatAt;
+      this.supportedSlices = Object.freeze([...message.supportedSlices]);
       this.protocolCompatible = message.protocol === OPERATIONAL_STATE_PROTOCOL &&
         message.version === OPERATIONAL_STATE_PROTOCOL_VERSION;
       if (this.protocolCompatible) {
@@ -430,6 +465,7 @@ export type SupervisedOperationalStateServiceOptions =
     restartMaxDelayMs?: number;
     restartMaxAttempts?: number;
     restartStableMs?: number;
+    staleRestartMs?: number;
   };
 
 type OperationalStateRestartPolicy = {
@@ -438,6 +474,7 @@ type OperationalStateRestartPolicy = {
   restartMaxDelayMs: number;
   restartMaxAttempts: number;
   restartStableMs: number;
+  staleRestartMs: number;
 };
 
 /**
@@ -449,6 +486,7 @@ export class SupervisedOperationalStateService implements OperationalStateServic
   private service?: ChildProcessOperationalStateService;
   private restartTimer?: NodeJS.Timeout;
   private stableTimer?: NodeJS.Timeout;
+  private staleWatchdogTimer?: NodeJS.Timeout;
   private restartAttempts = 0;
   private closed = false;
   private lastError?: OperationalStateProcessError;
@@ -457,6 +495,7 @@ export class SupervisedOperationalStateService implements OperationalStateServic
   private readonly restartMaxDelayMs: number;
   private readonly restartMaxAttempts: number;
   private readonly restartStableMs: number;
+  private readonly staleRestartMs: number;
 
   private constructor(
     private readonly options: SupervisedOperationalStateServiceOptions,
@@ -468,6 +507,7 @@ export class SupervisedOperationalStateService implements OperationalStateServic
     this.restartMaxDelayMs = policy.restartMaxDelayMs;
     this.restartMaxAttempts = policy.restartMaxAttempts;
     this.restartStableMs = policy.restartStableMs;
+    this.staleRestartMs = policy.staleRestartMs;
     this.adopt(service);
   }
 
@@ -500,7 +540,8 @@ export class SupervisedOperationalStateService implements OperationalStateServic
       reason: "state-recovering",
       protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
       inFlight: 0,
-      capacity: this.capacity
+      capacity: this.capacity,
+      supportedSlices: []
     };
   }
 
@@ -513,8 +554,10 @@ export class SupervisedOperationalStateService implements OperationalStateServic
     this.closed = true;
     if (this.restartTimer) clearTimeout(this.restartTimer);
     if (this.stableTimer) clearTimeout(this.stableTimer);
+    if (this.staleWatchdogTimer) clearInterval(this.staleWatchdogTimer);
     this.restartTimer = undefined;
     this.stableTimer = undefined;
+    this.staleWatchdogTimer = undefined;
     const service = this.service;
     this.service = undefined;
     if (service) await service.close();
@@ -524,16 +567,35 @@ export class SupervisedOperationalStateService implements OperationalStateServic
     this.service = service;
     this.lastError = undefined;
     if (this.stableTimer) clearTimeout(this.stableTimer);
+    if (this.staleWatchdogTimer) clearInterval(this.staleWatchdogTimer);
     this.stableTimer = setTimeout(() => {
       if (!this.closed && this.service === service) this.restartAttempts = 0;
     }, this.restartStableMs);
     this.stableTimer.unref();
+    const watchdogIntervalMs = Math.max(
+      100,
+      Math.min(1_000, Math.floor((this.staleRestartMs - HEARTBEAT_STALE_MS) / 2))
+    );
+    this.staleWatchdogTimer = setInterval(() => {
+      if (this.closed || this.service !== service) return;
+      const heartbeatAgeMs = service.health().heartbeatAgeMs;
+      if (heartbeatAgeMs === undefined || heartbeatAgeMs < this.staleRestartMs) return;
+      if (this.staleWatchdogTimer) clearInterval(this.staleWatchdogTimer);
+      this.staleWatchdogTimer = undefined;
+      // close() first requests a graceful shutdown, then force-kills a child
+      // that cannot process IPC. waitForExit below is the sole restart gate,
+      // so two SQLite writers are never started concurrently.
+      void service.close();
+    }, watchdogIntervalMs);
+    this.staleWatchdogTimer.unref();
     void service.waitForExit().then(error => {
       if (this.closed || this.service !== service) return;
       this.service = undefined;
       this.lastError = error;
       if (this.stableTimer) clearTimeout(this.stableTimer);
+      if (this.staleWatchdogTimer) clearInterval(this.staleWatchdogTimer);
       this.stableTimer = undefined;
+      this.staleWatchdogTimer = undefined;
       this.scheduleRestart();
     });
   }
@@ -593,7 +655,8 @@ async function runChild(file: string): Promise<void> {
       protocol: OPERATIONAL_STATE_PROTOCOL,
       version: OPERATIONAL_STATE_PROTOCOL_VERSION,
       generation,
-      heartbeatAt: Date.now()
+      heartbeatAt: Date.now(),
+      supportedSlices: [...OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES]
     });
     process.on("message", message => {
       if (!isParentMessage(message) || closing) return;
@@ -657,6 +720,15 @@ async function executeChildRequest(
     fail("STATE_DEADLINE", "Operational state request expired before execution.");
     return;
   }
+  if (!OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES.includes(
+    envelope.payload.slice as Exclude<StateMaintenanceSlice, "jobs">
+  )) {
+    fail(
+      "STATE_OPERATION_UNAVAILABLE",
+      `Operational state child does not support the ${envelope.payload.slice} maintenance slice.`
+    );
+    return;
+  }
   try {
     const execution = store.executeOperationalCommand({
       commandId: envelope.commandId,
@@ -695,6 +767,7 @@ function validEnvelope(envelope: OperationalStateRequestEnvelope, generation: st
       Buffer.byteLength(envelope.aggregateKey, "utf8") <= 512) &&
     Number.isSafeInteger(envelope.deadlineAt) &&
     envelope.payload?.operation === envelope.operation &&
+    STATE_MAINTENANCE_SLICES.includes(envelope.payload?.slice as StateMaintenanceSlice) &&
     digest(envelope.payload) === envelope.payloadSha256;
 }
 
@@ -706,7 +779,8 @@ function isChildMessage(value: unknown): value is StateChildMessage {
     return message.protocol === OPERATIONAL_STATE_PROTOCOL &&
       typeof message.version === "number" &&
       isUuid(message.generation) &&
-      Number.isSafeInteger(message.heartbeatAt);
+      Number.isSafeInteger(message.heartbeatAt) &&
+      isMaintenanceSliceList(message.supportedSlices);
   }
   if (message.type === "heartbeat") {
     return isUuid(message.generation) && Number.isSafeInteger(message.heartbeatAt) &&
@@ -740,6 +814,17 @@ function boundedPositiveInteger(value: number, min: number, max: number, name: s
   return value;
 }
 
+function isMaintenanceSliceList(value: unknown): value is StateMaintenanceSlice[] {
+  return Array.isArray(value) &&
+    new Set(value).size === value.length &&
+    value.every(item => typeof item === "string" &&
+      STATE_MAINTENANCE_SLICES.includes(item as StateMaintenanceSlice));
+}
+
+function supportsRequiredSlices(slices: readonly StateMaintenanceSlice[]): boolean {
+  return OPERATIONAL_STATE_REQUIRED_SLICES.every(slice => slices.includes(slice));
+}
+
 function operationalStateRestartPolicy(
   options: SupervisedOperationalStateServiceOptions
 ): OperationalStateRestartPolicy {
@@ -770,6 +855,12 @@ function operationalStateRestartPolicy(
       100,
       3_600_000,
       "restartStableMs"
+    ),
+    staleRestartMs: boundedPositiveInteger(
+      options.staleRestartMs ?? DEFAULT_STALE_RESTART_MS,
+      HEARTBEAT_STALE_MS + DEFAULT_HEARTBEAT_MS,
+      300_000,
+      "staleRestartMs"
     )
   };
 }

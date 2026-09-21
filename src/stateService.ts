@@ -1,8 +1,17 @@
-import type { StateMaintenanceSlice } from "./maintenanceScheduler.js";
+import {
+  STATE_MAINTENANCE_SLICES,
+  type StateMaintenanceSlice
+} from "./maintenanceScheduler.js";
 import type { BridgeStateStore } from "./stateStore.js";
 
 export const OPERATIONAL_STATE_PROTOCOL = "bridge-state-service" as const;
-export const OPERATIONAL_STATE_PROTOCOL_VERSION = 2 as const;
+export const OPERATIONAL_STATE_PROTOCOL_VERSION = 3 as const;
+export const OPERATIONAL_STATE_REQUIRED_SLICES = STATE_MAINTENANCE_SLICES;
+export const OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES = Object.freeze(
+  STATE_MAINTENANCE_SLICES.filter(
+    (slice): slice is Exclude<StateMaintenanceSlice, "jobs"> => slice !== "jobs"
+  )
+);
 
 export type OperationalStateCommand = {
   operation: "maintain";
@@ -54,6 +63,7 @@ export type OperationalStateHealth = {
   heartbeatAgeMs?: number;
   inFlight: number;
   capacity: number;
+  supportedSlices: readonly StateMaintenanceSlice[];
 };
 
 /**

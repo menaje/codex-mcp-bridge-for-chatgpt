@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { CodexJobRegistry } from "../src/tools.js";
 import { BridgeStateStore } from "../src/stateStore.js";
@@ -419,6 +420,100 @@ describe("CodexJobRegistry persistence", () => {
     } finally {
       clock.mockRestore();
       stateStore.close();
+    }
+  });
+
+  it("backpressures new Jobs while active work defers retained-Job maintenance", async () => {
+    const root = temporaryRoot();
+    const stateStore = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    const registry = new CodexJobRegistry({
+      stateStore,
+      allowedRoots: [root],
+      maxConcurrentJobs: 2,
+      maxJobs: 2
+    });
+    let releaseLong: (value: ToolResult) => void = () => undefined;
+    try {
+      registry.configureStateMaintenance(5);
+      const long = registry.start({
+        ...jobInput(root),
+        requestId: randomUUID(),
+        requestHash: "1".repeat(64)
+      }, () => new Promise<ToolResult>(resolve => { releaseLong = resolve; }));
+      await Promise.resolve();
+
+      const shortInput = {
+        ...jobInput(root),
+        requestId: randomUUID(),
+        requestHash: "2".repeat(64)
+      };
+      const short = registry.start(shortInput, async () => result("short-thread"));
+      await short.promise;
+
+      for (let index = 0; index < 12; index += 1) {
+        expect(() => registry.start({
+          ...jobInput(root),
+          requestId: randomUUID(),
+          requestHash: (index + 3).toString(16).padStart(64, "0")
+        }, async () => result(`blocked-${index}`))).toThrow(/JOB_RETENTION_CAPACITY/);
+      }
+      expect(registry.size).toBe(2);
+      expect(stateStore.listJobs()).toHaveLength(2);
+      expect(registry.start(shortInput, async () => result("must-not-run"))).toBe(short);
+
+      releaseLong(result("long-thread"));
+      await long.promise;
+      await waitForCondition(() => registry.size === 1, 2_000);
+
+      const recovered = registry.start({
+        ...jobInput(root),
+        requestId: randomUUID(),
+        requestHash: "f".repeat(64)
+      }, async () => result("recovered-thread"));
+      await recovered.promise;
+      expect(registry.size).toBeLessThanOrEqual(2);
+      expect(stateStore.listJobs()).toHaveLength(registry.size);
+    } finally {
+      releaseLong(result("cleanup-thread"));
+      await registry.closeThreadConnections();
+      stateStore.close();
+    }
+  });
+
+  it("does not charge durably protected terminal Jobs to admission capacity", async () => {
+    const root = temporaryRoot();
+    const file = path.join(root, "state.sqlite");
+    const firstStore = new BridgeStateStore({ file });
+    const first = new CodexJobRegistry({
+      stateStore: firstStore,
+      allowedRoots: [root],
+      maxConcurrentJobs: 1,
+      maxJobs: 1
+    });
+    const protectedJob = first.start(jobInput(root), async () => result("protected-thread"));
+    await protectedJob.promise;
+    firstStore.holdResult(protectedJob.jobId, "test protection", Date.now() + 60_000);
+    firstStore.close();
+
+    const restoredStore = new BridgeStateStore({ file });
+    const restored = new CodexJobRegistry({
+      stateStore: restoredStore,
+      allowedRoots: [root],
+      maxConcurrentJobs: 1,
+      maxJobs: 1
+    });
+    try {
+      const next = restored.start({
+        ...jobInput(root),
+        requestId: randomUUID(),
+        requestHash: "e".repeat(64)
+      }, async () => result("next-thread"));
+      await next.promise;
+      expect(restored.size).toBe(2);
+      expect(restoredStore.retentionProtection(protectedJob.jobId)).toContain("user-hold");
+    } finally {
+      await restored.closeThreadConnections();
+      restoredStore.close();
     }
   });
 
@@ -1007,4 +1102,12 @@ function result(threadId: string): ToolResult {
 
 function temporaryRoot(): string {
   return mkdtempSync(path.join(tmpdir(), "bridge-job-state-"));
+}
+
+async function waitForCondition(condition: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for retained-Job maintenance.");
+    await delay(10);
+  }
 }

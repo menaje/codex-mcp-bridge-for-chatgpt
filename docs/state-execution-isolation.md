@@ -129,7 +129,7 @@ envelope:
 ```ts
 type StateRequestEnvelope = {
   protocol: "bridge-state-service";
-  version: 2;
+  version: 3;
   requestId: string;          // unique IPC attempt UUID
   commandId: string;          // stable UUID for a logical mutation retry
   kind: "command" | "query" | "control";
@@ -313,12 +313,18 @@ The asynchronous API conversion and physical owner cutover are separate:
 
 ### Current implementation status
 
-The repository now contains the versioned child-process transport, generation
-checks, bounded parent admission, deadlines, heartbeats, bounded exponential
-restart supervision, schema-25 durable command receipts, and standalone locked-
-database/response-loss/crash-recovery isolation tests.
+The repository now contains protocol-v3 child-process transport, generation
+checks, explicit maintenance-slice capabilities, bounded parent admission,
+deadlines, heartbeats, stale-owner retirement, bounded exponential restart
+supervision, schema-25 durable command receipts, and standalone locked-database,
+response-loss, crash-recovery and stopped-process recovery tests. A stale owner
+is asked to close and force-killed after the bounded grace period; its exit is
+observed before a replacement is started, preserving the single-writer rule.
 An identical command ID and payload is replayed from its original receipt after
-a state-owner restart; a changed payload fails closed. Only the maintenance
+a state-owner restart; a changed payload fails closed. The child currently
+supports every maintenance slice except registry-owned `jobs`, advertises that
+capability set, and therefore reports `state-incompatible` rather than false
+readiness. Supported slices remain directly fault-testable. Only the maintenance
 semantic operation is implemented through that transport. Production startup
 deliberately continues to use the
 in-process compatibility owner and reports `state-incompatible` from `/readyz`.
