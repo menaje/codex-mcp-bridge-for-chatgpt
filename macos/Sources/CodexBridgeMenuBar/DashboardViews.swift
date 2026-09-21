@@ -63,6 +63,9 @@ struct DashboardPopoverView: View {
                     }
                 } else if !model.bridgeConnected, model.isBridgeConnectionChecking, model.dashboard == nil {
                     connectionCheckingView
+                } else if !model.bridgeConnected, model.hasRetainedBridgeObservation,
+                          let dashboard = model.dashboard {
+                    dashboardContent(dashboard)
                 } else if !model.bridgeConnected, !model.isBridgeConnectionChecking {
                     runtimeUnavailableView.frame(height: fallbackHeight)
                 } else if let dashboard = model.dashboard {

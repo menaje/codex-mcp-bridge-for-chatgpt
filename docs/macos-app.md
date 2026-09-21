@@ -222,20 +222,27 @@ time. The candidate and development app builds use isolated default state
 profiles; an operational stable-DB upgrade requires an explicit selection. See
 the [state upgrade and recovery runbook](state-upgrade-recovery.md).
 
-Routine companion status probes allow two seconds for a response. A failed
-observation while the runtime remains running is presented as checking for at
-most eight seconds, with one-second retries and retained Dashboard/Settings
-content. A confirmed runtime stop or exit bypasses that grace period. These
-presentation rules do not reuse stale admission or shutdown evidence. Helper
-and Tunnel diagnostics record failure/recovery transitions with PID and duration;
-Tunnel diagnostics retain only non-secret probe status fields.
+Routine companion status probes allow two seconds for a response. The helper
+classifies a missed deadline as `timed-out`, separately from an immediate probe
+failure, and reports the last successful observation only for the same managed
+PID. While the runtime remains running, the app presents the first eight seconds
+as checking. Repeated timeouts then become response-unconfirmed attention rather
+than a confirmed disconnect: the last Dashboard/Settings content stays visible,
+but stale content is not admission or shutdown evidence. Dashboard controls that
+require a fresh Bridge connection stay unavailable, and any other action still
+requires a live RPC response. A confirmed runtime stop or exit
+bypasses the grace period and clears retained content through the normal
+unavailable path. A timeout by itself does not recommend restarting the runtime.
+Helper and Tunnel diagnostics record failure/recovery transitions with PID and
+duration; Tunnel diagnostics retain only non-secret probe status fields.
 
 During startup and Tunnel readiness, the menu shows checking without an
 unavailable/recovery banner. Invalid configuration and confirmed runtime failure
-still show recovery guidance immediately. If readiness remains unresolved past
-the existing sixty-second operational notification grace, the menu switches from
-checking to attention and recovery guidance. Fresh observations take precedence
-over a previous alert while the notification refresh is still pending.
+still show recovery guidance immediately. A response-unconfirmed observation
+switches from checking to attention after eight seconds and may notify after the
+separate sixty-second operational grace, but it does not offer a restart as
+though the process had exited. Fresh observations take precedence over a
+previous alert while the notification refresh is still pending.
 
 ### Native refresh policy
 

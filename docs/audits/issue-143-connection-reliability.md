@@ -123,6 +123,36 @@ Production startup still uses the in-process owner, and the remaining
 command/query callers and installed end-to-end combination have not crossed or
 passed the release gate.
 
+## Timeout-domain audit and native mitigation
+
+The visible surfaces do not share one fixed deadline. The native helper gives
+the memory-only `runtime.health` observation two seconds, while the Swift client
+allows the helper call five seconds. Dashboard and decision cards allow five
+seconds for MCP initialization and 15 seconds for a tool dispatch. Codex App
+Server bounded control requests default to 30 seconds; once a turn is accepted,
+turn completion is notification-driven rather than limited by that control
+deadline. Late App Server control responses are correlated separately instead
+of blindly replaying a new request. Increasing the helper's two-second value
+would therefore hide only one symptom and would not unblock cards or App Server
+traffic when the shared Bridge event loop is occupied.
+
+The native status contract now distinguishes `fresh`, `timed-out`, and `failed`
+observations and carries `lastSuccessfulAt` only within the same managed PID
+generation. A timeout keeps `connected=false`; it never becomes fresh admission,
+shutdown, or mutation authority. The app gives the first miss the existing
+eight-second checking window, then shows response-unconfirmed attention. If a
+same-PID successful observation exists, the last Dashboard and Settings content
+remains visible as stale while controls that require a fresh Bridge connection
+remain unavailable. A timeout does not recommend a runtime restart. An immediate
+probe failure and a confirmed process exit continue through the unavailable
+path, and recovery requires a new successful observation.
+
+This mitigation prevents a fixed observation deadline from being mislabeled as
+a confirmed disconnect. It does not resolve the underlying coupled stall:
+production state execution, Dashboard reads, diagnostics, serialization and the
+installed Tunnel/Card combination still require the isolation and end-to-end
+gates above.
+
 ## T1 decision
 
 Direct observations and remaining uncertainty are now separated:

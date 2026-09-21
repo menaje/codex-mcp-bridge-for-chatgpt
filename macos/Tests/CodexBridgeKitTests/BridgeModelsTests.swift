@@ -259,6 +259,8 @@ final class BridgeModelsTests: XCTestCase {
           "bridge":{
             "socketPath":"/private/config/run/bridge.sock",
             "connected":true,
+            "observation":"fresh",
+            "lastSuccessfulAt":"2026-09-02T00:00:00.000Z",
             "acceptingNewJobs":true,
             "activeJobs":2,
             "pendingAdmissions":0
@@ -279,6 +281,8 @@ final class BridgeModelsTests: XCTestCase {
         XCTAssertEqual(status.phase, "running")
         XCTAssertTrue(status.configuration.hasApiKey)
         XCTAssertEqual(status.bridge.activeJobs, 2)
+        XCTAssertEqual(status.bridge.observation, "fresh")
+        XCTAssertEqual(status.bridge.lastSuccessfulAt, "2026-09-02T00:00:00.000Z")
         XCTAssertTrue(status.tunnel.connected)
         XCTAssertFalse(String(data: json, encoding: .utf8)!.contains("CONTROL_PLANE_API_KEY"))
     }

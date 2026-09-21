@@ -118,7 +118,8 @@ enum ConnectionRecoveryPlan {
         bridgeConnected: Bool,
         helperPhase: String?,
         codexInstalled: Bool?,
-        permissionsRepairAvailable: Bool
+        permissionsRepairAvailable: Bool,
+        bridgeObservation: String? = nil
     ) -> [ConnectionRecoveryRecommendedAction] {
         switch component {
         case .configuration:
@@ -127,6 +128,7 @@ enum ConnectionRecoveryPlan {
                 : [.configureConnection]
         case .bridge:
             guard !isRemoteClient, configurationValid else { return [] }
+            if bridgeObservation == "timed-out" { return [] }
             return helperPhase == "stopped" ? [.startRuntime] : [.restartRuntime]
         case .tunnel:
             guard !isRemoteClient, configurationValid, bridgeConnected else { return [] }
@@ -1228,7 +1230,8 @@ struct ConnectionRecoveryView: View {
             bridgeConnected: model.helperStatus?.bridge.connected == true,
             helperPhase: model.helperStatus?.phase,
             codexInstalled: model.authStatus?.installed,
-            permissionsRepairAvailable: configurationPermissionsCanBeRepaired
+            permissionsRepairAvailable: configurationPermissionsCanBeRepaired,
+            bridgeObservation: model.helperStatus?.bridge.observation
         )
         if !actions.isEmpty {
             HStack(spacing: 12) {
@@ -1368,7 +1371,7 @@ struct ConnectionRecoveryView: View {
                 kind: .bridge,
                 title: localized("macos.bridge"),
                 detail: model.runtimeErrorMessage ?? model.startupErrorMessage ??
-                    model.statusErrorMessage ?? localized("macos.notconnected"),
+                    model.statusErrorMessage ?? model.runtimeUnavailableExplanation,
                 symbol: "server.rack",
                 checking: model.isBridgeConnectionChecking
             ))

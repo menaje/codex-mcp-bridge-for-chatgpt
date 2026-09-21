@@ -762,6 +762,10 @@ public struct RuntimeConfigurationStatus: Codable, Sendable {
 public struct HelperBridgeStatus: Codable, Sendable {
     public let socketPath: String
     public let connected: Bool
+    /// `timed-out` is an inconclusive bounded observation, not a confirmed exit.
+    public let observation: String?
+    /// Last fresh observation for the current managed process generation.
+    public let lastSuccessfulAt: String?
     public let acceptingNewJobs: Bool?
     public let activeJobs: Int?
     public let pendingAdmissions: Int?

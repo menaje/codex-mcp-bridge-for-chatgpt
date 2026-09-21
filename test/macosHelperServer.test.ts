@@ -312,6 +312,7 @@ describe("macOS runtime helper RPC", () => {
         runtimeLockDirectory: path.join(root, "run", "launcher.lock") });
       const health = await supervisor.health();
       expect(health.bridge.connected).toBe(code !== -32603);
+      expect(health.bridge.observation).toBe(code !== -32603 ? "fresh" : "failed");
       expect(methods).toEqual(code === -32603 ? ["runtime.health"] : ["runtime.health", "runtime.snapshot"]);
     }
   });
@@ -839,19 +840,29 @@ describe("macOS runtime helper RPC", () => {
     });
     try {
       const started = await supervisor.start();
+      expect(started.bridge).toMatchObject({ connected: true, observation: "fresh" });
+      expect(started.bridge.lastSuccessfulAt).toEqual(expect.any(String));
       writeFileSync(delayFile, "750");
-      expect(await supervisor.snapshot()).toMatchObject({
-        phase: "running", pid: started.pid, bridge: { connected: true }, lastExit: null, restartAttempt: 0
+      const delayed = await supervisor.snapshot();
+      expect(delayed).toMatchObject({
+        phase: "running", pid: started.pid,
+        bridge: { connected: true, observation: "fresh", lastSuccessfulAt: expect.any(String) },
+        lastExit: null, restartAttempt: 0
       });
+      const lastSuccessfulAt = delayed.bridge.lastSuccessfulAt;
       writeFileSync(delayFile, "2300");
       const failures = await Promise.all([supervisor.snapshot(), supervisor.snapshot()]);
-      expect(failures.every(status => !status.bridge.connected && status.pid === started.pid)).toBe(true);
+      expect(failures.every(status => !status.bridge.connected && status.pid === started.pid &&
+        status.bridge.observation === "timed-out" && status.bridge.lastSuccessfulAt === lastSuccessfulAt)).toBe(true);
       await supervisor.snapshot();
       let messages = supervisor.logs(200).map(entry => entry.message);
       expect(messages.filter(message => message.includes("Bridge status check failed"))).toHaveLength(1);
       expect(messages.some(message => message.includes("Bridge companion request timed out"))).toBe(true);
       writeFileSync(delayFile, "0");
-      expect(await supervisor.snapshot()).toMatchObject({ bridge: { connected: true }, lastExit: null, restartAttempt: 0 });
+      expect(await supervisor.snapshot()).toMatchObject({
+        bridge: { connected: true, observation: "fresh", lastSuccessfulAt: expect.any(String) },
+        lastExit: null, restartAttempt: 0
+      });
       messages = supervisor.logs(200).map(entry => entry.message);
       expect(messages.filter(message => message.includes("Bridge status check recovered"))).toHaveLength(1);
     } finally {

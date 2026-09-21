@@ -97,6 +97,19 @@ type ManagedProcessIdentity = {
   processGroupId: number;
 };
 
+type BridgeStatusObservation = {
+  admission: RuntimeAdmissionSnapshot | null;
+  state: "fresh" | "timed-out" | "failed";
+  lastSuccessfulAt: number | null;
+};
+
+class BridgeCompanionRequestTimeoutError extends Error {
+  constructor() {
+    super("Bridge companion request timed out.");
+    this.name = "BridgeCompanionRequestTimeoutError";
+  }
+}
+
 const requestIdSchema = z.union([
   z.string().min(1).max(128),
   z.number().int().safe()
@@ -220,6 +233,14 @@ export type MacOSHelperStatus = {
   bridge: {
     socketPath: string;
     connected: boolean;
+    /**
+     * `timed-out` means the bounded observation missed its deadline; it is not
+     * evidence that the managed process or its socket exited. Optional for
+     * compatibility with helpers that predate response classification.
+     */
+    observation?: "fresh" | "timed-out" | "failed";
+    /** Last fresh observation for this exact managed process generation. */
+    lastSuccessfulAt?: string | null;
     acceptingNewJobs: boolean | null;
     activeJobs: number | null;
     pendingAdmissions: number | null;
@@ -398,8 +419,14 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private loginProcess: ChildProcess | undefined;
   private pendingProcessCleanup: ManagedProcessIdentity[] = [];
   private readonly logEntries: DiagnosticLog<MacOSHelperLogEntry>;
-  private bridgeStatusProbe: Promise<RuntimeAdmissionSnapshot | null> | undefined;
-  private bridgeProbeObservation: { pid: number | undefined; connected: boolean; failedAt: number | null } | undefined;
+  private bridgeStatusProbe: Promise<BridgeStatusObservation> | undefined;
+  private bridgeProbeObservation: {
+    pid: number | undefined;
+    startedAt: string | null;
+    state: BridgeStatusObservation["state"];
+    failedAt: number | null;
+    lastSuccessfulAt: number | null;
+  } | undefined;
   private operation: Promise<unknown> = Promise.resolve();
   private lifecycleManager?: RuntimeLifecycleCoordinator;
   private handoffWatcher?: FSWatcher;
@@ -456,7 +483,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
 
   async snapshot(options: { includeDetails?: boolean } = {}): Promise<MacOSHelperStatus> {
     this.reconcileManagedRuntime();
-    const bridgeAdmission = await this.readBridgeStatus();
+    const bridgeObservation = await this.readBridgeStatus();
+    const bridgeAdmission = bridgeObservation.admission;
     const includeDetails = options.includeDetails !== false;
     const generation = this.configurationGeneration;
     const cached = this.healthConfiguration;
@@ -485,6 +513,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       bridge: {
         socketPath: this.bridgeSocketPath,
         connected: bridgeAdmission !== null,
+        observation: bridgeObservation.state,
+        lastSuccessfulAt: bridgeObservation.lastSuccessfulAt === null
+          ? null : new Date(bridgeObservation.lastSuccessfulAt).toISOString(),
         acceptingNewJobs: bridgeAdmission?.acceptingNewJobs ?? null,
         activeJobs: bridgeAdmission?.activeJobs ?? null,
         pendingAdmissions: bridgeAdmission?.pendingAdmissions ?? null,
@@ -501,24 +532,32 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     };
   }
 
-  private readBridgeStatus(): Promise<RuntimeAdmissionSnapshot | null> {
+  private readBridgeStatus(): Promise<BridgeStatusObservation> {
     if (this.bridgeStatusProbe) return this.bridgeStatusProbe;
     const pid = this.managedPid;
+    const processStartedAt = this.startedAt;
     const started = Date.now();
     let failure: unknown;
     const probe = readBridgeHealth(this.bridgeSocketPath, (error) => { failure = error; })
       .then((admission) => {
-        if (pid !== this.managedPid) return null;
-        const connected = admission !== null;
-        const previous = this.bridgeProbeObservation?.pid === pid ? this.bridgeProbeObservation : undefined;
-        const failedAt = connected ? null : previous?.failedAt ?? started;
-        if (!connected && previous?.connected !== false && this.phase === "running") {
-          this.appendLog("helper", `Bridge status check failed (pid ${pid ?? "unknown"}, ${Date.now() - started}ms): ${safeErrorMessage(failure)}`);
-        } else if (connected && previous?.connected === false && previous.failedAt !== null) {
+        if (pid !== this.managedPid || processStartedAt !== this.startedAt) {
+          return { admission: null, state: "failed" as const, lastSuccessfulAt: null };
+        }
+        const state: BridgeStatusObservation["state"] = admission !== null
+          ? "fresh"
+          : failure instanceof BridgeCompanionRequestTimeoutError ? "timed-out" : "failed";
+        const observed = this.bridgeProbeObservation;
+        const previous = observed && observed.pid === pid && observed.startedAt === processStartedAt
+          ? observed : undefined;
+        const failedAt = state === "fresh" ? null : previous?.failedAt ?? started;
+        const lastSuccessfulAt = state === "fresh" ? Date.now() : previous?.lastSuccessfulAt ?? null;
+        if (state !== "fresh" && previous?.state !== "timed-out" && previous?.state !== "failed" && this.phase === "running") {
+          this.appendLog("helper", `Bridge status check failed (${state}; pid ${pid ?? "unknown"}, ${Date.now() - started}ms): ${safeErrorMessage(failure)}`);
+        } else if (state === "fresh" && previous && previous.state !== "fresh" && previous.failedAt !== null) {
           this.appendLog("helper", `Bridge status check recovered (pid ${pid ?? "unknown"}, unavailable for ${Date.now() - previous.failedAt}ms).`);
         }
-        this.bridgeProbeObservation = { pid, connected, failedAt };
-        return admission;
+        this.bridgeProbeObservation = { pid, startedAt: processStartedAt, state, failedAt, lastSuccessfulAt };
+        return { admission, state, lastSuccessfulAt };
       }).finally(() => {
         if (this.bridgeStatusProbe === probe) this.bridgeStatusProbe = undefined;
       });
@@ -2137,7 +2176,7 @@ function bridgeRequest<T = unknown>(
     if (signal?.aborted) { abort(); return; }
     signal?.addEventListener("abort", abort, { once: true });
     timer = setTimeout(
-      () => finish(new Error("Bridge companion request timed out.")),
+      () => finish(new BridgeCompanionRequestTimeoutError()),
       timeoutMs
     );
     socket.once("connect", () => {
