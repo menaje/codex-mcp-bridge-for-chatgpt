@@ -8,6 +8,7 @@ export const STATE_MAINTENANCE_SLICES = [
   "questions",
   "decisions",
   "recovery",
+  "receipts",
   "jobs"
 ] as const;
 

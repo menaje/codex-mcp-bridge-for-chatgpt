@@ -116,6 +116,8 @@ export function executeOperationalStateCommand(
   } else if (slice === "recovery") {
     const report = store.maintainRecoveryRetention();
     changed = report.recordsRemoved + report.incidentsRemoved;
+  } else if (slice === "receipts") {
+    changed = store.maintainOperationalCommandReceiptRetention().receiptsRemoved;
   } else {
     if (!options.maintainJobs) {
       throw new Error("STATE_OPERATION_UNAVAILABLE: Job retention requires the registry compatibility adapter.");

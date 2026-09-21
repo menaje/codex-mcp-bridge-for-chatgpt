@@ -36,6 +36,15 @@ describe("operational state child process", () => {
           commandId: expect.any(String),
           replayed: false
         });
+      await expect(service.execute({ operation: "maintain", slice: "receipts" }))
+        .resolves.toMatchObject({
+          operation: "maintain",
+          slice: "receipts",
+          changed: 0,
+          certainty: "committed",
+          commandId: expect.any(String),
+          replayed: false
+        });
     } finally {
       await service.close();
       rmSync(root, { recursive: true, force: true });

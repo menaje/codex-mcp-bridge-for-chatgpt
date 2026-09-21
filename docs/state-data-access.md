@@ -67,7 +67,7 @@ writer column.
 | `decision_card_versions` | `DecisionCardStore` | `DecisionCardStore` | decision query/card paths | cascades from decision-card expiry |
 | `decision_card_requests` | `DecisionCardStore` | `DecisionCardStore` | decision idempotency commands | cascades from decision-card expiry |
 | `decision_submissions` | `DecisionCardStore` | `DecisionCardStore` | decision query/delivery paths | decision lease slice and startup recovery |
-| `operational_command_receipts` | State UoW / isolated command receipt repository | State UoW in the same mutation transaction | command replay and outcome-unknown recovery | no deletion until the uncertainty/reference retention contract is implemented |
+| `operational_command_receipts` | State UoW / isolated command receipt repository | State UoW in the same mutation transaction | command replay and outcome-unknown recovery | idempotent maintenance receipts: 24-hour uncertainty window, 500-row bounded slice; business-command receipts require a separate reference-aware policy |
 
 `jobs.summary` is part of the Job repository even though event retention derives
 its `execution`, `usage`, and `uncertainResponseReview` projection. The event

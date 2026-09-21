@@ -5,6 +5,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it, vi } from "vitest";
 import { V24_DECISION_CARD_MIGRATION_SCHEMA } from "../src/decisionCardStore.js";
+import { MAINTENANCE_COMMAND_RECEIPT_RETENTION_MS } from "../src/operationalCommandReceipt.js";
 import {
   CURRENT_STATE_SCHEMA,
   V20_ASYNC_EXECUTION_MIGRATION_SCHEMA,
@@ -136,6 +137,56 @@ describe("operational command receipts", () => {
       store.close();
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prunes only expired maintenance receipts in bounded slices", () => {
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const generation = randomUUID();
+    const now = MAINTENANCE_COMMAND_RECEIPT_RETENTION_MS + 10_000;
+    const oldest = randomUUID();
+    const older = randomUUID();
+    const recent = randomUUID();
+    const business = randomUUID();
+    const commit = (commandId: string, operation: string, committedAt: number) =>
+      store.executeOperationalCommand({
+        commandId,
+        operation,
+        payloadSha256: hash({ commandId, operation }),
+        workerGeneration: generation,
+        committedAt
+      }, () => ({ result: { commandId } }));
+    try {
+      commit(oldest, "maintain", 1);
+      commit(older, "maintain", 2);
+      commit(recent, "maintain", now);
+      commit(business, "cancel-intent", 1);
+
+      expect(store.maintainOperationalCommandReceiptRetention(now, 1))
+        .toEqual({ receiptsRemoved: 1 });
+      expect(store.getOperationalCommandReceipt(oldest)).toBeUndefined();
+      expect(store.getOperationalCommandReceipt(older)).toBeDefined();
+
+      expect(store.maintainOperationalCommandReceiptRetention(now, 1))
+        .toEqual({ receiptsRemoved: 1 });
+      expect(store.maintainOperationalCommandReceiptRetention(now, 1))
+        .toEqual({ receiptsRemoved: 0 });
+
+      for (let index = 0; index < 501; index += 1) {
+        commit(randomUUID(), "maintain", index + 3);
+      }
+      expect(store.maintainOperationalCommandReceiptRetention(now, 1_000))
+        .toEqual({ receiptsRemoved: 500 });
+      expect(store.maintainOperationalCommandReceiptRetention(now, 1_000))
+        .toEqual({ receiptsRemoved: 1 });
+      expect(store.getOperationalCommandReceipt(recent)).toBeDefined();
+      expect(store.getOperationalCommandReceipt(business)).toBeDefined();
+      expect(() => store.maintainOperationalCommandReceiptRetention(-1))
+        .toThrow(/STATE_COMMAND_RECEIPT_RETENTION_INVALID/);
+      expect(() => store.maintainOperationalCommandReceiptRetention(now, 0))
+        .toThrow(/STATE_COMMAND_RECEIPT_RETENTION_INVALID/);
+    } finally {
+      store.close();
     }
   });
 

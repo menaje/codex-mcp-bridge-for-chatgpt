@@ -12,6 +12,8 @@ import {
   V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA
 } from "./stateSchema.js";
 import {
+  MAINTENANCE_COMMAND_RECEIPT_RETENTION_BATCH,
+  MAINTENANCE_COMMAND_RECEIPT_RETENTION_MS,
   OPERATIONAL_COMMAND_RECEIPT_RESULT_MAX_BYTES,
   V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA,
   type OperationalCommandApplication,
@@ -884,6 +886,38 @@ export class BridgeStateStore {
       throw new Error("STATE_COMMAND_RECEIPT_INVALID: commandId must be a UUID.");
     }
     return this.readOperationalCommandReceipt<T>(commandId);
+  }
+
+  /**
+   * Delete only old idempotent maintenance receipts. Business commands keep
+   * their domain request IDs as the long-lived idempotency authority and need
+   * a separate reference-aware policy before they can enter this cleanup.
+   */
+  maintainOperationalCommandReceiptRetention(
+    now = Date.now(),
+    limit = MAINTENANCE_COMMAND_RECEIPT_RETENTION_BATCH
+  ): { receiptsRemoved: number } {
+    if (!Number.isSafeInteger(now) || now < 0) {
+      throw new Error("STATE_COMMAND_RECEIPT_RETENTION_INVALID: now must be a non-negative integer.");
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new Error("STATE_COMMAND_RECEIPT_RETENTION_INVALID: limit must be a positive integer.");
+    }
+    const boundedLimit = Math.min(MAINTENANCE_COMMAND_RECEIPT_RETENTION_BATCH, limit);
+    const cutoff = Math.max(0, now - MAINTENANCE_COMMAND_RECEIPT_RETENTION_MS);
+    return this.transaction(() => {
+      const result = this.database.prepare(`
+        DELETE FROM operational_command_receipts
+         WHERE command_id IN (
+           SELECT command_id
+             FROM operational_command_receipts
+            WHERE operation = 'maintain' AND committed_at < ?
+            ORDER BY committed_at ASC, command_id ASC
+            LIMIT ?
+         )
+      `).run(cutoff, boundedLimit);
+      return { receiptsRemoved: result.changes };
+    });
   }
 
   /** Record the point after which snapshot rollback could discard admitted work. */

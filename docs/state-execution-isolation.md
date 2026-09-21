@@ -168,6 +168,10 @@ payload hash, aggregate, resulting version, compact result, generation and
 commit time. Receipts are capacity-bounded only after every referencing request
 and uncertainty window expires. Existing domain request IDs remain the business
 idempotency authority; the receipt closes the IPC response-loss window.
+The current maintenance-only transport prunes at most 500 idempotent
+`maintain` receipts per slice after a 24-hour uncertainty window. It does not
+delete future business-command receipts; those require reference-aware
+acknowledgement and their domain idempotency record before cleanup.
 
 ## Queue and fairness contract
 

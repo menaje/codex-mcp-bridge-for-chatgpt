@@ -1,4 +1,10 @@
 export const OPERATIONAL_COMMAND_RECEIPT_RESULT_MAX_BYTES = 64 * 1024;
+/** Maintenance commands are idempotent and have no business-level caller
+ * after their outcome-unknown recovery window. Retain one full day so a
+ * delayed response or supervised state-child restart can be resolved before
+ * bounded GC. */
+export const MAINTENANCE_COMMAND_RECEIPT_RETENTION_MS = 24 * 60 * 60 * 1_000;
+export const MAINTENANCE_COMMAND_RECEIPT_RETENTION_BATCH = 500;
 
 /**
  * Durable proof that one logical state mutation committed. The receipt lives
