@@ -306,6 +306,18 @@ The asynchronous API conversion and physical owner cutover are separate:
    window if rollback requires the older binary; removing it needs a later
    catalogued schema migration.
 
+### Current implementation status
+
+The repository now contains the versioned child-process transport, generation
+checks, bounded parent admission, deadlines, heartbeats and a standalone locked-
+database isolation test. Only the maintenance semantic operation is implemented
+through that transport. Production startup deliberately continues to use the
+in-process compatibility owner and reports `state-incompatible` from `/readyz`.
+The child must not be selected until every operational command and query caller
+has crossed the asynchronous boundary and the compatibility owner can be closed
+before child startup. This status is implementation progress, not cutover or
+resolution evidence.
+
 Before every physical cutover, create and verify a consistent state backup that
 includes committed WAL content. Do not copy the main file alone and do not run
 live `VACUUM`. New state writes after service-open forbid restoring an older

@@ -1,6 +1,9 @@
 import type { StateMaintenanceSlice } from "./maintenanceScheduler.js";
 import type { BridgeStateStore } from "./stateStore.js";
 
+export const OPERATIONAL_STATE_PROTOCOL = "bridge-state-service" as const;
+export const OPERATIONAL_STATE_PROTOCOL_VERSION = 1 as const;
+
 export type OperationalStateCommand = {
   operation: "maintain";
   slice: StateMaintenanceSlice;
@@ -12,6 +15,38 @@ export type OperationalStateResult = {
   changed: number;
 };
 
+export type OperationalStateExecuteOptions = {
+  deadlineMs?: number;
+};
+
+export type OperationalStateRequestEnvelope = {
+  protocol: typeof OPERATIONAL_STATE_PROTOCOL;
+  version: typeof OPERATIONAL_STATE_PROTOCOL_VERSION;
+  requestId: string;
+  kind: "command";
+  operation: OperationalStateCommand["operation"];
+  workerGeneration: string;
+  deadlineAt: number;
+  payloadSha256: string;
+  payload: OperationalStateCommand;
+};
+
+export type OperationalStateHealth = {
+  ready: boolean;
+  reason:
+    | "ready"
+    | "state-starting"
+    | "state-stale"
+    | "state-recovering"
+    | "state-incompatible"
+    | "state-capacity";
+  protocolVersion: number;
+  generation?: string;
+  heartbeatAgeMs?: number;
+  inFlight: number;
+  capacity: number;
+};
+
 /**
  * Semantic asynchronous boundary for authoritative operational state.
  * Callers depend on this contract rather than on a SQLite connection. The
@@ -19,7 +54,10 @@ export type OperationalStateResult = {
  * replace it only after every state caller has crossed this boundary.
  */
 export interface OperationalStateService {
-  execute(command: OperationalStateCommand): Promise<OperationalStateResult>;
+  execute(
+    command: OperationalStateCommand,
+    options?: OperationalStateExecuteOptions
+  ): Promise<OperationalStateResult>;
 }
 
 export class InProcessOperationalStateService implements OperationalStateService {
@@ -30,7 +68,10 @@ export class InProcessOperationalStateService implements OperationalStateService
     private readonly options: { maintainJobs?: () => number } = {}
   ) {}
 
-  execute(command: OperationalStateCommand): Promise<OperationalStateResult> {
+  execute(
+    command: OperationalStateCommand,
+    _options: OperationalStateExecuteOptions = {}
+  ): Promise<OperationalStateResult> {
     const execute = () => this.run(command);
     const result = this.tail.then(execute, execute);
     this.tail = result.then(() => undefined, () => undefined);
@@ -62,6 +103,9 @@ export class InProcessOperationalStateService implements OperationalStateService
       const report = this.store.maintainRecoveryRetention();
       return report.recordsRemoved + report.incidentsRemoved;
     }
-    return this.options.maintainJobs?.() || 0;
+    if (!this.options.maintainJobs) {
+      throw new Error("STATE_OPERATION_UNAVAILABLE: Job retention requires the registry compatibility adapter.");
+    }
+    return this.options.maintainJobs();
   }
 }
