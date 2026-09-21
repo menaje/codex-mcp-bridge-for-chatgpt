@@ -1,8 +1,8 @@
 # State upgrade and recovery runbook
 
 This runbook owns the release-time contract for the bridge SQLite database.
-The current target is schema 24. Supported source schemas are 3 through 23;
-schemas 1 and 2, databases newer than 24, and the retired standalone Settings,
+The current target is schema 25. Supported source schemas are 3 through 24;
+schemas 1 and 2, databases newer than 25, and the retired standalone Settings,
 session, and Job JSON stores are rejected. `release-manifest.json` and
 `state-migrations.json` are the machine-readable authorities.
 
@@ -53,7 +53,7 @@ Every persistent HTTP and stdio startup follows the same lifecycle:
    product/build, and time. A durable pending record closes the crash window
    between the schema commit and its provenance record.
 6. Validate the complete applied path, database integrity, foreign keys, and
-   schema 24 before registering the runtime owner and opening a transport.
+   schema 25 before registering the runtime owner and opening a transport.
 
 The private status file beside the DB ends in `.migration-status.json` and
 records `preflight`, `backup`, `migrating`, `verifying`, `completed`, or
@@ -74,8 +74,8 @@ For a source schema `S`, the migration creates these mode-0600 files beside the
 database:
 
 ```text
-state.sqlite.pre-vS-to-v24.sqlite
-state.sqlite.migration-vS-to-v24.backup.json
+state.sqlite.pre-vS-to-v25.sqlite
+state.sqlite.migration-vS-to-v25.backup.json
 ```
 
 The JSON sidecar binds the snapshot to the logical and physical source database,
@@ -113,7 +113,7 @@ Stop every bridge/helper process, then inspect the exact pair:
 ```bash
 node dist/stateRecovery.js inspect \
   --database /absolute/path/state.sqlite \
-  --backup /absolute/path/state.sqlite.pre-v18-to-v24.sqlite
+  --backup /absolute/path/state.sqlite.pre-v18-to-v25.sqlite
 ```
 
 Inspection verifies the current target schema, service-open marker, live owners,
@@ -136,7 +136,7 @@ rollback pair. Then run:
 ```bash
 node dist/stateRecovery.js restore \
   --database /absolute/path/state.sqlite \
-  --backup /absolute/path/state.sqlite.pre-v18-to-v24.sqlite \
+  --backup /absolute/path/state.sqlite.pre-v18-to-v25.sqlite \
   --source-product-version 0.3.0 \
   --source-build-id exact-recorded-build-id
 ```
@@ -230,7 +230,7 @@ blindly replaying a possibly accepted `ui/message`.
 Run the normal schema and lifecycle suites from a clean checkout. Release CI also
 runs `scripts/state-release-audit.ts` against the unpacked npm tarball and the
 mounted arm64 and x64 DMGs. The packaged code opens every supported source schema
-3 through 23 directly, using the three exact source fixtures and the declared
+3 through 24 directly, using the three exact source fixtures and the declared
 derived checkpoints. Each job records the artifact checksum, commit/build, OS and
 architecture, Node and module ABI, `better-sqlite3` and SQLite versions, catalog
 digest, source fixture provenance, migration checkpoints, semantic counts, two

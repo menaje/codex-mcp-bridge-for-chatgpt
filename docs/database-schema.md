@@ -172,7 +172,7 @@ copy, not end-to-end service latency or evidence of a live replacement.
 
 ## Upgrade and legacy-data rules
 
-A fresh database creates schema 24 directly. A persistent supported older database
+A fresh database creates schema 25 directly. A persistent supported older database
 is inspected before a writable SQLite connection opens. The canonical-file lock,
 live-owner check, integrity and foreign-key checks, permissions, free-space
 calculation, verified backup, sequential conversion, and final verification all
@@ -181,7 +181,7 @@ Development and candidate packages use separate default state profiles; selectin
 the stable DB requires an explicit profile or absolute-file override.
 
 The upgrade gets one private, mode-0600 backup named
-`state.sqlite.pre-v<SOURCE>-to-v24.sqlite` and a bound metadata sidecar. The
+`state.sqlite.pre-v<SOURCE>-to-v25.sqlite` and a bound metadata sidecar. The
 sidecar records the logical/physical database identity, source and target runtime
 facts, migration path/checksums, snapshot checksum, integrity/foreign-key results,
 and a digest of table row counts. Retrying the same upgrade reuses and fully
@@ -262,7 +262,7 @@ ends and the upgraded database has survived normal restarts, remove older backup
 as a deliberate operator action. Backups contain the same private material as the
 source database and require the same access controls. The bridge does not silently
 delete them because release and rollback policy belong to the operator. Keep each
-backup with its `.migration-v<SOURCE>-to-v24.backup.json` sidecar. Supported
+backup with its `.migration-v<SOURCE>-to-v25.backup.json` sidecar. Supported
 snapshot restore is allowed only while the migrated DB records that neither HTTP
 nor stdio service-open occurred; after that boundary, preserve current state and
 use forward repair or explicit data reconciliation. See the

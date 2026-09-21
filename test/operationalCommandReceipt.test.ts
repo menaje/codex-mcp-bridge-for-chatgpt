@@ -1,8 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { describe, expect, it, vi } from "vitest";
+import { V24_DECISION_CARD_MIGRATION_SCHEMA } from "../src/decisionCardStore.js";
+import {
+  CURRENT_STATE_SCHEMA,
+  V20_ASYNC_EXECUTION_MIGRATION_SCHEMA,
+  V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA,
+  V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA,
+  V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA
+} from "../src/stateSchema.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 
 const hash = (value: unknown) => createHash("sha256")
@@ -125,6 +134,46 @@ describe("operational command receipts", () => {
         result: { retained: true }
       });
       store.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("upgrades an authentic schema-24 database without changing domain rows", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "operational-receipt-v24-"));
+    const file = path.join(root, "state.sqlite");
+    const databaseId = randomUUID();
+    const legacy = new Database(file);
+    try {
+      legacy.exec("CREATE TABLE bridge_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL) STRICT;");
+      legacy.exec(CURRENT_STATE_SCHEMA);
+      legacy.exec(V20_ASYNC_EXECUTION_MIGRATION_SCHEMA);
+      legacy.exec(V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA);
+      legacy.exec(V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA);
+      legacy.exec(V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA);
+      legacy.exec(V24_DECISION_CARD_MIGRATION_SCHEMA);
+      legacy.prepare("INSERT INTO bridge_meta(key,value) VALUES ('schema_version','24')").run();
+      legacy.prepare("INSERT INTO bridge_meta(key,value) VALUES ('state_database_id',?)")
+        .run(databaseId);
+    } finally {
+      legacy.close();
+    }
+
+    try {
+      const store = new BridgeStateStore({ file });
+      expect(store.schemaVersion).toBe(25);
+      expect(store.getMeta("schema_v25_operational_command_receipts"))
+        .toBe("durable-command-receipts-v1");
+      store.close();
+
+      const migrated = new Database(file, { readonly: true });
+      expect(migrated.prepare(
+        "SELECT COUNT(*) AS count FROM operational_command_receipts"
+      ).get()).toEqual({ count: 0 });
+      expect(migrated.pragma("integrity_check", { simple: true })).toBe("ok");
+      expect(migrated.pragma("foreign_key_check")).toEqual([]);
+      migrated.close();
+      expect(existsSync(`${file}.pre-v24-to-v25.sqlite`)).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

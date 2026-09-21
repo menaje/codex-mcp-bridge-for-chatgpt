@@ -1,6 +1,6 @@
 # State data access and maintenance ownership
 
-This document is the schema-24 ownership contract. SQLite remains one durable
+This document is the schema-25 ownership contract. SQLite remains one durable
 database, but a shared file does not imply shared write authority.
 
 The issue #142 successor architecture that preserves these owners while moving
@@ -23,7 +23,7 @@ Activity-event and result-hold cleanup is scheduled by the event-retention
 slice but executed through `EventRetentionMaintenanceRepository` commands
 implemented by the State Unit of Work.
 
-## Schema 24 ownership matrix
+## Schema 25 ownership matrix
 
 “State UoW” below means `BridgeStateStore`. Read models never appear in the
 writer column.
@@ -67,6 +67,7 @@ writer column.
 | `decision_card_versions` | `DecisionCardStore` | `DecisionCardStore` | decision query/card paths | cascades from decision-card expiry |
 | `decision_card_requests` | `DecisionCardStore` | `DecisionCardStore` | decision idempotency commands | cascades from decision-card expiry |
 | `decision_submissions` | `DecisionCardStore` | `DecisionCardStore` | decision query/delivery paths | decision lease slice and startup recovery |
+| `operational_command_receipts` | State UoW / isolated command receipt repository | State UoW in the same mutation transaction | command replay and outcome-unknown recovery | no deletion until the uncertainty/reference retention contract is implemented |
 
 `jobs.summary` is part of the Job repository even though event retention derives
 its `execution`, `usage`, and `uncertainResponseReview` projection. The event
@@ -140,7 +141,7 @@ Current-policy event sweep rows are compared byte-for-byte and are not updated
 when normalization produces the stored payload. Legacy or policy-upgrade rows
 still use the restartable event cursor.
 
-Schema 24 intentionally keeps no `result_holds(expires_at)` index. Holds are a
+Schema 25 intentionally keeps no `result_holds(expires_at)` index. Holds are a
 sparse, manually created subset with a 30-day maximum lifetime; the maintenance
 query is capped at 500, and adding an index would add a write and page cost to
 every hold. The storage audit records the scan so this decision can be revisited

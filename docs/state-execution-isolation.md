@@ -193,7 +193,7 @@ scheduler uses round-robin scope/project buckets so one progress-heavy project
 cannot consume all normal capacity. Critical work has reserved capacity but is
 not allowed to reorder two commands for the same Job or Agent. Maintenance runs
 only when the higher lanes are empty and retains the bounded slice contracts
-from schema 24.
+from schema 25.
 
 The Bridge limits total in-flight state requests to 64. The state child processes
 one write transaction at a time. Read-only worker queries have a separate limit
