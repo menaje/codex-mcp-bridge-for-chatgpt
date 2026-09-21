@@ -81,6 +81,52 @@ describe("state access ownership", () => {
     }
   });
 
+  it("defers scheduled storage work while foreground jobs are active", () => {
+    let now = 1_000;
+    let active = true;
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const eventMaintenance = vi.spyOn(store, "maintainEventRetention");
+    const scheduler = new StateMaintenanceScheduler(store, {
+      now: () => now,
+      shouldDefer: () => active,
+      maxDeferMs: 60_000
+    });
+    try {
+      expect(scheduler.sweep()).toMatchObject({
+        slice: "events",
+        changed: 0,
+        failed: false,
+        deferred: true
+      });
+      expect(eventMaintenance).not.toHaveBeenCalled();
+
+      expect(scheduler.sweep("events")).toMatchObject({
+        slice: "events",
+        failed: false,
+        deferred: false
+      });
+      expect(eventMaintenance).toHaveBeenCalledTimes(1);
+
+      now += 60_000;
+      expect(scheduler.sweep()).toMatchObject({
+        slice: "events",
+        failed: false,
+        deferred: false
+      });
+      expect(eventMaintenance).toHaveBeenCalledTimes(2);
+
+      active = false;
+      expect(scheduler.sweep()).toMatchObject({
+        slice: "history",
+        failed: false,
+        deferred: false
+      });
+    } finally {
+      scheduler.close();
+      store.close();
+    }
+  });
+
   it("commits compatibility maintenance as separate domain transactions", () => {
     const sql: string[] = [];
     const store = new BridgeStateStore({ file: ":memory:", traceSql: statement => sql.push(statement) });

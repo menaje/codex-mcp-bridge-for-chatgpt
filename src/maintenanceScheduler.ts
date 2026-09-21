@@ -17,6 +17,7 @@ export type StateMaintenanceObservation = {
   durationMs: number;
   changed: number;
   failed: boolean;
+  deferred: boolean;
 };
 
 /**
@@ -30,6 +31,7 @@ export class StateMaintenanceScheduler {
   private pending = false;
   private closed = false;
   private cursor = 0;
+  private deferredSince?: number;
   private readonly observations: StateMaintenanceObservation[] = [];
 
   constructor(
@@ -39,6 +41,8 @@ export class StateMaintenanceScheduler {
       now?: () => number;
       maintainJobs?: () => number;
       changed?: () => void;
+      shouldDefer?: () => boolean;
+      maxDeferMs?: number;
     } = {}
   ) {}
 
@@ -52,8 +56,27 @@ export class StateMaintenanceScheduler {
   sweep(slice?: StateMaintenanceSlice): StateMaintenanceObservation | undefined {
     if (this.closed || this.pending) return;
     this.pending = true;
-    const selected = slice || STATE_MAINTENANCE_SLICES[this.cursor++ % STATE_MAINTENANCE_SLICES.length]!;
+    const selected = slice || STATE_MAINTENANCE_SLICES[this.cursor % STATE_MAINTENANCE_SLICES.length]!;
     const startedAt = (this.options.now || Date.now)();
+    const maxDeferMs = Math.max(0, this.options.maxDeferMs ?? 60_000);
+    if (!slice && this.options.shouldDefer?.()) {
+      this.deferredSince ??= startedAt;
+      if (startedAt - this.deferredSince < maxDeferMs) {
+        this.pending = false;
+        return this.record({
+          slice: selected,
+          startedAt,
+          durationMs: 0,
+          changed: 0,
+          failed: false,
+          deferred: true
+        });
+      }
+    }
+    if (!slice) {
+      this.deferredSince = undefined;
+      this.cursor++;
+    }
     const started = performance.now();
     let changed = 0;
     let failed = false;
@@ -72,11 +95,10 @@ export class StateMaintenanceScheduler {
       startedAt,
       durationMs: Math.max(0, performance.now() - started),
       changed,
-      failed
+      failed,
+      deferred: false
     };
-    this.observations.push(observation);
-    if (this.observations.length > 120) this.observations.shift();
-    return observation;
+    return this.record(observation);
   }
 
   diagnostics(): readonly StateMaintenanceObservation[] {
@@ -110,5 +132,11 @@ export class StateMaintenanceScheduler {
       return report.recordsRemoved + report.incidentsRemoved;
     }
     return this.options.maintainJobs?.() || 0;
+  }
+
+  private record(observation: StateMaintenanceObservation): StateMaintenanceObservation {
+    this.observations.push(observation);
+    if (this.observations.length > 120) this.observations.shift();
+    return observation;
   }
 }

@@ -23,7 +23,7 @@ import {
 } from "./completionDelivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import { ThreadConnectionController, type ThreadConnectionRecord } from "./threadConnections.js";
-import { StateMaintenanceScheduler } from "./maintenanceScheduler.js";
+import { STATE_MAINTENANCE_SLICES, StateMaintenanceScheduler } from "./maintenanceScheduler.js";
 import { classifyMemoryOnlyThreadImpact } from "./runtimeAdmission.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
 import { registerCodexInputTools, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS } from "./questionTools.js";
@@ -1413,6 +1413,14 @@ const diagnosticsOutputSchema = z.strictObject({
       cacheHits: z.number().int().min(0)
     })),
     jobWaits: jobWaitDiagnosticsOutputSchema,
+    stateMaintenance: z.array(z.strictObject({
+      slice: z.enum(STATE_MAINTENANCE_SLICES),
+      startedAt: z.number().int().min(0),
+      durationMs: z.number().min(0),
+      changed: z.number().int().min(0),
+      failed: z.boolean(),
+      deferred: z.boolean()
+    })),
     html: z.strictObject({
       dashboardBytes: z.number().int().min(0),
       dashboardBudgetBytes: z.number().int().positive(),
@@ -2148,7 +2156,9 @@ export class CodexJobRegistry {
     this.maintenanceScheduler = new StateMaintenanceScheduler(this.activityStore, {
       intervalMs,
       maintainJobs: () => this.maintainRetainedJobs(),
-      changed: () => { for (const listener of this.changeListeners) listener(); }
+      changed: () => { for (const listener of this.changeListeners) listener(); },
+      shouldDefer: () => this.runtimeAdmission.pendingAdmissions > 0 || this.observedRunningCount() > 0,
+      maxDeferMs: 60_000
     });
     this.maintenanceScheduler.start();
   }
@@ -2761,6 +2771,10 @@ export class CodexJobRegistry {
     return this.waitDiagnosticsTracker.snapshot(
       this.activityStore.listTransportObservations("status-wait-aborted").length
     );
+  }
+
+  stateMaintenanceDiagnostics(): z.infer<typeof diagnosticsOutputSchema>["performance"]["stateMaintenance"] {
+    return [...(this.maintenanceScheduler?.diagnostics() || [])];
   }
 
   getScopeVersion(scopeId: string): number {
@@ -4171,7 +4185,10 @@ export class CardPerformanceTracker {
     this.samples.set(name, entries);
   }
 
-  snapshot(): Omit<z.infer<typeof diagnosticsOutputSchema>["performance"], "jobWaits"> {
+  snapshot(): Omit<
+    z.infer<typeof diagnosticsOutputSchema>["performance"],
+    "jobWaits" | "stateMaintenance"
+  > {
     const percentile = (values: number[], fraction: number): number => {
       if (values.length === 0) return 0;
       return values[Math.min(values.length - 1, Math.ceil(values.length * fraction) - 1)] || 0;
@@ -5805,7 +5822,8 @@ export function registerBridgeTools(
         },
         performance: {
           ...cardPerformance.snapshot(),
-          jobWaits: jobs.waitDiagnostics()
+          jobWaits: jobs.waitDiagnostics(),
+          stateMaintenance: jobs.stateMaintenanceDiagnostics()
         },
         forensics: {
           bridgeInstanceId: jobs.bridgeInstanceId,
