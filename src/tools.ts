@@ -24,6 +24,7 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 import { ThreadConnectionController, type ThreadConnectionRecord } from "./threadConnections.js";
 import { STATE_MAINTENANCE_SLICES, StateMaintenanceScheduler } from "./maintenanceScheduler.js";
+import { InProcessOperationalStateService } from "./stateService.js";
 import { classifyMemoryOnlyThreadImpact } from "./runtimeAdmission.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
 import { registerCodexInputTools, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS } from "./questionTools.js";
@@ -2153,9 +2154,11 @@ export class CodexJobRegistry {
 
   configureStateMaintenance(intervalMs?: number): void {
     if (this.maintenanceScheduler) return;
-    this.maintenanceScheduler = new StateMaintenanceScheduler(this.activityStore, {
+    const stateService = new InProcessOperationalStateService(this.activityStore, {
+      maintainJobs: () => this.maintainRetainedJobs()
+    });
+    this.maintenanceScheduler = new StateMaintenanceScheduler(stateService, {
       intervalMs,
-      maintainJobs: () => this.maintainRetainedJobs(),
       changed: () => { for (const listener of this.changeListeners) listener(); },
       shouldDefer: () => this.runtimeAdmission.pendingAdmissions > 0 || this.observedRunningCount() > 0,
       maxDeferMs: 60_000

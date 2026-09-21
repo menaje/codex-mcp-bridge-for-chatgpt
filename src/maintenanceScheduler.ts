@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import type { BridgeStateStore } from "./stateStore.js";
+import type { OperationalStateService } from "./stateService.js";
 
 export const STATE_MAINTENANCE_SLICES = [
   "events",
@@ -35,11 +35,10 @@ export class StateMaintenanceScheduler {
   private readonly observations: StateMaintenanceObservation[] = [];
 
   constructor(
-    private readonly store: BridgeStateStore,
+    private readonly stateService: OperationalStateService,
     private readonly options: {
       intervalMs?: number;
       now?: () => number;
-      maintainJobs?: () => number;
       changed?: () => void;
       shouldDefer?: () => boolean;
       maxDeferMs?: number;
@@ -48,12 +47,12 @@ export class StateMaintenanceScheduler {
 
   start(): void {
     if (this.closed || this.timer) return;
-    this.timer = setInterval(() => { this.sweep(); }, this.options.intervalMs ?? 5_000);
+    this.timer = setInterval(() => { void this.sweep(); }, this.options.intervalMs ?? 5_000);
     this.timer.unref();
-    this.sweep();
+    void this.sweep();
   }
 
-  sweep(slice?: StateMaintenanceSlice): StateMaintenanceObservation | undefined {
+  async sweep(slice?: StateMaintenanceSlice): Promise<StateMaintenanceObservation | undefined> {
     if (this.closed || this.pending) return;
     this.pending = true;
     const selected = slice || STATE_MAINTENANCE_SLICES[this.cursor % STATE_MAINTENANCE_SLICES.length]!;
@@ -81,7 +80,7 @@ export class StateMaintenanceScheduler {
     let changed = 0;
     let failed = false;
     try {
-      changed = this.run(selected);
+      changed = (await this.stateService.execute({ operation: "maintain", slice: selected })).changed;
       this.lastError = undefined;
       if (changed > 0) this.options.changed?.();
     } catch (error) {
@@ -109,29 +108,6 @@ export class StateMaintenanceScheduler {
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
-  }
-
-  private run(slice: StateMaintenanceSlice): number {
-    if (slice === "events") {
-      const report = this.store.maintainEventRetention();
-      return report.expiredJobEventsRemoved + report.expiredActivityEventsRemoved +
-        report.expiredResultHoldsRemoved + report.perJobEventsRemoved + report.budgetEventsRemoved;
-    }
-    if (slice === "history") return this.store.maintainHistoryRetention().historyRemoved;
-    if (slice === "questions") {
-      const report = this.store.maintainQuestionRetention();
-      return report.expiredQuestionsRemoved + report.deliveredJournalsRemoved +
-        report.notificationsMarkedUncertain;
-    }
-    if (slice === "decisions") {
-      const report = this.store.maintainDecisionRetention();
-      return report.expiredLeasesMarkedUnknown + report.expiredCardsRemoved;
-    }
-    if (slice === "recovery") {
-      const report = this.store.maintainRecoveryRetention();
-      return report.recordsRemoved + report.incidentsRemoved;
-    }
-    return this.options.maintainJobs?.() || 0;
   }
 
   private record(observation: StateMaintenanceObservation): StateMaintenanceObservation {

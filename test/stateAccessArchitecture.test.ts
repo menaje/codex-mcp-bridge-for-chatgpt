@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { StateMaintenanceScheduler } from "../src/maintenanceScheduler.js";
+import { InProcessOperationalStateService } from "../src/stateService.js";
 import { ThreadConnectionController } from "../src/threadConnections.js";
 import type { CodexUpstream } from "../src/upstream.js";
 
@@ -68,11 +69,11 @@ describe("state access ownership", () => {
       store.threadConnections,
       {} as CodexUpstream
     );
-    const scheduler = new StateMaintenanceScheduler(store);
+    const scheduler = new StateMaintenanceScheduler(new InProcessOperationalStateService(store));
     try {
       await controller.sweep();
       expect(eventMaintenance).not.toHaveBeenCalled();
-      expect(scheduler.sweep("events")).toMatchObject({ slice: "events", failed: false });
+      expect(await scheduler.sweep("events")).toMatchObject({ slice: "events", failed: false });
       expect(eventMaintenance).toHaveBeenCalledTimes(1);
     } finally {
       scheduler.close();
@@ -81,18 +82,18 @@ describe("state access ownership", () => {
     }
   });
 
-  it("defers scheduled storage work while foreground jobs are active", () => {
+  it("defers scheduled storage work while foreground jobs are active", async () => {
     let now = 1_000;
     let active = true;
     const store = new BridgeStateStore({ file: ":memory:" });
     const eventMaintenance = vi.spyOn(store, "maintainEventRetention");
-    const scheduler = new StateMaintenanceScheduler(store, {
+    const scheduler = new StateMaintenanceScheduler(new InProcessOperationalStateService(store), {
       now: () => now,
       shouldDefer: () => active,
       maxDeferMs: 60_000
     });
     try {
-      expect(scheduler.sweep()).toMatchObject({
+      expect(await scheduler.sweep()).toMatchObject({
         slice: "events",
         changed: 0,
         failed: false,
@@ -100,7 +101,7 @@ describe("state access ownership", () => {
       });
       expect(eventMaintenance).not.toHaveBeenCalled();
 
-      expect(scheduler.sweep("events")).toMatchObject({
+      expect(await scheduler.sweep("events")).toMatchObject({
         slice: "events",
         failed: false,
         deferred: false
@@ -108,7 +109,7 @@ describe("state access ownership", () => {
       expect(eventMaintenance).toHaveBeenCalledTimes(1);
 
       now += 60_000;
-      expect(scheduler.sweep()).toMatchObject({
+      expect(await scheduler.sweep()).toMatchObject({
         slice: "events",
         failed: false,
         deferred: false
@@ -116,7 +117,7 @@ describe("state access ownership", () => {
       expect(eventMaintenance).toHaveBeenCalledTimes(2);
 
       active = false;
-      expect(scheduler.sweep()).toMatchObject({
+      expect(await scheduler.sweep()).toMatchObject({
         slice: "history",
         failed: false,
         deferred: false
