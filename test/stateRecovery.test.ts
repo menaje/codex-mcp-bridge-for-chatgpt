@@ -28,7 +28,7 @@ describe("state recovery boundary", { timeout: 15_000 }, () => {
     expect(inspectStateRecovery({ databaseFile: file, backupFile: backup })).toMatchObject({
       eligible: true,
       sourceSchema: 18,
-      targetSchema: 24,
+      targetSchema: 25,
       sourceRuntimeKnown: true,
       serviceOpenedAfterMigration: false
     });
@@ -43,7 +43,7 @@ describe("state recovery boundary", { timeout: 15_000 }, () => {
     expect(existsSync(result.receiptFile)).toBe(true);
     expect(result.receipt).toMatchObject({
       sourceSchema: 18,
-      replacedSchema: 24,
+      replacedSchema: 25,
       sourceRuntimeProvenance: "recorded",
       serviceRestartVerified: false
     });

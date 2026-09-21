@@ -33,7 +33,7 @@ describe("state database lifecycle", () => {
     expect(readStateMigrationStatus(file)).toMatchObject({
       phase: "failed",
       sourceSchema: 18,
-      targetSchema: 24
+      targetSchema: 25
     });
   });
 
@@ -177,12 +177,12 @@ describe("state database lifecycle", () => {
     });
     store.close();
 
-    expect(checkpoints).toEqual([19, 20, 21, 22, 23, 24]);
+    expect(checkpoints).toEqual([19, 20, 21, 22, 23, 24, 25]);
     expect(readStateMigrationStatus(file)).toMatchObject({
       phase: "completed",
       sourceSchema: 18,
-      currentSchema: 24,
-      migrationId: "bridge-state-23-to-24"
+      currentSchema: 25,
+      migrationId: "bridge-state-24-to-25"
     });
   });
 

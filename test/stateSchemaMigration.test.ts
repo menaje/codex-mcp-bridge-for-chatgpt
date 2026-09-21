@@ -550,7 +550,7 @@ describe("current state schema after asynchronous-execution normalization", { ti
       backupFile: originalBackup,
       databaseId,
       sourceSchema: 3,
-      targetSchema: 24
+      targetSchema: 25
     });
 
     expect(() => new BridgeStateStore({ file })).toThrow(/malformed JSON|Invalid job payload/);
