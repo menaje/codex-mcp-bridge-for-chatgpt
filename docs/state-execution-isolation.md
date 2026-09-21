@@ -69,6 +69,9 @@ does not address that failure. The implementation order is therefore:
 
 Unclassified or mixed-use data remains in `state.sqlite`. Importance is decided
 by consumers and recovery semantics, not by a table or event name.
+The exhaustive schema-24 table, index, trigger, consumer, recovery and file
+security inventory is maintained in
+[State schema ownership catalog](state-schema-ownership-catalog.md).
 
 ### `state.sqlite`
 

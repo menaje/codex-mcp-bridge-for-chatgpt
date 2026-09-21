@@ -281,3 +281,8 @@ The storage audit executes and verifies steps 2–5 on disposable copies and lea
 the live database untouched. A report with `liveDatabaseReplacementPerformed:
 false` is implementation evidence, not evidence that an operator has compacted or
 released a production installation.
+
+The complete schema-24 table, explicit index and trigger ownership inventory,
+including command/query consumers, recovery dependencies, future destination and
+two-database file security rules, is in
+[State schema ownership catalog](state-schema-ownership-catalog.md).
