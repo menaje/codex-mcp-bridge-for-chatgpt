@@ -6,7 +6,7 @@ import UserNotifications
 
 /// Deliberately accepts operational state only. Codex task/Activity events are not inputs.
 enum OperationalProblem: String, Codable, CaseIterable, Sendable {
-    case runtime, responseUnconfirmed, tunnel, configuration, authentication, authenticationStatus, installation, remoteConnection, remoteSecurity, compatibility
+    case runtime, responseUnconfirmed, stateStorage, tunnel, configuration, authentication, authenticationStatus, installation, remoteConnection, remoteSecurity, compatibility
 
     var isSecurity: Bool { self == .remoteSecurity }
     var settingsTab: String {
@@ -19,6 +19,7 @@ enum OperationalProblem: String, Codable, CaseIterable, Sendable {
         switch self {
         case .runtime: return "macos.thebridgeisunavailableopenconnectionsettingsto"
         case .responseUnconfirmed: return "macos.thebridgeserverdidnotrespondpleasetry"
+        case .stateStorage: return "macos.bridgestoragecannotacceptupdatesexistingworkispreserved"
         case .tunnel: return "macos.thechatgptconnectioncouldnotberestoredcheck"
         case .configuration: return "macos.bridgeconfigurationneedsattentionopenconnectionsettingsto"
         case .authentication: return "macos.codexauthenticationneedsattentioncheckyoursignin"

@@ -481,6 +481,9 @@ final class AppModel: ObservableObject {
         if status.phase == "running", status.bridge.observation == "timed-out" {
             return .problem(.responseUnconfirmed)
         }
+        if status.phase == "running", status.bridge.stateServiceStorageError != nil {
+            return .problem(.stateStorage)
+        }
         if status.phase == "running",
            let stateServiceStatus = status.bridge.stateServiceStatus,
            stateServiceStatus != "ready" {
@@ -509,7 +512,7 @@ final class AppModel: ObservableObject {
 
     private var connectionCheckRequiresAttention: Bool {
         switch currentActionRequiredProblem {
-        case .runtime, .responseUnconfirmed, .tunnel, .remoteConnection: return true
+        case .runtime, .responseUnconfirmed, .stateStorage, .tunnel, .remoteConnection: return true
         default: return false
         }
     }
@@ -672,10 +675,16 @@ final class AppModel: ObservableObject {
         guard !isRemoteClient, let status = helperStatus else { return false }
         guard status.phase == "running" else { return false }
         if status.bridge.observation == "timed-out" { return true }
+        if status.bridge.stateServiceStorageError != nil { return false }
         if let stateServiceStatus = status.bridge.stateServiceStatus {
             return stateServiceStatus != "ready"
         }
         return false
+    }
+
+    var bridgeStateStorageError: String? {
+        guard !isRemoteClient, helperStatus?.phase == "running" else { return nil }
+        return helperStatus?.bridge.stateServiceStorageError
     }
 
     /// A read projection failure degrades Dashboard/Settings freshness without
@@ -687,7 +696,8 @@ final class AppModel: ObservableObject {
     }
 
     var hasRetainedBridgeObservation: Bool {
-        bridgeResponseUnconfirmed && helperStatus?.bridge.lastSuccessfulAt != nil
+        (bridgeResponseUnconfirmed || bridgeStateStorageError != nil) &&
+            helperStatus?.bridge.lastSuccessfulAt != nil
     }
 
     var hasConnectionTarget: Bool {
@@ -784,6 +794,7 @@ final class AppModel: ObservableObject {
         if systemObservationPending { return .checking }
         if currentActionRequiredProblem != nil { return .attention }
         if isBridgeConnectionChecking { return .checking }
+        if bridgeStateStorageError != nil { return .attention }
         if bridgeResponseUnconfirmed { return .attention }
         if bridgeReadProjectionDelayed { return .attention }
         if isRemoteClient {
@@ -1384,6 +1395,9 @@ final class AppModel: ObservableObject {
         let key: String
         if isRemoteClient { key = "macos.selectorpairaserverintheconnection" }
         else if helperStatus?.phase == "stopped" { key = "macos.thebridgeserverisstopped" }
+        else if bridgeStateStorageError != nil {
+            key = "macos.bridgestoragecannotacceptupdatesexistingworkispreserved"
+        }
         else if helperStatus?.pid != nil { key = "macos.theserverprocessisrunningbutitsconnection" }
         else { key = "macos.thebridgeserverdidnotrespondpleasetry" }
         return BridgeAppLocalization.string(key, locale: interfaceLocale)

@@ -315,6 +315,7 @@ enum BridgeGeneratedLocalization {
         "macos.bridgeconfigurationneedsattentionopenconnectionsettingsto": "Bridge configuration needs attention. Open connection settings to review the required fields.",
         "macos.bridgeconnected": "%1$@ · Bridge %2$@ · Connected",
         "macos.bridgeskills": "Bridge Skills",
+        "macos.bridgestoragecannotacceptupdatesexistingworkispreserved": "Bridge storage cannot accept updates. Existing work is preserved, and new work is paused until storage recovers.",
         "macos.bridgeversion": "Bridge · Version %@",
         "macos.bytes": "%@ · %@ · %lld bytes",
         "macos.cancelhandoff": "Cancel handoff",

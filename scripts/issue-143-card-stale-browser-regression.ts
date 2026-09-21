@@ -2,17 +2,46 @@ import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { DASHBOARD_CARD_HTML } from "../src/dashboardCard.js";
-import { DECISION_CARD_HTML, DECISION_CARD_METADATA_KEY } from "../src/decisionCard.js";
-import { prepareDecisionCardContent } from "../src/decisionCardContent.js";
-import { SETTINGS_CARD_HTML } from "../src/settingsCard.js";
+import { DASHBOARD_CARD_HTML as SOURCE_DASHBOARD_CARD_HTML } from "../src/dashboardCard.js";
+import {
+  DECISION_CARD_HTML as SOURCE_DECISION_CARD_HTML,
+  DECISION_CARD_METADATA_KEY as SOURCE_DECISION_CARD_METADATA_KEY
+} from "../src/decisionCard.js";
+import {
+  prepareDecisionCardContent as sourcePrepareDecisionCardContent
+} from "../src/decisionCardContent.js";
+import { SETTINGS_CARD_HTML as SOURCE_SETTINGS_CARD_HTML } from "../src/settingsCard.js";
 import { dashboardView, settingsView } from "./card-browser-fixtures.js";
 
 const artifacts = path.resolve("output/playwright/issue-143-card-stale");
 mkdirSync(artifacts, { recursive: true });
 const execute = promisify(execFile);
 const session = `issue-143-card-stale-${process.pid}`;
+const installedRuntime = path.join(
+  "/Applications/Codex MCP Bridge for ChatGPT.app",
+  "Contents/Resources/Runtime/dist"
+);
+const useInstalledBundle = process.argv.includes("--installed-app");
+let DASHBOARD_CARD_HTML = SOURCE_DASHBOARD_CARD_HTML;
+let DECISION_CARD_HTML = SOURCE_DECISION_CARD_HTML;
+let DECISION_CARD_METADATA_KEY = SOURCE_DECISION_CARD_METADATA_KEY;
+let prepareDecisionCardContent = sourcePrepareDecisionCardContent;
+let SETTINGS_CARD_HTML = SOURCE_SETTINGS_CARD_HTML;
+if (useInstalledBundle) {
+  const [dashboard, decision, decisionContent, settings] = await Promise.all([
+    import(pathToFileURL(path.join(installedRuntime, "dashboardCard.js")).href),
+    import(pathToFileURL(path.join(installedRuntime, "decisionCard.js")).href),
+    import(pathToFileURL(path.join(installedRuntime, "decisionCardContent.js")).href),
+    import(pathToFileURL(path.join(installedRuntime, "settingsCard.js")).href)
+  ]);
+  DASHBOARD_CARD_HTML = dashboard.DASHBOARD_CARD_HTML;
+  DECISION_CARD_HTML = decision.DECISION_CARD_HTML;
+  DECISION_CARD_METADATA_KEY = decision.DECISION_CARD_METADATA_KEY;
+  prepareDecisionCardContent = decisionContent.prepareDecisionCardContent;
+  SETTINGS_CARD_HTML = settings.SETTINGS_CARD_HTML;
+}
 const preparedDecision = prepareDecisionCardContent(`
   <article><h2>Keep the confirmed choice</h2>
   <fieldset><legend>Preferred option</legend>
@@ -161,6 +190,7 @@ try {
 
   const report = {
     passed: true,
+    source: useInstalledBundle ? installedRuntime : "current checkout",
     artifacts,
     checks: [
       "Dashboard keeps its last confirmed DOM after a dispatched read timeout",

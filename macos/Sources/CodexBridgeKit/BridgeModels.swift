@@ -705,6 +705,8 @@ public struct RuntimeStateServiceSnapshot: Codable, Sendable {
     public let heartbeatAgeMs: Int?
     public let activeOperation: ActiveOperation?
     public let lastCommitAt: Int64?
+    public let storageError: String?
+    public let storageErrorObservedAt: Int64?
 }
 
 public struct RuntimeReadServiceSnapshot: Codable, Sendable {
@@ -834,6 +836,8 @@ public struct HelperBridgeStatus: Codable, Sendable {
     public let stateServicePhase: String?
     public let stateServiceObservedAt: Int64?
     public let stateServiceLastCommitAt: Int64?
+    public let stateServiceStorageError: String?
+    public let stateServiceStorageErrorObservedAt: Int64?
     public let readServiceStatus: String?
     public let readServicePhase: String?
     public let readServiceObservedAt: Int64?

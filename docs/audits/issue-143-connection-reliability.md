@@ -250,9 +250,111 @@ claim simultaneous writes during a SQLite lock: the central writer may still
 make every operational mutation wait, but that wait is reported as degraded or
 unconfirmed state and no longer consumes public connection liveness.
 
-Current-checkout verification after this change: 96 TypeScript test files / 844
+Current-checkout verification after this change: 96 TypeScript test files / 848
 tests, build and release checks, the long production fault regression, and the
 real companion socket plus production Swift-client contract all pass against
 disposable databases. Applying the candidate to the installed helper, Tunnel,
 and ChatGPT host remains an explicit deployment step rather than evidence
 created by these local fixtures.
+
+## Completion re-audit and corrective boundary (2026-09-22)
+
+Issue #143 was reopened after comparing its closure claim with the checked-in
+implementation and its own unchecked acceptance list. The installed build was
+healthy, but the repository did not contain the full separate operational-state
+owner described by the original target diagram. The production boundary moves
+the whole application and its single writer into a supervised child; it does not
+move every mutation through the maintenance-only state-service prototype.
+
+The correction records two different outcomes instead of treating them as one:
+
+- #143 owns public/native connection liveness, bounded request admission,
+  truthful stale or storage-degraded state, stale presentation preservation and
+  authoritative recovery after the application child resumes.
+- #142 owns the later semantic conversion that would keep critical commands and
+  unrelated application work runnable while the operational writer itself is
+  blocked. The current central writer serializes writes, and issue #143 does not
+  claim otherwise.
+
+The corrective implementation adds a structured degradation response to proxied
+MCP traffic. A stale write reports `state-write-unconfirmed` and `outcome=unknown`;
+capacity or pre-admission degradation reports `outcome=not-observed`. The response
+also carries `retry-after`, the privacy-safe last operation phase and no domain
+identifiers. An actual SQLite `FULL` fault now disables new-Job admission and is
+reported as `state-storage-full` until a later state transaction commits. The
+same fail-closed mapping covers SQLite busy, I/O, corruption and read-only driver
+results; classification comes from the driver code, never elapsed time.
+
+The acceptance evidence is now interpreted as follows:
+
+| Fault or contract | Evidence | #143 result |
+| --- | --- | --- |
+| 30.5 s application/state stall | 121 public health samples, native health checkpoints, exact-once settings recovery | pass |
+| SQLite lock below and beyond `busy_timeout` | committed slow write versus explicit `STATE_STORAGE_BUSY` | pass |
+| SQLite capacity exhaustion | real `SQLITE_FULL` on the runtime writer, fail-closed admission and explicit readiness limitation | pass |
+| proxy saturation and large payload allocation | 112 incomplete requests with native reserve; four bounded 6 MiB JSON bodies with concurrent health probes | pass |
+| progress flood and project fairness | 100 project-A updates, bounded/coalesced disposable queue, project-B fair turn and critical-input bypass | pass within the pre-SQLite queue; no in-flight write preemption claim |
+| read projection stall | bounded read capacity, stale result and independent state write | pass |
+| telemetry lock, flood, capacity and crash | bounded drop/failure accounting and independent operational write | pass |
+| response loss and owner restart | durable command receipt replay, hash conflict rejection and single live writer generation | pass for implemented receipt surface |
+| migration interruption and rollback | checkpoint reconciliation, verified pre-open restore and post-service-open rollback refusal | pass |
+| installed app, Tunnel and ChatGPT card | exact installed build, injected runtime stop, native live view and installed card-resource regression | pass; see installed completion acceptance below |
+
+Passing the disposable fault suite does not prove Tunnel, ChatGPT-host or Codex
+network latency can be shortened. Those clocks remain external tolerance
+domains. The closure record below identifies the exact installed build, runs an
+installed fault without altering the operating database, confirms native and
+card stale behavior, and fixes the #143/#142 scope boundary.
+
+## Installed completion acceptance (2026-09-22)
+
+The signed arm64 application installed at `/Applications/Codex MCP Bridge for
+ChatGPT.app` contains commit `b53fcccf9580b85bc298b011bd3a1573b6c1c7d9`,
+build ID `b53fcccf9580:12f58b20657a`, and a clean source hash. Before replacement,
+the authoritative runtime snapshot reported zero active Jobs, admissions,
+interactions, memory-only threads and background processes. The prior app was
+stopped through the ordinary non-force lifecycle handoff, whose receipt was
+`completed`. Its signed `b3d2b4f91bea:4be694bea2a1` bundle, helper definition
+and a consistent SQLite backup are retained at
+`~/.codex-mcp-bridge/backups/issue-143-pre-b53fccc-20260922T0847KST`;
+the backup reports `quick_check=ok` and zero foreign-key violations.
+
+Opening only the replacement app restored the helper, Bridge supervisor,
+application runtime, read child, telemetry child and Tunnel. The installed
+runtime then passed a non-database fault: its application child was sent
+`SIGSTOP` for 6.020 seconds while the SQLite files were left untouched. All 58
+public `/healthz` samples returned HTTP 200 (p50 2.156 ms, p95 3.629 ms, p99
+19.167 ms, maximum 19.167 ms). At 2.511 seconds `/readyz` returned 503 with
+`state-stale` and `state-response-unconfirmed`, while helper status still
+reported the Bridge and Tunnel connected and disabled new-Job admission. After
+`SIGCONT`, readiness and state-service status returned to ready in 8.301 ms.
+
+A separately signed live-acceptance window used the production Swift views
+against that installed helper. During the stop it changed from healthy to
+attention/response-unconfirmed, while the last confirmed Running, Response
+needed and Issues values and their confirmation time remained visible. It
+returned to healthy after recovery. This directly verifies that native UI does
+not translate the state stall into a disconnected process or erase the last
+confirmed Dashboard.
+
+The browser regression was also run by dynamically importing Dashboard,
+Settings and Decision resources from the exact installed runtime directory,
+not the checkout. Each retained its last confirmed DOM after a dispatched read
+timeout and none issued a second compatibility tool call. The three installed
+card modules are byte-identical to the `b3d2b4f` resources previously rendered
+through the real ChatGPT web host, so this run adds installed fault semantics
+without claiming a new independent human-host sample. No prompt, mutation or
+operational card action was submitted for this acceptance.
+
+After the fault, the live state database still reported `integrity_check=ok`
+and zero foreign-key violations, the private environment file digest was
+unchanged, the Tunnel doctor and connection were healthy, and admission,
+state-read and telemetry status were ready. Final repository validation passed
+96 TypeScript files / 848 tests, App Server schema compatibility, 205 macOS
+tests with two opt-in skips, and 1,319 localized strings across nine languages.
+
+This closes #143 only for connection liveness, truthful bounded degradation,
+last-confirmed presentation and recovery. It does not claim that an in-flight
+SQLite call can be preempted or that independent semantic writes continue while
+the central writer is blocked. Moving every command/query behind the dedicated
+operational-state owner remains #142.

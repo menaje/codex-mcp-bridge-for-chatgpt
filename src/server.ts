@@ -59,6 +59,8 @@ export type BridgeReadinessSnapshot = {
     capacity?: number;
     activeOperation?: OperationalStateOperationObservation;
     lastCommitAt?: number;
+    storageError?: "busy" | "full" | "io" | "corrupt" | "read-only";
+    storageErrorObservedAt?: number;
   };
 };
 

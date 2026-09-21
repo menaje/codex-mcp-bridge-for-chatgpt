@@ -476,6 +476,26 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testStateStorageFailureIsDistinctFromAnUnconfirmedResponse() throws {
+        let model = AppModel()
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        model.recordLocalConnectionStatus(try helperStatus(stateServiceStorageError: "full"))
+
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertEqual(model.bridgeStateStorageError, "full")
+        XCTAssertFalse(model.bridgeResponseUnconfirmed)
+        XCTAssertEqual(model.operationalObservation, .problem(.stateStorage))
+        XCTAssertEqual(model.health, .attention)
+        XCTAssertEqual(
+            model.runtimeUnavailableExplanation,
+            BridgeAppLocalization.string(
+                "macos.bridgestoragecannotacceptupdatesexistingworkispreserved",
+                locale: model.interfaceLocale
+            )
+        )
+    }
+
+    @MainActor
     func testTunnelProbeFailureGetsGraceButRuntimeExitDoesNot() throws {
         let model = AppModel()
         model.recordLocalConnectionStatus(try helperStatus(tunnelConnected: false))
@@ -1945,18 +1965,22 @@ private func helperStatus(
     configurationValid: Bool = true,
     bridgeObservation: String? = nil,
     bridgeLastSuccessfulAt: String? = nil,
-    readServiceStatus: String? = nil
+    readServiceStatus: String? = nil,
+    stateServiceStorageError: String? = nil
 ) throws -> HelperStatus {
     let bridgeObservationJSON = bridgeObservation.map { ",\"observation\":\"\($0)\"" } ?? ""
     let bridgeLastSuccessfulAtJSON = bridgeLastSuccessfulAt.map { ",\"lastSuccessfulAt\":\"\($0)\"" } ?? ""
     let readServiceStatusJSON = readServiceStatus.map { ",\"readServiceStatus\":\"\($0)\"" } ?? ""
+    let stateServiceStorageErrorJSON = stateServiceStorageError.map {
+        ",\"stateServiceStatus\":\"state-recovering\",\"stateServiceStorageError\":\"\($0)\""
+    } ?? ""
     let json = #"""
     {
       "kind":"helper-status","generatedAt":"2026-09-03T00:00:00.000Z",
       "phase":"\#(phase)","pid":42,"startedAt":null,"lastExit":null,"lastError":null,
       "restartAttempt":0,
       "configuration":{"path":"/private/.env","exists":true,"valid":\#(configurationValid),"hasApiKey":true,"hasTunnelId":true,"tunnelId":"tunnel_native123","issue":null},
-      "bridge":{"socketPath":"/private/bridge.sock","connected":\#(bridgeConnected)\#(bridgeObservationJSON)\#(bridgeLastSuccessfulAtJSON)\#(readServiceStatusJSON),"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},
+      "bridge":{"socketPath":"/private/bridge.sock","connected":\#(bridgeConnected)\#(bridgeObservationJSON)\#(bridgeLastSuccessfulAtJSON)\#(readServiceStatusJSON)\#(stateServiceStorageErrorJSON),"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},
       "tunnel":{"phase":"connected","profile":"managed","transport":"stdio","doctorPassed":true,"processRunning":true,"connected":\#(tunnelConnected),"lastCheckedAt":null,"lastError":null}
     }
     """#.data(using: .utf8)!
