@@ -3,6 +3,10 @@
 This document is the schema-24 ownership contract. SQLite remains one durable
 database, but a shared file does not imply shared write authority.
 
+The issue #142 successor architecture that preserves these owners while moving
+execution behind a child-process boundary is documented in
+[State execution isolation architecture](state-execution-isolation.md).
+
 The runtime has three access classes:
 
 - Commands and domain repositories own invariants and mutations.

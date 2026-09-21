@@ -233,6 +233,9 @@ restarts.
 The schema-24 table/write/read/maintenance ownership matrix and the command,
 query, and bounded scheduler contracts are documented in
 [State data access and maintenance ownership](state-data-access.md).
+The selected two-database process, IPC, readiness, migration and fault contract
+is documented in
+[State execution isolation architecture](state-execution-isolation.md).
 
 Treat four measurements separately:
 
