@@ -84,6 +84,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
   private closed = false;
   private childInFlight = 0;
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly unconfirmed = new Set<string>();
   private readonly startup: Promise<void>;
   private startupResolve!: () => void;
   private startupReject!: (error: Error) => void;
@@ -159,7 +160,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         "Operational state protocol is not compatible."
       ));
     }
-    if (this.pending.size >= this.capacity) {
+    if (this.outstanding >= this.capacity) {
       return Promise.reject(new OperationalStateProcessError(
         "STATE_CAPACITY",
         "Operational state request capacity is exhausted."
@@ -193,6 +194,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
     return new Promise<OperationalStateResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
+        this.unconfirmed.add(requestId);
         reject(new OperationalStateProcessError(
           "STATE_OUTCOME_UNKNOWN",
           "Operational state response missed its deadline; the command may still complete."
@@ -218,7 +220,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         reason: "state-recovering",
         protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
         generation: this.generation,
-        inFlight: this.pending.size,
+        inFlight: this.outstanding,
         capacity: this.capacity
       };
     }
@@ -228,7 +230,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         reason: "state-starting",
         protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
         generation: this.generation,
-        inFlight: this.pending.size,
+        inFlight: this.outstanding,
         capacity: this.capacity
       };
     }
@@ -239,7 +241,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
         generation: this.generation,
         heartbeatAgeMs: Math.max(0, now - this.lastHeartbeatAt),
-        inFlight: this.pending.size,
+        inFlight: this.outstanding,
         capacity: this.capacity
       };
     }
@@ -255,14 +257,14 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         capacity: this.capacity
       };
     }
-    if (this.pending.size >= this.capacity) {
+    if (this.outstanding >= this.capacity) {
       return {
         ready: false,
         reason: "state-capacity",
         protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
         generation: this.generation,
         heartbeatAgeMs,
-        inFlight: this.pending.size,
+        inFlight: this.outstanding,
         capacity: this.capacity
       };
     }
@@ -272,7 +274,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
       protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
       generation: this.generation,
       heartbeatAgeMs,
-      inFlight: Math.max(this.pending.size, this.childInFlight),
+      inFlight: Math.max(this.outstanding, this.childInFlight),
       capacity: this.capacity
     };
   }
@@ -320,6 +322,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
       return;
     }
     if (message.generation !== this.generation) return;
+    if (this.unconfirmed.delete(message.requestId)) return;
     const pending = this.pending.get(message.requestId);
     if (!pending) return;
     clearTimeout(pending.timer);
@@ -349,6 +352,11 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
       ));
     }
     this.pending.clear();
+    this.unconfirmed.clear();
+  }
+
+  private get outstanding(): number {
+    return this.pending.size + this.unconfirmed.size;
   }
 }
 

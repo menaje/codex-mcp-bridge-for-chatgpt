@@ -9,6 +9,7 @@ import {
   ChildProcessOperationalStateService,
   OperationalStateProcessError
 } from "../src/stateServiceProcess.js";
+import { BridgeStateStore } from "../src/stateStore.js";
 
 describe("operational state child process", () => {
   it("executes a semantic maintenance command in an isolated process", async () => {
@@ -31,6 +32,21 @@ describe("operational state child process", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("refuses to become a second BridgeStateStore owner", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "state-service-owner-"));
+    const file = path.join(root, "state.sqlite");
+    const currentOwner = new BridgeStateStore({ file });
+    try {
+      await expect(ChildProcessOperationalStateService.start({
+        file,
+        startupTimeoutMs: 2_000
+      })).rejects.toThrow(/already in use|owner|lease/iu);
+    } finally {
+      currentOwner.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 10_000);
 
   it("keeps the parent event loop responsive and reports stale heartbeat while SQLite is locked", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "state-service-lock-"));
@@ -70,6 +86,41 @@ describe("operational state child process", () => {
       await expect(maintenance).resolves.toMatchObject({ operation: "maintain", slice: "events" });
       await delay(350);
       expect(service.health()).toMatchObject({ ready: true, reason: "ready" });
+    } finally {
+      if (locked && locker.inTransaction) locker.exec("ROLLBACK");
+      locker.close();
+      await service.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it("keeps timed-out commands charged to capacity until their late response arrives", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "state-service-uncertain-"));
+    const file = path.join(root, "state.sqlite");
+    const service = await ChildProcessOperationalStateService.start({ file, capacity: 1 });
+    const locker = new Database(file);
+    let locked = false;
+    try {
+      locker.exec("BEGIN IMMEDIATE");
+      locked = true;
+      await expect(service.execute(
+        { operation: "maintain", slice: "events" },
+        { deadlineMs: 100 }
+      )).rejects.toMatchObject<Partial<OperationalStateProcessError>>({
+        code: "STATE_OUTCOME_UNKNOWN"
+      });
+      expect(service.health()).toMatchObject({
+        ready: false,
+        reason: "state-capacity",
+        inFlight: 1
+      });
+      await expect(service.execute({ operation: "maintain", slice: "history" }))
+        .rejects.toMatchObject<Partial<OperationalStateProcessError>>({ code: "STATE_CAPACITY" });
+
+      locker.exec("COMMIT");
+      locked = false;
+      await delay(350);
+      expect(service.health()).toMatchObject({ ready: true, reason: "ready", inFlight: 0 });
     } finally {
       if (locked && locker.inTransaction) locker.exec("ROLLBACK");
       locker.close();
