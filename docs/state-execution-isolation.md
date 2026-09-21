@@ -218,6 +218,20 @@ acknowledgement and their domain idempotency record before cleanup.
 Capacity is reserved before a payload is sent to child-process IPC. Transport
 buffer acceptance is not state acceptance.
 
+The table below remains the full #142 semantic state-service target. The #143
+production cutover first places the complete application/runtime and its single
+SQLite writer in one supervised child. Within that owner, disposable
+`updated` progress projections use a 256-entry, 32-per-project round-robin
+queue. At most four such writes run immediately per event-loop turn. Started,
+completed, waiting, error, warning, usage, approval/input, resumed, terminal,
+cancellation, and delivery state bypass that disposable queue. The queue runs
+one item per event-loop turn, drops or supersedes only non-authoritative
+progress, and publishes aggregate queued/processed/dropped counts without
+project identifiers. This is the implemented protection for the explicit
+cross-project progress-flood case; it does not make a central SQLite writer
+concurrent or allow critical work to preempt a synchronous write that has
+already entered SQLite.
+
 | Lane | Work | Initial request/byte budget | Behavior at capacity |
 | --- | --- | ---: | --- |
 | critical | cancellation intent/result, user input, terminal result, required delivery state, receipt lookup | 256 / 16 MiB reserved | reject only new work that has not started; preserve recovery/query access |

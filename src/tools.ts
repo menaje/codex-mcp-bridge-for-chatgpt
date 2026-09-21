@@ -35,6 +35,7 @@ import {
 import { classifyMemoryOnlyThreadImpact } from "./runtimeAdmission.js";
 import type { BridgeTelemetryService } from "./telemetryService.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
+import { ScopeFairQueue, type ScopeFairQueueStatus } from "./scopeFairQueue.js";
 import { registerCodexInputTools, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS } from "./questionTools.js";
 import path from "node:path";
 import * as z from "zod/v4";
@@ -372,6 +373,9 @@ export const MAX_CODEX_STATUS_WAIT_MS = 60_000;
 /** Keep model-visible reads comfortably below common 60-second host lifetimes. */
 export const DEFAULT_CODEX_STATUS_WAIT_MS = 20_000;
 const JOB_PROGRESS_PERSIST_INTERVAL_MS = 30_000;
+const PROGRESS_PERSISTENCE_QUEUE_CAPACITY = 256;
+const PROGRESS_PERSISTENCE_PER_PROJECT_CAPACITY = 32;
+const PROGRESS_PERSISTENCE_IMMEDIATE_BUDGET = 4;
 
 /**
  * Explicit escape hatch for protocol-owned or upstream-owned JSON leaves. The
@@ -1870,6 +1874,23 @@ type CodexJob = {
 
 type PersistedCodexJob = Omit<CodexJob, "promise">;
 
+type ProgressPersistenceSnapshot = {
+  jobId: string;
+  scopeId: string;
+  projectKey: string;
+  version: number;
+  updatedAt: number;
+  lastProgressAt: number;
+  lastProgress?: Progress;
+  pendingInteractions: CodexPendingInteraction[];
+  publicEvent?: CodexPublicEvent;
+};
+
+export type ProgressPersistenceStatus = ScopeFairQueueStatus & {
+  immediateBudget: number;
+  immediateRemaining: number;
+};
+
 type CodexJobStartInput = Omit<
   CodexJob,
   | "jobId"
@@ -2151,6 +2172,13 @@ export class CodexJobRegistry {
   private retainedJobTarget?: number;
   private retainedJobMaintenanceTimer?: NodeJS.Timeout;
   private stateMaintenanceClosed = false;
+  private readonly progressPersistenceQueue: ScopeFairQueue<ProgressPersistenceSnapshot>;
+  private readonly progressPersisted = new Map<
+    string,
+    { version: number; persistedAt: number }
+  >();
+  private progressPersistenceImmediateRemaining = PROGRESS_PERSISTENCE_IMMEDIATE_BUDGET;
+  private progressPersistenceImmediateReset?: NodeJS.Immediate;
 
   configureAutomaticRecovery(options: ConstructorParameters<typeof AutomaticRecoveryController>[1]): void {
     if (this.projectionOnly) return;
@@ -2188,6 +2216,11 @@ export class CodexJobRegistry {
 
   async closeThreadConnections(): Promise<void> {
     this.stateMaintenanceClosed = true;
+    this.progressPersistenceQueue.close();
+    if (this.progressPersistenceImmediateReset) {
+      clearImmediate(this.progressPersistenceImmediateReset);
+      this.progressPersistenceImmediateReset = undefined;
+    }
     this.unsubscribeRecovery?.();
     this.maintenanceScheduler?.close();
     if (this.retainedJobMaintenanceTimer) clearTimeout(this.retainedJobMaintenanceTimer);
@@ -2209,7 +2242,6 @@ export class CodexJobRegistry {
   }
 
   private persistenceWarningShown = false;
-  private lastPersistedAt = 0;
 
   constructor(options: CodexJobRegistryOptions = {}) {
     const maxConcurrentJobs = options.maxConcurrentJobs ?? 30;
@@ -2236,6 +2268,11 @@ export class CodexJobRegistry {
     this.projectionOnly = options.projectionOnly === true;
     this.activityStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
     this.allowedRoots = options.allowedRoots || [];
+    this.progressPersistenceQueue = new ScopeFairQueue<ProgressPersistenceSnapshot>({
+      capacity: PROGRESS_PERSISTENCE_QUEUE_CAPACITY,
+      perScopeCapacity: PROGRESS_PERSISTENCE_PER_PROJECT_CAPACITY,
+      run: snapshot => this.persistDeferredProgress(snapshot)
+    });
     this.load();
   }
 
@@ -2809,6 +2846,14 @@ export class CodexJobRegistry {
     );
   }
 
+  progressPersistenceStatus(): ProgressPersistenceStatus {
+    return {
+      ...this.progressPersistenceQueue.status(),
+      immediateBudget: PROGRESS_PERSISTENCE_IMMEDIATE_BUDGET,
+      immediateRemaining: this.progressPersistenceImmediateRemaining
+    };
+  }
+
   stateMaintenanceDiagnostics(): z.infer<typeof diagnosticsOutputSchema>["performance"]["stateMaintenance"] {
     return [...(this.maintenanceScheduler?.diagnostics() || [])];
   }
@@ -3072,6 +3117,8 @@ export class CodexJobRegistry {
     this.deferredSettlements.delete(jobId);
     this.steeringPromptRedactions.delete(jobId);
     this.jobs.delete(jobId);
+    this.progressPersistenceQueue.remove(snapshot => snapshot.jobId === jobId);
+    this.progressPersisted.delete(jobId);
     this.lastWake.delete(jobId);
     this.retentionProtectedJobs.delete(jobId);
     this.scheduleIdleRetainedJobMaintenance();
@@ -3537,10 +3584,12 @@ export class CodexJobRegistry {
       this.allowedRoots,
       steeringPrompts
     );
+    let resolvedInteractionId: string | undefined;
+    let interaction: CodexPendingInteraction | undefined;
     if (publicEvent) {
       if (isCodexInputEvent(publicEvent)) job.inputEvents = [...(job.inputEvents || []), publicEvent].slice(-40);
       job.publicEvents = [...job.publicEvents, publicEvent].slice(-200);
-      const resolvedInteractionId = typeof publicEvent.details?.resolvedInteractionId === "string"
+      resolvedInteractionId = typeof publicEvent.details?.resolvedInteractionId === "string"
         ? publicEvent.details.resolvedInteractionId
         : undefined;
       if (resolvedInteractionId) {
@@ -3548,11 +3597,14 @@ export class CodexJobRegistry {
           (entry) => entry.interactionId !== resolvedInteractionId
         );
       }
-      const interaction = readPendingInteraction(publicEvent.details?.interaction);
-      if (interaction) {
+      const pendingInteraction = readPendingInteraction(publicEvent.details?.interaction);
+      interaction = pendingInteraction;
+      if (pendingInteraction) {
         job.pendingInteractions = [
-          ...job.pendingInteractions.filter((entry) => entry.interactionId !== interaction.interactionId),
-          interaction
+          ...job.pendingInteractions.filter(
+            (entry) => entry.interactionId !== pendingInteraction.interactionId
+          ),
+          pendingInteraction
         ].slice(-20);
       }
     }
@@ -3560,13 +3612,40 @@ export class CodexJobRegistry {
     job.updatedAt = now;
     job.version += 1;
     this.notify(job.jobId, "progress");
+    const snapshot = this.progressSnapshot(job, publicEvent);
     if (publicEvent) {
-      this.persistTelemetryBestEffort(job, publicEvent);
+      const critical = resumedFromTerminationFailure ||
+        isCodexInputEvent(publicEvent) ||
+        resolvedInteractionId !== undefined ||
+        interaction !== undefined ||
+        publicEvent.phase !== "updated" ||
+        publicEvent.type === "error" ||
+        publicEvent.type === "warning" ||
+        publicEvent.type === "usage";
+      if (critical || this.claimImmediateProgressPersistence()) {
+        this.progressPersistenceQueue.remove(
+          queued => queued.jobId === job.jobId && queued.version <= snapshot.version
+        );
+        this.persistProgressSnapshotBestEffort(snapshot);
+      } else {
+        this.progressPersistenceQueue.enqueue(snapshot.projectKey, snapshot);
+      }
     } else if (
       resumedFromTerminationFailure ||
-      now - this.lastPersistedAt >= JOB_PROGRESS_PERSIST_INTERVAL_MS
+      now - (this.progressPersisted.get(job.jobId)?.persistedAt || job.createdAt) >=
+        JOB_PROGRESS_PERSIST_INTERVAL_MS
     ) {
-      this.persistProgressStateBestEffort(job);
+      if (resumedFromTerminationFailure || this.claimImmediateProgressPersistence()) {
+        this.progressPersistenceQueue.remove(
+          queued => queued.jobId === job.jobId && queued.version <= snapshot.version
+        );
+        this.persistProgressSnapshotBestEffort(snapshot);
+      } else {
+        this.progressPersistenceQueue.remove(
+          queued => queued.jobId === job.jobId && queued.publicEvent === undefined
+        );
+        this.progressPersistenceQueue.enqueue(snapshot.projectKey, snapshot);
+      }
     }
   }
 
@@ -3983,6 +4062,12 @@ export class CodexJobRegistry {
     if (!this.stateStore) return;
     const stored = this.stateStore.listJobs();
     const changed = this.loadJobs(stored);
+    for (const job of this.jobs.values()) {
+      this.progressPersisted.set(job.jobId, {
+        version: job.version,
+        persistedAt: job.updatedAt
+      });
+    }
     if (this.projectionOnly) return;
     if (changed || this.jobs.size !== stored.length) {
       this.stateStore.replaceJobs(this.persistedJobs());
@@ -4051,7 +4136,11 @@ export class CodexJobRegistry {
     const persisted = this.persistedJobs();
     if (this.stateStore) this.stateStore.replaceJobs(persisted);
     else this.activityStore.replaceJobs(persisted);
-    this.lastPersistedAt = Date.now();
+    const persistedAt = Date.now();
+    this.progressPersistenceQueue.remove(() => true);
+    for (const job of persisted) {
+      this.progressPersisted.set(job.jobId, { version: job.version, persistedAt });
+    }
     this.persistenceWarningShown = false;
   }
 
@@ -4067,7 +4156,13 @@ export class CodexJobRegistry {
       this.activityStore.upsertJob(persisted);
       for (const jobId of removed) this.activityStore.deleteJob(jobId);
     });
-    this.lastPersistedAt = Date.now();
+    const removedIds = new Set([job.jobId, ...removed]);
+    this.progressPersistenceQueue.remove(snapshot => removedIds.has(snapshot.jobId));
+    this.progressPersisted.set(job.jobId, {
+      version: job.version,
+      persistedAt: Date.now()
+    });
+    for (const jobId of removed) this.progressPersisted.delete(jobId);
     this.persistenceWarningShown = false;
     if (notifyScope) this.notifyScope(job.scopeId);
   }
@@ -4087,15 +4182,21 @@ export class CodexJobRegistry {
     }
   }
 
-  private persistTelemetryBestEffort(
-    job: CodexJob,
-    publicEvent: CodexPublicEvent
+  private persistProgressSnapshotBestEffort(snapshot: ProgressPersistenceSnapshot): boolean {
+    return snapshot.publicEvent
+      ? this.persistTelemetrySnapshotBestEffort(snapshot)
+      : this.persistProgressStateSnapshotBestEffort(snapshot);
+  }
+
+  private persistTelemetrySnapshotBestEffort(
+    snapshot: ProgressPersistenceSnapshot
   ): boolean {
+    const publicEvent = snapshot.publicEvent as CodexPublicEvent;
     try {
       const transactionStartedAt = performance.now();
       try {
         this.activityStore.recordJobTelemetryEvent(
-          job.jobId,
+          snapshot.jobId,
           `app-${publicEvent.type}-${publicEvent.phase}`,
           publicEvent,
           publicEvent.createdAt,
@@ -4107,11 +4208,11 @@ export class CodexJobRegistry {
                 : undefined
             : undefined,
           {
-            updatedAt: job.updatedAt,
-            version: job.version,
-            lastProgressAt: job.lastProgressAt,
-            lastProgress: job.lastProgress,
-            pendingInteractions: job.pendingInteractions
+            updatedAt: snapshot.updatedAt,
+            version: snapshot.version,
+            lastProgressAt: snapshot.lastProgressAt,
+            lastProgress: snapshot.lastProgress,
+            pendingInteractions: snapshot.pendingInteractions
           }
         );
       } finally {
@@ -4119,9 +4220,12 @@ export class CodexJobRegistry {
           performance.now() - transactionStartedAt
         );
       }
-      this.lastPersistedAt = Date.now();
+      this.progressPersisted.set(snapshot.jobId, {
+        version: snapshot.version,
+        persistedAt: Date.now()
+      });
       this.persistenceWarningShown = false;
-      this.notifyScope(job.scopeId);
+      this.notifyScope(snapshot.scopeId);
       return true;
     } catch (error) {
       if (!this.persistenceWarningShown) {
@@ -4134,18 +4238,23 @@ export class CodexJobRegistry {
     }
   }
 
-  private persistProgressStateBestEffort(job: CodexJob): boolean {
+  private persistProgressStateSnapshotBestEffort(
+    snapshot: ProgressPersistenceSnapshot
+  ): boolean {
     try {
-      const scopeChanged = this.activityStore.updateJobProgressState(job.jobId, {
-        updatedAt: job.updatedAt,
-        version: job.version,
-        lastProgressAt: job.lastProgressAt,
-        lastProgress: job.lastProgress,
-        pendingInteractions: job.pendingInteractions
+      const scopeChanged = this.activityStore.updateJobProgressState(snapshot.jobId, {
+        updatedAt: snapshot.updatedAt,
+        version: snapshot.version,
+        lastProgressAt: snapshot.lastProgressAt,
+        lastProgress: snapshot.lastProgress,
+        pendingInteractions: snapshot.pendingInteractions
       });
-      this.lastPersistedAt = Date.now();
+      this.progressPersisted.set(snapshot.jobId, {
+        version: snapshot.version,
+        persistedAt: Date.now()
+      });
       this.persistenceWarningShown = false;
-      if (scopeChanged) this.notifyScope(job.scopeId);
+      if (scopeChanged) this.notifyScope(snapshot.scopeId);
       return true;
     } catch (error) {
       if (!this.persistenceWarningShown) {
@@ -4156,6 +4265,51 @@ export class CodexJobRegistry {
       }
       return false;
     }
+  }
+
+  private progressSnapshot(
+    job: CodexJob,
+    publicEvent?: CodexPublicEvent
+  ): ProgressPersistenceSnapshot {
+    const projectRef = job.projectRequest && "projectRef" in job.projectRequest
+      ? job.projectRequest.projectRef
+      : undefined;
+    return {
+      jobId: job.jobId,
+      scopeId: job.scopeId,
+      projectKey: job.projectId
+        ? `project:${job.projectId}`
+        : projectRef
+          ? `project-ref:${projectRef}`
+          : `cwd:${job.cwd}`,
+      version: job.version,
+      updatedAt: job.updatedAt,
+      lastProgressAt: job.lastProgressAt,
+      ...(job.lastProgress ? { lastProgress: { ...job.lastProgress } } : {}),
+      pendingInteractions: [...job.pendingInteractions],
+      ...(publicEvent ? { publicEvent } : {})
+    };
+  }
+
+  private claimImmediateProgressPersistence(): boolean {
+    if (this.progressPersistenceImmediateRemaining <= 0) return false;
+    this.progressPersistenceImmediateRemaining -= 1;
+    if (!this.progressPersistenceImmediateReset) {
+      this.progressPersistenceImmediateReset = setImmediate(() => {
+        this.progressPersistenceImmediateReset = undefined;
+        this.progressPersistenceImmediateRemaining = PROGRESS_PERSISTENCE_IMMEDIATE_BUDGET;
+      });
+      this.progressPersistenceImmediateReset.unref();
+    }
+    return true;
+  }
+
+  private persistDeferredProgress(snapshot: ProgressPersistenceSnapshot): void {
+    const current = this.jobs.get(snapshot.jobId);
+    if (!current || isTerminalActivityJobStatus(current.status)) return;
+    const persisted = this.progressPersisted.get(snapshot.jobId);
+    if (persisted && persisted.version >= snapshot.version) return;
+    this.persistProgressSnapshotBestEffort(snapshot);
   }
 
   /** Explicit Job-retention command used by mutation boundaries and the
@@ -4311,6 +4465,10 @@ export class CodexJobRegistry {
       }
       if (classification.disposition !== "removed") continue;
       this.jobs.delete(classification.jobId);
+      this.progressPersistenceQueue.remove(
+        snapshot => snapshot.jobId === classification.jobId
+      );
+      this.progressPersisted.delete(classification.jobId);
       this.lastWake.delete(classification.jobId);
       this.retentionProtectedJobs.delete(classification.jobId);
       removed += 1;
@@ -4918,6 +5076,7 @@ export function registerBridgeTools(
         acceptingNewJobs: runtimeAdmission.acceptingNewJobs,
         activeJobs: jobs.observedRunningCount(),
         pendingAdmissions: runtimeAdmission.pendingAdmissions,
+        progressPersistence: jobs.progressPersistenceStatus(),
         backgroundProcessState: backgroundProcessImpact.state,
         backgroundProcesses: backgroundProcessImpact.processes,
         backgroundProcessAgents: backgroundProcessImpact.agents,
@@ -10312,6 +10471,8 @@ export type BridgeRuntimeAdmissionSnapshot = {
     failed: number;
     lastPersistedAt?: number;
   };
+  /** Bounded project-fair persistence for disposable progress projections. */
+  progressPersistence?: ProgressPersistenceStatus;
 };
 
 export type BridgeRuntimeSnapshotOptions = {

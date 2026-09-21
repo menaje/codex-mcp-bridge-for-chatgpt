@@ -10,6 +10,10 @@ import type { CodexProgress, CodexUpstream, ToolResult } from "../src/upstream.j
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const REQUEST_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const SCOPE_B = "22222222-2222-4222-8222-222222222222";
+const REQUEST_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const PROJECT_REF_A = "prj_AAAAAAAAAAAAAAAAAAAAAA";
+const PROJECT_REF_B = "prj_BBBBBBBBBBBBBBBBBBBBBB";
 
 describe("CodexJobRegistry persistence", () => {
   it.each(["persistent", "ephemeral"] as const)(
@@ -221,7 +225,16 @@ describe("CodexJobRegistry persistence", () => {
           dashboardCompletion: 1,
           jobs: [{ jobId: job.jobId, total: 2, terminal: 2 }]
         },
-        maintenance: { telemetryTransaction: { count: 100 } }
+        maintenance: { telemetryTransaction: { count: 4 } }
+      });
+      expect(registry.progressPersistenceStatus()).toMatchObject({
+        queued: 32,
+        scopes: 1,
+        capacity: 256,
+        perScopeCapacity: 32,
+        dropped: 64,
+        immediateBudget: 4,
+        immediateRemaining: 0
       });
 
       complete(result("two-watchers-one-terminal"));
@@ -235,6 +248,134 @@ describe("CodexJobRegistry persistence", () => {
         active: { total: 0, jobs: [] }
       });
     } finally {
+      store.close();
+    }
+  });
+
+  it("fairly drains project progress and lets critical input bypass a noisy project", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    const store = registry.admissionStateStore;
+    let emitA: ((progress: CodexProgress) => void) | undefined;
+    let emitB: ((progress: CodexProgress) => void) | undefined;
+    let completeA: (value: ToolResult) => void = () => undefined;
+    let completeB: (value: ToolResult) => void = () => undefined;
+    const jobA = registry.start({
+      ...jobInput(root),
+      projectRequest: {
+        name: "Project A",
+        projectRef: PROJECT_REF_A,
+        projectRevision: 1
+      }
+    }, async progress => {
+      emitA = progress;
+      return new Promise<ToolResult>(resolve => { completeA = resolve; });
+    });
+    const jobB = registry.start({
+      ...jobInput(root),
+      scopeId: SCOPE_B,
+      requestId: REQUEST_B,
+      requestHash: "b".repeat(64),
+      projectRequest: {
+        name: "Project B",
+        projectRef: PROJECT_REF_B,
+        projectRevision: 1
+      }
+    }, async progress => {
+      emitB = progress;
+      return new Promise<ToolResult>(resolve => { completeB = resolve; });
+    });
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(emitA).toBeTypeOf("function");
+      expect(emitB).toBeTypeOf("function");
+      const recordTelemetry = vi.spyOn(store, "recordJobTelemetryEvent");
+
+      for (let index = 0; index < 100; index += 1) {
+        emitA?.({
+          progress: index / 100,
+          event: {
+            eventId: `project-a-${index}`,
+            type: "command",
+            phase: "updated",
+            createdAt: Date.now(),
+            summary: `Project A progress ${index}`
+          }
+        });
+      }
+      emitB?.({
+        progress: 0.1,
+        event: {
+          eventId: "project-b-fair",
+          type: "command",
+          phase: "updated",
+          createdAt: Date.now(),
+          summary: "Project B progress"
+        }
+      });
+
+      expect(recordTelemetry.mock.calls.map(call => call[0])).toEqual([
+        jobA.jobId,
+        jobA.jobId,
+        jobA.jobId,
+        jobA.jobId
+      ]);
+      expect(registry.progressPersistenceStatus()).toMatchObject({
+        queued: 33,
+        scopes: 2,
+        dropped: 64,
+        immediateRemaining: 0
+      });
+
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(recordTelemetry.mock.calls.slice(4, 6).map(call => call[0])).toEqual([
+        jobA.jobId,
+        jobB.jobId
+      ]);
+
+      for (let index = 100; index < 140; index += 1) {
+        emitA?.({
+          progress: index / 140,
+          event: {
+            eventId: `project-a-${index}`,
+            type: "command",
+            phase: "updated",
+            createdAt: Date.now(),
+            summary: `Project A progress ${index}`
+          }
+        });
+      }
+      expect(registry.progressPersistenceStatus()).toMatchObject({
+        queued: 32,
+        scopes: 1,
+        immediateRemaining: 0
+      });
+
+      const callsBeforeCriticalInput = recordTelemetry.mock.calls.length;
+      emitB?.({
+        progress: 0.5,
+        event: {
+          eventId: "project-b-input",
+          type: "input-required",
+          phase: "waiting",
+          createdAt: Date.now(),
+          summary: "Project B needs input"
+        }
+      });
+      expect(recordTelemetry).toHaveBeenCalledTimes(callsBeforeCriticalInput + 1);
+      expect(recordTelemetry.mock.calls.at(-1)?.[0]).toBe(jobB.jobId);
+      expect(registry.progressPersistenceStatus()).toMatchObject({
+        queued: 32,
+        scopes: 1,
+        immediateRemaining: 0
+      });
+    } finally {
+      completeA(result("project-a-complete"));
+      completeB(result("project-b-complete"));
+      await Promise.allSettled([jobA.promise, jobB.promise]);
+      await registry.closeThreadConnections();
       store.close();
     }
   });

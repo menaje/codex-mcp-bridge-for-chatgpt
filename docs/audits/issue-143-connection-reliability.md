@@ -152,12 +152,11 @@ The resulting policy is:
 - never permit a state fault to freeze liveness or turn uncertainty into a Job
   success, failure or cancellation.
 
-This verifies the isolation boundary only in a disposable prototype. The
-protocol-v4 child now supports all maintenance slices, including bounded
-registry-planned `jobs` retention, and reports `ready` for that surface.
-Production startup still uses the in-process owner, and the remaining
-command/query callers and installed end-to-end combination have not crossed or
-passed the release gate.
+At this measurement stage, this verified the isolation boundary only in a
+disposable prototype. The protocol-v4 child supported all maintenance slices,
+including bounded registry-planned `jobs` retention, and reported `ready` for
+that surface. Production startup still used the in-process owner at that point;
+the later production cutover result is recorded below.
 
 ## Timeout-domain audit and native mitigation
 
@@ -184,10 +183,10 @@ probe failure and a confirmed process exit continue through the unavailable
 path, and recovery requires a new successful observation.
 
 This mitigation prevents a fixed observation deadline from being mislabeled as
-a confirmed disconnect. It does not resolve the underlying coupled stall:
-production state execution, Dashboard reads, diagnostics, serialization and the
-installed Tunnel/Card combination still require the isolation and end-to-end
-gates above.
+a confirmed disconnect. By itself it did not resolve the underlying coupled
+stall; the later production isolation result below supplies that boundary,
+while the installed Tunnel/Card combination remains a separate deployment
+gate.
 
 ## T1 decision
 
@@ -210,9 +209,50 @@ Direct observations and remaining uncertainty are now separated:
   latency source after state execution is isolated.
 - Unconfirmed: the exact SQL, lock owner, allocation source, or maintenance
   slice responsible for each operating stall.
-- Unconfirmed: production cutover behavior across every state caller, queue and
-  read path, and the installed Tunnel/ChatGPT/Codex combination.
+- Unconfirmed at T1: production cutover behavior across every state caller,
+  queue and read path, and the installed Tunnel/ChatGPT/Codex combination.
 
 T1 therefore supports proceeding to #142 with execution isolation as the first
 architectural boundary. File separation remains a later data-ownership and fault
 containment step, not the first implementation step.
+
+## Production cutover and bounded progress fairness
+
+The production entry point now keeps public HTTP, native companion, and stdio
+ingress in a SQLite-free supervisor. The complete Bridge application/runtime
+and the sole operational writer run in a supervised child; query-only card
+reads and non-authoritative telemetry use independent children and bounded
+capacities. A 30.667-second stopped-runtime/write-lock fixture kept all 121
+`/healthz` samples at HTTP 200 (p50 1.580 ms, p95 2.248 ms, p99 2.872 ms,
+maximum 3.990 ms). Native `runtime.health` remained available at the 2.25,
+10, and 30 second checkpoints while readiness truthfully reported
+`state-stale + write-lock-wait`. The original mutation returned
+`RUNTIME_RESPONSE_UNCONFIRMED`; after resume, Settings loaded in 23.838 ms,
+Dashboard in 101.458 ms, and the authoritative Settings revision advanced
+exactly once.
+
+The operational owner also bounds disposable progress persistence separately
+from authoritative state. Only non-terminal `updated` progress enters a
+project-keyed round-robin queue with 256 total entries, 32 entries per project,
+and four immediate writes per event-loop turn. Semantic milestones, errors,
+usage, approvals/input, interaction resolution, resumed execution, terminal
+state, cancellation, and delivery evidence do not use the disposable lane.
+Queue health exposes counts only; it never exposes project or Job identity.
+
+The saturation regression submitted 100 progress updates for project A in one
+turn. Four used the immediate budget, the queue retained 32, and 64 older
+disposable updates were dropped. Project B was still admitted and its update
+ran on the second fair drain turn rather than after project A emptied. With
+project A saturated again and the immediate budget exhausted, project B's
+input-required event persisted immediately. This proves bounded admission and
+cross-project scheduling for the reported progress-flood case. It does not
+claim simultaneous writes during a SQLite lock: the central writer may still
+make every operational mutation wait, but that wait is reported as degraded or
+unconfirmed state and no longer consumes public connection liveness.
+
+Current-checkout verification after this change: 96 TypeScript test files / 844
+tests, build and release checks, the long production fault regression, and the
+real companion socket plus production Swift-client contract all pass against
+disposable databases. Applying the candidate to the installed helper, Tunnel,
+and ChatGPT host remains an explicit deployment step rather than evidence
+created by these local fixtures.
