@@ -360,10 +360,15 @@ Default server files are per-user:
 ```text
 ~/.config/codex-mcp-bridge/.env       Tunnel runtime configuration
 ~/.codex-mcp-bridge/state.sqlite      Stable Settings, projects, Agents, Activities, and jobs
+~/.codex-mcp-bridge/telemetry.sqlite  Disposable transport diagnostics (no execution authority)
 ~/.codex-mcp-bridge/profiles/candidate/state.sqlite
                                       Release-candidate state
+~/.codex-mcp-bridge/profiles/candidate/telemetry.sqlite
+                                      Candidate transport diagnostics
 ~/.codex-mcp-bridge/profiles/development/state.sqlite
                                       Development/deprecated-build state
+~/.codex-mcp-bridge/profiles/development/telemetry.sqlite
+                                      Development transport diagnostics
 ```
 
 This SQLite database is the sole bridge state authority; there are no parallel
@@ -375,6 +380,13 @@ deliberately pointing development or candidate code at stable state. See
 [database schema and lifecycle](database-schema.md) for table ownership and the
 [state upgrade and recovery runbook](state-upgrade-recovery.md) for profiles,
 backups, restore, retention, and safe offline compaction.
+
+Transport observations are best-effort diagnostics, not bridge state authority.
+Production stores them in a separate `telemetry.sqlite` beside the selected state
+database, so its lock, capacity, or filesystem failure cannot block operational
+state. `CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE` may select another absolute
+file, but it must not resolve to the operational state database. The telemetry
+database can be deleted and rebuilt independently while the Bridge is stopped.
 
 The macOS app also uses private helper/runtime files and, when remote management is enabled, a server identity and device registry. See [Native macOS app](macos-app.md#local-files-and-interfaces) and [Remote client mode](remote-client.md#server-files-and-lifecycle) for exact paths and permissions.
 

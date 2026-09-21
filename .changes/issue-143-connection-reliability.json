@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Keep Bridge liveness responsive during operational SQLite stalls, separate read projections and best-effort telemetry, preserve stale card content, and report uncertain outcomes without inventing Job failure or disconnection.",
+  "breaking": false,
+  "migration": null
+}

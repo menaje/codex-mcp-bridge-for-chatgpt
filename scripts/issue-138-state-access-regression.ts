@@ -13,7 +13,7 @@ const sql: string[] = [];
 const report: Record<string, unknown> = {
   issue: 138,
   testedAt: new Date().toISOString(),
-  database: "disposable schema-24 fixture",
+  database: "disposable schema-25 fixture",
   productionDatabaseModified: false
 };
 

@@ -35,11 +35,12 @@ export class EventRetention {
   constructor(
     private readonly db: Database.Database,
     private readonly jobs: EventRetentionJobRepository,
-    private readonly maintenance: EventRetentionMaintenanceRepository
+    private readonly maintenance: EventRetentionMaintenanceRepository,
+    options: { readOnly?: boolean } = {}
   ) {
     const policy = this.db.prepare("SELECT policy_version FROM event_retention_state WHERE singleton=1")
       .get() as {policy_version:number};
-    if (policy.policy_version !== 2) this.db.transaction(() => {
+    if (!options.readOnly && policy.policy_version !== 2) this.db.transaction(() => {
       // Revisit rows already passed by v14's original, first-Job-only sweep.
       this.db.prepare(`UPDATE event_retention_state SET cursor_event_id=0,policy_version=2
         WHERE singleton=1`).run();

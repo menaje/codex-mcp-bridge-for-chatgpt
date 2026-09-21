@@ -16,6 +16,7 @@ import type {
   ModelCatalogOptions
 } from "../src/modelCatalog.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
+import { OPERATIONAL_STATE_PROTOCOL_VERSION } from "../src/stateService.js";
 
 const CURRENT_PROTOCOL = "2026-07-28";
 const CURRENT_TOOL_ORDER = [
@@ -207,6 +208,69 @@ async function start(
 }
 
 describe("MCP 2026-07-28 HTTP server", () => {
+  it("separates liveness from state-service readiness without authentication", async () => {
+    const starting = await start();
+    const liveness = await fetch(`${starting.baseUrl}/healthz`);
+    expect(liveness.status).toBe(200);
+    expect(await liveness.json()).toMatchObject({ ok: true });
+
+    const notReady = await fetch(`${starting.baseUrl}/readyz`);
+    expect(notReady.status).toBe(503);
+    expect(await notReady.json()).toEqual(expect.objectContaining({
+      ok: false,
+      reason: "state-incompatible",
+      limitations: ["state-execution-in-process"]
+    }));
+
+    const isolated = await start({}, {
+      readiness: () => ({
+        ready: true,
+        reason: "ready",
+        limitations: [],
+        stateService: {
+          protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
+          generation: "fixture-generation",
+          heartbeatAgeMs: 5,
+          inFlight: 1,
+          queueDepth: 0,
+          capacity: 64,
+          activeOperation: {
+            access: "write",
+            operation: "maintain",
+            slice: "events",
+            phase: "executing",
+            startedAt: 1_000,
+            observedAt: 1_001
+          },
+          lastCommitAt: 999
+        }
+      })
+    });
+    const ready = await fetch(`${isolated.baseUrl}/readyz`);
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toEqual(expect.objectContaining({
+      ok: true,
+      reason: "ready",
+      stateService: {
+        protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
+        generation: "fixture-generation",
+        heartbeatAgeMs: 5,
+        inFlight: 1,
+        queueDepth: 0,
+        capacity: 64,
+        activeOperation: {
+          access: "write",
+          operation: "maintain",
+          slice: "events",
+          phase: "executing",
+          startedAt: 1_000,
+          observedAt: 1_001
+        },
+        lastCommitAt: 999
+      }
+    }));
+  });
+
   it("rejects malformed UTF-8 and escaped unpaired surrogates before MCP decoding", async () => {
     const { baseUrl } = await start();
     const prefix = Buffer.from(

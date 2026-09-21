@@ -1,5 +1,10 @@
 import { performance } from "node:perf_hooks";
-import type { BridgeStateStore } from "./stateStore.js";
+import { randomUUID } from "node:crypto";
+import type {
+  OperationalStateCommand,
+  OperationalStateResult,
+  OperationalStateService
+} from "./stateService.js";
 
 export const STATE_MAINTENANCE_SLICES = [
   "events",
@@ -7,6 +12,7 @@ export const STATE_MAINTENANCE_SLICES = [
   "questions",
   "decisions",
   "recovery",
+  "receipts",
   "jobs"
 ] as const;
 
@@ -17,6 +23,7 @@ export type StateMaintenanceObservation = {
   durationMs: number;
   changed: number;
   failed: boolean;
+  deferred: boolean;
 };
 
 /**
@@ -30,39 +37,92 @@ export class StateMaintenanceScheduler {
   private pending = false;
   private closed = false;
   private cursor = 0;
+  private deferredSince?: number;
+  private readonly uncertainCommands = new Map<
+    StateMaintenanceSlice,
+    { commandId: string; command: OperationalStateCommand }
+  >();
   private readonly observations: StateMaintenanceObservation[] = [];
 
   constructor(
-    private readonly store: BridgeStateStore,
+    private readonly stateService: OperationalStateService,
     private readonly options: {
       intervalMs?: number;
       now?: () => number;
-      maintainJobs?: () => number;
       changed?: () => void;
+      shouldDefer?: () => boolean;
+      maxDeferMs?: number;
+      command?: (slice: StateMaintenanceSlice) => OperationalStateCommand;
+      completed?: (
+        command: OperationalStateCommand,
+        result: OperationalStateResult
+      ) => void;
     } = {}
   ) {}
 
   start(): void {
     if (this.closed || this.timer) return;
-    this.timer = setInterval(() => { this.sweep(); }, this.options.intervalMs ?? 5_000);
+    this.timer = setInterval(() => { void this.sweep(); }, this.options.intervalMs ?? 5_000);
     this.timer.unref();
-    this.sweep();
+    void this.sweep();
   }
 
-  sweep(slice?: StateMaintenanceSlice): StateMaintenanceObservation | undefined {
+  async sweep(slice?: StateMaintenanceSlice): Promise<StateMaintenanceObservation | undefined> {
     if (this.closed || this.pending) return;
     this.pending = true;
-    const selected = slice || STATE_MAINTENANCE_SLICES[this.cursor++ % STATE_MAINTENANCE_SLICES.length]!;
+    const selected = slice || STATE_MAINTENANCE_SLICES[this.cursor % STATE_MAINTENANCE_SLICES.length]!;
     const startedAt = (this.options.now || Date.now)();
+    const maxDeferMs = this.options.maxDeferMs === undefined
+      ? undefined
+      : Math.max(0, this.options.maxDeferMs);
+    if (!slice && this.options.shouldDefer?.()) {
+      this.deferredSince ??= startedAt;
+      if (maxDeferMs === undefined || startedAt - this.deferredSince < maxDeferMs) {
+        this.pending = false;
+        return this.record({
+          slice: selected,
+          startedAt,
+          durationMs: 0,
+          changed: 0,
+          failed: false,
+          deferred: true
+        });
+      }
+    }
+    if (!slice) {
+      this.deferredSince = undefined;
+      this.cursor++;
+    }
     const started = performance.now();
     let changed = 0;
     let failed = false;
+    const uncertain = this.uncertainCommands.get(selected);
+    const commandId = uncertain?.commandId ?? randomUUID();
+    const wasUncertain = uncertain !== undefined;
+    let command = uncertain?.command;
+    let committed = false;
     try {
-      changed = this.run(selected);
+      command ||= this.options.command?.(selected) ?? defaultMaintenanceCommand(selected);
+      const result = await this.stateService.execute(
+        command,
+        { commandId, aggregateKey: `maintenance:${selected}` }
+      );
+      committed = true;
+      this.options.completed?.(command, result);
+      changed = result.changed;
+      this.uncertainCommands.delete(selected);
       this.lastError = undefined;
       if (changed > 0) this.options.changed?.();
     } catch (error) {
       failed = true;
+      if (
+        command &&
+        (wasUncertain || committed || stateProcessErrorCode(error) === "STATE_OUTCOME_UNKNOWN")
+      ) {
+        this.uncertainCommands.set(selected, { commandId, command });
+      } else {
+        this.uncertainCommands.delete(selected);
+      }
       this.lastError = error instanceof Error ? error.message : String(error);
     } finally {
       this.pending = false;
@@ -72,11 +132,10 @@ export class StateMaintenanceScheduler {
       startedAt,
       durationMs: Math.max(0, performance.now() - started),
       changed,
-      failed
+      failed,
+      deferred: false
     };
-    this.observations.push(observation);
-    if (this.observations.length > 120) this.observations.shift();
-    return observation;
+    return this.record(observation);
   }
 
   diagnostics(): readonly StateMaintenanceObservation[] {
@@ -89,26 +148,21 @@ export class StateMaintenanceScheduler {
     this.timer = undefined;
   }
 
-  private run(slice: StateMaintenanceSlice): number {
-    if (slice === "events") {
-      const report = this.store.maintainEventRetention();
-      return report.expiredJobEventsRemoved + report.expiredActivityEventsRemoved +
-        report.expiredResultHoldsRemoved + report.perJobEventsRemoved + report.budgetEventsRemoved;
-    }
-    if (slice === "history") return this.store.maintainHistoryRetention().historyRemoved;
-    if (slice === "questions") {
-      const report = this.store.maintainQuestionRetention();
-      return report.expiredQuestionsRemoved + report.deliveredJournalsRemoved +
-        report.notificationsMarkedUncertain;
-    }
-    if (slice === "decisions") {
-      const report = this.store.maintainDecisionRetention();
-      return report.expiredLeasesMarkedUnknown + report.expiredCardsRemoved;
-    }
-    if (slice === "recovery") {
-      const report = this.store.maintainRecoveryRetention();
-      return report.recordsRemoved + report.incidentsRemoved;
-    }
-    return this.options.maintainJobs?.() || 0;
+  private record(observation: StateMaintenanceObservation): StateMaintenanceObservation {
+    this.observations.push(observation);
+    if (this.observations.length > 120) this.observations.shift();
+    return observation;
   }
+}
+
+function defaultMaintenanceCommand(slice: StateMaintenanceSlice): OperationalStateCommand {
+  if (slice === "jobs") {
+    throw new Error("STATE_JOB_RETENTION_PLAN_REQUIRED: Job retention requires a bounded registry plan.");
+  }
+  return { operation: "maintain", slice };
+}
+
+function stateProcessErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
 }

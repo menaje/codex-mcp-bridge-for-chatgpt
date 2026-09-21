@@ -19,7 +19,8 @@ import {
   CodexJobRegistry,
   TaskProjectAvailabilityProjection,
   registerBridgeTools,
-  type BridgeApplicationService
+  type BridgeApplicationService,
+  type BridgeReadProjectionService
 } from "./tools.js";
 import { SessionRegistry } from "./sessionRegistry.js";
 import { ScopeResolver } from "./scopeResolver.js";
@@ -29,8 +30,37 @@ import { CodexBackendRouter } from "./upstreamRouter.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import { SkillLibrary } from "./skillLibrary.js";
 import { assertJsonTextIntegrity, decodeUtf8Strict } from "./textIntegrity.js";
+import type { OperationalStateOperationObservation } from "./stateService.js";
+import type { BridgeTelemetryService } from "./telemetryService.js";
 
 const MAX_MCP_REQUEST_BYTES = 8 * 1024 * 1024;
+
+export const BRIDGE_READINESS_REASONS = [
+  "ready",
+  "state-starting",
+  "state-stale",
+  "state-recovering",
+  "state-incompatible",
+  "state-capacity",
+  "admission-draining"
+] as const;
+
+export type BridgeReadinessReason = (typeof BRIDGE_READINESS_REASONS)[number];
+export type BridgeReadinessSnapshot = {
+  ready: boolean;
+  reason: BridgeReadinessReason;
+  limitations: string[];
+  stateService?: {
+    protocolVersion: number;
+    generation: string;
+    heartbeatAgeMs: number;
+    inFlight?: number;
+    queueDepth?: number;
+    capacity?: number;
+    activeOperation?: OperationalStateOperationObservation;
+    lastCommitAt?: number;
+  };
+};
 
 /**
  * The instructions remain deliberately policy-focused. Wire-protocol behavior
@@ -54,8 +84,14 @@ export const BRIDGE_MCP_INSTRUCTIONS = [
 export type BridgeHttpRuntimeOptions = {
   /** Shared production store; when supplied, its lifecycle remains caller-owned. */
   stateStore?: BridgeStateStore;
+  /** Separate best-effort diagnostic sink; never used for operational state. */
+  telemetry?: BridgeTelemetryService;
+  /** Separate query process for structural Dashboard and Settings reads. */
+  readProjection?: BridgeReadProjectionService;
   /** Retained for callers that collect their own diagnostics. HTTP health does not expose it. */
   healthDiagnostics?: () => Record<string, unknown>;
+  /** Memory-only state-service readiness; it must never perform I/O. */
+  readiness?: () => BridgeReadinessSnapshot;
   /**
    * Opt-in protocol-suite fixtures. These are never enabled by normal bridge
    * startup and exist solely to exercise SDK paths that the product does not
@@ -83,7 +119,8 @@ export function createBridgeMcpServer(
   scopeResolver?: ScopeResolver,
   projectAvailability?: TaskProjectAvailabilityProjection,
   cardPerformance?: CardPerformanceTracker,
-  skillLibrary?: SkillLibrary
+  skillLibrary?: SkillLibrary,
+  readProjection?: BridgeReadProjectionService
 ): BridgeMcpServer {
   // A directly constructed server has the same single-store admission boundary
   // as an HTTP runtime. HTTP handlers share their explicitly composed store.
@@ -169,7 +206,8 @@ export function createBridgeMcpServer(
     effectiveScopeResolver,
     projectAvailability,
     cardPerformance,
-    effectiveSkillLibrary
+    effectiveSkillLibrary,
+    readProjection
   );
   Object.defineProperty(server, "applicationService", {
     configurable: false,
@@ -213,6 +251,7 @@ export function createHttpServer(
     maxResultBytes: config.maxJobResultBytes,
     staleAfterMs: config.jobStaleAfterMs,
     stateStore,
+    telemetry: runtimeOptions.telemetry,
     allowedRoots: config.allowedRoots
   });
   const modelCatalog = modelCatalogOverride || createModelCatalog(config, upstream);
@@ -241,7 +280,8 @@ export function createHttpServer(
       scopeResolver,
       projectAvailability,
       cardPerformance,
-      skillLibrary
+      skillLibrary,
+      runtimeOptions.readProjection
     );
     if (runtimeOptions.conformanceFixtures) {
       registerMcpConformanceFixtures(server, () => notifyToolsChanged());
@@ -274,7 +314,21 @@ export function createHttpServer(
   const validateOrigin = originValidation(allowedOrigins);
 
   const httpServer = createServer((req, res) => {
-    void handleHttpRequest(req, res, config, validateHost, validateOrigin, nodeMcpHandler);
+    void handleHttpRequest(
+      req,
+      res,
+      config,
+      validateHost,
+      validateOrigin,
+      nodeMcpHandler,
+      runtimeOptions.readiness || (() => ({
+        ready: false,
+        reason: jobs.runtimeAdmission.acceptingNewJobs
+          ? "state-incompatible"
+          : "admission-draining",
+        limitations: ["state-execution-in-process"]
+      }))
+    );
   }) as BridgeHttpServer;
   httpServer.once("listening", () => stateStore.markServiceOpen("http"));
   Object.defineProperty(httpServer, "applicationService", {
@@ -386,7 +440,8 @@ async function handleHttpRequest(
     request: IncomingMessage,
     response: ServerResponse,
     parsedBody?: unknown
-  ) => Promise<void>
+  ) => Promise<void>,
+  readiness: () => BridgeReadinessSnapshot
 ): Promise<void> {
   const pathname = new URL(req.url || "/", "http://bridge.invalid").pathname;
   if (pathname === "/healthz" && req.method === "GET") {
@@ -394,6 +449,22 @@ async function handleHttpRequest(
       ok: true,
       name: PRODUCT_INFO.runtimeName,
       title: PRODUCT_INFO.displayName
+    });
+    return;
+  }
+  if (pathname === "/readyz" && req.method === "GET") {
+    let snapshot: BridgeReadinessSnapshot;
+    try {
+      snapshot = readiness();
+    } catch {
+      snapshot = { ready: false, reason: "state-stale", limitations: [] };
+    }
+    writeJson(res, snapshot.ready ? 200 : 503, {
+      ok: snapshot.ready,
+      name: PRODUCT_INFO.runtimeName,
+      reason: snapshot.reason,
+      limitations: snapshot.limitations,
+      ...(snapshot.stateService ? { stateService: snapshot.stateService } : {})
     });
     return;
   }

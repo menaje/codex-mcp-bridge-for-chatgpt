@@ -70,8 +70,8 @@ try {
   source = new Database(baselineFile, { readonly: true, fileMustExist: true });
   const sourceVersion = version(source);
   assert.ok(
-    sourceVersion >= 18 && sourceVersion <= 24,
-    `Storage audit supports source schemas 18 through 24, received ${sourceVersion}`
+    sourceVersion >= 18 && sourceVersion <= 25,
+    `Storage audit supports source schemas 18 through 25, received ${sourceVersion}`
   );
   const threadIds = representativeThreadIds(source);
   const sourceConnection = connectionAudit(source, sourceVersion, threadIds);
@@ -85,16 +85,16 @@ try {
   source = undefined;
   await chmod(workingFile, 0o600);
 
-  if (sourceVersion < 24) {
+  if (sourceVersion < 25) {
     const store = new BridgeStateStore({ file: workingFile });
     store.close();
   }
   working = new Database(workingFile, { fileMustExist: true });
-  assert.equal(version(working), 24);
+  assert.equal(version(working), 25);
   assert.equal(String(working.pragma("integrity_check", { simple: true })), "ok");
   assert.deepEqual(working.pragma("foreign_key_check"), []);
 
-  const currentConnection = connectionAudit(working, 24, threadIds);
+  const currentConnection = connectionAudit(working, 25, threadIds);
   assert.deepEqual(
     currentConnection.results,
     sourceConnection.results,
@@ -128,7 +128,7 @@ try {
     oldestEventScan: "accepted: integer-primary-key order with a 500-row slice"
   };
   report.currentRows = rowTotals(working);
-  const currentSerialization = serializationMetrics(working, 24);
+  const currentSerialization = serializationMetrics(working, 25);
   assert.equal(
     (currentSerialization.interactions as { structuredDuplicateFields: number })
       .structuredDuplicateFields,
@@ -165,7 +165,7 @@ try {
     assert.equal(String(compact.pragma("integrity_check", { simple: true })), "ok");
     assert.deepEqual(compact.pragma("foreign_key_check"), []);
     assert.deepEqual(tableCounts(compact), beforeCompactCounts);
-    assert.equal(version(compact), 24);
+    assert.equal(version(compact), 25);
     report.compactedCapacity = await capacity(compact, compactFile);
   } finally {
     compact.close();

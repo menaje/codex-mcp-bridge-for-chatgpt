@@ -180,6 +180,19 @@ final class SettingsConnectionPresentationTests: XCTestCase {
             ),
             [.restartRuntime]
         )
+        XCTAssertTrue(
+            ConnectionRecoveryPlan.recommendedActions(
+                for: .bridge,
+                isRemoteClient: false,
+                configurationValid: true,
+                bridgeConnected: false,
+                helperPhase: "running",
+                codexInstalled: nil,
+                permissionsRepairAvailable: false,
+                bridgeObservation: "timed-out"
+            ).isEmpty,
+            "An inconclusive health deadline must not recommend restarting active work."
+        )
         XCTAssertEqual(
             ConnectionRecoveryPlan.recommendedActions(
                 for: .tunnel,

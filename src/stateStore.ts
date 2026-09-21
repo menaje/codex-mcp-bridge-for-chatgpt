@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import Database from "better-sqlite3";
 import { canonicalHumanText, parseJsonTextStrict } from "./textIntegrity.js";
 import {
@@ -11,6 +12,16 @@ import {
   V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA,
   V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA
 } from "./stateSchema.js";
+import {
+  MAINTENANCE_COMMAND_RECEIPT_RETENTION_BATCH,
+  MAINTENANCE_COMMAND_RECEIPT_RETENTION_MS,
+  OPERATIONAL_COMMAND_RECEIPT_RESULT_MAX_BYTES,
+  V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA,
+  type OperationalCommandApplication,
+  type OperationalCommandExecution,
+  type OperationalCommandReceipt,
+  type OperationalCommandReceiptInput
+} from "./operationalCommandReceipt.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
@@ -59,6 +70,11 @@ import {
   type DashboardArchivedJobRow,
   type DashboardRepresentativeOrder
 } from "./stateReadModels.js";
+import type {
+  OperationalJobRetentionCommand,
+  OperationalJobRetentionResult,
+  OperationalStateOperationPhase
+} from "./stateService.js";
 import {
   ACTIVITY_COMPLETION_TRIGGERS,
   ACTIVITY_HANDOFF_POLICIES,
@@ -134,8 +150,11 @@ import {
   type JobTerminalOrigin
 } from "./cancellation.js";
 
+export const STATE_DATABASE_BUSY_TIMEOUT_MS = 5_000;
+
 const CURRENT_SCHEMA_VERSION = CURRENT_STATE_SCHEMA_VERSION;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
 
@@ -588,8 +607,15 @@ export type BeginSteeringDeliveryInput = {
 
 export type BridgeStateStoreOptions = {
   file: string;
+  /** Query-only projection connection. It never migrates or registers a writer. */
+  readOnly?: boolean;
   /** Diagnostic SQL trace hook used by bounded-path audits and tests. */
   traceSql?: (sql: string) => void;
+  /**
+   * Privacy-safe transaction boundary used by an enclosing process
+   * supervisor. It never receives SQL, identifiers, payloads, or results.
+   */
+  onTransactionPhase?: (phase: OperationalStateOperationPhase) => void;
   /** Test hook fired in the crash window after schema commit and before provenance commit. */
   onMigrationSchemaCommitted?: (progress: StateMigrationProgress) => void;
   /** Test/diagnostic hook fired after each durable schema checkpoint. */
@@ -625,22 +651,55 @@ export class BridgeStateStore {
   private closed = false;
 
   constructor(private readonly options: BridgeStateStoreOptions) {
-    if (options.file !== ":memory:") {
+    if (!options.readOnly && options.file !== ":memory:") {
       mkdirSync(path.dirname(options.file), { recursive: true, mode: 0o700 });
     }
-    this.databaseLease = prepareStateDatabaseOpen(options.file);
+    this.databaseLease = options.readOnly ? null : prepareStateDatabaseOpen(options.file);
     this.migrationLease = this.databaseLease?.requiresMigration
       ? this.databaseLease as StateMigrationLease
       : null;
     let openedDatabase: Database.Database | undefined;
     try {
       const databaseFile = this.databaseLease?.databaseFile ?? options.file;
-      const databaseOptions = options.traceSql
-        ? { verbose: (message?: unknown) => options.traceSql?.(String(message ?? "")) }
-        : undefined;
+      const databaseOptions = {
+        ...(options.readOnly ? { readonly: true, fileMustExist: true } : {}),
+        ...(options.traceSql
+          ? { verbose: (message?: unknown) => options.traceSql?.(String(message ?? "")) }
+          : {})
+      };
       this.database = new Database(databaseFile, databaseOptions);
       openedDatabase = this.database;
-      this.database.pragma("busy_timeout = 5000");
+      this.database.pragma(`busy_timeout = ${STATE_DATABASE_BUSY_TIMEOUT_MS}`);
+      if (options.readOnly) {
+        this.database.pragma("query_only = ON");
+        const existingVersion = this.getMeta("schema_version");
+        if (existingVersion !== CURRENT_SCHEMA_VERSION) {
+          throw new Error(
+            `Read projection requires current state schema ${CURRENT_SCHEMA_VERSION}; ` +
+            `found ${existingVersion ?? "unknown"}.`
+          );
+        }
+        this.questions = new QuestionStore(this.database, { readOnly: true });
+        this.decisionCards = new DecisionCardStore(this.database, { readOnly: true });
+        this.eventRetention = new EventRetention(this.database, {
+          readSummary: (jobId) => this.readJobSummary(jobId),
+          saveSummary: (jobId, summary) => this.saveJobSummary(jobId, summary)
+        }, {
+          deleteActivityEvents: (olderThan, batchSize, retainedLimit) =>
+            this.deleteActivityEventsForRetention(olderThan, batchSize, retainedLimit),
+          deleteExpiredResultHolds: (now, limit) =>
+            this.deleteExpiredResultHoldsForRetention(now, limit)
+        }, { readOnly: true });
+        this.workHistory = new WorkHistoryStore(
+          this.database,
+          (candidate, now) => this.expireHistoryProjection(candidate, now)
+        );
+        this.automaticRecovery = new AutomaticRecoveryStore(this.database);
+        this.threadConnections = new ThreadConnectionStore(this.database);
+        this.dashboardReadModel = new DashboardReadModel(this.database);
+        this.statusReadModel = new StatusReadModel(this.database);
+        return;
+      }
       if (this.migrationLease) this.claimExclusiveMigrationConnection();
       this.configureDatabaseConnection();
       this.database.exec(`
@@ -667,11 +726,13 @@ export class BridgeStateStore {
           this.database.exec(V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA);
           this.database.exec(V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA);
           this.database.exec(V24_DECISION_CARD_MIGRATION_SCHEMA);
+          this.database.exec(V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
           this.setMeta("schema_v21_created_at", new Date().toISOString());
           this.setMeta("schema_v22_created_at", new Date().toISOString());
           this.setMeta("schema_v23_created_at", new Date().toISOString());
           this.setMeta("schema_v24_created_at", new Date().toISOString());
+          this.setMeta("schema_v25_created_at", new Date().toISOString());
           this.setMeta("state_migration_catalog_version", String(STATE_MIGRATION_CATALOG_VERSION));
           this.setMeta("state_database_id", randomUUID());
           this.recordSchemaOrigin("fresh");
@@ -706,7 +767,7 @@ export class BridgeStateStore {
         openedDatabase = undefined;
         this.database = new Database(databaseFile, databaseOptions);
         openedDatabase = this.database;
-        this.database.pragma("busy_timeout = 5000");
+        this.database.pragma(`busy_timeout = ${STATE_DATABASE_BUSY_TIMEOUT_MS}`);
         this.configureDatabaseConnection();
       }
       this.questions = this.transaction(() => {
@@ -781,6 +842,141 @@ export class BridgeStateStore {
     return this.currentInstanceId;
   }
 
+  /**
+   * Apply one semantic state command and persist its compact result atomically.
+   * Reusing a command ID with an identical payload returns the first result;
+   * reusing it for different work is a hard conflict.
+   */
+  executeOperationalCommand<T extends Record<string, unknown>>(
+    input: OperationalCommandReceiptInput,
+    apply: () => OperationalCommandApplication<T>,
+    observePhase?: (phase: OperationalStateOperationPhase) => void
+  ): OperationalCommandExecution<T> {
+    validateOperationalCommandReceiptInput(input);
+    return this.transaction(() => {
+      const existing = this.readOperationalCommandReceipt<T>(input.commandId);
+      if (existing) {
+        if (
+          existing.operation !== input.operation ||
+          existing.payloadSha256 !== input.payloadSha256 ||
+          existing.aggregateKey !== input.aggregateKey
+        ) {
+          throw new Error(
+            "STATE_COMMAND_CONFLICT: The command ID was already committed with a different payload."
+          );
+        }
+        return { receipt: existing, replayed: true };
+      }
+
+      const applied = apply();
+      if (
+        applied.resultingVersion !== undefined &&
+        (!Number.isSafeInteger(applied.resultingVersion) || applied.resultingVersion < 0)
+      ) {
+        throw new Error("STATE_COMMAND_RESULT_INVALID: resultingVersion must be a non-negative integer.");
+      }
+      const resultJson = JSON.stringify(applied.result);
+      if (
+        resultJson === undefined ||
+        Buffer.byteLength(resultJson, "utf8") > OPERATIONAL_COMMAND_RECEIPT_RESULT_MAX_BYTES
+      ) {
+        throw new Error(
+          `STATE_COMMAND_RESULT_TOO_LARGE: Command receipts are limited to ${OPERATIONAL_COMMAND_RECEIPT_RESULT_MAX_BYTES} bytes.`
+        );
+      }
+      const parsedResult = parseJsonTextStrict(
+        resultJson,
+        "operational command receipt result"
+      );
+      if (!isRecord(parsedResult) || Array.isArray(parsedResult)) {
+        throw new Error("STATE_COMMAND_RESULT_INVALID: Command receipt result must be a JSON object.");
+      }
+      const committedAt = input.committedAt ?? Date.now();
+      if (!Number.isSafeInteger(committedAt) || committedAt < 0) {
+        throw new Error("STATE_COMMAND_RECEIPT_INVALID: committedAt must be a non-negative integer.");
+      }
+      this.database.prepare(`
+        INSERT INTO operational_command_receipts(
+          command_id, operation, payload_sha256, aggregate_key, resulting_version,
+          result, worker_generation, committed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.commandId,
+        input.operation,
+        input.payloadSha256,
+        input.aggregateKey ?? null,
+        applied.resultingVersion ?? null,
+        resultJson,
+        input.workerGeneration,
+        committedAt
+      );
+      return {
+        receipt: {
+          commandId: input.commandId,
+          operation: input.operation,
+          payloadSha256: input.payloadSha256,
+          ...(input.aggregateKey !== undefined ? { aggregateKey: input.aggregateKey } : {}),
+          ...(applied.resultingVersion !== undefined
+            ? { resultingVersion: applied.resultingVersion }
+            : {}),
+          result: parsedResult as T,
+          workerGeneration: input.workerGeneration,
+          committedAt
+        },
+        replayed: false
+      };
+    }, observePhase);
+  }
+
+  getOperationalCommandReceipt<T = unknown>(
+    commandId: string
+  ): OperationalCommandReceipt<T> | undefined {
+    if (!UUID_PATTERN.test(commandId)) {
+      throw new Error("STATE_COMMAND_RECEIPT_INVALID: commandId must be a UUID.");
+    }
+    return this.readOperationalCommandReceipt<T>(commandId);
+  }
+
+  getLastOperationalCommandCommitAt(): number | undefined {
+    const row = this.database.prepare(`
+      SELECT MAX(committed_at) AS committed_at
+        FROM operational_command_receipts
+    `).get() as { committed_at: number | null };
+    return row.committed_at === null ? undefined : Number(row.committed_at);
+  }
+
+  /**
+   * Delete only old idempotent maintenance receipts. Business commands keep
+   * their domain request IDs as the long-lived idempotency authority and need
+   * a separate reference-aware policy before they can enter this cleanup.
+   */
+  maintainOperationalCommandReceiptRetention(
+    now = Date.now(),
+    limit = MAINTENANCE_COMMAND_RECEIPT_RETENTION_BATCH
+  ): { receiptsRemoved: number } {
+    if (!Number.isSafeInteger(now) || now < 0) {
+      throw new Error("STATE_COMMAND_RECEIPT_RETENTION_INVALID: now must be a non-negative integer.");
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new Error("STATE_COMMAND_RECEIPT_RETENTION_INVALID: limit must be a positive integer.");
+    }
+    const boundedLimit = Math.min(MAINTENANCE_COMMAND_RECEIPT_RETENTION_BATCH, limit);
+    const cutoff = Math.max(0, now - MAINTENANCE_COMMAND_RECEIPT_RETENTION_MS);
+    return this.transaction(() => {
+      const result = this.database.prepare(`
+        DELETE FROM operational_command_receipts
+         WHERE command_id IN (
+           SELECT command_id
+             FROM operational_command_receipts
+            WHERE operation = 'maintain' AND committed_at < ?
+            ORDER BY committed_at ASC, command_id ASC
+            LIMIT ?
+         )
+      `).run(cutoff, boundedLimit);
+      return { receiptsRemoved: result.changes };
+    });
+  }
+
   /** Record the point after which snapshot rollback could discard admitted work. */
   markServiceOpen(transport: "http" | "stdio"): void {
     this.transaction(() => {
@@ -852,13 +1048,28 @@ export class BridgeStateStore {
     }
   }
 
-  transaction<T>(operation: () => T): T {
-    if (this.transactionDepth > 0) return operation();
+  transaction<T>(
+    operation: () => T,
+    observePhase?: (phase: OperationalStateOperationPhase) => void
+  ): T {
+    if (this.options.readOnly) return operation();
+    if (this.transactionDepth > 0) {
+      this.observeTransactionPhase(observePhase, "executing");
+      return operation();
+    }
+    this.observeTransactionPhase(observePhase, "write-lock-wait");
     this.database.exec("BEGIN IMMEDIATE");
     this.transactionDepth += 1;
     try {
+      this.observeTransactionPhase(observePhase, "executing");
       const result = operation();
+      this.observeTransactionPhase(observePhase, "committing");
       this.database.exec("COMMIT");
+      // The per-command observer owns its response boundary because it may
+      // still need to persist/replay a receipt before replying. The enclosing
+      // runtime observer only needs to know that this synchronous transaction
+      // has released SQLite.
+      this.observeTransactionPhase(undefined, "responding");
       return result;
     } catch (error) {
       try {
@@ -869,6 +1080,22 @@ export class BridgeStateStore {
       throw error;
     } finally {
       this.transactionDepth -= 1;
+    }
+  }
+
+  private observeTransactionPhase(
+    observer: ((phase: OperationalStateOperationPhase) => void) | undefined,
+    phase: OperationalStateOperationPhase
+  ): void {
+    try {
+      this.options.onTransactionPhase?.(phase);
+    } catch {
+      // Diagnostics cannot change transaction semantics.
+    }
+    try {
+      observer?.(phase);
+    } catch {
+      // Diagnostics cannot change transaction semantics.
     }
   }
 
@@ -1124,9 +1351,74 @@ export class BridgeStateStore {
     this.transaction(() => this.upsertJobInternal(job));
   }
 
-  deleteJob(jobId: string): void {
+  maintainJobRetentionCandidates(
+    command: OperationalJobRetentionCommand
+  ): OperationalJobRetentionResult {
+    return this.transaction(() => {
+      const deadline = performance.now() + command.maxDurationMs;
+      let remainingAdmissionReservations = command.admissionReservations;
+      let removed = 0;
+      const classifications: OperationalJobRetentionResult["classifications"] = [];
+      for (const candidate of command.candidates) {
+        if (
+          removed >= command.maxRemoved ||
+          classifications.length > 0 && performance.now() >= deadline
+        ) break;
+        const row = this.database.prepare(`
+          SELECT status, updated_at, job_version
+            FROM jobs
+           WHERE job_id = ? AND archived_at IS NULL
+        `).get(candidate.jobId) as {
+          status: string;
+          updated_at: number;
+          job_version: number;
+        } | undefined;
+        if (
+          !row ||
+          !isTerminalActivityJobStatus(row.status) ||
+          row.updated_at !== candidate.updatedAt ||
+          row.job_version !== candidate.version
+        ) {
+          classifications.push({ ...candidate, disposition: "skipped" });
+          continue;
+        }
+        if (
+          this.retentionProtection(
+            candidate.jobId,
+            command.now,
+            command.completionResultRecoveryMs
+          ).length > 0
+        ) {
+          if (!candidate.knownProtected) {
+            remainingAdmissionReservations = Math.max(0, remainingAdmissionReservations - 1);
+          }
+          classifications.push({ ...candidate, disposition: "protected" });
+          continue;
+        }
+        if (candidate.knownProtected) remainingAdmissionReservations += 1;
+        if (
+          candidate.updatedAt >= command.cutoffAt &&
+          remainingAdmissionReservations <= command.retentionTarget
+        ) {
+          classifications.push({ ...candidate, disposition: "retained" });
+          continue;
+        }
+        if (this.deleteJob(candidate.jobId, command.now)) {
+          removed += 1;
+          remainingAdmissionReservations = Math.max(0, remainingAdmissionReservations - 1);
+          classifications.push({ ...candidate, disposition: "removed" });
+        } else {
+          classifications.push({ ...candidate, disposition: "protected" });
+        }
+      }
+      return { classifications, remainingAdmissionReservations };
+    });
+  }
+
+  deleteJob(jobId: string, now = Date.now()): boolean {
+    let archived = false;
     this.transaction(() => {
-      if (this.retentionProtection(jobId).length) return;
+      if (this.retentionProtection(jobId, now).length) return;
       const row = this.database
         .prepare(`
           SELECT job_id, scope_id, request_id, status, updated_at, activity_id,
@@ -1146,7 +1438,6 @@ export class BridgeStateStore {
           }
         | undefined;
       if (!row) return;
-      const now = Date.now();
       const scopeVersion = this.nextScopeVersion(row.scope_id, now);
       if (!this.eventRetention.summary(jobId).usage) {
         const usage = this.database.prepare("SELECT payload FROM job_events WHERE job_id=? AND event_type LIKE 'app-usage%' ORDER BY event_id DESC LIMIT 1").get(jobId) as JsonRow | undefined;
@@ -1169,7 +1460,9 @@ export class BridgeStateStore {
       this.touchActivity(row.activity_id, scopeVersion, now, "job-retention-pruned", {
         jobId: row.job_id
       });
+      archived = true;
     });
+    return archived;
   }
 
   retentionProtection(
@@ -3720,6 +4013,11 @@ export class BridgeStateStore {
 
   close(): void {
     if (this.closed) return;
+    if (this.options.readOnly) {
+      this.database.close();
+      this.closed = true;
+      return;
+    }
     const now = Date.now();
     this.database
       .prepare(`
@@ -3857,6 +4155,7 @@ export class BridgeStateStore {
     this.runMigration("21", "22", originalSourceSchema, () => this.migrateV21ToV22());
     this.runMigration("22", "23", originalSourceSchema, () => this.migrateV22ToV23());
     this.runMigration("23", "24", originalSourceSchema, () => this.migrateV23ToV24());
+    this.runMigration("24", "25", originalSourceSchema, () => this.migrateV24ToV25());
     if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
       throw new Error(`Bridge state migration stopped at unsupported schema version ${this.getMeta("schema_version")}.`);
     }
@@ -5252,6 +5551,46 @@ export class BridgeStateStore {
     } finally {
       this.database.pragma("foreign_keys = ON");
     }
+  }
+
+  private migrateV24ToV25(): void {
+    this.transaction(() => {
+      this.database.exec(V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "25");
+      this.setMeta("schema_v25_operational_command_receipts", "durable-command-receipts-v1");
+      this.setMeta("schema_v25_migrated_at", new Date().toISOString());
+    });
+  }
+
+  private readOperationalCommandReceipt<T>(
+    commandId: string
+  ): OperationalCommandReceipt<T> | undefined {
+    const row = this.database.prepare(`
+      SELECT command_id, operation, payload_sha256, aggregate_key, resulting_version,
+             result, worker_generation, committed_at
+        FROM operational_command_receipts
+       WHERE command_id = ?
+    `).get(commandId) as {
+      command_id: string;
+      operation: string;
+      payload_sha256: string;
+      aggregate_key: string | null;
+      resulting_version: number | null;
+      result: string;
+      worker_generation: string;
+      committed_at: number;
+    } | undefined;
+    if (!row) return undefined;
+    return {
+      commandId: row.command_id,
+      operation: row.operation,
+      payloadSha256: row.payload_sha256,
+      ...(row.aggregate_key !== null ? { aggregateKey: row.aggregate_key } : {}),
+      ...(row.resulting_version !== null ? { resultingVersion: row.resulting_version } : {}),
+      result: parseStoredJson(row.result, "operational command receipt result") as T,
+      workerGeneration: row.worker_generation,
+      committedAt: row.committed_at
+    };
   }
 
   private registerBridgeInstance(): void {
@@ -7383,6 +7722,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasBlockingInteraction(value: unknown): boolean {
   return Array.isArray(value) && value.some(entry => !entry || typeof entry !== "object" || entry.isBlocking !== false);
+}
+
+function validateOperationalCommandReceiptInput(input: OperationalCommandReceiptInput): void {
+  if (!UUID_PATTERN.test(input.commandId)) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: commandId must be a UUID.");
+  }
+  if (!/^[a-z][a-z0-9.-]{0,79}$/u.test(input.operation)) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: operation must be a bounded semantic identifier.");
+  }
+  if (!SHA256_PATTERN.test(input.payloadSha256)) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: payloadSha256 must be a lowercase SHA-256 digest.");
+  }
+  if (
+    input.aggregateKey !== undefined &&
+    (!input.aggregateKey || Buffer.byteLength(input.aggregateKey, "utf8") > 512)
+  ) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: aggregateKey must contain at most 512 bytes.");
+  }
+  if (!UUID_PATTERN.test(input.workerGeneration)) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: workerGeneration must be a UUID.");
+  }
 }
 
 function processIsAlive(processId: number): boolean {

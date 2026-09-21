@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-import { createExecutionRuntime } from "./executionRuntime.js";
-import { AppServerLateResponseJournal } from "./appServerLateResponses.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { loadConfig } from "./config.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import { startRuntimeCompanions } from "./runtimeCompanions.js";
-import { createStdioBridgeRuntime } from "./stdioServer.js";
-import { BridgeStateStore } from "./stateStore.js";
+import {
+  createIsolatedStdioRuntime,
+  type IsolatedStdioRuntime
+} from "./runtimeProcess.js";
 
 if (process.platform === "darwin") {
   process.title = "Codex MCP Bridge Server";
@@ -20,12 +20,7 @@ const config = loadConfig({
   CODEX_MCP_BRIDGE_HOST: "127.0.0.1",
   CODEX_MCP_BRIDGE_NO_AUTH: "1"
 });
-const stateStore = new BridgeStateStore({ file: config.stateDatabaseFile });
-const appServerLateResponses = new AppServerLateResponseJournal(stateStore);
-const upstream = createExecutionRuntime(config, {
-  onLateResponse: (response) => appServerLateResponses.observe(response)
-});
-const runtime = createStdioBridgeRuntime(config, upstream, { stateStore });
+let runtime: IsolatedStdioRuntime | undefined;
 let companions: Awaited<ReturnType<typeof startRuntimeCompanions>> | undefined;
 let shuttingDown = false;
 
@@ -39,8 +34,14 @@ main().catch((error) => {
 });
 
 async function main(): Promise<void> {
-  await runtime.start();
-  companions = await startRuntimeCompanions(config, runtime.applicationService);
+  const createdRuntime = await createIsolatedStdioRuntime(config);
+  runtime = createdRuntime;
+  companions = await startRuntimeCompanions(config, createdRuntime.applicationService);
+  if (shuttingDown) {
+    await companions.close();
+    await createdRuntime.close();
+    return;
+  }
   console.error(
     `${PRODUCT_INFO.displayName} persistent stdio ready; build ${BRIDGE_BUILD_INFO.id} ` +
     `(${BRIDGE_BUILD_INFO.version})`
@@ -59,22 +60,10 @@ async function shutdown(reason: string, code = 0): Promise<void> {
     console.error(`companion shutdown failed: ${errorMessage(error)}`);
   }
   try {
-    await runtime.close();
+    await runtime?.close();
   } catch (error) {
     exitCode = 1;
     console.error(`persistent stdio runtime shutdown failed: ${errorMessage(error)}`);
-  }
-  try {
-    await upstream.close();
-  } catch (error) {
-    exitCode = 1;
-    console.error(`Codex upstream shutdown failed: ${errorMessage(error)}`);
-  }
-  try {
-    stateStore.close();
-  } catch (error) {
-    exitCode = 1;
-    console.error(`bridge state shutdown failed: ${errorMessage(error)}`);
   }
   process.exit(exitCode);
 }

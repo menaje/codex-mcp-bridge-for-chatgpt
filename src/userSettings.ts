@@ -68,12 +68,14 @@ type GeneralSettings = Omit<
 export type UserSettingsStoreOptions = {
   stateStore?: BridgeStateStore;
   now?: () => number;
+  projectionOnly?: boolean;
 };
 
 export class UserSettingsStore {
   private readonly stateStore: BridgeStateStore;
   private readonly executionPolicyHmacSecret: Buffer;
   private readonly now: () => number;
+  private readonly projectionOnly: boolean;
   private readonly initial: GeneralSettings;
   private settings: GeneralSettings;
   private readonly warnings: string[] = [];
@@ -89,7 +91,11 @@ export class UserSettingsStore {
     options: UserSettingsStoreOptions = {}
   ) {
     this.stateStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
-    this.executionPolicyHmacSecret = loadOrCreateExecutionPolicySecret(this.stateStore);
+    this.projectionOnly = options.projectionOnly === true;
+    this.executionPolicyHmacSecret = loadOrCreateExecutionPolicySecret(
+      this.stateStore,
+      !this.projectionOnly
+    );
     this.now = options.now || Date.now;
     this.initial = this.validateGeneral({
       schemaVersion: MODEL_POLICY_SCHEMA_VERSION,
@@ -406,7 +412,7 @@ export class UserSettingsStore {
         "state database",
         stored.settingsRevision
       );
-      if (loaded.changed) {
+      if (loaded.changed && !this.projectionOnly) {
         this.stateStore.writeSettings(
           loaded.settings,
           stored.settingsRevision,
@@ -497,7 +503,10 @@ function canonicalGeneralSettings(settings: GeneralSettings): string {
   return JSON.stringify(semantic);
 }
 
-function loadOrCreateExecutionPolicySecret(stateStore: BridgeStateStore): Buffer {
+function loadOrCreateExecutionPolicySecret(
+  stateStore: BridgeStateStore,
+  createIfMissing = true
+): Buffer {
   return stateStore.transaction(() => {
     const encoded = stateStore.getMeta(EXECUTION_POLICY_HMAC_SECRET_META_KEY);
     if (encoded !== undefined) {
@@ -511,6 +520,9 @@ function loadOrCreateExecutionPolicySecret(stateStore: BridgeStateStore): Buffer
         throw new Error("Invalid persisted execution-policy HMAC key.");
       }
       return decoded;
+    }
+    if (!createIfMissing) {
+      throw new Error("Read projection requires an existing execution-policy HMAC key.");
     }
     const created = randomBytes(32);
     stateStore.setMeta(EXECUTION_POLICY_HMAC_SECRET_META_KEY, created.toString("base64url"));

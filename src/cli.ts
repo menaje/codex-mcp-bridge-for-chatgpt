@@ -1,31 +1,18 @@
 #!/usr/bin/env node
-import { createExecutionRuntime } from "./executionRuntime.js";
 import { loadConfig } from "./config.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
-import { createHttpServer } from "./server.js";
-import { AppServerLateResponseJournal } from "./appServerLateResponses.js";
+import type { BridgeHttpServer } from "./server.js";
 import { PRODUCT_INFO } from "./productInfo.js";
-import { BridgeStateStore } from "./stateStore.js";
 import { startRuntimeCompanions } from "./runtimeCompanions.js";
+import { createIsolatedHttpServer } from "./runtimeProcess.js";
 
 if (process.platform === "darwin") {
   process.title = "Codex MCP Bridge Server";
 }
 
 const config = loadConfig();
-const stateStore = new BridgeStateStore({ file: config.stateDatabaseFile });
-const appServerLateResponses = new AppServerLateResponseJournal(stateStore);
-const upstream = createExecutionRuntime(config, {
-  onLateResponse: (response) => appServerLateResponses.observe(response)
-});
-const server = createHttpServer(config, upstream, undefined, {
-  stateStore,
-  healthDiagnostics: () => ({
-    appServerLateResponses: appServerLateResponses.status()
-  }),
-  conformanceFixtures: process.argv.slice(2).includes("--conformance-fixtures")
-});
 let shuttingDown = false;
+let server: BridgeHttpServer | undefined;
 let companions: Awaited<ReturnType<typeof startRuntimeCompanions>> | undefined;
 
 for (const warning of [...config.startupWarnings, ...config.developerStartupWarnings]) {
@@ -38,12 +25,16 @@ void main().catch((error) => {
 });
 
 async function main(): Promise<void> {
-  companions = await startRuntimeCompanions(config, server.applicationService);
+  const createdServer = await createIsolatedHttpServer(config, {
+    conformanceFixtures: process.argv.slice(2).includes("--conformance-fixtures")
+  });
+  server = createdServer;
+  companions = await startRuntimeCompanions(config, createdServer.applicationService);
   if (shuttingDown) { await companions.close(); return; }
   await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(config.port, config.host, () => {
-      server.removeListener("error", reject);
+    createdServer.once("error", reject);
+    createdServer.listen(config.port, config.host, () => {
+      createdServer.removeListener("error", reject);
       resolve();
     });
   });
@@ -58,10 +49,12 @@ async function shutdown(signal: string, code = 0): Promise<void> {
   console.log(`received ${signal}, shutting down`);
   for (const [name, close] of [
     ["companions", () => companions?.close()],
-    ["HTTP server", () => new Promise<void>((resolve, reject) => server.close(error =>
-      error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING" ? reject(error) : resolve()))],
-    ["Codex upstream", () => upstream.close()],
-    ["bridge state", () => stateStore.close()]
+    ["HTTP server", () => server
+      ? new Promise<void>((resolve, reject) => server?.close(error =>
+        error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING"
+          ? reject(error)
+          : resolve()))
+      : undefined]
   ] as const) {
     try { await close(); }
     catch (error) { code = 1; console.error(`${name} shutdown failed: ${error instanceof Error ? error.message : String(error)}`); }

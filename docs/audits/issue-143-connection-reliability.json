@@ -1,0 +1,266 @@
+{
+  "issue": 143,
+  "kind": "failure-characterization",
+  "failureReproduced": true,
+  "resolutionVerified": false,
+  "testedAt": "2026-09-21T06:27:34.000Z",
+  "checkout": "bd41b788dc38ebb1b9e234bd278bcac7303f62be",
+  "productionDatabaseModified": false,
+  "installedRuntime": {
+    "version": "0.4.1",
+    "buildId": "f7f5056f9cf3:8d672a3d96bd",
+    "bridgePid": 57195,
+    "launcherPid": 57170,
+    "activeJobsAtBaseline": 3,
+    "tunnelConnectedAtBaseline": true,
+    "baseline": {
+      "helperHealthMs": 3.218,
+      "runtimeHealthMs": 0.651,
+      "healthzMs": 5.823
+    },
+    "recentBoundedHelperLog": {
+      "entries": 200,
+      "firstAt": "2026-09-21T04:02:42.628Z",
+      "lastAt": "2026-09-21T06:25:12.574Z",
+      "bridgeStatusTimeouts": 88,
+      "bridgeStatusRecoveries": 88,
+      "maximumObservedUnavailableMs": 349642,
+      "connectionReset502s": 16,
+      "tunnelHealthFailures": 3
+    },
+    "pairedLiveProbe": {
+      "runtimeHealth": {
+        "outcome": "timeout",
+        "durationMs": 2002.2
+      },
+      "healthz": {
+        "outcome": "timeout",
+        "durationMs": 2002.1
+      },
+      "sameBridgePidBeforeAndAfter": true
+    },
+    "postTimeoutStackSample": {
+      "durationSeconds": 2,
+      "mainThreadSamples": 1410,
+      "mainThreadTimerSamples": 348,
+      "minorGarbageCollectionSamples": 225,
+      "synchronousBetterSqliteGetSamplesObserved": [93, 79],
+      "synchronousBetterSqlitePrepareSamplesObserved": 40,
+      "sqliteBusyWaitStackObserved": false,
+      "physicalFootprintAtSample": "587.3M",
+      "peakPhysicalFootprintReported": "1.0G"
+    }
+  },
+  "disposableFault": {
+    "database": "schema-24 temporary fixture",
+    "lock": "separate SQLite connection BEGIN IMMEDIATE",
+    "blockedOperation": "BridgeStateStore.setMeta on the bridge process",
+    "lockHoldMs": 3200,
+    "configuredBusyTimeoutMs": 5000,
+    "helperRuntimeHealthTimeoutMs": 2000,
+    "baseline": {
+      "healthzMs": 4.291,
+      "runtimeHealthMs": 1.638
+    },
+    "contention": {
+      "writeDurationMs": 3247.94,
+      "healthzMs": 3252.486,
+      "runtimeHealthOutcome": "timeout",
+      "runtimeHealthMs": 2001.425,
+      "eventLoopTimerDelayMs": 3248.814
+    },
+    "recovery": {
+      "healthzMs": 6.083,
+      "runtimeHealthMs": 1.206,
+      "processRestarted": false
+    }
+  },
+  "latencyAttributionUpdate": {
+    "testedAt": "2026-09-21T10:51:45.270Z",
+    "baseCheckout": "8815f98d6b1cf1477b75e005084694a4bb4e6b47",
+    "database": "disposable schema-25 fixtures",
+    "samplesPerFaultDuration": 1,
+    "percentileClaimed": false,
+    "lockHoldMs": [50, 250, 1000, 3200],
+    "currentMainProcess": [
+      {
+        "lockHoldMs": 50,
+        "stateOperationMs": 80.129,
+        "healthzMs": 80.585,
+        "runtimeHealthOutcome": "ok",
+        "runtimeHealthMs": 80.614,
+        "eventLoopTimerMs": 80.196
+      },
+      {
+        "lockHoldMs": 250,
+        "stateOperationMs": 269.236,
+        "healthzMs": 273.131,
+        "runtimeHealthOutcome": "ok",
+        "runtimeHealthMs": 273.6,
+        "eventLoopTimerMs": 271.641
+      },
+      {
+        "lockHoldMs": 1000,
+        "stateOperationMs": 1043.022,
+        "healthzMs": 1046.129,
+        "runtimeHealthOutcome": "ok",
+        "runtimeHealthMs": 1046.578,
+        "eventLoopTimerMs": 1043.444
+      },
+      {
+        "lockHoldMs": 3200,
+        "stateOperationMs": 3271.858,
+        "healthzMs": 3274.566,
+        "runtimeHealthOutcome": "timeout",
+        "runtimeHealthMs": 2003.118,
+        "eventLoopTimerMs": 3272.252
+      }
+    ],
+    "isolatedStatePrototype": [
+      {
+        "lockHoldMs": 50,
+        "stateOperationMs": 56.739,
+        "healthzMs": 2.041,
+        "runtimeHealthMs": 2.028,
+        "eventLoopTimerMs": 10.161
+      },
+      {
+        "lockHoldMs": 250,
+        "stateOperationMs": 279.127,
+        "healthzMs": 1.268,
+        "runtimeHealthMs": 1.278,
+        "eventLoopTimerMs": 11.916
+      },
+      {
+        "lockHoldMs": 1000,
+        "stateOperationMs": 1042.463,
+        "healthzMs": 1.307,
+        "runtimeHealthMs": 1.266,
+        "eventLoopTimerMs": 10.266
+      },
+      {
+        "lockHoldMs": 3200,
+        "stateOperationMs": 3284.074,
+        "healthzMs": 1.701,
+        "runtimeHealthMs": 1.697,
+        "eventLoopTimerMs": 11.364,
+        "stateServiceReason": "state-stale",
+        "stateServiceHeartbeatAgeMs": 2255,
+        "stateServiceInFlight": 1
+      }
+    ],
+    "mainThreadCpu": {
+      "blockMs": 350,
+      "healthzMs": 350.983,
+      "runtimeHealthMs": 350.53,
+      "eventLoopTimerMs": 350.359
+    },
+    "conclusion": {
+      "stateCompletionLatencyEliminated": false,
+      "sqliteLatencyPropagationPreventedByPrototype": true,
+      "mainThreadCpuStillPropagates": true,
+      "productionResolutionVerified": false
+    }
+  },
+  "stateOperationObservationUpdate": {
+    "testedAt": "2026-09-21T12:41:23.630Z",
+    "baseCheckout": "472b1ce82ad48baffc0efaa3ab056801cc40ae50",
+    "database": "disposable schema-25 fixtures",
+    "lockHoldMs": 3200,
+    "currentMainProcess": {
+      "stateOperationMs": 3280.807,
+      "healthzMs": 3283.294,
+      "runtimeHealthOutcome": "timeout",
+      "runtimeHealthMs": 2001.025,
+      "eventLoopTimerMs": 3281.183
+    },
+    "isolatedStatePrototype": {
+      "stateOperationMs": 3305.486,
+      "healthzMs": 1.113,
+      "runtimeHealthMs": 1.134,
+      "eventLoopTimerMs": 12.752,
+      "stateServiceReason": "state-stale",
+      "stateServiceHeartbeatAgeMs": 2254,
+      "stateServiceInFlight": 1,
+      "stateServiceQueueDepth": 0,
+      "lastConfirmedOperation": {
+        "access": "write",
+        "operation": "maintain",
+        "slice": "events",
+        "phase": "write-lock-wait"
+      },
+      "lastCommitAtPreserved": true
+    },
+    "privacyContract": "no request, scope, project or Job identifier and no command payload",
+    "interpretation": "the phase identifies the last confirmed transaction boundary, not the exact internal SQLite, filesystem or hardware cause",
+    "productionResolutionVerified": false
+  },
+  "sqliteBusyBoundaryUpdate": {
+    "testedAt": "2026-09-21T13:21:13.854Z",
+    "baseCheckout": "1e56b35f280783ea0cf3fedf67ec136f13a908b2",
+    "database": "disposable schema-25 fixtures",
+    "configuredBusyTimeoutMs": 5000,
+    "measurementResponseDeadlineMs": 8000,
+    "percentileClaimed": false,
+    "cases": [
+      {
+        "lockHoldMs": 4900,
+        "expectedOutcome": "committed",
+        "currentMainProcess": {
+          "stateOperationMs": 4953.479,
+          "healthzMs": 4958.959,
+          "runtimeHealthOutcome": "timeout",
+          "eventLoopTimerMs": 4953.829
+        },
+        "isolatedStatePrototype": {
+          "stateOperationMs": 4988.038,
+          "healthzMs": 9.287,
+          "runtimeHealthMs": 3.193,
+          "eventLoopTimerMs": 10.704,
+          "stateServiceReason": "state-stale",
+          "lastConfirmedPhase": "write-lock-wait"
+        }
+      },
+      {
+        "lockHoldMs": 6500,
+        "expectedOutcome": "STATE_STORAGE_BUSY",
+        "currentMainProcess": {
+          "stateOperationMs": 5338.043,
+          "healthzMs": 6580.589,
+          "runtimeHealthOutcome": "timeout",
+          "eventLoopTimerMs": 5338.417
+        },
+        "isolatedStatePrototype": {
+          "stateOperationMs": 5383.775,
+          "healthzMs": 2.669,
+          "runtimeHealthMs": 1.43,
+          "eventLoopTimerMs": 11.789,
+          "stateServiceReason": "state-stale",
+          "lastConfirmedPhase": "write-lock-wait"
+        }
+      }
+    ],
+    "classificationSource": "actual SQLITE_BUSY or SQLITE_LOCKED driver code, never elapsed time alone",
+    "interpretation": "busy_timeout is a lock-wait policy, not a Bridge connection deadline or SLA",
+    "productionResolutionVerified": false
+  },
+  "findings": {
+    "directlyObserved": [
+      "the installed bridge process remained alive while both the private runtime.health path and public healthz path missed the same two-second interval",
+      "the helper repeatedly recovered against the same launcher and bridge process without a runtime restart",
+      "tools/call connection_reset 502 records occurred in the same bounded diagnostic window as repeated bridge status timeouts",
+      "a post-timeout main-thread sample contained synchronous better-sqlite3 work and substantial minor garbage collection",
+      "a controlled SQLite lock reproduced the same health-path coupling and recovered without a process restart",
+      "the isolated prototype kept both Bridge health paths responsive while the same state operation remained blocked and state readiness became stale",
+      "a 4.9-second lock committed below busy_timeout while a 6.5-second lock returned STATE_STORAGE_BUSY from the actual SQLite driver code in both execution designs",
+      "a synthetic main-thread CPU fault still delayed both Bridge health paths after the state execution boundary was isolated"
+    ],
+    "notYetProven": [
+      "the exact SQL statement or maintenance slice that initiated each installed-runtime stall",
+      "whether lock contention, query work, allocation pressure, garbage collection, or a combination dominated each stall",
+      "the complete Tunnel and ChatGPT request history outside the bounded helper log",
+      "production cutover behavior across every state caller, queue and read path, and the installed end-to-end combination"
+    ]
+  },
+  "result": "latency domains separated and the state-process isolation boundary verified on disposable fixtures; production resolution remains unverified"
+}

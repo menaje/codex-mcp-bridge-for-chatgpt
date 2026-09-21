@@ -1,7 +1,11 @@
 # State data access and maintenance ownership
 
-This document is the schema-24 ownership contract. SQLite remains one durable
+This document is the schema-25 ownership contract. SQLite remains one durable
 database, but a shared file does not imply shared write authority.
+
+The issue #142 successor architecture that preserves these owners while moving
+execution behind a child-process boundary is documented in
+[State execution isolation architecture](state-execution-isolation.md).
 
 The runtime has three access classes:
 
@@ -19,7 +23,7 @@ Activity-event and result-hold cleanup is scheduled by the event-retention
 slice but executed through `EventRetentionMaintenanceRepository` commands
 implemented by the State Unit of Work.
 
-## Schema 24 ownership matrix
+## Schema 25 ownership matrix
 
 “State UoW” below means `BridgeStateStore`. Read models never appear in the
 writer column.
@@ -63,6 +67,7 @@ writer column.
 | `decision_card_versions` | `DecisionCardStore` | `DecisionCardStore` | decision query/card paths | cascades from decision-card expiry |
 | `decision_card_requests` | `DecisionCardStore` | `DecisionCardStore` | decision idempotency commands | cascades from decision-card expiry |
 | `decision_submissions` | `DecisionCardStore` | `DecisionCardStore` | decision query/delivery paths | decision lease slice and startup recovery |
+| `operational_command_receipts` | State UoW / isolated command receipt repository | State UoW in the same mutation transaction | command replay and outcome-unknown recovery | idempotent maintenance receipts: 24-hour uncertainty window, 500-row bounded slice; business-command receipts require a separate reference-aware policy |
 
 `jobs.summary` is part of the Job repository even though event retention derives
 its `execution`, `usage`, and `uncertainResponseReview` projection. The event
@@ -114,11 +119,26 @@ failure record; the connection controller neither invokes nor owns maintenance.
 | Questions | 500 expirations, journals, and stale notification leases |
 | Decisions | 500 expired leases and 500 expired cards |
 | Recovery | 500 recovery rows and 500 incident rows |
-| In-memory Jobs | 64 inspected, 32 removals, and a 10 ms cooperative deadline per runtime slice; resumable iterator |
+| Command receipts | 500 expired maintenance receipts; business receipts are preserved |
+| Jobs | Registry defaults to 64 inspected candidates and 32 removals (hard caps 256/64) with a 10 ms cooperative planning deadline; the state owner revalidates the transmitted candidates under the same bounded execution deadline before atomically archiving eligible rows |
 
 The one-time startup load may normalize the complete persisted Job set before
 serving requests. Runtime maintenance never treats the configured retained-Job
 ceiling as a scan bound; each invocation advances the explicit slice above.
+Active Jobs reserve retained capacity before admission. A terminal Job keeps
+that reservation until bounded idle maintenance removes it or verifies a
+durable protection. Admission applies `JOB_RETENTION_CAPACITY` backpressure at
+the ceiling, so foreground deferral cannot create an unbounded terminal-Job
+backlog. Replays of an already admitted request remain available while this
+backpressure is active. Protocol-v4 Job maintenance preserves the exact bounded
+candidate payload and command ID across outcome-unknown recovery. Registry
+memory is changed only after the state owner returns matching Job version and
+timestamp classifications; a stale candidate is skipped rather than archived.
+
+The standalone state child is ready for the complete maintenance surface, but
+production still uses the in-process compatibility owner. Operational admission,
+progress, cancellation, delivery and query callers must cross the asynchronous
+semantic boundary before the single-writer cutover can select the child.
 
 Protected history candidates receive a 15-minute in-process backoff before the
 next full multi-table protection check. Losing the cache on restart is safe: it
@@ -136,7 +156,7 @@ Current-policy event sweep rows are compared byte-for-byte and are not updated
 when normalization produces the stored payload. Legacy or policy-upgrade rows
 still use the restartable event cursor.
 
-Schema 24 intentionally keeps no `result_holds(expires_at)` index. Holds are a
+Schema 25 intentionally keeps no `result_holds(expires_at)` index. Holds are a
 sparse, manually created subset with a 30-day maximum lifetime; the maintenance
 query is capped at 500, and adding an index would add a write and page cost to
 every hold. The storage audit records the scan so this decision can be revisited

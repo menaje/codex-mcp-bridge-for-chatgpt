@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { StateMaintenanceScheduler } from "../src/maintenanceScheduler.js";
+import { InProcessOperationalStateService } from "../src/stateService.js";
 import { ThreadConnectionController } from "../src/threadConnections.js";
 import type { CodexUpstream } from "../src/upstream.js";
 
@@ -68,16 +69,132 @@ describe("state access ownership", () => {
       store.threadConnections,
       {} as CodexUpstream
     );
-    const scheduler = new StateMaintenanceScheduler(store);
+    const scheduler = new StateMaintenanceScheduler(new InProcessOperationalStateService(store));
     try {
       await controller.sweep();
       expect(eventMaintenance).not.toHaveBeenCalled();
-      expect(scheduler.sweep("events")).toMatchObject({ slice: "events", failed: false });
+      expect(await scheduler.sweep("events")).toMatchObject({ slice: "events", failed: false });
       expect(eventMaintenance).toHaveBeenCalledTimes(1);
     } finally {
       scheduler.close();
       await controller.close();
       store.close();
+    }
+  });
+
+  it("defers scheduled storage work while foreground jobs are active", async () => {
+    let now = 1_000;
+    let active = true;
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const eventMaintenance = vi.spyOn(store, "maintainEventRetention");
+    const scheduler = new StateMaintenanceScheduler(new InProcessOperationalStateService(store), {
+      now: () => now,
+      shouldDefer: () => active,
+      maxDeferMs: 60_000
+    });
+    try {
+      expect(await scheduler.sweep()).toMatchObject({
+        slice: "events",
+        changed: 0,
+        failed: false,
+        deferred: true
+      });
+      expect(eventMaintenance).not.toHaveBeenCalled();
+
+      expect(await scheduler.sweep("events")).toMatchObject({
+        slice: "events",
+        failed: false,
+        deferred: false
+      });
+      expect(eventMaintenance).toHaveBeenCalledTimes(1);
+
+      now += 60_000;
+      expect(await scheduler.sweep()).toMatchObject({
+        slice: "events",
+        failed: false,
+        deferred: false
+      });
+      expect(eventMaintenance).toHaveBeenCalledTimes(2);
+
+      active = false;
+      expect(await scheduler.sweep()).toMatchObject({
+        slice: "history",
+        failed: false,
+        deferred: false
+      });
+    } finally {
+      scheduler.close();
+      store.close();
+    }
+  });
+
+  it("does not force scheduled storage work through an active foreground period by default", async () => {
+    let now = 1_000;
+    const store = new BridgeStateStore({ file: ":memory:" });
+    const eventMaintenance = vi.spyOn(store, "maintainEventRetention");
+    const scheduler = new StateMaintenanceScheduler(new InProcessOperationalStateService(store), {
+      now: () => now,
+      shouldDefer: () => true
+    });
+    try {
+      expect(await scheduler.sweep()).toMatchObject({ slice: "events", deferred: true });
+      now += 24 * 60 * 60 * 1_000;
+      expect(await scheduler.sweep()).toMatchObject({ slice: "events", deferred: true });
+      expect(eventMaintenance).not.toHaveBeenCalled();
+    } finally {
+      scheduler.close();
+      store.close();
+    }
+  });
+
+  it("reuses one logical command ID and exact payload after an outcome-unknown response", async () => {
+    const execute = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error("unknown"), {
+        code: "STATE_OUTCOME_UNKNOWN"
+      }))
+      .mockRejectedValueOnce(Object.assign(new Error("recovering"), {
+        code: "STATE_RECOVERING"
+      }))
+      .mockResolvedValueOnce({
+        operation: "maintain",
+        slice: "jobs",
+        changed: 0,
+        jobRetention: { classifications: [], remainingAdmissionReservations: 0 }
+      });
+    let now = 1_000;
+    const command = vi.fn(() => ({
+      operation: "maintain" as const,
+      slice: "jobs" as const,
+      now: now++,
+      cutoffAt: 0,
+      completionResultRecoveryMs: 0,
+      retentionTarget: 0,
+      admissionReservations: 0,
+      maxRemoved: 32,
+      maxDurationMs: 10,
+      candidates: []
+    }));
+    const scheduler = new StateMaintenanceScheduler({ execute }, { command });
+    try {
+      expect(await scheduler.sweep("jobs")).toMatchObject({ failed: true });
+      expect(await scheduler.sweep("jobs")).toMatchObject({ failed: true });
+      expect(await scheduler.sweep("jobs")).toMatchObject({ failed: false });
+      expect(execute).toHaveBeenCalledTimes(3);
+      expect(command).toHaveBeenCalledTimes(1);
+      const firstCommand = execute.mock.calls[0]?.[0];
+      expect(execute.mock.calls[1]?.[0]).toBe(firstCommand);
+      expect(execute.mock.calls[2]?.[0]).toBe(firstCommand);
+      const firstOptions = execute.mock.calls[0]?.[1];
+      const secondOptions = execute.mock.calls[1]?.[1];
+      const thirdOptions = execute.mock.calls[2]?.[1];
+      expect(firstOptions).toMatchObject({
+        commandId: expect.any(String),
+        aggregateKey: "maintenance:jobs"
+      });
+      expect(secondOptions).toEqual(firstOptions);
+      expect(thirdOptions).toEqual(firstOptions);
+    } finally {
+      scheduler.close();
     }
   });
 

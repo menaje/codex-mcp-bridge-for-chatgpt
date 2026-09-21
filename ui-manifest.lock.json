@@ -47,7 +47,7 @@
       {
         "name": "settings",
         "uriVersion": 3,
-        "digest": "01cb8c4cf341327b1662dcc127de346651a29eaca8c8c28a008c79a4236482ab",
+        "digest": "956b41eca28d93e0a94f55f329f489316f1a7f3aa80f7fd1e1a2cc6ab61d729b",
         "uri": "ui://codex-mcp-bridge/settings/v3.html",
         "inventories": [
           "development-current"
@@ -65,7 +65,7 @@
       {
         "name": "dashboard",
         "uriVersion": 2,
-        "digest": "582a26a9a7b1109a6b22d073facdb260c2dcf1dd446b960d3f9c5c1ce8cafa3e",
+        "digest": "c4b11830a5e8b9e4deec6722a7789d8122db598c224e7c5701019737178f9088",
         "uri": "ui://codex-mcp-bridge/dashboard/v2.html",
         "inventories": [
           "development-current"
@@ -85,7 +85,7 @@
       {
         "name": "decision",
         "uriVersion": 1,
-        "digest": "f40d7feae5d9d1c22e39f21f7eb25f4f5d313191e8a468e68ac279f5aadae748",
+        "digest": "9f22a96c8634230ca28565bf651aa3f2150b2e6ab0bcd016e24f4e9a9b2d262c",
         "uri": "ui://codex-mcp-bridge/decision/v1.html",
         "inventories": [
           "development-current"
@@ -105,7 +105,7 @@
   "resources": {
     "settings": {
       "uriVersion": 3,
-      "digest": "01cb8c4cf341327b1662dcc127de346651a29eaca8c8c28a008c79a4236482ab",
+      "digest": "956b41eca28d93e0a94f55f329f489316f1a7f3aa80f7fd1e1a2cc6ab61d729b",
       "uri": "ui://codex-mcp-bridge/settings/v3.html",
       "metadata": {
         "descriptor": {
@@ -149,7 +149,7 @@
     },
     "dashboard": {
       "uriVersion": 2,
-      "digest": "582a26a9a7b1109a6b22d073facdb260c2dcf1dd446b960d3f9c5c1ce8cafa3e",
+      "digest": "c4b11830a5e8b9e4deec6722a7789d8122db598c224e7c5701019737178f9088",
       "uri": "ui://codex-mcp-bridge/dashboard/v2.html",
       "metadata": {
         "descriptor": {
@@ -198,7 +198,7 @@
     },
     "decision": {
       "uriVersion": 1,
-      "digest": "f40d7feae5d9d1c22e39f21f7eb25f4f5d313191e8a468e68ac279f5aadae748",
+      "digest": "9f22a96c8634230ca28565bf651aa3f2150b2e6ab0bcd016e24f4e9a9b2d262c",
       "uri": "ui://codex-mcp-bridge/decision/v1.html",
       "metadata": {
         "descriptor": {

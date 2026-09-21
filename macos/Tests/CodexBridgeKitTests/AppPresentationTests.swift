@@ -428,6 +428,54 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testTimedOutBridgeObservationRetainsLastDashboardAsUnconfirmed() async throws {
+        let model = AppModel()
+        let start = Date(timeIntervalSince1970: 100)
+        model.recordLocalConnectionStatus(try helperStatus(), at: start)
+        model.dashboard = try dashboardStatus(scope: "retained-timeout-dashboard")
+        model.settings = try settingsSnapshot(
+            policy: ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+                     "constraints": ["allowDelegation": true]],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let timedOut = try helperStatus(
+            bridgeConnected: false,
+            bridgeObservation: "timed-out",
+            bridgeLastSuccessfulAt: "2026-09-21T00:00:00.000Z"
+        )
+
+        model.recordLocalConnectionStatus(timedOut, at: start.addingTimeInterval(1))
+        XCTAssertFalse(model.bridgeConnected)
+        XCTAssertTrue(model.hasRetainedBridgeObservation)
+        XCTAssertEqual(model.health, .checking)
+
+        model.recordLocalConnectionStatus(timedOut, at: start.addingTimeInterval(9))
+        XCTAssertEqual(model.health, .attention)
+        XCTAssertEqual(model.operationalObservation, .problem(.responseUnconfirmed))
+        XCTAssertFalse(model.runtimeUnavailableExplanation.contains("중지되었습니다"))
+        await model.refreshDashboard()
+        XCTAssertEqual(model.dashboard?.scope, "retained-timeout-dashboard")
+        await model.refreshSettings()
+        XCTAssertEqual(model.settings?.settings.settingsRevision, 4)
+    }
+
+    @MainActor
+    func testReadProjectionDelayIsPartialAndDoesNotClaimRuntimeOrWritesFailed() throws {
+        let model = AppModel()
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        model.recordLocalConnectionStatus(try helperStatus(readServiceStatus: "read-stale"))
+
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertTrue(model.bridgeReadProjectionDelayed)
+        XCTAssertFalse(model.bridgeResponseUnconfirmed)
+        XCTAssertEqual(model.operationalObservation, .healthy)
+        XCTAssertEqual(model.health, .attention)
+
+        model.recordLocalConnectionStatus(try helperStatus(readServiceStatus: "ready"))
+        XCTAssertFalse(model.bridgeReadProjectionDelayed)
+    }
+
+    @MainActor
     func testTunnelProbeFailureGetsGraceButRuntimeExitDoesNot() throws {
         let model = AppModel()
         model.recordLocalConnectionStatus(try helperStatus(tunnelConnected: false))
@@ -1894,15 +1942,21 @@ private func helperStatus(
     phase: String = "running",
     bridgeConnected: Bool = true,
     tunnelConnected: Bool = true,
-    configurationValid: Bool = true
+    configurationValid: Bool = true,
+    bridgeObservation: String? = nil,
+    bridgeLastSuccessfulAt: String? = nil,
+    readServiceStatus: String? = nil
 ) throws -> HelperStatus {
+    let bridgeObservationJSON = bridgeObservation.map { ",\"observation\":\"\($0)\"" } ?? ""
+    let bridgeLastSuccessfulAtJSON = bridgeLastSuccessfulAt.map { ",\"lastSuccessfulAt\":\"\($0)\"" } ?? ""
+    let readServiceStatusJSON = readServiceStatus.map { ",\"readServiceStatus\":\"\($0)\"" } ?? ""
     let json = #"""
     {
       "kind":"helper-status","generatedAt":"2026-09-03T00:00:00.000Z",
       "phase":"\#(phase)","pid":42,"startedAt":null,"lastExit":null,"lastError":null,
       "restartAttempt":0,
       "configuration":{"path":"/private/.env","exists":true,"valid":\#(configurationValid),"hasApiKey":true,"hasTunnelId":true,"tunnelId":"tunnel_native123","issue":null},
-      "bridge":{"socketPath":"/private/bridge.sock","connected":\#(bridgeConnected),"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},
+      "bridge":{"socketPath":"/private/bridge.sock","connected":\#(bridgeConnected)\#(bridgeObservationJSON)\#(bridgeLastSuccessfulAtJSON)\#(readServiceStatusJSON),"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},
       "tunnel":{"phase":"connected","profile":"managed","transport":"stdio","doctorPassed":true,"processRunning":true,"connected":\#(tunnelConnected),"lastCheckedAt":null,"lastError":null}
     }
     """#.data(using: .utf8)!

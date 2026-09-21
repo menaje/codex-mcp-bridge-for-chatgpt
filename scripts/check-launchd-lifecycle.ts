@@ -66,6 +66,7 @@ function helperBundle(buildId: string): string {
   mkdirSync(bundle, { mode: 0o700 });
   cpSync(path.join(repository, "dist"), path.join(bundle, "dist"), { recursive: true });
   cpSync(path.join(repository, "release-manifest.json"), path.join(bundle, "release-manifest.json"));
+  cpSync(path.join(repository, "state-migrations.json"), path.join(bundle, "state-migrations.json"));
   symlinkSync(path.join(repository, "node_modules"), path.join(bundle, "node_modules"));
   symlinkSync(path.join(repository, "scripts"), path.join(bundle, "scripts"));
   writeFileSync(path.join(bundle, "package.json"), JSON.stringify({ type: "module" }));

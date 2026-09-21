@@ -478,6 +478,14 @@ final class AppModel: ObservableObject {
         if !status.configuration.valid { return .problem(.configuration) }
         // An intentional stop is healthy. Failed/retrying starts still have a grace period.
         if status.phase == "stopped", status.lastError == nil, status.lastProblem == nil { return .healthy }
+        if status.phase == "running", status.bridge.observation == "timed-out" {
+            return .problem(.responseUnconfirmed)
+        }
+        if status.phase == "running",
+           let stateServiceStatus = status.bridge.stateServiceStatus,
+           stateServiceStatus != "ready" {
+            return .problem(.responseUnconfirmed)
+        }
         if status.phase != "running" || !status.bridge.connected { return .problem(.runtime) }
         if networkAvailable == false || !status.tunnel.connected { return .problem(.tunnel) }
         guard let auth = authStatus else { return authErrorMessage == nil ? .unknown : .problem(.authenticationStatus) }
@@ -501,7 +509,7 @@ final class AppModel: ObservableObject {
 
     private var connectionCheckRequiresAttention: Bool {
         switch currentActionRequiredProblem {
-        case .runtime, .tunnel, .remoteConnection: return true
+        case .runtime, .responseUnconfirmed, .tunnel, .remoteConnection: return true
         default: return false
         }
     }
@@ -660,6 +668,28 @@ final class AppModel: ObservableObject {
         isRemoteClient ? remoteHello != nil : helperStatus?.bridge.connected == true
     }
 
+    var bridgeResponseUnconfirmed: Bool {
+        guard !isRemoteClient, let status = helperStatus else { return false }
+        guard status.phase == "running" else { return false }
+        if status.bridge.observation == "timed-out" { return true }
+        if let stateServiceStatus = status.bridge.stateServiceStatus {
+            return stateServiceStatus != "ready"
+        }
+        return false
+    }
+
+    /// A read projection failure degrades Dashboard/Settings freshness without
+    /// implying that writes, Codex work, or the Bridge process have failed.
+    var bridgeReadProjectionDelayed: Bool {
+        guard !isRemoteClient, helperStatus?.phase == "running",
+              let status = helperStatus?.bridge.readServiceStatus else { return false }
+        return status != "ready"
+    }
+
+    var hasRetainedBridgeObservation: Bool {
+        bridgeResponseUnconfirmed && helperStatus?.bridge.lastSuccessfulAt != nil
+    }
+
     var hasConnectionTarget: Bool {
         !isRemoteClient || activeRemoteProfile != nil
     }
@@ -754,6 +784,8 @@ final class AppModel: ObservableObject {
         if systemObservationPending { return .checking }
         if currentActionRequiredProblem != nil { return .attention }
         if isBridgeConnectionChecking { return .checking }
+        if bridgeResponseUnconfirmed { return .attention }
+        if bridgeReadProjectionDelayed { return .attention }
         if isRemoteClient {
             guard activeRemoteProfile != nil, remoteHello != nil else { return .unavailable }
             guard connectionErrorMessage == nil, dashboardErrorMessage == nil else {
@@ -1643,7 +1675,7 @@ final class AppModel: ObservableObject {
         guard bridgeConnected else {
             // Keep the user's menu/refresh request until its connection is ready.
             deferredDashboardRead = dashboardVisible ? (enrich, applyCachedEnrichment) : nil
-            if isBridgeConnectionChecking { return }
+            if isBridgeConnectionChecking || bridgeResponseUnconfirmed { return }
             dashboard = nil
             clearDashboardHistoryDetails()
             dashboardErrorMessage = nil
@@ -1798,7 +1830,7 @@ final class AppModel: ObservableObject {
         settingsRequestGeneration += 1
         let request = settingsRequestGeneration
         guard bridgeConnected else {
-            if isBridgeConnectionChecking { return }
+            if isBridgeConnectionChecking || bridgeResponseUnconfirmed { return }
             settings = nil
             settingsLoadErrorMessage = nil
             return
@@ -1836,7 +1868,7 @@ final class AppModel: ObservableObject {
         skillLibraryRequestGeneration += 1
         let request = skillLibraryRequestGeneration
         guard bridgeConnected else {
-            if !isBridgeConnectionChecking {
+            if !isBridgeConnectionChecking && !bridgeResponseUnconfirmed {
                 skillLibrary = nil
                 selectedBridgeSkill = nil
                 selectedBridgeSkillFile = nil

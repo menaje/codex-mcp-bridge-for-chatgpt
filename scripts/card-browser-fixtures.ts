@@ -120,7 +120,7 @@ export const dashboardView = (state: "structural" | "enriched") => ({
   uiLocalePreference: "ko"
 });
 
-const settingsView = {
+export const settingsView = {
   settings: {
     schemaVersion: 1,
     settingsRevision: 1,
