@@ -834,7 +834,7 @@ function executeChildRequest(
     sendToParent({ type: "response", requestId: envelope.requestId, generation, ok: true, result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const code = stateErrorCode(message);
+    const code = operationalStateErrorCode(error);
     fail(code, message.replace(new RegExp(`^${code}:\\s*`), ""));
   }
 }
@@ -980,9 +980,24 @@ function isUuid(value: unknown): value is string {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(value);
 }
 
-function stateErrorCode(message: string): string {
-  const match = /^([A-Z][A-Z0-9_]+):/.exec(message);
-  return match?.[1] ?? "STATE_COMMAND_FAILED";
+export function operationalStateErrorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = /^(STATE_[A-Z0-9_]+):/.exec(message);
+  if (match) return match[1];
+  const sqliteCode = error && typeof error === "object" &&
+    typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : undefined;
+  if (sqliteCode?.startsWith("SQLITE_BUSY") || sqliteCode?.startsWith("SQLITE_LOCKED")) {
+    return "STATE_STORAGE_BUSY";
+  }
+  if (sqliteCode === "SQLITE_FULL") return "STATE_STORAGE_FULL";
+  if (sqliteCode?.startsWith("SQLITE_CORRUPT") || sqliteCode === "SQLITE_NOTADB") {
+    return "STATE_STORAGE_CORRUPT";
+  }
+  if (sqliteCode?.startsWith("SQLITE_IOERR")) return "STATE_STORAGE_IO";
+  if (sqliteCode?.startsWith("SQLITE_READONLY")) return "STATE_STORAGE_READ_ONLY";
+  return "STATE_COMMAND_FAILED";
 }
 
 function childEnvironment(): NodeJS.ProcessEnv {

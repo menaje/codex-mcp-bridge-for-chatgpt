@@ -67,10 +67,13 @@ does not address that failure. The implementation order is therefore:
 
 ## What isolation changes and what remains
 
-The issue #143 characterization now applies 50, 250, 1,000 and 3,200 ms SQLite
-write locks to both the current in-process state call and the protocol-v4 child
-prototype. At 3,200 ms, both state operations still took about 3.28 seconds.
-Isolation does not shorten an external lock, filesystem stall or `fsync`.
+The issue #143 characterization now applies 50, 250, 1,000, 3,200 and 4,900 ms
+SQLite write locks plus a 6,500 ms lock beyond the configured 5,000 ms
+`busy_timeout` to both the current in-process state call and the protocol-v4
+child prototype. At 3,200 ms, both state operations still took about 3.28
+seconds. At 4,900 ms both committed; beyond the busy timeout both returned the
+driver's bounded `STATE_STORAGE_BUSY` result. Isolation does not shorten an
+external lock, filesystem stall or `fsync`.
 
 The availability effect is different. The current path delayed `/healthz` and
 the Bridge event-loop timer by about 3.27 seconds and made the two-second
@@ -190,6 +193,15 @@ On `outcome-unknown`, the Bridge queries the durable receipt for the same
 mismatch is a conflict, not a retry. External effects retain their existing
 prepared/dispatching/uncertain journals; a state receipt does not claim an
 external recipient accepted anything.
+
+SQLite execution failures are classified from the driver's error code, not
+from elapsed time. `SQLITE_BUSY` and `SQLITE_LOCKED` become
+`STATE_STORAGE_BUSY`; full, read-only, I/O and corrupt/not-a-database results
+have separate bounded storage codes. The configured `busy_timeout` controls
+how long SQLite attempts lock acquisition. It is not a liveness deadline or
+SLA. If the caller's observation deadline ends first, the result remains
+outcome-unknown until a late response, receipt lookup or authoritative retry
+resolves it; elapsed time alone never fabricates a storage error.
 
 Schema 25 adds `operational_command_receipts` with command ID, operation,
 payload hash, aggregate, resulting version, compact result, generation and

@@ -150,6 +150,8 @@ import {
   type JobTerminalOrigin
 } from "./cancellation.js";
 
+export const STATE_DATABASE_BUSY_TIMEOUT_MS = 5_000;
+
 const CURRENT_SCHEMA_VERSION = CURRENT_STATE_SCHEMA_VERSION;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -657,7 +659,7 @@ export class BridgeStateStore {
         : undefined;
       this.database = new Database(databaseFile, databaseOptions);
       openedDatabase = this.database;
-      this.database.pragma("busy_timeout = 5000");
+      this.database.pragma(`busy_timeout = ${STATE_DATABASE_BUSY_TIMEOUT_MS}`);
       if (this.migrationLease) this.claimExclusiveMigrationConnection();
       this.configureDatabaseConnection();
       this.database.exec(`
@@ -725,7 +727,7 @@ export class BridgeStateStore {
         openedDatabase = undefined;
         this.database = new Database(databaseFile, databaseOptions);
         openedDatabase = this.database;
-        this.database.pragma("busy_timeout = 5000");
+        this.database.pragma(`busy_timeout = ${STATE_DATABASE_BUSY_TIMEOUT_MS}`);
         this.configureDatabaseConnection();
       }
       this.questions = this.transaction(() => {

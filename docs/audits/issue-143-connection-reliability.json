@@ -195,6 +195,55 @@
     "interpretation": "the phase identifies the last confirmed transaction boundary, not the exact internal SQLite, filesystem or hardware cause",
     "productionResolutionVerified": false
   },
+  "sqliteBusyBoundaryUpdate": {
+    "testedAt": "2026-09-21T13:21:13.854Z",
+    "baseCheckout": "1e56b35f280783ea0cf3fedf67ec136f13a908b2",
+    "database": "disposable schema-25 fixtures",
+    "configuredBusyTimeoutMs": 5000,
+    "measurementResponseDeadlineMs": 8000,
+    "percentileClaimed": false,
+    "cases": [
+      {
+        "lockHoldMs": 4900,
+        "expectedOutcome": "committed",
+        "currentMainProcess": {
+          "stateOperationMs": 4953.479,
+          "healthzMs": 4958.959,
+          "runtimeHealthOutcome": "timeout",
+          "eventLoopTimerMs": 4953.829
+        },
+        "isolatedStatePrototype": {
+          "stateOperationMs": 4988.038,
+          "healthzMs": 9.287,
+          "runtimeHealthMs": 3.193,
+          "eventLoopTimerMs": 10.704,
+          "stateServiceReason": "state-stale",
+          "lastConfirmedPhase": "write-lock-wait"
+        }
+      },
+      {
+        "lockHoldMs": 6500,
+        "expectedOutcome": "STATE_STORAGE_BUSY",
+        "currentMainProcess": {
+          "stateOperationMs": 5338.043,
+          "healthzMs": 6580.589,
+          "runtimeHealthOutcome": "timeout",
+          "eventLoopTimerMs": 5338.417
+        },
+        "isolatedStatePrototype": {
+          "stateOperationMs": 5383.775,
+          "healthzMs": 2.669,
+          "runtimeHealthMs": 1.43,
+          "eventLoopTimerMs": 11.789,
+          "stateServiceReason": "state-stale",
+          "lastConfirmedPhase": "write-lock-wait"
+        }
+      }
+    ],
+    "classificationSource": "actual SQLITE_BUSY or SQLITE_LOCKED driver code, never elapsed time alone",
+    "interpretation": "busy_timeout is a lock-wait policy, not a Bridge connection deadline or SLA",
+    "productionResolutionVerified": false
+  },
   "findings": {
     "directlyObserved": [
       "the installed bridge process remained alive while both the private runtime.health path and public healthz path missed the same two-second interval",
@@ -203,6 +252,7 @@
       "a post-timeout main-thread sample contained synchronous better-sqlite3 work and substantial minor garbage collection",
       "a controlled SQLite lock reproduced the same health-path coupling and recovered without a process restart",
       "the isolated prototype kept both Bridge health paths responsive while the same state operation remained blocked and state readiness became stale",
+      "a 4.9-second lock committed below busy_timeout while a 6.5-second lock returned STATE_STORAGE_BUSY from the actual SQLite driver code in both execution designs",
       "a synthetic main-thread CPU fault still delayed both Bridge health paths after the state execution boundary was isolated"
     ],
     "notYetProven": [

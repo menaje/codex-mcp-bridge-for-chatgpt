@@ -20,12 +20,21 @@ import { createHttpServer } from "../src/server.js";
 import type { OperationalStateHealth } from "../src/stateService.js";
 import {
   ChildProcessOperationalStateService,
-  OperationalStateProcessError
+  OperationalStateProcessError,
+  operationalStateErrorCode
 } from "../src/stateServiceProcess.js";
-import { BridgeStateStore } from "../src/stateStore.js";
+import {
+  BridgeStateStore,
+  STATE_DATABASE_BUSY_TIMEOUT_MS
+} from "../src/stateStore.js";
 import type { CodexUpstream, ToolResult } from "../src/upstream.js";
 
 type SqliteFaultMode = "in-process-current" | "isolated-prototype";
+type SqliteFaultExpectedOutcome = "committed" | "storage-busy";
+type SqliteFaultCase = {
+  lockHoldMs: number;
+  expectedOutcome: SqliteFaultExpectedOutcome;
+};
 
 type FixtureMessage =
   | {
@@ -75,7 +84,14 @@ type FixtureCommand =
 type ReadyMessage = Extract<FixtureMessage, { type: "ready" }>;
 
 const CHILD_FLAG = "--fixture-child";
-const SQLITE_LOCK_HOLDS_MS = [50, 250, 1_000, 3_200] as const;
+const SQLITE_LOCK_FAULTS: readonly SqliteFaultCase[] = [
+  { lockHoldMs: 50, expectedOutcome: "committed" },
+  { lockHoldMs: 250, expectedOutcome: "committed" },
+  { lockHoldMs: 1_000, expectedOutcome: "committed" },
+  { lockHoldMs: 3_200, expectedOutcome: "committed" },
+  { lockHoldMs: STATE_DATABASE_BUSY_TIMEOUT_MS - 100, expectedOutcome: "committed" },
+  { lockHoldMs: STATE_DATABASE_BUSY_TIMEOUT_MS + 1_500, expectedOutcome: "storage-busy" }
+];
 const CPU_BLOCK_MS = 350;
 const HEALTH_TARGET_MS = 200;
 const EVENT_LOOP_TARGET_MS = 50;
@@ -102,11 +118,11 @@ async function runCharacterization(): Promise<void> {
 
     const inProcessSqlite = [];
     const isolatedSqlite = [];
-    for (const lockHoldMs of SQLITE_LOCK_HOLDS_MS) {
-      inProcessSqlite.push(await runSqliteFaultCase(child, ready, "in-process-current", lockHoldMs));
+    for (const fault of SQLITE_LOCK_FAULTS) {
+      inProcessSqlite.push(await runSqliteFaultCase(child, ready, "in-process-current", fault));
     }
-    for (const lockHoldMs of SQLITE_LOCK_HOLDS_MS) {
-      isolatedSqlite.push(await runSqliteFaultCase(child, ready, "isolated-prototype", lockHoldMs));
+    for (const fault of SQLITE_LOCK_FAULTS) {
+      isolatedSqlite.push(await runSqliteFaultCase(child, ready, "isolated-prototype", fault));
     }
 
     const mainThreadCpu = await runCpuFaultCase(child, ready, CPU_BLOCK_MS);
@@ -135,7 +151,7 @@ async function runCharacterization(): Promise<void> {
       measurementContract: {
         samplesPerFaultDuration: 1,
         percentileClaimed: false,
-        configuredBusyTimeoutMs: 5_000,
+        configuredBusyTimeoutMs: STATE_DATABASE_BUSY_TIMEOUT_MS,
         runtimeHealthTimeoutMs: RUNTIME_HEALTH_TIMEOUT_MS,
         initialTargetsMs: {
           healthzP99: HEALTH_TARGET_MS,
@@ -152,7 +168,7 @@ async function runCharacterization(): Promise<void> {
       faultMatrix: {
         sqliteWriteLock: {
           injection: "separate SQLite connection BEGIN IMMEDIATE",
-          lockHoldMs: [...SQLITE_LOCK_HOLDS_MS],
+          cases: SQLITE_LOCK_FAULTS,
           currentMainProcess: inProcessSqlite,
           isolatedStatePrototype: isolatedSqlite
         },
@@ -189,6 +205,7 @@ async function runCharacterization(): Promise<void> {
         "latency is not indivisible: SQLite completion remains delayed by the injected lock, while process isolation prevents that delay from occupying the Bridge event loop",
         "the current in-process path scales Bridge health and event-loop delay with the SQLite lock duration and crosses the macOS two-second timeout",
         "the isolated prototype keeps /healthz, runtime.health, and the Bridge timer responsive while its state-service readiness becomes stale",
+        "the 4.9-second case commits below the configured SQLite busy timeout, while a 6.5-second lock produces an explicit state-storage-busy result instead of being inferred from elapsed time",
         "a synthetic main-thread CPU fault still delays both health paths, so database isolation is necessary but not sufficient"
       ],
       limits: [
@@ -199,6 +216,7 @@ async function runCharacterization(): Promise<void> {
       ],
       failureReproduced: true,
       isolationPrototypeBoundaryVerified: true,
+      sqliteBusyBoundaryVerified: true,
       productionResolutionVerified: false,
       temporaryFixtureRemoved: true
     };
@@ -223,28 +241,30 @@ async function runSqliteFaultCase(
   child: ChildProcess,
   ready: ReadyMessage,
   mode: SqliteFaultMode,
-  lockHoldMs: number
+  fault: SqliteFaultCase
 ): Promise<Record<string, unknown> & {
   runtimeHealth: { outcome: string; durationMs: number };
   stateServiceDuringFault?: OperationalStateHealth;
 }> {
+  const { lockHoldMs, expectedOutcome } = fault;
   const scenarioId = `${mode}-sqlite-${lockHoldMs}`;
   const stateFile = mode === "in-process-current" ? ready.stateFile : ready.isolatedStateFile;
   const locker = new Database(stateFile);
   let lockReleased = false;
   let releaseTimer: NodeJS.Timeout | undefined;
   try {
-    locker.pragma("busy_timeout = 5000");
+    locker.pragma(`busy_timeout = ${STATE_DATABASE_BUSY_TIMEOUT_MS}`);
     locker.exec("BEGIN IMMEDIATE");
     const startedPromise = waitForMessage(child, "operation-started", 5_000, scenarioId);
-    const finishedPromise = waitForMessage(child, "operation-finished", lockHoldMs + 5_000, scenarioId);
-    const timerPromise = waitForMessage(child, "timer-fired", lockHoldMs + 5_000, scenarioId);
+    const scenarioTimeoutMs = Math.max(lockHoldMs, STATE_DATABASE_BUSY_TIMEOUT_MS) + 5_000;
+    const finishedPromise = waitForMessage(child, "operation-finished", scenarioTimeoutMs, scenarioId);
+    const timerPromise = waitForMessage(child, "timer-fired", scenarioTimeoutMs, scenarioId);
     const healthSnapshotAfterMs = mode === "isolated-prototype" && lockHoldMs >= 3_000
       ? 2_250
       : undefined;
     const stateHealthPromise = healthSnapshotAfterMs === undefined
       ? undefined
-      : waitForMessage(child, "state-health", lockHoldMs + 5_000, scenarioId);
+      : waitForMessage(child, "state-health", scenarioTimeoutMs, scenarioId);
     child.send({
       type: "run-sqlite-fault",
       scenarioId,
@@ -287,24 +307,33 @@ async function runSqliteFaultCase(
     ]);
     if (releaseTimer) clearTimeout(releaseTimer);
 
-    const toleranceMs = Math.min(250, Math.max(25, lockHoldMs * 0.25));
-    assert.equal(operation.error, null);
-    assert.equal(operation.outcome, "committed");
+    const expectedBlockingMs = expectedOutcome === "committed"
+      ? lockHoldMs
+      : STATE_DATABASE_BUSY_TIMEOUT_MS;
+    const toleranceMs = Math.min(350, Math.max(25, expectedBlockingMs * 0.1));
+    if (expectedOutcome === "committed") {
+      assert.equal(operation.error, null);
+      assert.equal(operation.outcome, "committed");
+    } else {
+      assert.equal(operation.outcome, "failed");
+      assert.equal(operation.errorCode, "STATE_STORAGE_BUSY");
+      assert.match(operation.error || "", /busy|locked/iu);
+    }
     assert.ok(
-      operation.durationMs >= lockHoldMs - toleranceMs,
-      `${mode} state operation blocked only ${operation.durationMs} ms for a ${lockHoldMs} ms lock`
+      operation.durationMs >= expectedBlockingMs - toleranceMs,
+      `${mode} state operation blocked only ${operation.durationMs} ms; expected about ${expectedBlockingMs} ms`
     );
     assert.equal(http.statusCode, 200);
     if (mode === "in-process-current") {
       assert.ok(
-        http.durationMs >= lockHoldMs - toleranceMs,
-        `current /healthz delayed only ${http.durationMs} ms for a ${lockHoldMs} ms lock`
+        http.durationMs >= expectedBlockingMs - toleranceMs,
+        `current /healthz delayed only ${http.durationMs} ms; expected about ${expectedBlockingMs} ms`
       );
       assert.ok(
-        timer.delayMs >= lockHoldMs - toleranceMs,
-        `current event-loop timer delayed only ${timer.delayMs} ms for a ${lockHoldMs} ms lock`
+        timer.delayMs >= expectedBlockingMs - toleranceMs,
+        `current event-loop timer delayed only ${timer.delayMs} ms; expected about ${expectedBlockingMs} ms`
       );
-      if (lockHoldMs > RUNTIME_HEALTH_TIMEOUT_MS) {
+      if (expectedBlockingMs > RUNTIME_HEALTH_TIMEOUT_MS) {
         assert.equal(runtimeHealth.ok, false);
         assert.equal(runtimeHealth.error, "timeout");
       } else {
@@ -340,9 +369,11 @@ async function runSqliteFaultCase(
       scenarioId,
       injectedDomain: "sqlite-write-lock",
       lockHoldMs,
+      expectedOutcome,
       operationStartedAt: rounded(started.at),
       stateOperation: {
         outcome: operation.outcome,
+        ...(operation.errorCode ? { errorCode: operation.errorCode } : {}),
         durationMs: rounded(operation.durationMs)
       },
       healthz: {
@@ -488,10 +519,12 @@ async function runFixtureChild(root: string): Promise<void> {
       send({ type: "operation-started", scenarioId, at: startedAt });
       if (command.mode === "in-process-current") {
         let error: string | null = null;
+        let errorCode: string | undefined;
         try {
           store.setMeta("issue_143_contention_probe", randomUUID());
         } catch (caught) {
           error = caught instanceof Error ? caught.message : String(caught);
+          errorCode = operationalStateErrorCode(caught);
         }
         const finishedAt = performance.now();
         send({
@@ -501,6 +534,7 @@ async function runFixtureChild(root: string): Promise<void> {
           finishedAt,
           durationMs: finishedAt - startedAt,
           outcome: error ? "failed" : "committed",
+          ...(errorCode ? { errorCode } : {}),
           error
         });
         return;
@@ -515,7 +549,7 @@ async function runFixtureChild(root: string): Promise<void> {
       void isolatedState.execute(
         { operation: "maintain", slice: "events" },
         {
-          deadlineMs: 5_000,
+          deadlineMs: STATE_DATABASE_BUSY_TIMEOUT_MS + 3_000,
           commandId: randomUUID(),
           aggregateKey: `issue-143:${scenarioId}`
         }

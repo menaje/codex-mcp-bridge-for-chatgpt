@@ -78,7 +78,7 @@ synchronous database call occupies the same event loop.
 
 ## Latency attribution and isolation comparison
 
-The characterization was extended on 2026-09-21 with four lock durations and
+The initial characterization was extended on 2026-09-21 with four lock durations and
 the same supported `events` maintenance write through the protocol-v4 isolated
 state prototype. Each row is one controlled sample, not a percentile claim.
 The state operation remains subject to the injected lock in both designs; the
@@ -109,6 +109,31 @@ No request, scope, project, Job identifier or payload is included. This narrows
 the blocked boundary to entry into `BEGIN IMMEDIATE`; it does not claim that a
 timer can inspect SQLite internals or distinguish lock-manager, filesystem and
 native-driver time while that synchronous call is blocked.
+
+## SQLite busy boundary
+
+The next characterization added one case immediately below the configured
+`busy_timeout=5000` and one above it. The state-service response deadline was
+set to eight seconds for these measurements so the test could observe SQLite's
+own outcome rather than first collapsing it into the caller's outcome-unknown
+deadline.
+
+| Lock | Path | State outcome | State duration | `/healthz` | `runtime.health` | Bridge timer |
+| ---: | --- | --- | ---: | ---: | ---: | ---: |
+| 4,900 ms | current | committed | 4,953.479 ms | 4,958.959 ms | timeout | 4,953.829 ms |
+| 4,900 ms | isolated | committed | 4,988.038 ms | 9.287 ms | 3.193 ms | 10.704 ms |
+| 6,500 ms | current | `STATE_STORAGE_BUSY` | 5,338.043 ms | 6,580.589 ms | timeout | 5,338.417 ms |
+| 6,500 ms | isolated | `STATE_STORAGE_BUSY` | 5,383.775 ms | 2.669 ms | 1.430 ms | 11.789 ms |
+
+The 4.9 second write therefore remained a valid slow commit. The 6.5 second
+case was not called failed because an elapsed-time threshold was crossed; the
+state child mapped an actual `SQLITE_BUSY` or `SQLITE_LOCKED` driver result to
+the bounded `STATE_STORAGE_BUSY` contract. In both isolated cases the
+last-confirmed phase was `write-lock-wait` and Bridge liveness remained
+responsive. `busy_timeout` is a local lock-wait policy, not a Bridge connection
+deadline, performance target, or SLA. Callers whose observation deadline ends
+first still receive outcome-unknown and must use the existing command identity
+and authoritative recovery path rather than infer storage failure.
 
 A separate synthetic 350 ms main-thread CPU fault delayed `/healthz` by
 350.927 ms, `runtime.health` by 350.706 ms, and the event-loop timer by

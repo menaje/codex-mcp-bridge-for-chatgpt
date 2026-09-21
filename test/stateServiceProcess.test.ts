@@ -9,16 +9,43 @@ import { describe, expect, it } from "vitest";
 import {
   ChildProcessOperationalStateService,
   OperationalStateProcessError,
-  SupervisedOperationalStateService
+  SupervisedOperationalStateService,
+  operationalStateErrorCode
 } from "../src/stateServiceProcess.js";
 import {
   OPERATIONAL_STATE_CHILD_SUPPORTED_SLICES,
   OPERATIONAL_STATE_PROTOCOL_VERSION,
   type OperationalJobRetentionCommand
 } from "../src/stateService.js";
-import { BridgeStateStore } from "../src/stateStore.js";
+import {
+  BridgeStateStore,
+  STATE_DATABASE_BUSY_TIMEOUT_MS
+} from "../src/stateStore.js";
 
 describe("operational state child process", () => {
+  it("classifies storage driver errors independently of elapsed time", () => {
+    const codedError = (code: string) => Object.assign(new Error("storage failure"), { code });
+    expect(operationalStateErrorCode(codedError("SQLITE_BUSY"))).toBe("STATE_STORAGE_BUSY");
+    expect(operationalStateErrorCode(codedError("SQLITE_BUSY_SNAPSHOT")))
+      .toBe("STATE_STORAGE_BUSY");
+    expect(operationalStateErrorCode(codedError("SQLITE_LOCKED_SHAREDCACHE")))
+      .toBe("STATE_STORAGE_BUSY");
+    expect(operationalStateErrorCode(codedError("SQLITE_FULL"))).toBe("STATE_STORAGE_FULL");
+    expect(operationalStateErrorCode(codedError("SQLITE_IOERR_FSYNC"))).toBe("STATE_STORAGE_IO");
+    expect(operationalStateErrorCode(codedError("SQLITE_READONLY_DBMOVED")))
+      .toBe("STATE_STORAGE_READ_ONLY");
+    expect(operationalStateErrorCode(codedError("SQLITE_CORRUPT_VTAB")))
+      .toBe("STATE_STORAGE_CORRUPT");
+    expect(operationalStateErrorCode(codedError("SQLITE_NOTADB")))
+      .toBe("STATE_STORAGE_CORRUPT");
+    expect(operationalStateErrorCode(new Error("STATE_COMMAND_CONFLICT: changed")))
+      .toBe("STATE_COMMAND_CONFLICT");
+    expect(operationalStateErrorCode(new Error("SQLITE_BUSY: untrusted message prefix")))
+      .toBe("STATE_COMMAND_FAILED");
+    expect(operationalStateErrorCode(new Error("unclassified")))
+      .toBe("STATE_COMMAND_FAILED");
+  });
+
   it("executes a semantic maintenance command in an isolated process", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "state-service-process-"));
     const service = await ChildProcessOperationalStateService.start({
@@ -298,6 +325,37 @@ describe("operational state child process", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 10_000);
+
+  it("reports an explicit storage-busy result when SQLite lock waiting expires", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "state-service-storage-busy-"));
+    const file = path.join(root, "state.sqlite");
+    const service = await ChildProcessOperationalStateService.start({ file, capacity: 1 });
+    const locker = new Database(file);
+    let locked = false;
+    try {
+      locker.exec("BEGIN IMMEDIATE");
+      locked = true;
+      const startedAt = performance.now();
+      await expect(service.execute(
+        { operation: "maintain", slice: "events" },
+        { deadlineMs: STATE_DATABASE_BUSY_TIMEOUT_MS + 3_000 }
+      )).rejects.toMatchObject<Partial<OperationalStateProcessError>>({
+        code: "STATE_STORAGE_BUSY"
+      });
+      expect(performance.now() - startedAt)
+        .toBeGreaterThanOrEqual(STATE_DATABASE_BUSY_TIMEOUT_MS - 500);
+      expect(service.health()).toMatchObject({
+        inFlight: 0,
+        queueDepth: 0
+      });
+      expect(service.health()).not.toHaveProperty("activeOperation");
+    } finally {
+      if (locked && locker.inTransaction) locker.exec("ROLLBACK");
+      locker.close();
+      await service.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 12_000);
 
   it("replays a durable receipt after response loss and rejects hash conflicts", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "state-service-receipt-replay-"));
