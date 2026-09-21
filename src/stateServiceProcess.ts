@@ -300,7 +300,7 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         protocolVersion: OPERATIONAL_STATE_PROTOCOL_VERSION,
         generation: this.generation,
         heartbeatAgeMs,
-        inFlight: this.pending.size,
+        inFlight: this.outstanding,
         capacity: this.capacity
       };
     }

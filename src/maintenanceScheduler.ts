@@ -84,6 +84,7 @@ export class StateMaintenanceScheduler {
     let changed = 0;
     let failed = false;
     const commandId = this.uncertainCommandIds.get(selected) ?? randomUUID();
+    const wasUncertain = this.uncertainCommandIds.has(selected);
     try {
       changed = (await this.stateService.execute(
         { operation: "maintain", slice: selected },
@@ -94,7 +95,7 @@ export class StateMaintenanceScheduler {
       if (changed > 0) this.options.changed?.();
     } catch (error) {
       failed = true;
-      if (stateProcessErrorCode(error) === "STATE_OUTCOME_UNKNOWN") {
+      if (wasUncertain || stateProcessErrorCode(error) === "STATE_OUTCOME_UNKNOWN") {
         this.uncertainCommandIds.set(selected, commandId);
       } else {
         this.uncertainCommandIds.delete(selected);
