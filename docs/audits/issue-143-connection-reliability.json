@@ -1,0 +1,91 @@
+{
+  "issue": 143,
+  "testedAt": "2026-09-21T06:27:34.000Z",
+  "checkout": "bd41b788dc38ebb1b9e234bd278bcac7303f62be",
+  "productionDatabaseModified": false,
+  "installedRuntime": {
+    "version": "0.4.1",
+    "buildId": "f7f5056f9cf3:8d672a3d96bd",
+    "bridgePid": 57195,
+    "launcherPid": 57170,
+    "activeJobsAtBaseline": 3,
+    "tunnelConnectedAtBaseline": true,
+    "baseline": {
+      "helperHealthMs": 3.218,
+      "runtimeHealthMs": 0.651,
+      "healthzMs": 5.823
+    },
+    "recentBoundedHelperLog": {
+      "entries": 200,
+      "firstAt": "2026-09-21T04:02:42.628Z",
+      "lastAt": "2026-09-21T06:25:12.574Z",
+      "bridgeStatusTimeouts": 88,
+      "bridgeStatusRecoveries": 88,
+      "maximumObservedUnavailableMs": 349642,
+      "connectionReset502s": 16,
+      "tunnelHealthFailures": 3
+    },
+    "pairedLiveProbe": {
+      "runtimeHealth": {
+        "outcome": "timeout",
+        "durationMs": 2002.2
+      },
+      "healthz": {
+        "outcome": "timeout",
+        "durationMs": 2002.1
+      },
+      "sameBridgePidBeforeAndAfter": true
+    },
+    "postTimeoutStackSample": {
+      "durationSeconds": 2,
+      "mainThreadSamples": 1410,
+      "mainThreadTimerSamples": 348,
+      "minorGarbageCollectionSamples": 225,
+      "synchronousBetterSqliteGetSamplesObserved": [93, 79],
+      "synchronousBetterSqlitePrepareSamplesObserved": 40,
+      "sqliteBusyWaitStackObserved": false,
+      "physicalFootprintAtSample": "587.3M",
+      "peakPhysicalFootprintReported": "1.0G"
+    }
+  },
+  "disposableFault": {
+    "database": "schema-24 temporary fixture",
+    "lock": "separate SQLite connection BEGIN IMMEDIATE",
+    "blockedOperation": "BridgeStateStore.setMeta on the bridge process",
+    "lockHoldMs": 3200,
+    "configuredBusyTimeoutMs": 5000,
+    "helperRuntimeHealthTimeoutMs": 2000,
+    "baseline": {
+      "healthzMs": 4.291,
+      "runtimeHealthMs": 1.638
+    },
+    "contention": {
+      "writeDurationMs": 3247.94,
+      "healthzMs": 3252.486,
+      "runtimeHealthOutcome": "timeout",
+      "runtimeHealthMs": 2001.425,
+      "eventLoopTimerDelayMs": 3248.814
+    },
+    "recovery": {
+      "healthzMs": 6.083,
+      "runtimeHealthMs": 1.206,
+      "processRestarted": false
+    }
+  },
+  "findings": {
+    "directlyObserved": [
+      "the installed bridge process remained alive while both the private runtime.health path and public healthz path missed the same two-second interval",
+      "the helper repeatedly recovered against the same launcher and bridge process without a runtime restart",
+      "tools/call connection_reset 502 records occurred in the same bounded diagnostic window as repeated bridge status timeouts",
+      "a post-timeout main-thread sample contained synchronous better-sqlite3 work and substantial minor garbage collection",
+      "a controlled SQLite lock reproduced the same health-path coupling and recovered without a process restart"
+    ],
+    "notYetProven": [
+      "the exact SQL statement or maintenance slice that initiated each installed-runtime stall",
+      "whether lock contention, query work, allocation pressure, garbage collection, or a combination dominated each stall",
+      "the complete Tunnel and ChatGPT request history outside the bounded helper log",
+      "that splitting the database file alone would prevent recurrence"
+    ]
+  },
+  "result": "T1 evidence complete; proceed to issue 142 architecture contracts"
+}
