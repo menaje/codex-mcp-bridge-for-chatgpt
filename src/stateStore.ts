@@ -11,6 +11,14 @@ import {
   V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA,
   V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA
 } from "./stateSchema.js";
+import {
+  OPERATIONAL_COMMAND_RECEIPT_RESULT_MAX_BYTES,
+  V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA,
+  type OperationalCommandApplication,
+  type OperationalCommandExecution,
+  type OperationalCommandReceipt,
+  type OperationalCommandReceiptInput
+} from "./operationalCommandReceipt.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { PRODUCT_INFO } from "./productInfo.js";
 import {
@@ -136,6 +144,7 @@ import {
 
 const CURRENT_SCHEMA_VERSION = CURRENT_STATE_SCHEMA_VERSION;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const CANCELLATION_REASON_CODE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}$/;
 const TRANSPORT_OBSERVATION_LIMIT = 1_000;
 
@@ -667,11 +676,13 @@ export class BridgeStateStore {
           this.database.exec(V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA);
           this.database.exec(V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA);
           this.database.exec(V24_DECISION_CARD_MIGRATION_SCHEMA);
+          this.database.exec(V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
           this.setMeta("schema_v21_created_at", new Date().toISOString());
           this.setMeta("schema_v22_created_at", new Date().toISOString());
           this.setMeta("schema_v23_created_at", new Date().toISOString());
           this.setMeta("schema_v24_created_at", new Date().toISOString());
+          this.setMeta("schema_v25_created_at", new Date().toISOString());
           this.setMeta("state_migration_catalog_version", String(STATE_MIGRATION_CATALOG_VERSION));
           this.setMeta("state_database_id", randomUUID());
           this.recordSchemaOrigin("fresh");
@@ -779,6 +790,100 @@ export class BridgeStateStore {
 
   get bridgeInstanceId(): string {
     return this.currentInstanceId;
+  }
+
+  /**
+   * Apply one semantic state command and persist its compact result atomically.
+   * Reusing a command ID with an identical payload returns the first result;
+   * reusing it for different work is a hard conflict.
+   */
+  executeOperationalCommand<T extends Record<string, unknown>>(
+    input: OperationalCommandReceiptInput,
+    apply: () => OperationalCommandApplication<T>
+  ): OperationalCommandExecution<T> {
+    validateOperationalCommandReceiptInput(input);
+    return this.transaction(() => {
+      const existing = this.readOperationalCommandReceipt<T>(input.commandId);
+      if (existing) {
+        if (
+          existing.operation !== input.operation ||
+          existing.payloadSha256 !== input.payloadSha256 ||
+          existing.aggregateKey !== input.aggregateKey
+        ) {
+          throw new Error(
+            "STATE_COMMAND_CONFLICT: The command ID was already committed with a different payload."
+          );
+        }
+        return { receipt: existing, replayed: true };
+      }
+
+      const applied = apply();
+      if (
+        applied.resultingVersion !== undefined &&
+        (!Number.isSafeInteger(applied.resultingVersion) || applied.resultingVersion < 0)
+      ) {
+        throw new Error("STATE_COMMAND_RESULT_INVALID: resultingVersion must be a non-negative integer.");
+      }
+      const resultJson = JSON.stringify(applied.result);
+      if (
+        resultJson === undefined ||
+        Buffer.byteLength(resultJson, "utf8") > OPERATIONAL_COMMAND_RECEIPT_RESULT_MAX_BYTES
+      ) {
+        throw new Error(
+          `STATE_COMMAND_RESULT_TOO_LARGE: Command receipts are limited to ${OPERATIONAL_COMMAND_RECEIPT_RESULT_MAX_BYTES} bytes.`
+        );
+      }
+      const parsedResult = parseJsonTextStrict(
+        resultJson,
+        "operational command receipt result"
+      );
+      if (!isRecord(parsedResult) || Array.isArray(parsedResult)) {
+        throw new Error("STATE_COMMAND_RESULT_INVALID: Command receipt result must be a JSON object.");
+      }
+      const committedAt = input.committedAt ?? Date.now();
+      if (!Number.isSafeInteger(committedAt) || committedAt < 0) {
+        throw new Error("STATE_COMMAND_RECEIPT_INVALID: committedAt must be a non-negative integer.");
+      }
+      this.database.prepare(`
+        INSERT INTO operational_command_receipts(
+          command_id, operation, payload_sha256, aggregate_key, resulting_version,
+          result, worker_generation, committed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.commandId,
+        input.operation,
+        input.payloadSha256,
+        input.aggregateKey ?? null,
+        applied.resultingVersion ?? null,
+        resultJson,
+        input.workerGeneration,
+        committedAt
+      );
+      return {
+        receipt: {
+          commandId: input.commandId,
+          operation: input.operation,
+          payloadSha256: input.payloadSha256,
+          ...(input.aggregateKey !== undefined ? { aggregateKey: input.aggregateKey } : {}),
+          ...(applied.resultingVersion !== undefined
+            ? { resultingVersion: applied.resultingVersion }
+            : {}),
+          result: parsedResult as T,
+          workerGeneration: input.workerGeneration,
+          committedAt
+        },
+        replayed: false
+      };
+    });
+  }
+
+  getOperationalCommandReceipt<T = unknown>(
+    commandId: string
+  ): OperationalCommandReceipt<T> | undefined {
+    if (!UUID_PATTERN.test(commandId)) {
+      throw new Error("STATE_COMMAND_RECEIPT_INVALID: commandId must be a UUID.");
+    }
+    return this.readOperationalCommandReceipt<T>(commandId);
   }
 
   /** Record the point after which snapshot rollback could discard admitted work. */
@@ -3857,6 +3962,7 @@ export class BridgeStateStore {
     this.runMigration("21", "22", originalSourceSchema, () => this.migrateV21ToV22());
     this.runMigration("22", "23", originalSourceSchema, () => this.migrateV22ToV23());
     this.runMigration("23", "24", originalSourceSchema, () => this.migrateV23ToV24());
+    this.runMigration("24", "25", originalSourceSchema, () => this.migrateV24ToV25());
     if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
       throw new Error(`Bridge state migration stopped at unsupported schema version ${this.getMeta("schema_version")}.`);
     }
@@ -5252,6 +5358,46 @@ export class BridgeStateStore {
     } finally {
       this.database.pragma("foreign_keys = ON");
     }
+  }
+
+  private migrateV24ToV25(): void {
+    this.transaction(() => {
+      this.database.exec(V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "25");
+      this.setMeta("schema_v25_operational_command_receipts", "durable-command-receipts-v1");
+      this.setMeta("schema_v25_migrated_at", new Date().toISOString());
+    });
+  }
+
+  private readOperationalCommandReceipt<T>(
+    commandId: string
+  ): OperationalCommandReceipt<T> | undefined {
+    const row = this.database.prepare(`
+      SELECT command_id, operation, payload_sha256, aggregate_key, resulting_version,
+             result, worker_generation, committed_at
+        FROM operational_command_receipts
+       WHERE command_id = ?
+    `).get(commandId) as {
+      command_id: string;
+      operation: string;
+      payload_sha256: string;
+      aggregate_key: string | null;
+      resulting_version: number | null;
+      result: string;
+      worker_generation: string;
+      committed_at: number;
+    } | undefined;
+    if (!row) return undefined;
+    return {
+      commandId: row.command_id,
+      operation: row.operation,
+      payloadSha256: row.payload_sha256,
+      ...(row.aggregate_key !== null ? { aggregateKey: row.aggregate_key } : {}),
+      ...(row.resulting_version !== null ? { resultingVersion: row.resulting_version } : {}),
+      result: parseStoredJson(row.result, "operational command receipt result") as T,
+      workerGeneration: row.worker_generation,
+      committedAt: row.committed_at
+    };
   }
 
   private registerBridgeInstance(): void {
@@ -7383,6 +7529,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasBlockingInteraction(value: unknown): boolean {
   return Array.isArray(value) && value.some(entry => !entry || typeof entry !== "object" || entry.isBlocking !== false);
+}
+
+function validateOperationalCommandReceiptInput(input: OperationalCommandReceiptInput): void {
+  if (!UUID_PATTERN.test(input.commandId)) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: commandId must be a UUID.");
+  }
+  if (!/^[a-z][a-z0-9.-]{0,79}$/u.test(input.operation)) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: operation must be a bounded semantic identifier.");
+  }
+  if (!SHA256_PATTERN.test(input.payloadSha256)) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: payloadSha256 must be a lowercase SHA-256 digest.");
+  }
+  if (
+    input.aggregateKey !== undefined &&
+    (!input.aggregateKey || Buffer.byteLength(input.aggregateKey, "utf8") > 512)
+  ) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: aggregateKey must contain at most 512 bytes.");
+  }
+  if (!UUID_PATTERN.test(input.workerGeneration)) {
+    throw new Error("STATE_COMMAND_RECEIPT_INVALID: workerGeneration must be a UUID.");
+  }
 }
 
 function processIsAlive(processId: number): boolean {

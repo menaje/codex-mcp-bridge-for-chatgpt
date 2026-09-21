@@ -26,8 +26,19 @@ describe("state schema ownership catalog", () => {
       `).all() as Array<{ type: string; name: string; tableName: string }>;
       expect(objects.length).toBeGreaterThan(0);
       for (const object of objects) {
-        expect(catalog, `${object.type} ${object.name} is missing from the ownership catalog`)
-          .toContain(`\`${object.name}\``);
+        if (object.type === "table") {
+          const tableRow = new RegExp(
+            "^\\| `" + escapeRegExp(object.name) + "` \\|",
+            "mu"
+          );
+          expect(
+            tableRow.test(catalog),
+            `table ${object.name} is missing its ownership-catalog row`
+          ).toBe(true);
+        } else {
+          expect(catalog, `${object.type} ${object.name} is missing from the ownership catalog`)
+            .toContain(`\`${object.name}\``);
+        }
         expect(catalog, `${object.type} ${object.name} has an uncatalogued parent table`)
           .toContain(`\`${object.tableName}\``);
       }
@@ -37,3 +48,7 @@ describe("state schema ownership catalog", () => {
     }
   });
 });
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

@@ -1,7 +1,7 @@
 # State execution isolation architecture
 
 This document is the issue #142 architecture decision produced from the issue
-#143 T1 evidence. It extends the schema-24 ownership contract in
+#143 T1 evidence. It extends the schema-25 ownership contract in
 [State data access and maintenance ownership](state-data-access.md). It does not
 make a second writer legal, relax any Unit-of-Work invariant, or treat a queued
 IPC message as a durable state change.
@@ -69,13 +69,13 @@ does not address that failure. The implementation order is therefore:
 
 Unclassified or mixed-use data remains in `state.sqlite`. Importance is decided
 by consumers and recovery semantics, not by a table or event name.
-The exhaustive schema-24 table, index, trigger, consumer, recovery and file
+The exhaustive schema-25 table, index, trigger, consumer, recovery and file
 security inventory is maintained in
 [State schema ownership catalog](state-schema-ownership-catalog.md).
 
 ### `state.sqlite`
 
-The following current schema-24 tables remain authoritative operational state:
+The following current schema-25 tables remain authoritative operational state:
 
 | Domain | Tables | Reason |
 | --- | --- | --- |
@@ -88,6 +88,7 @@ The following current schema-24 tables remain authoritative operational state:
 | questions and decisions | `user_questions`, `codex_question_deliveries`, `decision_cards`, `decision_card_versions`, `decision_card_requests`, `decision_submissions` | user-response authority and delivery recovery |
 | history and recovery | `work_history_state`, `work_history_control`, `runtime_problem_resolutions`, `automatic_recovery`, `automatic_recovery_incidents` | review, recovery budgets and restart evidence |
 | mixed event/control history | `activity_events`, `job_events`, `event_budget`, `event_retention_state` | current cursors, usage/status projection and recovery consumers prevent whole-table movement |
+| state IPC certainty | `operational_command_receipts` | atomically resolves commit-then-response-loss without rerunning a different logical command |
 
 `activity_events` and `job_events` are not moved in the first telemetry schema.
 Before a later move, every cursor, usage projection, summary extraction,
@@ -128,9 +129,9 @@ envelope:
 ```ts
 type StateRequestEnvelope = {
   protocol: "bridge-state-service";
-  version: 1;
+  version: 2;
   requestId: string;          // unique IPC attempt UUID
-  commandId?: string;         // stable UUID for a logical mutation retry
+  commandId: string;          // stable UUID for a logical mutation retry
   kind: "command" | "query" | "control";
   operation: string;          // closed discriminated union
   aggregateKey?: string;      // Job, Agent, Activity or scope ordering key
@@ -309,9 +310,12 @@ The asynchronous API conversion and physical owner cutover are separate:
 ### Current implementation status
 
 The repository now contains the versioned child-process transport, generation
-checks, bounded parent admission, deadlines, heartbeats and a standalone locked-
-database isolation test. Only the maintenance semantic operation is implemented
-through that transport. Production startup deliberately continues to use the
+checks, bounded parent admission, deadlines, heartbeats, schema-25 durable
+command receipts, and standalone locked-database/response-loss isolation tests.
+An identical command ID and payload is replayed from its original receipt after
+a state-owner restart; a changed payload fails closed. Only the maintenance
+semantic operation is implemented through that transport. Production startup
+deliberately continues to use the
 in-process compatibility owner and reports `state-incompatible` from `/readyz`.
 The child must not be selected until every operational command and query caller
 has crossed the asynchronous boundary and the compatibility owner can be closed

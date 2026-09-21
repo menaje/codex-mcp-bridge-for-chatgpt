@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -21,12 +22,19 @@ describe("operational state child process", () => {
       expect(service.health()).toMatchObject({
         ready: true,
         reason: "ready",
-        protocolVersion: 1,
+        protocolVersion: 2,
         generation: expect.any(String),
         capacity: 64
       });
       await expect(service.execute({ operation: "maintain", slice: "events" }))
-        .resolves.toEqual({ operation: "maintain", slice: "events", changed: 0 });
+        .resolves.toMatchObject({
+          operation: "maintain",
+          slice: "events",
+          changed: 0,
+          certainty: "committed",
+          commandId: expect.any(String),
+          replayed: false
+        });
     } finally {
       await service.close();
       rmSync(root, { recursive: true, force: true });
@@ -121,6 +129,55 @@ describe("operational state child process", () => {
       locked = false;
       await delay(350);
       expect(service.health()).toMatchObject({ ready: true, reason: "ready", inFlight: 0 });
+    } finally {
+      if (locked && locker.inTransaction) locker.exec("ROLLBACK");
+      locker.close();
+      await service.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it("replays a durable receipt after response loss and rejects hash conflicts", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "state-service-receipt-replay-"));
+    const file = path.join(root, "state.sqlite");
+    const commandId = randomUUID();
+    let service = await ChildProcessOperationalStateService.start({ file, capacity: 1 });
+    const locker = new Database(file);
+    let locked = false;
+    try {
+      locker.exec("BEGIN IMMEDIATE");
+      locked = true;
+      await expect(service.execute(
+        { operation: "maintain", slice: "events" },
+        { deadlineMs: 100, commandId, aggregateKey: "maintenance:events" }
+      )).rejects.toMatchObject<Partial<OperationalStateProcessError>>({
+        code: "STATE_OUTCOME_UNKNOWN",
+        commandId
+      });
+
+      locker.exec("COMMIT");
+      locked = false;
+      await delay(350);
+      expect(service.health()).toMatchObject({ ready: true, inFlight: 0 });
+      await service.close();
+
+      service = await ChildProcessOperationalStateService.start({ file, capacity: 1 });
+      await expect(service.execute(
+        { operation: "maintain", slice: "events" },
+        { commandId, aggregateKey: "maintenance:events" }
+      )).resolves.toMatchObject({
+        operation: "maintain",
+        slice: "events",
+        certainty: "committed",
+        commandId,
+        replayed: true
+      });
+      await expect(service.execute(
+        { operation: "maintain", slice: "history" },
+        { commandId, aggregateKey: "maintenance:events" }
+      )).rejects.toMatchObject<Partial<OperationalStateProcessError>>({
+        code: "STATE_COMMAND_CONFLICT"
+      });
     } finally {
       if (locked && locker.inTransaction) locker.exec("ROLLBACK");
       locker.close();

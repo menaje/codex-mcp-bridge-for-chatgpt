@@ -93,7 +93,7 @@ async function runCharacterization(): Promise<void> {
         kind: "failure-characterization",
         testedAt: new Date().toISOString(),
         source: "current checkout",
-        database: "disposable schema-24 fixture",
+        database: "disposable schema-25 fixture",
         productionDatabaseModified: false,
         scenario: {
           lock: "separate SQLite connection BEGIN IMMEDIATE",

@@ -1,6 +1,6 @@
 # State schema ownership catalog
 
-This catalog is the schema-24 inventory required by issues #142 and #143. It
+This catalog is the schema-25 inventory required by issues #142 and #143. It
 records the current owner and consumers before the asynchronous state-service
 cutover. The target column is a data-classification decision, not evidence that
 the move has happened. Until cutover, `BridgeStateStore` remains the only
@@ -52,6 +52,7 @@ queries only.
 | `automatic_recovery` | `AutomaticRecoveryStore` commands | recovery controller | retry budget, lease and terminal recovery state | state |
 | `automatic_recovery_incidents` | `AutomaticRecoveryStore` commands/maintenance | recovery diagnostics and review | bounded incident evidence used by recovery policy | state |
 | `transport_observations` | transport observation append/retention | private diagnostics and wait-abort counts | no mutation authority; bounded loss is allowed | telemetry after verified cutover |
+| `operational_command_receipts` | isolated state command Unit of Work | response-loss recovery and identical-command replay | commit proof for the IPC uncertainty window; payload-hash conflicts fail closed | state |
 
 ## Index inventory
 
@@ -82,6 +83,7 @@ parent table and is covered by the same owner above.
 - `job_interactions`: `job_interactions_blocking`
 - `jobs`: `jobs_activity_recent`, `jobs_agent_active`, `jobs_scope_recent`,
   `jobs_source_thread_active`, `jobs_status_recent`, `jobs_thread_active`
+- `operational_command_receipts`: `operational_command_receipts_committed`
 - `projects`: `projects_active_cwd`, `projects_active_name`, `projects_ordered`
 - `sessions`: `sessions_project_recent`, `sessions_scope_recent`
 - `steering_deliveries`: `steering_deliveries_job_recent`,
@@ -137,7 +139,7 @@ verified.
 
 ## Coverage rule
 
-`test/stateSchemaOwnership.test.ts` opens a fresh schema-24 fixture and requires
+`test/stateSchemaOwnership.test.ts` opens a fresh schema-25 fixture and requires
 every non-SQLite-internal table, explicit index and trigger in `sqlite_master` to
 appear in this catalog. Adding or renaming a schema object without updating its
 owner and destination therefore fails the test.

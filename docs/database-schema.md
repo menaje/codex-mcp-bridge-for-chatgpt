@@ -1,11 +1,11 @@
 # Bridge database schema and lifecycle
 
-Schema 24 is the current SQLite schema. `src/stateSchema.ts` contains the complete
+Schema 25 is the current SQLite schema. `src/stateSchema.ts` contains the complete
 DDL and projections used for a new installation. `src/stateStore.ts` contains
-upgrade code for schemas 3 through 23; schemas 1 and 2 are rejected. The published v0.2 and
+upgrade code for schemas 3 through 24; schemas 1 and 2 are rejected. The published v0.2 and
 v0.3 line used schema 3, and the pre-change development installation used schema
 18. Every supported upgrade ends with the same tables, columns, constraints,
-indexes, and triggers as direct schema-24 creation.
+indexes, and triggers as direct schema-25 creation.
 
 The database is the only bridge state authority. Settings, projects, retained
 sessions, and Jobs no longer have parallel JSON files or JSON mirrors. SQLite
@@ -45,7 +45,7 @@ input state. There is no `job_summaries` table, and progress events do not write
 full Job document. `scopes.version` is the one scope CAS/event sequence; there is
 no `scope_versions` mirror.
 
-## Complete schema-24 table matrix
+## Complete schema-25 table matrix
 
 The retention column describes bridge cleanup. SQLite free pages are reusable but
 remain allocated until an offline compaction; physical erasure is therefore a
@@ -61,7 +61,9 @@ schema 22 records the legacy path that marked a terminal result as read. Schema
 Creating a tool response is no longer treated as proof that ChatGPT received it,
 and a direct query no longer consumes a pending live-card delivery. Schema 24
 adds Job-independent GPT–user decision cards with immutable sanitized versions,
-idempotent mutations, semantic submissions, and delivery evidence.
+idempotent mutations, semantic submissions, and delivery evidence. Schema 25
+adds compact operational command receipts in the same transaction as the
+isolated state mutation so an IPC response-loss retry cannot duplicate work.
 
 | Table | Current consumer and authoritative fields | Decision and retention |
 | --- | --- | --- |
@@ -102,6 +104,7 @@ idempotent mutations, semantic submissions, and delivery evidence.
 | `runtime_problem_resolutions` | Current runtime-problem resolution evidence by Agent revision | Keep the latest matching resolution only; delete with Agent. Replaces one dynamic meta key per Agent. |
 | `automatic_recovery` | Durable bounded recovery action/budget; kind/state/attempts/schedule/evidence | Keep unresolved work through restart and retained resolved evidence through history retention. It never authorizes arbitrary new execution. |
 | `automatic_recovery_incidents` | Stable incident identity to active recovery relationship | Keep current and historical incident identity so a restart does not reset attempt limits; one recovery key per incident. |
+| `operational_command_receipts` | Isolated-state command ID, operation, payload digest, optional aggregate/version, compact result, committing generation and time | Keep through the unresolved IPC uncertainty window. An identical command retry returns the original result; a changed operation, payload hash, or aggregate fails closed. Receipt storage does not prove an external recipient accepted an effect. |
 
 Schema 18 also had `scope_versions` and `job_summaries`; both are removed above.
 Its other project label/UUID/name/cwd snapshot columns, session payload, Agent archive
@@ -110,7 +113,7 @@ their schema-19 owners rather than by compatibility tables.
 
 ## Index and query contract
 
-The schema defines 47 non-SQLite indexes and three event-budget triggers. The
+The schema defines 48 non-SQLite indexes and three event-budget triggers. The
 indexes below are correctness or bounded-work contracts rather than incidental
 optimizations:
 
@@ -203,6 +206,8 @@ It does not infer receipt from response construction and does not replay legacy
 `result-read` rows whose transport outcome cannot be reconstructed. Schema 24
 adds the four independent decision-card tables without backfilling or changing
 any Codex Job, Question, completion, or Activity record.
+Schema 25 adds an empty command-receipt table and index without backfilling or
+changing existing domain state.
 An
 interrupted or invalid conversion rolls its transaction back and can be retried
 after the source problem is corrected. The full operational and restore procedure is in the
@@ -220,8 +225,8 @@ relationship. Migration never creates a project from a slug, name, cwd, or old
 snapshot.
 
 The supported schema-3 fixture is taken from the published v0.3.0 implementation
-and passes every fixed checkpoint through schema 24. Exact deployed-development
-fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 23 are generated
+and passes every fixed checkpoint through schema 25. Exact deployed-development
+fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 24 are generated
 only as named, committed checkpoints from those sources. `state-migrations.json` binds
 their provenance and hashes to the shipped implementation. Schemas 1 and 2 are
 outside the supported release floor and are rejected before a backup or mutation.
@@ -230,7 +235,7 @@ restarts.
 
 ## Capacity, backups, and offline compaction
 
-The schema-24 table/write/read/maintenance ownership matrix and the command,
+The schema-25 table/write/read/maintenance ownership matrix and the command,
 query, and bounded scheduler contracts are documented in
 [State data access and maintenance ownership](state-data-access.md).
 The selected two-database process, IPC, readiness, migration and fault contract
@@ -282,7 +287,7 @@ the live database untouched. A report with `liveDatabaseReplacementPerformed:
 false` is implementation evidence, not evidence that an operator has compacted or
 released a production installation.
 
-The complete schema-24 table, explicit index and trigger ownership inventory,
+The complete schema-25 table, explicit index and trigger ownership inventory,
 including command/query consumers, recovery dependencies, future destination and
 two-database file security rules, is in
 [State schema ownership catalog](state-schema-ownership-catalog.md).

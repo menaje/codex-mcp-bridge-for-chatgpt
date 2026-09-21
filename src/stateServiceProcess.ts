@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
-  InProcessOperationalStateService,
+  executeOperationalStateCommand,
   OPERATIONAL_STATE_PROTOCOL,
   OPERATIONAL_STATE_PROTOCOL_VERSION,
   type OperationalStateCommand,
@@ -56,10 +56,15 @@ type PendingRequest = {
   resolve: (result: OperationalStateResult) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  commandId: string;
 };
 
 export class OperationalStateProcessError extends Error {
-  constructor(readonly code: string, message: string) {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly commandId?: string
+  ) {
     super(`${code}: ${message}`);
     this.name = "OperationalStateProcessError";
   }
@@ -173,13 +178,33 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
       "deadlineMs"
     );
     const requestId = randomUUID();
+    const commandId = options.commandId ?? randomUUID();
+    if (!isUuid(commandId)) {
+      return Promise.reject(new OperationalStateProcessError(
+        "STATE_COMMAND_ID_INVALID",
+        "Operational state commandId must be a UUID.",
+        commandId
+      ));
+    }
+    if (
+      options.aggregateKey !== undefined &&
+      (!options.aggregateKey || Buffer.byteLength(options.aggregateKey, "utf8") > 512)
+    ) {
+      return Promise.reject(new OperationalStateProcessError(
+        "STATE_AGGREGATE_KEY_INVALID",
+        "Operational state aggregateKey must contain at most 512 bytes.",
+        commandId
+      ));
+    }
     const payloadSha256 = digest(command);
     const envelope: OperationalStateRequestEnvelope = {
       protocol: OPERATIONAL_STATE_PROTOCOL,
       version: OPERATIONAL_STATE_PROTOCOL_VERSION,
       requestId,
+      commandId,
       kind: "command",
       operation: command.operation,
+      ...(options.aggregateKey !== undefined ? { aggregateKey: options.aggregateKey } : {}),
       workerGeneration: this.generation,
       deadlineAt: Date.now() + deadlineMs,
       payloadSha256,
@@ -197,18 +222,22 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
         this.unconfirmed.add(requestId);
         reject(new OperationalStateProcessError(
           "STATE_OUTCOME_UNKNOWN",
-          "Operational state response missed its deadline; the command may still complete."
+          "Operational state response missed its deadline; the command may still complete.",
+          commandId
         ));
       }, deadlineMs);
       timer.unref();
-      this.pending.set(requestId, { resolve, reject, timer });
+      this.pending.set(requestId, { resolve, reject, timer, commandId });
       this.child.send({ type: "request", envelope } satisfies ParentRequestMessage, error => {
         if (!error) return;
         const pending = this.pending.get(requestId);
-        if (!pending) return;
+        if (!pending) {
+          this.unconfirmed.delete(requestId);
+          return;
+        }
         clearTimeout(pending.timer);
         this.pending.delete(requestId);
-        pending.reject(new OperationalStateProcessError("STATE_SEND_FAILED", error.message));
+        pending.reject(new OperationalStateProcessError("STATE_SEND_FAILED", error.message, commandId));
       });
     });
   }
@@ -330,7 +359,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
     if (message.ok && message.result) pending.resolve(message.result);
     else pending.reject(new OperationalStateProcessError(
       message.error?.code || "STATE_COMMAND_FAILED",
-      message.error?.message || "Operational state command failed."
+      message.error?.message || "Operational state command failed.",
+      pending.commandId
     ));
   }
 
@@ -348,7 +378,8 @@ export class ChildProcessOperationalStateService implements OperationalStateServ
       clearTimeout(pending.timer);
       pending.reject(new OperationalStateProcessError(
         "STATE_OUTCOME_UNKNOWN",
-        `${error.message} Request ${requestId} may have committed.`
+        `${error.message} Request ${requestId} may have committed.`,
+        pending.commandId
       ));
     }
     this.pending.clear();
@@ -367,7 +398,6 @@ async function runChild(file: string): Promise<void> {
   const active = new Set<Promise<unknown>>();
   try {
     store = new BridgeStateStore({ file });
-    const service = new InProcessOperationalStateService(store);
     const heartbeat = () => sendToParent({
       type: "heartbeat",
       generation,
@@ -395,7 +425,7 @@ async function runChild(file: string): Promise<void> {
         });
         return;
       }
-      const operation = executeChildRequest(service, generation, message.envelope);
+      const operation = executeChildRequest(store as BridgeStateStore, generation, message.envelope);
       active.add(operation);
       void operation.finally(() => active.delete(operation));
     });
@@ -426,7 +456,7 @@ async function runChild(file: string): Promise<void> {
 }
 
 async function executeChildRequest(
-  service: OperationalStateService,
+  store: BridgeStateStore,
   generation: string,
   envelope: OperationalStateRequestEnvelope
 ): Promise<void> {
@@ -446,10 +476,24 @@ async function executeChildRequest(
     return;
   }
   try {
-    const result = await service.execute(envelope.payload);
+    const execution = store.executeOperationalCommand({
+      commandId: envelope.commandId,
+      operation: envelope.operation,
+      payloadSha256: envelope.payloadSha256,
+      ...(envelope.aggregateKey !== undefined ? { aggregateKey: envelope.aggregateKey } : {}),
+      workerGeneration: generation
+    }, () => ({ result: executeOperationalStateCommand(store, envelope.payload) }));
+    const result: OperationalStateResult = {
+      ...execution.receipt.result,
+      certainty: "committed",
+      commandId: envelope.commandId,
+      replayed: execution.replayed
+    };
     sendToParent({ type: "response", requestId: envelope.requestId, generation, ok: true, result });
   } catch (error) {
-    fail("STATE_COMMAND_FAILED", error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    const code = stateErrorCode(message);
+    fail(code, message.replace(new RegExp(`^${code}:\\s*`), ""));
   }
 }
 
@@ -462,6 +506,11 @@ function validEnvelope(envelope: OperationalStateRequestEnvelope, generation: st
     envelope.operation === "maintain" &&
     envelope.workerGeneration === generation &&
     typeof envelope.requestId === "string" &&
+    isUuid(envelope.commandId) &&
+    (envelope.aggregateKey === undefined ||
+      typeof envelope.aggregateKey === "string" &&
+      envelope.aggregateKey.length > 0 &&
+      Buffer.byteLength(envelope.aggregateKey, "utf8") <= 512) &&
     Number.isSafeInteger(envelope.deadlineAt) &&
     envelope.payload?.operation === envelope.operation &&
     digest(envelope.payload) === envelope.payloadSha256;
@@ -469,8 +518,23 @@ function validEnvelope(envelope: OperationalStateRequestEnvelope, generation: st
 
 function isChildMessage(value: unknown): value is StateChildMessage {
   if (!value || typeof value !== "object") return false;
-  const type = (value as { type?: unknown }).type;
-  return type === "ready" || type === "heartbeat" || type === "response" || type === "fatal";
+  const message = value as Record<string, unknown>;
+  if (message.type === "fatal") return typeof message.message === "string";
+  if (message.type === "ready") {
+    return message.protocol === OPERATIONAL_STATE_PROTOCOL &&
+      typeof message.version === "number" &&
+      isUuid(message.generation) &&
+      Number.isSafeInteger(message.heartbeatAt);
+  }
+  if (message.type === "heartbeat") {
+    return isUuid(message.generation) && Number.isSafeInteger(message.heartbeatAt) &&
+      Number.isSafeInteger(message.inFlight) && Number(message.inFlight) >= 0;
+  }
+  if (message.type === "response") {
+    return isUuid(message.requestId) && isUuid(message.generation) &&
+      typeof message.ok === "boolean";
+  }
+  return false;
 }
 
 function isParentMessage(value: unknown): value is StateParentMessage {
@@ -492,6 +556,16 @@ function boundedPositiveInteger(value: number, min: number, max: number, name: s
     throw new Error(`${name} must be an integer from ${min} to ${max}.`);
   }
   return value;
+}
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(value);
+}
+
+function stateErrorCode(message: string): string {
+  const match = /^([A-Z][A-Z0-9_]+):/.exec(message);
+  return match?.[1] ?? "STATE_COMMAND_FAILED";
 }
 
 function childEnvironment(): NodeJS.ProcessEnv {
