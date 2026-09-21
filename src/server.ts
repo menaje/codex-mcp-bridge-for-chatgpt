@@ -32,6 +32,28 @@ import { assertJsonTextIntegrity, decodeUtf8Strict } from "./textIntegrity.js";
 
 const MAX_MCP_REQUEST_BYTES = 8 * 1024 * 1024;
 
+export const BRIDGE_READINESS_REASONS = [
+  "ready",
+  "state-starting",
+  "state-stale",
+  "state-recovering",
+  "state-incompatible",
+  "state-capacity",
+  "admission-draining"
+] as const;
+
+export type BridgeReadinessReason = (typeof BRIDGE_READINESS_REASONS)[number];
+export type BridgeReadinessSnapshot = {
+  ready: boolean;
+  reason: BridgeReadinessReason;
+  limitations: string[];
+  stateService?: {
+    protocolVersion: number;
+    generation: string;
+    heartbeatAgeMs: number;
+  };
+};
+
 /**
  * The instructions remain deliberately policy-focused. Wire-protocol behavior
  * belongs to the SDK handler and is not delegated to a model.
@@ -56,6 +78,8 @@ export type BridgeHttpRuntimeOptions = {
   stateStore?: BridgeStateStore;
   /** Retained for callers that collect their own diagnostics. HTTP health does not expose it. */
   healthDiagnostics?: () => Record<string, unknown>;
+  /** Memory-only state-service readiness; it must never perform I/O. */
+  readiness?: () => BridgeReadinessSnapshot;
   /**
    * Opt-in protocol-suite fixtures. These are never enabled by normal bridge
    * startup and exist solely to exercise SDK paths that the product does not
@@ -274,7 +298,21 @@ export function createHttpServer(
   const validateOrigin = originValidation(allowedOrigins);
 
   const httpServer = createServer((req, res) => {
-    void handleHttpRequest(req, res, config, validateHost, validateOrigin, nodeMcpHandler);
+    void handleHttpRequest(
+      req,
+      res,
+      config,
+      validateHost,
+      validateOrigin,
+      nodeMcpHandler,
+      runtimeOptions.readiness || (() => ({
+        ready: false,
+        reason: jobs.runtimeAdmission.acceptingNewJobs
+          ? "state-incompatible"
+          : "admission-draining",
+        limitations: ["state-execution-in-process"]
+      }))
+    );
   }) as BridgeHttpServer;
   httpServer.once("listening", () => stateStore.markServiceOpen("http"));
   Object.defineProperty(httpServer, "applicationService", {
@@ -386,7 +424,8 @@ async function handleHttpRequest(
     request: IncomingMessage,
     response: ServerResponse,
     parsedBody?: unknown
-  ) => Promise<void>
+  ) => Promise<void>,
+  readiness: () => BridgeReadinessSnapshot
 ): Promise<void> {
   const pathname = new URL(req.url || "/", "http://bridge.invalid").pathname;
   if (pathname === "/healthz" && req.method === "GET") {
@@ -394,6 +433,22 @@ async function handleHttpRequest(
       ok: true,
       name: PRODUCT_INFO.runtimeName,
       title: PRODUCT_INFO.displayName
+    });
+    return;
+  }
+  if (pathname === "/readyz" && req.method === "GET") {
+    let snapshot: BridgeReadinessSnapshot;
+    try {
+      snapshot = readiness();
+    } catch {
+      snapshot = { ready: false, reason: "state-stale", limitations: [] };
+    }
+    writeJson(res, snapshot.ready ? 200 : 503, {
+      ok: snapshot.ready,
+      name: PRODUCT_INFO.runtimeName,
+      reason: snapshot.reason,
+      limitations: snapshot.limitations,
+      ...(snapshot.stateService ? { stateService: snapshot.stateService } : {})
     });
     return;
   }
