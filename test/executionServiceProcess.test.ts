@@ -1,9 +1,13 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { ChildProcessCodexExecutionService } from "../src/executionServiceProcess.js";
+import {
+  ChildProcessCodexExecutionService,
+  type CodexExecutionRequestLimits
+} from "../src/executionServiceProcess.js";
 import type { CodexPendingInteraction, UpstreamWorkerAssignment } from "../src/upstream.js";
 
 const fixture = path.join(
@@ -79,22 +83,133 @@ describe("isolated Codex execution process", () => {
     }
   }, 20_000);
 
-  it("restarts after a process crash without restarting the state owner", async () => {
-    const service = await createService();
+  it("reserves request slots for interaction responses and forced termination", async () => {
+    const service = await createService({}, {
+      maxPendingRequests: 3,
+      controlRequestReserve: 1,
+      maxBytesInFlight: 1024 * 1024,
+      controlRequestBytesReserve: 256 * 1024
+    });
+    let interaction: CodexPendingInteraction | undefined;
+    let firstAssignment: UpstreamWorkerAssignment | undefined;
+    const interactionTurn = service.callTool("codex", task("elicitation form"), value => {
+      const candidate = value.event?.details?.interaction as CodexPendingInteraction | undefined;
+      if (candidate?.interactionId) interaction = candidate;
+    });
+    const firstHold = service.callTool(
+      "codex",
+      task("hold first saturated turn"),
+      undefined,
+      value => { firstAssignment = value; }
+    );
+    const firstHoldSettled = firstHold.catch(error => error);
+    let secondHoldSettled: Promise<unknown> | undefined;
+    try {
+      await eventually(() => Boolean(interaction && firstAssignment));
+      expect(service.health()).toMatchObject({
+        status: "capacity",
+        inFlight: 2,
+        ordinaryInFlight: 2,
+        ordinaryCapacity: 2
+      });
+      await expect(service.callTool("codex", task("must be rejected at ordinary capacity")))
+        .rejects.toThrow(/EXECUTION_CAPACITY/);
+      await expect(service.respondToInteraction(interaction!.interactionId, {
+        elicitation: {
+          action: "accept",
+          content: { color: "blue", count: 2, enabled: false, tags: ["b"] }
+        }
+      })).resolves.toBeNull();
+      await expect(interactionTurn).resolves.toMatchObject({
+        content: [{ text: "ELICITATION COMPLETE" }]
+      });
+
+      const secondHold = service.callTool("codex", task("hold second saturated turn"));
+      secondHoldSettled = secondHold.catch(error => error);
+      await eventually(() => service.health().status === "capacity");
+      await expect(service.forceTerminateWorker(firstAssignment!, {
+        kind: "cancellation-intent",
+        intentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        source: "operator",
+        reasonCode: "saturated-control-reserve"
+      })).resolves.toMatchObject({ mode: "turn-interrupt" });
+      await firstHoldSettled;
+    } finally {
+      await service.close();
+      await firstHoldSettled;
+      await secondHoldSettled;
+    }
+  }, 20_000);
+
+  it("reserves byte capacity for steering an existing turn", async () => {
+    const service = await createService({}, {
+      maxPendingRequests: 10,
+      controlRequestReserve: 2,
+      maxBytesInFlight: 30 * 1024,
+      controlRequestBytesReserve: 10 * 1024
+    });
+    let firstAssignment: UpstreamWorkerAssignment | undefined;
+    const largePrompt = `hold ${"x".repeat(9_000)}`;
+    const first = service.callTool(
+      "codex",
+      task(largePrompt),
+      undefined,
+      value => { firstAssignment = value; }
+    );
+    const firstSettled = first.then(
+      value => ({ value }),
+      error => ({ error })
+    );
+    const second = service.callTool("codex", task(largePrompt));
+    const secondSettled = second.catch(error => error);
+    try {
+      await eventually(() => Boolean(firstAssignment) && service.health().inFlight === 2);
+      expect(service.health().ordinaryBytesInFlight).toBeGreaterThan(18_000);
+      await expect(service.callTool(
+        "codex",
+        task(`ordinary byte overflow ${"x".repeat(3_000)}`)
+      ))
+        .rejects.toThrow(/EXECUTION_CAPACITY/);
+      await expect(service.steerThread(firstAssignment!.threadId!, "reserved byte control"))
+        .resolves.toMatchObject({ turnId: firstAssignment!.upstreamRequestId });
+      await expect(firstSettled).resolves.toMatchObject({
+        value: { content: [{ text: "STEERED:reserved byte control" }] }
+      });
+    } finally {
+      await service.close();
+      await secondSettled;
+    }
+  }, 20_000);
+
+  it.skipIf(process.platform === "win32")(
+    "kills the registered App Server group before replacing a crashed executor",
+    async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "execution-descendant-"));
+    roots.push(root);
+    const observation = path.join(root, "descendants.jsonl");
+    const service = await createService({
+      CODEX_TEST_DESCENDANT_OBSERVATION: observation
+    });
     try {
       const first = service.processId;
-      const interrupted = service.callTool("codex", task("hold for steering"));
-      await eventually(() => service.health().inFlight === 1);
+      const interrupted = service.callTool("codex", task("execution descendant hold"));
+      await eventually(() => readDescendantObservations(observation).length === 1);
+      const [{ appServerPid, childPid }] = readDescendantObservations(observation);
+      expect(isProcessAlive(appServerPid)).toBe(true);
+      expect(isProcessAlive(childPid)).toBe(true);
       expect(service.terminate("SIGKILL")).toBe(true);
       await expect(interrupted).rejects.toThrow(/CODEX_WORKER_LOST/);
+      await eventually(() => !isProcessAlive(appServerPid) && !isProcessAlive(childPid), 10_000);
       await eventually(() => service.processId !== undefined && service.processId !== first &&
         service.health().status === "ready", 10_000);
+      expect(readDescendantObservations(observation)).toHaveLength(1);
       await expect(service.callTool("codex", task("after execution restart")))
         .resolves.toMatchObject({ structuredContent: { turnStatus: "completed" } });
     } finally {
       await service.close();
     }
-  }, 20_000);
+  }, 30_000);
 
   it("rechecks authoritative release eligibility across the process boundary", async () => {
     const service = await createService({ CODEX_TEST_UNSUBSCRIBE_UNLOAD: "1" });
@@ -169,20 +284,29 @@ describe("isolated Codex execution process", () => {
       CODEX_TEST_TURN_COMPLETION_LOG: completionLog
     });
     try {
+      let assigned = false;
       const running = service.callTool(
         "codex",
-        task("delayed isolated completion")
+        task("delayed isolated completion"),
+        undefined,
+        () => { assigned = true; }
       );
-      await eventually(() => service.health().inFlight === 1);
+      const runningSettled = running.then(
+        value => ({ value }),
+        error => ({ error })
+      );
+      await eventually(() => assigned);
       const blockedAt = Date.now();
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
       const resumedAt = Date.now();
       const completedAt = Number((await readFile(completionLog, "utf8")).trim());
       expect(completedAt).toBeGreaterThanOrEqual(blockedAt);
       expect(completedAt).toBeLessThan(resumedAt);
-      await expect(running).resolves.toMatchObject({
-        content: [{ text: "ISOLATED COMPLETION" }],
-        structuredContent: { turnStatus: "completed" }
+      await expect(runningSettled).resolves.toMatchObject({
+        value: {
+          content: [{ text: "ISOLATED COMPLETION" }],
+          structuredContent: { turnStatus: "completed" }
+        }
       });
     } finally {
       await service.close();
@@ -212,7 +336,8 @@ describe("isolated Codex execution process", () => {
 });
 
 async function createService(
-  extraEnvironment: NodeJS.ProcessEnv = {}
+  extraEnvironment: NodeJS.ProcessEnv = {},
+  requestLimits?: Partial<CodexExecutionRequestLimits>
 ): Promise<ChildProcessCodexExecutionService> {
   const home = await mkdtemp(path.join(tmpdir(), "execution-service-"));
   roots.push(home);
@@ -224,8 +349,32 @@ async function createService(
       HOME: home,
       CODEX_HOME: path.join(home, ".codex"),
       ...extraEnvironment
-    }
+    },
+    ...(requestLimits ? { requestLimits } : {})
   });
+}
+
+function readDescendantObservations(file: string): Array<{
+  appServerPid: number;
+  childPid: number;
+}> {
+  try {
+    return readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map(line => {
+      const value = JSON.parse(line) as { appServerPid: number; childPid: number };
+      return value;
+    });
+  } catch {
+    return [];
+  }
+}
+
+function isProcessAlive(processId: number): boolean {
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
 }
 
 function task(prompt: string): Record<string, unknown> {

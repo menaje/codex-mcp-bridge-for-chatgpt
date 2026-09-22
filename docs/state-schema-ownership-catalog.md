@@ -116,6 +116,7 @@ child. They are intentionally absent from the operational schema inventory test.
 | `diagnostic_events` | bounded telemetry queue | sanitized severity/component/reason transitions |
 | `telemetry_drop_counters` | reserved telemetry control message | persistent kind/count/first/last evidence for queue, send and write loss |
 | `telemetry_retention_state` | each successful detail transaction | restartable per-kind cleanup cursor and completion time |
+| `telemetry_record_deliveries` | each successful detail transaction | bounded idempotency map from delivery UUID to actual record ID; startup collisions are remapped and ACK-loss retries cannot be silently ignored |
 
 Telemetry indexes are `transport_observations_recent`,
 `runtime_measurements_recent` and `diagnostic_events_recent`. The independent

@@ -24,23 +24,31 @@ import type {
   UpstreamWorkerAssignment
 } from "./upstream.js";
 import type { ThreadReleaseOptions, ThreadReleaseResult } from "./threadConnections.js";
-import type { JsonRpcTerminationResult } from "./jsonRpcProcess.js";
+import {
+  terminateJsonRpcProcessIdentity,
+  type JsonRpcProcessIdentity,
+  type JsonRpcTerminationResult
+} from "./jsonRpcProcess.js";
 import type { WorkerTerminationCorrelation } from "./cancellation.js";
 
 const CHILD_FLAG = "--codex-execution-child";
 const PROTOCOL = "bridge-codex-execution" as const;
-const PROTOCOL_VERSION = 1 as const;
+const PROTOCOL_VERSION = 2 as const;
 const HEARTBEAT_MS = 250;
 const HEARTBEAT_STALE_MS = 2_000;
 const STALE_RESTART_MS = 10_000;
 const STARTUP_TIMEOUT_MS = 20_000;
 const FORCE_CLOSE_MS = 5_000;
+const WORKER_REGISTRATION_TIMEOUT_MS = 5_000;
+const ORPHAN_CLEANUP_GRACE_MS = 1_500;
 const RESTART_BASE_DELAY_MS = 250;
 const RESTART_MAX_DELAY_MS = 10_000;
 const RESTART_STABLE_MS = 60_000;
 const MAX_PENDING_REQUESTS = 128;
+const CONTROL_REQUEST_RESERVE = 16;
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 const MAX_REQUEST_BYTES_IN_FLIGHT = 32 * 1024 * 1024;
+const CONTROL_REQUEST_BYTES_RESERVE = 8 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_OUTBOUND_MESSAGE_BYTES = MAX_RESPONSE_BYTES + 64 * 1024;
 const MAX_OUTBOUND_CRITICAL_MESSAGES = 256;
@@ -90,6 +98,21 @@ const TURN_EXECUTION_OPERATIONS = new Set<ExecutionOperation>([
   "callTool"
 ]);
 
+const CONTROL_EXECUTION_OPERATIONS = new Set<ExecutionOperation>([
+  "releaseThreadConnection",
+  "terminateBackgroundTerminal",
+  "forceTerminateWorker",
+  "respondToInteraction",
+  "steerThread"
+]);
+
+export type CodexExecutionRequestLimits = {
+  maxPendingRequests: number;
+  controlRequestReserve: number;
+  maxBytesInFlight: number;
+  controlRequestBytesReserve: number;
+};
+
 type SerializableProtocolOptions = Pick<
   CodexAppServerProtocolOptions,
   | "versionCheckTimeoutMs"
@@ -128,8 +151,19 @@ type ReleaseCheckResponseMessage = {
   allowed: boolean;
 };
 
+type WorkerRegistrationAckMessage = {
+  type: "worker-registration-ack";
+  generation: string;
+  registrationId: string;
+};
+
 type CloseMessage = { type: "close" };
-type ParentMessage = RequestMessage | ProtectMessage | ReleaseCheckResponseMessage | CloseMessage;
+type ParentMessage =
+  | RequestMessage
+  | ProtectMessage
+  | ReleaseCheckResponseMessage
+  | WorkerRegistrationAckMessage
+  | CloseMessage;
 
 type ReadyMessage = {
   type: "ready";
@@ -188,6 +222,19 @@ type ReleaseCheckMessage = {
   threadId: string;
 };
 
+type WorkerStartedMessage = {
+  type: "worker-started";
+  generation: string;
+  registrationId: string;
+  identity: JsonRpcProcessIdentity;
+};
+
+type WorkerExitedMessage = {
+  type: "worker-exited";
+  generation: string;
+  identity: JsonRpcProcessIdentity;
+};
+
 type FatalMessage = { type: "fatal"; message: string };
 type ChildMessage =
   | ReadyMessage
@@ -197,10 +244,13 @@ type ChildMessage =
   | ResponseMessage
   | LateResponseMessage
   | ReleaseCheckMessage
+  | WorkerStartedMessage
+  | WorkerExitedMessage
   | FatalMessage;
 
 type PendingRequest = {
   operation: ExecutionOperation;
+  control: boolean;
   bytes: number;
   resolve(value: unknown): void;
   reject(error: Error): void;
@@ -218,6 +268,12 @@ export type CodexExecutionServiceHealth = {
   heartbeatAgeMs?: number;
   inFlight: number;
   capacity: number;
+  ordinaryInFlight?: number;
+  ordinaryCapacity?: number;
+  bytesInFlight?: number;
+  byteCapacity?: number;
+  ordinaryBytesInFlight?: number;
+  ordinaryByteCapacity?: number;
   processId?: number;
 };
 
@@ -229,6 +285,8 @@ export type ChildProcessCodexExecutionServiceOptions = {
   onLateResponse?: (response: CodexAppServerLateResponse) => void;
   /** Test/diagnostic hook. Process identity is never exposed over MCP. */
   onProcessSpawn?: (processId: number) => void;
+  /** Test-only override for deterministic ordinary/control saturation coverage. */
+  requestLimits?: Partial<CodexExecutionRequestLimits>;
 };
 
 /**
@@ -243,7 +301,10 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   private capabilitiesValue: BackendCapabilities = UNVERIFIED_APP_SERVER_CAPABILITIES;
   private readonly pending = new Map<string, PendingRequest>();
   private pendingBytes = 0;
+  private ordinaryPending = 0;
+  private ordinaryPendingBytes = 0;
   private readonly protectedThreads = new Set<string>();
+  private readonly workerProcesses = new Map<string, JsonRpcProcessIdentity>();
   private readonly resumableThreads = new Map<string, boolean>();
   private readonly activeThreads = new Set<string>();
   private readonly interactionInputs = new Map<string, CodexInteractionInput>();
@@ -251,12 +312,17 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   private starting = false;
   private restartAttempts = 0;
   private restartTimer?: NodeJS.Timeout;
+  private workerCleanupTimer?: NodeJS.Timeout;
   private stableTimer?: NodeJS.Timeout;
   private staleTimer?: NodeJS.Timeout;
   private closePromise?: Promise<void>;
+  private workerCleanupPromise: Promise<boolean> = Promise.resolve(true);
   private stderr = "";
+  private readonly requestLimits: CodexExecutionRequestLimits;
 
-  private constructor(private readonly options: ChildProcessCodexExecutionServiceOptions) {}
+  private constructor(private readonly options: ChildProcessCodexExecutionServiceOptions) {
+    this.requestLimits = resolveExecutionRequestLimits(options.requestLimits);
+  }
 
   static async start(
     options: ChildProcessCodexExecutionServiceOptions
@@ -423,10 +489,15 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       : Math.max(0, now - this.lastHeartbeatAt);
     const status = !connected
       ? this.starting ? "starting" : "recovering"
-      : heartbeatAgeMs === undefined || heartbeatAgeMs > HEARTBEAT_STALE_MS
+        : heartbeatAgeMs === undefined || heartbeatAgeMs > HEARTBEAT_STALE_MS
         ? "stale"
-        : this.pending.size >= MAX_PENDING_REQUESTS ||
-            this.pendingBytes >= MAX_REQUEST_BYTES_IN_FLIGHT
+        : this.pending.size >= this.requestLimits.maxPendingRequests ||
+            this.pendingBytes >= this.requestLimits.maxBytesInFlight ||
+            this.ordinaryPending >=
+              this.requestLimits.maxPendingRequests - this.requestLimits.controlRequestReserve ||
+            this.ordinaryPendingBytes >=
+              this.requestLimits.maxBytesInFlight -
+                this.requestLimits.controlRequestBytesReserve
           ? "capacity"
           : "ready";
     return {
@@ -434,7 +505,16 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       ...(this.generation ? { generation: this.generation } : {}),
       ...(heartbeatAgeMs !== undefined ? { heartbeatAgeMs } : {}),
       inFlight: this.pending.size,
-      capacity: MAX_PENDING_REQUESTS,
+      capacity: this.requestLimits.maxPendingRequests,
+      ordinaryInFlight: this.ordinaryPending,
+      ordinaryCapacity:
+        this.requestLimits.maxPendingRequests - this.requestLimits.controlRequestReserve,
+      bytesInFlight: this.pendingBytes,
+      byteCapacity: this.requestLimits.maxBytesInFlight,
+      ordinaryBytesInFlight: this.ordinaryPendingBytes,
+      ordinaryByteCapacity:
+        this.requestLimits.maxBytesInFlight -
+          this.requestLimits.controlRequestBytesReserve,
       ...(this.child?.pid !== undefined ? { processId: this.child.pid } : {})
     };
   }
@@ -461,12 +541,21 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   ): Promise<T> {
     const child = this.child;
     const generation = this.generation;
-    if (this.closed || !child?.connected || !generation || this.health().status !== "ready") {
+    const health = this.health();
+    const control = CONTROL_EXECUTION_OPERATIONS.has(operation);
+    if (
+      this.closed || !child?.connected || !generation ||
+      !["ready", "capacity"].includes(health.status)
+    ) {
       return Promise.reject(new Error(
         "EXECUTION_UNAVAILABLE: The isolated Codex execution service is not ready."
       ));
     }
-    if (this.pending.size >= MAX_PENDING_REQUESTS) {
+    if (
+      this.pending.size >= this.requestLimits.maxPendingRequests ||
+      (!control && this.ordinaryPending >=
+        this.requestLimits.maxPendingRequests - this.requestLimits.controlRequestReserve)
+    ) {
       return Promise.reject(new Error(
         "EXECUTION_CAPACITY: The isolated Codex execution service is at capacity."
       ));
@@ -503,15 +592,25 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
         "EXECUTION_REQUEST_TOO_LARGE: The Codex execution request exceeds its IPC limit."
       ));
     }
-    if (this.pendingBytes + bytes > MAX_REQUEST_BYTES_IN_FLIGHT) {
+    if (
+      this.pendingBytes + bytes > this.requestLimits.maxBytesInFlight ||
+      (!control && this.ordinaryPendingBytes + bytes >
+        this.requestLimits.maxBytesInFlight -
+          this.requestLimits.controlRequestBytesReserve)
+    ) {
       return Promise.reject(new Error(
         "EXECUTION_CAPACITY: The Codex execution byte capacity is exhausted."
       ));
     }
     return new Promise<T>((resolve, reject) => {
       this.pendingBytes += bytes;
+      if (!control) {
+        this.ordinaryPending += 1;
+        this.ordinaryPendingBytes += bytes;
+      }
       this.pending.set(requestId, {
         operation,
+        control,
         bytes,
         resolve,
         reject,
@@ -549,6 +648,11 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
 
   private async spawnAndWait(): Promise<void> {
     if (this.closed) throw new Error("EXECUTION_CLOSED: Codex execution service closed.");
+    if (this.workerProcesses.size > 0) {
+      throw new Error(
+        "EXECUTION_ORPHAN_CLEANUP_PENDING: A previous worker generation is still alive."
+      );
+    }
     this.starting = true;
     const modulePath = fileURLToPath(import.meta.url);
     const configuration: ChildConfiguration = {
@@ -645,6 +749,22 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     }
     if (message.type === "late-response") {
       this.options.onLateResponse?.(message.response);
+      return;
+    }
+    if (message.type === "worker-started") {
+      const child = this.child;
+      const generation = this.generation;
+      if (!child?.connected || !generation) return;
+      this.workerProcesses.set(processIdentityKey(message.identity), message.identity);
+      child.send({
+        type: "worker-registration-ack",
+        generation,
+        registrationId: message.registrationId
+      } satisfies WorkerRegistrationAckMessage, () => {});
+      return;
+    }
+    if (message.type === "worker-exited") {
+      this.workerProcesses.delete(processIdentityKey(message.identity));
       return;
     }
     if (message.type === "release-check") {
@@ -745,6 +865,10 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     if (!pending) return undefined;
     this.pending.delete(requestId);
     this.pendingBytes = Math.max(0, this.pendingBytes - pending.bytes);
+    if (!pending.control) {
+      this.ordinaryPending = Math.max(0, this.ordinaryPending - 1);
+      this.ordinaryPendingBytes = Math.max(0, this.ordinaryPendingBytes - pending.bytes);
+    }
     return pending;
   }
 
@@ -767,7 +891,45 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     }
     if (this.stableTimer) clearTimeout(this.stableTimer);
     this.stableTimer = undefined;
-    if (!this.closed) this.scheduleRestart();
+    this.queueWorkerCleanup(!this.closed);
+  }
+
+  private queueWorkerCleanup(restartWhenClean: boolean): void {
+    this.workerCleanupPromise = this.workerCleanupPromise
+      .catch(() => false)
+      .then(() => this.cleanupRegisteredWorkers());
+    void this.workerCleanupPromise.then(cleaned => {
+      if (this.closed || !restartWhenClean) return;
+      if (cleaned) this.scheduleRestart();
+      else this.scheduleWorkerCleanupRetry();
+    });
+  }
+
+  private async cleanupRegisteredWorkers(): Promise<boolean> {
+    const identities = [...this.workerProcesses.values()];
+    if (identities.length === 0) return true;
+    const results = await Promise.all(identities.map(async identity => {
+      try {
+        return await terminateJsonRpcProcessIdentity(identity, ORPHAN_CLEANUP_GRACE_MS);
+      } catch {
+        return undefined;
+      }
+    }));
+    for (let index = 0; index < identities.length; index += 1) {
+      if (results[index]?.exited) {
+        this.workerProcesses.delete(processIdentityKey(identities[index]!));
+      }
+    }
+    return this.workerProcesses.size === 0;
+  }
+
+  private scheduleWorkerCleanupRetry(): void {
+    if (this.closed || this.workerCleanupTimer) return;
+    this.workerCleanupTimer = setTimeout(() => {
+      this.workerCleanupTimer = undefined;
+      this.queueWorkerCleanup(true);
+    }, RESTART_BASE_DELAY_MS);
+    this.workerCleanupTimer.unref();
   }
 
   private scheduleRestart(): void {
@@ -797,6 +959,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   private async closeInternal(): Promise<void> {
     this.closed = true;
     if (this.restartTimer) clearTimeout(this.restartTimer);
+    if (this.workerCleanupTimer) clearTimeout(this.workerCleanupTimer);
     if (this.stableTimer) clearTimeout(this.stableTimer);
     if (this.staleTimer) clearInterval(this.staleTimer);
     for (const [requestId] of this.pending) {
@@ -805,23 +968,33 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       ));
     }
     const child = this.child;
-    this.child = undefined;
-    this.generation = undefined;
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
-    if (child.connected) child.send({ type: "close" } satisfies CloseMessage);
-    await new Promise<void>(resolve => {
-      let settled = false;
-      const force = setTimeout(() => child.kill("SIGKILL"), FORCE_CLOSE_MS);
-      force.unref();
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(force);
-        resolve();
-      };
-      child.once("exit", finish);
-      if (child.exitCode !== null || child.signalCode !== null) finish();
-    });
+    if (child && child.exitCode === null && child.signalCode === null) {
+      if (child.connected) child.send({ type: "close" } satisfies CloseMessage);
+      await new Promise<void>(resolve => {
+        let settled = false;
+        const force = setTimeout(() => child.kill("SIGKILL"), FORCE_CLOSE_MS);
+        force.unref();
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(force);
+          resolve();
+        };
+        child.once("exit", finish);
+        if (child.exitCode !== null || child.signalCode !== null) finish();
+      });
+    }
+    if (this.child === child) {
+      this.child = undefined;
+      this.generation = undefined;
+    }
+    await this.workerCleanupPromise.catch(() => false);
+    const cleaned = await this.cleanupRegisteredWorkers();
+    if (!cleaned) {
+      throw new Error(
+        "EXECUTION_ORPHAN_CLEANUP_FAILED: A supervised Codex worker did not exit."
+      );
+    }
   }
 }
 
@@ -832,6 +1005,11 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
   const active = new Set<Promise<void>>();
   const releaseChecks = new Map<string, {
     resolve: (allowed: boolean) => void;
+    timer: NodeJS.Timeout;
+  }>();
+  const workerRegistrations = new Map<string, {
+    resolve: () => void;
+    reject: (error: Error) => void;
     timer: NodeJS.Timeout;
   }>();
   const outbound = createExecutionChildSender();
@@ -846,6 +1024,32 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
         type: "late-response",
         generation,
         response
+      }),
+      onWorkerProcessStarted: identity => new Promise<void>((resolve, reject) => {
+        const registrationId = randomUUID();
+        const registrationTimer = setTimeout(() => {
+          workerRegistrations.delete(registrationId);
+          reject(new Error(
+            "EXECUTION_WORKER_REGISTRATION_TIMEOUT: The state owner did not acknowledge the worker."
+          ));
+        }, WORKER_REGISTRATION_TIMEOUT_MS);
+        registrationTimer.unref();
+        workerRegistrations.set(registrationId, {
+          resolve,
+          reject,
+          timer: registrationTimer
+        });
+        send({
+          type: "worker-started",
+          generation,
+          registrationId,
+          identity
+        });
+      }),
+      onWorkerProcessExited: identity => send({
+        type: "worker-exited",
+        generation,
+        identity
       })
     }
   );
@@ -865,6 +1069,11 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
       resolve(false);
     }
     releaseChecks.clear();
+    for (const { reject, timer: registrationTimer } of workerRegistrations.values()) {
+      clearTimeout(registrationTimer);
+      reject(new Error("EXECUTION_CLOSED: Worker registration was interrupted."));
+    }
+    workerRegistrations.clear();
     await pool.close().catch(() => undefined);
     await Promise.allSettled([...active]);
     await outbound.drain(1_000);
@@ -886,6 +1095,14 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
         return;
       }
       if (value.generation !== generation) return;
+      if (value.type === "worker-registration-ack") {
+        const pending = workerRegistrations.get(value.registrationId);
+        if (!pending) return;
+        workerRegistrations.delete(value.registrationId);
+        clearTimeout(pending.timer);
+        pending.resolve();
+        return;
+      }
       if (value.type === "release-check-response") {
         const pending = releaseChecks.get(value.checkId);
         if (!pending) return;
@@ -1223,6 +1440,41 @@ async function executeChildRequest(
   });
 }
 
+function resolveExecutionRequestLimits(
+  overrides: Partial<CodexExecutionRequestLimits> | undefined
+): CodexExecutionRequestLimits {
+  const limits = {
+    maxPendingRequests: overrides?.maxPendingRequests ?? MAX_PENDING_REQUESTS,
+    controlRequestReserve: overrides?.controlRequestReserve ?? CONTROL_REQUEST_RESERVE,
+    maxBytesInFlight: overrides?.maxBytesInFlight ?? MAX_REQUEST_BYTES_IN_FLIGHT,
+    controlRequestBytesReserve:
+      overrides?.controlRequestBytesReserve ?? CONTROL_REQUEST_BYTES_RESERVE
+  };
+  if (
+    !Number.isSafeInteger(limits.maxPendingRequests) ||
+    !Number.isSafeInteger(limits.controlRequestReserve) ||
+    limits.maxPendingRequests < 2 ||
+    limits.controlRequestReserve < 1 ||
+    limits.controlRequestReserve >= limits.maxPendingRequests
+  ) {
+    throw new Error(
+      "EXECUTION_CAPACITY_INVALID: Control request slots must be a strict subset of capacity."
+    );
+  }
+  if (
+    !Number.isSafeInteger(limits.maxBytesInFlight) ||
+    !Number.isSafeInteger(limits.controlRequestBytesReserve) ||
+    limits.maxBytesInFlight < 2 ||
+    limits.controlRequestBytesReserve < 1 ||
+    limits.controlRequestBytesReserve >= limits.maxBytesInFlight
+  ) {
+    throw new Error(
+      "EXECUTION_CAPACITY_INVALID: Control request bytes must be a strict subset of capacity."
+    );
+  }
+  return limits;
+}
+
 function serializableOptions(
   options: CodexAppServerProtocolOptions
 ): SerializableProtocolOptions {
@@ -1274,6 +1526,10 @@ function isParentMessage(value: unknown): value is ParentMessage {
       typeof value.checkId === "string" &&
       typeof value.allowed === "boolean";
   }
+  if (value.type === "worker-registration-ack") {
+    return typeof value.generation === "string" &&
+      typeof value.registrationId === "string";
+  }
   if (value.type === "protect") {
     return typeof value.generation === "string" &&
       typeof value.threadId === "string" && value.threadId.length <= 512;
@@ -1307,12 +1563,31 @@ function isChildMessage(value: unknown): value is ChildMessage {
       typeof value.checkId === "string" &&
       typeof value.threadId === "string" && value.threadId.length <= 512;
   }
+  if (value.type === "worker-started") {
+    return typeof value.generation === "string" &&
+      typeof value.registrationId === "string" &&
+      isJsonRpcProcessIdentity(value.identity);
+  }
+  if (value.type === "worker-exited") {
+    return typeof value.generation === "string" &&
+      isJsonRpcProcessIdentity(value.identity);
+  }
   if (!["progress", "assignment", "response"].includes(String(value.type))) return false;
   return typeof value.generation === "string" && typeof value.requestId === "string";
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isJsonRpcProcessIdentity(value: unknown): value is JsonRpcProcessIdentity {
+  return isRecord(value) && Number.isSafeInteger(value.pid) && value.pid >= 2 &&
+    (value.processGroupId === null ||
+      (Number.isSafeInteger(value.processGroupId) && value.processGroupId >= 2));
+}
+
+function processIdentityKey(identity: JsonRpcProcessIdentity): string {
+  return `${identity.pid}:${identity.processGroupId ?? "process"}`;
 }
 
 function readChildConfiguration(encoded: string | undefined): ChildConfiguration {

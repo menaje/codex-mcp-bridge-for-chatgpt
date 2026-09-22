@@ -96,6 +96,10 @@ export type CodexAppServerProtocolOptions = {
    * payloads must be sanitized before logging or persistence.
    */
   onLateResponse?: (response: CodexAppServerLateResponse) => void;
+  /** Internal executor-supervision handshake completed before protocol initialization. */
+  onWorkerProcessStarted?: (identity: JsonRpcProcessIdentity) => Promise<void> | void;
+  /** Internal executor-supervision release after the exact worker exits. */
+  onWorkerProcessExited?: (identity: JsonRpcProcessIdentity) => void;
 };
 
 type ResolvedCodexAppServerProtocolOptions = {
@@ -105,6 +109,8 @@ type ResolvedCodexAppServerProtocolOptions = {
   initializeTimeoutMs: number;
   interruptTimeoutMs: number;
   onLateResponse?: (response: CodexAppServerLateResponse) => void;
+  onWorkerProcessStarted?: (identity: JsonRpcProcessIdentity) => Promise<void> | void;
+  onWorkerProcessExited?: (identity: JsonRpcProcessIdentity) => void;
 };
 
 export type CodexAppServerDependencies = {
@@ -934,6 +940,7 @@ class AppServerConnection {
   private configWarningCount = 0;
   private closeRequested = false;
   private terminationRequested = false;
+  private registeredWorkerIdentity?: JsonRpcProcessIdentity;
 
   private constructor(
     command: string,
@@ -988,6 +995,9 @@ class AppServerConnection {
 
   async initializeForAdmission(): Promise<AppServerConnection> {
     try {
+      const identity = await this.rpc.start();
+      this.registeredWorkerIdentity = identity;
+      await this.protocolOptions.onWorkerProcessStarted?.(identity);
       await this.initialize();
       return this;
     } catch (error) {
@@ -2062,6 +2072,12 @@ class AppServerConnection {
   }
 
   private onProcessExit(error: Error): void {
+    const registeredIdentity = this.registeredWorkerIdentity;
+    this.registeredWorkerIdentity = undefined;
+    if (registeredIdentity) {
+      try { this.protocolOptions.onWorkerProcessExited?.(registeredIdentity); }
+      catch { /* Executor supervision remains fail-closed on a missed release. */ }
+    }
     const expected = this.closeRequested || this.terminationRequested;
     const terminalError = expected
       ? error
@@ -2223,7 +2239,13 @@ function resolveProtocolOptions(
       options.interruptTimeoutMs ?? DEFAULT_APP_SERVER_INTERRUPT_TIMEOUT_MS,
       "interruptTimeoutMs"
     ),
-    ...(options.onLateResponse ? { onLateResponse: options.onLateResponse } : {})
+    ...(options.onLateResponse ? { onLateResponse: options.onLateResponse } : {}),
+    ...(options.onWorkerProcessStarted
+      ? { onWorkerProcessStarted: options.onWorkerProcessStarted }
+      : {}),
+    ...(options.onWorkerProcessExited
+      ? { onWorkerProcessExited: options.onWorkerProcessExited }
+      : {})
   };
 }
 

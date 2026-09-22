@@ -21,7 +21,7 @@ SQLite-free ingress (HTTP / MCP / native / stdio)
 This preserves every existing multi-repository Unit of Work. Native calls use
 the closed `bridge-operational-state-owner` v2 command/query/control protocol;
 MCP traffic crosses the same bounded process boundary before admission. The
-executor uses `bridge-codex-execution` v1 and relays assignments, progress,
+executor uses `bridge-codex-execution` v2 and relays assignments, progress,
 interactions, steering, release checks, results and late responses. Account App
 Server I/O also uses the executor, while account cache/presentation policy stays
 with the state owner.
@@ -35,10 +35,18 @@ SQLite writer.
 - Ingress has 128 total state-owner requests, reserves 16 slots from MCP, caps
   one message at 8 MiB and proxied bytes at 32 MiB. Pre-forward rejection is
   `not-observed`; response loss after forwarding is `unknown`.
-- Codex execution has 128 requests, a 2 MiB request cap, 32 MiB in-flight cap
-  and 8 MiB response cap. It has a generation heartbeat and bounded restart.
-  A crashed active turn becomes `CODEX_WORKER_LOST` and is persisted as
-  interrupted/worker-lost rather than false success or cancellation.
+- Codex execution has 128 requests with 16 slots reserved for existing-work
+  control, a 2 MiB request cap, 32 MiB in-flight cap with 8 MiB reserved for
+  control, and an 8 MiB response cap. Ordinary admission stops at 112 slots or
+  24 MiB without blocking bounded input responses, steering, forced
+  termination, terminal cleanup or connection release. It has a generation
+  heartbeat and bounded restart. A crashed active turn becomes
+  `CODEX_WORKER_LOST` and is persisted as interrupted/worker-lost rather than
+  false success or cancellation.
+- Each App Server process group is registered and acknowledged before protocol
+  initialization or user work. Executor loss triggers exact group TERM/KILL
+  cleanup, including descendants, and a replacement executor cannot start
+  until that cleanup is confirmed.
 - Executor-to-owner IPC keeps at most 256 critical messages/32 MiB and
   coalesces ordinary `updated` progress to 128 request entries/8 MiB. Critical
   overflow fails the executor closed instead of growing process memory without
@@ -55,8 +63,11 @@ SQLite writer.
 - Telemetry uses a 4,096-record/16 MiB queue and separate SQLite process. Its
   schema now includes metadata/source identity, transport observations,
   duration measurements, diagnostic transitions, persistent drop counters and
-  restartable retention state. Failed drop-counter writes use bounded
-  exponential retry rather than a failure-amplification loop.
+  restartable retention state plus a bounded delivery-id ledger. Initial-open
+  records are rebased above existing IDs, strict inserts remap legacy
+  collisions, ACK-loss retries resolve idempotently, and startup-period drop
+  counters are merged with persisted counts. Failed drop-counter writes use
+  bounded exponential retry rather than a failure-amplification loop.
 - Telemetry startup locks recover by restart. Corrupt, incompatible or
   wrong-source databases are moved with WAL/SHM into a recoverable quarantine
   directory before an empty source-bound telemetry DB is created. Operational
@@ -72,15 +83,15 @@ the production startup path. On 2026-09-22 it produced:
 | Check | Result |
 | --- | --- |
 | topology | ingress, state owner and Codex executor were distinct PIDs; state DB UUID remained stable across replacement |
-| Dashboard reads | 12 structural readers completed concurrently in 201.892 ms; first account-enriched read started the executor |
+| Dashboard reads | 12 structural readers completed concurrently in 187.184 ms; the first account-enriched read completed in 60.967 ms and started the executor |
 | execution child stall | `/readyz` reported `execution-stale`, actual `codex_task` admission returned retryable `EXECUTION_UNAVAILABLE`, and the durable Job count stayed zero |
-| 25 healthy state commands | p50 2.409 ms, p95 6.015 ms, p99/max 7.548 ms |
-| telemetry DB write lock + 25 state commands | state p99/max 2.302 ms; `/healthz` and `/readyz` stayed HTTP 200; telemetry drained after unlock |
-| operational DB lock | 253 `/healthz` samples: p50 1.507 ms, p95 2.446 ms, p99 3.530 ms, max 7.018 ms |
-| ingress event-loop lag during state lock | p50 2.617 ms, p95 3.732 ms, p99 5.150 ms, max 8.131 ms |
+| 25 healthy state commands | p50 2.514 ms, p95 5.533 ms, p99/max 8.361 ms |
+| telemetry DB write lock + 25 state commands | state p99/max 2.392 ms; `/healthz` and `/readyz` stayed HTTP 200; telemetry drained after unlock |
+| operational DB lock | 246 `/healthz` samples: p50 1.237 ms, p95 1.693 ms, p99 2.383 ms, max 3.696 ms |
+| ingress event-loop lag during state lock | p50 3.324 ms, p95 3.889 ms, p99 4.815 ms, max 5.956 ms |
 | state-lock certainty | caller received unknown/unconfirmed; readiness showed `state-stale + state-write-unconfirmed`; the authoritative revision later advanced exactly once |
-| executor crash | `/healthz` returned in 1.311 ms; executor restarted; state-owner PID and DB UUID did not change |
-| state-owner crash | `/healthz` returned in 0.656 ms; one replacement owner acquired the same DB UUID and preserved the settings revision |
+| executor crash during real work | with an admitted Job and a live App Server descendant command, `/healthz` returned in 0.475 ms; both old PIDs exited before replacement; the Job became `interrupted/worker-loss`; the command observation occurred once; a new Job completed after recovery; state-owner PID and DB UUID did not change |
+| state-owner crash | `/healthz` returned in 0.375 ms; one replacement owner acquired the same DB UUID and preserved the settings revision |
 
 The focused execution regression also blocks the state-owner event loop for
 500 ms and proves from an executor-written timestamp that Codex completed while
@@ -90,11 +101,13 @@ The wider automated evidence includes:
 
 - 100-update noisy-project progress saturation, project-fair drain and critical
   input bypass in `test/jobRegistry.test.ts`;
-- execution crash/restart, interaction privacy, thread release rechecks and
-  authority stripping, plus a 2,000-update flood while the owner event loop is
-  blocked, in `test/executionServiceProcess.test.ts`;
-- telemetry lock/flood/drop persistence, `SQLITE_FULL`, startup lock recovery,
-  corruption quarantine and source-identity rebuild in
+- execution crash/restart with real descendant-PID cleanup, request- and
+  byte-saturation control reserves, interaction privacy, thread release
+  rechecks and authority stripping, plus a 2,000-update flood while the owner
+  event loop is blocked, in `test/executionServiceProcess.test.ts`;
+- telemetry lock/flood/drop persistence, `SQLITE_FULL`, startup lock recovery
+  with existing-ID rebasing and additive drop-counter merge, corruption
+  quarantine and source-identity rebuild in
   `test/telemetryService.test.ts`;
 - state/read/runtime lock, storage error, response loss, capacity, owner crash,
   rollback compatibility and telemetry rebuild in `test/runtimeProcess.test.ts`;
@@ -102,7 +115,7 @@ The wider automated evidence includes:
   rollback refusal in the state lifecycle/recovery suites.
 
 The final source checkout passed the release/build checks, App Server schema
-compatibility check, 98 TypeScript test files / 869 tests, and 205 macOS tests
+compatibility check, 98 TypeScript test files / 872 tests, and 205 macOS tests
 with two environment-dependent live smoke tests skipped. The issue-specific
 fault/load command above also passed again after the final queue and admission
 changes.
@@ -120,7 +133,13 @@ generations. It does not keep an orphan Codex process running without a state
 authority; an unfinished Job is reconciled as worker-lost. This is different
 from an executor-only crash, which restarts without replacing the state owner.
 
-## Installed acceptance
+## Previous installed acceptance baseline
+
+The following installed evidence covers the first isolation implementation and
+remains useful as a cutover/rollback baseline. It predates the reopened
+boundary-hardening work (execution protocol v2 control reserve, telemetry
+schema v2 collision recovery and active descendant cleanup), so it does not by
+itself satisfy the current completion gate.
 
 The production cutover was completed on 2026-09-22 KST from installed build
 `90b64c35d78a:2f89aecac2b4` to the issue implementation merge
@@ -171,8 +190,12 @@ background processes. Tunnel `/healthz` and `/readyz` returned `live` and
 key violations and `telemetry.sqlite` `quick_check=ok`; state, read, telemetry
 and execution services all reported ready.
 
-This installed evidence uses the same implementation revision as the source
-fault/load evidence. Together they satisfy the issue gates. The exact limits in
-the preceding section remain accepted behavior, not unfinished work: isolation
-does not shorten SQLite, filesystem, hardware or external-network latency, and
-it does not make the intentional single operational writer concurrent.
+At the time it was recorded, this installed evidence used the same revision as
+the earlier source fault/load evidence. Reopening #142 supersedes that final
+approval: the merged boundary-hardening revision must receive a fresh safe
+cutover, schema migration check, active-free installed fault checks and native
+contract verification before this audit can again declare completion. The
+exact limits in the preceding section remain accepted behavior, not unfinished
+work: isolation does not shorten SQLite, filesystem, hardware or external-
+network latency, and it does not make the intentional single operational
+writer concurrent.

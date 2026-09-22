@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import "./app-server-schema-fixture.mjs";
+import { spawn } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import readline from "node:readline";
 import { threadPolicyResponse, assertTurnPolicy } from "./app-server-policy-fixture.mjs";
@@ -193,9 +194,16 @@ lines.on("line", (line) => {
       send({ id: message.id, error: { code: -32602, message: "raw events must be disabled" } });
       return;
     }
-    const id = `fake-thread-${++threadSequence}`;
+    const sequence = ++threadSequence;
+    const processScope = process.env.CODEX_TEST_PROCESS_SCOPED_THREAD_IDS === "1"
+      ? `${process.pid}-`
+      : "";
+    const id = `fake-thread-${processScope}${sequence}`;
     knownThreads.add(id);
-    threadLineages.set(id, { sessionId: `fake-session-${threadSequence}`, forkedFromId: null });
+    threadLineages.set(id, {
+      sessionId: `fake-session-${processScope}${sequence}`,
+      forkedFromId: null
+    });
     threadEphemeral.set(id, message.params.ephemeral === true);
     loadedThreads.add(id);
     response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
@@ -426,6 +434,19 @@ lines.on("line", (line) => {
 
 function beginTurn(context) {
   const { threadId, turnId, prompt } = context;
+  if (prompt.includes("execution descendant hold") &&
+      process.env.CODEX_TEST_DESCENDANT_OBSERVATION) {
+    const descendant = spawn(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      { stdio: "ignore" }
+    );
+    descendant.unref();
+    appendFileSync(
+      process.env.CODEX_TEST_DESCENDANT_OBSERVATION,
+      `${JSON.stringify({ appServerPid: process.pid, childPid: descendant.pid })}\n`
+    );
+  }
   if (prompt.includes("future optional notification")) {
     notification("future/optionalObservation", { threadId, turnId, detail: "PRIVATE_FUTURE_PAYLOAD" });
   }
