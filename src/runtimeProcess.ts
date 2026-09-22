@@ -159,6 +159,8 @@ type RuntimeStorageError = NonNullable<
   NonNullable<BridgeRuntimeAdmissionSnapshot["stateService"]>["storageError"]
 >;
 
+type ProxyRequestOutcome = "not-observed" | "unknown";
+
 export type IsolatedStdioRuntime = {
   readonly applicationService: BridgeApplicationService;
   close(): Promise<void>;
@@ -521,14 +523,14 @@ class IsolatedRuntimeController {
     outgoing: import("node:http").ServerResponse
   ): void {
     if (!this.isFresh() || this.port === undefined || !this.child?.connected) {
-      writeUnavailable(outgoing, this.readiness());
+      writeUnavailable(outgoing, this.readiness(), "not-observed");
       return;
     }
     if (
       this.outstanding >= MAX_PENDING_REQUESTS ||
       this.activeProxyRequests >= MAX_PROXY_REQUESTS
     ) {
-      writeUnavailable(outgoing, this.readiness());
+      writeUnavailable(outgoing, this.readiness(), "not-observed");
       return;
     }
     const declaredLength = requestContentLength(incoming.headers);
@@ -544,7 +546,7 @@ class IsolatedRuntimeController {
       declaredLength !== undefined &&
       this.activeProxyBytes + declaredLength > MAX_PROXY_BYTES_IN_FLIGHT
     ) {
-      writeUnavailable(outgoing, this.readiness());
+      writeUnavailable(outgoing, this.readiness(), "not-observed");
       return;
     }
     const port = this.port;
@@ -553,6 +555,7 @@ class IsolatedRuntimeController {
     this.activeProxyBytes += requestBytes;
     let responseStarted = false;
     let settled = false;
+    let requestOutcome: ProxyRequestOutcome = "not-observed";
     let staleWatchdog: NodeJS.Timeout | undefined;
     const finish = () => {
       if (settled) return;
@@ -573,7 +576,7 @@ class IsolatedRuntimeController {
             reason
           });
         } else {
-          writeUnavailable(outgoing, this.readiness());
+          writeUnavailable(outgoing, this.readiness(), "not-observed");
         }
       } else if (!outgoing.destroyed) {
         outgoing.destroy();
@@ -596,11 +599,16 @@ class IsolatedRuntimeController {
         finish();
       });
     });
+    proxied.once("finish", () => {
+      // The full request crossed the supervisor boundary. The child may have
+      // acted even if its response or next heartbeat is never observed.
+      requestOutcome = "unknown";
+    });
     staleWatchdog = setInterval(() => {
       if (this.isFresh()) return;
       proxied.destroy(new Error("RUNTIME_RESPONSE_UNCONFIRMED"));
       if (!responseStarted && !outgoing.headersSent) {
-        writeUnavailable(outgoing, this.readiness());
+        writeUnavailable(outgoing, this.readiness(), requestOutcome);
       } else if (!outgoing.destroyed) {
         outgoing.destroy();
       }
@@ -609,7 +617,11 @@ class IsolatedRuntimeController {
     staleWatchdog.unref();
     proxied.once("error", error => {
       if (!outgoing.headersSent) {
-        writeUnavailable(outgoing, this.readiness());
+        writeUnavailable(
+          outgoing,
+          responseUnavailableReadiness(this.readiness()),
+          requestOutcome
+        );
       } else if (!outgoing.destroyed) {
         outgoing.destroy(error);
       }
@@ -924,6 +936,9 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
     activeOperation = undefined;
     operationStartedAt = 0;
     send({ type: "operation-clear", generation });
+    observeStorageFailure(error);
+  };
+  const observeStorageFailure = (error: unknown) => {
     const classified = runtimeStorageError(error);
     if (classified) storageFault = { error: classified, observedAt: Date.now() };
   };
@@ -1025,7 +1040,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         telemetry,
         readProjection,
         healthDiagnostics: () => ({ appServerLateResponses: appServerLateResponses.status() }),
-        conformanceFixtures: process.argv.slice(2).includes("--conformance-fixtures")
+        conformanceFixtures: process.argv.slice(2).includes("--conformance-fixtures"),
+        onOperationFailure: observeStorageFailure
       });
       await new Promise<void>((resolve, reject) => {
         httpServer?.once("error", reject);
@@ -1039,7 +1055,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
       stdioRuntime = createStdioBridgeRuntime(config, upstream, {
         stateStore: store,
         telemetry,
-        readProjection
+        readProjection,
+        onOperationFailure: observeStorageFailure
       });
       await stdioRuntime.start();
       applicationService = stdioRuntime.applicationService;
@@ -1136,16 +1153,19 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
           ok: true,
           result: result === undefined ? null : result
         }),
-        error => send({
-          type: "rpc-response",
-          generation,
-          requestId: value.requestId,
-          ok: false,
-          error: {
-            code: runtimeErrorCode(error),
-            message: error instanceof Error ? error.message : String(error)
-          }
-        })
+        error => {
+          observeStorageFailure(error);
+          send({
+            type: "rpc-response",
+            generation,
+            requestId: value.requestId,
+            ok: false,
+            error: {
+              code: runtimeErrorCode(error),
+              message: error instanceof Error ? error.message : String(error)
+            }
+          });
+        }
       );
     });
     if (transport === "stdio") process.stdin.once("end", () => { void close(); });
@@ -1314,7 +1334,8 @@ const HOP_BY_HOP_HEADERS = [
 
 function writeUnavailable(
   response: import("node:http").ServerResponse,
-  readiness: BridgeReadinessSnapshot
+  readiness: BridgeReadinessSnapshot,
+  outcome: ProxyRequestOutcome
 ): void {
   if (response.headersSent || response.destroyed) return;
   response.setHeader("retry-after", "1");
@@ -1324,11 +1345,21 @@ function writeUnavailable(
     reason: readiness.reason,
     limitations: readiness.limitations,
     retryable: true,
-    outcome: readiness.limitations.includes("state-write-unconfirmed")
-      ? "unknown"
-      : "not-observed",
+    outcome,
     ...(readiness.stateService ? { stateService: readiness.stateService } : {})
   });
+}
+
+function responseUnavailableReadiness(
+  readiness: BridgeReadinessSnapshot
+): BridgeReadinessSnapshot {
+  if (readiness.reason !== "ready") return readiness;
+  return {
+    ...readiness,
+    ready: false,
+    reason: "state-recovering",
+    limitations: ["state-response-unconfirmed"]
+  };
 }
 
 function writeJson(

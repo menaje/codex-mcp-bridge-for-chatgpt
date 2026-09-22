@@ -31,6 +31,8 @@ export type BridgeStdioRuntimeOptions = {
   /** Custom streams used by byte-level stdio integration tests. */
   input?: Readable;
   output?: Writable;
+  /** Observe an application failure without changing its protocol result. */
+  onOperationFailure?: (error: unknown) => void;
 };
 
 export type BridgeStdioRuntime = {
@@ -82,7 +84,8 @@ export function createStdioBridgeRuntime(
     projectAvailability,
     undefined,
     undefined,
-    options.readProjection
+    options.readProjection,
+    options.onOperationFailure
   );
   // The SDK's stock stdio ReadBuffer calls Buffer.toString("utf8"), which
   // replaces malformed bytes. Feed it only complete, prevalidated JSON lines.
@@ -104,7 +107,14 @@ export function createStdioBridgeRuntime(
         {
           legacy: "reject",
           transport,
-          onerror: (error) => logStdioError(error)
+          onerror: (error) => {
+            try {
+              options.onOperationFailure?.(error);
+            } catch {
+              // Readiness observation cannot replace the request error.
+            }
+            logStdioError(error);
+          }
         }
       );
     },

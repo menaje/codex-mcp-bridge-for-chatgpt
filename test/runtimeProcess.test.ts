@@ -22,6 +22,7 @@ type RunningRuntime = {
 };
 
 const running: RunningRuntime[] = [];
+const CURRENT_PROTOCOL = "2026-07-28";
 
 afterEach(async () => {
   for (const item of running.splice(0)) {
@@ -33,14 +34,16 @@ afterEach(async () => {
 async function start(
   onRuntimeProcessSpawn?: (processId: number) => void,
   restartStartupTimeoutMs?: number,
-  environmentOverrides: NodeJS.ProcessEnv = {}
+  environmentOverrides: NodeJS.ProcessEnv = {},
+  conformanceFixtures = false
 ): Promise<RunningRuntime> {
   const root = await mkdtemp(path.join(tmpdir(), "bridge-runtime-process-"));
   const environment = { ...runtimeEnvironment(root), ...environmentOverrides };
   const server = await createIsolatedHttpServer(loadConfig(environment), {
     childEnvironment: environment,
     onRuntimeProcessSpawn,
-    restartStartupTimeoutMs
+    restartStartupTimeoutMs,
+    conformanceFixtures
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -58,6 +61,40 @@ async function start(
   };
   running.push(item);
   return item;
+}
+
+function conformanceToolCall(baseUrl: string): Promise<Response> {
+  return fetch(`${baseUrl}/mcp`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      "mcp-protocol-version": CURRENT_PROTOCOL,
+      "mcp-method": "tools/call",
+      "mcp-name": "test_logging_tool"
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: randomRequestId(),
+      method: "tools/call",
+      params: {
+        name: "test_logging_tool",
+        arguments: {},
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": CURRENT_PROTOCOL,
+          "io.modelcontextprotocol/clientInfo": {
+            name: "runtime-process-regression",
+            version: "1.0.0"
+          },
+          "io.modelcontextprotocol/clientCapabilities": {}
+        }
+      }
+    })
+  });
+}
+
+function randomRequestId(): string {
+  return `runtime-process-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function runtimeEnvironment(root: string): NodeJS.ProcessEnv {
@@ -230,7 +267,7 @@ describe("isolated production runtime", () => {
         reason: "state-stale",
         limitations: ["state-write-unconfirmed"],
         retryable: true,
-        outcome: "unknown",
+        outcome: "not-observed",
         stateService: {
           activeOperation: {
             access: "write",
@@ -427,6 +464,109 @@ describe("isolated production runtime", () => {
     });
     await waitUntilReady(runtime.baseUrl);
   }, 20_000);
+
+  it.each([
+    ["SQLITE_IOERR_FSYNC", "io"],
+    ["SQLITE_CORRUPT_VTAB", "corrupt"],
+    ["SQLITE_READONLY_DBMOVED", "read-only"]
+  ] as const)(
+    "fails admission after an MCP operation surfaces %s and recovers only after a commit",
+    async (driverCode, storageError) => {
+      const runtime = await start(undefined, undefined, {
+        NODE_ENV: "test",
+        CODEX_MCP_BRIDGE_TEST_CONFORMANCE_STORAGE_ERROR: driverCode
+      }, true);
+      const current = await runtime.server.applicationService.settingsSnapshot();
+
+      const failed = await conformanceToolCall(runtime.baseUrl);
+      expect(failed.status).toBe(200);
+      expect(await failed.json()).toMatchObject({
+        result: { isError: true }
+      });
+
+      await waitForRuntimeHealth(
+        runtime.server.applicationService,
+        "state-recovering",
+        8_000,
+        () => runtime.server.applicationService.runtimeHealth?.().stateService?.storageError ===
+          storageError
+      );
+      expect(runtime.server.applicationService.runtimeHealth?.()).toMatchObject({
+        acceptingNewJobs: false,
+        stateService: {
+          status: "state-recovering",
+          storageError,
+          storageErrorObservedAt: expect.any(Number)
+        }
+      });
+      const degraded = await fetch(`${runtime.baseUrl}/readyz`);
+      expect(degraded.status).toBe(503);
+      await expect(degraded.json()).resolves.toMatchObject({
+        reason: "state-recovering",
+        limitations: [`state-storage-${storageError}`]
+      });
+
+      await expect(runtime.server.applicationService.updateSettings({
+        expectedSettingsRevision: current.settings.settingsRevision,
+        operation: {
+          kind: "patch",
+          settings: {
+            showBridgeThreadsInCodexApp: !current.settings.showBridgeThreadsInCodexApp
+          }
+        }
+      })).resolves.toMatchObject({
+        settings: { settingsRevision: current.settings.settingsRevision + 1 }
+      });
+      await waitUntilReady(runtime.baseUrl);
+    },
+    15_000
+  );
+
+  it("reports unknown only after the current MCP request crosses the runtime boundary", async () => {
+    const processIds: number[] = [];
+    const runtime = await start(
+      processId => processIds.push(processId),
+      undefined,
+      {
+        NODE_ENV: "test",
+        CODEX_MCP_BRIDGE_TEST_CONFORMANCE_DELAY_MS: "5000"
+      },
+      true
+    );
+    const pending = conformanceToolCall(runtime.baseUrl);
+    const forwardingDeadline = Date.now() + 2_000;
+    let forwarded = false;
+    while (!forwarded && Date.now() < forwardingDeadline) {
+      const readiness = await fetch(`${runtime.baseUrl}/readyz`).then(response => response.json()) as {
+        stateService?: { inFlight?: number };
+      };
+      forwarded = (readiness.stateService?.inFlight || 0) >= 1;
+      if (forwarded) break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(forwarded).toBe(true);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(processIds).toHaveLength(1);
+
+    let stopped = false;
+    try {
+      process.kill(processIds[0]!, "SIGSTOP");
+      stopped = true;
+      const response = await pending;
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "RUNTIME_RESPONSE_UNCONFIRMED",
+        reason: "state-stale",
+        limitations: ["state-response-unconfirmed"],
+        retryable: true,
+        outcome: "unknown"
+      });
+    } finally {
+      if (stopped) process.kill(processIds[0]!, "SIGCONT");
+    }
+
+    await waitUntilReady(runtime.baseUrl);
+  }, 15_000);
 
   it("reserves native control capacity when incomplete MCP requests saturate the proxy", async () => {
     const runtime = await start();

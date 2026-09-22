@@ -358,3 +358,46 @@ last-confirmed presentation and recovery. It does not claim that an in-flight
 SQLite call can be preempted or that independent semantic writes continue while
 the central writer is blocked. Moving every command/query behind the dedicated
 operational-state owner remains #142.
+
+## Request-outcome correctness follow-up (2026-09-22)
+
+A post-closure audit found that the first structured MCP 503 implementation
+derived `outcome` from the runtime's global last-confirmed state operation. That
+mixed two independent facts: why the runtime was degraded, and whether the
+current HTTP request crossed the supervisor-to-runtime boundary. In particular,
+a new request rejected before proxying inherited `outcome=unknown` when an
+unrelated write was already blocked, while a fully forwarded request could have
+received `outcome=not-observed` when no state write happened to be visible.
+
+The corrected proxy now tracks the current request independently:
+
+- freshness, request-count and byte-capacity rejection before forwarding returns
+  `outcome=not-observed`, regardless of an unrelated active operation;
+- once the complete request has been flushed across the child HTTP boundary,
+  loss of the response or heartbeat returns `outcome=unknown`;
+- a child-proxy error can no longer return a contradictory 503 with
+  `reason=ready`; it reports response-unconfirmed recovery state instead;
+- `limitations` continues to describe the last-confirmed global runtime or
+  storage condition, while `outcome` describes only the current request.
+
+The runtime also observes original application errors at the HTTP tool, native
+RPC and stdio tool boundaries. Actual SQLite driver codes remain the only input
+to storage classification. `BUSY`, `FULL`, `IOERR`, `CORRUPT`/`NOTADB` and
+`READONLY` close new-Job admission; an unrelated protocol or domain error does
+not. The fault remains visible until a later state transaction commits, rather
+than clearing merely because time elapsed or a read succeeded.
+
+The focused regression verifies both sides of the request boundary: a new MCP
+request rejected while another write is stale is `not-observed`, and a fully
+forwarded delayed MCP request whose runtime child is stopped before its response
+is `unknown` with `state-response-unconfirmed`. Deterministic MCP-boundary
+injections for `SQLITE_IOERR_FSYNC`, `SQLITE_CORRUPT_VTAB` and
+`SQLITE_READONLY_DBMOVED` each disable admission and recover only after a
+confirmed Settings commit. The existing real `SQLITE_BUSY` and `SQLITE_FULL`
+faults remain covered.
+
+Post-correction repository validation passed 96 TypeScript files / 853 tests,
+205 macOS tests with two opt-in skips, MCP 2026-07-28 conformance 29/29, App
+Server compatibility against CLI 0.153.3, and 1,319 localized strings across
+nine languages. Installed-build acceptance is recorded separately after the
+signed bundle is replaced and the live supervisor boundary is rechecked.
