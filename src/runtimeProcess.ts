@@ -33,8 +33,14 @@ import type {
   BridgeRuntimeAdmissionSnapshot
 } from "./tools.js";
 
+type RuntimeStateServiceStatus = NonNullable<
+  BridgeRuntimeAdmissionSnapshot["stateService"]
+>["status"];
+
 const CHILD_FLAG = "--isolated-bridge-runtime-child";
 const CHILD_STDIO_FLAG = "--stdio";
+const STATE_OWNER_PROTOCOL = "bridge-operational-state-owner" as const;
+const STATE_OWNER_PROTOCOL_VERSION = 2 as const;
 const HEARTBEAT_INTERVAL_MS = 250;
 const HEARTBEAT_STALE_MS = 2_000;
 const STARTUP_TIMEOUT_MS = 20_000;
@@ -82,9 +88,33 @@ const APPLICATION_RPC_METHODS = [
 ] as const;
 
 type ApplicationRpcMethod = (typeof APPLICATION_RPC_METHODS)[number];
+type ApplicationRpcKind = "command" | "query" | "control";
+
+const APPLICATION_QUERY_METHODS = new Set<ApplicationRpcMethod>([
+  "dashboardSnapshot",
+  "dashboardHistoryDetail",
+  "settingsSnapshot",
+  "runtimeSnapshot",
+  "skillLibrarySnapshot",
+  "readBridgeSkill",
+  "readBridgeSkillFile",
+  "listBridgeSkillVersions",
+  "inspectBridgeSkillPackageUpload",
+  "exportBridgeSkillPackage"
+]);
+
+const APPLICATION_CONTROL_METHODS = new Set<ApplicationRpcMethod>([
+  "beginDrain",
+  "cancelDrain",
+  "claimNativeCompletionNotifications",
+  "markNativeCompletionNotificationsDelivered",
+  "releaseNativeCompletionNotifications"
+]);
 
 type RuntimeReadyMessage = {
   type: "ready";
+  protocol: typeof STATE_OWNER_PROTOCOL;
+  protocolVersion: number;
   transport: RuntimeTransport;
   generation: string;
   port?: number;
@@ -118,6 +148,12 @@ type RuntimeChangeMessage = {
   topic: "dashboard" | "settings" | "enrichment";
 };
 
+type RuntimeExecutionProcessMessage = {
+  type: "execution-process";
+  generation: string;
+  processId: number;
+};
+
 type RuntimeRpcResponseMessage = {
   type: "rpc-response";
   generation: string;
@@ -135,13 +171,17 @@ type RuntimeChildMessage =
   | RuntimeOperationMessage
   | RuntimeOperationClearMessage
   | RuntimeChangeMessage
+  | RuntimeExecutionProcessMessage
   | RuntimeRpcResponseMessage
   | RuntimeFatalMessage;
 
 type RuntimeRpcRequestMessage = {
   type: "rpc";
+  protocol: typeof STATE_OWNER_PROTOCOL;
+  protocolVersion: typeof STATE_OWNER_PROTOCOL_VERSION;
   generation: string;
   requestId: string;
+  kind: ApplicationRpcKind;
   method: ApplicationRpcMethod;
   args: unknown[];
 };
@@ -173,9 +213,11 @@ export type IsolatedStdioRuntime = {
 
 /**
  * Production ingress boundary. The public HTTP and native companion listeners
- * stay in this process; every SQLite connection and the existing application
- * runtime live in one supervised child. A synchronous database stall can make
- * readiness stale, but cannot occupy the public liveness event loop.
+ * stay in this process. One supervised state-owner child holds operational
+ * SQLite authority and application orchestration; it supervises a separate
+ * SQLite-free Codex execution child. A synchronous database stall can make
+ * readiness stale, but cannot occupy the public liveness event loop or the
+ * Codex executor.
  */
 export async function createIsolatedHttpServer(
   config: BridgeConfig,
@@ -184,6 +226,8 @@ export async function createIsolatedHttpServer(
     conformanceFixtures?: boolean;
     /** Test/diagnostic hook; process identity is never exposed over MCP or HTTP. */
     onRuntimeProcessSpawn?: (processId: number) => void;
+    /** Test/diagnostic hook for the independently supervised Codex executor. */
+    onExecutionProcessSpawn?: (processId: number) => void;
     /** Test-only override for deterministic replacement-timeout coverage. */
     restartStartupTimeoutMs?: number;
   } = {}
@@ -205,6 +249,7 @@ export async function createIsolatedHttpServer(
     undefined,
     undefined,
     options.onRuntimeProcessSpawn,
+    options.onExecutionProcessSpawn,
     options.restartStartupTimeoutMs
   );
   const applicationService = runtime.applicationService();
@@ -261,8 +306,8 @@ export async function createIsolatedHttpServer(
 
 /**
  * Persistent stdio transport with the same process boundary as HTTP. The
- * parent owns the tunnel pipe and native companion sockets; the child owns
- * Codex and every SQLite connection.
+ * parent owns the tunnel pipe and native companion sockets; the state owner
+ * owns operational SQLite, while Codex execution runs in its own child.
  */
 export async function createIsolatedStdioRuntime(
   config: BridgeConfig,
@@ -272,6 +317,8 @@ export async function createIsolatedStdioRuntime(
     output?: Writable;
     /** Test/diagnostic hook; process identity is never exposed to stdio clients. */
     onRuntimeProcessSpawn?: (processId: number) => void;
+    /** Test/diagnostic hook for the independently supervised Codex executor. */
+    onExecutionProcessSpawn?: (processId: number) => void;
     /** Test-only override for deterministic replacement-timeout coverage. */
     restartStartupTimeoutMs?: number;
   } = {}
@@ -294,6 +341,7 @@ export async function createIsolatedStdioRuntime(
     input,
     output,
     options.onRuntimeProcessSpawn,
+    options.onExecutionProcessSpawn,
     options.restartStartupTimeoutMs
   );
   return {
@@ -334,6 +382,7 @@ class IsolatedRuntimeController {
     private readonly input?: Readable,
     private readonly output?: Writable,
     private readonly onRuntimeProcessSpawn?: (processId: number) => void,
+    private readonly onExecutionProcessSpawn?: (processId: number) => void,
     private readonly restartStartupTimeoutMs = STARTUP_TIMEOUT_MS
   ) {}
 
@@ -344,6 +393,7 @@ class IsolatedRuntimeController {
     input?: Readable,
     output?: Writable,
     onRuntimeProcessSpawn?: (processId: number) => void,
+    onExecutionProcessSpawn?: (processId: number) => void,
     restartStartupTimeoutMs?: number
   ): Promise<IsolatedRuntimeController> {
     const runtime = new IsolatedRuntimeController(
@@ -353,6 +403,7 @@ class IsolatedRuntimeController {
       input,
       output,
       onRuntimeProcessSpawn,
+      onExecutionProcessSpawn,
       restartStartupTimeoutMs
     );
     try {
@@ -435,12 +486,17 @@ class IsolatedRuntimeController {
     const reportedStateStatus = fresh
       ? this.lastRuntimeHealth?.stateService?.status
       : undefined;
+    const executionStatus = fresh
+      ? this.lastRuntimeHealth?.executionService?.status
+      : undefined;
     const reason = !connected
       ? "state-recovering"
       : !fresh
         ? "state-stale"
         : reportedStateStatus && reportedStateStatus !== "ready"
           ? reportedStateStatus
+          : executionStatus && executionStatus !== "idle" && executionStatus !== "ready"
+            ? `execution-${executionStatus}` as BridgeReadinessReason
           : !accepting
           ? "admission-draining"
           : this.outstanding >= MAX_PENDING_REQUESTS ||
@@ -464,7 +520,7 @@ class IsolatedRuntimeController {
       ],
       ...(this.generation ? {
         stateService: {
-          protocolVersion: 1,
+          protocolVersion: STATE_OWNER_PROTOCOL_VERSION,
           generation: this.generation,
           heartbeatAgeMs: heartbeatAgeMs ?? Number.MAX_SAFE_INTEGER,
           inFlight: this.outstanding,
@@ -508,7 +564,10 @@ class IsolatedRuntimeController {
         ...(current.stateService || {}),
         // Admission draining is an execution policy state, not evidence that
         // SQLite or the runtime response boundary is unavailable.
-        status: readiness.reason === "admission-draining" ? "ready" : readiness.reason,
+        status: stateServiceStatusForReadiness(
+          readiness.reason,
+          current.stateService?.status
+        ),
         ...(readiness.stateService ? {
           generation: readiness.stateService.generation,
           heartbeatAgeMs: readiness.stateService.heartbeatAgeMs,
@@ -713,8 +772,11 @@ class IsolatedRuntimeController {
     const requestId = randomUUID();
     const message: RuntimeRpcRequestMessage = {
       type: "rpc",
+      protocol: STATE_OWNER_PROTOCOL,
+      protocolVersion: STATE_OWNER_PROTOCOL_VERSION,
       generation: this.generation,
       requestId,
+      kind: applicationRpcKind(method),
       method,
       args
     };
@@ -793,6 +855,16 @@ class IsolatedRuntimeController {
       return;
     }
     if (value.type === "ready") {
+      if (
+        value.protocol !== STATE_OWNER_PROTOCOL ||
+        value.protocolVersion !== STATE_OWNER_PROTOCOL_VERSION
+      ) {
+        this.startupReject?.(new Error(
+          `RUNTIME_PROTOCOL_MISMATCH: Expected ${STATE_OWNER_PROTOCOL_VERSION}, ` +
+          `received ${value.protocolVersion}.`
+        ));
+        return;
+      }
       if (value.transport !== this.transport) {
         this.startupReject?.(new Error(
           `RUNTIME_TRANSPORT_MISMATCH: Expected ${this.transport}, received ${value.transport}.`
@@ -831,6 +903,10 @@ class IsolatedRuntimeController {
     }
     if (value.type === "change") {
       for (const listener of this.changeListeners) listener(value.topic);
+      return;
+    }
+    if (value.type === "execution-process") {
+      this.onExecutionProcessSpawn?.(value.processId);
       return;
     }
     if (value.type === "rpc-response") {
@@ -891,7 +967,7 @@ class IsolatedRuntimeController {
 }
 
 async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
-  if (process.platform === "darwin") process.title = "Codex MCP Bridge Runtime";
+  if (process.platform === "darwin") process.title = "Codex MCP Bridge State Owner";
   const generation = randomUUID();
   const conformanceFixtures = process.argv.includes("--conformance-fixtures");
   let activeOperation: OperationalStateOperationObservation | undefined;
@@ -940,6 +1016,12 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
     send({ type: "operation", generation, observation: activeOperation });
     if (phase === "responding") {
       lastCommitAt = Date.now();
+      telemetry?.recordRuntimeMeasurement({
+        component: "state",
+        metric: "transaction.duration",
+        durationMs: Math.max(0, lastCommitAt - operationStartedAt),
+        now: lastCommitAt
+      });
       queueMicrotask(() => {
         if (token !== observationToken || activeOperation?.access !== "write") return;
         activeOperation = undefined;
@@ -957,13 +1039,25 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
   const observeStorageFailure = (error: unknown) => {
     const classified = runtimeStorageError(error);
     if (classified) {
+      const changed = storageFault?.error !== classified;
       storageFault = { error: classified, observedAt: Date.now() };
       applicationService?.setStorageAdmissionError?.(classified);
+      if (changed) telemetry?.recordDiagnosticEvent({
+        severity: "error",
+        component: "state",
+        code: `storage.${classified}`
+      });
     }
   };
   const observeTransactionCommitted = () => {
+    const recovered = storageFault !== undefined;
     storageFault = undefined;
     applicationService?.setStorageAdmissionError?.();
+    if (recovered) telemetry?.recordDiagnosticEvent({
+      severity: "info",
+      component: "state",
+      code: "storage.recovered"
+    });
   };
   const observeSql = (sql: string) => {
     if (activeOperation?.access === "write") return;
@@ -1030,15 +1124,6 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
 
   try {
     const config = loadConfig();
-    try {
-      telemetry = await ChildProcessTelemetryService.start(config.telemetryDatabaseFile);
-    } catch (error) {
-      telemetry = new InMemoryTelemetryService();
-      process.stderr.write(
-        `Telemetry persistence unavailable; using bounded memory only: ` +
-        `${error instanceof Error ? error.message : String(error)}\n`
-      );
-    }
     store = new BridgeStateStore({
       file: config.stateDatabaseFile,
       traceSql: observeSql,
@@ -1046,14 +1131,40 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
       onTransactionCommitted: observeTransactionCommitted,
       onTransactionFailure: observeTransactionFailure
     });
+    try {
+      telemetry = await ChildProcessTelemetryService.start(
+        config.telemetryDatabaseFile,
+        { sourceStateDatabaseId: store.databaseId }
+      );
+    } catch (error) {
+      telemetry = new InMemoryTelemetryService();
+      process.stderr.write(
+        `Telemetry persistence unavailable; using bounded memory only: ` +
+        `${error instanceof Error ? error.message : String(error)}\n`
+      );
+    }
     readProjection = await ChildProcessStateReadService.start(
       config.stateDatabaseFile,
       process.env
     );
     const appServerLateResponses = new AppServerLateResponseJournal(store);
-    upstream = createExecutionRuntime(config, {
-      onLateResponse: response => appServerLateResponses.observe(response)
-    });
+    upstream = createExecutionRuntime(
+      config,
+      { onLateResponse: response => appServerLateResponses.observe(response) },
+      process.env,
+      {
+        isolateCodexExecution: true,
+        onExecutionProcessSpawn: processId => send({
+          type: "execution-process",
+          generation,
+          processId
+        })
+      }
+    );
+    const canAcceptExecution = () => {
+      const status = upstream?.executionHealth?.().status;
+      return status === undefined || status === "idle" || status === "ready";
+    };
     if (transport === "http") {
       httpServer = createHttpServer(config, upstream, undefined, {
         stateStore: store,
@@ -1061,7 +1172,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         readProjection,
         healthDiagnostics: () => ({ appServerLateResponses: appServerLateResponses.status() }),
         conformanceFixtures,
-        onOperationFailure: observeStorageFailure
+        onOperationFailure: observeStorageFailure,
+        canAcceptNewJobs: canAcceptExecution
       });
       await new Promise<void>((resolve, reject) => {
         httpServer?.once("error", reject);
@@ -1076,7 +1188,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         stateStore: store,
         telemetry,
         readProjection,
-        onOperationFailure: observeStorageFailure
+        onOperationFailure: observeStorageFailure,
+        canAcceptNewJobs: canAcceptExecution
       });
       await stdioRuntime.start();
       applicationService = stdioRuntime.applicationService;
@@ -1099,9 +1212,11 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
       const operational = applicationService?.runtimeHealth?.() || emptyRuntimeHealth();
       const read = readProjection?.health();
       const diagnostic = telemetry?.status();
+      const execution = upstream?.executionHealth?.();
+      const executionAccepting = canAcceptExecution();
       return {
         ...operational,
-        acceptingNewJobs: operational.acceptingNewJobs && !storageFault,
+        acceptingNewJobs: operational.acceptingNewJobs && !storageFault && executionAccepting,
         ...(storageFault ? {
           stateService: {
             status: storageFault.error === "busy" ? "state-capacity" : "state-recovering",
@@ -1138,11 +1253,24 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
               ? { lastPersistedAt: diagnostic.lastPersistedAt }
               : {})
           }
+        } : {}),
+        ...(execution ? {
+          executionService: {
+            status: execution.status,
+            ...(execution.generation ? { generation: execution.generation } : {}),
+            ...(execution.heartbeatAgeMs !== undefined
+              ? { heartbeatAgeMs: execution.heartbeatAgeMs }
+              : {}),
+            inFlight: execution.inFlight,
+            capacity: execution.capacity
+          }
         } : {})
       };
     };
     send({
       type: "ready",
+      protocol: STATE_OWNER_PROTOCOL,
+      protocolVersion: STATE_OWNER_PROTOCOL_VERSION,
       transport,
       generation,
       ...(address ? { port: address.port } : {}),
@@ -1243,6 +1371,22 @@ function emptyRuntimeHealth(): BridgeRuntimeAdmissionSnapshot {
   };
 }
 
+function stateServiceStatusForReadiness(
+  reason: BridgeReadinessReason,
+  current?: RuntimeStateServiceStatus
+): RuntimeStateServiceStatus {
+  switch (reason) {
+    case "admission-draining":
+    case "execution-starting":
+    case "execution-stale":
+    case "execution-recovering":
+    case "execution-capacity":
+      return current || "ready";
+    default:
+      return reason;
+  }
+}
+
 function runtimeErrorCode(error: unknown): string {
   const stateCode = operationalStateErrorCode(error);
   if (stateCode !== "STATE_COMMAND_FAILED") return stateCode;
@@ -1268,7 +1412,9 @@ function isRuntimeChildMessage(value: unknown): value is RuntimeChildMessage {
     const transport = message.transport === "http" || message.transport === "stdio"
       ? message.transport
       : undefined;
-    return transport !== undefined && typeof message.generation === "string" &&
+    return message.protocol === STATE_OWNER_PROTOCOL &&
+      Number.isSafeInteger(message.protocolVersion) &&
+      transport !== undefined && typeof message.generation === "string" &&
       (transport === "stdio" || Number.isInteger(message.port) && Number(message.port) > 0) &&
       Number.isSafeInteger(message.heartbeatAt) && isRuntimeHealth(message.runtimeHealth);
   }
@@ -1284,6 +1430,10 @@ function isRuntimeChildMessage(value: unknown): value is RuntimeChildMessage {
     return typeof message.generation === "string" &&
       ["dashboard", "settings", "enrichment"].includes(String(message.topic));
   }
+  if (message.type === "execution-process") {
+    return typeof message.generation === "string" &&
+      Number.isSafeInteger(message.processId) && Number(message.processId) > 0;
+  }
   if (message.type === "rpc-response") {
     return typeof message.generation === "string" &&
       typeof message.requestId === "string" && typeof message.ok === "boolean";
@@ -1296,12 +1446,21 @@ function isRuntimeParentMessage(value: unknown): value is RuntimeParentMessage {
   const message = value as Record<string, unknown>;
   if (message.type === "close") return true;
   return message.type === "rpc" &&
+    message.protocol === STATE_OWNER_PROTOCOL &&
+    message.protocolVersion === STATE_OWNER_PROTOCOL_VERSION &&
     typeof message.generation === "string" &&
     typeof message.requestId === "string" &&
     typeof message.method === "string" &&
     APPLICATION_RPC_METHODS.includes(message.method as ApplicationRpcMethod) &&
+    message.kind === applicationRpcKind(message.method as ApplicationRpcMethod) &&
     Array.isArray(message.args) &&
     Buffer.byteLength(JSON.stringify(message), "utf8") <= MAX_RPC_BYTES;
+}
+
+function applicationRpcKind(method: ApplicationRpcMethod): ApplicationRpcKind {
+  if (APPLICATION_QUERY_METHODS.has(method)) return "query";
+  if (APPLICATION_CONTROL_METHODS.has(method)) return "control";
+  return "command";
 }
 
 function isRuntimeHealth(value: unknown): value is BridgeRuntimeAdmissionSnapshot {

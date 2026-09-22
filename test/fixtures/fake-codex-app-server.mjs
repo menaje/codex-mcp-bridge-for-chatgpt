@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import "./app-server-schema-fixture.mjs";
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import readline from "node:readline";
 import { threadPolicyResponse, assertTurnPolicy } from "./app-server-policy-fixture.mjs";
 
@@ -13,6 +13,17 @@ if (process.argv.includes("--version")) {
 
 if (process.env.CODEX_TEST_APP_SERVER_CWD_OBSERVATION) {
   writeFileSync(process.env.CODEX_TEST_APP_SERVER_CWD_OBSERVATION, process.cwd());
+}
+if (process.env.CODEX_TEST_APP_SERVER_ENV_OBSERVATION) {
+  writeFileSync(process.env.CODEX_TEST_APP_SERVER_ENV_OBSERVATION, JSON.stringify({
+    stateDatabaseFile: process.env.CODEX_MCP_BRIDGE_STATE_DATABASE_FILE || null,
+    telemetryDatabaseFile: process.env.CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE || null,
+    bridgeToken: process.env.CODEX_MCP_BRIDGE_TOKEN || null,
+    runtimeHome: process.env.CODEX_MCP_BRIDGE_RUNTIME_HOME || null,
+    environmentFile: process.env.CODEX_MCP_BRIDGE_ENV_FILE || null,
+    allowedRoots: process.env.CODEX_MCP_BRIDGE_ROOTS || null,
+    codexHome: process.env.CODEX_HOME || null
+  }));
 }
 
 const lines = readline.createInterface({ input: process.stdin });
@@ -631,6 +642,17 @@ function beginTurn(context) {
     requestCommand(context);
     return;
   }
+  if (prompt.includes("execution progress flood")) {
+    for (let index = 0; index < 2_000; index += 1) {
+      notification("turn/plan/updated", {
+        threadId,
+        turnId,
+        plan: [{ step: `Flood progress ${index}`, status: "inProgress" }]
+      });
+    }
+    finishTurn(context, "completed", "EXECUTION PROGRESS FLOOD COMPLETE");
+    return;
+  }
   if (prompt.includes("auto resolve input")) {
     requestAutoResolvedInput(context);
     return;
@@ -649,6 +671,10 @@ function beginTurn(context) {
       cpuPercent: 1.5,
       rssKb: 2048
     }]);
+  }
+  if (prompt.includes("delayed isolated completion")) {
+    setTimeout(() => finishTurn(context, "completed", "ISOLATED COMPLETION"), 100);
+    return;
   }
   if (prompt.includes("hold")) return;
   if (prompt.includes("report interrupt count")) {
@@ -830,6 +856,9 @@ function requestLocallyExpiredInput(context) {
 
 function finishTurn(context, status, text, error = null) {
   if (!activeTurns.delete(context.turnId)) return;
+  if (process.env.CODEX_TEST_TURN_COMPLETION_LOG) {
+    appendFileSync(process.env.CODEX_TEST_TURN_COMPLETION_LOG, `${Date.now()}\n`);
+  }
   if (context.prompt.includes("mark thread system error")) {
     systemErrorThreads.add(context.threadId);
   }

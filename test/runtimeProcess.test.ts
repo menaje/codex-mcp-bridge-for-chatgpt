@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -37,13 +38,15 @@ async function start(
   onRuntimeProcessSpawn?: (processId: number) => void,
   restartStartupTimeoutMs?: number,
   environmentOverrides: NodeJS.ProcessEnv = {},
-  conformanceFixtures = false
+  conformanceFixtures = false,
+  onExecutionProcessSpawn?: (processId: number) => void
 ): Promise<RunningRuntime> {
   const root = await mkdtemp(path.join(tmpdir(), "bridge-runtime-process-"));
   const environment = { ...runtimeEnvironment(root), ...environmentOverrides };
   const server = await createIsolatedHttpServer(loadConfig(environment), {
     childEnvironment: environment,
     onRuntimeProcessSpawn,
+    onExecutionProcessSpawn,
     restartStartupTimeoutMs,
     conformanceFixtures
   });
@@ -266,18 +269,123 @@ async function expectTaskStorageUnavailable(
 }
 
 describe("isolated production runtime", () => {
+  it("supervises Codex execution separately from the operational state owner", async () => {
+    const stateProcessIds: number[] = [];
+    const executionProcessIds: number[] = [];
+    const runtime = await start(
+      processId => stateProcessIds.push(processId),
+      undefined,
+      {
+        CODEX_MCP_BRIDGE_CODEX: path.join(
+          process.cwd(),
+          "test/fixtures/fake-codex-app-server.mjs"
+        )
+      },
+      false,
+      processId => executionProcessIds.push(processId)
+    );
+
+    await expect(runtime.server.applicationService.dashboardSnapshot({
+      inspectRuntime: true
+    })).resolves.toMatchObject({ codexAccount: expect.any(Object) });
+    await waitForRuntimeHealth(
+      runtime.server.applicationService,
+      "ready",
+      8_000,
+      () => executionProcessIds.length === 1 &&
+        runtime.server.applicationService.runtimeHealth?.().executionService?.status === "ready"
+    );
+    expect(stateProcessIds).toHaveLength(1);
+    expect(executionProcessIds[0]).not.toBe(stateProcessIds[0]);
+    expect(execFileSync("ps", ["-p", String(executionProcessIds[0]), "-o", "command="], {
+      encoding: "utf8"
+    })).toContain("Codex MCP Bridge Execution");
+
+    const taskClient = await connectTaskClient(runtime.baseUrl);
+    let executionStopped = false;
+    try {
+      process.kill(executionProcessIds[0]!, "SIGSTOP");
+      executionStopped = true;
+      await waitForRuntimeHealth(
+        runtime.server.applicationService,
+        "ready",
+        8_000,
+        () => runtime.server.applicationService.runtimeHealth?.().executionService?.status ===
+          "stale"
+      );
+      const unavailable = await fetch(`${runtime.baseUrl}/readyz`);
+      expect(unavailable.status).toBe(503);
+      await expect(unavailable.json()).resolves.toMatchObject({
+        reason: "execution-stale",
+        limitations: ["execution-stale"]
+      });
+      await expect(runtime.server.applicationService.runtimeSnapshot()).resolves.toMatchObject({
+        acceptingNewJobs: false
+      });
+      expect(runtime.server.applicationService.runtimeHealth?.()).toMatchObject({
+        stateService: { status: "ready" },
+        executionService: { status: "stale" }
+      });
+      const blocked = await taskClient.client.callTool({
+        name: "codex_task",
+        arguments: taskClient.taskArguments()
+      });
+      expect(blocked.isError).toBe(true);
+      expect(blocked.structuredContent).toMatchObject({
+        jobId: null,
+        error: { code: "EXECUTION_UNAVAILABLE", retryable: true }
+      });
+      const inspection = new Database(path.join(runtime.root, "state.sqlite"), {
+        readonly: true
+      });
+      try {
+        expect(inspection.prepare("SELECT COUNT(*) AS count FROM jobs").get())
+          .toEqual({ count: 0 });
+      } finally {
+        inspection.close();
+      }
+    } finally {
+      if (executionStopped) process.kill(executionProcessIds[0]!, "SIGCONT");
+      await taskClient.client.close();
+    }
+    await waitForRuntimeHealth(
+      runtime.server.applicationService,
+      "ready",
+      8_000,
+      () => runtime.server.applicationService.runtimeHealth?.().executionService?.status === "ready"
+    );
+
+    process.kill(executionProcessIds[0]!, "SIGKILL");
+    await waitForRuntimeHealth(
+      runtime.server.applicationService,
+      "ready",
+      12_000,
+      () => executionProcessIds.length >= 2 &&
+        runtime.server.applicationService.runtimeHealth?.().executionService?.status === "ready"
+    );
+    expect(stateProcessIds).toHaveLength(1);
+    await expect(runtime.server.applicationService.runtimeSnapshot()).resolves.toMatchObject({
+      acceptingNewJobs: true
+    });
+    expect(runtime.server.applicationService.runtimeHealth?.()).toMatchObject({
+      stateService: { status: "ready" },
+      executionService: { status: "ready" }
+    });
+    expect(await fetch(`${runtime.baseUrl}/healthz`).then(response => response.status)).toBe(200);
+  }, 25_000);
+
   it("keeps liveness responsive, reports a blocked write, and recovers after the DB lock", async () => {
     const runtime = await start();
     const initialReady = await fetch(`${runtime.baseUrl}/readyz`);
     expect(initialReady.status).toBe(200);
     await expect(runtime.server.applicationService.dashboardSnapshot({
-      inspectRuntime: true
+      inspectRuntime: false
     })).resolves.toMatchObject({
       statusRows: expect.any(Array),
-      enrichment: { state: "enriched" }
+      enrichment: { state: "structural" }
     });
     expect(runtime.server.applicationService.runtimeHealth?.()).toMatchObject({
-      readService: { status: "ready", lastSnapshotAt: expect.any(Number) }
+      readService: { status: "ready" }
     });
     await runtime.server.applicationService.beginDrain();
     const drainDeadline = Date.now() + 2_000;

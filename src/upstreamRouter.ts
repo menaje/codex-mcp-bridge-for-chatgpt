@@ -26,6 +26,7 @@ const INTERNAL_BACKEND_ARGUMENT = "_bridgeBackendKind";
 /** Routes App Server execution while preserving retired backend identities in history. */
 export class CodexBackendRouter implements CodexUpstream {
   accountRevision?: () => string;
+  executionHealth?: () => import("./executionServiceProcess.js").CodexExecutionServiceHealth;
   private readonly threadBackends = new Map<string, CodexBackendKind>();
   private readonly workerBackends = new Map<string, CodexBackendKind>();
   private readonly backends: ReadonlyMap<CodexBackendKind, CodexUpstream>;

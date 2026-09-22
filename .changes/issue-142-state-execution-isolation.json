@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Separate Codex execution, operational state, read projections, and diagnostic persistence into independently supervised processes with bounded recovery.",
+  "breaking": false,
+  "migration": null
+}

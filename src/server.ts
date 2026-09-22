@@ -42,6 +42,10 @@ export const BRIDGE_READINESS_REASONS = [
   "state-recovering",
   "state-incompatible",
   "state-capacity",
+  "execution-starting",
+  "execution-stale",
+  "execution-recovering",
+  "execution-capacity",
   "admission-draining"
 ] as const;
 
@@ -96,6 +100,8 @@ export type BridgeHttpRuntimeOptions = {
   readiness?: () => BridgeReadinessSnapshot;
   /** Observe an application failure without changing its protocol result. */
   onOperationFailure?: (error: unknown) => void;
+  /** Dynamic execution-boundary admission; false rejects before a Job exists. */
+  canAcceptNewJobs?: () => boolean;
   /**
    * Opt-in protocol-suite fixtures. These are never enabled by normal bridge
    * startup and exist solely to exercise SDK paths that the product does not
@@ -126,7 +132,8 @@ export function createBridgeMcpServer(
   skillLibrary?: SkillLibrary,
   readProjection?: BridgeReadProjectionService,
   onOperationFailure?: (error: unknown) => void,
-  conformanceFixtures = false
+  conformanceFixtures = false,
+  canAcceptNewJobs?: () => boolean
 ): BridgeMcpServer {
   // A directly constructed server has the same single-store admission boundary
   // as an HTTP runtime. HTTP handlers share their explicitly composed store.
@@ -214,7 +221,7 @@ export function createBridgeMcpServer(
     cardPerformance,
     effectiveSkillLibrary,
     readProjection,
-    { onOperationFailure, conformanceFixtures }
+    { onOperationFailure, conformanceFixtures, canAcceptNewJobs }
   );
   Object.defineProperty(server, "applicationService", {
     configurable: false,
@@ -290,7 +297,8 @@ export function createHttpServer(
       skillLibrary,
       runtimeOptions.readProjection,
       runtimeOptions.onOperationFailure,
-      runtimeOptions.conformanceFixtures === true
+      runtimeOptions.conformanceFixtures === true,
+      runtimeOptions.canAcceptNewJobs
     );
     if (runtimeOptions.conformanceFixtures) {
       registerMcpConformanceFixtures(server, () => notifyToolsChanged());

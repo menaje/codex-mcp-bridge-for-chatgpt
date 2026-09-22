@@ -454,13 +454,19 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     const connection = worker.connection;
     if (!connection || connection.exited || this.closing) return { phase: "blocked", reason: "connection-changed" };
     if (!this.capabilities().supportsThreadUnsubscribe) return { phase: "blocked", reason: "unsupported" };
+    const canRelease = async (id: string): Promise<boolean> =>
+      Boolean(await options.canRelease(id));
+    const allCanRelease = async (ids: readonly string[]): Promise<boolean> => {
+      for (const id of ids) if (!(await canRelease(id))) return false;
+      return true;
+    };
     let unlock!: () => void;
     const maintenance = worker.maintenance = new Promise<void>(resolve => { unlock = resolve; });
     try {
-      if (!options.canRelease(threadId)) return { phase: "blocked", reason: "active-work" };
+      if (!(await canRelease(threadId))) return { phase: "blocked", reason: "active-work" };
       const safety = await connection.releaseSafety(threadId);
       if (!safety.safe) return { phase: "blocked", reason: safety.reason };
-      if (!options.canRelease(threadId)) return { phase: "blocked", reason: "active-work" };
+      if (!(await canRelease(threadId))) return { phase: "blocked", reason: "active-work" };
       this.detachedThreads.add(threadId);
       const acknowledgement = await connection.unsubscribeThread(threadId);
       if (acknowledgement === "notLoaded") {
@@ -474,17 +480,19 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       }
       // Retire only a completely eligible worker. An unknown child thread,
       // pending request, ephemeral context or another admission prevents it.
-      if (worker.activeCalls === 0 && loaded.every(id => options.eligibleThreadIds.includes(id) && options.canRelease(id))) {
+      if (worker.activeCalls === 0 &&
+          loaded.every(id => options.eligibleThreadIds.includes(id)) &&
+          await allCanRelease(loaded)) {
         for (const id of loaded) {
           if (!(await connection.releaseSafety(id)).safe) return { phase: "unsubscribed", reason: "shared-worker-protected" };
         }
-        if (worker.activeCalls === 0 && loaded.every(options.canRelease)) {
+        if (worker.activeCalls === 0 && await allCanRelease(loaded)) {
           for (const id of loaded) {
-            if (!options.canRelease(id) || worker.activeCalls > 0) return { phase: "unsubscribed", reason: "shared-worker-protected" };
+            if (!(await canRelease(id)) || worker.activeCalls > 0) return { phase: "unsubscribed", reason: "shared-worker-protected" };
             await connection.unsubscribeThread(id);
             this.detachedThreads.add(id);
           }
-          if (worker.activeCalls === 0 && loaded.every(options.canRelease)) {
+          if (worker.activeCalls === 0 && await allCanRelease(loaded)) {
             await connection.close();
             if (connection.exited) {
               for (const id of loaded) this.releaseEvidence.set(id, "worker-exited");

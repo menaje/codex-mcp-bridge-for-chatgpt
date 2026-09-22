@@ -39,11 +39,21 @@ export class CodexService {
   private accounts = new Map<CodexBackendKind, { revision: string; expires: number; request: Promise<CodexAccountSnapshot | null> }>();
   private displayedAccounts = new Map<CodexBackendKind, { revision: string; value: CodexAccountSnapshot }>();
   private accountFailures = new Map<CodexBackendKind, { revision: string; error: unknown }>();
+  private accountReader?: () => Promise<CodexAccountSnapshot | null>;
   constructor(readonly environment: NodeJS.ProcessEnv = process.env, cli?: CodexRuntimeManager) {
     this.cli = cli || new CodexRuntimeManager({ environment });
     this.billing = new CodexBilling(this.cli.root);
   }
   setVisibilityProvider(provider: () => boolean): void { this.visibility = provider; this.setAppVisibility(provider()); }
+  /**
+   * Production can place App Server account I/O in the isolated execution
+   * process while retaining this class as the cache and policy authority.
+   */
+  setAccountReader(reader: () => Promise<CodexAccountSnapshot | null>): void {
+    this.accountReader = reader;
+    this.accounts.clear();
+    this.accountFailures.clear();
+  }
   setAppVisibility(visible: boolean): void {
     const saved = this.readRecord("policy", "visibility");
     if (saved?.visible !== visible) this.writeRecord("policy", "visibility", { visible });
@@ -156,6 +166,11 @@ export class CodexService {
     return { ...account, billing: { ...account.billing, costsAvailable: costs.status === "available", actualCosts: costs } };
   }
   async readCliAccount(): Promise<CodexAccountSnapshot> {
+    if (this.accountReader) {
+      const account = await this.accountReader();
+      if (!account) throw new Error("CODEX_ACCOUNT_UNAVAILABLE: Codex account information is unavailable.");
+      return account;
+    }
     const { selection, release } = await this.cli.acquire();
     const rpc = new JsonRpcProcess({ command: selection.command, args: ["app-server", "--listen", "stdio://"],
       env: this.environment, cwd: stableCodexWorkingDirectory(this.environment),

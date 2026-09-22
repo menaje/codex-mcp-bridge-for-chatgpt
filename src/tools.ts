@@ -4593,6 +4593,7 @@ export function registerBridgeTools(
   runtimeOptions: {
     onOperationFailure?: (error: unknown) => void;
     conformanceFixtures?: boolean;
+    canAcceptNewJobs?: () => boolean;
   } = {}
 ): {
   applicationService: BridgeApplicationService;
@@ -4619,8 +4620,10 @@ export function registerBridgeTools(
     developerModeRefreshRequired: false
   });
   const runtimeAdmission = jobs.runtimeAdmission;
+  const executionAcceptingNewJobs = () => runtimeOptions.canAcceptNewJobs?.() !== false;
   const acceptingNewJobs = () =>
-    runtimeAdmission.acceptingNewJobs && runtimeAdmission.storageError === undefined;
+    runtimeAdmission.acceptingNewJobs && runtimeAdmission.storageError === undefined &&
+    executionAcceptingNewJobs();
   let testTaskReadStorageError =
     runtimeOptions.conformanceFixtures && process.env.NODE_ENV === "test" &&
       /^SQLITE_[A-Z0-9_]+$/u.test(
@@ -4668,6 +4671,12 @@ export function registerBridgeTools(
       throw new Error(
         "BRIDGE_DRAINING: The app is preparing to stop or restart the bridge. " +
         "No new Codex work is being admitted; retry after the runtime is available."
+      );
+    }
+    if (!executionAcceptingNewJobs()) {
+      throw new Error(
+        "EXECUTION_UNAVAILABLE: The isolated Codex execution service is not ready. " +
+        "No Job was created; retry after execution readiness recovers."
       );
     }
     runtimeAdmission.pendingAdmissions += 1;
@@ -10520,6 +10529,14 @@ export type BridgeRuntimeAdmissionSnapshot = {
     failed: number;
     lastPersistedAt?: number;
   };
+  /** Codex work executor; it has no SQLite connection or state authority. */
+  executionService?: {
+    status: "idle" | "starting" | "ready" | "stale" | "recovering" | "capacity";
+    generation?: string;
+    heartbeatAgeMs?: number;
+    inFlight: number;
+    capacity: number;
+  };
   /** Bounded project-fair persistence for disposable progress projections. */
   progressPersistence?: ProgressPersistenceStatus;
 };
@@ -15398,7 +15415,8 @@ function errorFromException(error: unknown): z.infer<typeof structuredErrorOutpu
     code,
     message: codeMatch ? rawMessage.slice(codeMatch[0].length) : rawMessage,
     ...(
-      code === "JOB_RETENTION_CAPACITY" || code === "STATE_STORAGE_UNAVAILABLE"
+      code === "JOB_RETENTION_CAPACITY" || code === "STATE_STORAGE_UNAVAILABLE" ||
+      code === "EXECUTION_UNAVAILABLE"
         ? { retryable: true }
         : {}
     )
