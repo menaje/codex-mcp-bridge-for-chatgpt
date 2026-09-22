@@ -4704,6 +4704,39 @@ export function registerBridgeTools(
     return revision === service.cacheRevision() ? result
       : { pending: false as const, value: { value: null, failed: false } };
   };
+  type AccountDisplayRead = Awaited<ReturnType<typeof readAccountForDisplay>>;
+  const projectAccountForDisplay = (
+    view: DashboardView,
+    account?: AccountDisplayRead
+  ): void => {
+    const service = config.codexService;
+    if (!service) return;
+    view.codexAccount = service.cachedAccount(config.defaultBackend);
+    if (account) {
+      if (account.pending) {
+        view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + 1;
+      } else {
+        view.codexAccount = account.value.value ||
+          service.cachedAccount(config.defaultBackend);
+        if (account.value.failed) view.enrichment.usageUnavailable = true;
+      }
+    } else {
+      const revision = service.cacheRevision();
+      view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) +
+        accountDisplayReads.observePending(key => key === revision);
+      if (accountCompletion?.revision === revision && accountCompletion.failed) {
+        view.enrichment.usageUnavailable = true;
+      }
+    }
+    if (view.codexAccount?.authMode === "api-key") view.weeklyUsage = null;
+    const accountObservedAt = view.codexAccount?.observedAt;
+    if (typeof accountObservedAt === "number") {
+      view.enrichment.oldestObservationAt = [
+        view.enrichment.oldestObservationAt,
+        new Date(accountObservedAt).toISOString()
+      ].filter((date): date is string => Boolean(date)).sort()[0];
+    }
+  };
   const historyTarget = (rowKey: string) => {
     const agent = listAllDashboardAgents(jobs).find(candidate => dashboardRowKey(candidate.agentId) === rowKey);
     if (!agent) throw new Error("HISTORY_TARGET_CHANGED: Refresh the selected execution.");
@@ -4943,28 +4976,7 @@ export function registerBridgeTools(
         options.problems,
         options.includeHistory !== false
       );
-      if (config.codexService) {
-        const service = config.codexService;
-        view.codexAccount = service.cachedAccount(config.defaultBackend);
-        if (accountRead) {
-          const account = await accountRead;
-          view.codexAccount = (!account.pending && account.value.value) || service.cachedAccount(config.defaultBackend);
-          if (account.pending) view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + 1;
-          if (!account.pending && account.value.failed) view.enrichment.usageUnavailable = true;
-        } else {
-          const revision = service.cacheRevision();
-          view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + accountDisplayReads.observePending(key => key === revision);
-          if (accountCompletion?.revision === revision && accountCompletion.failed) {
-            view.enrichment.usageUnavailable = true;
-          }
-        }
-        if (view.codexAccount?.authMode === "api-key") view.weeklyUsage = null;
-        const accountObservedAt = view.codexAccount?.observedAt;
-        if (typeof accountObservedAt === "number") {
-          view.enrichment.oldestObservationAt = [view.enrichment.oldestObservationAt,
-            new Date(accountObservedAt).toISOString()].filter((date): date is string => !!date).sort()[0];
-        }
-      }
+      projectAccountForDisplay(view, accountRead ? await accountRead : undefined);
       const stage = view.enrichment.state === "enriched"
         ? "dashboard.enriched.total"
         : "dashboard.structural.db-projection";
@@ -5120,7 +5132,11 @@ export function registerBridgeTools(
   };
   if (readProjection) {
     applicationService.dashboardSnapshot = async (options = {}) => {
-      if (!options.inspectRuntime) return readProjection.dashboardSnapshot(options);
+      if (!options.inspectRuntime) {
+        const view = await readProjection.dashboardSnapshot(options);
+        projectAccountForDisplay(view);
+        return view;
+      }
       const accountRead = config.codexService
         ? readAccountForDisplay().catch(() => ({
             pending: false as const,
@@ -5133,27 +5149,7 @@ export function registerBridgeTools(
         options,
         projectedEnrichment
       );
-      if (config.codexService) {
-        const service = config.codexService;
-        view.codexAccount = service.cachedAccount(config.defaultBackend);
-        if (accountRead) {
-          const account = await accountRead;
-          view.codexAccount = (!account.pending && account.value.value) ||
-            service.cachedAccount(config.defaultBackend);
-          if (account.pending) {
-            view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + 1;
-          }
-          if (!account.pending && account.value.failed) view.enrichment.usageUnavailable = true;
-        }
-        if (view.codexAccount?.authMode === "api-key") view.weeklyUsage = null;
-        const accountObservedAt = view.codexAccount?.observedAt;
-        if (typeof accountObservedAt === "number") {
-          view.enrichment.oldestObservationAt = [
-            view.enrichment.oldestObservationAt,
-            new Date(accountObservedAt).toISOString()
-          ].filter((date): date is string => Boolean(date)).sort()[0];
-        }
-      }
+      projectAccountForDisplay(view, accountRead ? await accountRead : undefined);
       return view;
     };
     applicationService.dashboardHistoryDetail = options =>
