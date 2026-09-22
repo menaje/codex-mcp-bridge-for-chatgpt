@@ -300,12 +300,16 @@ Each child uses bounded exponential restart. A read, telemetry or Codex
 execution child crash does not restart ingress or the operational state owner.
 An execution crash rejects active turns as `CODEX_WORKER_LOST`; the durable Job
 becomes interrupted/worker-lost and enters the existing reconciliation path,
-never completed or cancelled by inference. Every App Server process group is
-registered with and acknowledged by the state owner before protocol
-initialization or user work. If the executor exits, the state owner terminates
-all registered groups (including descendant commands) and confirms their exit
-before starting a replacement execution generation. New Job admission stays
-closed throughout cleanup and restart.
+never completed or cancelled by inference. Every App Server root is registered
+with and acknowledged by the state owner before protocol initialization or user
+work. The executor and state owner then retain a bounded PID/PPID/PGID ledger of
+the live worker tree, including descendants that create a separate process
+group. Observing the App Server root exit starts cleanup; it does not remove the
+ledger. The state owner terminates and verifies every captured group, returns a
+cleanup acknowledgement, and only then permits another App Server or execution
+generation. New Job admission stays closed throughout cleanup and restart. If
+tree observation itself becomes unavailable, the executor fails closed instead
+of weakening this guarantee.
 
 A state-owner crash makes new mutations fail closed while ingress `/healthz`
 remains live. Because the state owner is the lifecycle supervisor for its three
@@ -451,6 +455,10 @@ actual installed app/runtime combination:
   or event mixing;
 - installed native lifecycle, Tunnel interruption and card remount with
   authoritative state convergence and no inferred failure/cancellation.
+- App Server-first exit while a same-group command remains, with admission and
+  replacement fenced until that command is verified gone;
+- executor loss while a long-running command owns a separate Unix process
+  group, with both groups verified gone before executor replacement.
 
 Record p50, p95, p99, maximum stall, queue bytes/depth, worker generation,
 database identity, build, load shape and fault timing. Passing unit tests or

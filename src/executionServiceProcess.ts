@@ -25,21 +25,28 @@ import type {
 } from "./upstream.js";
 import type { ThreadReleaseOptions, ThreadReleaseResult } from "./threadConnections.js";
 import {
-  terminateJsonRpcProcessIdentity,
   type JsonRpcProcessIdentity,
   type JsonRpcTerminationResult
 } from "./jsonRpcProcess.js";
 import type { WorkerTerminationCorrelation } from "./cancellation.js";
+import {
+  SupervisedProcessTreeRegistry,
+  supervisedProcessKey,
+  type SupervisedProcessIdentity,
+  type SupervisedProcessTreeSnapshot
+} from "./processTreeSupervisor.js";
 
 const CHILD_FLAG = "--codex-execution-child";
 const PROTOCOL = "bridge-codex-execution" as const;
-const PROTOCOL_VERSION = 2 as const;
+const PROTOCOL_VERSION = 3 as const;
 const HEARTBEAT_MS = 250;
 const HEARTBEAT_STALE_MS = 2_000;
 const STALE_RESTART_MS = 10_000;
 const STARTUP_TIMEOUT_MS = 20_000;
 const FORCE_CLOSE_MS = 5_000;
 const WORKER_REGISTRATION_TIMEOUT_MS = 5_000;
+const WORKER_CLEANUP_TIMEOUT_MS = 10_000;
+const WORKER_TREE_OBSERVATION_MS = 250;
 const ORPHAN_CLEANUP_GRACE_MS = 1_500;
 const RESTART_BASE_DELAY_MS = 250;
 const RESTART_MAX_DELAY_MS = 10_000;
@@ -157,12 +164,20 @@ type WorkerRegistrationAckMessage = {
   registrationId: string;
 };
 
+type WorkerCleanupAckMessage = {
+  type: "worker-cleanup-ack";
+  generation: string;
+  cleanupId: string;
+  ok: boolean;
+};
+
 type CloseMessage = { type: "close" };
 type ParentMessage =
   | RequestMessage
   | ProtectMessage
   | ReleaseCheckResponseMessage
   | WorkerRegistrationAckMessage
+  | WorkerCleanupAckMessage
   | CloseMessage;
 
 type ReadyMessage = {
@@ -232,7 +247,21 @@ type WorkerStartedMessage = {
 type WorkerExitedMessage = {
   type: "worker-exited";
   generation: string;
+  cleanupId: string;
   identity: JsonRpcProcessIdentity;
+};
+
+type WorkerCleanupStartedMessage = {
+  type: "worker-cleanup-started";
+  generation: string;
+  cleanupId: string;
+  identity: JsonRpcProcessIdentity;
+};
+
+type WorkerObservedMessage = {
+  type: "worker-observed";
+  generation: string;
+  trees: SupervisedProcessTreeSnapshot[];
 };
 
 type FatalMessage = { type: "fatal"; message: string };
@@ -245,6 +274,8 @@ type ChildMessage =
   | LateResponseMessage
   | ReleaseCheckMessage
   | WorkerStartedMessage
+  | WorkerObservedMessage
+  | WorkerCleanupStartedMessage
   | WorkerExitedMessage
   | FatalMessage;
 
@@ -275,6 +306,8 @@ export type CodexExecutionServiceHealth = {
   ordinaryBytesInFlight?: number;
   ordinaryByteCapacity?: number;
   processId?: number;
+  supervisedWorkers?: number;
+  supervisedProcesses?: number;
 };
 
 export type ChildProcessCodexExecutionServiceOptions = {
@@ -304,7 +337,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   private ordinaryPending = 0;
   private ordinaryPendingBytes = 0;
   private readonly protectedThreads = new Set<string>();
-  private readonly workerProcesses = new Map<string, JsonRpcProcessIdentity>();
+  private readonly workerProcesses = new SupervisedProcessTreeRegistry();
   private readonly resumableThreads = new Map<string, boolean>();
   private readonly activeThreads = new Set<string>();
   private readonly interactionInputs = new Map<string, CodexInteractionInput>();
@@ -313,10 +346,13 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   private restartAttempts = 0;
   private restartTimer?: NodeJS.Timeout;
   private workerCleanupTimer?: NodeJS.Timeout;
+  private workerObservationTimer?: NodeJS.Timeout;
   private stableTimer?: NodeJS.Timeout;
   private staleTimer?: NodeJS.Timeout;
   private closePromise?: Promise<void>;
   private workerCleanupPromise: Promise<boolean> = Promise.resolve(true);
+  private workerObservationInFlight = false;
+  private readonly workerCleanupsInFlight = new Set<string>();
   private stderr = "";
   private readonly requestLimits: CodexExecutionRequestLimits;
 
@@ -489,6 +525,8 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       : Math.max(0, now - this.lastHeartbeatAt);
     const status = !connected
       ? this.starting ? "starting" : "recovering"
+      : this.workerCleanupsInFlight.size > 0
+        ? "recovering"
         : heartbeatAgeMs === undefined || heartbeatAgeMs > HEARTBEAT_STALE_MS
         ? "stale"
         : this.pending.size >= this.requestLimits.maxPendingRequests ||
@@ -515,6 +553,8 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       ordinaryByteCapacity:
         this.requestLimits.maxBytesInFlight -
           this.requestLimits.controlRequestBytesReserve,
+      supervisedWorkers: this.workerProcesses.size,
+      supervisedProcesses: this.workerProcesses.capturedProcessCount,
       ...(this.child?.pid !== undefined ? { processId: this.child.pid } : {})
     };
   }
@@ -752,19 +792,19 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       return;
     }
     if (message.type === "worker-started") {
-      const child = this.child;
-      const generation = this.generation;
-      if (!child?.connected || !generation) return;
-      this.workerProcesses.set(processIdentityKey(message.identity), message.identity);
-      child.send({
-        type: "worker-registration-ack",
-        generation,
-        registrationId: message.registrationId
-      } satisfies WorkerRegistrationAckMessage, () => {});
+      void this.registerWorkerProcess(message);
+      return;
+    }
+    if (message.type === "worker-observed") {
+      for (const tree of message.trees) this.workerProcesses.merge(tree);
+      return;
+    }
+    if (message.type === "worker-cleanup-started") {
+      this.workerCleanupsInFlight.add(message.cleanupId);
       return;
     }
     if (message.type === "worker-exited") {
-      this.workerProcesses.delete(processIdentityKey(message.identity));
+      void this.releaseWorkerProcess(message);
       return;
     }
     if (message.type === "release-check") {
@@ -791,6 +831,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     const pending = this.pending.get(message.requestId);
     if (!pending) return;
     if (message.type === "progress") {
+      this.observeWorkerProcesses();
       if (message.interactionId && message.interactionInput) {
         this.interactionInputs.set(message.interactionId, structuredClone(message.interactionInput));
       }
@@ -881,6 +922,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     this.activeThreads.clear();
     this.interactionInputs.clear();
     this.resumableThreads.clear();
+    this.workerCleanupsInFlight.clear();
     for (const [requestId] of this.pending) {
       const pending = this.takePending(requestId);
       pending?.reject(new Error(
@@ -892,6 +934,61 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     if (this.stableTimer) clearTimeout(this.stableTimer);
     this.stableTimer = undefined;
     this.queueWorkerCleanup(!this.closed);
+  }
+
+  private async registerWorkerProcess(message: WorkerStartedMessage): Promise<void> {
+    const child = this.child;
+    const generation = this.generation;
+    if (!child?.connected || !generation) return;
+    try {
+      await this.workerProcesses.register(message.identity);
+    } catch {
+      // A worker that cannot be independently observed is never admitted. The
+      // executor exit path retains the root identity and performs cleanup.
+      if (this.child === child && this.generation === generation) child.kill("SIGKILL");
+      return;
+    }
+    if (this.child !== child || this.generation !== generation || !child.connected) return;
+    child.send({
+      type: "worker-registration-ack",
+      generation,
+      registrationId: message.registrationId
+    } satisfies WorkerRegistrationAckMessage, () => {});
+  }
+
+  private async releaseWorkerProcess(message: WorkerExitedMessage): Promise<void> {
+    const child = this.child;
+    const generation = this.generation;
+    if (!child?.connected || !generation) return;
+    let ok = false;
+    this.workerCleanupsInFlight.add(message.cleanupId);
+    try {
+      ok = await this.workerProcesses.release(message.identity, ORPHAN_CLEANUP_GRACE_MS);
+    } catch {
+      ok = false;
+    }
+    if (ok) this.workerCleanupsInFlight.delete(message.cleanupId);
+    if (this.child !== child || this.generation !== generation || !child.connected) return;
+    child.send({
+      type: "worker-cleanup-ack",
+      generation,
+      cleanupId: message.cleanupId,
+      ok
+    } satisfies WorkerCleanupAckMessage, () => {});
+  }
+
+  private observeWorkerProcesses(): void {
+    if (this.workerObservationInFlight || this.workerProcesses.size === 0) return;
+    const child = this.child;
+    this.workerObservationInFlight = true;
+    void this.workerProcesses.refresh()
+      .catch(() => {
+        // Losing the independent process-tree view invalidates the no-orphan
+        // guarantee. Stop this executor generation and keep admission fenced
+        // until retained identities can be verified and cleaned.
+        if (this.workerProcesses.size > 0 && this.child === child) child?.kill("SIGKILL");
+      })
+      .finally(() => { this.workerObservationInFlight = false; });
   }
 
   private queueWorkerCleanup(restartWhenClean: boolean): void {
@@ -906,21 +1003,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   }
 
   private async cleanupRegisteredWorkers(): Promise<boolean> {
-    const identities = [...this.workerProcesses.values()];
-    if (identities.length === 0) return true;
-    const results = await Promise.all(identities.map(async identity => {
-      try {
-        return await terminateJsonRpcProcessIdentity(identity, ORPHAN_CLEANUP_GRACE_MS);
-      } catch {
-        return undefined;
-      }
-    }));
-    for (let index = 0; index < identities.length; index += 1) {
-      if (results[index]?.exited) {
-        this.workerProcesses.delete(processIdentityKey(identities[index]!));
-      }
-    }
-    return this.workerProcesses.size === 0;
+    return this.workerProcesses.cleanupAll(ORPHAN_CLEANUP_GRACE_MS);
   }
 
   private scheduleWorkerCleanupRetry(): void {
@@ -947,6 +1030,11 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   }
 
   private startWatchdog(): void {
+    this.workerObservationTimer = setInterval(
+      () => this.observeWorkerProcesses(),
+      WORKER_TREE_OBSERVATION_MS
+    );
+    this.workerObservationTimer.unref();
     this.staleTimer = setInterval(() => {
       const child = this.child;
       if (!child || this.health().heartbeatAgeMs === undefined) return;
@@ -960,6 +1048,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     this.closed = true;
     if (this.restartTimer) clearTimeout(this.restartTimer);
     if (this.workerCleanupTimer) clearTimeout(this.workerCleanupTimer);
+    if (this.workerObservationTimer) clearInterval(this.workerObservationTimer);
     if (this.stableTimer) clearTimeout(this.stableTimer);
     if (this.staleTimer) clearInterval(this.staleTimer);
     for (const [requestId] of this.pending) {
@@ -1012,8 +1101,40 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
     reject: (error: Error) => void;
     timer: NodeJS.Timeout;
   }>();
+  const workerCleanups = new Map<string, {
+    resolve: () => void;
+    reject: (error: Error) => void;
+    timer: NodeJS.Timeout;
+  }>();
   const outbound = createExecutionChildSender();
   const send = outbound.send;
+  const workerObserver = new SupervisedProcessTreeRegistry();
+  const lastWorkerObservations = new Map<string, string>();
+  let periodicObservationInFlight = false;
+  const sendWorkerObservation = () => {
+    const trees = workerObserver.snapshots()
+      .sort((left, right) => left.root.pid - right.root.pid)
+      .map((tree) => ({
+        root: tree.root,
+        processes: [...tree.processes].sort((left, right) => left.pid - right.pid)
+      }));
+    const currentKeys = new Set<string>();
+    for (const tree of trees) {
+      const key = supervisedProcessKey(tree.root);
+      currentKeys.add(key);
+      const encoded = JSON.stringify(tree);
+      if (lastWorkerObservations.get(key) === encoded) continue;
+      lastWorkerObservations.set(key, encoded);
+      send({ type: "worker-observed", generation, trees: [tree] });
+    }
+    for (const key of lastWorkerObservations.keys()) {
+      if (!currentKeys.has(key)) lastWorkerObservations.delete(key);
+    }
+  };
+  const refreshWorkerObservation = async () => {
+    await workerObserver.refresh();
+    sendWorkerObservation();
+  };
   const pool = new CodexAppServerUpstreamPool(
     configuration.command,
     configuration.poolSize,
@@ -1025,34 +1146,87 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
         generation,
         response
       }),
-      onWorkerProcessStarted: identity => new Promise<void>((resolve, reject) => {
-        const registrationId = randomUUID();
-        const registrationTimer = setTimeout(() => {
-          workerRegistrations.delete(registrationId);
-          reject(new Error(
-            "EXECUTION_WORKER_REGISTRATION_TIMEOUT: The state owner did not acknowledge the worker."
-          ));
-        }, WORKER_REGISTRATION_TIMEOUT_MS);
-        registrationTimer.unref();
-        workerRegistrations.set(registrationId, {
-          resolve,
-          reject,
-          timer: registrationTimer
+      onWorkerProcessStarted: async identity => {
+        try {
+          await workerObserver.register(identity);
+        } catch (error) {
+          await workerObserver.cleanupAll(ORPHAN_CLEANUP_GRACE_MS).catch(() => false);
+          throw error;
+        }
+        await new Promise<void>((resolve, reject) => {
+          const registrationId = randomUUID();
+          const registrationTimer = setTimeout(() => {
+            workerRegistrations.delete(registrationId);
+            reject(new Error(
+              "EXECUTION_WORKER_REGISTRATION_TIMEOUT: The state owner did not acknowledge the worker."
+            ));
+          }, WORKER_REGISTRATION_TIMEOUT_MS);
+          registrationTimer.unref();
+          workerRegistrations.set(registrationId, {
+            resolve,
+            reject,
+            timer: registrationTimer
+          });
+          send({
+            type: "worker-started",
+            generation,
+            registrationId,
+            identity
+          });
         });
-        send({
-          type: "worker-started",
-          generation,
-          registrationId,
-          identity
+        sendWorkerObservation();
+      },
+      onWorkerProcessExited: async identity => {
+        const cleanupId = randomUUID();
+        if (process.connected) {
+          send({
+            type: "worker-cleanup-started",
+            generation,
+            cleanupId,
+            identity
+          });
+        }
+        await refreshWorkerObservation();
+        if (!process.connected) {
+          const cleaned = await workerObserver.release(identity, ORPHAN_CLEANUP_GRACE_MS);
+          if (!cleaned) {
+            throw new Error(
+              "EXECUTION_ORPHAN_CLEANUP_FAILED: The disconnected executor retained a worker tree."
+            );
+          }
+          return;
+        }
+        const cleanup = new Promise<void>((resolve, reject) => {
+          const cleanupTimer = setTimeout(() => {
+            workerCleanups.delete(cleanupId);
+            reject(new Error(
+              "EXECUTION_WORKER_CLEANUP_TIMEOUT: The state owner did not confirm worker cleanup."
+            ));
+          }, WORKER_CLEANUP_TIMEOUT_MS);
+          workerCleanups.set(cleanupId, { resolve, reject, timer: cleanupTimer });
+          send({
+            type: "worker-exited",
+            generation,
+            cleanupId,
+            identity
+          });
         });
-      }),
-      onWorkerProcessExited: identity => send({
-        type: "worker-exited",
-        generation,
-        identity
-      })
+        void cleanup.catch(() => {
+          if (!closing) setImmediate(() => process.exit(1));
+        });
+        await cleanup;
+        workerObserver.forget(identity);
+      }
     }
   );
+  const workerObservationTimer = setInterval(() => {
+    if (periodicObservationInFlight || workerObserver.size === 0) return;
+    periodicObservationInFlight = true;
+    void refreshWorkerObservation()
+      .catch(() => { if (!closing) setImmediate(() => process.exit(1)); })
+      .finally(() => { periodicObservationInFlight = false; });
+  }, WORKER_TREE_OBSERVATION_MS);
+  workerObservationTimer.unref();
   const timer = setInterval(() => send({
     type: "heartbeat",
     generation,
@@ -1064,6 +1238,7 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
     if (closing) return;
     closing = true;
     clearInterval(timer);
+    clearInterval(workerObservationTimer);
     for (const { resolve, timer: checkTimer } of releaseChecks.values()) {
       clearTimeout(checkTimer);
       resolve(false);
@@ -1074,7 +1249,20 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
       reject(new Error("EXECUTION_CLOSED: Worker registration was interrupted."));
     }
     workerRegistrations.clear();
+    if (!process.connected) {
+      for (const { reject, timer: cleanupTimer } of workerCleanups.values()) {
+        clearTimeout(cleanupTimer);
+        reject(new Error("EXECUTION_CLOSED: The state-owner connection was lost."));
+      }
+      workerCleanups.clear();
+    }
     await pool.close().catch(() => undefined);
+    for (const { reject, timer: cleanupTimer } of workerCleanups.values()) {
+      clearTimeout(cleanupTimer);
+      reject(new Error("EXECUTION_CLOSED: Worker cleanup confirmation was interrupted."));
+    }
+    workerCleanups.clear();
+    await workerObserver.cleanupAll(ORPHAN_CLEANUP_GRACE_MS).catch(() => false);
     await Promise.allSettled([...active]);
     await outbound.drain(1_000);
     if (process.connected) process.disconnect();
@@ -1089,9 +1277,9 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
       capabilities: pool.capabilities()
     });
     process.on("message", value => {
-      if (!isParentMessage(value) || closing) return;
+      if (!isParentMessage(value)) return;
       if (value.type === "close") {
-        void close();
+        if (!closing) void close();
         return;
       }
       if (value.generation !== generation) return;
@@ -1103,6 +1291,18 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
         pending.resolve();
         return;
       }
+      if (value.type === "worker-cleanup-ack") {
+        const pending = workerCleanups.get(value.cleanupId);
+        if (!pending) return;
+        workerCleanups.delete(value.cleanupId);
+        clearTimeout(pending.timer);
+        if (value.ok) pending.resolve();
+        else pending.reject(new Error(
+          "EXECUTION_ORPHAN_CLEANUP_FAILED: The state owner could not clean the worker tree."
+        ));
+        return;
+      }
+      if (closing) return;
       if (value.type === "release-check-response") {
         const pending = releaseChecks.get(value.checkId);
         if (!pending) return;
@@ -1120,6 +1320,7 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
         generation,
         value,
         send,
+        () => refreshWorkerObservation(),
         threadId => new Promise<boolean>(resolve => {
           const checkId = randomUUID();
           const checkTimer = setTimeout(() => {
@@ -1301,9 +1502,13 @@ async function executeChildRequest(
   generation: string,
   request: RequestMessage,
   send: (message: ChildMessage) => void,
+  observeWorkers: () => Promise<void>,
   canRelease: (threadId: string) => Promise<boolean>
 ): Promise<void> {
   const progress = (value: CodexProgress) => {
+    if (value.event?.type === "command" && value.event.phase === "started") {
+      void observeWorkers().catch(() => setImmediate(() => process.exit(1)));
+    }
     const interaction = isRecord(value.event?.details?.interaction)
       ? value.event?.details?.interaction as Record<string, unknown>
       : undefined;
@@ -1530,6 +1735,11 @@ function isParentMessage(value: unknown): value is ParentMessage {
     return typeof value.generation === "string" &&
       typeof value.registrationId === "string";
   }
+  if (value.type === "worker-cleanup-ack") {
+    return typeof value.generation === "string" &&
+      typeof value.cleanupId === "string" &&
+      typeof value.ok === "boolean";
+  }
   if (value.type === "protect") {
     return typeof value.generation === "string" &&
       typeof value.threadId === "string" && value.threadId.length <= 512;
@@ -1568,8 +1778,19 @@ function isChildMessage(value: unknown): value is ChildMessage {
       typeof value.registrationId === "string" &&
       isJsonRpcProcessIdentity(value.identity);
   }
+  if (value.type === "worker-observed") {
+    return typeof value.generation === "string" &&
+      Array.isArray(value.trees) && value.trees.length <= 100 &&
+      value.trees.every((tree: unknown) => isSupervisedProcessTreeSnapshot(tree));
+  }
+  if (value.type === "worker-cleanup-started") {
+    return typeof value.generation === "string" &&
+      typeof value.cleanupId === "string" &&
+      isJsonRpcProcessIdentity(value.identity);
+  }
   if (value.type === "worker-exited") {
     return typeof value.generation === "string" &&
+      typeof value.cleanupId === "string" &&
       isJsonRpcProcessIdentity(value.identity);
   }
   if (!["progress", "assignment", "response"].includes(String(value.type))) return false;
@@ -1586,8 +1807,16 @@ function isJsonRpcProcessIdentity(value: unknown): value is JsonRpcProcessIdenti
       (Number.isSafeInteger(value.processGroupId) && value.processGroupId >= 2));
 }
 
-function processIdentityKey(identity: JsonRpcProcessIdentity): string {
-  return `${identity.pid}:${identity.processGroupId ?? "process"}`;
+function isSupervisedProcessTreeSnapshot(
+  value: unknown
+): value is SupervisedProcessTreeSnapshot {
+  return isRecord(value) && isJsonRpcProcessIdentity(value.root) &&
+    Array.isArray(value.processes) && value.processes.length <= 4_096 &&
+    value.processes.every((entry: unknown): entry is SupervisedProcessIdentity =>
+      isRecord(entry) && Number.isSafeInteger(entry.pid) && entry.pid >= 2 &&
+      Number.isSafeInteger(entry.parentPid) && entry.parentPid >= 0 &&
+      Number.isSafeInteger(entry.processGroupId) && entry.processGroupId >= 2
+    );
 }
 
 function readChildConfiguration(encoded: string | undefined): ChildConfiguration {

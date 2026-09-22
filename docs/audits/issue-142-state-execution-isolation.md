@@ -21,7 +21,7 @@ SQLite-free ingress (HTTP / MCP / native / stdio)
 This preserves every existing multi-repository Unit of Work. Native calls use
 the closed `bridge-operational-state-owner` v2 command/query/control protocol;
 MCP traffic crosses the same bounded process boundary before admission. The
-executor uses `bridge-codex-execution` v2 and relays assignments, progress,
+executor uses `bridge-codex-execution` v3 and relays assignments, progress,
 interactions, steering, release checks, results and late responses. Account App
 Server I/O also uses the executor, while account cache/presentation policy stays
 with the state owner.
@@ -43,10 +43,13 @@ SQLite writer.
   heartbeat and bounded restart. A crashed active turn becomes
   `CODEX_WORKER_LOST` and is persisted as interrupted/worker-lost rather than
   false success or cancellation.
-- Each App Server process group is registered and acknowledged before protocol
-  initialization or user work. Executor loss triggers exact group TERM/KILL
-  cleanup, including descendants, and a replacement executor cannot start
-  until that cleanup is confirmed.
+- Each App Server root is registered and acknowledged before protocol
+  initialization or user work. The executor and state owner continuously retain
+  a bounded PID/PPID/PGID tree ledger. Root exit no longer unregisters the
+  worker: it starts an acknowledged cleanup fence. Exact TERM/KILL cleanup
+  includes observed descendants that created separate groups, and neither App
+  Server nor executor replacement is admitted until every retained group is
+  verified gone.
 - Executor-to-owner IPC keeps at most 256 critical messages/32 MiB and
   coalesces ordinary `updated` progress to 128 request entries/8 MiB. Critical
   overflow fails the executor closed instead of growing process memory without
@@ -83,19 +86,23 @@ the production startup path. On 2026-09-22 it produced:
 | Check | Result |
 | --- | --- |
 | topology | ingress, state owner and Codex executor were distinct PIDs; state DB UUID remained stable across replacement |
-| Dashboard reads | 12 structural readers completed concurrently in 187.184 ms; the first account-enriched read completed in 60.967 ms and started the executor |
+| Dashboard reads | 12 structural readers completed concurrently in 191.876 ms; the first account-enriched read completed in 55.927 ms and started the executor |
 | execution child stall | `/readyz` reported `execution-stale`, actual `codex_task` admission returned retryable `EXECUTION_UNAVAILABLE`, and the durable Job count stayed zero |
-| 25 healthy state commands | p50 2.514 ms, p95 5.533 ms, p99/max 8.361 ms |
-| telemetry DB write lock + 25 state commands | state p99/max 2.392 ms; `/healthz` and `/readyz` stayed HTTP 200; telemetry drained after unlock |
-| operational DB lock | 246 `/healthz` samples: p50 1.237 ms, p95 1.693 ms, p99 2.383 ms, max 3.696 ms |
-| ingress event-loop lag during state lock | p50 3.324 ms, p95 3.889 ms, p99 4.815 ms, max 5.956 ms |
+| 25 healthy state commands | p50 2.418 ms, p95 5.747 ms, p99/max 7.965 ms |
+| telemetry DB write lock + 25 state commands | state p50 2.106 ms, p95 2.363 ms, p99/max 2.480 ms; `/healthz` and `/readyz` stayed HTTP 200; telemetry drained after unlock |
+| operational DB lock | 253 `/healthz` samples: p50 0.816 ms, p95 1.575 ms, p99 2.204 ms, max 7.908 ms |
+| ingress event-loop lag during state lock | p50 2.602 ms, p95 3.678 ms, p99 4.254 ms, max 10.096 ms |
 | state-lock certainty | caller received unknown/unconfirmed; readiness showed `state-stale + state-write-unconfirmed`; the authoritative revision later advanced exactly once |
-| executor crash during real work | with an admitted Job and a live App Server descendant command, `/healthz` returned in 0.475 ms; both old PIDs exited before replacement; the Job became `interrupted/worker-loss`; the command observation occurred once; a new Job completed after recovery; state-owner PID and DB UUID did not change |
-| state-owner crash | `/healthz` returned in 0.375 ms; one replacement owner acquired the same DB UUID and preserved the settings revision |
+| executor crash during real work | with an admitted Job and a live TERM-resistant command in a separate process group, `/healthz` returned in 0.555 ms; App Server and command PIDs both exited before replacement; the Job became `interrupted/worker-loss`; the command observation occurred once; a new Job completed after recovery; state-owner PID and DB UUID did not change |
+| state-owner crash | `/healthz` returned in 0.442 ms; one replacement owner acquired the same DB UUID and preserved the settings revision |
 
-The focused execution regression also blocks the state-owner event loop for
-500 ms and proves from an executor-written timestamp that Codex completed while
-the owner was blocked; the result was delivered after the owner resumed.
+The focused execution regression also (a) exits only the App Server while a
+TERM-resistant same-group command remains and proves readiness/replacement stay
+fenced until the command is gone, (b) kills the executor while a TERM-resistant
+detached command group remains and proves both old groups exit before executor
+replacement, and (c) blocks the state-owner event loop for 500 ms and proves
+from an executor-written timestamp that Codex completed while the owner was
+blocked; the result was delivered after the owner resumed.
 
 The wider automated evidence includes:
 
@@ -115,7 +122,7 @@ The wider automated evidence includes:
   rollback refusal in the state lifecycle/recovery suites.
 
 The final source checkout passed the release/build checks, App Server schema
-compatibility check, 98 TypeScript test files / 872 tests, and 205 macOS tests
+compatibility check, 98 TypeScript test files / 873 tests, and 205 macOS tests
 with two environment-dependent live smoke tests skipped. The issue-specific
 fault/load command above also passed again after the final queue and admission
 changes.
@@ -133,7 +140,7 @@ generations. It does not keep an orphan Codex process running without a state
 authority; an unfinished Job is reconciled as worker-lost. This is different
 from an executor-only crash, which restarts without replacing the state owner.
 
-## Reopened boundary-hardening installed acceptance
+## Previous boundary-hardening installed acceptance
 
 The reopened completion gate was accepted on 2026-09-22 KST against merge
 `8fa48c28ec39acbd43fd3c5d9b98b3ec75be9003` and installed build
@@ -191,9 +198,12 @@ After all installed faults, the running process tree again contained distinct
 server, state-owner, read, telemetry and execution processes. State, read,
 telemetry and execution health were ready; Tunnel was connected; admission was
 true; all workload counters were zero; both databases passed `quick_check` and
-the state database had no foreign-key violations. This fresh evidence closes
-the three reopened gates: bounded control reserve, telemetry recovery
-correctness and supervised descendant cleanup.
+the state database had no foreign-key violations. This evidence closed the
+control-reserve and telemetry-recovery gates. A later review showed that its
+process-group-only descendant check did not cover App Server-first exit or a
+descendant that created a separate group, so its orphan-cleanup approval is
+superseded by the v3 tree-ledger acceptance above and the later installed
+acceptance recorded for that revision.
 
 ## Previous installed acceptance baseline
 

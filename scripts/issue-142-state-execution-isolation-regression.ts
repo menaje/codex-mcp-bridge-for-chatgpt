@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -277,7 +278,7 @@ async function main(): Promise<void> {
           requestId: workerLossRequestId,
           taskContractVersion: taskProperties.taskContractVersion?.const,
           executionEnvelopeRef: taskProperties.executionEnvelopeRef?.const,
-          prompt: "execution descendant hold",
+          prompt: "execution descendant hold detached ignore descendant term",
           selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
           project: {
             name: activeProject.name,
@@ -290,15 +291,23 @@ async function main(): Promise<void> {
       workerLossJobId = (admitted.structuredContent as { jobId: string }).jobId;
       await waitForCondition(
         () => readDescendantObservations(fixture.descendantObservationFile).length === 1 &&
-          readJobState(fixture.stateFile, workerLossJobId)?.status === "running",
+          readJobState(fixture.stateFile, workerLossJobId)?.status === "running" &&
+          (fixture.server.applicationService.runtimeHealth?.().executionService
+            ?.supervisedProcesses || 0) >= 2,
         10_000,
         "active descendant command and running Job"
       );
       const [descendant] = readDescendantObservations(fixture.descendantObservationFile);
       terminatedAppServerPid = descendant!.appServerPid;
       terminatedCommandPid = descendant!.childPid;
+      assert.equal(descendant!.detached, true);
       assert.equal(processAlive(terminatedAppServerPid), true);
       assert.equal(processAlive(terminatedCommandPid), true);
+      assert.equal(processGroupId(terminatedCommandPid), terminatedCommandPid);
+      assert.notEqual(
+        processGroupId(terminatedCommandPid),
+        processGroupId(terminatedAppServerPid)
+      );
 
       const firstExecutionProcessId = fixture.executionProcessIds.at(-1)!;
       process.kill(firstExecutionProcessId, "SIGKILL");
@@ -307,7 +316,7 @@ async function main(): Promise<void> {
       await waitForCondition(
         () => !processAlive(terminatedAppServerPid) && !processAlive(terminatedCommandPid),
         12_000,
-        "previous App Server process group termination"
+        "previous App Server and detached command tree termination"
       );
       await waitForCondition(
         () => fixture.executionProcessIds.length >= 2 &&
@@ -433,7 +442,8 @@ async function main(): Promise<void> {
         interruptedJobTerminalOrigin: "worker-loss",
         terminatedAppServerPid,
         terminatedCommandPid,
-        previousProcessGroupExitedBeforeReplacement: true,
+        detachedCommandGroup: true,
+        previousProcessTreeExitedBeforeReplacement: true,
         duplicateExecutionObservations: 0,
         recoveryJobId,
         recoveryJobCompleted: true,
@@ -627,10 +637,11 @@ function readJobDiagnostic(file: string, jobId: string): unknown {
 function readDescendantObservations(file: string): Array<{
   appServerPid: number;
   childPid: number;
+  detached?: boolean;
 }> {
   try {
     return readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map(line =>
-      JSON.parse(line) as { appServerPid: number; childPid: number }
+      JSON.parse(line) as { appServerPid: number; childPid: number; detached?: boolean }
     );
   } catch {
     return [];
@@ -644,6 +655,14 @@ function processAlive(processId: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
+}
+
+function processGroupId(processId: number): number {
+  return Number(execFileSync(
+    "/bin/ps",
+    ["-o", "pgid=", "-p", String(processId)],
+    { encoding: "utf8" }
+  ).trim());
 }
 
 async function probe(baseUrl: string, pathname: string): Promise<{

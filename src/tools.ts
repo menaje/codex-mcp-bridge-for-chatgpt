@@ -10536,6 +10536,8 @@ export type BridgeRuntimeAdmissionSnapshot = {
     heartbeatAgeMs?: number;
     inFlight: number;
     capacity: number;
+    supervisedWorkers?: number;
+    supervisedProcesses?: number;
   };
   /** Bounded project-fair persistence for disposable progress projections. */
   progressPersistence?: ProgressPersistenceStatus;
