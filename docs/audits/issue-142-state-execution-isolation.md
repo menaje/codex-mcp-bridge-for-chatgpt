@@ -133,6 +133,68 @@ generations. It does not keep an orphan Codex process running without a state
 authority; an unfinished Job is reconciled as worker-lost. This is different
 from an executor-only crash, which restarts without replacing the state owner.
 
+## Reopened boundary-hardening installed acceptance
+
+The reopened completion gate was accepted on 2026-09-22 KST against merge
+`8fa48c28ec39acbd43fd3c5d9b98b3ec75be9003` and installed build
+`8fa48c28ec39:32d605742b8f`. The bundle passed strict deep code-signature
+verification before and after installation, and the running launcher's build
+identity matched the embedded clean source build.
+
+Immediately before replacement, authoritative `runtime.snapshot` reported
+zero active Jobs, pending admissions, pending interactions, memory-only
+threads and background processes, with background state confirmed. The
+recoverable cutover backup is
+`~/.codex-mcp-bridge/backups/issue-142-pre-8fa48c2-20260922T1924KST` and contains
+the previous signed application, the LaunchAgent definition, lifecycle/status
+evidence and SQLite online backups of both databases. The state backup passed
+`quick_check` with zero foreign-key violations; the telemetry backup passed
+`quick_check`. Their SHA-256 values are respectively
+`2737755a33e81d4dcba03f7d3a37647a1607d5ba461049dd35fa1591e0eaef42` and
+`ca8b528661be0531574096f6489cfeb009dc7b45ff3f92ec23edba70d8734bbf`.
+
+Shutdown used the non-force lifecycle reservation
+`9a176790-0349-4dd1-a454-a140aab76be6`. Its external handoff receipt was
+`completed`, and the application, helper, launcher, server, state owner, read,
+telemetry, execution and Tunnel processes plus both native sockets had exited
+before the application path was replaced. The old application was moved into
+the backup rather than deleted.
+
+The first launch migrated the existing telemetry database from schema 1 to
+schema 2. It added `telemetry_record_deliveries` while preserving telemetry DB
+identity `5b6b8930-697c-4ddc-9ac0-24388b79fa53`, source state DB identity
+`d710d487-807d-4813-9786-f3a262322848`, the bounded 5,000 measurement rows and
+the retention row. The operational DB kept the same identity and settings
+revision 168. This verifies the production migration path; startup-lock ID
+rebasing, legacy collision remapping, ACK-loss idempotency and additive
+startup-drop merging remain covered by the disposable telemetry fault tests.
+
+Fresh active-free installed fault results were:
+
+| Check | Installed result |
+| --- | --- |
+| executor stopped for 3 seconds | local ingress `/healthz` stayed HTTP 200 in 1.510 ms; `/readyz` became HTTP 503 `execution-stale` in 1.251 ms; authoritative admission became false while every workload counter stayed zero; the same executor recovered to ready after resume |
+| executor terminated | preflight workload was zero; `/healthz` stayed HTTP 200 in 2.672 ms and `/readyz` reported HTTP 503 `execution-recovering` in 1.310 ms; executor PID 47543 exited and PID 53827 became ready while server PID 47334, state-owner PID 47401 and its generation remained unchanged |
+| state owner terminated | preflight workload was zero; `/healthz` stayed HTTP 200 in 2.275 ms and `/readyz` reported HTTP 503 `state-recovering` in 1.249 ms; old owner/read/telemetry/executor PIDs 47401/47458/47414/53827 all exited; server PID 47334 remained and replacement owner PID 55096 with executor PID 55263 became ready in about 3.75 seconds |
+| installed cards | Dashboard, Settings and Decision loaded from the installed runtime, retained their last confirmed UI through dispatched-read timeouts and did not issue a second compatibility tool call |
+
+The live active-descendant crash is intentionally not repeated against user
+work. The same merge's disposable production-startup acceptance admitted an
+actual `codex_task`, observed a live App Server process and descendant command,
+killed the executor, confirmed both old PIDs exited before replacement,
+persisted the Job as `interrupted/worker-loss`, observed no duplicate command,
+and completed a new Job after recovery. The installed crash checks above prove
+that the deployed process supervisor follows the same executable path while no
+user work is at risk.
+
+After all installed faults, the running process tree again contained distinct
+server, state-owner, read, telemetry and execution processes. State, read,
+telemetry and execution health were ready; Tunnel was connected; admission was
+true; all workload counters were zero; both databases passed `quick_check` and
+the state database had no foreign-key violations. This fresh evidence closes
+the three reopened gates: bounded control reserve, telemetry recovery
+correctness and supervised descendant cleanup.
+
 ## Previous installed acceptance baseline
 
 The following installed evidence covers the first isolation implementation and
@@ -191,11 +253,10 @@ key violations and `telemetry.sqlite` `quick_check=ok`; state, read, telemetry
 and execution services all reported ready.
 
 At the time it was recorded, this installed evidence used the same revision as
-the earlier source fault/load evidence. Reopening #142 supersedes that final
-approval: the merged boundary-hardening revision must receive a fresh safe
-cutover, schema migration check, active-free installed fault checks and native
-contract verification before this audit can again declare completion. The
-exact limits in the preceding section remain accepted behavior, not unfinished
-work: isolation does not shorten SQLite, filesystem, hardware or external-
-network latency, and it does not make the intentional single operational
-writer concurrent.
+the earlier source fault/load evidence. Reopening #142 superseded that approval;
+the fresh boundary-hardening acceptance above now supplies the required safe
+cutover, schema migration and active-free installed fault checks. The exact
+limits in the preceding section remain accepted behavior, not unfinished work:
+isolation does not shorten SQLite, filesystem, hardware or external-network
+latency, and it does not make the intentional single operational writer
+concurrent.
