@@ -492,7 +492,57 @@ Current-checkout validation passed 96 TypeScript files / 856 tests, MCP
 2026-07-28 conformance 29/29, App Server compatibility against CLI 0.153.3,
 205 macOS tests with two opt-in skips, the 30-second production-isolation
 fixture, the real companion-socket Swift contract and all three stale-card
-regressions. These results use disposable fault databases. Installed-build
-acceptance for this exact correction is recorded after the signed candidate is
-deployed and rechecked; earlier installed builds are not evidence for this
-follow-up.
+regressions. The SQLite fault matrix uses disposable databases; destructive
+FULL, corruption and read-only faults are not injected into the operating
+database.
+
+### Installed acceptance for the admission correction
+
+The exact merged correction was built and installed from clean commit
+`6965a56799579d9b8ebd7e5fb729b58f062ed246`, with build ID
+`6965a5679957:7bff66f8dffe` and source hash
+`7bff66f8dffe68e3a6d978848415d8af67cc1d2f944e1f14624ef1e1677d9cd5`.
+The arm64 application and its complete nested bundle passed strict code-sign
+verification before and after installation. Preflight reported zero active
+Jobs, admissions, interactions, memory-only threads and background processes.
+
+The prior signed app, the exact app moved out of `/Applications`, the
+LaunchAgent definition, private configuration and online-consistent state and
+telemetry backups are retained at
+`~/.codex-mcp-bridge/backups/issue-143-admission-pre-6965a56-20260922T1340KST`.
+Both backup databases passed `quick_check` with zero foreign-key violations,
+and the private configuration copy has the same SHA-256 digest as the live
+file. The ordinary non-force application lifecycle completed before the bundle
+was replaced.
+
+Opening only the new installed app restored a new helper, supervisor, runtime,
+state-read child, telemetry child and Tunnel from `/Applications`. Bridge
+health was fresh, state/read/telemetry were ready, Tunnel doctor and connection
+were healthy, and the production Swift client loaded Dashboard and Settings
+from the installed companion socket.
+
+The installed aggregate-byte boundary was exercised without touching SQLite.
+Four incomplete requests reserved 28 MiB while `/readyz` remained HTTP 200 and
+`reason=ready`. Adding one 6 MiB request returned HTTP 503 with request-local
+`state-capacity`, `outcome=not-observed`, and nested
+`runtimeReadiness={ready:true, reason:"ready"}`. Closing the four sockets
+returned readiness immediately to HTTP 200. This is the formerly contradictory
+503 branch, verified in the installed build rather than only the test fixture.
+
+A second installed fault stopped only the application runtime child for 6.044
+seconds while the databases were left untouched. All 76 `/healthz` samples
+returned HTTP 200: p50 2.167 ms, p95 3.690 ms, p99 6.336 ms and maximum 19.440
+ms. At 2.554 seconds `/readyz` returned `state-stale +
+state-response-unconfirmed`. A new MCP request submitted after that boundary
+returned HTTP 503 with `outcome=not-observed`. After `SIGCONT`, readiness
+returned to HTTP 200 in 24.480 ms.
+
+Dashboard, Settings and Decision resources imported from the exact installed
+runtime retained their last confirmed DOM after a dispatched timeout and made
+no fallback duplicate call. Post-fault state and telemetry databases again
+passed `quick_check` with zero foreign-key violations, the configuration digest
+was unchanged, and Bridge, Tunnel, state-read and telemetry returned healthy.
+This installed result completes #143's admission and request-context follow-up;
+it still makes no claim that external network latency is shortened or that the
+central writer can execute independent semantic writes concurrently. That
+larger ownership migration remains #142.
