@@ -140,6 +140,68 @@ generations. It does not keep an orphan Codex process running without a state
 authority; an unfinished Job is reconciled as worker-lost. This is different
 from an executor-only crash, which restarts without replacing the state owner.
 
+## Final process-tree-ledger installed acceptance
+
+The orphan-cleanup gate was reopened after review showed that the earlier
+process-group-only implementation could forget a worker when its App Server
+root exited first and could miss a descendant that created a separate process
+group. PR #155 fixed that boundary and was merged as
+`50b115c24bd4c254609ee6c6ff959a44710b9821`. The exact clean bundle installed
+on 2026-09-22 KST is `50b115c24bd4:b94c080975f3`; it passed strict deep
+code-signature verification before and after installation.
+
+The source acceptance for that merge ran on macOS with disposable state. Its
+focused regression killed only an App Server root while a TERM-resistant
+same-group command remained, and separately killed the executor while a
+TERM-resistant command remained in a distinct process group. In both cases the
+old root and command were gone before cleanup/replacement was acknowledged.
+The production-startup #142 scenario also admitted a real Job, observed a live
+detached command, killed the executor, confirmed the App Server and command
+were gone before replacement, persisted one `interrupted/worker-loss` result,
+observed no duplicate execution and completed a subsequent Job. The final
+checkout passed 98 TypeScript files / 873 tests, 205 macOS tests with two
+explicit live-environment skips, release/build checks, App Server compatibility
+and the issue-specific fault/load scenario.
+
+Immediately before the installed cutover, authoritative `runtime.snapshot`
+reported zero active Jobs, admissions, interactions, memory-only threads and
+background processes, with background inspection confirmed. The recoverable
+backup is
+`~/.codex-mcp-bridge/backups/issue-142-pre-50b115c-20260922T2056KST`.
+It contains the previous signed application, LaunchAgent and lifecycle/status
+evidence plus SQLite online backups of both databases. The state backup passed
+`quick_check` with zero foreign-key violations and SHA-256
+`d68d7dba7710e3152b7e5f079fb4d003ddbc9fb7b2837be8424217392c9bdcfd`;
+the telemetry backup passed `quick_check` and has SHA-256
+`1745f26eb593e129389f0e7c6f6bb6380f0d83ed25e0aa0e926c8b5a6abb2dbe`.
+Shutdown used non-force lifecycle reservation
+`592b40a2-5a1e-440e-a0e4-be8f4e840b89`; its external handoff receipt was
+`completed`, and every application/runtime process and both sockets were gone
+before the application path was replaced.
+
+Fresh active-free checks against that installed build produced:
+
+| Check | Installed result |
+| --- | --- |
+| App Server exits first | registered idle App Server PID/PGID `71165` under executor `67845` was killed; the root was gone at 74 ms while the retained supervisor entry remained until verified cleanup at 149 ms; the executor generation stayed `c3dae91e-0bc5-4fd5-993e-e44218ad7485`, and a subsequent enriched Dashboard request admitted and used a new registered worker |
+| executor exits with registered workers | executor `67845` was killed with independently grouped App Servers `74724` and `78336`; the old executor and both workers were gone at the first 59 ms observation, replacement executor `81955` did not appear until 757 ms and became ready at 944 ms; the state-owner PID `63801` and generation `e0e3f787-0a6d-49f8-98a7-b9b37537a6ac` were unchanged |
+| ordinary idle lifecycle | after recovery, two normal App Server workers and periodic native reads were observed for 45 seconds; execution generation `386294f8-c32a-40ef-9914-8b66b3f01e37` remained stable and ready |
+
+No user Job was created for the installed fault checks. Before and after every
+fault, active Jobs, pending admissions/interactions, memory-only threads and
+background processes were zero and background inspection was confirmed. The
+separate-group active-command condition is covered by the same merge's macOS
+disposable production-startup acceptance rather than by manufacturing a
+command inside the user's installed runtime.
+
+After all checks, state/read/telemetry/execution were ready, Tunnel was
+connected, admission was enabled and every workload counter was zero. The
+operational database retained identity
+`d710d487-807d-4813-9786-f3a262322848`, schema 25 and settings revision 168.
+Telemetry retained identity `5b6b8930-697c-4ddc-9ac0-24388b79fa53`, schema 2
+and the matching source-state identity. Both live databases passed
+`quick_check`; the state database had zero foreign-key violations.
+
 ## Previous boundary-hardening installed acceptance
 
 The reopened completion gate was accepted on 2026-09-22 KST against merge
