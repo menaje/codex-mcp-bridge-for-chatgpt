@@ -1,10 +1,12 @@
 import Database from "better-sqlite3";
-import { mkdtemp, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createConnection, type Socket } from "node:net";
 import { performance } from "node:perf_hooks";
 import { PassThrough } from "node:stream";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import {
@@ -155,7 +157,10 @@ async function waitForRuntimeHealth(
   );
 }
 
-function openIncompleteMcpRequest(baseUrl: string): Promise<Socket> {
+function openIncompleteMcpRequest(
+  baseUrl: string,
+  declaredLength?: number
+): Promise<Socket> {
   const url = new URL(baseUrl);
   return new Promise((resolve, reject) => {
     const socket = createConnection(Number(url.port), url.hostname);
@@ -167,13 +172,97 @@ function openIncompleteMcpRequest(baseUrl: string): Promise<Socket> {
         `POST /mcp HTTP/1.1\r\n` +
         `Host: ${url.host}\r\n` +
         "Content-Type: application/json\r\n" +
-        "Transfer-Encoding: chunked\r\n" +
+        (declaredLength === undefined
+          ? "Transfer-Encoding: chunked\r\n"
+          : `Content-Length: ${declaredLength}\r\n`) +
         "Connection: keep-alive\r\n\r\n" +
-        "1\r\n{\r\n"
+        (declaredLength === undefined ? "1\r\n{\r\n" : "{")
       );
       resolve(socket);
     });
   });
+}
+
+async function connectTaskClient(baseUrl: string): Promise<{
+  client: Client;
+  taskArguments(): Record<string, unknown>;
+}> {
+  const client = new Client(
+    { name: "runtime-storage-admission", version: "1.0.0" },
+    { versionNegotiation: { mode: { pin: CURRENT_PROTOCOL } } }
+  );
+  await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+  const descriptor = (await client.listTools()).tools.find(
+    tool => tool.name === "codex_task"
+  );
+  if (!descriptor) {
+    await client.close();
+    throw new Error("codex_task descriptor is unavailable.");
+  }
+  const properties = descriptor.inputSchema.properties as Record<
+    string,
+    { const?: string | number }
+  >;
+  const scopeId = randomUUID();
+  return {
+    client,
+    taskArguments: () => ({
+      scopeId,
+      requestId: randomUUID(),
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "This task must not be admitted while state storage is unavailable."
+    })
+  };
+}
+
+async function primeTaskScope(
+  runtime: RunningRuntime,
+  taskClient: Awaited<ReturnType<typeof connectTaskClient>>
+): Promise<void> {
+  const preflight = await taskClient.client.callTool({
+    name: "codex_task",
+    arguments: taskClient.taskArguments()
+  });
+  expect(preflight.isError).toBe(true);
+  expect(preflight.structuredContent).toMatchObject({ jobId: null });
+  expect(JSON.stringify(preflight)).not.toContain("STATE_STORAGE_UNAVAILABLE");
+  const inspection = new Database(path.join(runtime.root, "state.sqlite"), {
+    readonly: true
+  });
+  try {
+    expect(inspection.prepare("SELECT COUNT(*) AS count FROM jobs").get())
+      .toEqual({ count: 0 });
+  } finally {
+    inspection.close();
+  }
+}
+
+async function expectTaskStorageUnavailable(
+  runtime: RunningRuntime,
+  taskClient: Awaited<ReturnType<typeof connectTaskClient>>
+): Promise<void> {
+  const blocked = await taskClient.client.callTool({
+    name: "codex_task",
+    arguments: taskClient.taskArguments()
+  });
+  expect(blocked.isError).toBe(true);
+  expect(blocked.structuredContent).toMatchObject({
+    jobId: null,
+    error: {
+      code: "STATE_STORAGE_UNAVAILABLE",
+      retryable: true
+    }
+  });
+  const inspection = new Database(path.join(runtime.root, "state.sqlite"), {
+    readonly: true
+  });
+  try {
+    expect(inspection.prepare("SELECT COUNT(*) AS count FROM jobs").get())
+      .toEqual({ count: 0 });
+  } finally {
+    inspection.close();
+  }
 }
 
 describe("isolated production runtime", () => {
@@ -365,8 +454,10 @@ describe("isolated production runtime", () => {
       NODE_ENV: "test",
       CODEX_MCP_BRIDGE_TEST_FREEZE_STATE_PAGE_COUNT: "1"
     });
+    const taskClient = await connectTaskClient(runtime.baseUrl);
     const current = await runtime.server.applicationService.settingsSnapshot();
     try {
+      await primeTaskScope(runtime, taskClient);
       const descriptions = Object.fromEntries(Array.from({ length: 100 }, (_, index) => [
         `model-${index.toString().padStart(3, "0")}`,
         `${index}:`.padEnd(600, "x")
@@ -401,8 +492,9 @@ describe("isolated production runtime", () => {
         limitations: ["state-storage-full"],
         stateService: { storageError: "full" }
       });
+      await expectTaskStorageUnavailable(runtime, taskClient);
     } finally {
-      // The disposable fixture is removed by the suite cleanup.
+      await taskClient.client.close();
     }
   }, 15_000);
 
@@ -410,102 +502,48 @@ describe("isolated production runtime", () => {
     const runtime = await start();
     const current = await runtime.server.applicationService.settingsSnapshot();
     const locker = new Database(path.join(runtime.root, "state.sqlite"));
-    locker.exec("BEGIN IMMEDIATE");
-
-    const blockedMutation = runtime.server.applicationService.updateSettings({
-      expectedSettingsRevision: current.settings.settingsRevision,
-      operation: {
-        kind: "patch",
-        settings: {
-          showBridgeThreadsInCodexApp: !current.settings.showBridgeThreadsInCodexApp
-        }
-      }
-    }).catch(error => error);
-
     try {
-      await waitForRuntimeHealth(
-        runtime.server.applicationService,
-        "state-capacity",
-        8_000,
-        () => runtime.server.applicationService.runtimeHealth?.().stateService?.storageError ===
-          "busy"
-      );
-      expect(runtime.server.applicationService.runtimeHealth?.()).toMatchObject({
-        acceptingNewJobs: false,
-        stateService: {
-          status: "state-capacity",
-          storageError: "busy",
-          storageErrorObservedAt: expect.any(Number)
-        }
-      });
-      const degraded = await fetch(`${runtime.baseUrl}/readyz`);
-      expect(degraded.status).toBe(503);
-      await expect(degraded.json()).resolves.toMatchObject({
-        reason: "state-capacity",
-        limitations: ["state-storage-busy"],
-        stateService: { storageError: "busy" }
-      });
-    } finally {
-      locker.exec("ROLLBACK");
-      locker.close();
-    }
+      locker.exec("BEGIN IMMEDIATE");
 
-    await expect(blockedMutation).resolves.toBeInstanceOf(Error);
-    await expect(runtime.server.applicationService.updateSettings({
-      expectedSettingsRevision: current.settings.settingsRevision,
-      operation: {
-        kind: "patch",
-        settings: {
-          showBridgeThreadsInCodexApp: !current.settings.showBridgeThreadsInCodexApp
+      const blockedMutation = runtime.server.applicationService.updateSettings({
+        expectedSettingsRevision: current.settings.settingsRevision,
+        operation: {
+          kind: "patch",
+          settings: {
+            showBridgeThreadsInCodexApp: !current.settings.showBridgeThreadsInCodexApp
+          }
         }
+      }).catch(error => error);
+
+      try {
+        await waitForRuntimeHealth(
+          runtime.server.applicationService,
+          "state-capacity",
+          8_000,
+          () => runtime.server.applicationService.runtimeHealth?.().stateService?.storageError ===
+            "busy"
+        );
+        expect(runtime.server.applicationService.runtimeHealth?.()).toMatchObject({
+          acceptingNewJobs: false,
+          stateService: {
+            status: "state-capacity",
+            storageError: "busy",
+            storageErrorObservedAt: expect.any(Number)
+          }
+        });
+        const degraded = await fetch(`${runtime.baseUrl}/readyz`);
+        expect(degraded.status).toBe(503);
+        await expect(degraded.json()).resolves.toMatchObject({
+          reason: "state-capacity",
+          limitations: ["state-storage-busy"],
+          stateService: { storageError: "busy" }
+        });
+      } finally {
+        locker.exec("ROLLBACK");
+        locker.close();
       }
-    })).resolves.toMatchObject({
-      settings: { settingsRevision: current.settings.settingsRevision + 1 }
-    });
-    await waitUntilReady(runtime.baseUrl);
-  }, 20_000);
 
-  it.each([
-    ["SQLITE_IOERR_FSYNC", "io"],
-    ["SQLITE_CORRUPT_VTAB", "corrupt"],
-    ["SQLITE_READONLY_DBMOVED", "read-only"]
-  ] as const)(
-    "fails admission after an MCP operation surfaces %s and recovers only after a commit",
-    async (driverCode, storageError) => {
-      const runtime = await start(undefined, undefined, {
-        NODE_ENV: "test",
-        CODEX_MCP_BRIDGE_TEST_CONFORMANCE_STORAGE_ERROR: driverCode
-      }, true);
-      const current = await runtime.server.applicationService.settingsSnapshot();
-
-      const failed = await conformanceToolCall(runtime.baseUrl);
-      expect(failed.status).toBe(200);
-      expect(await failed.json()).toMatchObject({
-        result: { isError: true }
-      });
-
-      await waitForRuntimeHealth(
-        runtime.server.applicationService,
-        "state-recovering",
-        8_000,
-        () => runtime.server.applicationService.runtimeHealth?.().stateService?.storageError ===
-          storageError
-      );
-      expect(runtime.server.applicationService.runtimeHealth?.()).toMatchObject({
-        acceptingNewJobs: false,
-        stateService: {
-          status: "state-recovering",
-          storageError,
-          storageErrorObservedAt: expect.any(Number)
-        }
-      });
-      const degraded = await fetch(`${runtime.baseUrl}/readyz`);
-      expect(degraded.status).toBe(503);
-      await expect(degraded.json()).resolves.toMatchObject({
-        reason: "state-recovering",
-        limitations: [`state-storage-${storageError}`]
-      });
-
+      await expect(blockedMutation).resolves.toBeInstanceOf(Error);
       await expect(runtime.server.applicationService.updateSettings({
         expectedSettingsRevision: current.settings.settingsRevision,
         operation: {
@@ -518,8 +556,107 @@ describe("isolated production runtime", () => {
         settings: { settingsRevision: current.settings.settingsRevision + 1 }
       });
       await waitUntilReady(runtime.baseUrl);
+    } finally {
+      if (locker.open) locker.close();
+    }
+  }, 20_000);
+
+  it.each([
+    ["SQLITE_BUSY", "busy"],
+    ["SQLITE_IOERR_FSYNC", "io"],
+    ["SQLITE_CORRUPT_VTAB", "corrupt"],
+    ["SQLITE_READONLY_DBMOVED", "read-only"]
+  ] as const)(
+    "fails actual Job admission after a non-transaction task read surfaces %s",
+    async (driverCode, storageError) => {
+      const degradedStatus = storageError === "busy"
+        ? "state-capacity"
+        : "state-recovering";
+      const turnLog = path.join(
+        tmpdir(),
+        `bridge-runtime-turns-${randomUUID()}.log`
+      );
+      const runtime = await start(undefined, undefined, {
+        NODE_ENV: "test",
+        CODEX_MCP_BRIDGE_CODEX: path.join(
+          process.cwd(),
+          "test/fixtures/fake-codex-app-server.mjs"
+        ),
+        CODEX_TEST_TURN_LOG: turnLog,
+        CODEX_MCP_BRIDGE_TEST_TASK_READ_STORAGE_ERROR: driverCode
+      }, true);
+      const settingsInspection = new Database(path.join(runtime.root, "state.sqlite"), {
+        readonly: true
+      });
+      let settingsRevision = 0;
+      try {
+        const row = settingsInspection
+          .prepare("SELECT settings_revision FROM user_settings WHERE singleton = 1")
+          .get() as { settings_revision: number } | undefined;
+        settingsRevision = row?.settings_revision || 0;
+      } finally {
+        settingsInspection.close();
+      }
+      const taskClient = await connectTaskClient(runtime.baseUrl);
+      try {
+        const surfaced = await taskClient.client.callTool({
+          name: "codex_task",
+          arguments: taskClient.taskArguments()
+        });
+        expect(surfaced.isError).toBe(true);
+
+        await waitForRuntimeHealth(
+          runtime.server.applicationService,
+          degradedStatus,
+          8_000,
+          () => runtime.server.applicationService.runtimeHealth?.().stateService?.storageError ===
+            storageError
+        );
+        expect(runtime.server.applicationService.runtimeHealth?.()).toMatchObject({
+          acceptingNewJobs: false,
+          stateService: {
+            status: degradedStatus,
+            storageError,
+            storageErrorObservedAt: expect.any(Number)
+          }
+        });
+        const degraded = await fetch(`${runtime.baseUrl}/readyz`);
+        expect(degraded.status).toBe(503);
+        await expect(degraded.json()).resolves.toMatchObject({
+          reason: degradedStatus,
+          limitations: [`state-storage-${storageError}`]
+        });
+
+        await expectTaskStorageUnavailable(runtime, taskClient);
+        const turns = await readFile(turnLog, "utf8").catch(error => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+          throw error;
+        });
+        expect(turns).toBe("");
+
+        await expect(runtime.server.applicationService.updateSettings({
+          expectedSettingsRevision: settingsRevision,
+          operation: {
+            kind: "patch",
+            settings: {
+              showBridgeThreadsInCodexApp: false
+            }
+          }
+        })).resolves.toMatchObject({
+          settings: { settingsRevision: settingsRevision + 1 }
+        });
+        await waitUntilReady(runtime.baseUrl);
+        const recovered = await taskClient.client.callTool({
+          name: "codex_task",
+          arguments: taskClient.taskArguments()
+        });
+        expect(JSON.stringify(recovered)).not.toContain("STATE_STORAGE_UNAVAILABLE");
+      } finally {
+        await taskClient.client.close();
+        await rm(turnLog, { force: true });
+      }
     },
-    15_000
+    20_000
   );
 
   it("reports unknown only after the current MCP request crosses the runtime boundary", async () => {
@@ -566,6 +703,77 @@ describe("isolated production runtime", () => {
     }
 
     await waitUntilReady(runtime.baseUrl);
+  }, 15_000);
+
+  it("separates a proxy connection failure from still-fresh runtime readiness", async () => {
+    const runtime = await start(undefined, undefined, {
+      NODE_ENV: "test",
+      CODEX_MCP_BRIDGE_TEST_CLOSE_HTTP_AFTER_READY_MS: "100"
+    }, true);
+    await new Promise(resolve => setTimeout(resolve, 250));
+
+    const readiness = await fetch(`${runtime.baseUrl}/readyz`);
+    expect(readiness.status).toBe(200);
+    await expect(readiness.json()).resolves.toMatchObject({
+      reason: "ready",
+      limitations: []
+    });
+
+    const failed = await fetch(`${runtime.baseUrl}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}"
+    });
+    expect(failed.status).toBe(503);
+    await expect(failed.json()).resolves.toMatchObject({
+      reason: "state-recovering",
+      limitations: ["state-response-unconfirmed"],
+      outcome: "not-observed",
+      runtimeReadiness: {
+        ready: true,
+        reason: "ready",
+        limitations: []
+      }
+    });
+  });
+
+  it("reports request capacity separately when only the added body crosses the limit", async () => {
+    const runtime = await start();
+    const sockets: Socket[] = [];
+    try {
+      for (let index = 0; index < 4; index += 1) {
+        sockets.push(await openIncompleteMcpRequest(
+          runtime.baseUrl,
+          7 * 1024 * 1024
+        ));
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const before = await fetch(`${runtime.baseUrl}/readyz`);
+      expect(before.status).toBe(200);
+      await expect(before.json()).resolves.toMatchObject({
+        reason: "ready",
+        limitations: []
+      });
+
+      const rejected = await fetch(`${runtime.baseUrl}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "x".repeat(6 * 1024 * 1024)
+      });
+      expect(rejected.status).toBe(503);
+      await expect(rejected.json()).resolves.toMatchObject({
+        reason: "state-capacity",
+        limitations: ["state-capacity"],
+        outcome: "not-observed",
+        runtimeReadiness: {
+          ready: true,
+          reason: "ready",
+          limitations: []
+        }
+      });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+    }
   }, 15_000);
 
   it("reserves native control capacity when incomplete MCP requests saturate the proxy", async () => {

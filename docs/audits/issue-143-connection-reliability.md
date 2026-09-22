@@ -440,3 +440,59 @@ unchanged, and `/healthz`, `/readyz`, Bridge, Tunnel, state-read and telemetry
 all returned healthy/ready. This installed result closes the request-outcome
 correctness follow-up without claiming control over Tunnel or ChatGPT network
 latency and without expanding #143 into #142's full state-owner migration.
+
+## Admission enforcement and request-failure context follow-up (2026-09-22)
+
+A further audit against `dev` commit
+`de33505240bb67867b421e0e8f86649c781b2af3` found two remaining gaps inside
+#143's stated boundary. First, a classified storage fault changed runtime
+health to `acceptingNewJobs=false`, but the `codex_task` admission gate still
+read only the ordinary drain flag. Second, a request whose own body would push
+aggregate proxy bytes over the limit could receive HTTP 503 while a fresh
+global readiness snapshot still said `reason=ready`. The same contradiction
+was possible for a child HTTP connection failure with a fresh heartbeat.
+
+The corrective implementation keeps request facts and runtime facts separate:
+
+- the shared Job admission state now retains a classified storage fault and
+  rejects a new `codex_task` with retryable `STATE_STORAGE_UNAVAILABLE` before
+  Job creation or execution dispatch;
+- MCP task errors converted into structured tool results are observed at that
+  boundary, so SQLite failures from non-transaction task reads are not hidden
+  from the runtime supervisor;
+- automatic recovery work uses the same effective admission gate;
+- only a later confirmed state transaction clears the storage gate;
+- HTTP 503 top-level `reason` and `limitations` describe the current request,
+  while `runtimeReadiness` preserves the independent global snapshot;
+- aggregate-byte rejection reports `state-capacity`, and a child connection
+  failure reports `state-recovering + state-response-unconfirmed`, even when
+  the last heartbeat still reports ready;
+- `outcome` remains request-local: rejection before crossing the runtime
+  boundary is `not-observed`, while response loss after the complete request
+  was forwarded is `unknown`.
+
+The storage regression now sends real `codex_task` calls. A real
+`SQLITE_FULL` writer failure and deterministic task-read driver errors for
+`SQLITE_BUSY`, `SQLITE_IOERR_FSYNC`, `SQLITE_CORRUPT_VTAB` and
+`SQLITE_READONLY_DBMOVED` each make runtime health non-admitting. The following
+task call returns `STATE_STORAGE_UNAVAILABLE`, the live `jobs` table remains at
+zero rows, and the fake Codex App Server records no turn. A confirmed Settings
+commit then clears the gate. The separate real lock fixture still distinguishes
+a slow commit from SQLite's actual busy result; no elapsed duration is used as
+the storage classifier.
+
+Two proxy regressions cover the contradictory-503 cases. Four incomplete
+requests reserve 28 MiB while global readiness remains ready; a new 6 MiB body
+is rejected as request-local `state-capacity`, `outcome=not-observed`, with the
+nested global snapshot still ready. A deliberately closed child HTTP listener
+likewise returns request-local recovery/response-unconfirmed rather than
+`reason=ready` while preserving the fresh global snapshot.
+
+Current-checkout validation passed 96 TypeScript files / 856 tests, MCP
+2026-07-28 conformance 29/29, App Server compatibility against CLI 0.153.3,
+205 macOS tests with two opt-in skips, the 30-second production-isolation
+fixture, the real companion-socket Swift contract and all three stale-card
+regressions. These results use disposable fault databases. Installed-build
+acceptance for this exact correction is recorded after the signed candidate is
+deployed and rechecked; earlier installed builds are not evidence for this
+follow-up.

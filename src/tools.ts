@@ -2134,7 +2134,11 @@ export class CodexJobRegistry {
   private readonly activityStore: BridgeStateStore;
   private readonly allowedRoots: string[];
   // HTTP requests and the native companion share one runtime admission gate.
-  readonly runtimeAdmission = { acceptingNewJobs: true, pendingAdmissions: 0 };
+  readonly runtimeAdmission: {
+    acceptingNewJobs: boolean;
+    pendingAdmissions: number;
+    storageError?: BridgeStorageAdmissionError;
+  } = { acceptingNewJobs: true, pendingAdmissions: 0 };
   private upstream?: CodexUpstream;
   private readonly terminations = new Map<
     string,
@@ -4585,7 +4589,11 @@ export function registerBridgeTools(
   projectAvailability?: TaskProjectAvailabilityProjection,
   sharedCardPerformance?: CardPerformanceTracker,
   skillLibrary?: SkillLibrary,
-  readProjection?: BridgeReadProjectionService
+  readProjection?: BridgeReadProjectionService,
+  runtimeOptions: {
+    onOperationFailure?: (error: unknown) => void;
+    conformanceFixtures?: boolean;
+  } = {}
 ): {
   applicationService: BridgeApplicationService;
   dispose(): void;
@@ -4611,6 +4619,15 @@ export function registerBridgeTools(
     developerModeRefreshRequired: false
   });
   const runtimeAdmission = jobs.runtimeAdmission;
+  const acceptingNewJobs = () =>
+    runtimeAdmission.acceptingNewJobs && runtimeAdmission.storageError === undefined;
+  let testTaskReadStorageError =
+    runtimeOptions.conformanceFixtures && process.env.NODE_ENV === "test" &&
+      /^SQLITE_[A-Z0-9_]+$/u.test(
+        process.env.CODEX_MCP_BRIDGE_TEST_TASK_READ_STORAGE_ERROR || ""
+      )
+      ? process.env.CODEX_MCP_BRIDGE_TEST_TASK_READ_STORAGE_ERROR
+      : undefined;
   let backgroundProcessImpact: BridgeBackgroundProcessImpact = {
     state: "unknown",
     processes: 0,
@@ -4629,7 +4646,7 @@ export function registerBridgeTools(
       threadId => jobs.admissionStateStore.threadConnections.hasUnfinishedWork(threadId)
     );
     return {
-      acceptingNewJobs: runtimeAdmission.acceptingNewJobs,
+      acceptingNewJobs: acceptingNewJobs(),
       activeJobs: jobs.runningCount(),
       pendingAdmissions: runtimeAdmission.pendingAdmissions,
       pendingInteractions: jobs.list(config.maxRetainedJobs).reduce((count, job) => count + job.pendingInteractions.length, 0),
@@ -4641,6 +4658,12 @@ export function registerBridgeTools(
     };
   };
   const acquireRuntimeAdmission = (): (() => void) => {
+    if (runtimeAdmission.storageError) {
+      throw new Error(
+        `STATE_STORAGE_UNAVAILABLE: Persistent state storage is ` +
+        `${runtimeAdmission.storageError}; retry only after a confirmed state commit.`
+      );
+    }
     if (!runtimeAdmission.acceptingNewJobs) {
       throw new Error(
         "BRIDGE_DRAINING: The app is preparing to stop or restart the bridge. " +
@@ -5073,7 +5096,7 @@ export function registerBridgeTools(
     },
     runtimeHealth() {
       return {
-        acceptingNewJobs: runtimeAdmission.acceptingNewJobs,
+        acceptingNewJobs: acceptingNewJobs(),
         activeJobs: jobs.observedRunningCount(),
         pendingAdmissions: runtimeAdmission.pendingAdmissions,
         progressPersistence: jobs.progressPersistenceStatus(),
@@ -5090,6 +5113,9 @@ export function registerBridgeTools(
     cancelDrain() {
       runtimeAdmission.acceptingNewJobs = true;
       return runtimeAdmissionSnapshot();
+    },
+    setStorageAdmissionError(error) {
+      runtimeAdmission.storageError = error;
     }
   };
   if (readProjection) {
@@ -7605,6 +7631,15 @@ export function registerBridgeTools(
           "Codex task execution"
         );
         taskScopeId = scope.scopeId;
+        if (testTaskReadStorageError) {
+          const code = testTaskReadStorageError;
+          testTaskReadStorageError = undefined;
+          delete process.env.CODEX_MCP_BRIDGE_TEST_TASK_READ_STORAGE_ERROR;
+          throw Object.assign(
+            new Error("Injected non-transaction task read storage failure."),
+            { code }
+          );
+        }
         const onAbort = () => {
           const admitted = jobs.peekRequest(scope.scopeId, args.requestId);
           if (!admitted) return;
@@ -7632,6 +7667,7 @@ export function registerBridgeTools(
           executionEnvelopeRef: taskExecutionEnvelopeRef(),
           executionPolicyRef: currentTaskAdmissionRef(preferences)
         });
+        if (!existingRequest) releaseRuntimeAdmission = acquireRuntimeAdmission();
         const requestedActivity = validateActivityTaskRequest(args, jobs, scope.scopeId);
         const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, requestedActivity);
         validateTaskSelectionInput(args, preferences, requestedActivity, agentResolution);
@@ -7662,8 +7698,6 @@ export function registerBridgeTools(
         if (scope.scopeId === LEGACY_SCOPE_ID && agentResolution.contextMode === "fresh") {
           throw new Error("The legacy scope cannot create a fresh bridge Agent thread.");
         }
-        releaseRuntimeAdmission = acquireRuntimeAdmission();
-
         if (agentResolution.contextMode === "fresh") {
           const backendHandoff = resolveBackendHandoff({
             args,
@@ -7910,6 +7944,11 @@ export function registerBridgeTools(
           onAdmitted: onTaskAdmitted
         });
       } catch (error) {
+        try {
+          runtimeOptions.onOperationFailure?.(error);
+        } catch {
+          // Storage observation cannot replace the task's structured error.
+        }
         const admitted = admittedForCall && taskScopeId ? jobs.peekRequest(taskScopeId, args.requestId) : undefined;
         if (admitted) return resultForJob(admitted, config.jobStaleAfterMs, userSettings.current, jobs, false);
         if (error instanceof ExecutionPolicyChangedError) {
@@ -8110,7 +8149,7 @@ export function registerBridgeTools(
     const result = await applicationService.problemAction!(input,claims.selectedScopeId || undefined,"widget-control");
     return {content:[{type:"text",text:"Problem action completed."}],structuredContent:result};
   });
-  configureAutomaticRecovery(jobs,upstream,applicationService);
+  configureAutomaticRecovery(jobs,upstream,applicationService,acceptingNewJobs);
   return {
     applicationService,
     dispose: () => undefined
@@ -8123,10 +8162,15 @@ function recheckRecoveryIdentity(jobs: CodexJobRegistry, agent: BridgeAgent,
     scopeId:agent.scopeId,agentId:agent.agentId,jobId:agent.currentJobId || latest?.jobId,kind:"recheck"};
 }
 
-function configureAutomaticRecovery(jobs: CodexJobRegistry, upstream: CodexUpstream, service: BridgeApplicationService): void {
+function configureAutomaticRecovery(
+  jobs: CodexJobRegistry,
+  upstream: CodexUpstream,
+  service: BridgeApplicationService,
+  acceptingNewJobs: () => boolean
+): void {
   const store = jobs.admissionStateStore;
   const candidates = (): AutomaticRecoveryCandidate[] => {
-    if (!jobs.runtimeAdmission.acceptingNewJobs || jobs.runtimeAdmission.pendingAdmissions > 0) return [];
+    if (!acceptingNewJobs() || jobs.runtimeAdmission.pendingAdmissions > 0) return [];
     const latestByAgent = new Map<string, CodexJob>();
     for (const job of jobs.list(jobs.size)) {
       if (!job.agentId) continue;
@@ -8220,7 +8264,7 @@ function configureAutomaticRecovery(jobs: CodexJobRegistry, upstream: CodexUpstr
       const expected = eligible.get(id);
       if (!expected) return false;
       const currentAgent = jobs.getAgent(expected.agent.agentId), current = store.threadConnections.get(id);
-      return jobs.runtimeAdmission.acceptingNewJobs && jobs.runtimeAdmission.pendingAdmissions === 0 &&
+      return acceptingNewJobs() && jobs.runtimeAdmission.pendingAdmissions === 0 &&
         currentAgent?.version === expected.agent.version && !currentAgent.currentJobId &&
         current?.revision === (id === thread.threadId ? releasing.revision : expected.connection.revision) &&
         current.lastJobId === expected.candidate.jobId && !store.threadConnections.hasUnfinishedWork(id);
@@ -8242,7 +8286,7 @@ function configureAutomaticRecovery(jobs: CodexJobRegistry, upstream: CodexUpstr
       return {resolved:false,reason:"release-unconfirmed"};
     }
   };
-  jobs.configureAutomaticRecovery({candidates,attempt,enabled:() => jobs.runtimeAdmission.acceptingNewJobs && jobs.runtimeAdmission.pendingAdmissions === 0,
+  jobs.configureAutomaticRecovery({candidates,attempt,enabled:() => acceptingNewJobs() && jobs.runtimeAdmission.pendingAdmissions === 0,
     changed:() => notifyCardObservation(upstream)});
 }
 
@@ -10419,6 +10463,13 @@ export type BridgeSettingsMutationInput = {
     | { kind: "patch"; settings: BridgeSettingsPatchInput };
 };
 
+export type BridgeStorageAdmissionError =
+  | "busy"
+  | "full"
+  | "io"
+  | "corrupt"
+  | "read-only";
+
 export type BridgeRuntimeAdmissionSnapshot = {
   acceptingNewJobs: boolean;
   activeJobs: number;
@@ -10445,7 +10496,7 @@ export type BridgeRuntimeAdmissionSnapshot = {
     heartbeatAgeMs?: number;
     activeOperation?: OperationalStateOperationObservation;
     lastCommitAt?: number;
-    storageError?: "busy" | "full" | "io" | "corrupt" | "read-only";
+    storageError?: BridgeStorageAdmissionError;
     storageErrorObservedAt?: number;
   };
   /** Read-only projection worker; a degraded value does not imply write loss. */
@@ -10515,6 +10566,8 @@ export type BridgeApplicationService = {
   runtimeHealth?(): BridgeRuntimeAdmissionSnapshot;
   beginDrain(options?: BridgeRuntimeSnapshotOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
   cancelDrain(): Promise<BridgeRuntimeAdmissionSnapshot>;
+  /** Internal runtime gate; never registered as an MCP or native RPC method. */
+  setStorageAdmissionError?(error?: BridgeStorageAdmissionError): void;
   /** Local native app only: opaque completion events, never task content. */
   claimNativeCompletionNotifications?(input: BridgeNativeCompletionNotificationClaim): Promise<NativeCompletionNotification[]>;
   markNativeCompletionNotificationsDelivered?(input: BridgeNativeCompletionNotificationMutation): Promise<void>;
@@ -15348,7 +15401,11 @@ function errorFromException(error: unknown): z.infer<typeof structuredErrorOutpu
   return normalizeStructuredError({
     code,
     message: codeMatch ? rawMessage.slice(codeMatch[0].length) : rawMessage,
-    ...(code === "JOB_RETENTION_CAPACITY" ? { retryable: true } : {})
+    ...(
+      code === "JOB_RETENTION_CAPACITY" || code === "STATE_STORAGE_UNAVAILABLE"
+        ? { retryable: true }
+        : {}
+    )
   });
 }
 
