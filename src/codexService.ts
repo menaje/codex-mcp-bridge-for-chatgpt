@@ -139,10 +139,16 @@ export class CodexService {
     const failure = this.accountFailures.get(kind);
     return failure?.revision === this.cacheRevision() ? failure.error : null;
   }
-  /** Fast structural refreshes retain only bounded data from the same auth/storage context. */
+  /**
+   * Fast structural refreshes retain the last displayed value while a fresh
+   * account read is in flight. The revision check is the invalidation boundary:
+   * authentication, configuration, or runtime selection changes must never
+   * reuse a value from the previous context. `observedAt` communicates age to
+   * the UI, so elapsed time alone must not create a blank refresh interval.
+   */
   cachedAccount(kind: CodexBackendKind): CodexAccountSnapshot | null {
     const cached = this.displayedAccounts.get(kind);
-    return cached?.revision === this.cacheRevision() && Date.now() - cached.value.observedAt < 5 * 60_000 ? cached.value : null;
+    return cached?.revision === this.cacheRevision() ? cached.value : null;
   }
   private async withBilling(account: CodexAccountSnapshot | null): Promise<CodexAccountSnapshot | null> {
     if (!account || account.authMode !== "api-key") return account;

@@ -128,15 +128,19 @@ createInterface({ input: process.stdin }).on("line", line => {
     await expect(f.service.sessionPolicy("app-server", false, undefined, "persistent")).rejects.toThrow(/HIDDEN_PERSISTENT_UNSUPPORTED/);
   });
 
-  it("keeps account display stable across metadata refreshes but clears it when authentication or selection changes", async () => {
+  it("keeps stale account display during same-context refreshes but clears it when authentication or selection changes", async () => {
     const f = await fixture();
     await mkdir(f.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME, { recursive: true });
     const file = path.join(f.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME, "cli-state.json");
     const state = { selection: { command: "/fixture/codex", version: "0.153.3" } };
     await writeFile(file, JSON.stringify(state));
-    const account = projectCodexAccount({ account: { type: "chatgpt", email: "fixture@example.com" } }, null);
+    const account = {
+      ...projectCodexAccount({ account: { type: "chatgpt", email: "fixture@example.com" } }, null),
+      observedAt: Date.now() - 60 * 60_000
+    };
     const read = vi.spyOn(f.service, "readCliAccount").mockResolvedValue(account);
     await f.service.readAccount("app-server");
+    expect(f.service.cachedAccount("app-server")).toEqual(account);
     await writeFile(file, JSON.stringify({ ...state, checkedAt: "2026-09-06", operation: { phase: "downloading" } }));
     expect(f.service.cachedAccount("app-server")).toEqual(account);
     expect(read).toHaveBeenCalledTimes(1);
@@ -146,6 +150,37 @@ createInterface({ input: process.stdin }).on("line", line => {
     await mkdir(path.join(f.root, ".codex"));
     await writeFile(path.join(f.root, ".codex", "auth.json"), JSON.stringify({ auth_mode: "apiKey", OPENAI_API_KEY: "fixture-secret" }));
     expect(f.service.cachedAccount("app-server")).toBeNull();
+  });
+
+  it("retains the previous account while a same-context refresh is in flight and replaces it on completion", async () => {
+    const f = await fixture();
+    const startedAt = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(startedAt);
+    const previous = {
+      ...projectCodexAccount({ account: { type: "chatgpt", email: "previous@example.com" } }, null),
+      observedAt: startedAt - 60 * 60_000
+    };
+    const refreshed = {
+      ...projectCodexAccount({ account: { type: "chatgpt", email: "previous@example.com", planType: "plus" } }, null),
+      observedAt: startedAt + 16_000
+    };
+    let completeRefresh!: (value: typeof refreshed) => void;
+    const refreshResult = new Promise<typeof refreshed>((resolve) => { completeRefresh = resolve; });
+    const read = vi.spyOn(f.service, "readCliAccount")
+      .mockResolvedValueOnce(previous)
+      .mockReturnValueOnce(refreshResult);
+
+    await expect(f.service.readAccount("app-server")).resolves.toEqual(previous);
+    expect(f.service.cachedAccount("app-server")).toEqual(previous);
+
+    clock.mockReturnValue(startedAt + 16_000);
+    const refresh = f.service.readAccount("app-server");
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(f.service.cachedAccount("app-server")).toEqual(previous);
+
+    completeRefresh(refreshed);
+    await expect(refresh).resolves.toEqual(refreshed);
+    expect(f.service.cachedAccount("app-server")).toEqual(refreshed);
   });
 
 
