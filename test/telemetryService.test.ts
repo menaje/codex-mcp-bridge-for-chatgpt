@@ -259,4 +259,89 @@ describe("isolated telemetry persistence", () => {
       await rm(root, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it("rebases startup records and merges drops after an initially locked database", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "bridge-telemetry-rebase-"));
+    const file = path.join(root, "telemetry.sqlite");
+    const sourceStateDatabaseId = randomUUID();
+    const bridgeInstanceId = randomUUID();
+    const scopeId = randomUUID();
+    const initial = await ChildProcessTelemetryService.start(file, { sourceStateDatabaseId });
+    initial.recordTransportObservation({
+      kind: "status-wait-aborted",
+      scopeId,
+      reasonCode: "existing-before-startup-lock"
+    }, bridgeInstanceId);
+    await waitFor(() => initial.status().queued === 0 && initial.status().inFlight === 0);
+    await initial.close();
+
+    const locker = new Database(file);
+    locker.prepare(`
+      INSERT INTO telemetry_drop_counters(kind, dropped_count, first_at, last_at)
+      VALUES ('transport.queue-capacity', 5, 100, 200)
+    `).run();
+    locker.prepare(`
+      UPDATE telemetry_meta SET value = '1' WHERE key = 'schema_version'
+    `).run();
+    locker.exec("DROP TABLE telemetry_record_deliveries");
+    locker.exec("BEGIN EXCLUSIVE");
+    let service: ChildProcessTelemetryService | undefined;
+    try {
+      service = await ChildProcessTelemetryService.start(file, {
+        sourceStateDatabaseId,
+        queueCapacity: 1
+      });
+      expect(service.status()).toMatchObject({ connected: false, failed: 1 });
+      expect(service.recordTransportObservation({
+        kind: "status-wait-aborted",
+        scopeId,
+        reasonCode: "queued-during-startup-recovery"
+      }, bridgeInstanceId)).toMatchObject({ observationId: 1 });
+      service.recordTransportObservation({
+        kind: "status-wait-aborted",
+        scopeId,
+        reasonCode: "dropped-during-startup-recovery"
+      }, bridgeInstanceId);
+      expect(service.status().dropped).toBe(1);
+
+      locker.exec("ROLLBACK");
+      await waitFor(() => service!.status().connected, 10_000);
+      await waitFor(
+        () => service!.status().queued === 0 && service!.status().inFlight === 0,
+        10_000
+      );
+      expect(service.status().dropped).toBe(6);
+      await service.close();
+
+      const persisted = new Database(file, { readonly: true, fileMustExist: true });
+      try {
+        expect(persisted.prepare(`
+          SELECT observation_id AS id, reason_code AS reason
+            FROM transport_observations
+           ORDER BY observation_id
+        `).all()).toEqual([
+          { id: 1, reason: "existing-before-startup-lock" },
+          { id: 2, reason: "queued-during-startup-recovery" }
+        ]);
+        expect(persisted.prepare(`
+          SELECT dropped_count AS count
+            FROM telemetry_drop_counters
+           WHERE kind = 'transport.queue-capacity'
+        `).get()).toEqual({ count: 6 });
+        expect(persisted.prepare(`
+          SELECT value FROM telemetry_meta WHERE key = 'schema_version'
+        `).get()).toEqual({ value: "2" });
+        expect(persisted.prepare(`
+          SELECT COUNT(*) AS count FROM telemetry_record_deliveries
+        `).get()).toEqual({ count: 1 });
+      } finally {
+        persisted.close();
+      }
+    } finally {
+      if (locker.inTransaction) locker.exec("ROLLBACK");
+      locker.close();
+      await service?.close().catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 20_000);
 });

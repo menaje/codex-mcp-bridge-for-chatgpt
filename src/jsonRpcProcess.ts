@@ -308,13 +308,7 @@ export class JsonRpcProcess {
     }
 
     this.closing = true;
-    signalExactProcess(identity, "SIGTERM");
-    if (await this.waitForGroupExit(identity, graceMs)) {
-      return { ...identity, exited: true, escalated: false, signal: "SIGTERM", mode: "process-group", workerExited: true };
-    }
-    signalExactProcess(identity, "SIGKILL");
-    const exited = await this.waitForGroupExit(identity, graceMs);
-    return { ...identity, exited, escalated: true, signal: "SIGKILL", mode: "process-group", workerExited: exited };
+    return terminateJsonRpcProcessIdentity(identity, graceMs);
   }
 
   private async waitForExit(timeoutMs: number): Promise<boolean> {
@@ -323,15 +317,6 @@ export class JsonRpcProcess {
       (this.exitPromise || Promise.resolve()).then(() => true),
       delay(timeoutMs).then(() => false)
     ]);
-  }
-
-  private async waitForGroupExit(identity: JsonRpcProcessIdentity, timeoutMs: number): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    do {
-      if (!processIdentityAlive(identity)) return true;
-      await delay(25);
-    } while (Date.now() < deadline);
-    return !processIdentityAlive(identity);
   }
 
   private receiveStdout(chunk: Buffer): void {
@@ -395,10 +380,7 @@ export class JsonRpcProcess {
     this.stdoutBuffer = Buffer.alloc(0);
     const identity = this.identity;
     if (identity) {
-      signalExactProcess(identity, "SIGTERM");
-      void this.waitForGroupExit(identity, 1_500).then((exited) => {
-        if (!exited) signalExactProcess(identity, "SIGKILL");
-      });
+      void terminateJsonRpcProcessIdentity(identity, 1_500).catch(() => undefined);
     }
     try {
       this.child?.stdin.end();
@@ -569,6 +551,57 @@ export class JsonRpcProcess {
   }
 }
 
+/**
+ * Terminates a previously registered App Server identity without requiring the
+ * supervising executor process to still be alive. On Unix the identity is a
+ * dedicated process group, so descendant commands are covered by the same
+ * bounded TERM/KILL sequence.
+ */
+export async function terminateJsonRpcProcessIdentity(
+  identity: JsonRpcProcessIdentity,
+  graceMs = 1_500
+): Promise<JsonRpcTerminationResult> {
+  if (
+    !Number.isSafeInteger(identity.pid) || identity.pid < 2 ||
+    (identity.processGroupId !== null &&
+      (!Number.isSafeInteger(identity.processGroupId) || identity.processGroupId < 2)) ||
+    !Number.isSafeInteger(graceMs) || graceMs < 0
+  ) {
+    throw new Error("Invalid supervised process identity or termination grace period.");
+  }
+  if (!processIdentityAlive(identity)) {
+    return {
+      ...identity,
+      exited: true,
+      escalated: false,
+      signal: null,
+      mode: "process-group",
+      workerExited: true
+    };
+  }
+  signalExactProcess(identity, "SIGTERM");
+  if (await waitForProcessIdentityExit(identity, graceMs)) {
+    return {
+      ...identity,
+      exited: true,
+      escalated: false,
+      signal: "SIGTERM",
+      mode: "process-group",
+      workerExited: true
+    };
+  }
+  signalExactProcess(identity, "SIGKILL");
+  const exited = await waitForProcessIdentityExit(identity, graceMs);
+  return {
+    ...identity,
+    exited,
+    escalated: true,
+    signal: "SIGKILL",
+    mode: "process-group",
+    workerExited: exited
+  };
+}
+
 function addProgressToken(params: unknown, requestId: number): Record<string, unknown> {
   const base = isRecord(params) ? { ...params } : {};
   const meta = isRecord(base._meta) ? { ...base._meta } : {};
@@ -642,6 +675,18 @@ function processIdentityAlive(identity: JsonRpcProcessIdentity): boolean {
     if (isPermissionDenied(error)) return true;
     throw error;
   }
+}
+
+async function waitForProcessIdentityExit(
+  identity: JsonRpcProcessIdentity,
+  timeoutMs: number
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (!processIdentityAlive(identity)) return true;
+    await delay(25);
+  } while (Date.now() < deadline);
+  return !processIdentityAlive(identity);
 }
 
 function isNoSuchProcess(error: unknown): boolean {

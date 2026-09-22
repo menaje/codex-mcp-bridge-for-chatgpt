@@ -147,6 +147,7 @@ The first telemetry schema contains:
 | `diagnostic_events` | sanitized component/error transitions without prompt, result, secret or absolute project path | bounded drop allowed by severity policy |
 | `telemetry_drop_counters` | dropped/coalesced count and first/last occurrence per kind | retained even when detail is dropped, subject to a small fixed cap |
 | `telemetry_retention_state` | restartable cleanup cursor and last completion | telemetry-local only |
+| `telemetry_record_deliveries` | idempotent delivery UUID to actual per-kind record ID | prevents an ACK loss or startup-ID collision from becoming a silent `INSERT OR IGNORE` loss; pruned with retained detail |
 
 `transport_observations.bridge_instance_id`, scope, Activity and Job identifiers
 are correlation values, not foreign keys into `state.sqlite`. Telemetry may lag,
@@ -223,7 +224,7 @@ actually accumulate:
 | Boundary | Capacity | Policy |
 | --- | ---: | --- |
 | ingress to state owner | 128 requests, 16 slots reserved from MCP, 32 MiB proxied bodies | reject before forwarding with `not-observed`; preserve native control/recovery access |
-| Codex execution | 128 requests, 2 MiB each, 32 MiB total, 8 MiB result; 256/32 MiB critical outbound messages and 128/8 MiB coalesced progress | reject before execution; latest ordinary progress is coalesced per request; critical overflow fails the worker closed and marks an active turn interrupted/worker-lost rather than successful |
+| Codex execution | 128 requests with 16 control slots reserved, 2 MiB each, 32 MiB total with 8 MiB reserved for control, 8 MiB result; 256/32 MiB critical outbound messages and 128/8 MiB coalesced progress | ordinary admission stops at 112 requests or 24 MiB, while bounded input responses, steering, forced termination, terminal cleanup and connection release may use the reserve; absolute overflow still rejects before execution; latest ordinary progress is coalesced per request; critical outbound overflow fails the worker closed and marks an active turn interrupted/worker-lost rather than successful |
 | read projection | 16 independent requests, 8 MiB response | fail retryably and retain the last confirmed presentation |
 | disposable Job progress | 256 total, 32 per project, four immediate writes | per-project round robin; drop/supersede only non-authoritative `updated` progress |
 | telemetry | 4,096 records, 16 MiB, 16 KiB per sanitized record | bounded drop with persistent kind/count/first/last counters; never affect operational outcome |
@@ -299,8 +300,12 @@ Each child uses bounded exponential restart. A read, telemetry or Codex
 execution child crash does not restart ingress or the operational state owner.
 An execution crash rejects active turns as `CODEX_WORKER_LOST`; the durable Job
 becomes interrupted/worker-lost and enters the existing reconciliation path,
-never completed or cancelled by inference. New Job admission stays closed until
-the execution generation is ready again.
+never completed or cancelled by inference. Every App Server process group is
+registered with and acknowledged by the state owner before protocol
+initialization or user work. If the executor exits, the state owner terminates
+all registered groups (including descendant commands) and confirms their exit
+before starting a replacement execution generation. New Job admission stays
+closed throughout cleanup and restart.
 
 A state-owner crash makes new mutations fail closed while ingress `/healthz`
 remains live. Because the state owner is the lifecycle supervisor for its three
@@ -340,6 +345,15 @@ reserved control message. Failed counter persistence uses bounded exponential
 retry so a full diagnostic disk cannot create a reporting loop. Records never
 include raw prompts, Job results,
 secrets, absolute project paths or unsanitized subprocess output.
+
+Records accepted while the initial telemetry open is recovering are not sent
+until the database reports ready. Their provisional IDs are rebased above the
+database maximum, and every record also carries an idempotent delivery UUID.
+The child uses a strict insert, remaps a genuine legacy-ID collision, and
+returns the actual persisted ID; retry after ACK loss resolves through the
+delivery ledger instead of silently ignoring a row. Drop counters accumulated
+during that startup interval are added to, rather than overwritten by, the
+persisted counters before the reserved counter update is sent.
 
 The telemetry database uses its own WAL/checkpoint and retention state. A lock,
 capacity failure or process exit only accumulates bounded telemetry work or

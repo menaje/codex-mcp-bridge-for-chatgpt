@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -25,6 +26,7 @@ type RuntimeFixture = {
   baseUrl: string;
   stateProcessIds: number[];
   executionProcessIds: number[];
+  descendantObservationFile: string;
 };
 
 async function main(): Promise<void> {
@@ -33,6 +35,18 @@ async function main(): Promise<void> {
   let stateLocker: Database.Database | undefined;
   try {
     await waitForReady(fixture.baseUrl);
+    await fixture.server.applicationService.updateSettings({
+      expectedRegistryRevision: 0,
+      operation: {
+        kind: "patch",
+        settings: {
+          projectOperations: [{
+            kind: "add",
+            project: { name: "Issue 142 isolation", cwd: fixture.root }
+          }]
+        }
+      }
+    });
     const initialDatabaseId = readMeta(fixture.stateFile, "state_database_id");
     assert.match(initialDatabaseId, /^[0-9a-f-]{36}$/iu);
 
@@ -41,6 +55,8 @@ async function main(): Promise<void> {
       inspectRuntime: true,
       includeHistory: false
     });
+    const activeProject = readActiveProject(fixture.stateFile);
+    assert.ok(activeProject, "an active fixture project must be available");
     const firstDashboardDurationMs = performance.now() - dashboardStartedAt;
     assert.ok(dashboard.codexAccount);
     await waitForCondition(
@@ -81,6 +97,7 @@ async function main(): Promise<void> {
     const executionProcessId = fixture.executionProcessIds.at(-1)!;
     let executionStopped = false;
     let executionAdmissionReadiness: unknown;
+    let blockedAdmissionJobCount = -1;
     try {
       process.kill(executionProcessId, "SIGSTOP");
       executionStopped = true;
@@ -115,6 +132,7 @@ async function main(): Promise<void> {
         "EXECUTION_UNAVAILABLE"
       );
       assert.equal(readJobCount(fixture.stateFile), 0);
+      blockedAdmissionJobCount = readJobCount(fixture.stateFile);
     } finally {
       if (executionStopped) process.kill(executionProcessId, "SIGCONT");
       await executionClient.close();
@@ -229,16 +247,119 @@ async function main(): Promise<void> {
     );
     revision = lockedTargetRevision;
 
-    const firstExecutionProcessId = fixture.executionProcessIds.at(-1)!;
-    process.kill(firstExecutionProcessId, "SIGKILL");
-    const healthDuringExecutionRestart = await probe(fixture.baseUrl, "/healthz");
-    assert.equal(healthDuringExecutionRestart.status, 200);
-    await waitForCondition(
-      () => fixture.executionProcessIds.length >= 2 &&
-        fixture.server.applicationService.runtimeHealth?.().executionService?.status === "ready",
-      12_000,
-      "Codex execution restart"
+    const workerLossClient = new Client(
+      { name: "issue-142-worker-loss", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: CURRENT_PROTOCOL } } }
     );
+    let workerLossJobId = "";
+    let recoveryJobId = "";
+    let terminatedAppServerPid = 0;
+    let terminatedCommandPid = 0;
+    let healthDuringExecutionRestart: Awaited<ReturnType<typeof probe>>;
+    try {
+      await workerLossClient.connect(
+        new StreamableHTTPClientTransport(new URL(`${fixture.baseUrl}/mcp`))
+      );
+      const taskDescriptor = (await workerLossClient.listTools()).tools.find(
+        tool => tool.name === "codex_task"
+      );
+      assert.ok(taskDescriptor, "codex_task descriptor must be available for worker-loss proof");
+      const taskProperties = taskDescriptor.inputSchema.properties as Record<
+        string,
+        { const?: string | number }
+      >;
+      const scopeId = randomUUID();
+      const workerLossRequestId = randomUUID();
+      const admitted = await workerLossClient.callTool({
+        name: "codex_task",
+        arguments: {
+          scopeId,
+          requestId: workerLossRequestId,
+          taskContractVersion: taskProperties.taskContractVersion?.const,
+          executionEnvelopeRef: taskProperties.executionEnvelopeRef?.const,
+          prompt: "execution descendant hold",
+          selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+          project: {
+            name: activeProject.name,
+            projectRef: activeProject.projectRef,
+            projectRevision: activeProject.projectRevision
+          }
+        }
+      });
+      assert.notEqual(admitted.isError, true, JSON.stringify(admitted));
+      workerLossJobId = (admitted.structuredContent as { jobId: string }).jobId;
+      await waitForCondition(
+        () => readDescendantObservations(fixture.descendantObservationFile).length === 1 &&
+          readJobState(fixture.stateFile, workerLossJobId)?.status === "running",
+        10_000,
+        "active descendant command and running Job"
+      );
+      const [descendant] = readDescendantObservations(fixture.descendantObservationFile);
+      terminatedAppServerPid = descendant!.appServerPid;
+      terminatedCommandPid = descendant!.childPid;
+      assert.equal(processAlive(terminatedAppServerPid), true);
+      assert.equal(processAlive(terminatedCommandPid), true);
+
+      const firstExecutionProcessId = fixture.executionProcessIds.at(-1)!;
+      process.kill(firstExecutionProcessId, "SIGKILL");
+      healthDuringExecutionRestart = await probe(fixture.baseUrl, "/healthz");
+      assert.equal(healthDuringExecutionRestart.status, 200);
+      await waitForCondition(
+        () => !processAlive(terminatedAppServerPid) && !processAlive(terminatedCommandPid),
+        12_000,
+        "previous App Server process group termination"
+      );
+      await waitForCondition(
+        () => fixture.executionProcessIds.length >= 2 &&
+          fixture.server.applicationService.runtimeHealth?.().executionService?.status === "ready",
+        12_000,
+        "Codex execution restart after worker cleanup"
+      );
+      await waitForCondition(() => {
+        const job = readJobState(fixture.stateFile, workerLossJobId);
+        return job?.status === "interrupted" && job.terminalOrigin === "worker-loss";
+      }, 10_000, "worker-loss Job terminal state");
+      assert.equal(readJobCountByRequest(fixture.stateFile, workerLossRequestId), 1);
+      assert.equal(readDescendantObservations(fixture.descendantObservationFile).length, 1);
+
+      const recoveryRequestId = randomUUID();
+      const recovery = await workerLossClient.callTool({
+        name: "codex_task",
+        arguments: {
+          scopeId,
+          requestId: recoveryRequestId,
+          taskContractVersion: taskProperties.taskContractVersion?.const,
+          executionEnvelopeRef: taskProperties.executionEnvelopeRef?.const,
+          prompt: "after execution restart",
+          selection: { model: "gpt-5.6-sol", reasoningEffort: "max" },
+          project: {
+            name: activeProject.name,
+            projectRef: activeProject.projectRef,
+            projectRevision: activeProject.projectRevision
+          }
+        }
+      });
+      assert.notEqual(recovery.isError, true, JSON.stringify(recovery));
+      recoveryJobId = (recovery.structuredContent as { jobId: string }).jobId;
+      await waitForCondition(
+        () => {
+          const status = readJobState(fixture.stateFile, recoveryJobId)?.status;
+          return status !== undefined && !["running", "terminating"].includes(status);
+        },
+        10_000,
+        "new Job terminal state after executor replacement"
+      );
+      const recoveryState = readJobState(fixture.stateFile, recoveryJobId);
+      assert.equal(
+        recoveryState?.status,
+        "completed",
+        JSON.stringify(readJobDiagnostic(fixture.stateFile, recoveryJobId))
+      );
+      assert.equal(recoveryState.terminalOrigin, "normal-completion");
+      assert.equal(readJobCountByRequest(fixture.stateFile, recoveryRequestId), 1);
+    } finally {
+      await workerLossClient.close().catch(() => undefined);
+    }
     assert.equal(fixture.stateProcessIds.length, 1);
     assert.equal(readMeta(fixture.stateFile, "state_database_id"), initialDatabaseId);
     assert.equal((await fixture.server.applicationService.runtimeSnapshot()).acceptingNewJobs, true);
@@ -286,7 +407,7 @@ async function main(): Promise<void> {
         staleReadiness: executionAdmissionReadiness,
         acceptingNewJobs: false,
         blockedBeforeJobCreation: true,
-        retainedJobs: readJobCount(fixture.stateFile)
+        retainedJobs: blockedAdmissionJobCount
       },
       healthyStateCommands: summarize(healthySorted, HEALTHY_COMMAND_TARGET_MS),
       telemetryLock: {
@@ -308,6 +429,14 @@ async function main(): Promise<void> {
       recovery: {
         executionRestartedWithoutStateOwnerRestart: true,
         healthDuringExecutionRestartMs: rounded(healthDuringExecutionRestart.durationMs),
+        interruptedJobId: workerLossJobId,
+        interruptedJobTerminalOrigin: "worker-loss",
+        terminatedAppServerPid,
+        terminatedCommandPid,
+        previousProcessGroupExitedBeforeReplacement: true,
+        duplicateExecutionObservations: 0,
+        recoveryJobId,
+        recoveryJobCompleted: true,
         stateOwnerRestartedWithIdentityPreserved: true,
         healthDuringStateRestartMs: rounded(healthDuringStateRestart.durationMs),
         settingsRevisionPreserved: true
@@ -329,6 +458,7 @@ async function startFixture(): Promise<RuntimeFixture> {
   const root = await mkdtemp(path.join(tmpdir(), "issue-142-isolation-"));
   const stateFile = path.join(root, "state.sqlite");
   const telemetryFile = path.join(root, "telemetry.sqlite");
+  const descendantObservationFile = path.join(root, "execution-descendants.jsonl");
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: root,
@@ -342,6 +472,8 @@ async function startFixture(): Promise<RuntimeFixture> {
     CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime"),
     CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: stateFile,
     CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE: telemetryFile,
+    CODEX_TEST_DESCENDANT_OBSERVATION: descendantObservationFile,
+    CODEX_TEST_PROCESS_SCOPED_THREAD_IDS: "1",
     CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: path.join(root, "models.json"),
     CODEX_MCP_BRIDGE_SKILLS_DIRECTORY: path.join(root, "skills")
   };
@@ -368,7 +500,8 @@ async function startFixture(): Promise<RuntimeFixture> {
     server,
     baseUrl: `http://127.0.0.1:${address.port}`,
     stateProcessIds,
-    executionProcessIds
+    executionProcessIds,
+    descendantObservationFile
   };
 }
 
@@ -395,6 +528,36 @@ function readVisibility(file: string): boolean {
   }
 }
 
+function readActiveProject(file: string): {
+  name: string;
+  projectRef: string;
+  projectRevision: number;
+} | undefined {
+  const database = new Database(file, { readonly: true, fileMustExist: true });
+  try {
+    const row = database.prepare(`
+      SELECT name, project_ref AS projectRef, project_revision AS projectRevision
+        FROM projects
+       WHERE archived_at IS NULL AND deleted_at IS NULL
+       ORDER BY sort_order, created_at, project_id
+       LIMIT 1
+    `).get() as {
+      name?: string;
+      projectRef?: string;
+      projectRevision?: number;
+    } | undefined;
+    return row?.name && row.projectRef && Number.isSafeInteger(row.projectRevision)
+      ? {
+          name: row.name,
+          projectRef: row.projectRef,
+          projectRevision: Number(row.projectRevision)
+        }
+      : undefined;
+  } finally {
+    database.close();
+  }
+}
+
 function readMeta(file: string, key: string): string {
   const database = new Database(file, { readonly: true, fileMustExist: true });
   try {
@@ -414,6 +577,72 @@ function readJobCount(file: string): number {
     ).get() as { value?: number } | undefined)?.value || 0);
   } finally {
     database.close();
+  }
+}
+
+function readJobCountByRequest(file: string, requestId: string): number {
+  const database = new Database(file, { readonly: true, fileMustExist: true });
+  try {
+    return Number((database.prepare(
+      "SELECT COUNT(*) AS value FROM jobs WHERE request_id = ?"
+    ).get(requestId) as { value?: number } | undefined)?.value || 0);
+  } finally {
+    database.close();
+  }
+}
+
+function readJobState(file: string, jobId: string): {
+  status: string;
+  terminalOrigin: string | null;
+} | undefined {
+  const database = new Database(file, { readonly: true, fileMustExist: true });
+  try {
+    const row = database.prepare(`
+      SELECT status, terminal_origin AS terminalOrigin
+        FROM jobs
+       WHERE job_id = ?
+    `).get(jobId) as { status?: string; terminalOrigin?: string | null } | undefined;
+    return row?.status ? {
+      status: row.status,
+      terminalOrigin: row.terminalOrigin ?? null
+    } : undefined;
+  } finally {
+    database.close();
+  }
+}
+
+function readJobDiagnostic(file: string, jobId: string): unknown {
+  const database = new Database(file, { readonly: true, fileMustExist: true });
+  try {
+    return database.prepare(`
+      SELECT status, terminal_origin, summary, payload
+        FROM jobs
+       WHERE job_id = ?
+    `).get(jobId);
+  } finally {
+    database.close();
+  }
+}
+
+function readDescendantObservations(file: string): Array<{
+  appServerPid: number;
+  childPid: number;
+}> {
+  try {
+    return readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map(line =>
+      JSON.parse(line) as { appServerPid: number; childPid: number }
+    );
+  } catch {
+    return [];
+  }
+}
+
+function processAlive(processId: number): boolean {
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
 }
 
