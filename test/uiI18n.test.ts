@@ -219,6 +219,10 @@ describe("human-facing UI localization", () => {
     expect(UI_TRANSLATIONS.ko["settings.codexAppThreadsHint"]).toContain(
       "Codex 앱 목록에 나타나지 않으며"
     );
+    expect(UI_TRANSLATIONS.ko["settings.experimental.directResults"])
+      .toBe("Codex 결과 직접 수신");
+    expect(UI_TRANSLATIONS.ko["settings.experimental.directResultsHint"])
+      .toContain("자동 연속 진행은 보장되지 않습니다");
     expect(UI_TRANSLATIONS.ko["settings.developerModeRefreshRequired"]).toContain(
       "정적 도구 계약도 변경"
     );
@@ -395,6 +399,8 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.orchestrationDefaultsHint"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-visibility"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="completion-handoff"');
+    expect(SETTINGS_CARD_HTML).toContain('id="experimental-direct-result-delivery"');
+    expect(SETTINGS_CARD_HTML).toContain("experimentalDirectResultDelivery:elements.directResultDelivery.checked");
     expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_read"');
     expect(DASHBOARD_CARD_HTML).not.toContain("codex_ui_stop");
     expect(DASHBOARD_CARD_HTML).toContain('if(row.controlKind!=="request")return');
@@ -445,6 +451,8 @@ describe("human-facing UI localization", () => {
     expect(DASHBOARD_CARD_HTML).toContain('tornDown=true;mounted=false');
     expect(DASHBOARD_CARD_HTML).toContain('if(tornDown)return;mounted=true');
     expect(DASHBOARD_CARD_HTML).toContain('document.visibilityState==="hidden"');
+    expect(DASHBOARD_CARD_HTML).toContain('presentationDeliveryRoute==="live-card"');
+    expect(DASHBOARD_CARD_HTML).toContain('dataset.completionDeliveryRoute=presentationDeliveryRoute||"missing"');
     expect(SETTINGS_CARD_HTML).toContain('callTool("codex_ui_read"');
     expect(SETTINGS_CARD_HTML).not.toContain('callTool("codex_settings",');
     expect(DECISION_CARD_HTML).toContain('dir="auto"');

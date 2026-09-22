@@ -357,6 +357,73 @@ describe("BridgeStateStore", () => {
     }
   });
 
+  it("keeps a direct-wait Job policy immutable and out of the live-card lease path across restart", () => {
+    const file = stateFile();
+    const store = new BridgeStateStore({ file });
+    const jobId = "45454545-4545-4545-8545-454545454545";
+    const requestId = "46464646-4646-4646-8646-464646464646";
+    try {
+      store.upsertJob({
+        ...job(jobId, requestId),
+        status: "running",
+        updatedAt: 1,
+        completionDeliveryPolicy: "direct-wait"
+      });
+      store.upsertJob({
+        ...job(jobId, requestId),
+        completionDeliveryPolicy: "direct-wait"
+      });
+      expect(store.listJobs()).toEqual([
+        expect.objectContaining({ jobId, completionDeliveryPolicy: "direct-wait" })
+      ]);
+      expect(store.getJobCompletionDelivery(jobId, SCOPE_A)).toMatchObject({
+        state: "pending",
+        attemptCount: 0
+      });
+      expect(store.claimJobCompletionDelivery(
+        jobId,
+        SCOPE_A,
+        "47474747-4747-4747-8747-474747474747"
+      )).toBeUndefined();
+      expect(() => store.upsertJob({
+        ...job(jobId, requestId),
+        completionDeliveryPolicy: "live-card"
+      })).toThrow(/completion delivery policy cannot change/);
+      expect(store.listJobs()).toEqual([
+        expect.objectContaining({ jobId, completionDeliveryPolicy: "direct-wait" })
+      ]);
+    } finally {
+      store.close();
+    }
+
+    const restarted = new BridgeStateStore({ file });
+    try {
+      expect(restarted.listJobs()).toEqual([
+        expect.objectContaining({ jobId, completionDeliveryPolicy: "direct-wait" })
+      ]);
+      expect(restarted.getJobCompletionDelivery(jobId, SCOPE_A)).toMatchObject({
+        state: "pending",
+        attemptCount: 0
+      });
+      expect(restarted.claimJobCompletionDelivery(
+        jobId,
+        SCOPE_A,
+        "48484848-4848-4848-8848-484848484848"
+      )).toBeUndefined();
+      restarted.upsertJob({
+        ...job(jobId, requestId),
+        completionDeliveryPolicy: "direct-wait"
+      });
+      expect(restarted.listJobs()).toHaveLength(1);
+      expect(() => restarted.upsertJob({
+        ...job(jobId, requestId),
+        completionDeliveryPolicy: "live-card"
+      })).toThrow(/completion delivery policy cannot change/);
+    } finally {
+      restarted.close();
+    }
+  });
+
   it("turns an expired completion send lease into uncertainty without replay", () => {
     const store = new BridgeStateStore({ file: ":memory:" });
     const jobId = "18181818-1818-4818-8818-181818181818";

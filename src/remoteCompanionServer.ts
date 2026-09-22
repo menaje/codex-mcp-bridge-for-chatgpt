@@ -42,7 +42,7 @@ import type { BridgeApplicationService } from "./tools.js";
 
 export const REMOTE_COMPANION_PROTOCOL_NAME = "codex-mcp-bridge-remote-companion";
 /** v9 removes retired Dashboard and completion-delivery Settings fields. */
-export const REMOTE_COMPANION_PROTOCOL_VERSION = 9;
+export const REMOTE_COMPANION_PROTOCOL_VERSION = 10;
 const REMOTE_API_PREFIX = "/remote-companion/v1";
 const REMOTE_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 const REMOTE_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;

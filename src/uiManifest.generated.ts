@@ -51,7 +51,7 @@ export const UI_RESOURCE_MANIFEST = {
       {
         "name": "settings",
         "uriVersion": 3,
-        "digest": "956b41eca28d93e0a94f55f329f489316f1a7f3aa80f7fd1e1a2cc6ab61d729b",
+        "digest": "2bb373753a8249553a065de53e7d4547e975d51feb66b56505f733e6abef4d41",
         "uri": "ui://codex-mcp-bridge/settings/v3.html",
         "inventories": [
           "development-current"
@@ -69,7 +69,7 @@ export const UI_RESOURCE_MANIFEST = {
       {
         "name": "dashboard",
         "uriVersion": 2,
-        "digest": "c4b11830a5e8b9e4deec6722a7789d8122db598c224e7c5701019737178f9088",
+        "digest": "65d34a98834f4908629d1ca09898d95c68277eb778a99a4df36b0d0c1998754f",
         "uri": "ui://codex-mcp-bridge/dashboard/v2.html",
         "inventories": [
           "development-current"
@@ -109,7 +109,7 @@ export const UI_RESOURCE_MANIFEST = {
   "resources": {
     "settings": {
       "uriVersion": 3,
-      "digest": "956b41eca28d93e0a94f55f329f489316f1a7f3aa80f7fd1e1a2cc6ab61d729b",
+      "digest": "2bb373753a8249553a065de53e7d4547e975d51feb66b56505f733e6abef4d41",
       "uri": "ui://codex-mcp-bridge/settings/v3.html",
       "metadata": {
         "descriptor": {
@@ -126,14 +126,14 @@ export const UI_RESOURCE_MANIFEST = {
             },
             "domain": "https://web-sandbox.oaiusercontent.com"
           },
-          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Codex-app thread visibility, interface language, history, and concurrency for Codex MCP Bridge for ChatGPT.",
+          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, experimental direct-result delivery, Codex-app thread visibility, interface language, history, and concurrency for Codex MCP Bridge for ChatGPT.",
           "openai/widgetPrefersBorder": false,
           "openai/widgetCSP": {
             "connect_domains": [],
             "resource_domains": []
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 23
+          "codex/uiContractGeneration": 24
         }
       },
       "releaseProvenance": {
@@ -153,7 +153,7 @@ export const UI_RESOURCE_MANIFEST = {
     },
     "dashboard": {
       "uriVersion": 2,
-      "digest": "c4b11830a5e8b9e4deec6722a7789d8122db598c224e7c5701019737178f9088",
+      "digest": "65d34a98834f4908629d1ca09898d95c68277eb778a99a4df36b0d0c1998754f",
       "uri": "ui://codex-mcp-bridge/dashboard/v2.html",
       "metadata": {
         "descriptor": {
@@ -180,7 +180,7 @@ export const UI_RESOURCE_MANIFEST = {
             ]
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 34
+          "codex/uiContractGeneration": 35
         }
       },
       "releaseProvenance": {

@@ -83,6 +83,7 @@
     "test:issue-143-connection-reliability:characterization": "tsx scripts/issue-143-connection-reliability-regression.ts",
     "test:issue-143-card-stale": "tsx scripts/issue-143-card-stale-browser-regression.ts",
     "test:issue-143-native-companion": "tsx scripts/issue-143-native-companion-contract.ts",
+    "test:issue-154-direct-result": "vitest run test/userSettings.test.ts test/stateStore.test.ts test/tools.test.ts -t 'direct-result|direct-wait' --maxWorkers=1 && npm run test:issue-126-live-card",
     "test:model-descriptions-browser": "tsx scripts/model-description-browser-regression.ts",
     "mcp:conformance": "npm run build && node scripts/mcp-conformance.mjs",
     "check": "npm run build && npm run test",

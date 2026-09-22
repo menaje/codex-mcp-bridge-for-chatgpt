@@ -878,6 +878,35 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertTrue(draft.modelPolicyDirty)
     }
 
+    func testSettingsDraftTracksExperimentalDirectResultDelivery() throws {
+        let enabledSnapshot = try settingsSnapshot(
+            experimentalDirectResultDelivery: true,
+            policy: [
+                "mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let disabledSnapshot = try settingsSnapshot(
+            experimentalDirectResultDelivery: false,
+            policy: [
+                "mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"],
+                "constraints": ["allowDelegation": true]
+            ],
+            catalogModels: [catalogModel(id: "gpt-current", efforts: ["high"])]
+        )
+        let enabled = SettingsDraft(snapshot: enabledSnapshot)
+        var edited = enabled
+        edited.experimentalDirectResultDelivery = false
+
+        XCTAssertTrue(enabled.experimentalDirectResultDelivery)
+        XCTAssertFalse(edited.hasSameEditableValues(as: enabled))
+        XCTAssertFalse(edited.rebased(on: enabledSnapshot).experimentalDirectResultDelivery)
+        XCTAssertFalse(SettingsDraft(snapshot: disabledSnapshot).experimentalDirectResultDelivery)
+    }
+
     func testSettingsDraftIgnoresRetiredAutomaticDefaultsWithoutDirtyingPolicy() throws {
         let snapshot = try settingsSnapshot(
             policy: [
@@ -2053,6 +2082,7 @@ private func settingsSnapshot(
     settingsRevision: Int = 4,
     accessStrategy: String = "adaptive",
     showBridgeThreadsInCodexApp: Bool = true,
+    experimentalDirectResultDelivery: Bool = false,
     policy: [String: Any],
     legacyPreferredModel: String? = nil,
     modelDescriptionOverrides: [String: String]? = nil,
@@ -2070,7 +2100,8 @@ private func settingsSnapshot(
         "projects": [],
         "uiLocalePreference": "auto",
         "maxConcurrentJobs": 2,
-        "showBridgeThreadsInCodexApp": showBridgeThreadsInCodexApp
+        "showBridgeThreadsInCodexApp": showBridgeThreadsInCodexApp,
+        "experimentalDirectResultDelivery": experimentalDirectResultDelivery
     ]
     if let legacyPreferredModel {
         settings["legacyPreferredModel"] = legacyPreferredModel

@@ -1607,6 +1607,26 @@ private struct AppGeneralSettingsPane: View {
                         .foregroundStyle(.secondary)
                     }
                     .id(SettingsSearchTarget.generalLanguage.anchorID)
+
+                    Section {
+                        Toggle(
+                            "settings.experimental.directResults",
+                            isOn: draft.experimentalDirectResultDelivery
+                        )
+                        Text("settings.experimental.directResultsHint")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } header: {
+                        HStack(spacing: 6) {
+                            Text("settings.experimental.title")
+                            Text("settings.experimental.badge")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.orange.opacity(0.16), in: Capsule())
+                                .foregroundStyle(.orange)
+                        }
+                    }
                 } else {
                     Section {
                         Label(

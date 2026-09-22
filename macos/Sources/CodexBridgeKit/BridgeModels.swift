@@ -318,6 +318,7 @@ public struct BridgeSettings: Codable, Sendable {
     public let uiLocalePreference: String
     public let maxConcurrentJobs: Int
     public let showBridgeThreadsInCodexApp: Bool
+    public let experimentalDirectResultDelivery: Bool
 }
 
 /// Opaque local-delivery receipt. It deliberately excludes task prompts,
@@ -575,6 +576,7 @@ public struct SettingsPatch: Encodable, Sendable {
     public var maxConcurrentJobs: Int?
     public var historyRetentionDays: Int?
     public var showBridgeThreadsInCodexApp: Bool?
+    public var experimentalDirectResultDelivery: Bool?
     public var projectOperations: [ProjectOperation]?
 
     public init(
@@ -586,6 +588,7 @@ public struct SettingsPatch: Encodable, Sendable {
         maxConcurrentJobs: Int? = nil,
         historyRetentionDays: Int? = nil,
         showBridgeThreadsInCodexApp: Bool? = nil,
+        experimentalDirectResultDelivery: Bool? = nil,
         projectOperations: [ProjectOperation]? = nil
     ) {
         self.accessStrategy = accessStrategy
@@ -596,6 +599,7 @@ public struct SettingsPatch: Encodable, Sendable {
         self.maxConcurrentJobs = maxConcurrentJobs
         self.historyRetentionDays = historyRetentionDays
         self.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
+        self.experimentalDirectResultDelivery = experimentalDirectResultDelivery
         self.projectOperations = projectOperations
     }
 }

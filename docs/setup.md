@@ -303,15 +303,21 @@ later use; a model temporarily missing from the list also keeps its saved text.
 - **Concurrent Agent jobs** limits how many jobs may run at once; it is not the number of registered Agents.
 - **Keep new Agent tasks in the Codex app** preserves eligible new App Server threads in Codex. It does not change older tasks.
 - **Run history retention** keeps display history for 7, 30 (default), or 90 days, or indefinitely. Full result retention and connection idle time are separate policies; after a live card crosses the send boundary, an unresolved ChatGPT completion result is protected only through the selected history period. See [work history](work-history.md).
+- **Experimental → Receive Codex results directly** is off by default. When enabled, each newly admitted Job snapshots the setting and returns an exact bounded terminal-wait action instead of an automatic Dashboard render action. Changing the setting never changes an already admitted Job.
 
-Dashboard creation and completion delivery are not settings. Every newly
-admitted orchestration Job returns an exact Dashboard render action, and GPT
-must open it in the originating conversation. While that card remains live, a
-terminal Job claims one bounded server lease, sends one standard `ui/message`,
-and the resumed GPT reads the retained exact result through the opaque receipt.
-Closing or disconnecting the card does not cancel Codex or lose its retained
-result, but automatic follow-up is then not guaranteed. The bridge does not
-revive a torn-down card or wake a cardless conversation.
+With the default setting, every newly admitted orchestration Job returns an
+exact Dashboard render action. GPT opens it in the originating conversation;
+the live card claims one terminal lease, sends one standard `ui/message`, and
+the resumed GPT reads the retained exact result through the opaque receipt.
+With experimental direct receiving, Codex admission is still durable and
+asynchronous, but the current GPT run repeats bounded `codex_status` terminal
+waits on the same Job, reviews the terminal result, and may start only a next
+step already covered by user intent. Timeout or host abort ends only that read,
+never the Job, and must not cause a replacement Job. A new approval or input
+request stops automatic continuation. Switching conversations, backgrounding
+the app, locking the screen, or losing the connection can interrupt the GPT
+run; Codex continues and remains queryable, but automatic continuation in those
+states is not guaranteed.
 
 The macOS app's operational notifications and any explicit Activity-native
 completion notification are separate local channels. They depend on macOS

@@ -150,9 +150,9 @@ Installation**, **Connection**, and **Server** when each destination applies to
 the current role and connection state. A pinned card at the bottom identifies the
 currently managed Mac or remote server and its health, and opens Connection when
 selected. General contains language, operational/security notifications,
-launch behavior, and app display behavior. Live-card creation and completion
-delivery are baseline orchestration behavior, so Settings exposes neither
-switches nor informational notices for them. Shared access, model, Fast,
+launch behavior, app display behavior, and the explicitly labeled experimental
+direct-result switch. The switch is off by default and affects only newly
+admitted Jobs; the default remains live-card delivery. Shared access, model, Fast,
 concurrency, and retention controls live under Models & Execution. Projects uses
 a list-oriented manager, while the Server destination retains an explicit
 apply-and-restart confirmation because those values are stored in the private

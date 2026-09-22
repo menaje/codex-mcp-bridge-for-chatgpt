@@ -70,6 +70,30 @@ describe("user settings and project registry", () => {
     restored.stateStore.close();
   });
 
+  it("defaults experimental direct-result delivery off, persists it, and migrates older settings off", () => {
+    const databaseFile = path.join(temporaryDirectory("settings-direct-results-"), "state.sqlite");
+    const config = configFor();
+    const first = persistentSettings(config, databaseFile);
+    expect(first.settings.current.experimentalDirectResultDelivery).toBe(false);
+    first.settings.update({ experimentalDirectResultDelivery: true }, 0);
+    expect(first.settings.current.experimentalDirectResultDelivery).toBe(true);
+    first.stateStore.close();
+
+    const second = persistentSettings(config, databaseFile);
+    expect(second.settings.current.experimentalDirectResultDelivery).toBe(true);
+    const legacy = second.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    legacy.schemaVersion = 6;
+    delete legacy.experimentalDirectResultDelivery;
+    second.stateStore.close();
+    replaceStoredSettingsPayloadForTest(databaseFile, legacy);
+
+    const restored = persistentSettings(config, databaseFile);
+    expect(restored.settings.current.experimentalDirectResultDelivery).toBe(false);
+    expect((restored.stateStore.getSettingsRecord()!.payload as Record<string, unknown>))
+      .toMatchObject({ schemaVersion: 7, experimentalDirectResultDelivery: false });
+    restored.stateStore.close();
+  });
+
   it("retires legacy Dashboard and completion delivery preferences", () => {
     const databaseFile = path.join(temporaryDirectory("settings-completion-delivery-"), "state.sqlite");
     const config = configFor();
@@ -88,11 +112,11 @@ describe("user settings and project registry", () => {
     replaceStoredSettingsPayloadForTest(databaseFile, legacy);
 
     const migrated = persistentSettings(config, databaseFile);
-    expect(migrated.settings.current.schemaVersion).toBe(6);
+    expect(migrated.settings.current.schemaVersion).toBe(7);
     expect(migrated.settings.current).not.toHaveProperty("dashboardAutoOpen");
     expect(migrated.settings.current).not.toHaveProperty("completionFollowUp");
     const rewritten = migrated.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
-    expect(rewritten.schemaVersion).toBe(6);
+    expect(rewritten.schemaVersion).toBe(7);
     expect(rewritten).not.toHaveProperty("dashboardAutoOpen");
     expect(rewritten).not.toHaveProperty("dashboardAutoOpenBackground");
     expect(rewritten).not.toHaveProperty("completionFollowUp");
@@ -143,7 +167,7 @@ describe("user settings and project registry", () => {
   it("starts without a default project, slug, or implicit selection", () => {
     const store = new UserSettingsStore(configFor());
     expect(store.current).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       settingsRevision: 0,
       registryRevision: 0,
       projects: [],
@@ -659,7 +683,7 @@ describe("user settings and project registry", () => {
 
     const restored = persistentSettings(config, databaseFile, () => 5_000);
     expect(restored.settings.current).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       settingsRevision: 2,
       modelPolicy: {
         mode: "automatic",

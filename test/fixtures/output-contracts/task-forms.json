@@ -2,7 +2,7 @@
   {
     "fixture": "setup",
     "structuredContent": {
-      "contractVersion": "3",
+      "contractVersion": "4",
       "kind": "task",
       "state": "setup-required",
       "terminal": true,
@@ -18,6 +18,7 @@
       "activityVersion": null,
       "backend": null,
       "sandbox": null,
+      "completionDeliveryPolicy": null,
       "requestedModel": null,
       "requestedReasoningEffort": null,
       "actualModel": null,
@@ -48,7 +49,7 @@
   {
     "fixture": "replay",
     "structuredContent": {
-      "contractVersion": "3",
+      "contractVersion": "4",
       "kind": "task",
       "state": "running",
       "terminal": false,
@@ -64,6 +65,7 @@
       "activityVersion": 3,
       "backend": "mcp-server",
       "sandbox": "read-only",
+      "completionDeliveryPolicy": "live-card",
       "requestedModel": null,
       "requestedReasoningEffort": null,
       "actualModel": "gpt-5.6-sol",
@@ -87,7 +89,7 @@
   {
     "fixture": "running",
     "structuredContent": {
-      "contractVersion": "3",
+      "contractVersion": "4",
       "kind": "task",
       "state": "running",
       "terminal": false,
@@ -103,6 +105,7 @@
       "activityVersion": 1,
       "backend": "app-server",
       "sandbox": "workspace-write",
+      "completionDeliveryPolicy": "live-card",
       "requestedModel": "gpt-5.6-terra",
       "requestedReasoningEffort": "high",
       "actualModel": "gpt-5.6-terra",
@@ -120,7 +123,7 @@
   {
     "fixture": "completed",
     "structuredContent": {
-      "contractVersion": "3",
+      "contractVersion": "4",
       "kind": "task",
       "state": "completed",
       "terminal": true,
@@ -136,6 +139,7 @@
       "activityVersion": 4,
       "backend": "mcp-server",
       "sandbox": "workspace-write",
+      "completionDeliveryPolicy": "live-card",
       "requestedModel": null,
       "requestedReasoningEffort": null,
       "actualModel": "gpt-5.6-sol",
@@ -153,7 +157,7 @@
   {
     "fixture": "failed",
     "structuredContent": {
-      "contractVersion": "3",
+      "contractVersion": "4",
       "kind": "task",
       "state": "failed",
       "terminal": true,
@@ -169,6 +173,7 @@
       "activityVersion": 5,
       "backend": "app-server",
       "sandbox": "read-only",
+      "completionDeliveryPolicy": "live-card",
       "requestedModel": null,
       "requestedReasoningEffort": null,
       "actualModel": "gpt-5.6-sol",
@@ -197,7 +202,7 @@
   {
     "fixture": "cancelled",
     "structuredContent": {
-      "contractVersion": "3",
+      "contractVersion": "4",
       "kind": "task",
       "state": "cancelled",
       "terminal": true,
@@ -213,6 +218,7 @@
       "activityVersion": 8,
       "backend": "mcp-server",
       "sandbox": "danger-full-access",
+      "completionDeliveryPolicy": "live-card",
       "requestedModel": null,
       "requestedReasoningEffort": null,
       "actualModel": "gpt-5.6-sol",

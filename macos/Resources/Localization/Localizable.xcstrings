@@ -11775,6 +11775,238 @@
         }
       }
     },
+    "settings.experimental.title": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "실험 기능"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "試験機能"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实验功能"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "實驗功能"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expérimental"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimentell"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        }
+      }
+    },
+    "settings.experimental.badge": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        }
+      }
+    },
+    "settings.experimental.directResults": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Receive Codex results directly"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 결과 직접 수신"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex の結果を直接受信"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "直接接收 Codex 结果"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "直接接收 Codex 結果"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recibir los resultados de Codex directamente"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recevoir directement les résultats Codex"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex-Ergebnisse direkt empfangen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Receber resultados do Codex diretamente"
+          }
+        }
+      }
+    },
+    "settings.experimental.directResultsHint": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "While the current ChatGPT run remains active, it waits for each new Codex job in bounded intervals and receives the terminal result directly. Codex keeps running if the conversation, app, screen, or connection interrupts the wait, but automatic continuation in those states is not guaranteed. Applies only to new jobs."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 ChatGPT 실행이 유지되는 동안 새 Codex 작업을 제한 시간 단위로 기다려 종료 결과를 직접 받습니다. 대화 이동, 앱 백그라운드, 화면 잠금 또는 연결 유실로 대기가 끊겨도 Codex 작업은 계속되지만, 해당 상태에서 자동 연속 진행은 보장되지 않습니다. 이후 새 작업부터 적용됩니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在の ChatGPT 実行が続く間、新しい Codex ジョブを時間制限付きで待ち、終了結果を直接受信します。会話の移動、アプリのバックグラウンド化、画面ロック、接続切断で待機が途切れても Codex は実行を続けますが、その状態での自動継続は保証されません。新しいジョブにのみ適用されます。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前 ChatGPT 运行保持活动时，它会分段限时等待每个新的 Codex 任务并直接接收终止结果。切换对话、应用进入后台、锁屏或断开连接会中断等待，但 Codex 会继续运行；这些状态下不保证自动继续。仅适用于新任务。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前 ChatGPT 執行保持活動時，會以有界等待接收每個新 Codex 工作的終止結果。切換對話、應用程式進入背景、鎖定螢幕或連線中斷會中止等待，但 Codex 仍會繼續執行；這些狀態下不保證自動接續。只套用至新工作。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mientras la ejecución actual de ChatGPT siga activa, espera cada trabajo nuevo de Codex en intervalos limitados y recibe directamente el resultado final. Codex sigue ejecutándose si un cambio de conversación, el segundo plano, el bloqueo de pantalla o una desconexión interrumpen la espera, pero no se garantiza la continuación automática en esos estados. Solo se aplica a trabajos nuevos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tant que l’exécution ChatGPT actuelle reste active, elle attend chaque nouvelle tâche Codex par intervalles bornés et reçoit directement le résultat final. Codex continue si un changement de conversation, l’arrière-plan, le verrouillage de l’écran ou une déconnexion interrompt l’attente, mais la continuation automatique n’est pas garantie dans ces états. S’applique uniquement aux nouvelles tâches."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solange der aktuelle ChatGPT-Lauf aktiv bleibt, wartet er in begrenzten Intervallen auf jeden neuen Codex-Job und empfängt das Endergebnis direkt. Codex läuft weiter, wenn ein Gesprächswechsel, der Hintergrund, die Bildschirmsperre oder ein Verbindungsabbruch das Warten unterbricht; eine automatische Fortsetzung ist in diesen Zuständen jedoch nicht garantiert. Gilt nur für neue Jobs."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enquanto a execução atual do ChatGPT permanecer ativa, ela aguarda cada novo trabalho do Codex em intervalos limitados e recebe diretamente o resultado final. O Codex continua executando se a troca de conversa, o segundo plano, o bloqueio de tela ou uma desconexão interromperem a espera, mas a continuação automática não é garantida nesses estados. Aplica-se apenas a novos trabalhos."
+          }
+        }
+      }
+    },
     "settings.codexAppThreads": {
       "localizations": {
         "en": {
@@ -12592,55 +12824,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restores access, model, Codex-app thread visibility, interface, and concurrency settings. Projects and their order are kept."
+            "value": "Restores access, model, experimental direct-result delivery, Codex-app thread visibility, interface, and concurrency settings. Projects and their order are kept."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "접근, 모델, Codex 앱 목록 표시, 인터페이스와 동시 작업 수 설정만 복원합니다. 프로젝트와 순서는 유지됩니다."
+            "value": "접근, 모델, 실험적 직접 결과 수신, Codex 앱 목록 표시, 인터페이스와 동시 작업 수 설정을 복원합니다. 프로젝트와 순서는 유지됩니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "アクセス、モデル、Codex アプリでのスレッド表示、表示言語、同時実行数だけを戻します。プロジェクトと順序は保持されます。"
+            "value": "アクセス、モデル、試験的な結果の直接受信、Codex アプリでのスレッド表示、表示言語、同時実行数を戻します。プロジェクトと順序は保持されます。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "仅恢复访问、模型、Codex 应用线程显示、界面和并发数。项目和顺序会保留。"
+            "value": "恢复访问、模型、实验性直接结果接收、Codex 应用线程显示、界面和并发数。项目和顺序会保留。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "只還原存取、模型、Codex 應用程式執行緒顯示、介面與並行數。專案與順序會保留。"
+            "value": "還原存取、模型、實驗性直接結果接收、Codex 應用程式執行緒顯示、介面與並行數。專案與順序會保留。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restaura solo acceso, modelo, visibilidad de hilos en la app Codex, interfaz y concurrencia. Se conservan los proyectos y su orden."
+            "value": "Restaura el acceso, el modelo, la recepción directa experimental, la visibilidad de hilos en Codex, la interfaz y la concurrencia. Se conservan los proyectos y su orden."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Rétablit uniquement l’accès, le modèle, la visibilité des fils dans l’app Codex, l’interface et la simultanéité. Les projets et leur ordre sont conservés."
+            "value": "Rétablit l’accès, le modèle, la réception directe expérimentale, la visibilité des fils Codex, l’interface et la simultanéité. Les projets et leur ordre sont conservés."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Setzt nur Zugriff, Modell, Thread-Sichtbarkeit in der Codex-App, Oberfläche und Parallelität zurück. Projekte und Reihenfolge bleiben erhalten."
+            "value": "Setzt Zugriff, Modell, experimentellen Direktempfang, Codex-Thread-Sichtbarkeit, Oberfläche und Parallelität zurück. Projekte und Reihenfolge bleiben erhalten."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restaura apenas acesso, modelo, visibilidade de threads no app Codex, interface e concorrência. Projetos e ordem são mantidos."
+            "value": "Restaura acesso, modelo, recebimento direto experimental, visibilidade de threads no Codex, interface e concorrência. Projetos e ordem são mantidos."
           }
         }
       }

@@ -17,7 +17,7 @@ const mismatchedRef = "b".repeat(64);
 const receipt = `completion-${"c".repeat(64)}`;
 
 const toolInput = { arguments: { scope: "conversation", jobId, presentationRef } };
-const toolResult = (ref = presentationRef) => ({
+const toolResult = (ref = presentationRef, route: "live-card" | "direct-wait" = "live-card") => ({
   structuredContent: {
     kind: "dashboard",
     scope: "conversation",
@@ -30,7 +30,7 @@ const toolResult = (ref = presentationRef) => ({
       scope: "conversation",
       automatic: true,
       presentationRef: ref,
-      completionDeliveryRoute: "live-card"
+      completionDeliveryRoute: route
     }
   }
 });
@@ -67,7 +67,7 @@ function cardHtml(): string {
 function hostHtml(scenario: string): string {
   const frameCount = scenario === "duplicate-cards" ? 2 : 1;
   return `<!doctype html><html><body><script>(()=>{
-    const scenario=${JSON.stringify(scenario)},input=${JSON.stringify(toolInput)},result=${JSON.stringify(toolResult())},mismatch=${JSON.stringify(toolResult(mismatchedRef))};
+    const scenario=${JSON.stringify(scenario)},input=${JSON.stringify(toolInput)},result=${JSON.stringify(toolResult())},direct=${JSON.stringify(toolResult(presentationRef, "direct-wait"))},mismatch=${JSON.stringify(toolResult(mismatchedRef))};
     window.__events=[];window.__messageCount=0;window.__settled=false;window.__claimed=false;window.__waitCount=0;window.__readyFrames=0;
     const frames=[];
     const delivery=(state,extra={})=>({structuredContent:{kind:"job-completion-delivery",state,...extra}});
@@ -80,6 +80,7 @@ function hostHtml(scenario: string): string {
       const frameIndex=Number(frame.dataset.index);
       if(message.method==="ui/initialize"&&message.id!==undefined){
         if(scenario==="mismatch"){send(frame,"ui/notifications/tool-input",input);send(frame,"ui/notifications/tool-result",mismatch)}
+        else if(scenario==="direct-wait-route"){send(frame,"ui/notifications/tool-input",input);send(frame,"ui/notifications/tool-result",direct)}
         else{send(frame,"ui/notifications/tool-input",input);send(frame,"ui/notifications/tool-result",result)}
         reply(frame,message.id,{protocolVersion:"2026-01-26",hostContext:{locale:"ko-KR"}});window.__readyFrames+=1;return;
       }
@@ -139,6 +140,7 @@ const scenarios = [
   "teardown-during-send",
   "direct-result-read",
   "teardown-before-terminal",
+  "direct-wait-route",
   "mismatch",
   "duplicate-cards"
 ] as const;
@@ -158,10 +160,11 @@ try {
         if(s==="teardown-during-send")return datasets[0]?.completionDelivery==="acceptance-unknown";
         if(s==="direct-result-read")return window.__settled&&window.__waitCount===1;
         if(s==="teardown-before-terminal")return window.__events.some(event=>event.operation==="wait")&&datasets[0]?.dashboardPresentation==="ready";
+        if(s==="direct-wait-route")return datasets[0]?.dashboardPresentation==="ready"&&datasets[0]?.completionDeliveryRoute==="direct-wait";
         if(s==="mismatch")return datasets[0]?.dashboardPresentation==="mismatch";
         return s==="duplicate-cards"&&window.__settled&&window.__readyFrames===2;
       },scenario,{timeout:5000}).catch(()=>{});
-      if(["direct-result-read","teardown-before-terminal","teardown-during-send","mismatch","duplicate-cards","timeout-unknown"].includes(scenario))await page.waitForTimeout(1200);
+      if(["direct-result-read","teardown-before-terminal","direct-wait-route","teardown-during-send","mismatch","duplicate-cards","timeout-unknown"].includes(scenario))await page.waitForTimeout(1200);
       const frames=page.frames().filter(frame=>frame.url().includes("/card?"));
       const host=await page.evaluate(()=>({events:window.__events,messageCount:window.__messageCount,waitCount:window.__waitCount,settled:window.__settled}));
       return {...host,datasets:await Promise.all(frames.map(frame=>frame.evaluate(()=>({...document.documentElement.dataset})))),errors:(await Promise.all(frames.map(frame=>frame.evaluate(()=>window.__errors)))).flat()};
@@ -199,6 +202,10 @@ try {
     } else if (scenario === "teardown-before-terminal") {
       assert.equal(observed.messageCount, 0);
       assert.equal(observed.waitCount, 1);
+    } else if (scenario === "direct-wait-route") {
+      assert.equal(observed.messageCount, 0);
+      assert.equal(observed.waitCount, 0);
+      assert.equal(observed.datasets[0]?.completionDeliveryRoute, "direct-wait");
     } else if (scenario === "mismatch") {
       assert.equal(observed.messageCount, 0);
       assert.equal(observed.waitCount, 0);

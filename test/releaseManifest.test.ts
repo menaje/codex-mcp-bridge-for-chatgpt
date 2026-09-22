@@ -106,11 +106,11 @@ describe("release manifest", () => {
       stateProfilePolicy: "release-stage-isolated-v1",
       rollbackPolicy: "verified-original-before-service-open-v1",
       persistentContracts: {
-        userSettingsSchema: 6,
+        userSettingsSchema: 7,
         taskInputContract: 6,
         macosHelperProtocol: 2,
-        localCompanionProtocol: 11,
-        remoteCompanionProtocol: 9
+        localCompanionProtocol: 12,
+        remoteCompanionProtocol: 10
       }
     });
     expect(catalog).toMatchObject({
@@ -246,8 +246,8 @@ describe("release manifest", () => {
     writeFileSync(
       modelPolicy,
       readFileSync(modelPolicy, "utf8").replace(
-        "MODEL_POLICY_SCHEMA_VERSION = 6",
-        "MODEL_POLICY_SCHEMA_VERSION = 7"
+        "MODEL_POLICY_SCHEMA_VERSION = 7",
+        "MODEL_POLICY_SCHEMA_VERSION = 8"
       )
     );
     expect(() => checkReleaseMetadata(root)).toThrow(

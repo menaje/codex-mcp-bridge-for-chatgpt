@@ -47,6 +47,7 @@ struct SettingsDraft: Equatable {
     var maxConcurrentJobs: Int
     var historyRetentionDays: Int
     var showBridgeThreadsInCodexApp: Bool
+    var experimentalDirectResultDelivery: Bool
     private let originalPolicyState: PolicyState
 
     private struct PolicyState: Equatable {
@@ -73,6 +74,7 @@ struct SettingsDraft: Equatable {
         maxConcurrentJobs = settings.maxConcurrentJobs
         historyRetentionDays = settings.historyRetentionDays ?? 30
         showBridgeThreadsInCodexApp = settings.showBridgeThreadsInCodexApp
+        experimentalDirectResultDelivery = settings.experimentalDirectResultDelivery
         originalPolicyState = PolicyState(
             mode: policyMode,
             fixedSelectionKey: fixedSelectionKey,
@@ -109,6 +111,7 @@ struct SettingsDraft: Equatable {
         rebased.maxConcurrentJobs = maxConcurrentJobs
         rebased.historyRetentionDays = historyRetentionDays
         rebased.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
+        rebased.experimentalDirectResultDelivery = experimentalDirectResultDelivery
         return rebased
     }
 
@@ -123,7 +126,8 @@ struct SettingsDraft: Equatable {
             uiLocalePreference == other.uiLocalePreference &&
             maxConcurrentJobs == other.maxConcurrentJobs &&
             historyRetentionDays == other.historyRetentionDays &&
-            showBridgeThreadsInCodexApp == other.showBridgeThreadsInCodexApp
+            showBridgeThreadsInCodexApp == other.showBridgeThreadsInCodexApp &&
+            experimentalDirectResultDelivery == other.experimentalDirectResultDelivery
     }
 
     private var policyState: PolicyState {
@@ -2667,7 +2671,8 @@ final class AppModel: ObservableObject {
                 uiLocalePreference: draft.uiLocalePreference,
                 maxConcurrentJobs: draft.maxConcurrentJobs,
                 historyRetentionDays: settings?.settings.historyRetentionDays == nil ? nil : draft.historyRetentionDays,
-                showBridgeThreadsInCodexApp: draft.showBridgeThreadsInCodexApp
+                showBridgeThreadsInCodexApp: draft.showBridgeThreadsInCodexApp,
+                experimentalDirectResultDelivery: draft.experimentalDirectResultDelivery
             ))
         )
         return await performSettingsMutation(
