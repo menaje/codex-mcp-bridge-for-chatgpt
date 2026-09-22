@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import "./app-server-schema-fixture.mjs";
 import { spawn } from "node:child_process";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import readline from "node:readline";
 import { threadPolicyResponse, assertTurnPolicy } from "./app-server-policy-fixture.mjs";
 
@@ -436,16 +436,27 @@ function beginTurn(context) {
   const { threadId, turnId, prompt } = context;
   if (prompt.includes("execution descendant hold") &&
       process.env.CODEX_TEST_DESCENDANT_OBSERVATION) {
+    const detached = prompt.includes("detached");
+    const ignoreTerm = prompt.includes("ignore descendant term") ||
+      prompt.includes("app server exits first");
     const descendant = spawn(
       process.execPath,
-      ["-e", "setInterval(() => {}, 1000)"],
-      { stdio: "ignore" }
+      ["-e", `${ignoreTerm ? "process.on('SIGTERM',()=>{});" : ""}setInterval(() => {}, 1000)`],
+      { stdio: "ignore", detached }
     );
     descendant.unref();
     appendFileSync(
       process.env.CODEX_TEST_DESCENDANT_OBSERVATION,
-      `${JSON.stringify({ appServerPid: process.pid, childPid: descendant.pid })}\n`
+      `${JSON.stringify({ appServerPid: process.pid, childPid: descendant.pid, detached })}\n`
     );
+    if (prompt.includes("app server exits first")) {
+      const gate = process.env.CODEX_TEST_APP_SERVER_EXIT_GATE;
+      const timer = setInterval(() => {
+        if (gate && !existsSync(gate)) return;
+        clearInterval(timer);
+        process.exit(71);
+      }, 10);
+    }
   }
   if (prompt.includes("future optional notification")) {
     notification("future/optionalObservation", { threadId, turnId, detail: "PRIVATE_FUTURE_PAYLOAD" });

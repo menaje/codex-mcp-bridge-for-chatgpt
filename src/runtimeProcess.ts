@@ -1262,7 +1262,13 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
               ? { heartbeatAgeMs: execution.heartbeatAgeMs }
               : {}),
             inFlight: execution.inFlight,
-            capacity: execution.capacity
+            capacity: execution.capacity,
+            ...(execution.supervisedWorkers !== undefined
+              ? { supervisedWorkers: execution.supervisedWorkers }
+              : {}),
+            ...(execution.supervisedProcesses !== undefined
+              ? { supervisedProcesses: execution.supervisedProcesses }
+              : {})
           }
         } : {})
       };

@@ -1,5 +1,6 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -183,7 +184,55 @@ describe("isolated Codex execution process", () => {
   }, 20_000);
 
   it.skipIf(process.platform === "win32")(
-    "kills the registered App Server group before replacing a crashed executor",
+    "retains an exited App Server until its same-group command is gone",
+    async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "execution-root-exit-"));
+    roots.push(root);
+    const observation = path.join(root, "descendants.jsonl");
+    const exitGate = path.join(root, "exit-app-server");
+    const service = await createService({
+      CODEX_TEST_DESCENDANT_OBSERVATION: observation,
+      CODEX_TEST_APP_SERVER_EXIT_GATE: exitGate
+    });
+    try {
+      const executorPid = service.processId;
+      const interrupted = service.callTool(
+        "codex",
+        task("execution descendant hold app server exits first")
+      );
+      await eventually(() => readDescendantObservations(observation).length === 1 &&
+        (service.health().supervisedProcesses || 0) >= 2);
+      const [{ appServerPid, childPid }] = readDescendantObservations(observation);
+      expect(isProcessAlive(appServerPid)).toBe(true);
+      expect(isProcessAlive(childPid)).toBe(true);
+      expect(processGroupId(childPid)).toBe(processGroupId(appServerPid));
+      await writeFile(exitGate, "exit\n");
+      await expect(interrupted).rejects.toThrow(/CODEX_WORKER_LOST/);
+      expect(service.health().status).toBe("recovering");
+      await expect(service.callTool("codex", task("blocked during App Server cleanup")))
+        .rejects.toThrow(/EXECUTION_UNAVAILABLE/);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(isProcessAlive(appServerPid)).toBe(false);
+      expect(isProcessAlive(childPid)).toBe(true);
+
+      await eventually(() => !isProcessAlive(childPid), 10_000);
+      await eventually(() => service.health().status === "ready");
+      await expect(service.callTool("codex", task("after App Server cleanup"))).resolves.toMatchObject({
+        structuredContent: { turnStatus: "completed" }
+      });
+      expect(service.processId).toBe(executorPid);
+      expect(service.health()).toMatchObject({
+        status: "ready",
+        supervisedWorkers: 1,
+        supervisedProcesses: 1
+      });
+    } finally {
+      await service.close();
+    }
+  }, 30_000);
+
+  it.skipIf(process.platform === "win32")(
+    "kills a detached descendant group before replacing a crashed executor",
     async () => {
     const root = await mkdtemp(path.join(tmpdir(), "execution-descendant-"));
     roots.push(root);
@@ -193,11 +242,18 @@ describe("isolated Codex execution process", () => {
     });
     try {
       const first = service.processId;
-      const interrupted = service.callTool("codex", task("execution descendant hold"));
-      await eventually(() => readDescendantObservations(observation).length === 1);
-      const [{ appServerPid, childPid }] = readDescendantObservations(observation);
+      const interrupted = service.callTool(
+        "codex",
+        task("execution descendant hold detached ignore descendant term")
+      );
+      await eventually(() => readDescendantObservations(observation).length === 1 &&
+        (service.health().supervisedProcesses || 0) >= 2);
+      const [{ appServerPid, childPid, detached }] = readDescendantObservations(observation);
+      expect(detached).toBe(true);
       expect(isProcessAlive(appServerPid)).toBe(true);
       expect(isProcessAlive(childPid)).toBe(true);
+      expect(processGroupId(childPid)).toBe(childPid);
+      expect(processGroupId(childPid)).not.toBe(processGroupId(appServerPid));
       expect(service.terminate("SIGKILL")).toBe(true);
       await expect(interrupted).rejects.toThrow(/CODEX_WORKER_LOST/);
       await eventually(() => !isProcessAlive(appServerPid) && !isProcessAlive(childPid), 10_000);
@@ -357,10 +413,15 @@ async function createService(
 function readDescendantObservations(file: string): Array<{
   appServerPid: number;
   childPid: number;
+  detached?: boolean;
 }> {
   try {
     return readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map(line => {
-      const value = JSON.parse(line) as { appServerPid: number; childPid: number };
+      const value = JSON.parse(line) as {
+        appServerPid: number;
+        childPid: number;
+        detached?: boolean;
+      };
       return value;
     });
   } catch {
@@ -375,6 +436,14 @@ function isProcessAlive(processId: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
+}
+
+function processGroupId(processId: number): number {
+  return Number(execFileSync(
+    "/bin/ps",
+    ["-o", "pgid=", "-p", String(processId)],
+    { encoding: "utf8" }
+  ).trim());
 }
 
 function task(prompt: string): Record<string, unknown> {

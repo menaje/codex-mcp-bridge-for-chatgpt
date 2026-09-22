@@ -121,8 +121,9 @@ export type JsonRpcProcessOptions = {
  * supplied, and treats timeout=0 as an immediate timeout. Long-running Codex
  * turns need a different contract: no request deadline, while process lifetime
  * remains explicitly supervised. This transport creates a dedicated Unix
- * process group so force-stop can target the exact backend generation and all
- * descendants rather than only rejecting a local Promise.
+ * process group so force-stop can target the exact backend generation. A
+ * separate process-tree supervisor retains descendants that create their own
+ * groups and verifies those groups before a replacement worker is admitted.
  */
 export class JsonRpcProcess {
   private child?: ChildProcessWithoutNullStreams;
@@ -554,8 +555,9 @@ export class JsonRpcProcess {
 /**
  * Terminates a previously registered App Server identity without requiring the
  * supervising executor process to still be alive. On Unix the identity is a
- * dedicated process group, so descendant commands are covered by the same
- * bounded TERM/KILL sequence.
+ * dedicated process group. This primitive intentionally verifies that exact
+ * group only; the execution service's process-tree ledger covers descendants
+ * that move into another group.
  */
 export async function terminateJsonRpcProcessIdentity(
   identity: JsonRpcProcessIdentity,

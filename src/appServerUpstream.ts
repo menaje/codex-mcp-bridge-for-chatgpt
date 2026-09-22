@@ -98,8 +98,8 @@ export type CodexAppServerProtocolOptions = {
   onLateResponse?: (response: CodexAppServerLateResponse) => void;
   /** Internal executor-supervision handshake completed before protocol initialization. */
   onWorkerProcessStarted?: (identity: JsonRpcProcessIdentity) => Promise<void> | void;
-  /** Internal executor-supervision release after the exact worker exits. */
-  onWorkerProcessExited?: (identity: JsonRpcProcessIdentity) => void;
+  /** Resolves only after the independent supervisor verifies the full worker tree exited. */
+  onWorkerProcessExited?: (identity: JsonRpcProcessIdentity) => Promise<void> | void;
 };
 
 type ResolvedCodexAppServerProtocolOptions = {
@@ -110,7 +110,7 @@ type ResolvedCodexAppServerProtocolOptions = {
   interruptTimeoutMs: number;
   onLateResponse?: (response: CodexAppServerLateResponse) => void;
   onWorkerProcessStarted?: (identity: JsonRpcProcessIdentity) => Promise<void> | void;
-  onWorkerProcessExited?: (identity: JsonRpcProcessIdentity) => void;
+  onWorkerProcessExited?: (identity: JsonRpcProcessIdentity) => Promise<void> | void;
 };
 
 export type CodexAppServerDependencies = {
@@ -820,7 +820,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
             ...this.protocolOptions,
             onLateResponse: (response) => this.onWorkerLateResponse(worker, response)
           },
-          (observation) => this.onWorkerExit(worker, observation),
+          (observation) => this.onWorkerExit(worker, connection, observation),
           () => this.invalidateAccountRateLimits(),
           (threadId) => this.onThreadClosed(worker, connection, threadId)
         );
@@ -894,13 +894,29 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     this.protocolOptions.onLateResponse?.(response);
   }
 
-  private onWorkerExit(worker: AppWorker, observation: WorkerExitObservation): void {
+  private onWorkerExit(
+    worker: AppWorker,
+    connection: AppServerConnection,
+    observation: WorkerExitObservation
+  ): void {
     if (worker.generation !== observation.generation) return;
     if (!observation.expected && !this.closing) {
       worker.crashCount += 1;
       worker.lastCrashAt = Date.now();
     }
-    if (worker.connection?.exited) worker.connection = undefined;
+    const previousMaintenance = worker.maintenance;
+    const cleanup = Promise.resolve(previousMaintenance)
+      .then(() => connection.waitForSupervisionRelease())
+      .then(() => {
+        if (worker.connection === connection) worker.connection = undefined;
+        if (worker.startingConnection === connection) worker.startingConnection = undefined;
+        if (worker.maintenance === cleanup) worker.maintenance = undefined;
+      });
+    worker.maintenance = cleanup;
+    // A failed cleanup deliberately leaves the rejected maintenance fence in
+    // place. The execution child fails closed and the state owner retries the
+    // same retained tree before it admits a replacement generation.
+    void cleanup.catch(() => undefined);
     this.forgetWorkerThreads(worker.index);
   }
 
@@ -941,6 +957,7 @@ class AppServerConnection {
   private closeRequested = false;
   private terminationRequested = false;
   private registeredWorkerIdentity?: JsonRpcProcessIdentity;
+  private supervisionRelease: Promise<void> = Promise.resolve();
 
   private constructor(
     command: string,
@@ -1021,6 +1038,10 @@ class AppServerConnection {
 
   get identity(): JsonRpcProcessIdentity | undefined {
     return this.rpc.identity;
+  }
+
+  waitForSupervisionRelease(): Promise<void> {
+    return this.supervisionRelease;
   }
 
   get initializationHealth(): AppServerInitializationHealth {
@@ -1567,7 +1588,9 @@ class AppServerConnection {
       throw new Error("PRECISE_INTERRUPTION_UNCONFIRMED: The original turn could not be confirmed stopped; shared worker termination was not authorized.");
     }
     this.terminationRequested = true;
-    return this.rpc.forceTerminate(graceMs);
+    const result = await this.rpc.forceTerminate(graceMs);
+    if (result.workerExited) await this.waitForSupervisionRelease();
+    return result;
   }
 
   async close(): Promise<void> {
@@ -1578,6 +1601,7 @@ class AppServerConnection {
     }
     this.pendingInteractions.clear();
     await this.rpc.close();
+    await this.waitForSupervisionRelease();
   }
 
   private async initialize(): Promise<void> {
@@ -2073,10 +2097,19 @@ class AppServerConnection {
 
   private onProcessExit(error: Error): void {
     const registeredIdentity = this.registeredWorkerIdentity;
-    this.registeredWorkerIdentity = undefined;
     if (registeredIdentity) {
-      try { this.protocolOptions.onWorkerProcessExited?.(registeredIdentity); }
-      catch { /* Executor supervision remains fail-closed on a missed release. */ }
+      const release = Promise.resolve()
+        .then(() => this.protocolOptions.onWorkerProcessExited?.(registeredIdentity))
+        .then(() => {
+          if (this.registeredWorkerIdentity === registeredIdentity) {
+            this.registeredWorkerIdentity = undefined;
+          }
+        });
+      this.supervisionRelease = release;
+      // The pool also holds this promise as its replacement fence. Attach a
+      // handler here so a failed independent cleanup never becomes an
+      // unhandled rejection while the executor transitions to fail-closed.
+      void release.catch(() => undefined);
     }
     const expected = this.closeRequested || this.terminationRequested;
     const terminalError = expected
