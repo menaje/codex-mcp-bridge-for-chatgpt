@@ -399,5 +399,44 @@ faults remain covered.
 Post-correction repository validation passed 96 TypeScript files / 853 tests,
 205 macOS tests with two opt-in skips, MCP 2026-07-28 conformance 29/29, App
 Server compatibility against CLI 0.153.3, and 1,319 localized strings across
-nine languages. Installed-build acceptance is recorded separately after the
-signed bundle is replaced and the live supervisor boundary is rechecked.
+nine languages.
+
+### Installed correction acceptance
+
+The signed arm64 application installed at `/Applications/Codex MCP Bridge for
+ChatGPT.app` now contains clean commit
+`b34b9a7eec4e6cc240c196a9163630ad0fb1f63b`, source hash
+`b441b19c2c650dbfbcdeaf5e1d9622487c78b89e3b47747a67e8e8932bce3329` and
+build ID `b34b9a7eec4e:b441b19c2c65`. Before replacement, a fresh authoritative
+snapshot confirmed zero active Jobs, pending admissions, interactions,
+memory-only threads and background processes. The previous signed app,
+LaunchAgent definition and online-consistent state and telemetry backups are
+retained at
+`~/.codex-mcp-bridge/backups/issue-143-outcome-pre-b34b9a7-20260922T0941KST`;
+both backup databases passed `quick_check` with zero foreign-key violations.
+The non-force application shutdown receipt
+`D0279078-C03C-4FF5-AB7A-686FAB1E9247` completed before replacement.
+
+The replacement restored the helper, Bridge, Tunnel, application runtime,
+state-read child and telemetry child. A non-database installed fault then held
+the application runtime child with `SIGSTOP` for 6.012 seconds. All 75 public
+`/healthz` samples returned HTTP 200 (p50 2.132 ms, p95 4.619 ms, p99 19.841
+ms and maximum 35.962 ms). During the stop, `/readyz` returned HTTP 503 with
+`state-stale` and `state-response-unconfirmed`. A new MCP request submitted only
+after that stale boundary returned HTTP 503 with `outcome=not-observed`; it was
+not confused with an unrelated global operation. After `SIGCONT`, readiness
+returned to HTTP 200 in 2.711 ms.
+
+The complementary fully-forwarded case remains deterministic rather than
+manufacturing a slow or mutating production request: the integration fixture
+flushes a delayed MCP request to the runtime, stops the child before its
+response, and verifies `outcome=unknown`. That fixture is compiled from the
+same clean source revision installed above; its delay and SQLite-error controls
+are unavailable during normal production startup.
+
+After the installed fault, both live databases passed `integrity_check` with
+zero foreign-key violations, the private environment digest remained
+unchanged, and `/healthz`, `/readyz`, Bridge, Tunnel, state-read and telemetry
+all returned healthy/ready. This installed result closes the request-outcome
+correctness follow-up without claiming control over Tunnel or ChatGPT network
+latency and without expanding #143 into #142's full state-owner migration.
