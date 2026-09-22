@@ -1,14 +1,13 @@
 # State schema ownership catalog
 
-This catalog is the schema-25 inventory required by issues #142 and #143. It
-records the current owner and consumers before the asynchronous state-service
-cutover. The target column is a data-classification decision, not evidence that
-the move has happened. Until cutover, `BridgeStateStore` remains the only
-authorized SQLite owner.
+This catalog is the schema-25 operational inventory and telemetry schema
+inventory required by issues #142 and #143. In production the operational
+state-owner process is the only `state.sqlite` writer, the read process opens it
+read-only, and the telemetry process is the only `telemetry.sqlite` writer.
 
 Indexes and triggers inherit the writer, durability, migration, backup and
 destination contract of their parent table. No caller may address an index or
-trigger through the future IPC protocol; callers use semantic commands and
+trigger through the state-owner IPC protocol; callers use semantic commands and
 queries only.
 
 ## Tables and paths
@@ -51,7 +50,7 @@ queries only.
 | `runtime_problem_resolutions` | problem review commands | Dashboard problem projection | acknowledged runtime problem revision | state |
 | `automatic_recovery` | `AutomaticRecoveryStore` commands | recovery controller | retry budget, lease and terminal recovery state | state |
 | `automatic_recovery_incidents` | `AutomaticRecoveryStore` commands/maintenance | recovery diagnostics and review | bounded incident evidence used by recovery policy | state |
-| `transport_observations` | transport observation append/retention | private diagnostics and wait-abort counts | no mutation authority; bounded loss is allowed | telemetry after verified cutover |
+| `transport_observations` | compatibility-only; production appends go to the telemetry service | older private diagnostics retained for rollback compatibility | no mutation authority; bounded loss is allowed | retained unused in state until a later schema migration |
 | `operational_command_receipts` | isolated state command Unit of Work | response-loss recovery and identical-command replay | commit proof for the IPC uncertainty window; payload-hash conflicts fail closed | state |
 
 ## Index inventory
@@ -104,14 +103,24 @@ only current explicit triggers. They are owned by the `job_events` write UoW and
 update `event_budget` in the same transaction. Neither object can move to
 telemetry while Job events remain operational.
 
-## Future telemetry objects
+## Telemetry schema
 
-`telemetry_meta`, `runtime_measurements`, `diagnostic_events`,
-`telemetry_drop_counters` and `telemetry_retention_state` do not exist yet.
-Their planned writers and failure policies are defined in
-[State execution isolation architecture](state-execution-isolation.md). Their
-absence is intentional until the telemetry cutover migration is implemented and
-verified.
+These objects exist only in `telemetry.sqlite` and are created by the telemetry
+child. They are intentionally absent from the operational schema inventory test.
+
+| Table | Writer | Content and failure policy |
+| --- | --- | --- |
+| `telemetry_meta` | telemetry startup transaction | schema version, telemetry UUID and source `state_database_id`; a wrong source is quarantined and rebuilt |
+| `transport_observations` | bounded telemetry queue | sanitized aborted/detached/presentation observations; detail may be dropped |
+| `runtime_measurements` | bounded telemetry queue | component/metric count, min, max and sum duration samples |
+| `diagnostic_events` | bounded telemetry queue | sanitized severity/component/reason transitions |
+| `telemetry_drop_counters` | reserved telemetry control message | persistent kind/count/first/last evidence for queue, send and write loss |
+| `telemetry_retention_state` | each successful detail transaction | restartable per-kind cleanup cursor and completion time |
+
+Telemetry indexes are `transport_observations_recent`,
+`runtime_measurements_recent` and `diagnostic_events_recent`. The independent
+retention caps are 1,000 transport observations, 5,000 measurements and 2,000
+diagnostic events.
 
 ## File, IPC and backup security contract
 
@@ -119,10 +128,11 @@ verified.
   backup, migration journal and digest files are mode `0600`. Startup refuses a
   non-regular canonical database target or an ownership/alias conflict rather
   than following an unsafe replacement.
-- State and telemetry children inherit only the local IPC channel and the
-  minimum configuration needed for their database. They open no listener and
-  receive no bearer token, raw user prompt or Codex result unless that payload
-  is itself authoritative state for a closed semantic command.
+- The telemetry child inherits only a minimal process environment and its local
+  IPC channel. The Codex executor receives the CLI environment but explicitly
+  receives no Bridge database path, bearer token, skills path or companion
+  socket. The state owner receives authoritative command payloads; the read
+  child has read-only database authority and opens no listener.
 - `state.sqlite` backups are sensitive operational artifacts and receive the
   same permissions and retention handling as the live database. A backup must
   include committed WAL content through the verified SQLite backup path; copying

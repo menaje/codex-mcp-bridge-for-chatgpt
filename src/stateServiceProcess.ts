@@ -103,9 +103,9 @@ export type ChildProcessOperationalStateServiceOptions = {
 };
 
 /**
- * Isolated operational-state transport. It is intentionally not selected by
- * createHttpServer until every state caller uses the semantic async contract;
- * doing so earlier would create two SQLite owners.
+ * Maintenance/receipt conformance transport retained for focused fault tests.
+ * Production selects the whole application/state coordinator as its one state
+ * owner; starting this writer beside it would violate the single-owner lease.
  */
 export class ChildProcessOperationalStateService implements OperationalStateService {
   private generation?: string;

@@ -848,6 +848,13 @@ export class BridgeStateStore {
     return this.currentInstanceId;
   }
 
+  /** Stable identity of this authoritative database across process generations. */
+  get databaseId(): string {
+    const value = this.getMeta("state_database_id");
+    if (!value) throw new Error("STATE_DATABASE_ID_MISSING: Operational database identity is unavailable.");
+    return value;
+  }
+
   /** Test-only fault injection on the already-open writer connection. */
   freezePageCountForTesting(): number {
     if (process.env.NODE_ENV !== "test") {

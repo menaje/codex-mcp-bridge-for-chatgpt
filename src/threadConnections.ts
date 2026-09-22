@@ -28,8 +28,8 @@ export type ThreadReleaseResult = {
 };
 
 export type ThreadReleaseOptions = {
-  /** Rechecked synchronously immediately before each unsubscribe or process close. */
-  canRelease: (threadId: string) => boolean;
+  /** Rechecked against authoritative state immediately before each unsubscribe or process close. */
+  canRelease: (threadId: string) => boolean | Promise<boolean>;
   eligibleThreadIds: readonly string[];
   previousWorkerPid?: number;
 };

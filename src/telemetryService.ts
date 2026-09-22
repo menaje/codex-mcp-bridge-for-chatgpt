@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
@@ -12,7 +13,10 @@ import {
 const CHILD_FLAG = "--bridge-telemetry-child";
 const FREEZE_PAGE_COUNT_FLAG = "--test-freeze-page-count";
 const RETENTION_LIMIT = 1_000;
-const QUEUE_CAPACITY = 256;
+const MEASUREMENT_RETENTION_LIMIT = 5_000;
+const DIAGNOSTIC_RETENTION_LIMIT = 2_000;
+const QUEUE_CAPACITY = 4_096;
+const QUEUE_BYTE_CAPACITY = 16 * 1024 * 1024;
 const MAX_MESSAGE_BYTES = 16 * 1024;
 const STARTUP_TIMEOUT_MS = 10_000;
 const CLOSE_FLUSH_MS = 1_000;
@@ -41,12 +45,62 @@ export type TelemetryServiceStatus = {
   lastPersistedAt?: number;
 };
 
+export type RuntimeMeasurementInput = {
+  component: "state" | "execution" | "read" | "telemetry" | "ingress";
+  metric: string;
+  durationMs: number;
+  count?: number;
+  now?: number;
+};
+
+export type DiagnosticEventInput = {
+  severity: "info" | "warning" | "error";
+  component: "state" | "execution" | "read" | "telemetry" | "ingress";
+  code: string;
+  now?: number;
+};
+
+type RuntimeMeasurementRecord = {
+  measurementId: number;
+  component: RuntimeMeasurementInput["component"];
+  metric: string;
+  count: number;
+  minMs: number;
+  maxMs: number;
+  sumMs: number;
+  createdAt: number;
+};
+
+type DiagnosticEventRecord = {
+  eventId: number;
+  severity: DiagnosticEventInput["severity"];
+  component: DiagnosticEventInput["component"];
+  code: string;
+  createdAt: number;
+};
+
+type DropCounterRecord = {
+  kind: string;
+  droppedCount: number;
+  firstAt: number;
+  lastAt: number;
+};
+
+type QueuedTelemetryRecord =
+  | { recordType: "transport"; id: number; record: TransportObservationRecord }
+  | { recordType: "measurement"; id: number; record: RuntimeMeasurementRecord }
+  | { recordType: "diagnostic"; id: number; record: DiagnosticEventRecord };
+
+type QueuedEntry = { value: QueuedTelemetryRecord; bytes: number };
+
 export interface BridgeTelemetryService {
   recordTransportObservation(
     input: TransportObservationInput,
     bridgeInstanceId: string
   ): TransportObservationRecord | undefined;
   listTransportObservations(kind?: TransportObservationKind): TransportObservationRecord[];
+  recordRuntimeMeasurement(input: RuntimeMeasurementInput): boolean;
+  recordDiagnosticEvent(input: DiagnosticEventInput): boolean;
   status(): TelemetryServiceStatus;
   close(): Promise<void>;
 }
@@ -56,6 +110,7 @@ export class InMemoryTelemetryService implements BridgeTelemetryService {
   private readonly records: TransportObservationRecord[] = [];
   private nextObservationId = 1;
   private failed = 0;
+  private retainedDiagnostics = 0;
 
   recordTransportObservation(
     input: TransportObservationInput,
@@ -79,12 +134,22 @@ export class InMemoryTelemetryService implements BridgeTelemetryService {
       .map(record => ({ ...record }));
   }
 
+  recordRuntimeMeasurement(input: RuntimeMeasurementInput): boolean {
+    try { normalizeMeasurement(input, 1); this.retainedDiagnostics += 1; return true; }
+    catch { this.failed += 1; return false; }
+  }
+
+  recordDiagnosticEvent(input: DiagnosticEventInput): boolean {
+    try { normalizeDiagnosticEvent(input, 1); this.retainedDiagnostics += 1; return true; }
+    catch { this.failed += 1; return false; }
+  }
+
   status(): TelemetryServiceStatus {
     return {
       connected: false,
       queued: 0,
       inFlight: 0,
-      retained: this.records.length,
+      retained: this.records.length + this.retainedDiagnostics,
       dropped: 0,
       failed: this.failed
     };
@@ -93,18 +158,26 @@ export class InMemoryTelemetryService implements BridgeTelemetryService {
   async close(): Promise<void> {}
 }
 
-type RecordMessage = { type: "record"; record: TransportObservationRecord };
+type RecordMessage = { type: "record"; entry: QueuedTelemetryRecord };
+type DropMessage = { type: "drops"; counters: DropCounterRecord[] };
 type CloseMessage = { type: "close" };
-type ParentMessage = RecordMessage | CloseMessage;
-type ReadyMessage = { type: "ready"; records: TransportObservationRecord[] };
+type ParentMessage = RecordMessage | DropMessage | CloseMessage;
+type ReadyMessage = {
+  type: "ready";
+  records: TransportObservationRecord[];
+  nextRecordId: number;
+  dropCounters: DropCounterRecord[];
+};
 type AckMessage = {
   type: "ack";
-  observationId: number;
+  recordType: QueuedTelemetryRecord["recordType"];
+  recordId: number;
   ok: boolean;
   persistedAt?: number;
 };
+type DropAckMessage = { type: "drop-ack"; ok: boolean; persistedAt?: number };
 type FatalMessage = { type: "fatal"; message: string };
-type ChildMessage = ReadyMessage | AckMessage | FatalMessage;
+type ChildMessage = ReadyMessage | AckMessage | DropAckMessage | FatalMessage;
 
 /**
  * Best-effort diagnostic persistence. The caller updates a bounded in-memory
@@ -115,38 +188,79 @@ type ChildMessage = ReadyMessage | AckMessage | FatalMessage;
 export class ChildProcessTelemetryService implements BridgeTelemetryService {
   private child?: ChildProcess;
   private readonly records: TransportObservationRecord[] = [];
-  private readonly queue: TransportObservationRecord[] = [];
-  private inFlight?: TransportObservationRecord;
-  private nextObservationId = 1;
+  private readonly queue: QueuedEntry[] = [];
+  private queueBytes = 0;
+  private inFlight?: QueuedEntry | { drops: true };
+  private nextRecordId = 1;
+  private readonly dropCounters = new Map<string, DropCounterRecord>();
+  private dropsDirty = false;
   private dropped = 0;
   private failed = 0;
   private lastPersistedAt?: number;
   private closed = false;
+  private closing = false;
   private closePromise?: Promise<void>;
   private restartTimer?: NodeJS.Timeout;
   private restartAttempts = 0;
+  private dropRetryTimer?: NodeJS.Timeout;
+  private dropRetryAttempts = 0;
   private initialized = false;
   private ready = false;
 
   private constructor(
     private readonly file: string,
-    private readonly freezePageCountAfterStartup: boolean
+    private readonly freezePageCountAfterStartup: boolean,
+    private readonly sourceStateDatabaseId?: string
   ) {}
 
   static async start(
     file: string,
-    options: { /** Deterministic disk-capacity fault injection for tests. */ freezePageCountAfterStartup?: boolean } = {}
+    options: {
+      /** Deterministic disk-capacity fault injection for tests. */
+      freezePageCountAfterStartup?: boolean;
+      sourceStateDatabaseId?: string;
+    } = {}
   ): Promise<ChildProcessTelemetryService> {
-    const service = new ChildProcessTelemetryService(
+    if (options.sourceStateDatabaseId !== undefined && !isUuid(options.sourceStateDatabaseId)) {
+      throw new Error("TELEMETRY_SOURCE_ID_INVALID: State database identity must be a UUID.");
+    }
+    const create = () => new ChildProcessTelemetryService(
       file,
-      options.freezePageCountAfterStartup === true
+      options.freezePageCountAfterStartup === true,
+      options.sourceStateDatabaseId
     );
+    let service = create();
     try {
       await service.spawnAndWait();
       return service;
     } catch (error) {
+      if (!existsSync(file) || !shouldRebuildTelemetryDatabase(error)) {
+        // The failed child exit already scheduled bounded restart. Telemetry is
+        // fail-open, so startup may continue in an explicitly disconnected
+        // state and recover after a transient lock or filesystem condition.
+        service.failed += 1;
+        return service;
+      }
       await service.close().catch(() => undefined);
-      throw error;
+      try {
+        quarantineTelemetryDatabase(file);
+        service = create();
+        try {
+          await service.spawnAndWait();
+        } catch {
+          service.failed += 1;
+          return service;
+        }
+        service.recordDiagnosticEvent({
+          severity: "warning",
+          component: "telemetry",
+          code: "database.rebuilt"
+        });
+        return service;
+      } catch {
+        await service.close().catch(() => undefined);
+        throw error;
+      }
     }
   }
 
@@ -154,22 +268,17 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
     input: TransportObservationInput,
     bridgeInstanceId: string
   ): TransportObservationRecord | undefined {
-    if (this.closed) return undefined;
+    if (this.closed || this.closing) return undefined;
     let record: TransportObservationRecord;
     try {
-      record = normalizeRecord(input, bridgeInstanceId, this.nextObservationId++);
+      record = normalizeRecord(input, bridgeInstanceId, this.nextRecordId++);
     } catch {
       this.failed += 1;
       return undefined;
     }
     this.records.push(record);
     trimRecords(this.records);
-    if (this.queue.length + (this.inFlight ? 1 : 0) >= QUEUE_CAPACITY) {
-      this.dropped += 1;
-      return record;
-    }
-    this.queue.push(record);
-    this.pump();
+    this.enqueue({ recordType: "transport", id: record.observationId, record });
     return { ...record };
   }
 
@@ -177,6 +286,28 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
     return this.records
       .filter(record => kind === undefined || record.kind === kind)
       .map(record => ({ ...record }));
+  }
+
+  recordRuntimeMeasurement(input: RuntimeMeasurementInput): boolean {
+    if (this.closed || this.closing) return false;
+    try {
+      const record = normalizeMeasurement(input, this.nextRecordId++);
+      return this.enqueue({ recordType: "measurement", id: record.measurementId, record });
+    } catch {
+      this.failed += 1;
+      return false;
+    }
+  }
+
+  recordDiagnosticEvent(input: DiagnosticEventInput): boolean {
+    if (this.closed || this.closing) return false;
+    try {
+      const record = normalizeDiagnosticEvent(input, this.nextRecordId++);
+      return this.enqueue({ recordType: "diagnostic", id: record.eventId, record });
+    } catch {
+      this.failed += 1;
+      return false;
+    }
   }
 
   status(): TelemetryServiceStatus {
@@ -201,14 +332,45 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
     return this.child?.pid;
   }
 
+  private enqueue(value: QueuedTelemetryRecord): boolean {
+    const bytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+    if (bytes > MAX_MESSAGE_BYTES) {
+      this.failed += 1;
+      this.noteDrop(`${value.recordType}.record-too-large`);
+      return false;
+    }
+    if (
+      this.queue.length + (this.inFlight && !("drops" in this.inFlight) ? 1 : 0) >=
+        QUEUE_CAPACITY ||
+      this.queueBytes + bytes > QUEUE_BYTE_CAPACITY
+    ) {
+      this.noteDrop(`${value.recordType}.queue-capacity`);
+      return false;
+    }
+    this.queue.push({ value, bytes });
+    this.queueBytes += bytes;
+    this.pump();
+    return true;
+  }
+
+  private noteDrop(kind: string, now = Date.now()): void {
+    this.dropped += 1;
+    const current = this.dropCounters.get(kind);
+    this.dropCounters.set(kind, current
+      ? { ...current, droppedCount: current.droppedCount + 1, lastAt: now }
+      : { kind, droppedCount: 1, firstAt: now, lastAt: now });
+    this.dropsDirty = true;
+    this.pump();
+  }
+
   private spawnAndWait(): Promise<void> {
     if (this.closed) {
       return Promise.reject(new Error("TELEMETRY_CLOSED: Telemetry service closed."));
     }
     const modulePath = fileURLToPath(import.meta.url);
     const args = modulePath.endsWith(".ts")
-      ? ["--import", "tsx", modulePath, CHILD_FLAG, this.file]
-      : [modulePath, CHILD_FLAG, this.file];
+      ? ["--import", "tsx", modulePath, CHILD_FLAG, this.file, this.sourceStateDatabaseId || "-"]
+      : [modulePath, CHILD_FLAG, this.file, this.sourceStateDatabaseId || "-"];
     if (this.freezePageCountAfterStartup) args.push(FREEZE_PAGE_COUNT_FLAG);
     const child = spawn(process.execPath, args, {
       cwd: process.cwd(),
@@ -254,9 +416,13 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
           if (!this.initialized) {
             this.records.push(...value.records.map(record => ({ ...record })));
             trimRecords(this.records);
-            this.nextObservationId = Math.max(
-              1,
-              ...this.records.map(record => record.observationId + 1)
+            this.nextRecordId = Math.max(1, value.nextRecordId);
+            for (const counter of value.dropCounters) {
+              this.dropCounters.set(counter.kind, { ...counter });
+            }
+            this.dropped = value.dropCounters.reduce(
+              (total, counter) => total + counter.droppedCount,
+              0
             );
             this.initialized = true;
           }
@@ -265,10 +431,31 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
           this.pump();
           return;
         }
-        if (this.inFlight?.observationId !== value.observationId) return;
+        if (value.type === "drop-ack") {
+          if (!this.inFlight || !("drops" in this.inFlight)) return;
+          this.inFlight = undefined;
+          if (value.ok) {
+            this.lastPersistedAt = value.persistedAt;
+            this.dropRetryAttempts = 0;
+          }
+          else {
+            this.failed += 1;
+            this.dropsDirty = true;
+            this.scheduleDropRetry();
+          }
+          this.pump();
+          return;
+        }
+        if (!this.inFlight || "drops" in this.inFlight ||
+            this.inFlight.value.recordType !== value.recordType ||
+            this.inFlight.value.id !== value.recordId) return;
+        const completed = this.inFlight;
         this.inFlight = undefined;
         if (value.ok) this.lastPersistedAt = value.persistedAt;
-        else this.failed += 1;
+        else {
+          this.failed += 1;
+          this.noteDrop(`${completed.value.recordType}.write-failed`);
+        }
         this.pump();
       });
     });
@@ -278,11 +465,19 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
     if (this.child !== child) return;
     this.child = undefined;
     this.ready = false;
-    if (this.inFlight) this.queue.unshift(this.inFlight);
+    if (this.inFlight) {
+      if ("drops" in this.inFlight) this.dropsDirty = true;
+      else {
+        this.queue.unshift(this.inFlight);
+        this.queueBytes += this.inFlight.bytes;
+      }
+    }
     this.inFlight = undefined;
-    while (this.queue.length > QUEUE_CAPACITY) {
-      this.queue.pop();
-      this.dropped += 1;
+    while (this.queue.length > QUEUE_CAPACITY || this.queueBytes > QUEUE_BYTE_CAPACITY) {
+      const removed = this.queue.pop();
+      if (!removed) break;
+      this.queueBytes = Math.max(0, this.queueBytes - removed.bytes);
+      this.noteDrop(`${removed.value.recordType}.restart-capacity`);
     }
     if (!this.closed) this.scheduleRestart();
   }
@@ -303,39 +498,88 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
 
   private pump(): void {
     const child = this.child;
-    if (
-      this.closed || this.inFlight || this.queue.length === 0 ||
-      !child?.connected || child.exitCode !== null
-    ) return;
-    const record = this.queue.shift() as TransportObservationRecord;
-    const message: RecordMessage = { type: "record", record };
+    if (this.closed || this.inFlight || !child?.connected || child.exitCode !== null) return;
+    if (this.dropsDirty) {
+      if (this.dropRetryTimer) return;
+      const message: DropMessage = {
+        type: "drops",
+        counters: [...this.dropCounters.values()].map(counter => ({ ...counter }))
+      };
+      if (Buffer.byteLength(JSON.stringify(message), "utf8") > MAX_MESSAGE_BYTES) {
+        this.failed += 1;
+        return;
+      }
+      this.dropsDirty = false;
+      this.inFlight = { drops: true };
+      child.send(message, error => {
+        if (!error || this.child !== child || !this.inFlight ||
+            !("drops" in this.inFlight)) return;
+        this.inFlight = undefined;
+        this.failed += 1;
+        this.dropsDirty = true;
+        this.scheduleDropRetry();
+        this.pump();
+      });
+      return;
+    }
+    const entry = this.queue.shift();
+    if (!entry) return;
+    this.queueBytes = Math.max(0, this.queueBytes - entry.bytes);
+    const message: RecordMessage = { type: "record", entry: entry.value };
     if (Buffer.byteLength(JSON.stringify(message), "utf8") > MAX_MESSAGE_BYTES) {
       this.failed += 1;
+      this.noteDrop(`${entry.value.recordType}.record-too-large`);
       queueMicrotask(() => this.pump());
       return;
     }
-    this.inFlight = record;
+    this.inFlight = entry;
     child.send(message, error => {
       if (
         !error || this.child !== child ||
-        this.inFlight?.observationId !== record.observationId
+        !this.inFlight || "drops" in this.inFlight ||
+        this.inFlight.value.recordType !== entry.value.recordType ||
+        this.inFlight.value.id !== entry.value.id
       ) return;
       this.inFlight = undefined;
       this.failed += 1;
+      this.noteDrop(`${entry.value.recordType}.send-failed`);
       this.pump();
     });
   }
 
+  private scheduleDropRetry(): void {
+    if (this.closed || this.dropRetryTimer) return;
+    const delay = Math.min(
+      RESTART_BASE_DELAY_MS * 2 ** Math.min(this.dropRetryAttempts, 16),
+      RESTART_MAX_DELAY_MS
+    );
+    this.dropRetryAttempts = Math.min(this.dropRetryAttempts + 1, 16);
+    this.dropRetryTimer = setTimeout(() => {
+      this.dropRetryTimer = undefined;
+      this.pump();
+    }, delay);
+    this.dropRetryTimer.unref();
+  }
+
   private async closeChild(): Promise<void> {
-    this.closed = true;
+    this.closing = true;
     if (this.restartTimer) clearTimeout(this.restartTimer);
+    if (this.dropRetryTimer) clearTimeout(this.dropRetryTimer);
+    this.dropRetryTimer = undefined;
+    this.pump();
     const deadline = Date.now() + CLOSE_FLUSH_MS;
-    while ((this.inFlight || this.queue.length > 0) && Date.now() < deadline) {
+    while ((this.inFlight || this.queue.length > 0 || this.dropsDirty) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 20));
+      this.pump();
     }
-    this.dropped += this.queue.length + (this.inFlight ? 1 : 0);
+    for (const entry of this.queue) this.noteDrop(`${entry.value.recordType}.close-timeout`);
+    if (this.inFlight && !("drops" in this.inFlight)) {
+      this.noteDrop(`${this.inFlight.value.recordType}.close-timeout`);
+    }
     this.queue.length = 0;
+    this.queueBytes = 0;
     this.inFlight = undefined;
+    this.closed = true;
     const child = this.child;
     this.child = undefined;
     this.ready = false;
@@ -356,7 +600,11 @@ export class ChildProcessTelemetryService implements BridgeTelemetryService {
   }
 }
 
-async function runChild(file: string, freezePageCountAfterStartup: boolean): Promise<void> {
+async function runChild(
+  file: string,
+  freezePageCountAfterStartup: boolean,
+  sourceStateDatabaseId?: string
+): Promise<void> {
   let database: Database.Database | undefined;
   const send = (message: ChildMessage) => {
     if (!process.connected || !process.send) return;
@@ -376,6 +624,10 @@ async function runChild(file: string, freezePageCountAfterStartup: boolean): Pro
     database.pragma("synchronous = NORMAL");
     database.pragma("wal_autocheckpoint = 128");
     database.exec(`
+      CREATE TABLE IF NOT EXISTS telemetry_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS transport_observations (
         observation_id INTEGER PRIMARY KEY,
         kind TEXT NOT NULL,
@@ -390,7 +642,40 @@ async function runChild(file: string, freezePageCountAfterStartup: boolean): Pro
       ) STRICT;
       CREATE INDEX IF NOT EXISTS transport_observations_recent
         ON transport_observations(created_at DESC, observation_id DESC);
+      CREATE TABLE IF NOT EXISTS runtime_measurements (
+        measurement_id INTEGER PRIMARY KEY,
+        component TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        sample_count INTEGER NOT NULL,
+        min_ms REAL NOT NULL,
+        max_ms REAL NOT NULL,
+        sum_ms REAL NOT NULL,
+        created_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS runtime_measurements_recent
+        ON runtime_measurements(created_at DESC, measurement_id DESC);
+      CREATE TABLE IF NOT EXISTS diagnostic_events (
+        event_id INTEGER PRIMARY KEY,
+        severity TEXT NOT NULL,
+        component TEXT NOT NULL,
+        code TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS diagnostic_events_recent
+        ON diagnostic_events(created_at DESC, event_id DESC);
+      CREATE TABLE IF NOT EXISTS telemetry_drop_counters (
+        kind TEXT PRIMARY KEY,
+        dropped_count INTEGER NOT NULL,
+        first_at INTEGER NOT NULL,
+        last_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS telemetry_retention_state (
+        kind TEXT PRIMARY KEY,
+        cursor INTEGER NOT NULL,
+        last_completed_at INTEGER NOT NULL
+      ) STRICT;
     `);
+    initializeTelemetryMetadata(database, sourceStateDatabaseId);
     if (freezePageCountAfterStartup) {
       database.pragma("wal_checkpoint(TRUNCATE)");
       const pageCount = database.pragma("page_count", { simple: true }) as number;
@@ -400,53 +685,47 @@ async function runChild(file: string, freezePageCountAfterStartup: boolean): Pro
     const records = (database.prepare(
       "SELECT * FROM transport_observations ORDER BY observation_id ASC"
     ).all() as Array<Record<string, unknown>>).map(readRow);
-    send({ type: "ready", records });
+    const dropCounters = (database.prepare(
+      "SELECT * FROM telemetry_drop_counters ORDER BY kind ASC"
+    ).all() as Array<Record<string, unknown>>).map(readDropCounter);
+    const nextRecordId = Number((database.prepare(`
+      SELECT MAX(value) AS value FROM (
+        SELECT COALESCE(MAX(observation_id), 0) AS value FROM transport_observations
+        UNION ALL SELECT COALESCE(MAX(measurement_id), 0) FROM runtime_measurements
+        UNION ALL SELECT COALESCE(MAX(event_id), 0) FROM diagnostic_events
+      )
+    `).get() as { value?: number } | undefined)?.value || 0) + 1;
+    send({ type: "ready", records, nextRecordId, dropCounters });
     process.on("message", value => {
       if (!isParentMessage(value)) return;
       if (value.type === "close") {
         close();
         return;
       }
+      if (value.type === "drops") {
+        let ok = false;
+        try {
+          if (!database) throw new Error("Telemetry database is closed.");
+          persistDropCounters(database, value.counters);
+          ok = true;
+        } catch { ok = false; }
+        send({
+          type: "drop-ack",
+          ok,
+          ...(ok ? { persistedAt: Date.now() } : {})
+        });
+        return;
+      }
       let ok = false;
       try {
-        const record = normalizeRecord(
-          value.record,
-          value.record.bridgeInstanceId,
-          value.record.observationId
-        );
-        database?.transaction(() => {
-          database?.prepare(`
-            INSERT OR IGNORE INTO transport_observations(
-              observation_id, kind, scope_id, job_id, activity_id, tool_name,
-              caller_request_digest, bridge_instance_id, reason_code, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(
-            record.observationId,
-            record.kind,
-            record.scopeId || null,
-            record.jobId || null,
-            record.activityId || null,
-            record.toolName || null,
-            record.callerRequestDigest || null,
-            record.bridgeInstanceId,
-            record.reasonCode,
-            record.createdAt
-          );
-          database?.prepare(`
-            DELETE FROM transport_observations
-             WHERE observation_id NOT IN (
-               SELECT observation_id FROM transport_observations
-                ORDER BY observation_id DESC LIMIT ?
-             )
-          `).run(RETENTION_LIMIT);
-        })();
+        if (!database) throw new Error("Telemetry database is closed.");
+        persistTelemetryRecord(database, value.entry);
         ok = true;
-      } catch {
-        ok = false;
-      }
+      } catch { ok = false; }
       send({
         type: "ack",
-        observationId: value.record.observationId,
+        recordType: value.entry.recordType,
+        recordId: value.entry.id,
         ok,
         ...(ok ? { persistedAt: Date.now() } : {})
       });
@@ -459,6 +738,234 @@ async function runChild(file: string, freezePageCountAfterStartup: boolean): Pro
     close();
     process.exitCode = 1;
   }
+}
+
+function initializeTelemetryMetadata(
+  database: Database.Database,
+  sourceStateDatabaseId?: string
+): void {
+  database.transaction(() => {
+    const read = database.prepare(
+      "SELECT value FROM telemetry_meta WHERE key = ?"
+    );
+    const write = database.prepare(
+      "INSERT INTO telemetry_meta(key, value) VALUES (?, ?)"
+    );
+    const schema = (read.get("schema_version") as { value?: string } | undefined)?.value;
+    if (schema === undefined) write.run("schema_version", "1");
+    else if (schema !== "1") {
+      throw new Error(`Unsupported telemetry database schema version: ${schema}.`);
+    }
+    const databaseId = (read.get("telemetry_database_id") as { value?: string } | undefined)?.value;
+    if (databaseId === undefined) write.run("telemetry_database_id", randomUUID());
+    else if (!isUuid(databaseId)) throw new Error("Telemetry database identity is invalid.");
+    if (sourceStateDatabaseId) {
+      const source = (read.get("source_state_database_id") as { value?: string } | undefined)?.value;
+      if (source === undefined) write.run("source_state_database_id", sourceStateDatabaseId);
+      else if (source !== sourceStateDatabaseId) {
+        throw new Error(
+          "TELEMETRY_SOURCE_MISMATCH: Telemetry belongs to a different operational database."
+        );
+      }
+    }
+  })();
+}
+
+function persistTelemetryRecord(
+  database: Database.Database,
+  entry: QueuedTelemetryRecord
+): void {
+  database.transaction(() => {
+    if (entry.recordType === "transport") {
+      const record = normalizeRecord(
+        entry.record,
+        entry.record.bridgeInstanceId,
+        entry.id
+      );
+      database.prepare(`
+        INSERT OR IGNORE INTO transport_observations(
+          observation_id, kind, scope_id, job_id, activity_id, tool_name,
+          caller_request_digest, bridge_instance_id, reason_code, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        record.observationId,
+        record.kind,
+        record.scopeId || null,
+        record.jobId || null,
+        record.activityId || null,
+        record.toolName || null,
+        record.callerRequestDigest || null,
+        record.bridgeInstanceId,
+        record.reasonCode,
+        record.createdAt
+      );
+      trimTable(database, "transport_observations", "observation_id", RETENTION_LIMIT);
+    } else if (entry.recordType === "measurement") {
+      const record = normalizeMeasurement(entry.record, entry.id);
+      database.prepare(`
+        INSERT OR IGNORE INTO runtime_measurements(
+          measurement_id, component, metric, sample_count, min_ms, max_ms, sum_ms, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        record.measurementId,
+        record.component,
+        record.metric,
+        record.count,
+        record.minMs,
+        record.maxMs,
+        record.sumMs,
+        record.createdAt
+      );
+      trimTable(database, "runtime_measurements", "measurement_id", MEASUREMENT_RETENTION_LIMIT);
+    } else {
+      const record = normalizeDiagnosticEvent(entry.record, entry.id);
+      database.prepare(`
+        INSERT OR IGNORE INTO diagnostic_events(
+          event_id, severity, component, code, created_at
+        ) VALUES (?, ?, ?, ?, ?)
+      `).run(
+        record.eventId,
+        record.severity,
+        record.component,
+        record.code,
+        record.createdAt
+      );
+      trimTable(database, "diagnostic_events", "event_id", DIAGNOSTIC_RETENTION_LIMIT);
+    }
+    database.prepare(`
+      INSERT INTO telemetry_retention_state(kind, cursor, last_completed_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(kind) DO UPDATE SET
+        cursor=excluded.cursor,
+        last_completed_at=excluded.last_completed_at
+    `).run(entry.recordType, entry.id, Date.now());
+  })();
+}
+
+function trimTable(
+  database: Database.Database,
+  table: "transport_observations" | "runtime_measurements" | "diagnostic_events",
+  id: "observation_id" | "measurement_id" | "event_id",
+  limit: number
+): void {
+  database.prepare(`
+    DELETE FROM ${table}
+     WHERE ${id} NOT IN (
+       SELECT ${id} FROM ${table} ORDER BY ${id} DESC LIMIT ?
+     )
+  `).run(limit);
+}
+
+function persistDropCounters(
+  database: Database.Database,
+  counters: DropCounterRecord[]
+): void {
+  if (counters.length > 128) throw new Error("Too many telemetry drop counter kinds.");
+  database.transaction(() => {
+    const statement = database.prepare(`
+      INSERT INTO telemetry_drop_counters(kind, dropped_count, first_at, last_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(kind) DO UPDATE SET
+        dropped_count=MAX(telemetry_drop_counters.dropped_count, excluded.dropped_count),
+        first_at=MIN(telemetry_drop_counters.first_at, excluded.first_at),
+        last_at=MAX(telemetry_drop_counters.last_at, excluded.last_at)
+    `);
+    for (const counter of counters) {
+      const normalized = normalizeDropCounter(counter);
+      statement.run(
+        normalized.kind,
+        normalized.droppedCount,
+        normalized.firstAt,
+        normalized.lastAt
+      );
+    }
+  })();
+}
+
+function normalizeMeasurement(
+  input: RuntimeMeasurementInput | RuntimeMeasurementRecord,
+  measurementId: number
+): RuntimeMeasurementRecord {
+  if (!Number.isSafeInteger(measurementId) || measurementId < 1) {
+    throw new Error("Invalid telemetry measurement id.");
+  }
+  if (!["state", "execution", "read", "telemetry", "ingress"].includes(input.component)) {
+    throw new Error("Invalid telemetry measurement component.");
+  }
+  if (!/^[a-z0-9][a-z0-9._-]{0,79}$/u.test(String(input.metric || ""))) {
+    throw new Error("Invalid telemetry metric.");
+  }
+  const count = "count" in input && input.count !== undefined ? input.count : 1;
+  if (!Number.isSafeInteger(count) || count < 1 || count > 1_000_000) {
+    throw new Error("Invalid telemetry measurement count.");
+  }
+  const values = "durationMs" in input
+    ? { minMs: input.durationMs, maxMs: input.durationMs, sumMs: input.durationMs * count }
+    : { minMs: input.minMs, maxMs: input.maxMs, sumMs: input.sumMs };
+  const { minMs, maxMs, sumMs } = values;
+  if (![minMs, maxMs, sumMs].every(value =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 86_400_000 * count
+  ) || minMs > maxMs) {
+    throw new Error("Invalid telemetry measurement value.");
+  }
+  const createdAt = "createdAt" in input ? input.createdAt : input.now ?? Date.now();
+  if (!Number.isSafeInteger(createdAt) || createdAt < 0) {
+    throw new Error("Invalid telemetry measurement timestamp.");
+  }
+  return {
+    measurementId,
+    component: input.component,
+    metric: input.metric,
+    count,
+    minMs,
+    maxMs,
+    sumMs,
+    createdAt
+  };
+}
+
+function normalizeDiagnosticEvent(
+  input: DiagnosticEventInput | DiagnosticEventRecord,
+  eventId: number
+): DiagnosticEventRecord {
+  if (!Number.isSafeInteger(eventId) || eventId < 1) {
+    throw new Error("Invalid telemetry diagnostic event id.");
+  }
+  if (!["info", "warning", "error"].includes(input.severity) ||
+      !["state", "execution", "read", "telemetry", "ingress"].includes(input.component) ||
+      !/^[a-z0-9][a-z0-9._-]{0,79}$/u.test(String(input.code || ""))) {
+    throw new Error("Invalid telemetry diagnostic event.");
+  }
+  const createdAt = "createdAt" in input ? input.createdAt : input.now ?? Date.now();
+  if (!Number.isSafeInteger(createdAt) || createdAt < 0) {
+    throw new Error("Invalid telemetry diagnostic timestamp.");
+  }
+  return {
+    eventId,
+    severity: input.severity,
+    component: input.component,
+    code: input.code,
+    createdAt
+  };
+}
+
+function normalizeDropCounter(input: DropCounterRecord): DropCounterRecord {
+  if (!/^[a-z0-9][a-z0-9._-]{0,79}$/u.test(String(input.kind || "")) ||
+      !Number.isSafeInteger(input.droppedCount) || input.droppedCount < 1 ||
+      !Number.isSafeInteger(input.firstAt) || input.firstAt < 0 ||
+      !Number.isSafeInteger(input.lastAt) || input.lastAt < input.firstAt) {
+    throw new Error("Invalid telemetry drop counter.");
+  }
+  return { ...input };
+}
+
+function readDropCounter(row: Record<string, unknown>): DropCounterRecord {
+  return normalizeDropCounter({
+    kind: String(row.kind),
+    droppedCount: Number(row.dropped_count),
+    firstAt: Number(row.first_at),
+    lastAt: Number(row.last_at)
+  });
 }
 
 function normalizeRecord(
@@ -537,18 +1044,58 @@ function isChildMessage(value: unknown): value is ChildMessage {
   if (!value || typeof value !== "object") return false;
   const message = value as Record<string, unknown>;
   if (message.type === "fatal") return typeof message.message === "string";
-  if (message.type === "ready") return Array.isArray(message.records);
-  return message.type === "ack" && Number.isSafeInteger(message.observationId) &&
-    typeof message.ok === "boolean";
+  if (message.type === "ready") {
+    return Array.isArray(message.records) && Number.isSafeInteger(message.nextRecordId) &&
+      Array.isArray(message.dropCounters);
+  }
+  if (message.type === "drop-ack") return typeof message.ok === "boolean";
+  return message.type === "ack" &&
+    ["transport", "measurement", "diagnostic"].includes(String(message.recordType)) &&
+    Number.isSafeInteger(message.recordId) && typeof message.ok === "boolean";
 }
 
 function isParentMessage(value: unknown): value is ParentMessage {
   if (!value || typeof value !== "object") return false;
   const message = value as Record<string, unknown>;
   if (message.type === "close") return true;
-  return message.type === "record" && value !== undefined &&
-    Buffer.byteLength(JSON.stringify(value), "utf8") <= MAX_MESSAGE_BYTES &&
-    typeof message.record === "object";
+  if (Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_MESSAGE_BYTES) return false;
+  if (message.type === "drops") return Array.isArray(message.counters);
+  return message.type === "record" && typeof message.entry === "object";
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
+}
+
+function shouldRebuildTelemetryDatabase(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return [
+    "TELEMETRY_SOURCE_MISMATCH",
+    "Unsupported telemetry database schema version",
+    "Telemetry database identity is invalid",
+    "database disk image is malformed",
+    "file is not a database"
+  ].some(marker => message.includes(marker));
+}
+
+/**
+ * Diagnostic state is disposable, but evidence of a rejected database is not
+ * silently deleted. Move the database and its SQLite sidecars together so an
+ * operator can inspect or recover them without ever selecting them as the
+ * active telemetry owner again.
+ */
+function quarantineTelemetryDatabase(file: string): string {
+  const rejectedDirectory = `${file}.rejected-${Date.now()}-${randomUUID()}`;
+  mkdirSync(rejectedDirectory, { recursive: false, mode: 0o700 });
+  let moved = false;
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const source = `${file}${suffix}`;
+    if (!existsSync(source)) continue;
+    renameSync(source, path.join(rejectedDirectory, path.basename(source)));
+    moved = true;
+  }
+  if (!moved) throw new Error("TELEMETRY_QUARANTINE_EMPTY: No telemetry database was moved.");
+  return rejectedDirectory;
 }
 
 function childEnvironment(): NodeJS.ProcessEnv {
@@ -560,7 +1107,14 @@ function childEnvironment(): NodeJS.ProcessEnv {
 }
 
 const childFile = process.argv[process.argv.indexOf(CHILD_FLAG) + 1];
+const childSourceStateDatabaseId = process.argv[process.argv.indexOf(CHILD_FLAG) + 2];
 if (process.argv.includes(CHILD_FLAG)) {
   if (!childFile) throw new Error("Telemetry database path is required.");
-  await runChild(childFile, process.argv.includes(FREEZE_PAGE_COUNT_FLAG));
+  await runChild(
+    childFile,
+    process.argv.includes(FREEZE_PAGE_COUNT_FLAG),
+    childSourceStateDatabaseId && childSourceStateDatabaseId !== "-"
+      ? childSourceStateDatabaseId
+      : undefined
+  );
 }

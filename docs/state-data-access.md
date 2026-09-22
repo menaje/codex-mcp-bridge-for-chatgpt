@@ -1,13 +1,16 @@
 # State data access and maintenance ownership
 
-This document is the schema-25 ownership contract. SQLite remains one durable
-database, but a shared file does not imply shared write authority.
+This document is the schema-25 operational ownership contract. Authoritative
+state remains one durable `state.sqlite` database; best-effort diagnostics use
+the separate `telemetry.sqlite` described by issue #142. A shared operational
+file does not imply shared write authority.
 
 The issue #142 successor architecture that preserves these owners while moving
 execution behind a child-process boundary is documented in
 [State execution isolation architecture](state-execution-isolation.md).
 
-The runtime has three access classes:
+The production runtime has three state access classes inside separate process
+boundaries:
 
 - Commands and domain repositories own invariants and mutations.
 - `DashboardReadModel` and `StatusReadModel` execute read-only projections.
@@ -50,7 +53,7 @@ writer column.
 | `cancellation_operations` | State UoW / cancellation repository | State UoW | cancellation/status projection | cancellation commands |
 | `cancellation_intents` | State UoW / cancellation repository | State UoW | cancellation, unfinished-work and retention protection | cancellation commands |
 | `steering_deliveries` | State UoW / steering repository | State UoW | steering/status and retention protection | steering commands |
-| `transport_observations` | State UoW / transport journal | State UoW | diagnostics | bounded insert policy |
+| `transport_observations` | compatibility-only legacy journal | no production appends after telemetry cutover | rollback-era diagnostics only | retained until a later schema migration |
 | `user_questions` | `QuestionStore` | `QuestionStore` | Question query/card paths | question slice and startup recovery |
 | `codex_question_deliveries` | `QuestionStore` | `QuestionStore` | Question delivery commands | question slice and startup recovery |
 | `thread_connections` | `ThreadConnectionStore` | `ThreadConnectionStore` | admission, connection controller, Dashboard | connection controller only; no DB retention |
@@ -135,10 +138,12 @@ candidate payload and command ID across outcome-unknown recovery. Registry
 memory is changed only after the state owner returns matching Job version and
 timestamp classifications; a stale candidate is skipped rather than archived.
 
-The standalone state child is ready for the complete maintenance surface, but
-production still uses the in-process compatibility owner. Operational admission,
-progress, cancellation, delivery and query callers must cross the asynchronous
-semantic boundary before the single-writer cutover can select the child.
+Production selects the state-owner child as the complete application/state
+coordinator. Operational admission, progress, cancellation and delivery run in
+that one writer; external/native callers cross protocol v2. Dashboard and
+Settings queries use the read-only projection child. The protocol-v4
+maintenance child remains a conformance harness and is never started beside the
+production owner.
 
 Protected history candidates receive a 15-minute in-process backoff before the
 next full multi-table protection check. Losing the cache on restart is safe: it

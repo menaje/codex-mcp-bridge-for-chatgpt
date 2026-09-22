@@ -33,6 +33,8 @@ export type BridgeStdioRuntimeOptions = {
   output?: Writable;
   /** Observe an application failure without changing its protocol result. */
   onOperationFailure?: (error: unknown) => void;
+  /** Dynamic execution-boundary admission; false rejects before a Job exists. */
+  canAcceptNewJobs?: () => boolean;
 };
 
 export type BridgeStdioRuntime = {
@@ -85,7 +87,9 @@ export function createStdioBridgeRuntime(
     undefined,
     undefined,
     options.readProjection,
-    options.onOperationFailure
+    options.onOperationFailure,
+    false,
+    options.canAcceptNewJobs
   );
   // The SDK's stock stdio ReadBuffer calls Buffer.toString("utf8"), which
   // replaces malformed bytes. Feed it only complete, prevalidated JSON lines.

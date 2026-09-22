@@ -8,43 +8,38 @@ IPC message as a durable state change.
 
 ## Decision
 
-Adopt three execution boundaries and two SQLite files:
+Adopt five execution boundaries and two SQLite files:
 
 ```text
 Bridge ingress process
   - HTTP, MCP and local companion listeners
-  - authentication, scope and request validation
-  - in-memory execution signals and bounded IPC admission
-  - no SQLite connection after state-service cutover
+  - authentication and bounded IPC admission
+  - no SQLite or Codex App Server connection
              |
-             | versioned asynchronous command/query protocol
+             | bridge-operational-state-owner protocol v2
              v
-Operational state child process
-  - one state.sqlite writer and one semantic command scheduler
-  - schema migration, Unit of Work and authoritative maintenance
-  - durable command receipts and worker generation
-  - one read-only worker thread for Dashboard/history projections
-             |
-             | independent bounded diagnostic batches
-             v
-Telemetry child process
-  - one telemetry.sqlite writer
-  - sampling, coalescing, drop accounting and retention
-  - no authority to admit, cancel, complete, deliver or recover work
+Operational state-owner child process
+  - application command coordinator and sole state.sqlite writer
+  - schema migration, Unit of Work, admission and maintenance
+  - domain idempotency journals and worker generation
+  ├─ state-read child: read-only Dashboard/Settings projections
+  ├─ telemetry child: sole telemetry.sqlite writer
+  └─ Codex execution child: App Server pool, no Bridge SQLite authority
 ```
 
-The operational state owner and telemetry owner are child processes, not two
-event loops sharing the Bridge process. The operational read path is a worker
-thread inside the state child and opens `state.sqlite` read-only. It is not a
-third database or a writer. `better-sqlite3` remains the initial driver in all
-three isolated execution contexts.
+The operational state owner, read projection, telemetry owner and Codex
+executor are separate processes, not several queues sharing one event loop.
+The read child opens `state.sqlite` read-only and is not a second writer. The
+executor receives the Codex CLI environment but no state/telemetry path,
+Bridge bearer token, companion socket or SQLite module. `better-sqlite3`
+remains the driver in the state, read and telemetry processes only.
 
 A worker thread alone is insufficient for the operational writer because a
 native crash, runaway allocation or process-level failure would still terminate
 the Bridge. A separate local service is unnecessary for the first version:
 authenticated network exposure, install management and another external
 lifecycle would add failure modes without improving the single-host ownership
-contract. A supervised child process provides the selected boundary.
+contract. Supervised child processes provide the selected local boundaries.
 
 ## Why execution isolation precedes file separation
 
@@ -56,14 +51,21 @@ event-loop timer by about 3.25 seconds and made `runtime.health` exceed its
 two-second deadline.
 
 Moving rows to another file while both files remain on the Bridge event loop
-does not address that failure. The implementation order is therefore:
+does not address that failure. The implemented order was therefore:
 
-1. introduce an asynchronous semantic state boundary and convert every caller;
-2. cut all SQLite ownership over to the operational state child at one point;
-3. move read models to its read-only worker thread;
-4. add the telemetry child and move only classified disposable data;
-5. integrate degraded state and end-to-end recovery in the native app and
-   Dashboard.
+1. move the complete application/state coordinator behind one versioned process
+   boundary, preserving the existing atomic repositories and one writer;
+2. move Dashboard and Settings projections to a read-only child;
+3. move classified diagnostics to a telemetry child and independent database;
+4. move the Codex App Server pool out of the state-owner event loop;
+5. expose truthful readiness, certainty and recovery state to the native app
+   and Dashboard.
+
+This whole-coordinator cutover replaced the earlier plan to make every
+repository method asynchronous. It creates the required state boundary without
+splitting existing Unit-of-Work transactions across hundreds of RPC calls. All
+external command/query entry points cross the state-owner boundary, while the
+actual long-running Codex work crosses a second execution-only boundary.
 
 ## What isolation changes and what remains
 
@@ -91,10 +93,11 @@ CPU-heavy handlers—must therefore be measured, bounded, split or moved even
 after the SQLite cutover. Database isolation is necessary for the reproduced
 failure mode, but it is not a blanket latency fix.
 
-The measurements are deterministic single fault samples, not p99 evidence. The
-full load matrix, queue timing, read worker, telemetry child and installed
-Tunnel/ChatGPT/Codex path remain release gates. Detailed values are retained in
-[the issue #143 audit](audits/issue-143-connection-reliability.md).
+Those original measurements were deterministic single fault samples, not p99
+evidence. The later production-boundary load/fault results are recorded in
+[the issue #143 audit](audits/issue-143-connection-reliability.md); the final
+state/execution topology and installed acceptance are recorded in
+[the issue #142 audit](audits/issue-142-state-execution-isolation.md).
 
 ## Database classification
 
@@ -152,47 +155,45 @@ that an operation happened or authorize a replay.
 
 ## State protocol
 
-The Bridge sends semantic operations, never arbitrary SQL, table names or raw
-query fragments. The protocol is local-only and uses length-bounded structured
-messages over Node child IPC in the first implementation. Every request has this
-envelope:
+Production uses the local-only `bridge-operational-state-owner` protocol v2.
+Native application calls use a closed method union and an explicit `command`,
+`query` or `control` kind. MCP traffic crosses the same bounded process boundary
+as an authenticated HTTP request and is parsed and revalidated by the state
+owner; no ingress caller can submit SQL, a table name or a query fragment.
+Native requests have this envelope:
 
 ```ts
 type StateRequestEnvelope = {
-  protocol: "bridge-state-service";
-  version: 4;
-  requestId: string;          // unique IPC attempt UUID
-  commandId: string;          // stable UUID for a logical mutation retry
+  protocol: "bridge-operational-state-owner";
+  protocolVersion: 2;
+  generation: string;
+  requestId: string;
   kind: "command" | "query" | "control";
-  operation: string;          // closed discriminated union
-  aggregateKey?: string;      // Job, Agent, Activity or scope ordering key
-  scopeId?: string;           // already authenticated by the Bridge
-  expectedVersion?: number;
-  workerGeneration: string;
-  deadlineAt: number;
-  payloadSha256: string;
-  payload: unknown;
+  method: ApplicationRpcMethod; // closed union
+  args: unknown[];
 };
 ```
 
-The state service validates the complete envelope again. `deadlineAt` controls
-queue admission only; it cannot interrupt a running synchronous SQLite call or
-turn an unknown commit result into a rejection.
+The ingress process validates protocol, generation, method/kind agreement,
+request count and byte capacity before sending. The state owner validates the
+same envelope again. Sixteen of 128 request slots are reserved for native
+control, completion delivery and recovery; MCP bodies are limited to 8 MiB and
+32 MiB in flight. A queued or written IPC message is never treated as a durable
+state change.
 
-Mutation results use exactly three certainty classes:
+Mutation certainty remains request-specific:
 
-- `committed`: the transaction and durable command receipt committed and the
-  response carries the resulting authoritative version;
-- `not-applied`: validation, version or capacity rejection occurred before a
-  transaction could apply the command;
-- `outcome-unknown`: IPC closed or the worker generation changed after the
-  command might have committed.
+- a request rejected before it crosses the boundary is `not-observed`;
+- a request sent to the state owner whose response is lost is `unknown` until
+  an exact read or its domain idempotency record resolves it;
+- a returned domain result carries its committed version/receipt as before.
 
-On `outcome-unknown`, the Bridge queries the durable receipt for the same
-`commandId` and payload hash. It never invents a new logical request ID. A hash
-mismatch is a conflict, not a retry. External effects retain their existing
-prepared/dispatching/uncertain journals; a state receipt does not claim an
-external recipient accepted anything.
+Job admission, Agent mutation, cancellation, steering, card submission and
+completion delivery keep their existing durable request IDs and
+prepared/dispatching/uncertain journals. A caller never invents a replacement
+logical request ID after an unknown response. Queries are safe to repeat.
+Settings use expected revision and an authoritative follow-up read instead of
+pretending an unconfirmed mutation did not run.
 
 SQLite execution failures are classified from the driver's error code, not
 from elapsed time. `SQLITE_BUSY` and `SQLITE_LOCKED` become
@@ -203,74 +204,52 @@ SLA. If the caller's observation deadline ends first, the result remains
 outcome-unknown until a late response, receipt lookup or authoritative retry
 resolves it; elapsed time alone never fabricates a storage error.
 
-Schema 25 adds `operational_command_receipts` with command ID, operation,
-payload hash, aggregate, resulting version, compact result, generation and
-commit time. Receipts are capacity-bounded only after every referencing request
-and uncertainty window expires. Existing domain request IDs remain the business
-idempotency authority; the receipt closes the IPC response-loss window.
-The current maintenance-only transport prunes at most 500 idempotent
-`maintain` receipts per slice after a 24-hour uncertainty window. It does not
-delete future business-command receipts; those require reference-aware
-acknowledgement and their domain idempotency record before cleanup.
+Schema 25 `operational_command_receipts` remains the durable replay authority
+for maintenance operations and their commit/response-loss tests. Business
+commands continue to use their stricter domain receipts rather than wrapping a
+multi-transaction or external-effect workflow in a misleading generic receipt.
+The protocol-v4 maintenance service remains a fault/receipt conformance harness;
+it is not started beside the production state owner and therefore cannot become
+a second writer.
 
 ## Queue and fairness contract
 
 Capacity is reserved before a payload is sent to child-process IPC. Transport
 buffer acceptance is not state acceptance.
 
-The table below remains the full #142 semantic state-service target. The #143
-production cutover first places the complete application/runtime and its single
-SQLite writer in one supervised child. Within that owner, disposable
-`updated` progress projections use a 256-entry, 32-per-project round-robin
-queue. At most four such writes run immediately per event-loop turn. Started,
-completed, waiting, error, warning, usage, approval/input, resumed, terminal,
-cancellation, and delivery state bypass that disposable queue. The queue runs
-one item per event-loop turn, drops or supersedes only non-authoritative
-progress, and publishes aggregate queued/processed/dropped counts without
-project identifiers. This is the implemented protection for the explicit
-cross-project progress-flood case; it does not make a central SQLite writer
-concurrent or allow critical work to preempt a synchronous write that has
-already entered SQLite.
+The final implementation uses bounded queues at the boundaries where work can
+actually accumulate:
 
-| Lane | Work | Initial request/byte budget | Behavior at capacity |
-| --- | --- | ---: | --- |
-| critical | cancellation intent/result, user input, terminal result, required delivery state, receipt lookup | 256 / 16 MiB reserved | reject only new work that has not started; preserve recovery/query access |
-| admission | new Job/Activity/Agent commands and settings/project mutations | 512 / 32 MiB | explicit retryable `state-busy` before external execution starts |
-| progress | coalescible non-terminal progress state | 1,024 / 32 MiB | coalesce only identical aggregate successors whose skipped versions have no consumer |
-| maintenance | retention and reconciliation slices | one running plus one pending per slice | defer while critical or admission work is queued |
-| query | exact state, Dashboard and history | 128 / 64 MiB response budget | exact reads get reserved slots; large optional history reads fail retryably |
+| Boundary | Capacity | Policy |
+| --- | ---: | --- |
+| ingress to state owner | 128 requests, 16 slots reserved from MCP, 32 MiB proxied bodies | reject before forwarding with `not-observed`; preserve native control/recovery access |
+| Codex execution | 128 requests, 2 MiB each, 32 MiB total, 8 MiB result; 256/32 MiB critical outbound messages and 128/8 MiB coalesced progress | reject before execution; latest ordinary progress is coalesced per request; critical overflow fails the worker closed and marks an active turn interrupted/worker-lost rather than successful |
+| read projection | 16 independent requests, 8 MiB response | fail retryably and retain the last confirmed presentation |
+| disposable Job progress | 256 total, 32 per project, four immediate writes | per-project round robin; drop/supersede only non-authoritative `updated` progress |
+| telemetry | 4,096 records, 16 MiB, 16 KiB per sanitized record | bounded drop with persistent kind/count/first/last counters; never affect operational outcome |
+| maintenance | one bounded slice at a time | defer/retry by slice; never run unbounded cleanup |
 
-These are implementation constants to be verified under load, not public SLA.
-One message is capped at 2 MiB for commands, 256 KiB for query input, and 8 MiB
-for query output. Larger result bodies use the existing bounded Job-result
-contract and a chunked or exact-result read operation rather than an unbounded
-IPC object.
-
-Commands for the same aggregate are FIFO. Across independent aggregates, the
-scheduler uses round-robin scope/project buckets so one progress-heavy project
-cannot consume all normal capacity. Critical work has reserved capacity but is
-not allowed to reorder two commands for the same Job or Agent. Maintenance runs
-only when the higher lanes are empty and retains the bounded slice contracts
-from schema 25.
-
-The Bridge limits total in-flight state requests to 64. The state child processes
-one write transaction at a time. Read-only worker queries have a separate limit
-of eight in flight and do not hold a read transaction while waiting for change
-notifications.
+Started, completed, waiting, error, warning, usage, approval/input, resumed,
+terminal, cancellation and delivery state bypass the disposable progress queue.
+Commands for one aggregate retain their existing transaction/version ordering.
+The central SQLite writer remains serialized by design: no queue can preempt a
+synchronous write after it entered SQLite. The important guarantee is that the
+Codex executor, ingress health loop, read process and telemetry process do not
+share that blocked event loop.
 
 ## Read protocol and freshness
 
-The state child publishes an in-memory authoritative summary after each commit:
-state database ID, generation, last committed sequence, last commit time, queue
-depths and admission state. The Bridge may use that summary for presentation and
-readiness, never to authorize a mutation.
+The state owner publishes a generation-bound in-memory health summary with last
+commit time, active operation phase, request capacity and admission state. The
+stable state database UUID binds `telemetry.sqlite` privately and is checked by
+tests and recovery tooling; it is not exposed from unauthenticated health.
 
-Dashboard/history queries run in the read worker against a read-only WAL
-connection. A query result includes the state database ID, writer generation,
-snapshot sequence, data-confirmed time and stale flag. If the read worker fails,
-the Bridge may retain the last successful presentation with an explicit stale
-marker. It must not replace Jobs with an empty list or treat stale content as
-current cancellation/completion authority.
+Dashboard/history/Settings queries run in a separate process against a
+read-only WAL connection. The state owner publishes that process's generation,
+heartbeat age, in-flight count, last successful snapshot time and current read
+phase. If it fails, the native/card presentation retains the last successful
+view with an explicit stale marker. It must not replace Jobs with an empty list
+or treat stale content as current cancellation/completion authority.
 
 An exact mutation command is always revalidated by the writer against current
 scope, permission and expected-version state. A fresh read result does not
@@ -288,9 +267,14 @@ contains no project or Job data.
   no older than two seconds, migration/recovery is complete, the generation is
   current, critical capacity remains and admission is enabled;
 - HTTP 503 for `state-starting`, `state-stale`, `state-recovering`,
-  `state-incompatible`, `state-capacity` or `admission-draining`;
-- telemetry and read-worker degradation are reported as feature limitations but
-  do not by themselves make operational mutation admission false.
+  `state-incompatible`, `state-capacity`, `execution-starting`,
+  `execution-stale`, `execution-recovering`, `execution-capacity` or
+  `admission-draining`;
+- telemetry and read-worker degradation are reported through private runtime
+  health/presentation state but do not by themselves make mutation admission
+  false;
+- a started execution child that is stale, recovering or at capacity disables
+  new Job admission while state queries and public liveness remain available.
 
 `runtime.health` remains in-memory and adds the last state-service heartbeat,
 read/telemetry availability and feature reason codes. The native helper presents
@@ -306,31 +290,36 @@ operation, maintenance slice, last confirmed phase (`write-lock-wait`,
 commit time. It never publishes a request, scope, project or Job identifier or
 the command payload through unauthenticated health. A stale heartbeat freezes
 this as the **last confirmed** phase; it is not permission to infer a more
-specific SQLite, filesystem or hardware cause. Read phases and snapshot
-freshness join this contract only when the read worker is implemented.
+specific SQLite, filesystem or hardware cause. The read child publishes the
+same bounded phase/freshness form for Dashboard and Settings projections.
 
 ## Failure and restart rules
 
-The Bridge supervises both children independently with bounded exponential
-backoff. A telemetry crash never restarts the Bridge, state child, Tunnel or
-Codex runtime. A state-child crash makes new state-changing work fail closed,
-but does not cancel existing Codex processes or report their Jobs failed.
+Each child uses bounded exponential restart. A read, telemetry or Codex
+execution child crash does not restart ingress or the operational state owner.
+An execution crash rejects active turns as `CODEX_WORKER_LOST`; the durable Job
+becomes interrupted/worker-lost and enters the existing reconciliation path,
+never completed or cancelled by inference. New Job admission stays closed until
+the execution generation is ready again.
 
-The Bridge retains only a finite, byte-bounded memory buffer for runtime
-terminal observations that arrived while state was unavailable. It reports
-`observed-not-persisted` and reconciles from the actual Codex runtime where that
-runtime supports exact result/status recovery. Buffer exhaustion is recorded as
-`missing-or-unconfirmed`; it never fabricates success.
+A state-owner crash makes new mutations fail closed while ingress `/healthz`
+remains live. Because the state owner is the lifecycle supervisor for its three
+children, its replacement starts fresh read, telemetry and execution
+generations after the old owner exits. This deliberately avoids orphaned Codex
+effects that no state authority can observe. Durable cancellation, interaction,
+terminal and completion-delivery evidence already committed in `state.sqlite`
+is preserved; an active turn without a terminal receipt is recovered as
+interrupted/worker-lost, not replayed automatically.
 
 State-child recovery follows this order:
 
 1. acquire the canonical database lease and reject any live older owner;
 2. validate schema, integrity boundary and worker generation;
-3. resolve durable command receipts for in-flight command IDs;
-4. reconcile prepared/dispatching/uncertain domain journals;
-5. query actual runtime state without replaying work;
-6. rebuild the current read snapshot;
-7. publish a fresh heartbeat and only then re-enable admission.
+3. resolve durable receipts and prepared/dispatching/uncertain domain journals;
+4. reconcile Jobs whose prior worker generation disappeared without replaying
+   work;
+5. start fresh read, telemetry and execution generations;
+6. publish a fresh heartbeat and only then re-enable admission.
 
 Messages and responses from an older generation are rejected. A slow old child
 cannot become a second writer after its lease has been revoked; the supervisor
@@ -343,55 +332,59 @@ diagnostic fact may be offered with an idempotent observation ID. Failure to sen
 or persist it increments an in-memory drop counter and does not change the
 operational result.
 
-The Bridge-to-telemetry queue is capped at 4,096 records and 16 MiB; batches are
-capped at 500 records or 512 KiB. Severity transitions and drop counters have
-reserved capacity. Repeated measurements may be coalesced into count/min/max/
-sum buckets. Records never include raw prompts, Job results, secrets, absolute
-project paths or unsanitized subprocess output.
+The state-owner-to-telemetry queue is capped at 4,096 records and 16 MiB, with a
+16 KiB sanitized-record limit. Transport observations, duration measurements
+and diagnostic state transitions have independent retained row caps. Queue,
+send and write loss update persistent kind/count/first/last drop counters via a
+reserved control message. Failed counter persistence uses bounded exponential
+retry so a full diagnostic disk cannot create a reporting loop. Records never
+include raw prompts, Job results,
+secrets, absolute project paths or unsanitized subprocess output.
 
-The telemetry database has an independent global byte target, WAL checkpoint
-policy and retention scheduler. Disk-free-space admission is checked before a
-batch. Telemetry stops accepting detail before it can consume the reserve needed
-by `state.sqlite`; repeated failure reporting is rate-limited and cannot create
-an error-amplification loop.
+The telemetry database uses its own WAL/checkpoint and retention state. A lock,
+capacity failure or process exit only accumulates bounded telemetry work or
+drops detail; it never changes an operational transaction. Transient startup
+locks recover by restart. A corrupt, incompatible or wrong-source telemetry
+database is moved with its WAL/SHM into a recoverable quarantine directory and
+rebuilt against the current state database UUID. Telemetry loss never causes an
+operational database restore.
 
 ## Migration, cutover and rollback
 
-The asynchronous API conversion and physical owner cutover are separate:
+The production cutover keeps the existing schema-25 operational database and
+atomic repositories intact:
 
-1. Add the typed state-service interface and in-process compatibility adapter.
-   Convert all repositories, controllers and tools to await semantic operations.
-   SQLite still has one in-process owner; this stage claims no isolation.
-2. Add the child-process implementation and fault tests. At startup, close the
-   compatibility owner before the child acquires the canonical lease. No stage
-   permits both to write.
-3. Add the read worker and switch Dashboard/history queries after snapshot and
-   version equivalence tests.
-4. Create `telemetry.sqlite` from a consistent copy while admission is stopped.
-   Copy only classified `transport_observations`, verify counts/digests, bind the
-   telemetry source identity, then select both databases as one cutover
-   generation. Current mixed event tables remain in state.
-5. Start telemetry writes. Keep the old state table unused for one compatibility
-   window if rollback requires the older binary; removing it needs a later
-   catalogued schema migration.
+1. ingress starts no SQLite connection and starts exactly one state owner;
+2. the state owner acquires the canonical lease before it advertises ready;
+3. it starts a read-only projection child and a source-UUID-bound telemetry
+   child;
+4. classified observations begin writing only to `telemetry.sqlite`; the old
+   state table remains unused for one compatibility window and is not
+   destructively migrated;
+5. the Codex executor starts lazily, without Bridge database paths or listener
+   credentials, before the first runtime/account operation.
+
+Starting the separate protocol-v4 maintenance writer beside this topology is
+forbidden. No cutover stage permits two live operational writers. Keeping the
+old diagnostic table avoids a destructive data migration; historical
+diagnostics are allowed to remain in the rollback-compatible state file while
+new observations use the bound telemetry file.
 
 ### Current implementation status
 
-The issue #143 production boundary now keeps public HTTP, native companion and
-stdio ingress in a SQLite-free supervisor. The complete application runtime and
-its one authoritative `BridgeStateStore` run in one supervised child. Dashboard
-and Settings projections use a separate read-only child, and best-effort
-diagnostics use a separate telemetry child and `telemetry.sqlite`. A blocked
-operational transaction can therefore make application commands unavailable,
-but it cannot occupy public `/healthz` or the native in-memory health listener.
+The issue #142 production topology is selected for both HTTP and stdio. Public
+HTTP, native companion and stdio ingress stay in a SQLite-free supervisor. The
+state owner is the sole operational writer and all native application methods
+cross its versioned command/query/control protocol. MCP requests cross the same
+process boundary before they can reach admission or any repository. Dashboard
+and Settings projections, best-effort diagnostics and actual Codex App Server
+execution each run in a separate child.
 
-This is intentionally narrower than the full architecture in this document.
-The protocol-v4 operational-state child currently implements maintenance
-commands, durable receipts, generation checks, deadlines and bounded restart,
-but production does not select it because the remaining application repositories
-still use synchronous `BridgeStateStore` calls. Selecting it now would create two
-writers. The full semantic command/query conversion and independent operational
-state owner remain issue #142 work.
+The state owner still contains application orchestration and synchronous atomic
+repositories. That is deliberate: moving each repository method behind another
+RPC layer would split existing Units of Work without adding failure isolation.
+The long-running Codex work that must continue during a state DB wait is now in
+the executor child, while all state decisions remain with the one writer.
 
 The production central writer is consequently serialized by design. Project-
 fair progress admission prevents a noisy project from filling the disposable
@@ -399,8 +392,9 @@ progress queue, and native/control requests retain parent capacity, but neither
 claim can preempt a synchronous SQLite call that has already started. During
 that interval readiness reports the last confirmed `read` or `write` phase and
 callers receive a bounded unconfirmed outcome; public connection liveness stays
-available. This limitation is an accepted issue #143 boundary, not evidence
-that SQLite writes became concurrent.
+available. The executor can continue already-admitted Codex work during that
+wait; its progress/result is applied after the state owner resumes. This does
+not claim SQLite writes became concurrent.
 
 Storage failures returned by SQLite are now distinct from elapsed time. `BUSY`,
 `FULL`, I/O, corruption and read-only errors make mutation admission fail closed
@@ -417,13 +411,14 @@ conversion. Loss of `telemetry.sqlite` never authorizes rollback of state.
 
 ## Verification gates
 
-The full issue #142 operational-state-child target is not complete until all of
-these pass on disposable fixtures and the actual installed app/runtime
-combination. Issue #143 may close only against its explicitly narrower
-connection-liveness and truthful-degradation boundary:
+Issue #142 completion requires these checks on disposable fixtures and the
+actual installed app/runtime combination:
 
-- 100 concurrent progress producers, multiple Dashboard readers and every
-  maintenance slice while `/healthz` p99 remains under 200 ms;
+- a 2,000-update executor burst while the owner cannot receive IPC, plus a
+  100-update noisy-project persistence burst, second-project fair drain and
+  critical-input bypass without an unbounded queue;
+- multiple concurrent Dashboard readers and every bounded maintenance slice,
+  with `/healthz` p99 under 200 ms during the declared state-fault load;
 - Bridge event-loop delay p99 under 50 ms under the declared test load;
 - critical state command commit p99 under 500 ms when the operational database
   is healthy;
@@ -432,7 +427,7 @@ connection-liveness and truthful-degradation boundary:
 - a locked and killed state child with no false success, no automatic Job
   cancellation and explicit readiness failure;
 - commit-then-response-loss, duplicate request, late response and old-generation
-  cases resolved through the same command receipt;
+  cases resolved through the applicable maintenance or domain receipt/journal;
 - slow Dashboard/history reads that do not block state commands;
 - state-child crash/restart with one writer and preserved cancellation,
   interaction, terminal and completion-delivery evidence;
@@ -440,9 +435,12 @@ connection-liveness and truthful-degradation boundary:
   refusal without loss of new operational state;
 - stale Dashboard preservation, generation-aware resync and no cross-scope cache
   or event mixing;
-- macOS sleep/wake, Tunnel interruption and ChatGPT card remount with authoritative
-  state convergence and no inferred failure/cancellation.
+- installed native lifecycle, Tunnel interruption and card remount with
+  authoritative state convergence and no inferred failure/cancellation.
 
 Record p50, p95, p99, maximum stall, queue bytes/depth, worker generation,
 database identity, build, load shape and fault timing. Passing unit tests or
-starting separate processes alone is not completion evidence.
+starting separate processes alone is not completion evidence. The executable
+gate is `npm run test:issue-142-state-execution-isolation`; unit and installed
+evidence, exact build identity and any accepted limits belong in the issue #142
+audit linked above.
