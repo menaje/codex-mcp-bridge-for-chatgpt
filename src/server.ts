@@ -94,6 +94,8 @@ export type BridgeHttpRuntimeOptions = {
   healthDiagnostics?: () => Record<string, unknown>;
   /** Memory-only state-service readiness; it must never perform I/O. */
   readiness?: () => BridgeReadinessSnapshot;
+  /** Observe an application failure without changing its protocol result. */
+  onOperationFailure?: (error: unknown) => void;
   /**
    * Opt-in protocol-suite fixtures. These are never enabled by normal bridge
    * startup and exist solely to exercise SDK paths that the product does not
@@ -122,7 +124,8 @@ export function createBridgeMcpServer(
   projectAvailability?: TaskProjectAvailabilityProjection,
   cardPerformance?: CardPerformanceTracker,
   skillLibrary?: SkillLibrary,
-  readProjection?: BridgeReadProjectionService
+  readProjection?: BridgeReadProjectionService,
+  onOperationFailure?: (error: unknown) => void
 ): BridgeMcpServer {
   // A directly constructed server has the same single-store admission boundary
   // as an HTTP runtime. HTTP handlers share their explicitly composed store.
@@ -196,7 +199,7 @@ export function createBridgeMcpServer(
       }
     }
   );
-  installMcpToolTextIntegrityGuard(server);
+  installMcpToolTextIntegrityGuard(server, onOperationFailure);
   const toolRegistration = registerBridgeTools(
     server,
     config,
@@ -283,7 +286,8 @@ export function createHttpServer(
       projectAvailability,
       cardPerformance,
       skillLibrary,
-      runtimeOptions.readProjection
+      runtimeOptions.readProjection,
+      runtimeOptions.onOperationFailure
     );
     if (runtimeOptions.conformanceFixtures) {
       registerMcpConformanceFixtures(server, () => notifyToolsChanged());
@@ -299,12 +303,18 @@ export function createHttpServer(
     {
       legacy: "reject",
       responseMode: "auto",
-      onerror: (error) => logMcpError("MCP request failed", error)
+      onerror: (error) => {
+        observeOperationFailure(runtimeOptions.onOperationFailure, error);
+        logMcpError("MCP request failed", error);
+      }
     }
   );
   notifyToolsChanged = () => mcpHandler.notify.toolsChanged();
   const nodeMcpHandler = toNodeHandler(mcpHandler, {
-    onerror: (error) => logMcpError("MCP node adapter failed", error)
+    onerror: (error) => {
+      observeOperationFailure(runtimeOptions.onOperationFailure, error);
+      logMcpError("MCP node adapter failed", error);
+    }
   });
   const allowedHosts = validationHostnames(config.allowedHosts, config.host, "ALLOWED_HOSTS");
   const allowedOrigins = validationHostnames(
@@ -416,7 +426,23 @@ function registerMcpConformanceFixtures(
       description: "Local protocol-suite fixture; never exposed by a normal bridge runtime.",
       inputSchema
     },
-    () => complete("Conformance logging fixture.")
+    async () => {
+      const storageError = process.env.NODE_ENV === "test"
+        ? process.env.CODEX_MCP_BRIDGE_TEST_CONFORMANCE_STORAGE_ERROR
+        : undefined;
+      if (storageError && /^SQLITE_[A-Z0-9_]+$/u.test(storageError)) {
+        throw Object.assign(new Error("Injected conformance storage failure."), {
+          code: storageError
+        });
+      }
+      const delayMs = process.env.NODE_ENV === "test"
+        ? Number(process.env.CODEX_MCP_BRIDGE_TEST_CONFORMANCE_DELAY_MS || 0)
+        : 0;
+      if (Number.isSafeInteger(delayMs) && delayMs > 0 && delayMs <= 30_000) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+      return complete("Conformance logging fixture.");
+    }
   );
   server.registerTool(
     "test_trigger_tool_change",
@@ -557,7 +583,10 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 /** Apply the same JSON-string invariant to every MCP tool in one place. */
-function installMcpToolTextIntegrityGuard(server: McpServer): void {
+function installMcpToolTextIntegrityGuard(
+  server: McpServer,
+  onOperationFailure?: (error: unknown) => void
+): void {
   type UntypedToolCallback = (args: unknown, context: unknown) => unknown;
   type UntypedRegisterTool = (
     name: string,
@@ -570,12 +599,28 @@ function installMcpToolTextIntegrityGuard(server: McpServer): void {
     name,
     config,
     async (args, context) => {
-      assertJsonTextIntegrity(args, `MCP tool ${name} input`);
-      const result = await callback(args, context);
-      assertJsonTextIntegrity(result, `MCP tool ${name} result`);
-      return result;
+      try {
+        assertJsonTextIntegrity(args, `MCP tool ${name} input`);
+        const result = await callback(args, context);
+        assertJsonTextIntegrity(result, `MCP tool ${name} result`);
+        return result;
+      } catch (error) {
+        observeOperationFailure(onOperationFailure, error);
+        throw error;
+      }
     }
   );
+}
+
+function observeOperationFailure(
+  observer: ((error: unknown) => void) | undefined,
+  error: unknown
+): void {
+  try {
+    observer?.(error);
+  } catch {
+    // Diagnostics and readiness observation cannot replace the request error.
+  }
 }
 
 function logMcpError(prefix: string, error: unknown): void {

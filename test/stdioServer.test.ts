@@ -101,6 +101,59 @@ describe("persistent stdio bridge", { timeout: 15_000 }, () => {
       stateStore.close();
     }
   });
+
+  it("observes stdio tool failures without replacing their protocol result", async () => {
+    const stateStore = new BridgeStateStore({ file: ":memory:" });
+    const stateDirectory = mkdtempSync(path.join(tmpdir(), "bridge-stdio-errors-"));
+    const clientToServer = new PassThrough();
+    const serverToClient = new PassThrough();
+    const observed: unknown[] = [];
+    const runtime = createStdioBridgeRuntime(
+      loadConfig({
+        CODEX_MCP_BRIDGE_NO_AUTH: "1",
+        CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(stateDirectory, "state.sqlite"),
+        CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: path.join(stateDirectory, "models.json")
+      }),
+      new FakeUpstream(),
+      {
+        stateStore,
+        modelCatalog: new StaticModelCatalog(),
+        input: clientToServer,
+        output: serverToClient,
+        onOperationFailure: error => observed.push(error)
+      }
+    );
+    const client = new Client(
+      { name: "stdio-error-observer", version: "0.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+    );
+    const clientTransport = new PairedStdioClientTransport(
+      clientToServer,
+      serverToClient
+    );
+    await runtime.start();
+    await client.connect(clientTransport);
+    try {
+      const result = await client.callTool({
+        name: "codex_status",
+        arguments: {
+          scopeId: "7d7d7d7d-7d7d-4d7d-8d7d-7d7d7d7d7d7d",
+          query: {
+            kind: "job",
+            id: "8d8d8d8d-8d8d-4d8d-8d8d-8d8d8d8d8d8d"
+          }
+        }
+      });
+      expect(result.isError).toBe(true);
+      expect(observed.some(error =>
+        error instanceof Error && error.message.includes("HANDLE_UNAVAILABLE")
+      )).toBe(true);
+    } finally {
+      await client.close();
+      await runtime.close();
+      stateStore.close();
+    }
+  });
 });
 
 class PairedStdioClientTransport implements Transport {

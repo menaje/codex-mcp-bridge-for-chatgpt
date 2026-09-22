@@ -358,3 +358,85 @@ last-confirmed presentation and recovery. It does not claim that an in-flight
 SQLite call can be preempted or that independent semantic writes continue while
 the central writer is blocked. Moving every command/query behind the dedicated
 operational-state owner remains #142.
+
+## Request-outcome correctness follow-up (2026-09-22)
+
+A post-closure audit found that the first structured MCP 503 implementation
+derived `outcome` from the runtime's global last-confirmed state operation. That
+mixed two independent facts: why the runtime was degraded, and whether the
+current HTTP request crossed the supervisor-to-runtime boundary. In particular,
+a new request rejected before proxying inherited `outcome=unknown` when an
+unrelated write was already blocked, while a fully forwarded request could have
+received `outcome=not-observed` when no state write happened to be visible.
+
+The corrected proxy now tracks the current request independently:
+
+- freshness, request-count and byte-capacity rejection before forwarding returns
+  `outcome=not-observed`, regardless of an unrelated active operation;
+- once the complete request has been flushed across the child HTTP boundary,
+  loss of the response or heartbeat returns `outcome=unknown`;
+- a child-proxy error can no longer return a contradictory 503 with
+  `reason=ready`; it reports response-unconfirmed recovery state instead;
+- `limitations` continues to describe the last-confirmed global runtime or
+  storage condition, while `outcome` describes only the current request.
+
+The runtime also observes original application errors at the HTTP tool, native
+RPC and stdio tool boundaries. Actual SQLite driver codes remain the only input
+to storage classification. `BUSY`, `FULL`, `IOERR`, `CORRUPT`/`NOTADB` and
+`READONLY` close new-Job admission; an unrelated protocol or domain error does
+not. The fault remains visible until a later state transaction commits, rather
+than clearing merely because time elapsed or a read succeeded.
+
+The focused regression verifies both sides of the request boundary: a new MCP
+request rejected while another write is stale is `not-observed`, and a fully
+forwarded delayed MCP request whose runtime child is stopped before its response
+is `unknown` with `state-response-unconfirmed`. Deterministic MCP-boundary
+injections for `SQLITE_IOERR_FSYNC`, `SQLITE_CORRUPT_VTAB` and
+`SQLITE_READONLY_DBMOVED` each disable admission and recover only after a
+confirmed Settings commit. The existing real `SQLITE_BUSY` and `SQLITE_FULL`
+faults remain covered.
+
+Post-correction repository validation passed 96 TypeScript files / 853 tests,
+205 macOS tests with two opt-in skips, MCP 2026-07-28 conformance 29/29, App
+Server compatibility against CLI 0.153.3, and 1,319 localized strings across
+nine languages.
+
+### Installed correction acceptance
+
+The signed arm64 application installed at `/Applications/Codex MCP Bridge for
+ChatGPT.app` now contains clean commit
+`b34b9a7eec4e6cc240c196a9163630ad0fb1f63b`, source hash
+`b441b19c2c650dbfbcdeaf5e1d9622487c78b89e3b47747a67e8e8932bce3329` and
+build ID `b34b9a7eec4e:b441b19c2c65`. Before replacement, a fresh authoritative
+snapshot confirmed zero active Jobs, pending admissions, interactions,
+memory-only threads and background processes. The previous signed app,
+LaunchAgent definition and online-consistent state and telemetry backups are
+retained at
+`~/.codex-mcp-bridge/backups/issue-143-outcome-pre-b34b9a7-20260922T0941KST`;
+both backup databases passed `quick_check` with zero foreign-key violations.
+The non-force application shutdown receipt
+`D0279078-C03C-4FF5-AB7A-686FAB1E9247` completed before replacement.
+
+The replacement restored the helper, Bridge, Tunnel, application runtime,
+state-read child and telemetry child. A non-database installed fault then held
+the application runtime child with `SIGSTOP` for 6.012 seconds. All 75 public
+`/healthz` samples returned HTTP 200 (p50 2.132 ms, p95 4.619 ms, p99 19.841
+ms and maximum 35.962 ms). During the stop, `/readyz` returned HTTP 503 with
+`state-stale` and `state-response-unconfirmed`. A new MCP request submitted only
+after that stale boundary returned HTTP 503 with `outcome=not-observed`; it was
+not confused with an unrelated global operation. After `SIGCONT`, readiness
+returned to HTTP 200 in 2.711 ms.
+
+The complementary fully-forwarded case remains deterministic rather than
+manufacturing a slow or mutating production request: the integration fixture
+flushes a delayed MCP request to the runtime, stops the child before its
+response, and verifies `outcome=unknown`. That fixture is compiled from the
+same clean source revision installed above; its delay and SQLite-error controls
+are unavailable during normal production startup.
+
+After the installed fault, both live databases passed `integrity_check` with
+zero foreign-key violations, the private environment digest remained
+unchanged, and `/healthz`, `/readyz`, Bridge, Tunnel, state-read and telemetry
+all returned healthy/ready. This installed result closes the request-outcome
+correctness follow-up without claiming control over Tunnel or ChatGPT network
+latency and without expanding #143 into #142's full state-owner migration.
