@@ -122,7 +122,57 @@ from an executor-only crash, which restarts without replacing the state owner.
 
 ## Installed acceptance
 
-The installed-build hash, pre-install workload check and backup, process
-topology, native/Tunnel/card verification and rollback artifact are recorded
-here immediately before issue closure. Source-only results are not sufficient
-to close #142.
+The production cutover was completed on 2026-09-22 KST from installed build
+`90b64c35d78a:2f89aecac2b4` to the issue implementation merge
+`ab760afab04e639c43baff09d021bb2217b8ec23`, build
+`ab760afab04e:139092fee804`. The installed bundle passed strict code-signature
+verification and its embedded build identity matched the merge before the
+replacement runtime was admitted.
+
+Immediately before shutdown, authoritative `runtime.snapshot` reported zero
+active Jobs, pending admissions, pending interactions, memory-only threads and
+background processes. The application then used a non-force lifecycle
+reservation and all app, helper, launcher, server, state, read, telemetry,
+execution and Tunnel processes exited before replacement.
+
+The rollback artifact is
+`~/.codex-mcp-bridge/backups/issue-142-pre-ab760af-20260922T1715KST` and contains
+the previous signed application, its LaunchAgent definition, build metadata
+and SQLite online backups of both databases. The state backup passed
+`quick_check` and had zero foreign-key violations; the telemetry backup passed
+`quick_check`. The state and telemetry backup SHA-256 values are respectively
+`a3706d18742f144da5ea61f3583624595a31476342a3efff9ba570859da30b5d` and
+`365343df1b0f519c45008ae27d7f0c8d04a3c4d3111a3ee908a119c477af85a9`.
+Normal rollback uses the previous compatible application against the current
+authoritative state file; the pre-cutover state snapshot is disaster-recovery
+evidence and is not permission to discard post-cutover writes.
+
+The installed process tree contained distinct server, state-owner, read,
+telemetry and execution PIDs. Telemetry recorded the same source state database
+identity, `d710d487-807d-4813-9786-f3a262322848`, and exposed all six final
+schema groups: metadata, transport observations, runtime measurements,
+diagnostic events, drop counters and retention state.
+
+Installed fault and integration results were:
+
+| Check | Installed result |
+| --- | --- |
+| executor stopped for 2.7 seconds | `/healthz` stayed HTTP 200 in 24.165 ms; `/readyz` became HTTP 503 `execution-stale` in 7.528 ms; `runtime.health` and authoritative snapshot returned in 2.225/2.136 ms and both denied new admission |
+| executor terminated | `/healthz` stayed HTTP 200 in 3.995 ms; executor PID and generation changed while state-owner PID and generation did not |
+| state owner terminated | `/healthz` stayed HTTP 200 in 20.658 ms; the server PID remained, one replacement state owner acquired the same database identity, settings revision 168 remained unchanged, and read, telemetry and execution children were replaced |
+| Tunnel stopped for 6.5 seconds | local `/healthz`, state and execution stayed ready; the Tunnel probe timed out and native status became `degraded`; resuming the same Tunnel returned `ready` and `connected` without replacing the state owner |
+| native contract | the production Swift client decoded live installed Dashboard and Settings responses from the real companion socket; 1 test passed in 0.958 seconds |
+| installed cards | Dashboard, Settings and Decision cards retained the last confirmed UI through dispatched-read timeouts and did not create a second tool-call retry path |
+
+After every injected fault, authoritative admission returned to true with zero
+active Jobs, pending admissions, pending interactions, memory-only threads and
+background processes. Tunnel `/healthz` and `/readyz` returned `live` and
+`ready`. Final live state checks again returned `quick_check=ok`, zero foreign-
+key violations and `telemetry.sqlite` `quick_check=ok`; state, read, telemetry
+and execution services all reported ready.
+
+This installed evidence uses the same implementation revision as the source
+fault/load evidence. Together they satisfy the issue gates. The exact limits in
+the preceding section remain accepted behavior, not unfinished work: isolation
+does not shorten SQLite, filesystem, hardware or external-network latency, and
+it does not make the intentional single operational writer concurrent.
