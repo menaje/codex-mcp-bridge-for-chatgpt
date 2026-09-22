@@ -12,6 +12,7 @@ import { PRODUCT_INFO } from "./productInfo.js";
 import {
   createHttpServer,
   type BridgeHttpServer,
+  type BridgeReadinessReason,
   type BridgeReadinessSnapshot
 } from "./server.js";
 import type { OperationalStateOperationObservation } from "./stateService.js";
@@ -160,6 +161,10 @@ type RuntimeStorageError = NonNullable<
 >;
 
 type ProxyRequestOutcome = "not-observed" | "unknown";
+type ProxyFailureContext = {
+  reason?: BridgeReadinessReason;
+  limitations?: string[];
+};
 
 export type IsolatedStdioRuntime = {
   readonly applicationService: BridgeApplicationService;
@@ -546,7 +551,10 @@ class IsolatedRuntimeController {
       declaredLength !== undefined &&
       this.activeProxyBytes + declaredLength > MAX_PROXY_BYTES_IN_FLIGHT
     ) {
-      writeUnavailable(outgoing, this.readiness(), "not-observed");
+      writeUnavailable(outgoing, this.readiness(), "not-observed", {
+        reason: "state-capacity",
+        limitations: ["state-capacity"]
+      });
       return;
     }
     const port = this.port;
@@ -576,7 +584,10 @@ class IsolatedRuntimeController {
             reason
           });
         } else {
-          writeUnavailable(outgoing, this.readiness(), "not-observed");
+          writeUnavailable(outgoing, this.readiness(), "not-observed", {
+            reason: "state-capacity",
+            limitations: ["state-capacity"]
+          });
         }
       } else if (!outgoing.destroyed) {
         outgoing.destroy();
@@ -619,8 +630,12 @@ class IsolatedRuntimeController {
       if (!outgoing.headersSent) {
         writeUnavailable(
           outgoing,
-          responseUnavailableReadiness(this.readiness()),
-          requestOutcome
+          this.readiness(),
+          requestOutcome,
+          {
+            reason: "state-recovering",
+            limitations: ["state-response-unconfirmed"]
+          }
         );
       } else if (!outgoing.destroyed) {
         outgoing.destroy(error);
@@ -878,6 +893,7 @@ class IsolatedRuntimeController {
 async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
   if (process.platform === "darwin") process.title = "Codex MCP Bridge Runtime";
   const generation = randomUUID();
+  const conformanceFixtures = process.argv.includes("--conformance-fixtures");
   let activeOperation: OperationalStateOperationObservation | undefined;
   let operationStartedAt = 0;
   let observationToken = 0;
@@ -940,10 +956,14 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
   };
   const observeStorageFailure = (error: unknown) => {
     const classified = runtimeStorageError(error);
-    if (classified) storageFault = { error: classified, observedAt: Date.now() };
+    if (classified) {
+      storageFault = { error: classified, observedAt: Date.now() };
+      applicationService?.setStorageAdmissionError?.(classified);
+    }
   };
   const observeTransactionCommitted = () => {
     storageFault = undefined;
+    applicationService?.setStorageAdmissionError?.();
   };
   const observeSql = (sql: string) => {
     if (activeOperation?.access === "write") return;
@@ -1040,7 +1060,7 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         telemetry,
         readProjection,
         healthDiagnostics: () => ({ appServerLateResponses: appServerLateResponses.status() }),
-        conformanceFixtures: process.argv.slice(2).includes("--conformance-fixtures"),
+        conformanceFixtures,
         onOperationFailure: observeStorageFailure
       });
       await new Promise<void>((resolve, reject) => {
@@ -1061,6 +1081,7 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
       await stdioRuntime.start();
       applicationService = stdioRuntime.applicationService;
     }
+    applicationService.setStorageAdmissionError?.(storageFault?.error);
     if (
       process.env.NODE_ENV === "test" &&
       process.env.CODEX_MCP_BRIDGE_TEST_FREEZE_STATE_PAGE_COUNT === "1"
@@ -1137,6 +1158,19 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
       ...(lastCommitAt !== undefined ? { lastCommitAt } : {})
     }), HEARTBEAT_INTERVAL_MS);
     heartbeat.unref();
+    const closeHttpAfterReadyMs =
+      conformanceFixtures && process.env.NODE_ENV === "test"
+        ? Number(process.env.CODEX_MCP_BRIDGE_TEST_CLOSE_HTTP_AFTER_READY_MS || 0)
+        : 0;
+    if (
+      httpServer && Number.isSafeInteger(closeHttpAfterReadyMs) &&
+      closeHttpAfterReadyMs > 0 && closeHttpAfterReadyMs <= 30_000
+    ) {
+      const timer = setTimeout(() => {
+        if (!closing) httpServer?.close();
+      }, closeHttpAfterReadyMs);
+      timer.unref();
+    }
 
     process.on("message", value => {
       if (!isRuntimeParentMessage(value) || closing) return;
@@ -1335,31 +1369,27 @@ const HOP_BY_HOP_HEADERS = [
 function writeUnavailable(
   response: import("node:http").ServerResponse,
   readiness: BridgeReadinessSnapshot,
-  outcome: ProxyRequestOutcome
+  outcome: ProxyRequestOutcome,
+  failure: ProxyFailureContext = {}
 ): void {
   if (response.headersSent || response.destroyed) return;
+  const reason = failure.reason || readiness.reason;
+  const limitations = failure.limitations || readiness.limitations;
   response.setHeader("retry-after", "1");
   writeJson(response, 503, {
     ok: false,
     code: "RUNTIME_RESPONSE_UNCONFIRMED",
-    reason: readiness.reason,
-    limitations: readiness.limitations,
+    reason,
+    limitations,
     retryable: true,
     outcome,
+    runtimeReadiness: {
+      ready: readiness.ready,
+      reason: readiness.reason,
+      limitations: readiness.limitations
+    },
     ...(readiness.stateService ? { stateService: readiness.stateService } : {})
   });
-}
-
-function responseUnavailableReadiness(
-  readiness: BridgeReadinessSnapshot
-): BridgeReadinessSnapshot {
-  if (readiness.reason !== "ready") return readiness;
-  return {
-    ...readiness,
-    ready: false,
-    reason: "state-recovering",
-    limitations: ["state-response-unconfirmed"]
-  };
 }
 
 function writeJson(

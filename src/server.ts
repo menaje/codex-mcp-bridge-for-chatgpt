@@ -125,7 +125,8 @@ export function createBridgeMcpServer(
   cardPerformance?: CardPerformanceTracker,
   skillLibrary?: SkillLibrary,
   readProjection?: BridgeReadProjectionService,
-  onOperationFailure?: (error: unknown) => void
+  onOperationFailure?: (error: unknown) => void,
+  conformanceFixtures = false
 ): BridgeMcpServer {
   // A directly constructed server has the same single-store admission boundary
   // as an HTTP runtime. HTTP handlers share their explicitly composed store.
@@ -212,7 +213,8 @@ export function createBridgeMcpServer(
     projectAvailability,
     cardPerformance,
     effectiveSkillLibrary,
-    readProjection
+    readProjection,
+    { onOperationFailure, conformanceFixtures }
   );
   Object.defineProperty(server, "applicationService", {
     configurable: false,
@@ -287,7 +289,8 @@ export function createHttpServer(
       cardPerformance,
       skillLibrary,
       runtimeOptions.readProjection,
-      runtimeOptions.onOperationFailure
+      runtimeOptions.onOperationFailure,
+      runtimeOptions.conformanceFixtures === true
     );
     if (runtimeOptions.conformanceFixtures) {
       registerMcpConformanceFixtures(server, () => notifyToolsChanged());

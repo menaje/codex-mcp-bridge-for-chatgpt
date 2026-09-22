@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "releaseUnitId": "codex-mcp-bridge",
   "bump": "patch",
-  "summary": "Keep Bridge live during SQLite stalls, preserve stale views, classify each proxied request by its forwarding boundary, and fail admission closed when storage errors surface through HTTP, native, or stdio.",
+  "summary": "Keep Bridge live during SQLite stalls, preserve stale views, fail actual Job admission closed on observed storage faults, and separate each proxy failure from the runtime's global readiness.",
   "breaking": false,
   "migration": null
 }
