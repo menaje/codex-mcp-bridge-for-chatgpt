@@ -1,0 +1,186 @@
+# #154 직접 결과 수신 실험 검증 — 2026-09-22
+
+관련 이슈: [#154](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/154),
+[#126](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/126),
+[#137](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/137),
+[#143](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/143)
+
+## 결론
+
+기본 completion 경로는 기존 `live-card`로 유지하고, 두 Settings 표면의
+off-by-default 실험 스위치를 켠 뒤 새로 접수한 Job만 `direct-wait`를
+admission-time 정책으로 고정한다. `codex_task` 자체는 계속 durable async이고,
+현재 GPT 실행이 exact Job의 bounded terminal wait를 반복해 결과를 검토한 뒤
+사용자가 이미 승인한 작업만 이어간다. timeout이나 host abort는 읽기만 끝내며
+Job을 취소하거나 대체 Job을 만들지 않는다.
+
+각 비종단 반환 뒤에는 exact Job의 input action을 확인한다. approval 또는
+user-input 경계에서는 자동 진행을 중단한다. terminal 결과를 받은 뒤에도 새
+권한이나 새 사용자 결정이 필요한 작업은 시작하지 않는다.
+
+실제 ChatGPT web host에서 다음 핵심 성공 조건을 확인했다.
+
+> 사용자가 원 대화에 다시 들어오거나 새 메시지를 보내지 않아도 GPT가 Job 1
+> 결과를 직접 받고 검토한 뒤, 사전 승인된 Job 2를 시작하고 그 결과까지 받는다.
+
+동일 대화, 대화 전환, 숨긴 브라우저, 테스트 탭 연결 유실·복구, terminal 결과
+중복 조회를 통과했다. 실제 macOS 화면 잠금은 자동으로 안전하게 복구할 수 없고
+사용자 인증이 필요하므로 실행하지 않았다. 따라서 이 문서는 화면 잠금까지
+포함한 전 행렬 완료를 주장하지 않는다.
+
+**2026-09-23 후속 검토:** 아래 기존 host 시험 요청문은 exact wait와 카드 금지를
+명시했다. 그러므로 이 시험은 직접 경로의 작동을 확인하지만, 설정만 켠 평소
+요청에서 GPT가 스스로 그 경로를 선택하는지는 증명하지 않는다. Job 2가 원 대화
+복귀보다 먼저 접수됐다는 당시 관찰도 복귀 시각의 별도 원기록이 없어 독립적으로
+대조할 수 없다. 아래의 2-Job DB 기록은 순서와 중복 부재의 증거이지, 복귀
+시각의 증거로 대체하지 않는다. 이 두 조건과 native 앱 background/화면 잠금은
+완료 승인 전에 별도로 다뤄야 한다.
+
+## 제품 계약
+
+- Settings schema는 7이다. 이전 schema 6은 실험값 `false`로 이관된다.
+- ChatGPT Settings card generation은 24, Dashboard generation은 35다.
+- local companion protocol은 12, remote companion protocol은 10이다.
+- task output contract는 4이며 nullable `completionDeliveryPolicy`를 포함한다.
+- `live-card | direct-wait`는 Job payload에 한 번 저장되고 이후 Settings 변경으로
+  바뀌지 않는다. legacy Job은 `live-card`로 읽는다.
+- direct Job의 active projection은 exact `codex_status` terminal wait
+  (`waitMs=60000`)와 exact input wait를 제공하고 Dashboard render action을
+  제공하지 않는다.
+- direct Job은 `job_completion_deliveries` 감사 행을 보존하지만 live-card lease를
+  claim할 수 없다. `codex_ui_completion`도 즉시 `settled`를 반환한다.
+- Dashboard production HTML은 `completionDeliveryRoute=direct-wait`에서 watcher를
+  시작하지 않는다. 서버 lease 조건이 두 번째 방어선이다.
+- exact terminal result offer는 GPT 수신 증명이 아니다. 실제 GPT final과 다음
+  Job admission을 host 수신·검토 증거로 사용한다.
+
+## 실제 ChatGPT 검증 환경
+
+검증은 운영 `stable` DB와 분리한 `development` state profile에서 수행했다.
+설치본 helper를 idle 상태에서 정상 drain 정지한 뒤 checkout build를 같은 Secure
+MCP Tunnel에 연결하고 ChatGPT developer-mode connection을 Refresh했다. 실제
+Settings card에서 시험 프로젝트와 실험 스위치를 저장한 뒤 새 대화를 사용했다.
+
+원시 conversation, scope, Activity, Agent, Job UUID와 프로젝트 경로는 이 문서에
+기록하지 않는다. 아래 alias는 공개용이며 marker만 결과 정확성에 사용한다.
+모든 Job은 read-only였고 파일 변경, approval, ordinary question은 없었다.
+
+| 시나리오 | 실제 조작 | 관측 결과 | 판정 |
+| --- | --- | --- | --- |
+| `LIVE-154-SAME` | 한 사용자 메시지로 Job A/B 사전 승인 | A `ISSUE154_STAGE1=codex-mcp-bridge-for-chatgpt` 직접 수신 후 같은 응답에서 B 시작, B `ISSUE154_STAGE2=0.4.1` 직접 수신 | PASS |
+| `LIVE-154-SWITCH` | 20초 지연 A가 running일 때 다른 ChatGPT 대화로 이동 | 원 대화를 다시 열기 전에 A completed, B admitted/completed; 돌아온 뒤 두 marker final 확인 | PASS |
+| `LIVE-154-HIDDEN` | 60초 지연 A가 running일 때 IAB visibility를 hidden으로 유지 | 첫 bounded wait 만료 뒤 같은 A 재대기, hidden 상태에서 B admitted/completed, 이후 final 동기화 | PASS, ChatGPT web/IAB 경계 |
+| `LIVE-154-DISCONNECT` | A가 running일 때 테스트 탭만 CDP offline, 시스템 네트워크는 유지 | offline 상태에서 A completed와 B admitted/completed; online 복구 뒤 두 marker final 동기화 | PASS, client-tab 연결 경계 |
+| `LIVE-154-DUPLICATE` | A terminal을 총 3회, B terminal을 총 2회 exact 조회 | 모든 결과 동일·`changed=false`; DB Job 수는 정확히 2개만 증가, 후속 B는 한 번만 생성 | PASS |
+| 실제 macOS 화면 잠금 | 미실행 | 자동 해제에는 사용자 인증이 필요하고 시험 중 안전한 복구 경로가 없음 | NOT RUN |
+
+`LIVE-154-HIDDEN`은 브라우저 visibility를 실제로 숨긴 web-host 검증이다. native
+ChatGPT 데스크톱 앱을 별도로 전면/백그라운드 전환한 증거로 확대 해석하지
+않는다. `LIVE-154-DISCONNECT`도 해당 ChatGPT 탭의 client connection 유실
+검증이며 Mac 전체 네트워크 장애나 Tunnel control-plane 단절을 주장하지 않는다.
+
+각 direct Job의 completion audit 행은 `attempt_count=0`을 유지했고
+`direct_result_offered_at`만 기록됐다. live-card message/lease가 없었다는 증거다.
+그 행의 `result_read_at`이 비어 있는 것은 의도된 계약이다. 서버 offer만으로
+수신을 추정하지 않고, 실제 ChatGPT final과 사전 승인된 다음 Job admission을
+함께 확인했다.
+
+## 기본 경로와 회귀
+
+default Settings에서 새 Job은 계속 `live-card`를 snapshot하고 exact Dashboard
+render action을 반환한다. 실험값을 running Job 도중 끈 통합 회귀에서 기존 Job은
+`direct-wait`를 유지하고 다음 Job만 `live-card`가 됐다. request replay는 같은 Job과
+같은 upstream execution을 반환했다.
+
+production Dashboard 브라우저 회귀는 host accept, explicit reject retry,
+timeout uncertainty, direct result read, teardown, mismatch, duplicate cards와 새
+`direct-wait-route`를 검사한다. direct route는 completion wait와 `ui/message`를
+각각 0회 실행한다.
+
+상태 저장소 회귀는 direct policy 변경을 거절하고 legacy payload를 `live-card`로
+읽으며, direct terminal row를 live-card claim query에서 제외한다. macOS 설정
+draft, save/rebase/equality와 9개 locale 생성물도 같은 필드를 고정한다.
+
+## 자동 검증
+
+최종 checkout에서 다음 검사를 실행했다. 이 결과는 실제 host 관측을 대체하지
+않고 deterministic 경계를 보강한다.
+
+| 검사 | 결과 |
+| --- | --- |
+| `npm run check` | 98 files / 876 tests PASS |
+| `npm run macos:check` | 206 tests PASS, opt-in live 2 tests 의도적 skip; 1,323 strings / 9 locales PASS |
+| `npm run test:issue-154-direct-result` | selected 3 tests PASS + production Dashboard browser 9/9 PASS |
+| `npm run test:issue-137-status-wait` | 100 progress / 2 terminal waiters / progress wake 0 / terminal wake 2 / identity read 0 / active waiter 0 PASS; persisted 36, bounded-drop 64 |
+| `npm run test:continuity` | 3 stages, 1 + 4 + 4 tests PASS |
+| `npm run app-server:compat:check` | CLI 0.153.3, 416 JSON / 827 TypeScript schema PASS |
+| `npm run test:issue-143-card-stale` | Dashboard, Settings, Decision stale-preservation PASS |
+| `npm run test:issue-143-native-companion` | real companion socket + production Swift client 1/1 PASS |
+| `npm run test:issue-143-connection-reliability` | disposable schema-25 fault matrix and 30-second production ingress stall PASS |
+| `npm run release:check` | release/localization/UI manifest PASS, active fragments 15 |
+
+## 복구와 남은 수동 항목
+
+검증 뒤 checkout runtime을 정상 종료하고 설치본 helper와
+`codex-mcp-bridge-macos` Tunnel을 다시 시작해 connected 상태를 확인했다.
+ChatGPT connector도 설치본 Dashboard 34 / Settings 23 metadata로 다시 Refresh해
+운영 build와 descriptor를 일치시켰다. 시험 Job과 설정은 분리된 development DB에만
+남고 운영 `stable` Job/Settings 데이터에는 사용하지 않았다. 시험용 Tunnel profile과
+그 managed metadata는 설치본 복구를 확인한 뒤 제거했다.
+
+화면 잠금 행렬을 완료하려면 사용자가 잠금·해제를 수행할 수 있는 세션에서
+지연 Job A를 시작하고, A가 running인 동안 Mac을 잠근 뒤 충분한 시간이 지나
+해제한다. 원 대화에 들어가기 전에 development DB에서 B admission을 확인하고,
+이후 실제 final을 확인해야 한다. 단순히 A가 completed인 것만으로 성공을
+판정하지 않는다.
+
+## 2026-09-23 후속 원자료 대조와 미충족 조건
+
+서명된 ChatGPT 계정에서 기존 `LIVE-154-SWITCH` 원대화를 직접 확인했다. 사용자
+요청문에는 다음 지시가 있었다.
+
+> Job 1의 정확한 Job ID를 bounded terminal wait로 기다려 direct-wait 결과를
+> 직접 검토한 즉시, 사용자 입력 없이 Job 2를 자동 시작하세요. Dashboard/live-card는
+> 사용하지 마세요.
+
+따라서 기존 시험은 **설정만 켠 일반 요청** 시험으로 분류하지 않는다. 원대화에
+보이는 한 번의 GPT 응답은 Job 1·2의 `direct-wait` 결과를 모두 보고했다. 분리된
+development DB를 read-only로 조회해 같은 두 Job의 원행을 대조한 값은 다음과
+같다. UTC 시각이며 공개 문서에는 Job ID 접두부만 적는다.
+
+| Job 별칭 | 접수 UTC | 완료 UTC | 정책 | 완료 전달 행 |
+| --- | --- | --- | --- | --- |
+| `65690a5c…` | 2026-09-22 14:08:33 | 14:09:07 | `direct-wait` | `pending`, attempt 0, direct offer 있음 |
+| `b6058c2d…` | 2026-09-22 14:09:22 | 14:09:34 | `direct-wait` | `pending`, attempt 0, direct offer 있음 |
+
+두 Job의 `scope_id`는 동일하며 그 scope의 Job 총수도 2개다. 이로써 결과
+재조회와 별개로 이 시나리오에서 후속 Job이 한 개만 접수된 것은 확인된다.
+반면 당시 **사용자의 원대화 복귀 UTC 시각은 기록되지 않았다.** 따라서 본문의
+`LIVE-154-SWITCH`의 복귀 전 성공 표기는 당시 운영자 관찰로 남겨두고, 제3자가
+시각을 재구성해 독립 승인한 결과로 표현하지 않는다.
+
+후속 코드 회귀에는 설정 ON 상태의 `codex_task` 도구 설명과 반환 본문의
+모델 안내가 direct wait를 가리키는지, 설정 OFF 후 새 Job은 live-card인지,
+Job 정책·lease 부재가 Bridge 재시작 뒤에도 유지되는지를 추가했다.
+
+2026-09-23 08:23 KST에 확인한 실제 설치본 Runtime `dist/build-info.json`의
+commit은 `50b115c24bd4c254609ee6c6ff959a44710b9821`이다. #154 변경이 없는
+이전 빌드이므로 **현재 설치본에서 실험 기능을 쓸 수 있다고 주장하지 않는다.**
+설치 전환과 연결 재확인 결과는 별도로 기록해야 한다.
+
+후속 변경본에서 실행한 검사는 다음과 같다.
+
+| 검사 | 2026-09-23 결과 |
+| --- | --- |
+| #154 집중 회귀 | 3/3 selected tests 및 production Dashboard browser 9/9 통과 |
+| 전체 TypeScript/build/release | 98 files, 876/876 tests 통과 |
+| macOS 및 9개 언어 | 206 tests 통과, 환경 의존 live 2건 skip; 1,323 strings 검증 |
+| MCP 2026-07-28 conformance | 29/29 통과 |
+| App Server schema | CLI 0.153.3, JSON 416개·TypeScript 827개 일치 |
+| 연속성·bounded wait·#143 카드/companion/연결 회귀 | 모두 통과 |
+
+처음 TypeScript 전체 시험을 macOS 전체 빌드와 동시에 실행했을 때, 기존
+`executionServiceProcess`의 steer 타이밍 시험 1건이 active turn 종료 경합으로
+실패했다. 같은 시험 단독 재실행과 macOS 빌드가 끝난 후 TypeScript 전체
+재실행은 모두 통과했다. 이 현상을 #154 기능 결함이나 첫 실행의 통과로
+치환하지 않는다.

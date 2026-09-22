@@ -138,10 +138,23 @@ thread, project, or bounded input wait. Use `codex_cancel` only for explicit
 stop intent and its required version/idempotency arguments.
 
 Exact terminal status waits are bounded to a 20-second default and ignore
-ordinary progress events. If the originating Dashboard is mounted, it already
-watches terminal completion, so do not keep a parallel terminal wait solely for
-the same delivery. A timed-out or host-aborted status read never stops the Job;
-reuse the exact retained Job identity for a later read.
+ordinary progress events. A Job reports its immutable `completionDeliveryPolicy`.
+For the default `live-card` route, the mounted originating Dashboard already
+watches terminal completion, so do not keep a parallel wait solely for the same
+delivery. For experimental `direct-wait`, repeat bounded terminal waits on that
+same exact Job until it is terminal, then review the result before continuing
+only already-approved work. After each non-terminal return, inspect the supplied
+exact-Job input action before waiting again. A timeout or host abort never stops
+the Job and never authorizes a replacement Job. Stop at every new approval or
+input boundary.
+
+If the GPT run itself ends, this experimental route does not fall back to a
+live-card completion message. Reopen the originating conversation and request
+an exact `codex_status` read of that retained Job, within the configured result
+retention window. A timeout of a single wait (default 20 seconds, maximum 60
+seconds) limits that read only; it is not a Codex execution deadline. Manual
+recovery cannot bypass conversation-scope checks and does not authorize a new
+follow-up Job by itself.
 
 ## 6. Cards and questions
 
@@ -157,12 +170,15 @@ controls. GPT asks for ordinary user decisions directly in the current ChatGPT
 conversation; original Codex approvals and non-ordinary input remain in the
 Dashboard work detail.
 
-Every new Job's task result includes an exact Dashboard render action. GPT must
-open it immediately; there is no Settings toggle. While that originating card
-is live, terminal completion uses one server lease and a standard `ui/message`
-to resume the same conversation. The resumed turn reads the exact retained
-result with `codex_status({query:{kind:"completion",receipt:"…"}})`. If the card
-is closed, torn down, or disconnected, the Job remains queryable but automatic
+By default, a new Job's task result includes an exact Dashboard render action.
+GPT opens it immediately. While that originating card is live, terminal
+completion uses one server lease and a standard `ui/message` to resume the same
+conversation. The resumed turn reads the exact retained result with
+`codex_status({query:{kind:"completion",receipt:"…"}})`. If experimental direct
+receiving was enabled when the Job was admitted, the task result instead
+includes an exact bounded terminal wait and the Dashboard live-card watcher is
+disabled for that Job. If the card or direct wait is closed, torn down, or
+disconnected, the Job remains queryable but automatic
 follow-up is not guaranteed. If the current authenticated response has already
 received that exact retained result through a Job or request query before the
 card claims it, the pending automatic follow-up is settled instead of creating a
@@ -203,15 +219,22 @@ npm test
 In a fresh ChatGPT conversation:
 
 1. Open Settings and register a project.
-2. Open Dashboard and Settings; confirm both load and Settings has no card-generation or completion-delivery toggle.
+2. Open Dashboard and Settings; confirm both load and the experimental direct-result switch is off by default.
 3. Ask for a small comparison decision card; confirm one selection and verify GPT reads its exact semantic result in the same conversation without starting Codex.
 4. Call `codex_models` and confirm its one current catalog response.
 5. Start a harmless task with contract version 6 and its exact envelope
    constant.
-6. Confirm the task opens its exact Dashboard and, without a diagnostic button or user message, terminal completion resumes the same conversation and reads the exact result once.
+6. With the experiment off, confirm the task opens its exact Dashboard and,
+   without a diagnostic button or user message, terminal completion resumes the
+   same conversation and reads the exact result once.
 7. If Codex asks an ordinary question, answer it through the current ChatGPT
    conversation and verify that it reaches the exact active Job.
-8. Restart the bridge, reconnect, and confirm retained work is still visible.
+8. Enable the experiment and start a second harmless task. Confirm the task
+   reports `direct-wait`, GPT repeats bounded terminal waits on that same Job,
+   reviews the result, and does not mount or use a competing live-card completion
+   watcher. Disable it again and confirm the already-admitted Job keeps its
+   policy while the next Job returns to `live-card`.
+9. Restart the bridge, reconnect, and confirm retained work is still visible.
 
 For release acceptance, also record a real current-protocol discovery, tool
 call, and card open through ChatGPT and Secure MCP Tunnel. A host that cannot

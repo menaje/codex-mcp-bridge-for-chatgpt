@@ -210,6 +210,7 @@ type JobRowInput = {
   sessionDecision?: { threadId?: string };
   terminalOrigin?: JobTerminalOrigin;
   cancellationIntentId?: string;
+  completionDeliveryPolicy?: "live-card" | "direct-wait";
 };
 
 /**
@@ -358,6 +359,7 @@ type PreviousJobRow = {
   project_name: string | null;
   pinned_cwd: string | null;
   archived_at: number | null;
+  completion_delivery_policy: string;
 };
 type ActivityStorageRow = {
   activity_id: string;
@@ -3261,6 +3263,11 @@ export class BridgeStateStore {
                lease_owner=?, lease_expires_at=?, next_attempt_at=NULL, updated_at=?
          WHERE job_id=? AND scope_id=?
            AND attempt_count < ?
+           AND EXISTS (
+             SELECT 1 FROM jobs
+              WHERE jobs.job_id=job_completion_deliveries.job_id
+                AND COALESCE(json_extract(jobs.payload,'$.completionDeliveryPolicy'),'live-card')='live-card'
+           )
            AND (
              state='pending' OR
              (state='host-rejected' AND next_attempt_at IS NOT NULL AND next_attempt_at<=?)
@@ -5696,7 +5703,8 @@ export class BridgeStateStore {
                j.terminal_version,j.agent_id,j.context_mode,j.cwd,j.sandbox,j.created_at,j.job_version,
                j.last_progress_at,j.last_progress,j.terminal_origin,j.cancellation_intent_id,
                a.project_id,p.name AS project_name,
-               a.pinned_cwd,j.archived_at
+               a.pinned_cwd,j.archived_at,
+               COALESCE(json_extract(j.payload,'$.completionDeliveryPolicy'),'live-card') AS completion_delivery_policy
           FROM jobs j JOIN activities a ON a.activity_id=j.activity_id
           LEFT JOIN projects p ON p.project_id=a.project_id
          WHERE j.job_id = ?
@@ -5777,6 +5785,19 @@ export class BridgeStateStore {
     }
     job.terminalOrigin = terminalOrigin;
     job.cancellationIntentId = cancellationIntentId;
+    if (
+      job.completionDeliveryPolicy !== undefined &&
+      job.completionDeliveryPolicy !== "live-card" &&
+      job.completionDeliveryPolicy !== "direct-wait"
+    ) {
+      throw new Error("Invalid Codex job completion delivery policy.");
+    }
+    const completionDeliveryPolicy = job.completionDeliveryPolicy ||
+      (previous?.completion_delivery_policy === "direct-wait" ? "direct-wait" : "live-card");
+    if (previous && previous.completion_delivery_policy !== completionDeliveryPolicy) {
+      throw new Error("A persisted Codex job completion delivery policy cannot change.");
+    }
+    job.completionDeliveryPolicy = completionDeliveryPolicy;
     if (previous && previous.scope_id !== scopeId) {
       throw new Error("A persisted Codex job cannot move to another conversation scope.");
     }

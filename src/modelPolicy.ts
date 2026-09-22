@@ -4,7 +4,7 @@ import type {
   CodexModelDescriptor
 } from "./modelCatalog.js";
 
-export const MODEL_POLICY_SCHEMA_VERSION = 6 as const;
+export const MODEL_POLICY_SCHEMA_VERSION = 7 as const;
 
 export type ModelChoice = {
   model: string;

@@ -388,11 +388,11 @@ export function validateReleaseManifest(value) {
     "stateCompatibility.persistentContracts"
   );
   const requiredContracts = {
-    userSettingsSchema: 6,
+    userSettingsSchema: 7,
     taskInputContract: 6,
     macosHelperProtocol: 2,
-    localCompanionProtocol: 11,
-    remoteCompanionProtocol: 9
+    localCompanionProtocol: 12,
+    remoteCompanionProtocol: 10
   };
   for (const [name, expected] of Object.entries(requiredContracts)) {
     if (persistentContracts[name] !== expected) {

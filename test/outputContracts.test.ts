@@ -206,7 +206,7 @@ describe("model-visible output contracts", () => {
     expect(
       (z.toJSONSchema(MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_task) as any)
         .properties.contractVersion
-    ).toEqual({ type: "string", const: "3" });
+    ).toEqual({ type: "string", const: "4" });
   });
 
   it("publishes codex_task as a strict all-required schema with nullable absence", () => {

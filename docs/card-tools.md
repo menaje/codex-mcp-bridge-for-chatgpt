@@ -65,12 +65,14 @@ answer through `codex_answer`. The retired `codex_ask_user`,
 `codex_user_answer`, and `codex_question_action` routes have no Codex-question
 card replacement. The independent Decision card does not change that contract.
 
-Dashboard creation and completion delivery are orchestration defaults, not user
-preferences. Every admitted `codex_task` returns an exact
+Dashboard creation and live-card completion delivery remain the default
+orchestration policy. Unless the experimental direct-result setting was enabled
+when a Job was admitted, `codex_task` returns an exact
 `scope + jobId + presentationRef` Dashboard render action and instructs GPT to
 call it before prose. Old `dashboardAutoOpen`, `completionFollowUp`, and
 `activityCardVisibility` values are ignored and removed during settings
-migration; neither Settings surface nor the mutation schema exposes them.
+migration; the only completion-route control exposed by either Settings surface
+is the off-by-default experimental direct-result switch.
 
 The exact terminal Job creates one durable `job_completion_deliveries` record.
 Only a live originating Dashboard whose host metadata, Job, and presentation
@@ -91,6 +93,28 @@ cancels the Job. Model-visible exact waits default to 20 seconds; when the
 originating Dashboard is mounted, GPT should not keep another terminal wait
 solely to duplicate the card's completion watcher. Exact manual reads and
 bounded input waits remain available.
+
+The optional experimental direct-result setting changes only newly admitted
+Jobs. Such a Job persists `completionDeliveryPolicy="direct-wait"`, returns a
+bounded exact terminal-wait action instead of an automatic Dashboard render
+action, and cannot claim a live-card delivery lease. After timeout or host abort,
+GPT retries the same exact Job; it never starts a replacement for the same work.
+After every non-terminal return, GPT inspects the supplied exact-Job input action
+before waiting again. After the terminal result, GPT may continue only work
+already approved by the user and must stop at a new approval or input boundary.
+Codex execution remains independent if navigation, backgrounding, screen lock,
+or connection loss ends the GPT wait, but automatic continuation through those
+host states is not a claimed capability.
+
+A bounded wait timeout is not the end of a GPT run: while the run is active, it
+repeats the exact Job wait. If the host ends the GPT run itself, the Bridge does
+not silently switch that Job to live-card or send a completion message. The Job
+and result remain under their ordinary retention policy. To resume, the user
+must return to the originating authenticated conversation and ask GPT to read
+the same retained Job with `codex_status` (or locate it in that conversation's
+Dashboard and then read it). The scope check still applies; a Job ID is not a
+cross-conversation capability. This manual recovery does not itself authorize
+or automatically start a later Job.
 
 The automatic message tells GPT to call `codex_status` once with
 `query.kind="completion"`. That read requires current authenticated ChatGPT

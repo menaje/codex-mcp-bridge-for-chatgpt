@@ -1106,9 +1106,10 @@ describe("current bridge tool contracts", () => {
     });
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      contractVersion: "3",
+      contractVersion: "4",
       state: "running",
       terminal: false,
+      completionDeliveryPolicy: "live-card",
       jobId: expect.any(String),
       requestId: expect.any(String),
       threadId: null,
@@ -1122,6 +1123,179 @@ describe("current bridge tool contracts", () => {
     await eventually(() => state.listJobs().some((job) =>
       job.jobId === (result.structuredContent as any).jobId && job.status === "completed"
     ));
+  });
+
+  it("snapshots experimental direct-result delivery per Job and keeps the default live-card path unchanged", async () => {
+    const descriptorBefore = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptorBefore.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const enabled = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedSettingsRevision: settings.current.settingsRevision,
+        operation: {
+          kind: "patch",
+          settings: { experimentalDirectResultDelivery: true }
+        }
+      },
+      _meta: metadata
+    });
+    expect(enabled.isError, JSON.stringify(enabled)).not.toBe(true);
+    expect(enabled.structuredContent).toHaveProperty(
+      "settings.experimentalDirectResultDelivery",
+      true
+    );
+    const enabledRevision = (enabled.structuredContent as any).settings.settingsRevision as number;
+    const descriptorAfter = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    expect((descriptorAfter.inputSchema.properties as any).executionEnvelopeRef.const)
+      .toBe(properties.executionEnvelopeRef?.const);
+    expect(descriptorAfter.description).toContain("Follow the returned Job's completionDeliveryPolicy and nextActions");
+    expect(descriptorAfter.description).toContain("repeat that same Job wait after timeout or host abort");
+
+    const hold = upstream.holdNextCall();
+    const requestId = randomUUID();
+    const argumentsValue = {
+      scopeId: "78787878-7878-4878-8878-787878787878",
+      requestId,
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Complete the direct-result fixture work.",
+      project: {
+        name: project.name,
+        projectRef: project.projectRef,
+        projectRevision: project.projectRevision
+      },
+      selection
+    };
+    const admitted = await client.callTool({
+      name: "codex_task",
+      arguments: argumentsValue,
+      _meta: metadata
+    });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    await hold.started;
+    const task = admitted.structuredContent as any;
+    expect(task).toMatchObject({
+      contractVersion: "4",
+      state: "running",
+      completionDeliveryPolicy: "direct-wait"
+    });
+    expect(task.nextActions).toContainEqual(expect.objectContaining({
+      kind: "tool",
+      tool: "codex_status",
+      arguments: {
+        query: {
+          kind: "job",
+          id: task.jobId,
+          waitFor: "terminal",
+          waitMs: 60_000
+        }
+      }
+    }));
+    expect(task.nextActions.some((action: any) => action.tool === "codex_dashboard")).toBe(false);
+    expect(JSON.stringify(admitted.content)).toContain("Required before replying:");
+    expect(JSON.stringify(admitted.content)).toContain("codex_status");
+
+    const timedOut = await client.callTool({
+      name: "codex_status",
+      arguments: {
+        query: { kind: "job", id: task.jobId, waitFor: "terminal", waitMs: 1 }
+      },
+      _meta: metadata
+    });
+    expect(timedOut.isError, JSON.stringify(timedOut)).not.toBe(true);
+    expect(timedOut.structuredContent).toMatchObject({
+      kind: "job",
+      items: [expect.objectContaining({
+        id: task.jobId,
+        state: "running",
+        completionDeliveryPolicy: "direct-wait",
+        wait: expect.objectContaining({ waitFor: "terminal", timedOut: true }),
+        nextActions: expect.arrayContaining([expect.objectContaining({
+          tool: "codex_status",
+          arguments: { query: expect.objectContaining({ id: task.jobId, waitFor: "terminal" }) }
+        })])
+      })]
+    });
+
+    const replay = await client.callTool({
+      name: "codex_task",
+      arguments: argumentsValue,
+      _meta: metadata
+    });
+    expect(replay.isError, JSON.stringify(replay)).not.toBe(true);
+    expect(replay.structuredContent).toMatchObject({
+      jobId: task.jobId,
+      replay: true,
+      completionDeliveryPolicy: "direct-wait"
+    });
+    expect(upstream.calls).toHaveLength(1);
+
+    const disabled = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedSettingsRevision: enabledRevision,
+        operation: {
+          kind: "patch",
+          settings: { experimentalDirectResultDelivery: false }
+        }
+      },
+      _meta: metadata
+    });
+    expect(disabled.isError, JSON.stringify(disabled)).not.toBe(true);
+    expect(disabled.structuredContent).toHaveProperty(
+      "settings.experimentalDirectResultDelivery",
+      false
+    );
+
+    hold.release();
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === task.jobId && job.status === "completed"
+    ));
+    const terminal = await client.callTool({
+      name: "codex_status",
+      arguments: {
+        query: { kind: "job", id: task.jobId, waitFor: "terminal", waitMs: 60_000 }
+      },
+      _meta: metadata
+    });
+    expect(terminal.isError, JSON.stringify(terminal)).not.toBe(true);
+    expect(terminal.structuredContent).toMatchObject({
+      kind: "job",
+      items: [expect.objectContaining({
+        id: task.jobId,
+        state: "completed",
+        completionDeliveryPolicy: "direct-wait",
+        answer: expect.stringContaining("Completed delayed fixture work")
+      })]
+    });
+    const directDelivery = state.getJobCompletionDelivery(task.jobId)!;
+    expect(directDelivery).toMatchObject({
+      state: "pending",
+      attemptCount: 0,
+      directResultOfferedAt: expect.any(Number)
+    });
+    expect(state.claimJobCompletionDelivery(
+      task.jobId,
+      directDelivery.scopeId,
+      randomUUID()
+    )).toBeUndefined();
+
+    const defaultTask = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        ...argumentsValue,
+        requestId: randomUUID(),
+        prompt: "Complete the default delivery fixture work."
+      },
+      _meta: metadata
+    });
+    expect(defaultTask.isError, JSON.stringify(defaultTask)).not.toBe(true);
+    expect(defaultTask.structuredContent).toMatchObject({
+      state: "running",
+      completionDeliveryPolicy: "live-card",
+      nextActions: expect.arrayContaining([expect.objectContaining({ tool: "codex_dashboard" })])
+    });
   });
 
   it("returns durable admission immediately while the admitted Job runs for more than one minute", async () => {

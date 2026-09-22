@@ -249,11 +249,11 @@
             "remoteCompanionProtocol"
           ],
           "properties": {
-            "userSettingsSchema": { "const": 6 },
+            "userSettingsSchema": { "const": 7 },
             "taskInputContract": { "const": 6 },
             "macosHelperProtocol": { "const": 2 },
-            "localCompanionProtocol": { "const": 11 },
-            "remoteCompanionProtocol": { "const": 9 }
+            "localCompanionProtocol": { "const": 12 },
+            "remoteCompanionProtocol": { "const": 10 }
           }
         },
         "contractSources": {

@@ -75,12 +75,22 @@ try {
     });
   }
 
+  // Public progress beyond the small synchronous budget is intentionally
+  // persisted by the bounded fair queue. A single noisy project is capped, so
+  // wait for the accepted queue entries to drain and account for deliberate
+  // drops instead of requiring every synthetic diagnostic event to persist.
+  await eventually(() => registry.progressPersistenceStatus().queued === 0);
+
   const active = registry.waitDiagnostics();
+  const progressPersistence = registry.progressPersistenceStatus();
   const progressIdentityReads = identityReadsDuringProgress;
   assert.equal(progressIdentityReads, 0);
   assert.equal(active.active.total, 2);
   assert.equal(active.wakes.total, 0);
-  assert.equal(active.maintenance.telemetryTransaction.count, 100);
+  assert.equal(
+    active.maintenance.telemetryTransaction.count + progressPersistence.dropped,
+    100
+  );
 
   complete({
     content: [{ type: "text", text: "Issue #137 regression completed." }],
@@ -108,6 +118,7 @@ try {
       progressTriggeredWakes: terminal.wakes.progress,
       terminalTriggeredWakes: terminal.wakes.terminal,
       telemetryTransactions: terminal.maintenance.telemetryTransaction,
+      progressPersistence,
       pruneAndPersist: terminal.maintenance.pruneAndPersist,
       activeWaitersAfterTerminal: terminal.active.total
     },
@@ -116,4 +127,13 @@ try {
 } finally {
   store.close();
   await rm(root, { recursive: true, force: true });
+}
+
+async function eventually(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for the bounded progress queue to drain.");
 }

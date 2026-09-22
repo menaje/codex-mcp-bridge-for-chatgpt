@@ -40,6 +40,14 @@ for Codex completion in the task call, and losing the MCP or HTTP connection doe
 not cancel the admitted Job. Read progress and the terminal result with
 `codex_status`; use `codex_cancel` only for explicit stop intent.
 
+Each admission also snapshots `completionDeliveryPolicy`. The default
+`live-card` policy returns an exact Dashboard render action. The opt-in
+experimental `direct-wait` policy returns an exact Job terminal-wait action and
+suppresses that Job's live-card claim path. Settings changes apply only to later
+Jobs and never rewrite a retained Job policy. After every non-terminal wait
+return, inspect the supplied exact-Job input action before waiting again so an
+approval or user-input boundary stops automatic continuation.
+
 An exact Job/request `codex_status` wait is a bounded read. `waitFor="change"`
 wakes on a Job version change; `waitFor="terminal"` uses a lifecycle-only signal
 and does not wake for ordinary progress. The model-visible default is 20 seconds
@@ -79,10 +87,10 @@ requires one. A later policy change is rechecked at admission.
 completion receipt, Activity, thread, project, or bounded input wait. Completion
 receipt reads require current ChatGPT conversation metadata; an explicit
 compatibility `scopeId` is not authority. When an authenticated exact Job or
-request query actually returns a retained terminal result before a Dashboard has
-claimed its send lease, that direct read atomically settles the still-pending
-automatic follow-up. A running, omitted, unavailable, explicitly scoped, or
-already leased/accepted/uncertain result does not make that transition.
+request query returns a retained terminal result, the Bridge records only that
+it offered the result. That evidence neither proves GPT received it nor settles,
+claims, or cancels a pending live-card delivery. A `direct-wait` Job cannot be
+claimed by the live-card path at all.
 `codex_cancel` and state-changing tools require their own idempotency UUID and
 exact version. An out-of-date version, a different retry payload, or a
 scope/ownership mismatch is a rejection, not a best-effort mutation.
@@ -91,7 +99,8 @@ App-private tools use card proofs, revisions, and scoped targets where
 applicable. They are current card operations, not public fallback aliases.
 `codex_ui_read` returns the current view selected by a closed `view` enum;
 settings changes use `codex_update_settings` with the required revision checks;
-`codex_ui_completion` owns the bounded exact-Job live-card delivery lease.
+`codex_ui_completion` owns the bounded exact-Job live-card delivery lease and
+settles without claiming when the exact Job uses `direct-wait`.
 
 ## Host metadata and scope
 

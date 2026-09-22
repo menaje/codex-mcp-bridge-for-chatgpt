@@ -4,7 +4,15 @@ const identifier = z.string().trim().min(1).max(200);
 const message = z.string().trim().min(1).max(1_000);
 const statusQueryArguments = z.strictObject({
   query: z.discriminatedUnion("kind", [
-    z.strictObject({ kind: z.literal("job"), id: identifier }),
+    z.strictObject({
+      kind: z.literal("job"),
+      id: identifier,
+      waitFor: z.enum(["change", "terminal"]).optional(),
+      waitMs: z.number().int().min(1).max(60_000).optional()
+    }).refine(
+      (query) => query.waitMs === undefined || query.waitFor !== undefined,
+      "waitFor is required whenever waitMs is sent."
+    ),
     z.strictObject({ kind: z.literal("activity"), id: identifier }),
     z.strictObject({ kind: z.literal("thread"), id: identifier }),
     z.strictObject({

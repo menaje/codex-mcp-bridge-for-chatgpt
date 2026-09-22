@@ -45,6 +45,8 @@ export type BridgeUserSettings = {
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
   showBridgeThreadsInCodexApp: boolean;
+  /** Presentation-only experiment. Each admitted Job snapshots this value. */
+  experimentalDirectResultDelivery: boolean;
   historyRetentionDays: HistoryRetentionDays;
 };
 
@@ -110,6 +112,7 @@ export class UserSettingsStore {
       // Durable context is the default for a new installation. Loaded legacy
       // settings retain their explicit (or historical missing-field) choice.
       showBridgeThreadsInCodexApp: true,
+      experimentalDirectResultDelivery: false,
       historyRetentionDays: DEFAULT_HISTORY_RETENTION_DAYS
     });
     this.settings = cloneGeneralSettings(this.initial);
@@ -257,6 +260,7 @@ export class UserSettingsStore {
       uiLocalePreference: this.initial.uiLocalePreference,
       maxConcurrentJobs: this.initial.maxConcurrentJobs,
       showBridgeThreadsInCodexApp: this.initial.showBridgeThreadsInCodexApp,
+      experimentalDirectResultDelivery: this.initial.experimentalDirectResultDelivery,
       historyRetentionDays: this.initial.historyRetentionDays
     };
     return this.applyConfiguration(patch, [], expectedSettingsRevision, undefined);
@@ -387,6 +391,9 @@ export class UserSettingsStore {
     );
     if (typeof candidate.showBridgeThreadsInCodexApp !== "boolean") {
       throw new Error("Invalid Codex app thread-visibility preference.");
+    }
+    if (typeof candidate.experimentalDirectResultDelivery !== "boolean") {
+      throw new Error("Invalid experimental direct-result delivery preference.");
     }
     if (!Number.isInteger(candidate.settingsRevision) || candidate.settingsRevision < 0) {
       throw new Error("Invalid settings revision.");
@@ -604,6 +611,7 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
+    "experimentalDirectResultDelivery",
     "historyRetentionDays"
   ];
   if (required.some((key) => !Object.prototype.hasOwnProperty.call(value, key))) return true;
@@ -646,6 +654,7 @@ function readGeneralSettings(
   const hasMigratablePolicy =
     (
       value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION ||
+      value.schemaVersion === 6 ||
       value.schemaVersion === 5 ||
       value.schemaVersion === 4 ||
       value.schemaVersion === 3 ||
@@ -677,6 +686,9 @@ function readGeneralSettings(
     maxConcurrentJobs,
     showBridgeThreadsInCodexApp: typeof value.showBridgeThreadsInCodexApp === "boolean"
       ? value.showBridgeThreadsInCodexApp
+      : false,
+    experimentalDirectResultDelivery: typeof value.experimentalDirectResultDelivery === "boolean"
+      ? value.experimentalDirectResultDelivery
       : false,
     historyRetentionDays: historyRetentionDays(value.historyRetentionDays),
   };
@@ -749,6 +761,7 @@ function assertSettingsPatchKeys(patch: BridgeUserSettingsPatch): void {
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
+    "experimentalDirectResultDelivery",
     "historyRetentionDays"
   ]);
   const unsupported = Object.keys(patch).find((key) => !allowed.has(key));
