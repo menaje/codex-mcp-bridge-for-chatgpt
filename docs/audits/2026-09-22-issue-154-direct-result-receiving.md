@@ -375,3 +375,29 @@ and try again` 오류가 있었다. 대화를 새로고침해도 진행 문구�
 열린 상태로 둔다. 시험 runtime은 active Job·대기 요청·백그라운드 프로세스가
 모두 0건임을 확인한 뒤 drain 종료했으며, 설치 앱은 운영 DB 단일 소유자,
 기본 OFF, helper `running`, Bridge/Tunnel `connected` 상태로 복원했다.
+
+## 2026-09-23 새 대화의 사용자 선택 경계 재시험
+
+앞선 stale conversation을 재사용하지 않고 새 ChatGPT Work 대화에서 브리지
+플러그인을 선택했다. 설치된 서명 빌드 `dc7c70ac0167:226fc3c1ab70`과 운영 DB에서
+분리된 development profile(실험 설정 ON)을 사용했다. 시험 요청은 첫 번째 읽기 전용
+Job만 승인하고, 결과를 검토한 뒤 A(버전 비교) 또는 B(release notes 제목 수 확인)를
+질문하되 답변 전에는 두 번째 Job을 만들지 말라고 요청했다.
+
+| 관측 | UTC 시각 | 근거 |
+| --- | --- | --- |
+| 첫 Job 접수 | 02:35:02 | DB `5bde4b42-1aa9-4e93-82b4-6cc78f567ed3`, `direct-wait` |
+| 첫 Job 정상 완료 및 직접 결과 offer | 02:35:15 | DB `normal-completion`, delivery `direct_result_offered_at` |
+| GPT의 결과 검토와 A/B 질문 | 완료 후 | 원래 ChatGPT Work 대화의 최종 응답: package name과 README 제목을 비교하고 선택을 요청 |
+| 같은 시험 구간의 두 번째 Job | 없음 | 02:34 UTC 이후 development DB 신규 Job 정확히 1건 |
+
+해당 completion의 live-card 전달 시도는 0회였다. GPT는 첫 Job ID와 결과를
+최종 응답에 제시했고 “두 번째 Job은 만들지 않았다”고 밝힌 뒤 A/B를 물었다.
+DB에서도 신규 Job이 1건뿐임을 독립적으로 확인했다. 따라서 **새 후속 작업을
+사용자가 아직 선택하지 않은 질문 경계**에서는 자동 진행하지 않는 동작을 이
+호스트·빌드에서 확인했다. 이 시험은 실제 Codex의 특권 승인 프롬프트나 모든
+사용자 입력 유형까지 검증한 것은 아니므로 그 범위로 확대하지 않는다.
+
+첫 Job 종료 뒤 runtime snapshot에서 active Job, pending admission, pending
+interaction, background process가 모두 0건임을 확인하고 development runtime을
+drain 종료했다. 운영 프로필 앱과 기본 OFF 설정의 복원 결과는 별도로 확인한다.
