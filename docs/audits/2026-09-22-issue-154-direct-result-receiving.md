@@ -201,6 +201,8 @@ launcher 상태는 같은 빌드 ID에 `running`, Tunnel은 `connected`와
 `doctorPassed=true`를 보고했다. helper도 `running`/Tunnel `connected`였고,
 Bridge `runtime.snapshot`은 `acceptingNewJobs=true`, active Job 및 pending
 admission/interaction 0, background process `confirmed`/0을 보고했다.
+재기동된 운영·진단 DB의 read-only `quick_check`도 모두 `ok`였고 운영 DB
+`foreign_key_check`에서 위반 행은 없었다.
 
 운영 Settings는 schema 7로 이관됐고 실험 스위치는 기본값 `false`를 유지했다.
 따라서 **새 기능이 현재 설치본에 포함되고 연결된 것**까지 확인했다. 이 설치
