@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Keep usage visible through run-history pagination and never restore an older usage reading over a newer one.",
+  "breaking": false,
+  "migration": null
+}

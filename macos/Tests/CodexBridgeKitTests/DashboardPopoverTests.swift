@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 import XCTest
@@ -139,6 +140,131 @@ final class DashboardPopoverTests: XCTestCase {
         await f.model.refreshDashboard(enrich: false)
         XCTAssertNil(f.model.dashboard?.codexAccount)
         XCTAssertFalse(f.model.shouldShowCodexWeeklyUsage)
+    }
+
+    @MainActor
+    func testLoadMoreRecentAndIdleRetainUsageFromTheActualPagedReply() async throws {
+        let f = try PopoverFixture()
+        defer { f.remove() }
+        let checkedAt = 1_780_000_000_000.0
+        f.state.pagedHistory = true
+        f.state.usageContext = "account-a:cli-one"
+        f.state.usageAccount = usageAccount(remaining: 60, status: "available",
+                                            checkedAt: checkedAt, observedAt: checkedAt)
+        await f.model.refreshDashboard(enrich: false)
+        await f.model.toggleDashboardPanel(.history)
+        XCTAssertTrue(f.model.dashboard?.pagination.terminal.hasNext == true)
+        XCTAssertTrue(f.model.dashboard?.pagination.idle.hasNext == true)
+
+        f.state.usageAccount = nil
+        await f.model.loadMoreRecent()
+        XCTAssertEqual(f.model.dashboard?.terminalRows.count, 2)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.weeklyUsage?.remainingPercent, 60)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.usageObservedAt, checkedAt)
+
+        await f.model.loadMoreIdle()
+        XCTAssertEqual(f.model.dashboard?.idleRows.count, 2)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.weeklyUsage?.remainingPercent, 60)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.usageObservedAt, checkedAt)
+
+        let newerCheckedAt = checkedAt + 300_000
+        f.state.usageAccount = usageAccount(remaining: 40, status: "unavailable",
+                                            checkedAt: newerCheckedAt,
+                                            observedAt: newerCheckedAt + 60_000)
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.weeklyUsage?.remainingPercent, 40)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.usageObservedAt, newerCheckedAt)
+    }
+
+    @MainActor
+    func testAnimatedNativePopoverKeepsUsageFrameThroughLoadMoreAndReopen() async throws {
+        let f = try PopoverFixture()
+        defer { f.remove() }
+        let checkedAt = 1_780_000_000_000.0
+        f.state.pagedHistory = true
+        f.state.usageContext = "account-a:cli-one"
+        f.state.usageAccount = usageAccount(remaining: 60, status: "available",
+                                            checkedAt: checkedAt, observedAt: checkedAt)
+        await f.model.refreshDashboard(enrich: false)
+        await f.model.toggleDashboardPanel(.history)
+
+        let screen = try XCTUnwrap(NSScreen.main)
+        let anchorWindow = NSPanel(contentRect: NSRect(
+            x: screen.visibleFrame.midX, y: screen.visibleFrame.maxY - 80,
+            width: 40, height: 30
+        ), styleMask: [.borderless], backing: .buffered, defer: false)
+        anchorWindow.isReleasedWhenClosed = false
+        let button = NSButton(frame: NSRect(x: 0, y: 0, width: 40, height: 30))
+        anchorWindow.contentView = button
+        anchorWindow.orderFrontRegardless()
+        let popover = NSPopover()
+        popover.animates = true
+        var observedUsageFrames: [CGRect?] = []
+        let host = NSHostingController(rootView: AnyView(
+            DashboardPopoverView(onContentSizeChange: { size in
+                popover.contentSize = NSSize(width: DashboardPopoverLayout.width, height: ceil(size.height))
+            }, onUsageFrameChange: { observedUsageFrames.append($0) })
+            .environmentObject(f.model)
+        ))
+        host.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = host
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        defer {
+            popover.performClose(nil)
+            anchorWindow.close()
+        }
+        for _ in 0..<25 {
+            host.view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(popover.isShown)
+        XCTAssertTrue(popover.animates)
+        let initialUsageFrame = try XCTUnwrap(observedUsageFrames.last ?? nil)
+        let initialHeight = popover.contentSize.height
+        let initialTop = try XCTUnwrap(host.view.window).frame.maxY
+        XCTAssertGreaterThan(initialUsageFrame.height, 30)
+
+        observedUsageFrames.removeAll()
+        var publishedUsage: [Double?] = []
+        let usageSubscription = f.model.$dashboard.sink {
+            publishedUsage.append($0?.codexAccount?.weeklyUsage?.remainingPercent)
+        }
+        defer { usageSubscription.cancel() }
+        f.state.usageAccount = nil
+        f.state.delayHistory = true
+        let load = Task { await f.model.loadMoreRecent() }
+        var sampledHeights: [CGFloat] = []
+        var sampledTops: [CGFloat] = []
+        for _ in 0..<35 {
+            host.view.layoutSubtreeIfNeeded()
+            sampledHeights.append(popover.contentSize.height)
+            if let window = host.view.window { sampledTops.append(window.frame.maxY) }
+            XCTAssertEqual(f.model.dashboard?.codexAccount?.weeklyUsage?.remainingPercent, 60)
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await load.value
+        XCTAssertEqual(f.model.dashboard?.terminalRows.count, 2)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.usageObservedAt, checkedAt)
+        XCTAssertTrue(publishedUsage.allSatisfy { $0 == 60 })
+        XCTAssertFalse(observedUsageFrames.contains { $0 == nil })
+        for frame in observedUsageFrames.compactMap({ $0 }) {
+            XCTAssertEqual(frame.minY, initialUsageFrame.minY, accuracy: 2)
+            XCTAssertEqual(frame.height, initialUsageFrame.height, accuracy: 2)
+        }
+        XCTAssertTrue(sampledHeights.allSatisfy { $0 >= initialHeight - 2 })
+        XCTAssertFalse(sampledTops.isEmpty)
+        for top in sampledTops { XCTAssertEqual(top, initialTop, accuracy: 4) }
+
+        popover.performClose(nil)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        for _ in 0..<20 {
+            host.view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(popover.isShown)
+        XCTAssertNotNil(host.view.window)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.weeklyUsage?.remainingPercent, 60)
+        XCTAssertTrue(publishedUsage.allSatisfy { $0 == 60 })
     }
 
     @MainActor
@@ -620,6 +746,7 @@ private final class PopoverReplyState: @unchecked Sendable {
     private var completedEnrichments = 0
     private var dashboardReads = 0
     private var slowHistory = false
+    private var pagedHistoryValue = false
     private var runningRowCount = 0
     private var usageContextValue: String?
     private var usageAccountValue: [String: Any]?
@@ -643,6 +770,7 @@ private final class PopoverReplyState: @unchecked Sendable {
         for _ in 0..<active { enrichmentGate.signal() }
     }
     var delayHistory: Bool { get { lock.withLock { slowHistory } } set { lock.withLock { slowHistory = newValue } } }
+    var pagedHistory: Bool { get { lock.withLock { pagedHistoryValue } } set { lock.withLock { pagedHistoryValue = newValue } } }
     var detailHistoryRevision: String { get { lock.withLock { deferredHistoryRevision } } set { lock.withLock { deferredHistoryRevision = newValue } } }
     var failStart: Bool { get { lock.withLock { fail } } set { lock.withLock { fail = newValue } } }
     var coalesceStart: Bool { get { lock.withLock { coalesce } } set { lock.withLock { coalesce = newValue } } }
@@ -718,6 +846,30 @@ private final class PopoverReplyState: @unchecked Sendable {
                     "cacheHits": lock.withLock { completedEnrichments }, "timeouts": 0,
                     "durationMs": 0, "usageTimedOut": false, "pendingReads": 0],
                 "uiLocalePreference": "ko"]
+            if pagedHistory, includeHistory {
+                func historyRow(_ index: Int, bucket: String) -> [String: Any] { [
+                    "rowKey": "\(bucket)-row-\(index)", "activityKey": "\(bucket)-activity-\(index)",
+                    "conversationKey": "\(bucket)-conversation-\(index)", "bucket": bucket,
+                    "sessionAlias": "\(bucket)-session-\(index)", "projectKey": "window-project",
+                    "projectName": "Window fixture", "agentName": "Task \(index)",
+                    "activityTitle": "\(bucket) task \(index)",
+                    "status": bucket == "idle" ? "idle" : "completed",
+                    "createdAt": "2026-09-10T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z",
+                    "elapsedMs": 5000, "backgroundProcessCount": 0,
+                    "history": [], "historyCount": 1, "historyRevision": rowHistoryRevision
+                ] }
+                let terminalOffset = params["terminalOffset"] as? Int ?? 0
+                let idleOffset = params["idleOffset"] as? Int ?? 0
+                func historyPage(_ offset: Int) -> [String: Any] { [
+                    "offset": offset, "limit": 12, "returned": 1, "total": 2,
+                    "returnedConversations": 1, "conversationTotal": 2,
+                    "hasPrevious": offset > 0, "hasNext": offset == 0
+                ] }
+                snapshot["terminalRows"] = [historyRow(terminalOffset, bucket: "recent")]
+                snapshot["idleRows"] = [historyRow(idleOffset, bucket: "idle")]
+                snapshot["pagination"] = ["active": page,
+                    "terminal": historyPage(terminalOffset), "idle": historyPage(idleOffset)]
+            }
             if let usageContext { snapshot["usageContext"] = usageContext }
             if let usageAccount { snapshot["codexAccount"] = usageAccount }
             if let usageWeekly { snapshot["weeklyUsage"] = usageWeekly }

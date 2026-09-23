@@ -433,6 +433,50 @@ final class BridgeModelsTests: XCTestCase {
             .retainingUsage(from: initial).weeklyUsage)
     }
 
+    func testUnavailableAccountUsageKeepsTheNewestConfirmedObservation() throws {
+        func account(remaining: Double?, status: String, checkedAt: Double?, observedAt: Double,
+                     key: String = "account-a", plan: String = "plus") throws -> CodexAccountUsage {
+            var value: [String: Any] = [
+                "authMode": "chatgpt", "authenticated": true, "accountKey": key,
+                "planType": plan, "usageStatus": status, "observedAt": observedAt,
+                "windows": remaining.map { [[
+                    "limitId": "codex", "usedPercent": 100 - $0, "remainingPercent": $0,
+                    "windowDurationMins": 10080
+                ]] } ?? []
+            ]
+            if let checkedAt { value["usageObservedAt"] = checkedAt }
+            return try JSONDecoder().decode(CodexAccountUsage.self,
+                from: JSONSerialization.data(withJSONObject: value))
+        }
+
+        let old = try account(remaining: 60, status: "available", checkedAt: 1_780_000_000_000,
+                              observedAt: 1_780_000_000_000)
+        let oldAfterFailedRead = try account(remaining: 60, status: "unavailable",
+            checkedAt: 1_780_000_000_000, observedAt: 1_780_000_600_000)
+        let newerRetainedByServer = try account(remaining: 40, status: "unavailable",
+            checkedAt: 1_780_000_300_000, observedAt: 1_780_000_660_000)
+        let newer = newerRetainedByServer.retainingUnavailableUsage(from: oldAfterFailedRead)
+        XCTAssertEqual(newer.weeklyUsage?.remainingPercent, 40)
+        XCTAssertEqual(newer.usageObservedAt, 1_780_000_300_000)
+
+        let olderRetainedByServer = try account(remaining: 80, status: "unavailable",
+            checkedAt: 1_779_999_700_000, observedAt: 1_780_000_360_000)
+        let retained = olderRetainedByServer.retainingUnavailableUsage(from: old)
+        XCTAssertEqual(retained.weeklyUsage?.remainingPercent, 60)
+        XCTAssertEqual(retained.usageObservedAt, old.usageObservedAt)
+
+        let missing = try account(remaining: nil, status: "unavailable", checkedAt: nil,
+            observedAt: 1_780_000_360_000)
+        XCTAssertEqual(missing.retainingUnavailableUsage(from: old).weeklyUsage?.remainingPercent, 60)
+        XCTAssertEqual(newerRetainedByServer.retainingUnavailableUsage(from:
+            try account(remaining: 60, status: "available", checkedAt: old.usageObservedAt,
+                        observedAt: old.observedAt, key: "account-b")).weeklyUsage?.remainingPercent, 40)
+        XCTAssertEqual(try account(remaining: 0, status: "available", checkedAt: 1_780_000_400_000,
+            observedAt: 1_780_000_400_000).retainingUnavailableUsage(from: old).weeklyUsage?.remainingPercent, 0)
+        XCTAssertNil(try account(remaining: nil, status: "none", checkedAt: nil,
+            observedAt: 1_780_000_400_000).retainingUnavailableUsage(from: old).weeklyUsage)
+    }
+
     func testDashboardLoadMoreEvictsRowsThatBecomeActive() {
         let initial = dashboardSnapshot(
             terminalRows: [dashboardRow("moved", bucket: "recent")],

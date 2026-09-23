@@ -190,11 +190,16 @@ public struct CodexAccountUsage: Codable, Sendable, Equatable {
     public func retainingUnavailableUsage(from previous: Self) -> Self {
         guard usageStatus == "unavailable", sharesKnownAccount(with: previous),
               planType == previous.planType else { return self }
+        let previousCheckedAt = previous.usageObservedAt ??
+            (previous.usageStatus == nil ? previous.observedAt : nil)
+        guard let previousCheckedAt, previousCheckedAt.isFinite, previousCheckedAt > 0 else { return self }
+        if let usageObservedAt, usageObservedAt.isFinite,
+           usageObservedAt > 0, usageObservedAt >= previousCheckedAt { return self }
         var result = self
         result.windows = previous.windows
         result.credits = previous.credits
         result.resetCredits = previous.resetCredits
-        result.usageObservedAt = previous.usageObservedAt ?? (previous.usageStatus == nil ? previous.observedAt : nil)
+        result.usageObservedAt = previousCheckedAt
         return result
     }
 }

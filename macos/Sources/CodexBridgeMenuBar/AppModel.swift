@@ -2777,11 +2777,12 @@ final class AppModel: ObservableObject {
             )
             guard connection == self.connectionGeneration,
                   generation == self.dashboardRequestGeneration else { return }
-            self.dashboard = current.mergingPage(
+            let merged = current.mergingPage(
                 page,
                 bucket: .terminal,
                 requestedOffset: nextOffset
             )
+            self.dashboard = self.dashboardWithCurrentUsage(merged, previous: current)
             self.lastDashboardRefresh = Date()
         }
     }
@@ -2805,11 +2806,12 @@ final class AppModel: ObservableObject {
             )
             guard connection == self.connectionGeneration,
                   generation == self.dashboardRequestGeneration else { return }
-            self.dashboard = current.mergingPage(
+            let merged = current.mergingPage(
                 page,
                 bucket: .idle,
                 requestedOffset: nextOffset
             )
+            self.dashboard = self.dashboardWithCurrentUsage(merged, previous: current)
             self.lastDashboardRefresh = Date()
         }
     }
