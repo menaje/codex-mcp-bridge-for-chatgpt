@@ -405,6 +405,34 @@ final class BridgeModelsTests: XCTestCase {
         XCTAssertEqual(afterIdle.idleRows.map(\.rowKey), ["idle-1", "idle-2"])
     }
 
+    func testPagedDashboardResponseKeepsUsageOnlyWithinTheSameDisplayContext() {
+        var initial = dashboardSnapshot(
+            terminalRows: [dashboardRow("recent-1", bucket: "recent")], idleRows: [],
+            terminalPage: dashboardPage(offset: 0, returned: 1, total: 2, hasNext: true),
+            idlePage: dashboardPage(offset: 0, returned: 0, total: 0, hasNext: false)
+        )
+        initial.usageContext = "account-a:cli-one"
+        initial.weeklyUsage = WeeklyUsage(
+            source: "codex-account", limitId: "codex", usedPercent: 40, remainingPercent: 60,
+            windowDurationMins: 10080, resetsAt: nil, observedAt: "2026-09-22T00:00:00Z"
+        )
+        var next = dashboardSnapshot(
+            terminalRows: [dashboardRow("recent-2", bucket: "recent")], idleRows: [],
+            terminalPage: dashboardPage(offset: 1, returned: 1, total: 2, hasNext: false),
+            idlePage: dashboardPage(offset: 0, returned: 0, total: 0, hasNext: false)
+        )
+        next.usageContext = initial.usageContext
+        let merged = initial.mergingPage(next, bucket: .terminal, requestedOffset: 1)
+            .retainingUsage(from: initial)
+        XCTAssertEqual(merged.terminalRows.map(\.rowKey), ["recent-1", "recent-2"])
+        XCTAssertEqual(merged.weeklyUsage?.remainingPercent, 60)
+        XCTAssertEqual(merged.weeklyUsage?.observedAt, "2026-09-22T00:00:00Z")
+
+        next.usageContext = "account-b:cli-one"
+        XCTAssertNil(initial.mergingPage(next, bucket: .terminal, requestedOffset: 1)
+            .retainingUsage(from: initial).weeklyUsage)
+    }
+
     func testDashboardLoadMoreEvictsRowsThatBecomeActive() {
         let initial = dashboardSnapshot(
             terminalRows: [dashboardRow("moved", bucket: "recent")],

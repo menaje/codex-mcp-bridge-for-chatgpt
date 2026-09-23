@@ -1073,6 +1073,7 @@ enum BridgeGeneratedLocalization {
         "macos.usageinformationisunavailable": "Usage information is unavailable.",
         "macos.usagelastchecked": "Usage last checked: %@",
         "macos.usageresetcoupons": "Usage reset coupons",
+        "macos.usageunconfirmed": "Usage has not been confirmed yet.",
         "macos.useanothercodexinstallation": "Use another Codex installation",
         "macos.useasavedserver": "Use a Saved Server",
         "macos.useroute": "Use route",

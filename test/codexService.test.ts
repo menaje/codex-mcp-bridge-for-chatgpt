@@ -130,6 +130,9 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("keeps stale account display during same-context refreshes but clears it when authentication or selection changes", async () => {
     const f = await fixture();
+    const codexHome = path.join(f.root, ".codex");
+    await mkdir(codexHome);
+    await writeFile(path.join(codexHome, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "fixture" } }));
     await mkdir(f.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME, { recursive: true });
     const file = path.join(f.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME, "cli-state.json");
     const state = {
@@ -158,8 +161,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     await writeFile(file, JSON.stringify({ ...state, selection: { ...state.selection, command: "/fixture/other", physicalPath: "/fixture/other" } }));
     expect(f.service.cachedAccount("app-server")).toBeNull();
     await f.service.readAccount("app-server");
-    await mkdir(path.join(f.root, ".codex"));
-    await writeFile(path.join(f.root, ".codex", "auth.json"), JSON.stringify({ auth_mode: "apiKey", OPENAI_API_KEY: "fixture-secret" }));
+    await writeFile(path.join(codexHome, "auth.json"), JSON.stringify({ auth_mode: "apiKey", OPENAI_API_KEY: "fixture-secret" }));
     expect(f.service.cachedAccount("app-server")).toBeNull();
   });
 
@@ -178,8 +180,23 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(service.cacheRevision()).not.toBe(before);
   });
 
+  it("does not project old numeric usage when the current account identity cannot be proven", async () => {
+    const f = await fixture();
+    const account = projectCodexAccount(
+      { account: { type: "chatgpt", email: "known@example.com" } },
+      { rateLimitsByLimitId: { codex: { primary: { usedPercent: 25, windowDurationMins: 10080 } } } }
+    );
+    vi.spyOn(f.service, "readCliAccount").mockResolvedValue(account);
+    expect(await f.service.readAccount("app-server")).toEqual(account);
+    expect(f.service.accountDisplayContext()).toBeNull();
+    expect(f.service.cachedAccount("app-server")).toBeNull();
+  });
+
   it("retains the previous account while a same-context refresh is in flight and replaces it on completion", async () => {
     const f = await fixture();
+    const codexHome = path.join(f.root, ".codex");
+    await mkdir(codexHome);
+    await writeFile(path.join(codexHome, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "previous" } }));
     const startedAt = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(startedAt);
     const previous = {
@@ -244,6 +261,63 @@ createInterface({ input: process.stdin }).on("line", line => {
     await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "b" } }));
     expect(() => guard()).toThrow("CODEX_AUTH_CHANGED");
     expect(await readFile(auth, "utf8")).toContain('"b"');
+  });
+  it("keeps the last confirmed usage through a same-account token refresh and a failed read", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    const auth = path.join(home, "auth.json");
+    await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "a", access_token: "one" } }));
+    const limits = { rateLimitsByLimitId: { codex: { primary: { usedPercent: 20, windowDurationMins: 10080 } } } };
+    const previous = projectCodexAccount({ account: { type: "chatgpt", email: "a@example.com" } }, limits, 1000);
+    const read = vi.spyOn(f.service, "readCliAccount").mockResolvedValueOnce(previous)
+      .mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(previous);
+    await f.service.readAccount("app-server");
+    const context = f.service.accountDisplayContext();
+    expect(context).toBeTruthy();
+    await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "a", access_token: "two" } }));
+    expect(f.service.accountDisplayContext()).toBe(context);
+    expect(f.service.cachedAccount("app-server")).toEqual(previous);
+    await expect(f.service.readAccount("app-server")).resolves.toBeNull();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(f.service.cachedAccount("app-server")).toEqual(previous);
+    await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "b", access_token: "three" } }));
+    expect(f.service.accountDisplayContext()).not.toBe(context);
+    expect(f.service.cachedAccount("app-server")).toBeNull();
+    await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "a", access_token: "four" } }));
+    expect(f.service.cachedAccount("app-server")).toBeNull();
+    await f.service.readAccount("app-server");
+    expect(f.service.cachedAccount("app-server")).toEqual(previous);
+    await writeFile(auth, JSON.stringify({ auth_mode: "apiKey", OPENAI_API_KEY: "another-credential" }));
+    expect(f.service.cachedAccount("app-server")).toBeNull();
+  });
+
+  it("retains dated usage after a partial account reply but accepts a confirmed reset and no-usage reply", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "a" } }));
+    const account = { account: { type: "chatgpt", email: "a@example.com", planType: "plus" } };
+    const limits = { accountId: "private-account-id", rateLimitsByLimitId: { codex: { primary: { usedPercent: 40, windowDurationMins: 10080 } } } };
+    const read = vi.spyOn(f.service, "readCliAccount")
+      .mockResolvedValueOnce(projectCodexAccount(account, limits, 1000))
+      .mockResolvedValueOnce(projectCodexAccount(account, null, 2000))
+      .mockResolvedValueOnce(projectCodexAccount(account, { rateLimitsByLimitId: { codex: { primary: { usedPercent: 100, windowDurationMins: 10080 } } } }, 3000))
+      .mockResolvedValueOnce(projectCodexAccount({ account: { ...account.account, planType: "pro" } }, null, 4000))
+      .mockResolvedValueOnce(projectCodexAccount({ account: { ...account.account, planType: "pro" } }, {}, 5000));
+    const clock = vi.spyOn(Date, "now").mockReturnValue(0);
+    await f.service.readAccount("app-server");
+    clock.mockReturnValue(16_000);
+    const partial = await f.service.readAccount("app-server");
+    expect(partial).toMatchObject({ planType: "plus", observedAt: 2000, usageObservedAt: 1000, usageStatus: "unavailable" });
+    expect(partial?.windows[0].remainingPercent).toBe(60);
+    clock.mockReturnValue(32_000);
+    const reset = await f.service.readAccount("app-server");
+    expect(reset).toMatchObject({ usageObservedAt: 3000, usageStatus: "available" });
+    expect(reset?.windows[0].remainingPercent).toBe(0);
+    clock.mockReturnValue(48_000);
+    const changedPlan = await f.service.readAccount("app-server");
+    expect(changedPlan).toMatchObject({ planType: "pro", usageStatus: "unavailable", windows: [], usageObservedAt: null });
+    clock.mockReturnValue(64_000);
+    const absent = await f.service.readAccount("app-server");
+    expect(absent).toMatchObject({ usageStatus: "none", windows: [], usageObservedAt: null });
+    expect(read).toHaveBeenCalledTimes(5);
   });
   it("drops another account's model cache even if the next account's refresh fails", async () => {
     let revision = "a", loads = 0;

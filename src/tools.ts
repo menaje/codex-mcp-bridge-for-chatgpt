@@ -790,6 +790,7 @@ const dashboardViewOutputSchema = z.strictObject({
   coverage: z.literal("bridge-known-retained"),
   enrichment: cardEnrichmentOutputSchema,
   codexAccount: z.record(z.string(), z.unknown()).nullable().optional(),
+  usageContext: z.string().nullable().optional(),
   weeklyUsage: codexWeeklyUsageOutputSchema.nullable().optional(),
   counts: dashboardCountsOutputSchema,
   activeRows: z.array(dashboardRowOutputSchema),
@@ -4725,7 +4726,8 @@ export function registerBridgeTools(
     const read = accountDisplayReads.start(revision, async () => {
       try {
         const value = await service.readAccount(config.defaultBackend, true);
-        return { value, failed: value === null || value.billing.actualCosts?.status === "unavailable" };
+        return { value, failed: value === null || value.usageStatus === "unavailable" ||
+          value.billing.actualCosts?.status === "unavailable" };
       } catch { return { value: null, failed: true }; }
     }, (value, deferred) => {
       if (revision !== service.cacheRevision()) return;
@@ -4744,6 +4746,8 @@ export function registerBridgeTools(
   ): void => {
     const service = config.codexService;
     if (!service) return;
+    const displayContext = service.accountDisplayContext();
+    const unknownRevision = displayContext === null ? service.cacheRevision() : null;
     view.codexAccount = service.cachedAccount(config.defaultBackend);
     if (account) {
       if (account.pending) {
@@ -4761,8 +4765,19 @@ export function registerBridgeTools(
         view.enrichment.usageUnavailable = true;
       }
     }
-    if (view.codexAccount?.authMode === "api-key") view.weeklyUsage = null;
-    const accountObservedAt = view.codexAccount?.observedAt;
+    if (view.codexAccount && (view.codexAccount.authMode !== "chatgpt" || view.codexAccount.usageStatus === "none")) {
+      view.weeklyUsage = null;
+    }
+    const currentContext = service.accountDisplayContext();
+    view.usageContext = currentContext;
+    if (currentContext === null) view.weeklyUsage = null;
+    if (currentContext !== displayContext ||
+        currentContext === null && unknownRevision !== service.cacheRevision()) {
+      view.codexAccount = null;
+      view.weeklyUsage = null;
+      view.usageContext = null;
+    }
+    const accountObservedAt = view.codexAccount?.usageObservedAt;
     if (typeof accountObservedAt === "number") {
       view.enrichment.oldestObservationAt = [
         view.enrichment.oldestObservationAt,

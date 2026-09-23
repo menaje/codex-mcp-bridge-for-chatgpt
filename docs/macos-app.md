@@ -80,6 +80,14 @@ with 1.5 seconds per observation and for usage/account details.
 These are display budgets: pending reads continue under the App Server's final
 RPC deadlines (normally thirty seconds). Matching last-known usage and runtime
 evidence is included in later structural snapshots without an upstream call.
+Usage display has a separate identity from the short-lived request cache: a
+same-account token refresh starts a new read but keeps the last confirmed
+numbers and their original check time. Missing or failed usage fields in either
+snapshot stage leave the usage card in place while counts and connection status
+continue to update. A confirmed new account, sign-out, authentication mode or
+server change clears those numbers; an unprovable identity does not reuse old
+quota and shows an unconfirmed card until a fresh read succeeds. A confirmed
+zero or a confirmed response with no usage replaces the old value.
 Status buttons classify the loaded index locally, so switching or collapsing
 them cannot clear counts, reorder data, or start a request. Pagination reads
 stored history only. One in-flight enrichment is shared across reopen/refresh
@@ -87,10 +95,10 @@ generations, and its cached result is projected onto the latest selected panel
 and page. An enrichment failure leaves the structural view visible. Swift does
 not issue App Server runtime probes itself.
 
-Slow details show an updating notice, separately from a failed observation.
-The native menu retains known values and shows their oldest observation time
-when available. Identical ongoing usage, account, and runtime reads are shared
-across snapshots; runtime observations hold one of eight shared slots until
+Slow or failed details show a compact status icon beside the last-check time;
+its explanation is available from the icon. The usage card shows its own last
+confirmed check time. Identical ongoing usage, account, and runtime reads are
+shared across snapshots; runtime observations hold one of eight shared slots until
 their actual read settles, including any follow-up process query. Valid late
 results update the cache and emit an `enrichment` invalidation. That invalidation
 is retained for the next explicit Dashboard read; it does not refresh a visible

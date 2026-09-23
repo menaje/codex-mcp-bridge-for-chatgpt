@@ -1502,7 +1502,9 @@ createInterface({input:process.stdin}).on("line", line => {
     });
     unlinkSync(invocationFile);
     const progress = await supervisor.codexRuntime({ action: "status", includeAccount: false });
-    expect(progress.account).toMatchObject({ authMode: "chatgpt", authenticated: true });
+    // This fixture has no auth.json identity. A structural status read must
+    // avoid reusing numbers from an account whose current identity is unknown.
+    expect(progress.account).toBeNull();
     expect(() => readFileSync(invocationFile)).toThrow();
   });
 

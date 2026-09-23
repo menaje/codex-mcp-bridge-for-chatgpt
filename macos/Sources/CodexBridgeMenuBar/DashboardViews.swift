@@ -342,19 +342,6 @@ struct DashboardPopoverView: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
                 }
-                if let error = model.dashboardErrorMessage {
-                    Label(
-                        BridgeAppLocalization.format(
-                            "macos.couldnotrefreshthelateststatus",
-                            locale: model.interfaceLocale,
-                            error
-                        ),
-                        systemImage: "clock.badge.exclamationmark"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .textSelection(.enabled)
-                }
                 if let error = model.runtimeErrorMessage {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
@@ -381,7 +368,11 @@ struct DashboardPopoverView: View {
                         CodexMenuAccountView(account: account, fallbackWeekly: dashboard.weeklyUsage)
                     } else if let usage = dashboard.weeklyUsage {
                         WeeklyUsageView(usage: usage)
+                    } else {
+                        UsageUnconfirmedView(loginRequired: false)
                     }
+                } else {
+                    UsageUnconfirmedView(loginRequired: true)
                 }
                 DashboardSummary(counts: dashboard.counts)
                 dashboardBackgroundStatus(dashboard)
@@ -521,33 +512,29 @@ struct DashboardPopoverView: View {
         HStack {
             Text("macos.lastchecked")
             Spacer()
+            if let error = model.dashboardErrorMessage {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .foregroundStyle(.orange)
+                    .help(BridgeAppLocalization.format(
+                        "macos.couldnotrefreshthelateststatus", locale: model.interfaceLocale, error
+                    ))
+                    .accessibilityLabel(BridgeAppLocalization.format(
+                        "macos.couldnotrefreshthelateststatus", locale: model.interfaceLocale, error
+                    ))
+            } else if model.dashboardEnrichmentFailed || dashboard.enrichment?.hasFailures == true {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .foregroundStyle(.orange)
+                    .help(Text("common.detailsRefreshFailed"))
+                    .accessibilityLabel(Text("common.detailsRefreshFailed"))
+            } else if model.dashboardEnrichmentPending || dashboard.enrichment?.isUpdating == true {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .help(Text("macos.updatingadditionaldetailsconfirmedinformationisshownas"))
+                    .accessibilityLabel(Text("macos.updatingadditionaldetailsconfirmedinformationisshownas"))
+            }
             Text(DisplayFormat.dateTime(dashboard.generatedAt, locale: model.interfaceLocale))
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
-
-        if model.dashboardEnrichmentFailed || dashboard.enrichment?.hasFailures == true {
-            Label(
-                "common.detailsRefreshFailed",
-                systemImage: "clock.badge.exclamationmark"
-            )
-            .font(.caption)
-            .foregroundStyle(.orange)
-        } else if model.dashboardEnrichmentPending || dashboard.enrichment?.isUpdating == true {
-            Label("macos.updatingadditionaldetailsconfirmedinformationisshownas", systemImage: "arrow.triangle.2.circlepath")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        if (model.dashboardEnrichmentFailed || model.dashboardEnrichmentPending),
-           let observed = model.dashboardObservationDate {
-            Text(BridgeAppLocalization.format(
-                "macos.detailsobserved",
-                locale: model.interfaceLocale,
-                observed.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(model.interfaceLocale))
-            ))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
     }
 
     private var authenticationNotice: String {
@@ -918,6 +905,23 @@ struct DashboardPopoverView: View {
     }
 }
 
+private struct UsageUnconfirmedView: View {
+    let loginRequired: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("macos.weeklyusage").font(.subheadline.weight(.semibold))
+            Text(loginRequired ? "macos.loginrequired" : "macos.usageunconfirmed")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .combine)
+    }
+}
+
 private struct WeeklyUsageView: View {
     @Environment(\.locale) private var locale
     let usage: WeeklyUsage
@@ -969,7 +973,8 @@ private struct CodexMenuAccountView: View {
     let fallbackWeekly: WeeklyUsage?
 
     var body: some View {
-        if account.authMode == "chatgpt", let weekly = account.weeklyUsage ?? fallbackWeekly {
+        if account.authMode == "chatgpt",
+           let weekly = account.weeklyUsage ?? (account.usageStatus == "none" ? nil : fallbackWeekly) {
             WeeklyUsageView(usage: weekly, account: account)
         } else {
             VStack(alignment: .leading, spacing: 6) {

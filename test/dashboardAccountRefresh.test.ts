@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { CodexService } from "../src/codexService.js";
-import { projectCodexAccount } from "../src/codexAccount.js";
+import { projectCodexAccount, type CodexAccountSnapshot } from "../src/codexAccount.js";
 import { createBridgeMcpServer } from "../src/server.js";
 import type {
   BridgeReadProjectionService,
@@ -36,12 +36,18 @@ describe("Dashboard account refresh presentation", () => {
     const config = loadConfig(environment);
     const service = new CodexService(environment);
     config.codexService = service;
+    const codexHome = path.join(root, ".codex");
+    await mkdir(codexHome);
+    const authFile = path.join(codexHome, "auth.json");
+    await writeFile(authFile, JSON.stringify({
+      auth_mode: "chatgpt", tokens: { account_id: "fixture-account", access_token: "one" }
+    }));
     const structuralSnapshot = vi.fn(async () => structuralDashboard());
     const readProjection = {
       dashboardSnapshot: structuralSnapshot,
       dashboardHistoryDetail: vi.fn(),
-      dashboardRuntimePlan: vi.fn(),
-      dashboardSnapshotWithEnrichment: vi.fn(),
+      dashboardRuntimePlan: vi.fn(async () => ({ candidates: [] })),
+      dashboardSnapshotWithEnrichment: vi.fn(async () => structuralDashboard()),
       settingsSnapshot: vi.fn()
     } as unknown as BridgeReadProjectionService;
     const upstream = {
@@ -63,11 +69,18 @@ describe("Dashboard account refresh presentation", () => {
       readProjection
     );
     try {
-      const account = {
-        ...projectCodexAccount({ account: { type: "chatgpt", email: "fixture@example.com" } }, null),
-        observedAt: Date.now() - 60 * 60_000
-      };
-      vi.spyOn(service, "readCliAccount").mockResolvedValue(account);
+      const observedAt = Date.now() - 60 * 60_000;
+      const account = projectCodexAccount(
+        { account: { type: "chatgpt", email: "fixture@example.com", planType: "plus" } },
+        { rateLimitsByLimitId: { codex: { primary: { usedPercent: 40, windowDurationMins: 10080 } } } },
+        observedAt
+      );
+      const partial = projectCodexAccount(
+        { account: { type: "chatgpt", email: "fixture@example.com", planType: "plus" } },
+        null,
+        Date.now()
+      );
+      vi.spyOn(service, "readCliAccount").mockResolvedValueOnce(account).mockResolvedValueOnce(partial);
       await expect(service.readAccount("app-server")).resolves.toEqual(account);
 
       const retained = await server.applicationService.dashboardSnapshot({
@@ -77,20 +90,31 @@ describe("Dashboard account refresh presentation", () => {
       expect(structuralSnapshot).toHaveBeenCalledOnce();
       expect(readProjection.dashboardRuntimePlan).not.toHaveBeenCalled();
       expect(retained.codexAccount).toEqual(account);
+      expect(retained.usageContext).toBe(service.accountDisplayContext());
       expect(retained.enrichment.oldestObservationAt).toBe(
-        new Date(account.observedAt).toISOString()
+        new Date(account.usageObservedAt!).toISOString()
       );
 
-      const codexHome = path.join(root, ".codex");
-      await mkdir(codexHome);
-      await writeFile(path.join(codexHome, "auth.json"), JSON.stringify({
-        auth_mode: "chatgpt",
-        tokens: { account_id: "replacement-account" }
+      await writeFile(authFile, JSON.stringify({
+        auth_mode: "chatgpt", tokens: { account_id: "fixture-account", access_token: "two" }
+      }));
+      const refreshed = await server.applicationService.dashboardSnapshot({ inspectRuntime: true });
+      expect(refreshed.usageContext).toBe(retained.usageContext);
+      expect(refreshed.codexAccount).toMatchObject({
+        planType: "plus", usageStatus: "unavailable", usageObservedAt: observedAt
+      });
+      expect((refreshed.codexAccount as unknown as CodexAccountSnapshot).windows[0].remainingPercent).toBe(60);
+      expect(refreshed.enrichment.usageUnavailable).toBe(true);
+      expect(refreshed.enrichment.oldestObservationAt).toBe(new Date(observedAt).toISOString());
+
+      await writeFile(authFile, JSON.stringify({
+        auth_mode: "chatgpt", tokens: { account_id: "replacement-account" }
       }));
       const changedContext = await server.applicationService.dashboardSnapshot({
         inspectRuntime: false
       });
       expect(changedContext.codexAccount).toBeNull();
+      expect(changedContext.usageContext).not.toBe(retained.usageContext);
     } finally {
       await server.close();
     }
