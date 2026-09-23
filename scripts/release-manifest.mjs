@@ -139,7 +139,7 @@ const STATE_MIGRATION_DEFINITIONS = [
   [24, 25, "migrateV24ToV25", "b763dba44d802483e4aad16fad9cc8df478b26a7", [
     ["src/operationalCommandReceipt.ts", "V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA"]
   ]],
-  [25, 26, "migrateV25ToV26", "950d1f436b2e13cc2727f7077e585f169fafcc6a", [
+  [25, 26, "migrateV25ToV26", "f38129dcd64c4b90acc18e01416b7a2d210acf89", [
     ["src/stateSchema.ts", "V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA"]
   ]]
 ];
