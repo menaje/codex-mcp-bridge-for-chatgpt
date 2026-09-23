@@ -55,14 +55,14 @@ export class CodexService {
     this.billing = new CodexBilling(this.cli.root);
   }
   async acquireContext(): Promise<ResolvedCodexContext> {
-    const { selection, release } = await this.cli.acquire();
+    const { selection, fingerprint, release } = await this.cli.acquire();
     try {
       return {
         selection,
         environment: codexProcessEnvironment(this.environment),
         runtimeHome: this.cli.root,
         managementCwd: stableCodexWorkingDirectory(this.environment),
-        fingerprint: this.cli.appliedContextFingerprint(),
+        fingerprint,
         authenticationIdentity: this.authenticationIdentity(),
         release
       };
@@ -86,7 +86,9 @@ export class CodexService {
     if (saved?.visible !== visible) this.writeRecord("policy", "visibility", { visible });
   }
   private appVisibility(): boolean { return this.visibility?.() ?? this.readRecord("policy", "visibility")?.visible === true; }
-  modelRevision(): string { return digest(this.cacheRevision() + JSON.stringify([...this.accountIdentities])); }
+  modelRevision(contextFingerprint?: string): string {
+    return digest(this.cacheRevision(contextFingerprint) + JSON.stringify([...this.accountIdentities]));
+  }
   authenticationIdentity(home?: string): string {
     const directory = home || this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
     try {
@@ -118,7 +120,7 @@ export class CodexService {
       identity = current;
     };
   }
-  cacheRevision(): string {
+  cacheRevision(contextFingerprint?: string): string {
     const shared = this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
     const files = ["auth.json", "config.toml"].map(name => path.join(shared, name));
     const values = files.map(file => {
@@ -128,7 +130,7 @@ export class CodexService {
     // Cache inputs follow the manager's effective command and native binary,
     // including explicit aliases, npm launchers and symlink replacement.
     return digest(JSON.stringify([
-      this.cli.appliedContextFingerprint(), shared, this.appVisibility(), ...values,
+      contextFingerprint ?? this.cli.appliedContextFingerprint(), shared, this.appVisibility(), ...values,
       this.environment.OPENAI_API_KEY, this.environment.CODEX_API_KEY,
       ...["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
         "CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "SSL_CERT_DIR", "SSL_CERT_FILE"].map(name => this.environment[name])

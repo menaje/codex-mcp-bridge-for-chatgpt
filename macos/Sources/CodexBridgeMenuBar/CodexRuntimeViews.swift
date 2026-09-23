@@ -80,6 +80,17 @@ struct CodexRuntimeSettingsPane: View {
                     }
                     if runtime.environmentPending == true || (runtime.configuredCommand == nil && (runtime.operation?.phase == "pending" || runtime.pendingSelection != nil)) {
                         Section("macos.waitingtoapply") {
+                        if runtime.environmentPending == true {
+                            if let applied = runtime.appliedEnvironment {
+                                LabeledContent("macos.current", value: environmentDescription(applied))
+                            }
+                            if let running = runtime.runningEnvironment {
+                                LabeledContent("macos.running", value: environmentDescription(running))
+                            }
+                            if let requested = runtime.requestedEnvironment {
+                                LabeledContent("macos.requested", value: environmentDescription(requested))
+                            }
+                        }
                         Text("macos.thecurrentenvironmentstaysinuserestartthe")
                             .font(.caption)
                         Button("macos.applyafterworkfinishes") {
@@ -227,6 +238,11 @@ struct CodexRuntimeSettingsPane: View {
                 }
             }
         }
+    }
+
+    private func environmentDescription(_ environment: CodexRuntimeEnvironment) -> String {
+        let command = environment.selection?.command ?? environment.configuredCommand ?? "—"
+        return [command, environment.runtimeHome, environment.codexHome].joined(separator: " · ")
     }
 
     private func action(_ action: String) {

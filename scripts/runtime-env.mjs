@@ -38,6 +38,19 @@ export const CODEX_CHILD_ENV_KEYS = Object.freeze([
   "CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "SSL_CERT_DIR", "SSL_CERT_FILE"
 ]);
 
+export const CODEX_APPLIED_ENV_KEYS = Object.freeze([
+  "HOME", "PATH", "USER", "LOGNAME", "SHELL", "TMPDIR", ...CODEX_CHILD_ENV_KEYS
+]);
+
+/** The launcher's private status retains only the Codex child environment it applied. */
+export function codexAppliedEnvironment(environment) {
+  const applied = {};
+  for (const name of CODEX_APPLIED_ENV_KEYS) {
+    if (typeof environment[name] === "string") applied[name] = environment[name];
+  }
+  return applied;
+}
+
 /**
  * Process values win over private-file values, including across the current
  * and legacy command names. A legacy command is normalized to the current

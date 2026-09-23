@@ -657,12 +657,15 @@ export function createModelCatalog(
       }
     };
   }
-  return new ContextualModelCatalog(config.defaultBackend, () => service.modelRevision(), () => {
+  return new ContextualModelCatalog(config.defaultBackend, () => service.modelRevision(), revision => {
     const cliCatalog = new CodexCliModelCatalog(
       async () => {
         const context = await service.acquireContext();
+        const acquiredRevision = service.modelRevision(context.fingerprint);
         return { command: context.selection.command, environment: context.environment,
-          cwd: context.managementCwd, release: context.release };
+          cwd: context.managementCwd, release: context.release,
+          cacheContext: acquiredRevision,
+          isContextCurrent: () => service.modelRevision() === acquiredRevision };
       },
       config.modelCatalogCacheTtlMs,
       config.modelCatalogTimeoutMs,
@@ -674,14 +677,16 @@ export function createModelCatalog(
       })).stdout,
       undefined,
       config.modelCatalogStateFile,
-      service.cacheRevision()
+      revision
     );
     if (!upstream.listModels) return cliCatalog;
     return new BackendAwareModelCatalog(
       config.defaultBackend,
       cliCatalog,
       () => upstream.listModels?.("app-server") as Promise<unknown>,
-      config.modelCatalogCacheTtlMs
+      config.modelCatalogCacheTtlMs,
+      undefined,
+      () => service.modelRevision() === revision
     );
   }, kind => service.readAccount(kind));
 }

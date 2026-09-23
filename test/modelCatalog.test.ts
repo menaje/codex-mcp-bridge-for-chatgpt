@@ -1,4 +1,4 @@
-import { mkdtempSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -325,7 +325,8 @@ describe("Codex model catalog", () => {
     const stateFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-context-models-")), "models.json");
     let now = Date.parse("2026-08-21T00:00:00.000Z");
     const catalog = (context: string, load: () => Promise<string>) => new CodexCliModelCatalog(
-      async () => "selected-codex", 1000, 5000,
+      async () => ({ command: "selected-codex", cacheContext: context,
+        isContextCurrent: () => true, release: async () => undefined }), 1000, 5000,
       async () => load(), () => now, stateFile, context
     );
     await catalog("selected-account-a", async () => catalogJson).getCatalog();
@@ -334,6 +335,37 @@ describe("Codex model catalog", () => {
     await expect(catalog("selected-account-b", offline).getCatalog()).rejects.toThrow("offline after restart");
     const restored = await catalog("selected-account-a", offline).getCatalog();
     expect(restored).toMatchObject({ cached: true, stale: true, source: "codex-cli" });
+    expect(restored.models[0]?.id).toBe("gpt-current");
+  });
+
+  it("never stores a model result under a context that changed during acquisition or execution", async () => {
+    const stateFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-context-race-")), "models.json");
+    const otherJson = catalogJson.replace('"gpt-current"', '"gpt-other"');
+    let activeContext = "A";
+    let commands = 0;
+    const catalog = (acquiredContext: () => string, run: () => Promise<string>) => new CodexCliModelCatalog(
+      async () => ({ command: "selected-codex", cacheContext: acquiredContext(),
+        isContextCurrent: () => activeContext === acquiredContext(), release: async () => undefined }),
+      60_000, 5000, async () => { commands++; return run(); }, Date.now, stateFile, "A"
+    );
+
+    await catalog(() => "A", async () => catalogJson).getCatalog();
+    const savedA = readFileSync(stateFile, "utf8");
+    activeContext = "B";
+    await expect(catalog(() => "B", async () => otherJson).getCatalog({ refresh: true }))
+      .rejects.toThrow("CODEX_ACCOUNT_CHANGED");
+    expect(commands).toBe(1);
+
+    activeContext = "A";
+    await expect(catalog(() => "A", async () => {
+      activeContext = "B";
+      return otherJson;
+    }).getCatalog({ refresh: true })).rejects.toThrow("CODEX_ACCOUNT_CHANGED");
+    expect(readFileSync(stateFile, "utf8")).toBe(savedA);
+
+    activeContext = "A";
+    const restored = await catalog(() => "A", async () => { throw new Error("should not fetch"); }).getCatalog();
+    expect(restored).toMatchObject({ cached: true, stale: false, validation: "valid" });
     expect(restored.models[0]?.id).toBe("gpt-current");
   });
 
@@ -493,6 +525,17 @@ describe("Codex model catalog", () => {
       stale: true,
       warning: expect.stringContaining("refresh failed")
     });
+  });
+
+  it("does not retain a late App Server model list after its context changes", async () => {
+    let current = true;
+    const app = new BackendAwareModelCatalog(
+      "app-server", { getCatalog: async () => snapshot("codex-cli", "fallback") },
+      async () => { current = false; return appPayload("other context"); },
+      60_000, Date.now, () => current
+    );
+    await expect(app.getCatalog({ refresh: true })).rejects.toThrow("CODEX_ACCOUNT_CHANGED");
+    expect(app.getCachedCatalog()).toBeUndefined();
   });
 
   it("emits backend-aware changes once and preserves the app last-known-good on failure", async () => {
