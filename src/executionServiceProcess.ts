@@ -42,6 +42,8 @@ const PROTOCOL_VERSION = 3 as const;
 const HEARTBEAT_MS = 250;
 const HEARTBEAT_STALE_MS = 2_000;
 const STALE_RESTART_MS = 10_000;
+const WATCHDOG_INTERVAL_MS = 1_000;
+const WATCHDOG_PAUSE_THRESHOLD_MS = 3_000;
 const STARTUP_TIMEOUT_MS = 20_000;
 const FORCE_CLOSE_MS = 5_000;
 const WORKER_REGISTRATION_TIMEOUT_MS = 5_000;
@@ -349,9 +351,12 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   private workerObservationTimer?: NodeJS.Timeout;
   private stableTimer?: NodeJS.Timeout;
   private staleTimer?: NodeJS.Timeout;
+  private lastWatchdogTickAt?: number;
+  private watchdogResumeGraceUntil = 0;
   private closePromise?: Promise<void>;
   private workerCleanupPromise: Promise<boolean> = Promise.resolve(true);
   private workerObservationInFlight = false;
+  private readonly supervisionKillReasons = new WeakMap<ChildProcess, string>();
   private readonly workerCleanupsInFlight = new Set<string>();
   private stderr = "";
   private readonly requestLimits: CodexExecutionRequestLimits;
@@ -770,8 +775,10 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
         this.onExit(child, error);
       });
       child.once("exit", (code, signal) => {
+        const supervisionReason = this.supervisionKillReasons.get(child);
         const error = new Error(
           `EXECUTION_PROCESS_EXITED: code=${code}, signal=${signal}.` +
+          (supervisionReason ? ` supervisor=${supervisionReason}.` : "") +
           (this.stderr ? ` ${this.stderr}` : "")
         );
         finish(error);
@@ -945,7 +952,9 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     } catch {
       // A worker that cannot be independently observed is never admitted. The
       // executor exit path retains the root identity and performs cleanup.
-      if (this.child === child && this.generation === generation) child.kill("SIGKILL");
+      if (this.child === child && this.generation === generation) {
+        this.killForSupervision(child, "worker-registration-failed");
+      }
       return;
     }
     if (this.child !== child || this.generation !== generation || !child.connected) return;
@@ -986,7 +995,9 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
         // Losing the independent process-tree view invalidates the no-orphan
         // guarantee. Stop this executor generation and keep admission fenced
         // until retained identities can be verified and cleaned.
-        if (this.workerProcesses.size > 0 && this.child === child) child?.kill("SIGKILL");
+        if (this.workerProcesses.size > 0 && this.child === child && child) {
+          this.killForSupervision(child, "worker-observation-failed");
+        }
       })
       .finally(() => { this.workerObservationInFlight = false; });
   }
@@ -1035,13 +1046,34 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       WORKER_TREE_OBSERVATION_MS
     );
     this.workerObservationTimer.unref();
+    this.lastWatchdogTickAt = Date.now();
     this.staleTimer = setInterval(() => {
+      const now = Date.now();
+      const previousTickAt = this.lastWatchdogTickAt;
+      this.lastWatchdogTickAt = now;
+      if (previousTickAt !== undefined && now < previousTickAt) {
+        this.watchdogResumeGraceUntil = 0;
+      } else if (previousTickAt !== undefined &&
+          now - previousTickAt > WATCHDOG_PAUSE_THRESHOLD_MS) {
+        // A system sleep or owner event-loop pause makes the child's wall-clock
+        // heartbeat appear stale before its own timers can run again. Give the
+        // existing generation a bounded chance to report after both resume.
+        this.watchdogResumeGraceUntil = now + STALE_RESTART_MS;
+      }
+      if (now < this.watchdogResumeGraceUntil) return;
       const child = this.child;
-      if (!child || this.health().heartbeatAgeMs === undefined) return;
-      if ((this.health().heartbeatAgeMs as number) < STALE_RESTART_MS) return;
-      child.kill("SIGKILL");
-    }, 1_000);
+      const heartbeatAgeMs = this.health(now).heartbeatAgeMs;
+      if (!child || heartbeatAgeMs === undefined || heartbeatAgeMs < STALE_RESTART_MS) return;
+      this.killForSupervision(child, "heartbeat-stale");
+    }, WATCHDOG_INTERVAL_MS);
     this.staleTimer.unref();
+  }
+
+  private killForSupervision(child: ChildProcess, reason: string): void {
+    if (!this.supervisionKillReasons.has(child)) {
+      this.supervisionKillReasons.set(child, reason);
+    }
+    child.kill("SIGKILL");
   }
 
   private async closeInternal(): Promise<void> {

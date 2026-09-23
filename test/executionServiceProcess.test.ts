@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ChildProcessCodexExecutionService,
   type CodexExecutionRequestLimits
@@ -57,6 +57,36 @@ describe("isolated Codex execution process", () => {
       expect(service.canSteerThread(assignment!.threadId!)).toBe(false);
       expect(service.canResumeThread(assignment!.threadId!)).toBe(true);
     } finally {
+      await service.close();
+    }
+  }, 20_000);
+
+  it("retains a running executor across a parent wall-clock jump", async () => {
+    const service = await createService();
+    let assignment: UpstreamWorkerAssignment | undefined;
+    const realNow = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, "now");
+    try {
+      const running = service.callTool(
+        "codex",
+        task("hold for steering"),
+        undefined,
+        value => { assignment = value; }
+      );
+      await eventually(() => Boolean(assignment?.threadId));
+      const executorPid = service.processId;
+      clock.mockImplementation(() => realNow() + 30_000);
+      await new Promise(resolve => setTimeout(resolve, 1_500));
+      clock.mockRestore();
+      await eventually(() => service.health().status === "ready");
+      expect(service.processId).toBe(executorPid);
+      await expect(service.steerThread(assignment!.threadId!, "resume after pause"))
+        .resolves.toMatchObject({ turnId: assignment!.upstreamRequestId });
+      await expect(running).resolves.toMatchObject({
+        content: [{ text: "STEERED:resume after pause" }]
+      });
+    } finally {
+      clock.mockRestore();
       await service.close();
     }
   }, 20_000);

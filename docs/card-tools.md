@@ -103,8 +103,11 @@ After every non-terminal return, GPT inspects the supplied exact-Job input actio
 before waiting again. After the terminal result, GPT may continue only work
 already approved by the user and must stop at a new approval or input boundary.
 Codex execution remains independent if navigation, backgrounding, screen lock,
-or connection loss ends the GPT wait, but automatic continuation through those
-host states is not a claimed capability.
+or connection loss ends the GPT wait. Automatic continuation is host-dependent,
+not guaranteed for every such state. The 2026-09-23 [#154 host audit](audits/2026-09-22-issue-154-direct-result-receiving.md)
+observed ordered continuation through one screen lock and one short macOS
+Clamshell Sleep in ChatGPT Work's in-app browser; it did not test the separate
+native ChatGPT app, a terminated GPT run, or whole-device network loss.
 
 A bounded wait timeout is not the end of a GPT run: while the run is active, it
 repeats the exact Job wait. If the host ends the GPT run itself, the Bridge does

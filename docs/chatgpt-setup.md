@@ -156,6 +156,17 @@ seconds) limits that read only; it is not a Codex execution deadline. Manual
 recovery cannot bypass conversation-scope checks and does not authorize a new
 follow-up Job by itself.
 
+Host support is empirical, not a promise that macOS or ChatGPT keeps every run
+alive. On 2026-09-23, the tested ChatGPT Work in-app browser and signed Bridge
+build completed an already-approved second Job while this Mac's screen was
+locked, and completed one ordered two-Job workflow after a short Clamshell
+Sleep. The original conversation was not reopened to start the second Job.
+This does **not** validate the separate native ChatGPT app, long or repeated
+sleep, whole-device network loss, or a GPT run that the host has actually
+ended. In that last case, use the retained exact Job's manual recovery above;
+the direct route does not send an automatic live-card fallback. The observed
+times and build are in the [#154 audit](audits/2026-09-22-issue-154-direct-result-receiving.md).
+
 ## 6. Cards and questions
 
 The active immutable cards are:

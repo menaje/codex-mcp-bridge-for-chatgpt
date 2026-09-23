@@ -4,6 +4,8 @@ import { decodeUtf8Strict } from "./textIntegrity.js";
 
 const PROCESS_TABLE_MAX_BYTES = 4 * 1024 * 1024;
 const PROCESS_TABLE_TIMEOUT_MS = 1_000;
+const PROCESS_TABLE_LATE_TIMER_TOLERANCE_MS = 250;
+const PROCESS_TABLE_RESUME_GRACE_MS = 5_000;
 const PROCESS_EXIT_POLL_MS = 25;
 const MAX_SUPERVISED_PROCESSES_PER_TREE = 4_096;
 
@@ -307,7 +309,8 @@ function signalPid(pid: number, signal: NodeJS.Signals): void {
   }
 }
 
-function readProcessTable(): Promise<ProcessTableEntry[]> {
+/** @internal Exported for the suspend/resume regression of the live probe. */
+export function readProcessTable(): Promise<ProcessTableEntry[]> {
   return new Promise((resolve, reject) => {
     const child = spawn("/bin/ps", ["-axo", "pid=,ppid=,pgid=,stat="], {
       stdio: ["ignore", "pipe", "pipe"]
@@ -316,10 +319,22 @@ function readProcessTable(): Promise<ProcessTableEntry[]> {
     const stderr: Buffer[] = [];
     let outputBytes = 0;
     let timedOut = false;
-    const timeout = setTimeout(() => {
+    let expectedTimeoutAt = Date.now() + PROCESS_TABLE_TIMEOUT_MS;
+    let timeout: NodeJS.Timeout;
+    const onTimeout = () => {
+      if (Date.now() - expectedTimeoutAt > PROCESS_TABLE_LATE_TIMER_TOLERANCE_MS) {
+        // /bin/ps and its supervisor can both be suspended with the machine.
+        // A late timer firing on wake is not proof that process observation
+        // failed. Give this same bounded probe a short post-resume interval.
+        expectedTimeoutAt = Date.now() + PROCESS_TABLE_RESUME_GRACE_MS;
+        timeout = setTimeout(onTimeout, PROCESS_TABLE_RESUME_GRACE_MS);
+        timeout.unref();
+        return;
+      }
       timedOut = true;
       child.kill("SIGKILL");
-    }, PROCESS_TABLE_TIMEOUT_MS);
+    };
+    timeout = setTimeout(onTimeout, PROCESS_TABLE_TIMEOUT_MS);
     timeout.unref();
     const capture = (target: Buffer[], chunk: Buffer): void => {
       outputBytes += chunk.length;
