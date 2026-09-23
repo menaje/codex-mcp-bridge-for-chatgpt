@@ -26,9 +26,10 @@ user-input 경계에서는 자동 진행을 중단한다. terminal 결과를 받
 동일 대화, 대화 전환, 숨긴 브라우저, 테스트 탭 연결 유실·복구, terminal 결과
 중복 조회를 통과했다. 최초 2026-09-22 시험에서는 사용자 인증이 필요한 실제
 macOS 화면 잠금을 실행하지 않았다. **2026-09-23 추가 시험에서는 사용자와
-함께 화면 잠금 및 짧은 Clamshell Sleep을 구분해 통과했다.** 결과와 한계는
-문서 끝의 시간순 원증거를 따른다. native ChatGPT 앱 전면/백그라운드와 Mac
-전체 네트워크 단절까지 포함한 전 행렬 완료를 주장하지 않는다.
+함께 화면 잠금 및 짧은 Clamshell Sleep을 구분해 통과했고, 별도 데스크톱
+Work task에서는 Finder가 최전면일 때의 연속 실행 및 Tunnel 저하·복구를
+관측했다.** 결과와 한계는 문서 끝의 시간순 원증거를 따른다. GPT 실행 자체의
+종료나 Mac 전체 네트워크 단절까지 보장하지 않는다.
 
 **2026-09-23 후속 검토:** 아래 기존 host 시험 요청문은 exact wait와 카드 금지를
 명시했다. 그 시험만으로는 설정을 켠 평소 요청의 동작이나 Job 2의 원 대화
@@ -401,3 +402,76 @@ DB에서도 신규 Job이 1건뿐임을 독립적으로 확인했다. 따라서 
 첫 Job 종료 뒤 runtime snapshot에서 active Job, pending admission, pending
 interaction, background process가 모두 0건임을 확인하고 development runtime을
 drain 종료했다. 운영 프로필 앱과 기본 OFF 설정의 복원 결과는 별도로 확인한다.
+
+## 2026-09-23 데스크톱 앱 백그라운드와 연결 저하 재시험
+
+같은 서명 설치 빌드 `dc7c70ac0167:226fc3c1ab70`을 운영 DB와 분리된
+development profile(실험 설정 ON)에 다시 연결했다. 전환 전후 active Job,
+pending admission/interaction, background process는 모두 0이었다. 기존
+ChatGPT Work 대화에 앱의 task 전송 경로로 읽기 전용 요청을 보냈다. 시험 중
+Finder 창을 최전면에 두고 원 대화를 다시 열지 않았으며, Finder의 최전면
+상태를 접근성 상태로 확인했다. 이 방식은 **이 Mac의 ChatGPT 데스크톱 호스트가
+다른 앱 뒤에 있을 때 실행한 local Work task**의 증거다. 네이티브 대화 창을
+직접 조작해 화면 표시 자체를 검증한 시험은 아니다.
+
+첫 요청은 실제 셸 `sleep 75` 뒤 이름을 비교하고, 결과 검토 후 별도 Job으로
+버전을 비교하는 두 단계를 미리 승인했다. 요청에는 direct-wait/exact wait/카드
+금지 지시가 없었다.
+
+| 관측 | UTC 시각 | 원증거 |
+| --- | --- | --- |
+| Job A 접수·실제 `sleep 75` 시작 | 03:46:02 / 03:46:08 | DB `f0b90759…`, `app-command-started` |
+| Job A 정상 완료·직접 결과 offer | 03:47:30 | DB `normal-completion`, delivery |
+| Job B 접수·정상 완료 | 03:47:44 / 03:47:50 | DB `5772321b…`, delivery |
+| 원 GPT의 응답 완료 | Job B 완료 후 | 같은 Work 대화의 최종 응답에 두 Job ID와 순서대로 검토한 결과 |
+
+두 Job은 `direct-wait`, 완료 전달 시도 0회, live-card lease 없음이었다.
+시험 전후 신규 Job도 정확히 두 건이다. 따라서 **설정만 켠 일반 요청에서,
+데스크톱 앱이 Finder 뒤에 있는 동안 첫 결과를 받아 후속 Job을 한 번 시작한
+것**을 확인했다. 다만 GPT 응답 자체가 호스트에 의해 종료되는 조건까지
+이 시험으로 보장하지 않는다.
+
+별도 연결 저하 시험은 실제 셸 `sleep 120`을 수행하는 Job A가 실행 중일 때
+설치본의 시험용 Tunnel client 프로세스 하나만 70초간 일시 정지한 뒤 자동
+재개했다. 정지 중 helper는 Bridge `connected=true`, Tunnel
+`phase=degraded`/`connected=false`와 readiness probe 실패를 보고했고,
+Job A는 계속 `running`이었다. Tunnel 재개 후 `connected=true`로 돌아왔다.
+
+| 관측 | UTC 시각 | 원증거 |
+| --- | --- | --- |
+| Job A 접수·실제 `sleep 120` 시작 | 03:49:46 / 03:49:52 | DB `3be281e9…`, `app-command-started` |
+| 시험 Tunnel 정지·재개 | 03:50:24 / 03:51:34 | 대상 PID에 `SIGSTOP`/`SIGCONT`, helper degraded 후 connected |
+| Job A 정상 완료·직접 결과 offer | 03:51:57 | DB `normal-completion`, delivery |
+| Job B 접수·정상 완료 | 03:52:07 / 03:52:12 | DB `90fae988…`, delivery |
+| 원 GPT의 응답 완료 | Job B 완료 후 | 상태 조회 1회 timeout 뒤 **같은 Job ID** 재조회, 결과 검토 후 Job B 시작 보고 |
+
+이 두 Job도 `direct-wait`, 완료 전달 시도 0회, live-card lease 없음이고 시험
+구간의 Job 증가가 정확히 두 건이었다. 이는 **Tunnel 연결 저하 중 실행 생존과
+재연결 뒤 원 GPT의 동일 Job 복구·후속 실행**을 보여준다. 그러나 이 시간대
+`transport_observations`에 `status-wait-aborted` 행은 없었다. 따라서 원 GPT가
+보고한 timeout을 실제 진행 중 MCP 호출의 host abort로 바꾸어 표현하지 않는다.
+Mac 전체 네트워크를 차단하거나 GPT 실행 자체를 강제 종료한 시험도 아니다.
+
+별도의 직접 수신 회귀에서는 실행 중 Job에 대한 status read의 client
+`AbortController`를 실제로 발동하고 `status-wait-aborted` 관측 기록을 확인한
+뒤, 동일 Job identity로 재조회해 원래 Job의 계속 실행·정상 완료와 신규 Job
+미생성을 확인한다. 이 회귀는 실제 ChatGPT host가 abort를 일으켰다는 원증거가
+아니라, 관측 가능한 abort 경계의 결정적 보강 시험이다. 사용자 선택 경계는
+위 실제 Work 시험이, 특권 명령 승인 경계는 별도의 합성 pending-approval
+회귀가 각각 담당한다. 합성 시험은 실제 특권 승인 팝업의 종단 시험으로
+확대하지 않는다.
+
+시험 종료 시 네 Job이 모두 terminal이고 `runtime.snapshot`의 active Job,
+pending admission/interaction, background process가 각각 0임을 확인했다.
+development runtime을 drain 종료하고 시험용 helper를 내린 뒤 설치 메뉴바
+앱을 다시 시작했다. 설치 파일의 빌드 ID는 여전히
+`dc7c70ac0167:226fc3c1ab70`이고 상태 조회 프로세스는 운영
+`state.sqlite`를 열었다. 운영 DB `quick_check=ok`, 실험 설정 OFF,
+helper `running`, Bridge/Tunnel `connected`, `doctorPassed=true`, 운영
+`runtime.snapshot`의 위 네 카운터 0을 확인했다. Finder 시험 창도 닫았다.
+
+후속 회귀 변경본에서 TypeScript 전체 99개 파일·880개 시험을 낮은 병렬도에서
+통과했고, #154 집중 회귀는 선택된 5개와 #126 production Dashboard 브라우저
+9개 시나리오를 통과했다. `npm run build`는 localization·release 검사와
+TypeScript 컴파일까지 통과했고, `npm run macos:check`는 9개 언어의 1,323개
+문자열 검사 및 Swift 206개 시험 통과(환경 의존 선택형 2개 건너뜀)로 끝났다.

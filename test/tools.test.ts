@@ -1298,6 +1298,198 @@ describe("current bridge tool contracts", () => {
     });
   });
 
+  it("keeps a direct-wait Job pending at an unapproved Codex command boundary", async () => {
+    const enabled = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedSettingsRevision: settings.current.settingsRevision,
+        operation: { kind: "patch", settings: { experimentalDirectResultDelivery: true } }
+      },
+      _meta: metadata
+    });
+    expect(enabled.isError, JSON.stringify(enabled)).not.toBe(true);
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const admitted = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        requestId: randomUUID(),
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Wait at a fixture command approval; do not continue automatically.",
+        project: {
+          name: project.name,
+          projectRef: project.projectRef,
+          projectRevision: project.projectRevision
+        },
+        selection
+      },
+      _meta: metadata
+    });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    expect(admitted.structuredContent).toMatchObject({ completionDeliveryPolicy: "direct-wait" });
+    const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+    await hold.started;
+    hold.assign(fixtureThreadId, fixtureTurnId);
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === jobId && job.threadId === fixtureThreadId
+    ));
+
+    const approval: CodexPendingInteraction = {
+      interactionId: "fixture-command-approval",
+      kind: "command-approval",
+      origin: "app-approval",
+      isBlocking: true,
+      threadId: fixtureThreadId,
+      turnId: fixtureTurnId,
+      itemId: "fixture-command-item",
+      summary: "A fixture command requires the user's approval."
+    };
+    hold.progress({
+      progress: 1,
+      event: {
+        eventId: "fixture-command-approval",
+        type: "approval-required",
+        phase: "updated",
+        createdAt: Date.now(),
+        summary: approval.summary,
+        details: { interaction: approval }
+      }
+    });
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === jobId && job.pendingInteractions.some((input) => input.interactionId === approval.interactionId)
+    ));
+
+    const input = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "input", jobId } },
+      _meta: metadata
+    });
+    expect(input.isError, JSON.stringify(input)).not.toBe(true);
+    expect(input.structuredContent).toMatchObject({
+      kind: "codex-input",
+      active: true,
+      questions: [],
+      approvals: [{ kind: "command-approval", isBlocking: true, reason: "approval-path-required" }]
+    });
+    const wait = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 1 } },
+      _meta: metadata
+    });
+    expect(wait.isError, JSON.stringify(wait)).not.toBe(true);
+    expect(wait.structuredContent).toMatchObject({
+      kind: "job",
+      items: [expect.objectContaining({
+        id: jobId,
+        state: "running",
+        completionDeliveryPolicy: "direct-wait",
+        wait: expect.objectContaining({ timedOut: true })
+      })]
+    });
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.interactionResponses).toEqual([]);
+    expect(state.listJobs().filter((job) => job.jobId === jobId)).toHaveLength(1);
+
+    hold.release();
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === jobId && job.status === "completed"
+    ));
+  });
+
+  it("recovers a direct-wait Job by exact identity after the host aborts a status read", async () => {
+    const enabled = await client.callTool({
+      name: "codex_update_settings",
+      arguments: {
+        expectedSettingsRevision: settings.current.settingsRevision,
+        operation: { kind: "patch", settings: { experimentalDirectResultDelivery: true } }
+      },
+      _meta: metadata
+    });
+    expect(enabled.isError, JSON.stringify(enabled)).not.toBe(true);
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const admitted = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        requestId: randomUUID(),
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Continue after a fixture host read abort.",
+        project: {
+          name: project.name,
+          projectRef: project.projectRef,
+          projectRevision: project.projectRevision
+        },
+        selection
+      },
+      _meta: metadata
+    });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    expect(admitted.structuredContent).toMatchObject({ completionDeliveryPolicy: "direct-wait" });
+    const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+    await hold.started;
+    try {
+      const projectRevisionReads = vi.spyOn(state, "getProjectRegistryRevision");
+      projectRevisionReads.mockClear();
+      const controller = new AbortController();
+      const waiting = client.callTool({
+        name: "codex_status",
+        arguments: { query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 5_000 } },
+        _meta: metadata
+      }, { signal: controller.signal });
+      await eventually(() => projectRevisionReads.mock.calls.length > 0);
+      controller.abort();
+      await expect(waiting).rejects.toThrow();
+      await eventually(() => state.listTransportObservations("status-wait-aborted")
+        .some((observation) => observation.jobId === jobId));
+      expect(state.listTransportObservations("status-wait-aborted")).toContainEqual(
+        expect.objectContaining({
+          jobId,
+          toolName: "codex_status",
+          reasonCode: "host-aborted-read-wait"
+        })
+      );
+
+      const recovered = await client.callTool({
+        name: "codex_status",
+        arguments: { query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 1 } },
+        _meta: metadata
+      });
+      expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
+      expect(recovered.structuredContent).toMatchObject({
+        kind: "job",
+        items: [expect.objectContaining({
+          id: jobId,
+          state: "running",
+          completionDeliveryPolicy: "direct-wait",
+          wait: expect.objectContaining({ timedOut: true })
+        })]
+      });
+      expect(state.listJobs().filter((job) => job.jobId === jobId)).toHaveLength(1);
+      expect(state.listJobs().find((job) => job.jobId === jobId)?.cancelRequestedAt).toBeUndefined();
+      expect(upstream.calls).toHaveLength(1);
+    } finally {
+      hold.release();
+      await eventually(() => state.listJobs().some((job) =>
+        job.jobId === jobId && job.status === "completed"
+      ));
+    }
+    const terminal = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "job", id: jobId, waitFor: "terminal", waitMs: 1 } },
+      _meta: metadata
+    });
+    expect(terminal.structuredContent).toMatchObject({
+      kind: "job",
+      items: [expect.objectContaining({ id: jobId, state: "completed", completionDeliveryPolicy: "direct-wait" })]
+    });
+  });
+
   it("returns durable admission immediately while the admitted Job runs for more than one minute", async () => {
     const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
     const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
