@@ -192,7 +192,13 @@ if (args[0] === "init") {
   appendFileSync(initializationLog, "init\\n");
   process.exit(0);
 }
-if (args[0] === "doctor") process.exit(0);
+if (args[0] === "doctor") {
+  if (process.env.CONTROL_PLANE_API_KEY !== "sk-launcher-test-1234567890123456") {
+    console.error("Missing control-plane API key in Tunnel child environment.");
+    process.exit(2);
+  }
+  process.exit(0);
+}
 if (args[0] === "health") {
   try {
     if (!existsSync(controlPlaneReadyFile)) process.exit(1);
