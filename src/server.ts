@@ -644,29 +644,46 @@ function logMcpError(prefix: string, error: unknown): void {
 
 export function createModelCatalog(
   config: BridgeConfig,
-  upstream: CodexUpstream,
-  environment?: NodeJS.ProcessEnv
+  upstream: CodexUpstream
 ): CodexModelCatalogProvider {
-  if (config.codexService) {
-    const service = config.codexService;
-    return new ContextualModelCatalog(config.defaultBackend, () => service.modelRevision(), () =>
-      createModelCatalog({ ...config, codexService: undefined }, upstream, service.environment), kind => service.readAccount(kind));
+  const service = config.codexService;
+  if (!service) {
+    // Read-only projections construct the MCP tool registry without starting
+    // an execution runtime. Keep those structural reads available, but never
+    // let a model request fall back to a command found on this process's PATH.
+    return {
+      getCatalog: async () => {
+        throw new Error("CODEX_CONTEXT_REQUIRED: Initialize the execution runtime before reading the operational model catalog.");
+      }
+    };
   }
-  const cliCatalog = new CodexCliModelCatalog(
-    config.codexCommandResolver || config.codexCommand,
-    config.modelCatalogCacheTtlMs,
-    config.modelCatalogTimeoutMs,
-    environment ? async (command, args, timeoutMs) => (await promisifyCatalog(execCatalogFile)(command, args, { env: environment, timeout: timeoutMs, maxBuffer: 5 * 1024 * 1024 })).stdout : undefined,
-    undefined,
-    config.modelCatalogStateFile
-  );
-  if (!upstream.listModels) return cliCatalog;
-  return new BackendAwareModelCatalog(
-    config.defaultBackend,
-    cliCatalog,
-    () => upstream.listModels?.("app-server") as Promise<unknown>,
-    config.modelCatalogCacheTtlMs
-  );
+  return new ContextualModelCatalog(config.defaultBackend, () => service.modelRevision(), () => {
+    const cliCatalog = new CodexCliModelCatalog(
+      async () => {
+        const context = await service.acquireContext();
+        return { command: context.selection.command, environment: context.environment,
+          cwd: context.managementCwd, release: context.release };
+      },
+      config.modelCatalogCacheTtlMs,
+      config.modelCatalogTimeoutMs,
+      async (command, args, timeoutMs, target) => (await promisifyCatalog(execCatalogFile)(command, args, {
+        env: target?.environment,
+        cwd: target?.cwd,
+        timeout: timeoutMs,
+        maxBuffer: 5 * 1024 * 1024
+      })).stdout,
+      undefined,
+      config.modelCatalogStateFile,
+      service.cacheRevision()
+    );
+    if (!upstream.listModels) return cliCatalog;
+    return new BackendAwareModelCatalog(
+      config.defaultBackend,
+      cliCatalog,
+      () => upstream.listModels?.("app-server") as Promise<unknown>,
+      config.modelCatalogCacheTtlMs
+    );
+  }, kind => service.readAccount(kind));
 }
 
 function isAuthorized(header: string | undefined, config: BridgeConfig): boolean {

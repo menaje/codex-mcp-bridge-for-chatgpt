@@ -30,7 +30,6 @@ export type BridgeConfig = {
   allowedOrigins?: string[];
   codexCommand: string;
   codexService?: import("./codexService.js").CodexService;
-  codexCommandResolver?: () => Promise<string>;
   runtimeStatusResolver?: () => Promise<string[]>;
   defaultBackend: "app-server";
   allowedRoots: string[];

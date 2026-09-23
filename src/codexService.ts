@@ -3,14 +3,24 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, statSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { CodexRuntimeManager } from "./codexRuntime.js";
+import { CodexRuntimeManager, type CliSelection } from "./codexRuntime.js";
 import type { CodexBackendKind } from "./config.js";
 import { JsonRpcProcess } from "./jsonRpcProcess.js";
 import { projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
 import { validateInitializeResponse } from "./runtimeCompatibility.js";
-import { decodeUtf8Strict, parseJsonTextStrict, parseJsonUtf8Strict } from "./textIntegrity.js";
+import { decodeUtf8Strict, parseJsonUtf8Strict } from "./textIntegrity.js";
+import { codexProcessEnvironment } from "../scripts/runtime-env.mjs";
 
 export type CodexSessionPolicy = { contextId?: string; visibleInCodexApp: boolean; persistent: boolean; persistence: "persistent" | "ephemeral"; constraint?: "hidden-persistent-unsupported" };
+export type ResolvedCodexContext = {
+  selection: CliSelection;
+  environment: NodeJS.ProcessEnv;
+  runtimeHome: string;
+  managementCwd: string;
+  fingerprint: string;
+  authenticationIdentity: string;
+  release: () => Promise<void>;
+};
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /**
@@ -41,8 +51,25 @@ export class CodexService {
   private accountFailures = new Map<CodexBackendKind, { revision: string; error: unknown }>();
   private accountReader?: () => Promise<CodexAccountSnapshot | null>;
   constructor(readonly environment: NodeJS.ProcessEnv = process.env, cli?: CodexRuntimeManager) {
-    this.cli = cli || new CodexRuntimeManager({ environment });
+    this.cli = cli || new CodexRuntimeManager({ environment: codexProcessEnvironment(environment) });
     this.billing = new CodexBilling(this.cli.root);
+  }
+  async acquireContext(): Promise<ResolvedCodexContext> {
+    const { selection, release } = await this.cli.acquire();
+    try {
+      return {
+        selection,
+        environment: codexProcessEnvironment(this.environment),
+        runtimeHome: this.cli.root,
+        managementCwd: stableCodexWorkingDirectory(this.environment),
+        fingerprint: this.cli.appliedContextFingerprint(),
+        authenticationIdentity: this.authenticationIdentity(),
+        release
+      };
+    } catch (error) {
+      await release();
+      throw error;
+    }
   }
   setVisibilityProvider(provider: () => boolean): void { this.visibility = provider; this.setAppVisibility(provider()); }
   /**
@@ -93,19 +120,19 @@ export class CodexService {
   }
   cacheRevision(): string {
     const shared = this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
-    const files = [path.join(this.cli.root, "cli-state.json"), ...["auth.json", "config.toml"].map(name => path.join(shared, name))];
+    const files = ["auth.json", "config.toml"].map(name => path.join(shared, name));
     const values = files.map(file => {
       try { return decodeUtf8Strict(readFileSync(file), `runtime input ${path.basename(file)}`); }
       catch { return "unavailable"; }
     });
-    const state = (() => { try { return parseJsonTextStrict<any>(values[0], "runtime state"); } catch { return {}; } })();
-    // Installation progress and update-check timestamps do not change the account.
-    for (const index of [0]) {
-      try { const runtime = parseJsonTextStrict<any>(values[index], "runtime state"); values[index] = JSON.stringify(runtime.selection ?? null); } catch { /* Preserve the unavailable marker. */ }
-    }
-    let binary = "";
-    try { const info = statSync(this.environment.CODEX_MCP_BRIDGE_CODEX || state.selection?.command || ""); binary = `${info.size}:${info.mtimeMs}:${info.ctimeMs}`; } catch { /* Missing selection invalidates the next admission. */ }
-    return digest(JSON.stringify([this.appVisibility(), ...values, binary, this.environment.OPENAI_API_KEY, this.environment.CODEX_API_KEY]));
+    // Cache inputs follow the manager's effective command and native binary,
+    // including explicit aliases, npm launchers and symlink replacement.
+    return digest(JSON.stringify([
+      this.cli.appliedContextFingerprint(), shared, this.appVisibility(), ...values,
+      this.environment.OPENAI_API_KEY, this.environment.CODEX_API_KEY,
+      ...["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+        "CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "SSL_CERT_DIR", "SSL_CERT_FILE"].map(name => this.environment[name])
+    ]));
   }
   async sessionPolicy(kind: CodexBackendKind, visible: boolean, _parent?: string, persistence: "persistent" | "ephemeral" = visible ? "persistent" : "ephemeral"): Promise<CodexSessionPolicy> {
     if (kind !== "app-server") throw new Error("CODEX_BACKEND_RETIRED: Start a fresh App Server context with an explicit handoff summary. Existing history is preserved.");
@@ -171,9 +198,9 @@ export class CodexService {
       if (!account) throw new Error("CODEX_ACCOUNT_UNAVAILABLE: Codex account information is unavailable.");
       return account;
     }
-    const { selection, release } = await this.cli.acquire();
-    const rpc = new JsonRpcProcess({ command: selection.command, args: ["app-server", "--listen", "stdio://"],
-      env: this.environment, cwd: stableCodexWorkingDirectory(this.environment),
+    const context = await this.acquireContext();
+    const rpc = new JsonRpcProcess({ command: context.selection.command, args: ["app-server", "--listen", "stdio://"],
+      env: context.environment, cwd: context.managementCwd,
       debugLabel: "Codex account", omitJsonRpcHeader: true });
     try {
       const initialized = await rpc.request("initialize", { clientInfo: { name: "codex_bridge_account", version: "1" }, capabilities: { experimentalApi: true } }, { timeoutMs: 15_000 });
@@ -183,7 +210,7 @@ export class CodexService {
       const mode = projectCodexAccount(account, null).authMode;
       const limits = mode === "chatgpt" ? await rpc.request("account/rateLimits/read", undefined, { timeoutMs: 15_000 }).catch(() => null) : null;
       return projectCodexAccount(account, limits);
-    } finally { try { await rpc.close(); } finally { await release(); } }
+    } finally { try { await rpc.close(); } finally { await context.release(); } }
   }
   private readRecord(group: string, id: string): Record<string, unknown> | null {
     try {

@@ -7,6 +7,10 @@ import { spawn, spawnSync, execFile } from "node:child_process";
 import { computeSourceHash } from "./build-fingerprint.mjs";
 import { parseLauncherArgs, requiredBuildOutputs } from "./launcher-options.mjs";
 import {
+  codexChildEnvironment,
+  codexChildEnvironmentFingerprint,
+  codexProcessEnvironment,
+  CODEX_CHILD_ENV_KEYS,
   loadRuntimeEnvFile,
   resolveRuntimeEnvFile,
   validateSecureTunnelEnvironment
@@ -47,35 +51,18 @@ if (process.platform === "darwin") {
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
+const inheritedEnvironment = { ...process.env };
 const MANAGED_APP_RUNTIME_EXACT_KEYS = new Set([
-  "CA_BUNDLE",
   "CLOUDFLARED_MANAGED",
   "CLOUDFLARED_PATH",
   "CLOUDFLARED_READY_TIMEOUT",
   "CLOUDFLARED_TUNNEL_TOKEN",
-  "CODEX_HOME",
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "ALL_PROXY",
-  "NO_PROXY",
-  "http_proxy",
-  "https_proxy",
-  "all_proxy",
-  "no_proxy",
-  "LANG",
-  "LC_ALL",
-  "LC_CTYPE",
   "LOG_LEVEL",
-  "NODE_EXTRA_CA_CERTS",
   "PROXY_CHECK_INTERVAL",
-  "SSL_CERT_DIR",
-  "SSL_CERT_FILE",
   "TUNNEL_CLIENT",
   "TUNNEL_CLIENT_CONFIG",
   "TUNNEL_CLIENT_PROFILE",
-  "TUNNEL_CLIENT_PROFILE_DIR",
-  "XDG_CONFIG_HOME",
-  "XDG_STATE_HOME"
+  "TUNNEL_CLIENT_PROFILE_DIR"
 ]);
 const args = parseLauncherArgs(process.argv.slice(2));
 // Capture the per-user ownership namespace before an alternate dotenv can
@@ -93,6 +80,7 @@ const runtimeEnvLoaded = args.help
         ? isManagedAppRuntimeKey
         : undefined
     });
+if (!args.help) Object.assign(process.env, codexChildEnvironment(runtimeEnvFile, inheritedEnvironment));
 const mode = args.mode || process.env.CODEX_MCP_BRIDGE_MODE || "local";
 const tunnelTransport =
   args.transport || process.env.CODEX_MCP_BRIDGE_TUNNEL_TRANSPORT || "http";
@@ -233,7 +221,7 @@ function isManagedAppRuntimeKey(name) {
   ) {
     return true;
   }
-  return MANAGED_APP_RUNTIME_EXACT_KEYS.has(name);
+  return MANAGED_APP_RUNTIME_EXACT_KEYS.has(name) || CODEX_CHILD_ENV_KEYS.includes(name);
 }
 
 
@@ -437,7 +425,7 @@ function startBridge() {
 
 function bridgeEnvironment() {
   const env = {
-    ...process.env,
+    ...codexProcessEnvironment(process.env),
     CODEX_MCP_BRIDGE_HOST: host,
     CODEX_MCP_BRIDGE_PORT: port,
     CODEX_MCP_BRIDGE_NO_AUTH: "1",
@@ -701,6 +689,7 @@ function publishRuntimeStatus() {
   writeManagedRuntimeStatus(runtimeStatusFile, {
     phase: runtimePhase,
     runtimeBuildId: activeRuntimeBuildId,
+    codexEnvironmentFingerprint: codexChildEnvironmentFingerprint(process.env),
     tunnel: tunnelState
   });
 }

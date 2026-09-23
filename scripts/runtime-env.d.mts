@@ -49,6 +49,14 @@ export function readRuntimeEnvSubset(
   }
 ): Record<string, string>;
 
+export const CODEX_CHILD_ENV_KEYS: readonly string[];
+export function codexChildEnvironment(
+  filePath?: string,
+  inherited?: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv;
+export function codexChildEnvironmentFingerprint(environment: NodeJS.ProcessEnv): string;
+export function codexProcessEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
+
 export type PreparedRuntimeEnvUpdate = {
   readonly path: string;
   readonly directory: string;

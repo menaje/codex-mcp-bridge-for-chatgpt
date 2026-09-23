@@ -7,6 +7,7 @@ import { CodexAppServerUpstreamPool, type CodexAppServerProtocolOptions } from "
 import { CodexBackendRouter } from "./upstreamRouter.js";
 import { LazyCodexUpstream } from "./lazyUpstream.js";
 import { UNVERIFIED_APP_SERVER_CAPABILITIES } from "./cliProtocol.js";
+import { codexProcessEnvironment } from "../scripts/runtime-env.mjs";
 import {
   ChildProcessCodexExecutionService,
   type CodexExecutionServiceHealth
@@ -24,18 +25,18 @@ export function createExecutionRuntime(
   environment: NodeJS.ProcessEnv = process.env,
   isolation: ExecutionRuntimeIsolationOptions = {}
 ): CodexBackendRouter {
-  const manager = new CodexRuntimeManager({ environment, explicitCommand: environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX ||
+  const codexEnvironment = codexProcessEnvironment(environment);
+  const manager = new CodexRuntimeManager({ environment: codexEnvironment, explicitCommand: codexEnvironment.CODEX_MCP_BRIDGE_CODEX || codexEnvironment.CODEX_GPT_BRIDGE_CODEX ||
     (config.codexCommand !== "codex" ? config.codexCommand : undefined) });
-  const service = config.codexService = new CodexService(environment, manager);
+  const service = config.codexService = new CodexService(codexEnvironment, manager);
   let selected: Promise<string> | undefined;
   let release: (() => Promise<void>) | undefined;
   const resolveCli = (): Promise<string> => {
-    if (!selected) selected = manager.acquire()
-      .then(acquired => { release = acquired.release; return acquired.selection.command; })
+    if (!selected) selected = service.acquireContext()
+      .then(context => { release = context.release; return context.selection.command; })
       .catch(error => { selected = undefined; throw error; });
     return selected;
   };
-  config.codexCommandResolver = resolveCli;
   config.runtimeStatusResolver = async () => {
     const cli = await manager.snapshot();
     const compact = (state: typeof cli) => `installed=${state.installedVersion ?? "none"}; running=${state.runningVersions.join(",") || "none"}; active=${state.managedVersions.find(item => item.active)?.version ?? "none"}; staged=${state.stagedVersion ?? "none"}; rollback=${state.recoveryVersion ?? "none"}`;
@@ -52,7 +53,7 @@ export function createExecutionRuntime(
         return new CodexAppServerUpstreamPool(
           command,
           config.upstreamPoolSize,
-          { ...options, environment }
+          { ...options, environment: codexEnvironment }
         );
       }
       executionStarting = true;
@@ -61,7 +62,7 @@ export function createExecutionRuntime(
         executionService = await ChildProcessCodexExecutionService.start({
           command,
           poolSize: config.upstreamPoolSize,
-          environment,
+          environment: codexEnvironment,
           protocolOptions: options,
           onLateResponse: options.onLateResponse,
           onProcessSpawn: isolation.onExecutionProcessSpawn

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,7 @@ import { APP_SERVER_CAPABILITIES } from "../src/appServerUpstream.js";
 import { LazyCodexUpstream } from "../src/lazyUpstream.js";
 import { ContextualModelCatalog } from "../src/contextualModelCatalog.js";
 import type { CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
-import { projectCodexAccount, estimateCodexCost } from "../src/codexAccount.js";
+import { projectCodexAccount, estimateCodexCost, type CodexAccountSnapshot } from "../src/codexAccount.js";
 import { JsonRpcProcess } from "../src/jsonRpcProcess.js";
 
 const roots: string[] = [];
@@ -132,7 +132,15 @@ createInterface({ input: process.stdin }).on("line", line => {
     const f = await fixture();
     await mkdir(f.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME, { recursive: true });
     const file = path.join(f.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME, "cli-state.json");
-    const state = { selection: { command: "/fixture/codex", version: "0.153.3" } };
+    const state = {
+      schemaVersion: 1,
+      selection: { id: "fixture", source: "terminal", command: "/fixture/codex", physicalPath: "/fixture/codex", version: "0.153.3" },
+      selectionRequired: false, selectionRevision: 1, stagedSelectionRevision: null,
+      pendingSelection: null, managed: [], activeId: null, stagedId: null, recoveryId: null,
+      preferences: { pinnedVersion: null, skippedVersion: null, notifications: true },
+      latestVersion: null, checkedAt: null, lastSuccessfulCheckAt: null, updateCheckError: null,
+      operation: null
+    };
     await writeFile(file, JSON.stringify(state));
     const account = {
       ...projectCodexAccount({ account: { type: "chatgpt", email: "fixture@example.com" } }, null),
@@ -141,15 +149,33 @@ createInterface({ input: process.stdin }).on("line", line => {
     const read = vi.spyOn(f.service, "readCliAccount").mockResolvedValue(account);
     await f.service.readAccount("app-server");
     expect(f.service.cachedAccount("app-server")).toEqual(account);
-    await writeFile(file, JSON.stringify({ ...state, checkedAt: "2026-09-06", operation: { phase: "downloading" } }));
+    await writeFile(file, JSON.stringify({ ...state, checkedAt: "2026-09-06" }));
+    expect(f.service.cachedAccount("app-server")).toEqual(account);
+    await writeFile(file, JSON.stringify({ ...state, selectionRevision: 2,
+      pendingSelection: { ...state.selection, command: "/fixture/pending", physicalPath: "/fixture/pending" } }));
     expect(f.service.cachedAccount("app-server")).toEqual(account);
     expect(read).toHaveBeenCalledTimes(1);
-    await writeFile(file, JSON.stringify({ selection: { command: "/fixture/other", version: "0.153.3" } }));
+    await writeFile(file, JSON.stringify({ ...state, selection: { ...state.selection, command: "/fixture/other", physicalPath: "/fixture/other" } }));
     expect(f.service.cachedAccount("app-server")).toBeNull();
     await f.service.readAccount("app-server");
     await mkdir(path.join(f.root, ".codex"));
     await writeFile(path.join(f.root, ".codex", "auth.json"), JSON.stringify({ auth_mode: "apiKey", OPENAI_API_KEY: "fixture-secret" }));
     expect(f.service.cachedAccount("app-server")).toBeNull();
+  });
+
+  it("keys account cache to a legacy explicit command and its symlink target", async () => {
+    const f = await fixture();
+    const first = path.join(f.root, "first-cli");
+    const second = path.join(f.root, "second-cli");
+    const alias = path.join(f.root, "selected-cli");
+    await writeFile(first, "first", { mode: 0o700 });
+    await writeFile(second, "second", { mode: 0o700 });
+    await symlink(first, alias);
+    const service = new CodexService({ ...f.environment, CODEX_GPT_BRIDGE_CODEX: alias });
+    const before = service.cacheRevision();
+    await rm(alias);
+    await symlink(second, alias);
+    expect(service.cacheRevision()).not.toBe(before);
   });
 
   it("retains the previous account while a same-context refresh is in flight and replaces it on completion", async () => {
@@ -181,6 +207,29 @@ createInterface({ input: process.stdin }).on("line", line => {
     completeRefresh(refreshed);
     await expect(refresh).resolves.toEqual(refreshed);
     expect(f.service.cachedAccount("app-server")).toEqual(refreshed);
+  });
+
+  it("discards an account response that completes after the applied CLI changes", async () => {
+    const f = await fixture();
+    await mkdir(f.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME, { recursive: true });
+    const stateFile = path.join(f.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME, "cli-state.json");
+    const selection = (command: string) => ({ id: command, source: "terminal", command,
+      physicalPath: command, version: "0.153.3" });
+    const state = { schemaVersion: 1, selection: selection("/fixture/one"), selectionRequired: false,
+      selectionRevision: 1, stagedSelectionRevision: null, pendingSelection: null, managed: [],
+      activeId: null, stagedId: null, recoveryId: null,
+      preferences: { pinnedVersion: null, skippedVersion: null, notifications: true },
+      latestVersion: null, checkedAt: null, lastSuccessfulCheckAt: null, updateCheckError: null,
+      operation: null };
+    await writeFile(stateFile, JSON.stringify(state));
+    let finish!: (value: CodexAccountSnapshot) => void;
+    const pending = new Promise<CodexAccountSnapshot>(resolve => { finish = resolve; });
+    vi.spyOn(f.service, "readCliAccount").mockReturnValue(pending);
+    const reading = f.service.readAccount("app-server");
+    await writeFile(stateFile, JSON.stringify({ ...state, selection: selection("/fixture/two"), selectionRevision: 2 }));
+    finish(projectCodexAccount({ account: { type: "chatgpt", email: "old@example.invalid" } }, null));
+    await expect(reading).resolves.toBeNull();
+    expect(f.service.cachedAccount("app-server")).toBeNull();
   });
 
 

@@ -20,6 +20,14 @@ Symlinks and official npm launchers resolving to the same native executable coun
 
 Terminal-managed servers can set an explicit executable path in their private runtime environment file. Remove that override and restart the helper before changing the saved selection in the app. Authentication, model discovery and execution use the same selected installation.
 
+The helper and launcher read Codex child settings from the same private file. For the executable override, precedence is: exported `CODEX_MCP_BRIDGE_CODEX`, exported legacy `CODEX_GPT_BRIDGE_CODEX`, private-file current name, private-file legacy name, saved selection, then initial single-install discovery. For `CODEX_HOME`, `CODEX_MCP_BRIDGE_RUNTIME_HOME`, proxy and certificate settings, an exported value wins over the private-file value of the same name. The runtime home is resolved to one physical directory even when a parent path is a symlink. Changing it does not migrate or merge another directory's selection.
+
+The launcher records only a hash of its applied Codex child environment in its private status file. When the private file changes while that runtime is still running, Settings marks the new values as waiting to apply. Helper login and account reads wait for the normal safe restart instead of inspecting a different CLI from the running worker. Existing workers retain their acquired command and lease; a new worker checks the executable's current protocol, including a changed npm native binary. A missing or damaged selected CLI produces an explicit error. No other executable on `PATH` takes its place.
+
+Only the allowlisted Codex child settings are copied into helper login and account processes: Codex home, runtime home, executable override, XDG and locale settings, proxies and certificate paths. Tunnel credentials and billing credentials stay in their separate paths. App-managed Codex children do not inherit an API key from the launcher. Management probes use a stable home directory; task turns retain the validated project or thread directory.
+
+The isolated execution process receives the chosen executable through its private parent envelope. It strips Bridge-only configuration variables, including runtime home and executable override, before starting a CLI worker. The worker still receives the Codex home and allowed proxy/certificate settings; it does not need access to Bridge state files.
+
 ## Central execution policy
 
 Execution permissions are resolved once in `src/executionPolicy.ts`, independently

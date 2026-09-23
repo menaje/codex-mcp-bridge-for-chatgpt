@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Use one applied Codex CLI context across native settings, login, account, model lookup and task execution, including private runtime homes and proxy settings.",
+  "breaking": false,
+  "migration": null
+}
