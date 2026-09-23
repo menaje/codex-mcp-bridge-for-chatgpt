@@ -262,7 +262,7 @@ function buildMatchesSource(outputPaths) {
   }
 }
 
-async function startSecureTunnel({ tunnelId }) {
+async function startSecureTunnel({ apiKey, tunnelId }) {
   const tunnelClient = args.tunnelClient || process.env.TUNNEL_CLIENT || defaultTunnelClient();
   const profile = args.profile || process.env.TUNNEL_CLIENT_PROFILE ||
     (tunnelTransport === "stdio" ? "codex-mcp-bridge-stdio" : "codex-mcp-bridge");
@@ -281,7 +281,11 @@ async function startSecureTunnel({ tunnelId }) {
         "--health-listen-addr",
         "127.0.0.1:0"
       ];
-  const childEnvironment = bridgeEnvironment();
+  const childEnvironment = {
+    ...bridgeEnvironment(),
+    CONTROL_PLANE_API_KEY: apiKey,
+    CONTROL_PLANE_TUNNEL_ID: tunnelId
+  };
   const runtimeBuildId = activeRuntimeBuildId;
   const tunnelClientVersion = readTunnelClientVersion(
     tunnelClient,
