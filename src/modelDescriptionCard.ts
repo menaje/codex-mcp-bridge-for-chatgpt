@@ -198,11 +198,16 @@ export const MODEL_DESCRIPTION_EDITOR_SCRIPT = String.raw`function createModelDe
       return {
         setSnapshot(next) {
           if (snapshot && next.settings.settingsRevision < snapshot.settings.settingsRevision) return;
+          const revisionChanged = snapshot && next.settings.settingsRevision !== snapshot.settings.settingsRevision;
           snapshot = next;
           render();
+          if (revisionChanged) for (const id of historyExpanded) void loadHistory(id);
         },
         refresh: render,
-        reset() { edits.clear(); histories.clear(); historyExpanded.clear(); },
+        reset() {
+          for (const [id, generation] of historyGenerations) historyGenerations.set(id, generation + 1);
+          edits.clear(); histories.clear(); historyExpanded.clear(); historyLoads.clear();
+        },
         setDisabled(value) {
           blocked = value;
           for (const element of root.querySelectorAll("button,textarea")) element.disabled = value || element.dataset.invalid === "true";

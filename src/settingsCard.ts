@@ -491,5 +491,5 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
 </body>
 </html>
 `.replace(/(<style>)([\s\S]*?)(<\/style>)/, (_match, open, css, close) =>
-  open + css.replace(/\n[ \t]+/g, " ") + close
+  open + css.replace(/\n[ \t]+/g, " ").replace(/; /g, ";").replace(/{ /g, "{").replace(/ }/g, "}") + close
 );
