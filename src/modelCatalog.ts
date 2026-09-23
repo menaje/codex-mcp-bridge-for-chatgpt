@@ -81,8 +81,11 @@ export type CodexModelCatalogProvider = {
 };
 
 type CatalogData = Omit<CodexModelCatalogSnapshot, "cached" | "stale" | "validation" | "warning">;
-type CatalogCommand = (command: string, args: string[], timeoutMs: number) => Promise<string>;
-type PersistedCatalog = { version: 1; fetchedAt: string; raw: string };
+type AcquiredCatalogTarget = { command: string; environment?: NodeJS.ProcessEnv; cwd?: string; release: () => Promise<void> };
+type CatalogCommand = (command: string, args: string[], timeoutMs: number, target?: AcquiredCatalogTarget) => Promise<string>;
+type CatalogTarget = string | (() => Promise<string | AcquiredCatalogTarget>);
+type PersistedCatalog = { version: 1; fetchedAt: string; raw: string } |
+  { version: 2; context: string; fetchedAt: string; raw: string };
 
 const rawEffortSchema = z
   .object({
@@ -171,14 +174,15 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
   private readonly listeners = new Set<ModelCatalogListener>();
 
   constructor(
-    private readonly codexCommand: string | (() => Promise<string>),
+    private readonly codexCommand: CatalogTarget,
     private readonly cacheTtlMs = 10 * 60 * 1000,
     private readonly timeoutMs = 30 * 1000,
     private readonly runCatalogCommand: CatalogCommand = runCodexCatalogCommand,
     private readonly now: () => number = Date.now,
-    private readonly stateFile?: string
+    private readonly stateFile?: string,
+    private readonly cacheContext?: string
   ) {
-    if (typeof this.codexCommand === "string") this.loadPersistedCache();
+    if (typeof this.codexCommand === "string" || this.cacheContext) this.loadPersistedCache();
   }
 
   async getCatalog(options: ModelCatalogOptions = {}): Promise<CodexModelCatalogSnapshot> {
@@ -245,8 +249,15 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
   }
 
   private async fetchCatalog(): Promise<CatalogData> {
-    const command = typeof this.codexCommand === "string" ? this.codexCommand : await this.codexCommand();
-    const stdout = await this.runCatalogCommand(command, ["debug", "models"], this.timeoutMs);
+    const target = typeof this.codexCommand === "string" ? this.codexCommand : await this.codexCommand();
+    const command = typeof target === "string" ? target : target.command;
+    let stdout: string;
+    try {
+      stdout = await this.runCatalogCommand(command, ["debug", "models"], this.timeoutMs,
+        typeof target === "string" ? undefined : target);
+    } finally {
+      if (typeof target !== "string") await target.release();
+    }
     const models = parseCodexModelCatalog(stdout);
     const fetchedAtMs = this.now();
     const data: CatalogData = {
@@ -261,7 +272,9 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
       data,
       expiresAt: fetchedAtMs + this.cacheTtlMs
     };
-    this.persistCache({ version: 1, fetchedAt: data.fetchedAt, raw: stdout });
+    this.persistCache(this.cacheContext
+      ? { version: 2, context: this.cacheContext, fetchedAt: data.fetchedAt, raw: stdout }
+      : { version: 1, fetchedAt: data.fetchedAt, raw: stdout });
     if (previousFingerprint !== data.fingerprint) {
       emitCatalogChanged(this.listeners, {
         backendKind: "app-server",
@@ -283,6 +296,7 @@ export class CodexCliModelCatalog implements CodexModelCatalogProvider {
       if (statSync(this.stateFile).size > 5 * 1024 * 1024) return;
       const parsed = parseJsonUtf8Strict(readFileSync(this.stateFile), "Model catalog cache") as unknown;
       if (!isPersistedCatalog(parsed)) return;
+      if (this.cacheContext ? parsed.version !== 2 || parsed.context !== this.cacheContext : parsed.version !== 1) return;
       const fetchedAtMs = Date.parse(parsed.fetchedAt);
       if (!Number.isFinite(fetchedAtMs)) return;
       const models = parseCodexModelCatalog(parsed.raw);
@@ -635,7 +649,7 @@ function isPersistedCatalog(value: unknown): value is PersistedCatalog {
     typeof value === "object" &&
     value !== null &&
     "version" in value &&
-    value.version === 1 &&
+    (value.version === 1 || (value.version === 2 && "context" in value && typeof value.context === "string")) &&
     "fetchedAt" in value &&
     typeof value.fetchedAt === "string" &&
     "raw" in value &&

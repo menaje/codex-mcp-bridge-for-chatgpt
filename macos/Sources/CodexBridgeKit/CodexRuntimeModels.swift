@@ -66,6 +66,7 @@ public struct CodexRuntimeSnapshot: Codable, Sendable, Equatable {
     public let candidates: [CodexInstallation]
     public let selectionRequired: Bool
     public let configuredCommand: String?
+    public let environmentPending: Bool?
     public let pendingSelection: CodexInstallation?
     public let installedVersion: String?
     public let runningVersions: [String]

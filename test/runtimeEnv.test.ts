@@ -11,6 +11,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  codexChildEnvironment,
+  codexChildEnvironmentFingerprint,
+  codexProcessEnvironment,
   commitRuntimeEnvUpdate,
   defaultRuntimeEnvFile,
   inspectRuntimeEnvFile,
@@ -37,6 +40,58 @@ afterEach(() => {
 });
 
 describe("runtime environment", () => {
+  it("removes tunnel-only credentials before a selected Codex process starts", () => {
+    const projected = codexProcessEnvironment({
+      CODEX_HOME: "/selected/home",
+      HTTPS_PROXY: "http://proxy.fixture.invalid",
+      OPENAI_API_KEY: "explicit-codex-auth",
+      CONTROL_PLANE_API_KEY: "tunnel-only",
+      CONTROL_PLANE_TUNNEL_ID: "tunnel-only",
+      CLOUDFLARED_TUNNEL_TOKEN: "tunnel-only",
+      TUNNEL_CLIENT_CONFIG: "/private/tunnel-config",
+      CODEX_MCP_BRIDGE_TOKEN: "bridge-only"
+    });
+    expect(projected).toEqual({
+      CODEX_HOME: "/selected/home",
+      HTTPS_PROXY: "http://proxy.fixture.invalid",
+      OPENAI_API_KEY: "explicit-codex-auth"
+    });
+  });
+  it("projects the same Codex child settings without tunnel or API credentials", () => {
+    const root = temporaryDirectory();
+    const file = path.join(root, ".env");
+    writeFileSync(file, [
+      "CODEX_MCP_BRIDGE_RUNTIME_HOME=/private/runtime",
+      "CODEX_MCP_BRIDGE_CODEX=/file/current",
+      "CODEX_GPT_BRIDGE_CODEX=/file/legacy",
+      "CODEX_HOME=/private/codex",
+      "HTTPS_PROXY=http://file-proxy.invalid",
+      "SSL_CERT_FILE=/private/cert.pem",
+      "CONTROL_PLANE_API_KEY=sk-file-1234567890123456",
+      "CODEX_API_KEY=should-not-pass",
+      "OPENAI_API_KEY=should-not-pass",
+      ""
+    ].join("\n"), { mode: 0o600 });
+
+    const inherited = {
+      HOME: "/home/fixture", PATH: "/bin", CODEX_GPT_BRIDGE_CODEX: "/process/legacy",
+      HTTP_PROXY: "http://process-proxy.invalid", CONTROL_PLANE_TUNNEL_ID: "tunnel_secret"
+    };
+    const selected = codexChildEnvironment(file, inherited);
+    expect(selected).toMatchObject({
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: "/private/runtime",
+      CODEX_MCP_BRIDGE_CODEX: "/process/legacy",
+      CODEX_HOME: "/private/codex",
+      HTTP_PROXY: "http://process-proxy.invalid",
+      HTTPS_PROXY: "http://file-proxy.invalid",
+      SSL_CERT_FILE: "/private/cert.pem"
+    });
+    expect(selected).not.toHaveProperty("CODEX_GPT_BRIDGE_CODEX");
+    expect(JSON.stringify(selected)).not.toMatch(/CONTROL_PLANE|OPENAI_API_KEY|CODEX_API_KEY|tunnel_secret/);
+    expect(codexChildEnvironmentFingerprint({ ...inherited, ...selected })).toMatch(/^[a-f0-9]{64}$/);
+    expect(codexChildEnvironmentFingerprint({ ...inherited, ...selected, HTTPS_PROXY: "http://changed.invalid" }))
+      .not.toBe(codexChildEnvironmentFingerprint({ ...inherited, ...selected }));
+  });
   it("defaults outside the repository and falls back to a repository .env", () => {
     const root = temporaryDirectory();
     const home = path.join(root, "home");

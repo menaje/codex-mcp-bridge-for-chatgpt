@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import { RuntimeLifecycleCoordinator, lifecycleRequestSchema, isLifecycleHandoff, type LifecycleRequest, type LifecycleRecord, type LifecycleSnapshot, type LifecycleReason, type LifecycleReconciliation } from "./runtimeLifecycle.js";
 import { ChangeSignal, changeWaitParamsSchema } from "./changeSignal.js";
-import { CodexService, stableCodexWorkingDirectory } from "./codexService.js";
+import { CodexService } from "./codexService.js";
 import { DiagnosticLog } from "./diagnosticLog.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -28,6 +28,8 @@ import { inspectRegisteredProjectRoots } from "./stateProjectInspection.js";
 import * as z from "zod/v4";
 import {
   commitRuntimeEnvUpdate,
+  codexChildEnvironment,
+  codexChildEnvironmentFingerprint,
   defaultRuntimeEnvFile,
   inspectRuntimeEnvFile,
   prepareRuntimeEnvUpdate,
@@ -403,7 +405,6 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     this.managerSubscriptions.add(manager.subscribeChanges(() => this.changed("installation")));
   }
 
-  private codexService?: CodexService;
   private readonly bridgeRoot: string;
   private readonly envFile: string;
   private readonly bridgeSocketPath: string;
@@ -450,6 +451,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private executingLifecycle?: LifecycleRecord;
   private readonly helperInstance = randomUUID();
   private cliManager?: CodexRuntimeManager;
+  private readonly injectedCliManager?: CodexRuntimeManager;
+  private cliContext?: { fingerprint: string; manager: CodexRuntimeManager; service: CodexService };
   private cliInstallation?: Promise<unknown>;
   private cliUpdateCheck?: Promise<unknown>;
   private authStatusFailure: string | undefined;
@@ -461,6 +464,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     this.bridgeRoot = path.resolve(options.bridgeRoot);
     this.envFile = path.resolve(options.envFile || defaultRuntimeEnvFile());
     this.cliManager = options.codexRuntimeManager;
+    this.injectedCliManager = options.codexRuntimeManager;
     this.bridgeSocketPath = path.resolve(options.bridgeSocketPath);
     this.launcherPath = path.resolve(
       options.launcherPath || path.join(this.bridgeRoot, "scripts", "start-codex-mcp-bridge.mjs")
@@ -766,16 +770,38 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   private selectedCliManager(): CodexRuntimeManager {
-    return this.cliManager ||= new CodexRuntimeManager({ environment: commandEnvironment(this.envFile) });
+    return this.selectedCliContext().manager;
   }
 
   private selectedCodexService(): CodexService {
-    return this.codexService ||= new CodexService(commandEnvironment(this.envFile), this.selectedCliManager());
+    return this.selectedCliContext().service;
+  }
+
+  private selectedCliContext(): { manager: CodexRuntimeManager; service: CodexService } {
+    const environment = commandEnvironment(this.envFile);
+    const fingerprint = createHash("sha256").update(JSON.stringify(environment)).digest("hex");
+    if (this.cliContext?.fingerprint === fingerprint) return this.cliContext;
+    const manager = this.injectedCliManager || new CodexRuntimeManager({ environment });
+    const service = new CodexService(environment, manager);
+    this.cliManager = manager;
+    this.cliContext = { fingerprint, manager, service };
+    return this.cliContext;
+  }
+
+  private cliEnvironmentPending(): boolean {
+    if (!this.isManagedRuntimeRunning()) return false;
+    const applied = readManagedRuntimeStatus(this.runtimeStatusFile);
+    return !!applied?.codexEnvironmentFingerprint && applied.launcherPid === this.managedPid &&
+      applied.codexEnvironmentFingerprint !== codexChildEnvironmentFingerprint(commandEnvironment(this.envFile));
   }
 
   async codexRuntime(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot> {
-    const manager = this.selectedCliManager();
+    const { manager, service } = this.selectedCliContext();
     this.watchManager(manager);
+    const environmentPending = this.cliEnvironmentPending();
+    if (environmentPending && request.action !== "status") {
+      throw new Error("CODEX_ENVIRONMENT_PENDING: Restart the managed runtime after current work finishes before using the changed Codex environment.");
+    }
     if (!["status", "check-updates"].includes(request.action) &&
         ["executing", "reconnecting"].includes(this.lifecycleManager?.active?.phase || "")) {
       throw new Error("LIFECYCLE_BUSY: Runtime activation is in progress.");
@@ -783,8 +809,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     switch (request.action) {
       case "status": {
         const base = await manager.snapshot();
-        const service = this.selectedCodexService(), kind = "app-server" as const;
-        const snapshot = { ...base, billing: await service.billing.configuration(), account: base.selection?.available
+        const kind = "app-server" as const;
+        const snapshot = { ...base, environmentPending, billing: await service.billing.configuration(), account: !environmentPending && base.selection?.available
           ? request.includeAccount === false ? service.cachedAccount(kind) : await service.readAccount(kind, true) || service.cachedAccount(kind) : null };
         if (snapshot.selection?.source === "bridge" && snapshot.preferences.notifications && !this.cliUpdateCheck &&
             (!snapshot.checkedAt || Date.now() - Date.parse(snapshot.checkedAt) > 24 * 60 * 60_000)) {
@@ -827,10 +853,15 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   async authStatus(): Promise<CodexLoginStatus> {
-    const environment = commandEnvironment(this.envFile);
-    const selected = await this.selectedCliManager().resolve(environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX).catch(() => null);
-    if (!selected) return { installed: false, authenticated: false, summary: "Choose or install Codex in the bridge settings." };
-    const service = this.selectedCodexService();
+    if (this.cliEnvironmentPending()) throw new Error("CODEX_ENVIRONMENT_PENDING: Restart the managed runtime before checking Codex login.");
+    const { manager, service } = this.selectedCliContext();
+    try { await manager.resolve(); }
+    catch (error) {
+      if (error instanceof Error && error.message.startsWith("CODEX_SELECTION_REQUIRED:")) {
+        return { installed: false, authenticated: false, summary: "Choose or install Codex in the bridge settings." };
+      }
+      throw error;
+    }
     const account = await service.readAccount("app-server");
     // A signed-out App Server still projects an account snapshot with
     // authenticated=false. Null means the inspection failed or was invalidated.
@@ -856,23 +887,23 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
 
   startLogin(_kind?: "cli"): Promise<{ started: true }> {
     return this.exclusive(async () => {
+      if (this.cliEnvironmentPending()) throw new Error("CODEX_ENVIRONMENT_PENDING: Restart the managed runtime before starting Codex login.");
       if (isChildRunning(this.loginProcess)) {
         this.appendLog("helper", "The existing Codex browser login is still in progress.");
         return { started: true };
       }
 
-      const environment = commandEnvironment(this.envFile);
-      const { selection: selected, release } = await this.selectedCliManager().acquire(environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX);
-      const command = selected.command;
+      const context = await this.selectedCodexService().acquireContext();
+      const command = context.selection.command;
       const child = spawn(command, ["login"], {
-        cwd: stableCodexWorkingDirectory(environment),
+        cwd: context.managementCwd,
         detached: true,
-        env: environment,
+        env: context.environment,
         stdio: "ignore"
       });
       this.loginProcess = child;
       child.once("exit", () => {
-        void release();
+        void context.release();
         if (this.loginProcess === child) this.loginProcess = undefined;
         this.changed("auth");
       });
@@ -885,7 +916,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
           child.once("error", reject);
         });
       } catch (error) {
-        await release();
+        await context.release();
         if (this.loginProcess === child) this.loginProcess = undefined;
         this.lastError = safeErrorMessage(error);
         this.appendLog("helper", `Codex login could not start: ${this.lastError}`);
@@ -2551,28 +2582,13 @@ function commandEnvironment(envFile?: string): NodeJS.ProcessEnv {
     "LC_ALL",
     "LC_CTYPE",
     "XDG_CONFIG_HOME",
-    "XDG_STATE_HOME",
-    "CODEX_HOME",
-    "CODEX_MCP_BRIDGE_RUNTIME_HOME",
-    "CODEX_MCP_BRIDGE_CODEX",
-    "CODEX_GPT_BRIDGE_CODEX"
+    "XDG_STATE_HOME"
   ];
   const environment: NodeJS.ProcessEnv = {};
   for (const name of names) {
     if (process.env[name] !== undefined) environment[name] = process.env[name];
   }
-  if (envFile) {
-    const fileValues = readRuntimeEnvSubset(envFile, [
-      "CODEX_HOME",
-      "CODEX_MCP_BRIDGE_CODEX",
-      "CODEX_GPT_BRIDGE_CODEX"
-    ]);
-    for (const [name, value] of Object.entries(fileValues)) {
-      if (environment[name] === undefined && process.env[name] === undefined) {
-        environment[name] = value;
-      }
-    }
-  }
+  Object.assign(environment, codexChildEnvironment(envFile, process.env));
   const home = process.env.HOME || "";
   const pathEntries = [
     process.env.PATH,
@@ -2589,56 +2605,6 @@ function commandEnvironment(envFile?: string): NodeJS.ProcessEnv {
     .filter((entry, index, entries) => Boolean(entry) && entries.indexOf(entry) === index);
   environment.PATH = pathEntries.join(path.delimiter);
   return environment;
-}
-
-function resolveCommand(command: string, environment: NodeJS.ProcessEnv): string {
-  const configured = environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX;
-  return configured && command === "codex"
-    ? configured
-    : command;
-}
-
-function runCommandStatus(
-  command: string,
-  args: string[],
-  environment: NodeJS.ProcessEnv,
-  timeoutMs: number
-): Promise<{ installed: boolean; exitCode: number | null }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      env: environment,
-      stdio: "ignore"
-    });
-    let settled = false;
-    const finish = (result: { installed: boolean; exitCode: number | null }) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(result);
-    };
-    const timer = setTimeout(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // The timeout result is authoritative even if the process exited in
-        // the narrow window before the signal was delivered.
-      }
-      if (settled) return;
-      settled = true;
-      reject(new Error("Codex login status check timed out."));
-    }, timeoutMs);
-    timer.unref();
-    child.once("error", (error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        finish({ installed: false, exitCode: null });
-      } else if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        reject(error);
-      }
-    });
-    child.once("exit", (code) => finish({ installed: true, exitCode: code }));
-  });
 }
 
 function readRegisteredProjectRoots(

@@ -20,13 +20,16 @@ export function writeFakeLauncher(
     snapshotDelayFile?: string;
     healthDelayFile?: string;
     admissionFile?: string;
+    recordCodexEnvironmentFingerprint?: boolean;
   } = {}
 ): void {
+  const runtimeEnvModule = new URL("../../scripts/runtime-env.mjs", import.meta.url).href;
   writeFileSync(file, `
 import { appendFileSync, mkdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync, watch } from "node:fs";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import path from "node:path";
+import { codexChildEnvironmentFingerprint } from ${JSON.stringify(runtimeEnvModule)};
 const socketPath = process.env.CODEX_MCP_BRIDGE_COMPANION_SOCKET;
 const statusIndex = process.argv.indexOf("--runtime-status-file");
 const runtimeStatusFile = statusIndex >= 0 ? process.argv[statusIndex + 1] : null;
@@ -79,6 +82,7 @@ if (runtimeStatusFile) {
     launcherPid: process.pid,
     phase: "running",
     runtimeBuildId: "development",
+    codexEnvironmentFingerprint: ${options.recordCodexEnvironmentFingerprint ? "codexChildEnvironmentFingerprint(process.env)" : "undefined"},
     tunnel: {
       phase: "connected",
       profile: ${JSON.stringify(options.runtimeProfile || null)} || profile,

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { codexProcessEnvironment } from "../scripts/runtime-env.mjs";
 import {
   CodexAppServerUpstreamPool,
   type CodexAppServerLateResponse,
@@ -1740,7 +1741,7 @@ function executionError(error: unknown): { code: string; message: string } {
 }
 
 function executionChildEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const environment = { ...source };
+  const environment = codexProcessEnvironment(source);
   // The executor needs the Codex CLI environment, but it has no authority to
   // open Bridge state, diagnostics, configuration, listener or companion
   // resources. Pass the selected executable in the private child envelope and

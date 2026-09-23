@@ -321,6 +321,22 @@ describe("Codex model catalog", () => {
     expect(stale.models[0]?.id).toBe("gpt-current");
   });
 
+  it("restores a selected CLI cache only for the same execution context", async () => {
+    const stateFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-context-models-")), "models.json");
+    let now = Date.parse("2026-08-21T00:00:00.000Z");
+    const catalog = (context: string, load: () => Promise<string>) => new CodexCliModelCatalog(
+      async () => "selected-codex", 1000, 5000,
+      async () => load(), () => now, stateFile, context
+    );
+    await catalog("selected-account-a", async () => catalogJson).getCatalog();
+    now += 2000;
+    const offline = async () => { throw new Error("offline after restart"); };
+    await expect(catalog("selected-account-b", offline).getCatalog()).rejects.toThrow("offline after restart");
+    const restored = await catalog("selected-account-a", offline).getCatalog();
+    expect(restored).toMatchObject({ cached: true, stale: true, source: "codex-cli" });
+    expect(restored.models[0]?.id).toBe("gpt-current");
+  });
+
   it("rejects invalid or empty selectable catalogs", () => {
     expect(() => parseCodexModelCatalog("not-json")).toThrow(/invalid JSON/);
     expect(() => parseCodexModelCatalog(JSON.stringify({ models: [] }))).toThrow(/selectable models/);

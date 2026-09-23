@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
+import { CodexService } from "./codexService.js";
 import { ScopeResolver } from "./scopeResolver.js";
 import { createBridgeMcpServer } from "./server.js";
 import { SessionRegistry } from "./sessionRegistry.js";
@@ -418,6 +419,7 @@ class ProjectionUpstream implements CodexUpstream {
 
 async function runChild(file: string): Promise<void> {
   const generation = randomUUID();
+  const codexService = new CodexService(process.env);
   let closing = false;
   let inFlight = 0;
   let tail: Promise<void> = Promise.resolve();
@@ -470,7 +472,7 @@ async function runChild(file: string): Promise<void> {
       observe(inFlight > 1 ? "queue-wait" : "read-snapshot");
       const run = tail.then(async () => {
         observe("read-snapshot");
-        const result = await executeProjection(file, value.method, value.args);
+        const result = await executeProjection(file, value.method, value.args, codexService);
         observe("serializing");
         const encoded = JSON.stringify(result === undefined ? null : result);
         if (Buffer.byteLength(encoded, "utf8") > MAX_MESSAGE_BYTES) {
@@ -506,12 +508,16 @@ async function runChild(file: string): Promise<void> {
 async function executeProjection(
   file: string,
   method: ReadMethod,
-  args: unknown[]
+  args: unknown[],
+  codexService: CodexService
 ): Promise<unknown> {
   const config = loadConfig({
     ...process.env,
     CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: file
   });
+  // Settings are read in a separate process. They still need the applied CLI
+  // selection for model discovery, even though no task worker runs here.
+  config.codexService = codexService;
   const stateStore = new BridgeStateStore({ file, readOnly: true });
   const upstream = new ProjectionUpstream();
   const sessions = new SessionRegistry({

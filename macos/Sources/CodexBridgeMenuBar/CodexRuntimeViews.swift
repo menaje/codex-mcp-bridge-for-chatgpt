@@ -78,7 +78,7 @@ struct CodexRuntimeSettingsPane: View {
                         }
                         }
                     }
-                    if runtime.configuredCommand == nil && (runtime.operation?.phase == "pending" || runtime.pendingSelection != nil) {
+                    if runtime.environmentPending == true || (runtime.configuredCommand == nil && (runtime.operation?.phase == "pending" || runtime.pendingSelection != nil)) {
                         Section("macos.waitingtoapply") {
                         Text("macos.thecurrentenvironmentstaysinuserestartthe")
                             .font(.caption)

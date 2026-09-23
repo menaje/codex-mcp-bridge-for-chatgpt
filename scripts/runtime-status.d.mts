@@ -22,6 +22,7 @@ export type ManagedRuntimeStatus = {
   launcherPid: number;
   phase: string;
   runtimeBuildId: string;
+  codexEnvironmentFingerprint?: string;
   tunnel: ManagedTunnelStatus;
   stale: boolean;
 };

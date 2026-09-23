@@ -46,6 +46,8 @@ export function readManagedRuntimeStatus(filePath, { maximumAgeMs = 20_000 } = {
       parsed.launcherPid <= 0 ||
       typeof parsed.phase !== "string" ||
       typeof parsed.runtimeBuildId !== "string" ||
+      !(parsed.codexEnvironmentFingerprint === undefined ||
+        (typeof parsed.codexEnvironmentFingerprint === "string" && /^[a-f0-9]{64}$/.test(parsed.codexEnvironmentFingerprint))) ||
       !parsed.tunnel ||
       typeof parsed.tunnel !== "object" ||
       typeof parsed.tunnel.phase !== "string" ||

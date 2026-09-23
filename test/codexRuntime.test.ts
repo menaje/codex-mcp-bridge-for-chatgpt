@@ -129,9 +129,12 @@ describe("Codex installation ownership and selection", () => {
     expect((await manager.snapshot()).candidates).toHaveLength(1);
     const terminal = new CodexRuntimeManager({ ...f.options, probe: async () => f.options.probe!(native) });
     expect((await terminal.discover())[0]).toMatchObject({ physicalPath: await realpath(native), version: "0.153.3" });
+    await terminal.snapshot();
+    const beforeFingerprint = terminal.appliedContextFingerprint();
     // The real launcher reads its native executable; only that executable changed.
     await writeFile(`${native}.next`, "version=0.153.4", { mode: 0o700 });
     await rename(`${native}.next`, native);
+    expect(terminal.appliedContextFingerprint()).not.toBe(beforeFingerprint);
     expect((await terminal.discover())[0].version).toBe("0.153.4");
   });
   it("never updates, removes or repairs an external installation", async () => {

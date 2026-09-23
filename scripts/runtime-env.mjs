@@ -10,7 +10,7 @@ import {
   unlinkSync,
   writeFileSync
 } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { parseEnv } from "node:util";
@@ -25,6 +25,59 @@ export const RUNTIME_ENV_MANAGED_KEYS = [
   "CODEX_MCP_BRIDGE_ALLOW_WRITE",
   "CODEX_MCP_BRIDGE_ALLOW_DANGER_FULL_ACCESS"
 ];
+
+// The same Codex child settings are projected for the native helper and the
+// launcher. Tunnel, billing, and API-key credentials are deliberately absent.
+export const CODEX_CHILD_ENV_KEYS = Object.freeze([
+  "CODEX_HOME", "CODEX_MCP_BRIDGE_RUNTIME_HOME",
+  "CODEX_MCP_BRIDGE_CODEX", "CODEX_GPT_BRIDGE_CODEX",
+  "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+  "LANG", "LC_ALL", "LC_CTYPE",
+  "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+  "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+  "CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "SSL_CERT_DIR", "SSL_CERT_FILE"
+]);
+
+/**
+ * Process values win over private-file values, including across the current
+ * and legacy command names. A legacy command is normalized to the current
+ * name so every consumer observes the same effective override.
+ */
+export function codexChildEnvironment(filePath, inherited = process.env) {
+  const fromFile = filePath ? readRuntimeEnvSubset(filePath, CODEX_CHILD_ENV_KEYS) : {};
+  const projected = {};
+  for (const name of CODEX_CHILD_ENV_KEYS) {
+    if (name === "CODEX_MCP_BRIDGE_CODEX" || name === "CODEX_GPT_BRIDGE_CODEX") continue;
+    const value = inherited[name] ?? fromFile[name];
+    if (value !== undefined) projected[name] = value;
+  }
+  const command = inherited.CODEX_MCP_BRIDGE_CODEX || inherited.CODEX_GPT_BRIDGE_CODEX ||
+    fromFile.CODEX_MCP_BRIDGE_CODEX || fromFile.CODEX_GPT_BRIDGE_CODEX;
+  if (command) projected.CODEX_MCP_BRIDGE_CODEX = command;
+  return projected;
+}
+
+/** Keep launcher/tunnel credentials out of selected Codex processes. */
+export function codexProcessEnvironment(environment) {
+  const projected = { ...environment };
+  for (const name of Object.keys(projected)) {
+    if (name.startsWith("CONTROL_PLANE_") || name.startsWith("CLOUDFLARED_") ||
+        name === "TUNNEL_CLIENT" || name.startsWith("TUNNEL_CLIENT_") ||
+        name === "CODEX_MCP_BRIDGE_TOKEN" || name === "CODEX_GPT_BRIDGE_TOKEN") {
+      delete projected[name];
+    }
+  }
+  return projected;
+}
+
+/** A private status marker; raw proxy credentials and paths are never emitted. */
+export function codexChildEnvironmentFingerprint(environment) {
+  const effective = codexChildEnvironment(undefined, environment);
+  return createHash("sha256").update(JSON.stringify(
+    ["HOME", "PATH", ...CODEX_CHILD_ENV_KEYS.filter(name => name !== "CODEX_GPT_BRIDGE_CODEX")]
+      .map(name => [name, name === "HOME" || name === "PATH" ? environment[name] ?? null : effective[name] ?? null])
+  )).digest("hex");
+}
 
 const DEFAULT_OPERATOR_CONFIGURATION = Object.freeze({
   defaultBackend: "app-server",

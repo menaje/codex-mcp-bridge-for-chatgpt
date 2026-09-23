@@ -1,6 +1,6 @@
 import { CLI_INSTALL_VALIDATION_ID, verifyCliConnection } from "./runtimeCompatibility.js";
 import { inspectCliProtocol, type CliProtocolSupport } from "./cliProtocol.js";
-import { constants } from "node:fs";
+import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
 import { access, chmod, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -49,6 +49,7 @@ export type CliRuntimeSnapshot = {
   knownVersions?: string[];
   selection: CliCandidate | null; candidates: CliCandidate[]; selectionRequired: boolean;
   configuredCommand?: string;
+  environmentPending?: boolean;
   pendingSelection: CliSelection | null; installedVersion: string | null; runningVersions: string[];
   updateVersion: string | null; latestVersion: string | null; checkedAt: string | null; lastSuccessfulCheckAt?: string | null; updateCheckError?: string | null;
   preferences: RuntimePreferences; operation: RuntimeState["operation"];
@@ -92,8 +93,9 @@ export class CodexRuntimeManager {
   constructor(options: RuntimeManagerOptions = {}) {
     this.options = options;
     this.environment = options.environment || process.env;
-    this.root = path.resolve(options.root || this.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME ||
+    const root = path.resolve(options.root || this.environment.CODEX_MCP_BRIDGE_RUNTIME_HOME ||
       path.join(homedir(), ".codex-mcp-bridge", "runtimes"));
+    this.root = canonicalRuntimePath(root);
   }
 
   private get validationId(): string { return this.options.validationId || CLI_INSTALL_VALIDATION_ID; }
@@ -101,6 +103,43 @@ export class CodexRuntimeManager {
   private configuredCommand(): string | undefined {
     if (this.options.discoverExternal === false) return undefined;
     return this.options.explicitCommand || this.environment.CODEX_MCP_BRIDGE_CODEX || this.environment.CODEX_GPT_BRIDGE_CODEX || undefined;
+  }
+
+  /**
+   * Synchronous, non-sensitive cache identity for the applied selection. The
+   * same command and native-binary resolution used by admission is used here;
+   * pending choices and installation progress are intentionally excluded.
+   */
+  appliedContextFingerprint(): string {
+    const stateFile = path.join(this.root, "cli-state.json");
+    let selection: CliSelection | null = null;
+    let stateIssue: string | null = null;
+    try {
+      selection = stateSchema.parse(parseJsonUtf8Strict(readFileSync(stateFile), "runtime state")).selection;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        try { stateIssue = createHash("sha256").update(readFileSync(stateFile)).digest("hex"); }
+        catch (readError) { stateIssue = (readError as NodeJS.ErrnoException).code || "invalid"; }
+      }
+    }
+    const configured = this.configuredCommand();
+    const command = configured || selection?.command || null;
+    let resolved = command;
+    let physical: string | null = null;
+    let commandStamp: string | null = null;
+    let nativeStamp: string | null = null;
+    if (command) {
+      try {
+        resolved = resolveOnPath(command, this.environment);
+        physical = physicalCodexPath(resolved);
+        commandStamp = fileStamp(resolved);
+        nativeStamp = fileStamp(physical);
+      } catch { /* A missing choice has its own identity and cannot borrow PATH. */ }
+    }
+    return createHash("sha256").update(JSON.stringify([
+      this.root, configured ? "configured" : "saved", command, configured ? null : selection?.source,
+      resolved, physical, commandStamp, nativeStamp, stateIssue
+    ])).digest("hex");
   }
 
   private async managedPaths(state: RuntimeState): Promise<Map<string, ManagedInstall>> {
@@ -698,22 +737,22 @@ async function latestStableCli(): Promise<string> {
   if (typeof metadata.version !== "string") throw new Error("CODEX_UPDATE_CHECK_FAILED: The version service returned invalid data.");
   return metadata.version;
 }
-async function resolveOnPath(command: string, environment: NodeJS.ProcessEnv): Promise<string> {
+function resolveOnPath(command: string, environment: NodeJS.ProcessEnv): string {
   if (path.isAbsolute(command) || command.includes(path.sep)) return path.resolve(command);
   for (const directory of (environment.PATH || "").split(path.delimiter).filter(Boolean)) {
     const file = path.join(directory, command);
-    try { await access(file, constants.X_OK); return file; } catch { /* next PATH entry */ }
+    try { accessSync(file, constants.X_OK); return file; } catch { /* next PATH entry */ }
   }
   throw new Error("CODEX_SELECTION_UNAVAILABLE: The explicitly configured executable was not found.");
 }
-async function physicalCodexPath(command: string): Promise<string> {
-  const resolved = await realpath(command);
+function physicalCodexPath(command: string): string {
+  const resolved = realpathSync(command);
   // The official npm JS launcher and its packaged native executable are one installation.
   if (resolved.endsWith(`${path.sep}bin${path.sep}codex.js`) || (process.platform === "win32" && resolved.endsWith(`${path.sep}codex.cmd`))) {
     const packageRoot = resolved.endsWith(".cmd") ? path.join(path.dirname(resolved), "node_modules", "@openai", "codex") : path.dirname(path.dirname(resolved));
     try {
       const metadata = parseJsonUtf8Strict<Record<string, unknown>>(
-        await readFile(path.join(packageRoot, "package.json")),
+        readFileSync(path.join(packageRoot, "package.json")),
         "Codex package metadata"
       );
       if (metadata.name === "@openai/codex") {
@@ -722,13 +761,33 @@ async function physicalCodexPath(command: string): Promise<string> {
         for (const root of [path.join(packageRoot, "node_modules", "@openai", `codex-${process.platform}-${process.arch}`),
           path.join(path.dirname(packageRoot), `codex-${process.platform}-${process.arch}`), packageRoot]) {
           for (const directory of ["bin", "codex"]) {
-            try { return await realpath(path.join(root, "vendor", target, directory, executable)); } catch { /* another official package layout */ }
+            try { return realpathSync(path.join(root, "vendor", target, directory, executable)); } catch { /* another official package layout */ }
           }
         }
       }
     } catch { /* standalone executable */ }
   }
   return resolved;
+}
+
+function fileStamp(file: string): string {
+  const info = statSync(file);
+  return `${info.dev}:${info.ino}:${info.size}:${info.mode}:${info.mtimeMs}:${info.ctimeMs}`;
+}
+
+function canonicalRuntimePath(file: string): string {
+  let candidate = file;
+  const missing: string[] = [];
+  for (;;) {
+    try { return path.join(realpathSync(candidate), ...missing.reverse()); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = path.dirname(candidate);
+      if (parent === candidate) return file;
+      missing.push(path.basename(candidate));
+      candidate = parent;
+    }
+  }
 }
 
 function assertCompatibleSelection(candidate: CliCandidate): void {
