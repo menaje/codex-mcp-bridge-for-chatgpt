@@ -1,6 +1,6 @@
 # Issue 162: context boundary follow-up
 
-Review basis: PR #166 merged at `950d1f4`. This follow-up started from `origin/dev` at `bac5b15e56d999c78f3d51184c0efb43af955cdf` after reopening #162. The earlier [implementation record](2026-09-23-issue-162-cli-context.md) describes the initial centralization; its late-result and pending-environment claims did not cover the races corrected here.
+Review basis: PR #166 merged at `950d1f4`. This follow-up started from `origin/dev` at `bac5b15e56d999c78f3d51184c0efb43af955cdf` after reopening #162, then was rebased onto `3ee82b9` for final validation. The earlier [implementation record](2026-09-23-issue-162-cli-context.md) describes the initial centralization; its late-result and pending-environment claims did not cover the races corrected here.
 
 ## Corrections
 
@@ -14,9 +14,9 @@ The private status file is an internal handoff record and can contain allowliste
 
 ## Verification scope
 
-- Source build and Node suite: 896 tests passed.
+- Source build and Node suite: 900 tests passed on the rebased branch.
 - App Server schema: the pinned Codex CLI 0.153.3 matched 416 JSON and 827 TypeScript schema files. The first full-validation command encountered the installed 0.155.0-alpha.16 CLI; the pinned CLI was installed in a temporary directory for the reproducible schema check.
-- macOS localization and strict Swift checks: 1,323 strings across nine languages and 206 tests (two skipped) passed.
+- macOS localization and strict Swift checks: 1,333 strings across nine languages and 207 tests (two skipped) passed.
 - The A/B CLI, account and cache tests use synthetic executables and responses. They do not authenticate a real account or send a paid model turn.
 
 Package and installed-app verification are recorded separately from these source checks.
