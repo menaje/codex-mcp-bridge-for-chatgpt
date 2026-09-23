@@ -1687,6 +1687,11 @@ final class AppModel: ObservableObject {
         await readDashboard(enrich: enrich, applyCachedEnrichment: applyCachedEnrichment)
     }
 
+    private func dashboardWithCurrentUsage(_ next: DashboardSnapshot, previous: DashboardSnapshot?) -> DashboardSnapshot {
+        if authStatus?.authenticated == false { return next.clearingUsage() }
+        return next.retainingUsage(from: previous)
+    }
+
     private func readDashboard(enrich: Bool, applyCachedEnrichment: Bool) async {
         dashboardRequestGeneration += 1
         let generation = dashboardRequestGeneration
@@ -1716,7 +1721,7 @@ final class AppModel: ObservableObject {
             )
             guard !Task.isCancelled, connection == connectionGeneration,
                   generation == dashboardRequestGeneration else { return }
-            dashboard = next
+            dashboard = dashboardWithCurrentUsage(next, previous: dashboard)
             clearDashboardHistoryDetails()
             dashboardLoadedFilter = filter
             if let problems = next.problems { dashboardProblemQuery.offset = problems.query.offset }
@@ -1803,13 +1808,13 @@ final class AppModel: ObservableObject {
                             continue
                         }
                         if let bucket = target.bucket, let current = self.dashboard {
-                            self.dashboard = current.mergingPage(
+                            self.dashboard = self.dashboardWithCurrentUsage(current.mergingPage(
                                 enriched,
                                 bucket: bucket,
                                 requestedOffset: target.requestedOffset
-                            )
+                            ), previous: current)
                         } else {
-                            self.dashboard = enriched
+                            self.dashboard = self.dashboardWithCurrentUsage(enriched, previous: self.dashboard)
                         }
                         self.lastDashboardRefresh = Date()
                         self.recordDashboardEnrichment(enriched)
@@ -2364,6 +2369,7 @@ final class AppModel: ObservableObject {
             guard generation == connectionGeneration, !isRemoteClient else { return }
             authStatus = next
             authErrorMessage = nil
+            if !next.authenticated { dashboard = dashboard?.clearingUsage() }
             if authStatus?.authenticated == true {
                 loginInProgress = false
                 loginPollingTask?.cancel()

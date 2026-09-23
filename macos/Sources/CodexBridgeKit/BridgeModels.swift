@@ -12,8 +12,9 @@ public struct DashboardSnapshot: Codable, Sendable {
     public let statusSource: String
     public let coverage: String
     public let enrichment: CardEnrichment?
-    public let codexAccount: CodexAccountUsage?
-    public let weeklyUsage: WeeklyUsage?
+    public var codexAccount: CodexAccountUsage?
+    public var weeklyUsage: WeeklyUsage?
+    public var usageContext: String? = nil
     public let counts: DashboardCounts
     public var activeRows: [DashboardRow]
     public var terminalRows: [DashboardRow]
@@ -87,6 +88,36 @@ public enum DashboardAppendBucket: Sendable {
 }
 
 public extension DashboardSnapshot {
+    /// A missing usage field is an incomplete observation only while the
+    /// server proves the same account and applied CLI context.
+    func retainingUsage(from previous: DashboardSnapshot?) -> DashboardSnapshot {
+        guard let previous, let usageContext, usageContext == previous.usageContext else { return self }
+        var result = self
+        if let account = codexAccount {
+            guard account.authenticated else { return self }
+            if account.usageStatus == "unavailable" {
+                if let old = previous.codexAccount {
+                    guard account.sharesKnownAccount(with: old),
+                          account.planType == old.planType else { return self }
+                    result.codexAccount = account.retainingUnavailableUsage(from: old)
+                }
+                if result.weeklyUsage == nil { result.weeklyUsage = previous.weeklyUsage }
+            }
+        } else {
+            result.codexAccount = previous.codexAccount
+            result.weeklyUsage = weeklyUsage ?? previous.weeklyUsage
+        }
+        return result
+    }
+
+    func clearingUsage() -> DashboardSnapshot {
+        var result = self
+        result.codexAccount = nil
+        result.weeklyUsage = nil
+        result.usageContext = nil
+        return result
+    }
+
     /// Merge one independently paged Dashboard bucket while retaining the
     /// other bucket and evicting rows that moved between runtime states.
     func mergingPage(

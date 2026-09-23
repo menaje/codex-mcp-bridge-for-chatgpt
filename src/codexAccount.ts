@@ -10,6 +10,9 @@ export type CodexAccountSnapshot = {
   resetCredits: { availableCount: number } | null;
   billing: { kind: "chatgpt-plan" | "api" | "unknown"; costsAvailable: boolean; actualCosts?: import("./codexBilling.js").CodexBillingSnapshot; url: string | null };
   observedAt: number;
+  /** A successful account read does not imply that the separate limits read succeeded. */
+  usageStatus: "available" | "unavailable" | "none";
+  usageObservedAt: number | null;
 };
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -42,13 +45,20 @@ export function projectCodexAccount(accountResponse: unknown, limitsResponse: un
     }
   }
   const reset = record(limits.rateLimitResetCredits);
-  const identity = typeof limits.accountId === "string" ? limits.accountId : typeof account.email === "string" ? account.email : null;
+  // Account/read remains available when the separate rate-limit request fails.
+  // Prefer its identity so the display key does not change with limits coverage.
+  const identity = typeof account.email === "string" ? account.email : typeof limits.accountId === "string" ? limits.accountId : null;
+  const usageStatus = authMode !== "chatgpt" ? "none"
+    : limitsResponse === null || limitsResponse === undefined ? "unavailable"
+    : windows.length ? "available"
+    : buckets.length ? "unavailable" : "none";
   return { authMode, authenticated: authMode !== "unknown",
     accountKey: identity ? createHash("sha256").update(`${authMode}:${identity}`).digest("hex") : null,
     planType: typeof account.planType === "string" ? account.planType : null, windows, credits,
     resetCredits: authMode === "chatgpt" && finite(reset.availableCount) && reset.availableCount >= 0 ? { availableCount: Math.floor(reset.availableCount) } : null,
     billing: { kind: authMode === "chatgpt" ? "chatgpt-plan" : authMode === "api-key" ? "api" : "unknown", costsAvailable: false,
-      url: authMode === "api-key" ? "https://platform.openai.com/usage" : null }, observedAt };
+      url: authMode === "api-key" ? "https://platform.openai.com/usage" : null }, observedAt,
+    usageStatus, usageObservedAt: usageStatus === "available" ? observedAt : null };
 }
 
 /** A task estimate is separate from account billing. Require explicit, dated prices. */

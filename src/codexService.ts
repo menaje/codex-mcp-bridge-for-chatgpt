@@ -47,7 +47,7 @@ export class CodexService {
   private visibility?: () => boolean;
   private accountIdentities = new Map<CodexBackendKind, string>();
   private accounts = new Map<CodexBackendKind, { revision: string; expires: number; request: Promise<CodexAccountSnapshot | null> }>();
-  private displayedAccounts = new Map<CodexBackendKind, { revision: string; value: CodexAccountSnapshot }>();
+  private displayedAccounts = new Map<CodexBackendKind, { revision: string; context: string | null; value: CodexAccountSnapshot }>();
   private accountFailures = new Map<CodexBackendKind, { revision: string; error: unknown }>();
   private accountReader?: () => Promise<CodexAccountSnapshot | null>;
   constructor(readonly environment: NodeJS.ProcessEnv = process.env, cli?: CodexRuntimeManager) {
@@ -112,6 +112,36 @@ export class CodexService {
       return digest(JSON.stringify([auth.auth_mode, auth.OPENAI_API_KEY, subject]));
     } catch { return "keyring-or-unavailable"; }
   }
+  /** Stable display boundary, independent of token/config refresh inputs. */
+  accountDisplayContext(): string | null {
+    const home = this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
+    try {
+      const auth = parseJsonUtf8Strict<Record<string, any>>(
+        readFileSync(path.join(home, "auth.json")), "Codex authentication state"
+      );
+      let subject: string | null = null;
+      if (auth.auth_mode === "chatgpt") {
+        subject = typeof auth.tokens?.account_id === "string" && auth.tokens.account_id
+          ? auth.tokens.account_id : null;
+        if (!subject && typeof auth.tokens?.id_token === "string") {
+          try {
+            const payload = auth.tokens.id_token.split(".")[1];
+            if (!payload || !/^[A-Za-z0-9_-]+$/.test(payload)) return null;
+            const claims = parseJsonUtf8Strict<Record<string, unknown>>(
+              Buffer.from(payload, "base64url"), "Codex identity token"
+            );
+            const claim = claims.sub ?? claims.email;
+            subject = typeof claim === "string" && claim ? claim : null;
+          } catch { return null; }
+        }
+      } else if (auth.auth_mode === "apiKey") {
+        const key = auth.OPENAI_API_KEY || this.environment.OPENAI_API_KEY || this.environment.CODEX_API_KEY;
+        subject = typeof key === "string" && key ? key : null;
+      }
+      if (!subject) return null;
+      return digest(JSON.stringify([home, this.cli.appliedContextFingerprint(), auth.auth_mode, subject]));
+    } catch { return null; }
+  }
   admissionGuard(home?: string): () => void {
     let identity: string | undefined;
     return () => {
@@ -144,6 +174,9 @@ export class CodexService {
       ...(!visible ? { constraint: "hidden-persistent-unsupported" as const } : {}) };
   }
   async readAccount(kind: CodexBackendKind, includeBilling = false): Promise<CodexAccountSnapshot | null> {
+    // Observe and permanently evict a confirmed display-boundary change before
+    // a failed request could later resurrect the old account.
+    this.cachedAccount(kind);
     const revision = this.cacheRevision(), cached = this.accounts.get(kind);
     const request = cached?.revision === revision && cached.expires > Date.now() ? cached.request : (async () => {
       if (kind !== "app-server") return null;
@@ -165,13 +198,26 @@ export class CodexService {
     if (request !== cached?.request) this.accounts.set(kind, { revision, expires: Date.now() + 15_000, request });
     const value = includeBilling ? await this.withBilling(await request) : await request;
     if (revision !== this.cacheRevision()) return null;
-    if (value) {
-      const previous = this.displayedAccounts.get(kind);
-      const displayed = !includeBilling && value.authMode === "api-key" && previous?.revision === revision && previous.value.billing.actualCosts
-        ? { ...value, billing: previous.value.billing } : value;
-      this.displayedAccounts.set(kind, { revision, value: displayed });
+    if (!value) return null;
+    const context = this.accountDisplayContext();
+    if (revision !== this.cacheRevision()) return null;
+    const previous = this.displayedAccounts.get(kind);
+    const sharesDisplayContext = previous && (context !== null && previous.context === context ||
+      context === null && previous.context === null && previous.revision === revision);
+    const sameAccount = sharesDisplayContext && value.accountKey !== null && previous.value.accountKey === value.accountKey &&
+      value.authMode === previous.value.authMode && value.planType === previous.value.planType;
+    let displayed = value;
+    if (sameAccount && value.authMode === "chatgpt" && value.usageStatus === "unavailable" &&
+        previous.value.usageObservedAt !== null) {
+      displayed = { ...value, windows: previous.value.windows, credits: previous.value.credits,
+        resetCredits: previous.value.resetCredits, usageObservedAt: previous.value.usageObservedAt };
     }
-    return value;
+    if (!includeBilling && value.authMode === "api-key" && previous?.revision === revision && previous.value.billing.actualCosts) {
+      displayed = { ...displayed, billing: previous.value.billing };
+    }
+    if (revision !== this.cacheRevision() || context !== this.accountDisplayContext()) return null;
+    this.displayedAccounts.set(kind, { revision, context, value: displayed });
+    return displayed;
   }
   /** Exact in-memory failure for local diagnostics; never projected to clients. */
   accountReadFailure(kind: CodexBackendKind): unknown | null {
@@ -180,14 +226,22 @@ export class CodexService {
   }
   /**
    * Fast structural refreshes retain the last displayed value while a fresh
-   * account read is in flight. The revision check is the invalidation boundary:
-   * authentication, configuration, or runtime selection changes must never
-   * reuse a value from the previous context. `observedAt` communicates age to
-   * the UI, so elapsed time alone must not create a blank refresh interval.
+   * account read is in flight. A token/config revision requests fresh data;
+   * only a proven account and applied CLI identity permits display reuse.
+   * Unknown identity requires a fresh read before displaying numeric usage.
    */
   cachedAccount(kind: CodexBackendKind): CodexAccountSnapshot | null {
     const cached = this.displayedAccounts.get(kind);
-    return cached?.revision === this.cacheRevision() ? cached.value : null;
+    if (!cached) return null;
+    const context = this.accountDisplayContext();
+    if (context !== null && context === cached.context) {
+      return cached.value;
+    }
+    // Keep an unknown-context value only as a private merge candidate for a
+    // fresh, same-account result. Never project it onto a structural response.
+    if (context === null && cached.context === null && cached.revision === this.cacheRevision()) return null;
+    this.displayedAccounts.delete(kind);
+    return null;
   }
   private async withBilling(account: CodexAccountSnapshot | null): Promise<CodexAccountSnapshot | null> {
     if (!account || account.authMode !== "api-key") return account;

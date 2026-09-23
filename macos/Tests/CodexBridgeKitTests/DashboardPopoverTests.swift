@@ -6,6 +6,141 @@ import XCTest
 @testable import CodexBridgeMenuBar
 
 final class DashboardPopoverTests: XCTestCase {
+    private func usageAccount(
+        remaining: Double?, status: String, checkedAt: Double?,
+        observedAt: Double, key: String = "account-a", plan: String = "plus"
+    ) -> [String: Any] {
+        var account: [String: Any] = [
+            "authMode": "chatgpt", "authenticated": true, "accountKey": key,
+            "planType": plan, "usageStatus": status, "observedAt": observedAt,
+            "windows": remaining.map { [[
+                "limitId": "codex", "usedPercent": 100 - $0, "remainingPercent": $0,
+                "windowDurationMins": 10080
+            ]] } ?? []
+        ]
+        if let checkedAt { account["usageObservedAt"] = checkedAt }
+        return account
+    }
+
+    @MainActor
+    func testUsageRemainsInTheNativePopoverAcrossMissingDelayedAndFailedReplies() async throws {
+        let f = try PopoverFixture()
+        defer { f.state.releaseEnrichment(); f.remove() }
+        let oldTime = 1_780_000_000_000.0
+        let newTime = oldTime + 60_000
+        let oldCheckedAt = ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: oldTime / 1000))
+        f.state.usageContext = "account-a:cli-one"
+        f.state.usageAccount = usageAccount(remaining: 60, status: "available", checkedAt: oldTime, observedAt: oldTime)
+        await f.model.refreshDashboard(enrich: false)
+        let screen = try XCTUnwrap(NSScreen.main)
+        let anchorWindow = NSPanel(contentRect: NSRect(
+            x: screen.visibleFrame.midX, y: screen.visibleFrame.maxY - 80,
+            width: 40, height: 30
+        ), styleMask: [.borderless], backing: .buffered, defer: false)
+        anchorWindow.isReleasedWhenClosed = false
+        let anchor = NSButton(frame: NSRect(x: 0, y: 0, width: 40, height: 30))
+        anchorWindow.contentView = anchor
+        anchorWindow.orderFrontRegardless()
+        let popover = NSPopover()
+        popover.animates = false
+        let host = NSHostingController(rootView: AnyView(
+            DashboardPopoverView(onContentSizeChange: { size in
+                popover.contentSize = NSSize(width: DashboardPopoverLayout.width, height: ceil(size.height))
+            }).environmentObject(f.model)
+        ))
+        host.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = host
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        defer { popover.performClose(nil); anchorWindow.close() }
+        func settle() async throws {
+            for _ in 0..<25 {
+                host.view.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        try await settle()
+        let initialHeight = popover.contentSize.height
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.weeklyUsage?.remainingPercent, 60)
+
+        f.state.rowCount = 1
+        f.state.usageAccount = nil
+        f.state.holdEnrichment = true
+        await f.model.refreshDashboard()
+        for _ in 0..<100 {
+            if f.state.enrichmentReadCount > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try await settle()
+        XCTAssertEqual(f.model.dashboard?.counts.running, 1)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.weeklyUsage?.remainingPercent, 60)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.weeklyUsage?.observedAt, oldCheckedAt)
+        XCTAssertEqual(popover.contentSize.height, initialHeight, accuracy: 1)
+
+        f.state.usageAccount = usageAccount(remaining: nil, status: "unavailable", checkedAt: nil,
+                                           observedAt: newTime, plan: "plus")
+        f.state.releaseEnrichment()
+        for _ in 0..<100 {
+            if f.model.dashboard?.codexAccount?.observedAt == newTime { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try await settle()
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.planType, "plus")
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.weeklyUsage?.remainingPercent, 60)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.weeklyUsage?.observedAt, oldCheckedAt)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.usageObservedAt, oldTime)
+        XCTAssertEqual(popover.contentSize.height, initialHeight, accuracy: 1)
+
+        f.state.usageAccount = nil
+        f.state.failEnrichment = true
+        await f.model.refreshDashboard()
+        for _ in 0..<100 {
+            if f.model.dashboardEnrichmentFailed { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try await settle()
+        XCTAssertTrue(f.model.dashboardEnrichmentFailed)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.weeklyUsage?.remainingPercent, 60)
+        XCTAssertEqual(popover.contentSize.height, initialHeight, accuracy: 1)
+
+        f.state.failEnrichment = false
+        f.state.usageAccount = usageAccount(remaining: 0, status: "available", checkedAt: newTime, observedAt: newTime)
+        await f.model.refreshDashboard(enrich: false)
+        try await settle()
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.weeklyUsage?.remainingPercent, 0)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.usageObservedAt, newTime)
+        XCTAssertEqual(popover.contentSize.height, initialHeight, accuracy: 1)
+
+        f.state.usageAccount = usageAccount(remaining: nil, status: "unavailable", checkedAt: nil,
+                                           observedAt: newTime, plan: "pro")
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.planType, "pro")
+        XCTAssertNil(f.model.dashboard?.codexAccount?.weeklyUsage)
+        f.state.usageAccount = usageAccount(remaining: 0, status: "available", checkedAt: newTime,
+                                           observedAt: newTime)
+        await f.model.refreshDashboard(enrich: false)
+
+        f.state.usageAccount = usageAccount(remaining: nil, status: "unavailable", checkedAt: nil,
+                                           observedAt: newTime, key: "account-b")
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertNil(f.model.dashboard?.codexAccount?.weeklyUsage)
+        XCTAssertEqual(f.model.dashboard?.codexAccount?.accountKey, "account-b")
+        f.state.usageContext = "account-b:cli-one"
+        f.state.usageAccount = nil
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertNil(f.model.dashboard?.codexAccount)
+        f.state.usageAccount = usageAccount(remaining: nil, status: "none", checkedAt: nil,
+                                           observedAt: newTime, key: "account-b")
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertNil(f.model.dashboard?.codexAccount?.weeklyUsage)
+        f.state.authenticated = false
+        await f.model.refreshAuthStatus()
+        f.state.usageAccount = usageAccount(remaining: 80, status: "available", checkedAt: newTime,
+                                           observedAt: newTime, key: "account-b")
+        await f.model.refreshDashboard(enrich: false)
+        XCTAssertNil(f.model.dashboard?.codexAccount)
+        XCTAssertFalse(f.model.shouldShowCodexWeeklyUsage)
+    }
+
     @MainActor
     func testStatusChangesStayLocalWhileReopeningRefreshesAndSharesPendingEnrichment() async throws {
         let f = try PopoverFixture()
@@ -486,8 +621,18 @@ private final class PopoverReplyState: @unchecked Sendable {
     private var dashboardReads = 0
     private var slowHistory = false
     private var runningRowCount = 0
+    private var usageContextValue: String?
+    private var usageAccountValue: [String: Any]?
+    private var usageWeeklyValue: [String: Any]?
+    private var authenticatedValue = true
+    private var failEnrichmentValue = false
     private var deferredHistoryRevision = String(repeating: "a", count: 64)
     var rowCount: Int { get { lock.withLock { runningRowCount } } set { lock.withLock { runningRowCount = newValue } } }
+    var usageContext: String? { get { lock.withLock { usageContextValue } } set { lock.withLock { usageContextValue = newValue } } }
+    var usageAccount: [String: Any]? { get { lock.withLock { usageAccountValue } } set { lock.withLock { usageAccountValue = newValue } } }
+    var usageWeekly: [String: Any]? { get { lock.withLock { usageWeeklyValue } } set { lock.withLock { usageWeeklyValue = newValue } } }
+    var authenticated: Bool { get { lock.withLock { authenticatedValue } } set { lock.withLock { authenticatedValue = newValue } } }
+    var failEnrichment: Bool { get { lock.withLock { failEnrichmentValue } } set { lock.withLock { failEnrichmentValue = newValue } } }
     var holdEnrichment: Bool { get { lock.withLock { pausedEnrichment } } set { lock.withLock { pausedEnrichment = newValue } } }
     var enrichmentReadCount: Int { lock.withLock { enrichmentReads } }
     var maximumConcurrentEnrichments: Int { lock.withLock { maximumEnrichments } }
@@ -518,7 +663,7 @@ private final class PopoverReplyState: @unchecked Sendable {
             var status = Self.helperStatus
             if let operation = lock.withLock({ operation }) { status["lifecycle"] = operation }
             result = status
-        case "auth.status": result = ["installed": true, "authenticated": true, "summary": "fixture"]
+        case "auth.status": result = ["installed": true, "authenticated": authenticated, "summary": "fixture"]
         case "lifecycle.request":
             lock.withLock { requests.append(params) }
             if failStart { return NativeFixtureReply(body: #"{"error":{"code":-32000,"message":"FIXTURE_START_FAILED"}}"#) }
@@ -539,6 +684,9 @@ private final class PopoverReplyState: @unchecked Sendable {
                 }
                 if paused { _ = enrichmentGate.wait(timeout: .now() + 5) }
                 lock.withLock { activeEnrichments -= 1; completedEnrichments += 1 }
+                if failEnrichment {
+                    return NativeFixtureReply(body: #"{"error":{"code":-32000,"message":"FIXTURE_USAGE_UNAVAILABLE"}}"#)
+                }
             }
             if includeHistory, delayHistory { delay = 0.2 }
             let names = ["trackedProjects", "trackedConversations", "retainedJobs", "active", "running", "inputRequired",
@@ -560,7 +708,7 @@ private final class PopoverReplyState: @unchecked Sendable {
             counts["running"] = rowCount == 0 ? 3 : rowCount
             let page: [String: Any] = ["offset": 0, "limit": 12, "returned": 0, "total": 0,
                 "returnedConversations": 0, "conversationTotal": 0, "hasPrevious": false, "hasNext": false]
-            result = ["kind": "dashboard", "generatedAt": "2026-09-10T00:00:00Z", "scope": filter,
+            var snapshot: [String: Any] = ["kind": "dashboard", "generatedAt": "2026-09-10T00:00:00Z", "scope": filter,
                 "statusSource": "codex-runtime-only", "coverage": "complete", "counts": counts,
                 "activeRows": rows, "terminalRows": [], "idleRows": [], "statusRows": rows,
                 "statusRowsComplete": true,
@@ -570,6 +718,10 @@ private final class PopoverReplyState: @unchecked Sendable {
                     "cacheHits": lock.withLock { completedEnrichments }, "timeouts": 0,
                     "durationMs": 0, "usageTimedOut": false, "pendingReads": 0],
                 "uiLocalePreference": "ko"]
+            if let usageContext { snapshot["usageContext"] = usageContext }
+            if let usageAccount { snapshot["codexAccount"] = usageAccount }
+            if let usageWeekly { snapshot["weeklyUsage"] = usageWeekly }
+            result = snapshot
         case "dashboard.history-detail":
             let rowKey = params["rowKey"] as? String ?? ""
             let historyRevision = lock.withLock { deferredHistoryRevision }

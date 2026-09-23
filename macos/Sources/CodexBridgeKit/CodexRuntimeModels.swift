@@ -158,18 +158,22 @@ public struct CodexAccountUsage: Codable, Sendable, Equatable {
     public let authenticated: Bool
     public let accountKey: String?
     public let planType: String?
-    public let windows: [Window]
-    public let credits: Credits?
-    public let resetCredits: ResetCredits?
+    public var windows: [Window]
+    public var credits: Credits?
+    public var resetCredits: ResetCredits?
     public let observedAt: Double
+    public var usageStatus: String? = nil
+    public var usageObservedAt: Double? = nil
 
     public var weeklyUsage: WeeklyUsage? {
-        guard authMode == "chatgpt", let window = windows.first(where: { $0.limitId == "codex" && $0.windowDurationMins == 10080 }) else { return nil }
+        guard authMode == "chatgpt",
+              let checkedAt = usageObservedAt ?? (usageStatus == nil ? observedAt : nil),
+              let window = windows.first(where: { $0.limitId == "codex" && $0.windowDurationMins == 10080 }) else { return nil }
         let formatter = ISO8601DateFormatter()
         return WeeklyUsage(source: "codex-account", limitId: window.limitId, usedPercent: window.usedPercent,
             remainingPercent: window.remainingPercent, windowDurationMins: 10080,
             resetsAt: window.resetsAt.map { formatter.string(from: Date(timeIntervalSince1970: $0)) },
-            observedAt: formatter.string(from: Date(timeIntervalSince1970: observedAt / 1000)))
+            observedAt: formatter.string(from: Date(timeIntervalSince1970: checkedAt / 1000)))
     }
     /// Balance is not a spend ledger. Surface it only when a plan window is exhausted.
     public var menuCreditBalance: String? {
@@ -181,6 +185,17 @@ public struct CodexAccountUsage: Codable, Sendable, Equatable {
     public func sharesKnownAccount(with other: Self) -> Bool {
         guard let accountKey, !accountKey.isEmpty else { return false }
         return authMode == other.authMode && accountKey == other.accountKey
+    }
+
+    public func retainingUnavailableUsage(from previous: Self) -> Self {
+        guard usageStatus == "unavailable", sharesKnownAccount(with: previous),
+              planType == previous.planType else { return self }
+        var result = self
+        result.windows = previous.windows
+        result.credits = previous.credits
+        result.resetCredits = previous.resetCredits
+        result.usageObservedAt = previous.usageObservedAt ?? (previous.usageStatus == nil ? previous.observedAt : nil)
+        return result
     }
 }
 
