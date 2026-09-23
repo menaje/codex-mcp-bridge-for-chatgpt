@@ -179,6 +179,8 @@ enum BridgeAppLocalization {
             key = "macos.movetheconnectionfileoutsideallregisteredproject"
         case "runtime-env-invalid-content", "runtime-env-invalid":
             key = "macos.theconnectionfilecontentsareinvalid"
+        case "codex-requested-state-invalid", "codex-requested-state-unavailable":
+            key = "macos.settingscouldnotbeloaded"
         case "remote-endpoint-not-configured":
             key = "macos.theremotemanagementserveraddressisnotconfigured"
         case "remote-address-in-use":

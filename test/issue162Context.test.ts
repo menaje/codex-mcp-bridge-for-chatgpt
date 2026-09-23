@@ -164,6 +164,15 @@ if (process.argv.includes("app-server")) {
       expect(pending.account?.authMode).toBe("chatgpt");
       expect((await supervisor.authStatus()).authenticated).toBe(true);
       expect(readFileSync(accountCalls, "utf8").trim().split("\n").every(name => name === "applied")).toBe(true);
+      const requestedStateFile = path.join(requestedHome, "cli-state.json");
+      const savedRequestedState = readFileSync(requestedStateFile, "utf8");
+      writeFileSync(requestedStateFile, "{invalid", { mode: 0o600 });
+      const invalidRequested = await supervisor.codexRuntime({ action: "status", includeAccount: true });
+      expect(invalidRequested).toMatchObject({ environmentPending: true,
+        selection: { command: appliedCli }, account: { authMode: "chatgpt" },
+        requestedEnvironment: { runtimeHome: realpathSync(requestedHome), selection: null },
+        requestedEnvironmentProblem: { code: "codex-requested-state-invalid" } });
+      expect(invalidRequested.runningVersions).toEqual(["0.153.3"]);
       const recovered = new MacOSBridgeSupervisor({ bridgeRoot, envFile, launcherPath,
         bridgeSocketPath: path.join(privateDirectory, "run", "bridge.sock"),
         runtimeStatusFile: path.join(privateDirectory, "run", "launcher-status.json"),
@@ -174,10 +183,43 @@ if (process.argv.includes("app-server")) {
         const adopted = await recovered.codexRuntime({ action: "status", includeAccount: false });
         expect(adopted.environmentPending).toBe(true);
         expect(adopted.selection?.command).toBe(appliedCli);
-        expect(adopted.requestedEnvironment?.selection?.command).toBe(requestedCli);
+        expect(adopted.requestedEnvironmentProblem?.code).toBe("codex-requested-state-invalid");
       } finally {
         await recovered.close();
       }
+      rmSync(requestedStateFile);
+      mkdirSync(requestedStateFile);
+      const unreadableRequested = await supervisor.codexRuntime({ action: "status", includeAccount: true });
+      expect(unreadableRequested.selection?.command).toBe(appliedCli);
+      expect(unreadableRequested.account?.authMode).toBe("chatgpt");
+      expect(unreadableRequested.requestedEnvironmentProblem?.code).toBe("codex-requested-state-invalid");
+      rmSync(requestedStateFile, { recursive: true });
+      writeFileSync(requestedStateFile, savedRequestedState, { mode: 0o600 });
+      chmodSync(envFile, 0o644);
+      const invalidFile = await supervisor.codexRuntime({ action: "status", includeAccount: true });
+      expect(invalidFile.selection?.command).toBe(appliedCli);
+      expect(invalidFile.account?.authMode).toBe("chatgpt");
+      expect(invalidFile.environmentPending).toBe(true);
+      expect(invalidFile.requestedEnvironment).toBeNull();
+      expect(invalidFile.requestedEnvironmentProblem?.code).toBe("runtime-env-permissions-too-broad");
+      expect((await supervisor.authStatus()).authenticated).toBe(true);
+      const recoveredWithInvalidFile = new MacOSBridgeSupervisor({ bridgeRoot, envFile, launcherPath,
+        bridgeSocketPath: path.join(privateDirectory, "run", "bridge.sock"),
+        runtimeStatusFile: path.join(privateDirectory, "run", "launcher-status.json"),
+        runtimeLockDirectory: path.join(privateDirectory, "run", "launcher.lock"),
+        autoRestart: false, registeredProjectRoots: () => [], startTimeoutMs: 5_000 });
+      try {
+        await recoveredWithInvalidFile.start();
+        const adopted = await recoveredWithInvalidFile.codexRuntime({ action: "status", includeAccount: true });
+        expect(adopted.selection?.command).toBe(appliedCli);
+        expect(adopted.account?.authMode).toBe("chatgpt");
+        expect(adopted.requestedEnvironmentProblem?.code).toBe("runtime-env-permissions-too-broad");
+      } finally {
+        await recoveredWithInvalidFile.close();
+      }
+      chmodSync(envFile, 0o600);
+      expect((await supervisor.codexRuntime({ action: "status", includeAccount: false })).requestedEnvironment?.selection?.command)
+        .toBe(requestedCli);
       expect((await supervisor.codexRuntime({ action: "preferences", preferences: { notifications: false } })).preferences.notifications).toBe(false);
       const checkUpdates = vi.spyOn(CodexRuntimeManager.prototype, "checkUpdates")
         .mockImplementation(function (this: CodexRuntimeManager) { return this.snapshot(); });

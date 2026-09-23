@@ -90,13 +90,25 @@ struct CodexRuntimeSettingsPane: View {
                             if let requested = runtime.requestedEnvironment {
                                 LabeledContent("macos.requested", value: environmentDescription(requested))
                             }
+                            if let problem = runtime.requestedEnvironmentProblem {
+                                Label(
+                                    BridgeAppLocalization.statusProblemDescription(
+                                        problem: problem,
+                                        diagnosticMessage: nil,
+                                        context: .runtimeConfiguration,
+                                        locale: model.interfaceLocale
+                                    ) ?? BridgeAppLocalization.string("macos.settingscouldnotbeloaded", locale: model.interfaceLocale),
+                                    systemImage: "exclamationmark.triangle"
+                                )
+                                .foregroundStyle(.orange)
+                            }
                         }
                         Text("macos.thecurrentenvironmentstaysinuserestartthe")
                             .font(.caption)
                         Button("macos.applyafterworkfinishes") {
                             Task { _ = await model.restartRuntime(force: false) }
                         }
-                        .disabled(model.isBusy)
+                        .disabled(model.isBusy || runtime.requestedEnvironmentProblem != nil)
                         }
                     }
 

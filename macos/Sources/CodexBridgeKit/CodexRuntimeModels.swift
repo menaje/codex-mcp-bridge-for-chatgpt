@@ -70,6 +70,7 @@ public struct CodexRuntimeSnapshot: Codable, Sendable, Equatable {
     public let appliedEnvironment: CodexRuntimeEnvironment?
     public let runningEnvironment: CodexRuntimeEnvironment?
     public let requestedEnvironment: CodexRuntimeEnvironment?
+    public let requestedEnvironmentProblem: BridgeStatusProblem?
     public let pendingSelection: CodexInstallation?
     public let installedVersion: String?
     public let runningVersions: [String]
