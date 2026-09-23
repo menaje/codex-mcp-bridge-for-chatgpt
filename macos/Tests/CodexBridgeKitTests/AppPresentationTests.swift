@@ -240,6 +240,15 @@ final class AppPresentationTests: XCTestCase {
             ),
             "The connection file or folder is not owned by the current user."
         )
+        XCTAssertEqual(
+            BridgeAppLocalization.statusProblemDescription(
+                problem: BridgeStatusProblem(code: "codex-requested-state-invalid"),
+                diagnosticMessage: nil,
+                context: .runtimeConfiguration,
+                locale: Locale(identifier: "ko")
+            ),
+            "Settings could not be loaded."
+        )
     }
 
     func testNativeLocalizationDoesNotExposeBridgeSkillDiagnostics() {

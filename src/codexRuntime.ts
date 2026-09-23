@@ -53,6 +53,7 @@ export type CliRuntimeSnapshot = {
   appliedEnvironment?: CliEnvironmentSummary;
   runningEnvironment?: CliEnvironmentSummary | null;
   requestedEnvironment?: CliEnvironmentSummary | null;
+  requestedEnvironmentProblem?: { code: string; arguments: Record<string, string> } | null;
   pendingSelection: CliSelection | null; installedVersion: string | null; runningVersions: string[];
   updateVersion: string | null; latestVersion: string | null; checkedAt: string | null; lastSuccessfulCheckAt?: string | null; updateCheckError?: string | null;
   preferences: RuntimePreferences; operation: RuntimeState["operation"];

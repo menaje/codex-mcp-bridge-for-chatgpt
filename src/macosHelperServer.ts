@@ -775,18 +775,26 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   private selectedCliContext(): { manager: CodexRuntimeManager; service: CodexService } {
-    let environment = commandEnvironment(this.envFile);
+    let environment: NodeJS.ProcessEnv;
     if (this.isManagedRuntimeRunning()) {
       const applied = readManagedRuntimeStatus(this.runtimeStatusFile);
-      if (!applied || applied.launcherPid !== this.managedPid ||
-          (!applied.codexEnvironment &&
-            applied.codexEnvironmentFingerprint !== codexChildEnvironmentFingerprint(environment))) {
+      if (!applied || applied.launcherPid !== this.managedPid) {
         throw new Error("CODEX_APPLIED_CONTEXT_UNAVAILABLE: The running Codex environment could not be verified.");
       }
       // Launchers from before this field was added still expose a fingerprint.
       // Current settings are safe to use only when they match that fingerprint.
-      environment = applied.codexEnvironment || environment;
-    }
+      if (applied.codexEnvironment) environment = applied.codexEnvironment;
+      else {
+        try {
+          environment = commandEnvironment(this.envFile);
+          if (applied.codexEnvironmentFingerprint !== codexChildEnvironmentFingerprint(environment)) {
+            throw new Error("context mismatch");
+          }
+        } catch {
+          throw new Error("CODEX_APPLIED_CONTEXT_UNAVAILABLE: The running Codex environment could not be verified.");
+        }
+      }
+    } else environment = commandEnvironment(this.envFile);
     const fingerprint = createHash("sha256").update(JSON.stringify(environment)).digest("hex");
     if (this.cliContext?.fingerprint === fingerprint) return this.cliContext;
     const manager = this.injectedCliManager || new CodexRuntimeManager({ environment });
@@ -796,8 +804,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     return this.cliContext;
   }
 
-  private requestedCliContext(): { manager: CodexRuntimeManager; service: CodexService } {
-    const environment = commandEnvironment(this.envFile);
+  private requestedCliContext(environment = commandEnvironment(this.envFile)): { manager: CodexRuntimeManager; service: CodexService } {
     const fingerprint = createHash("sha256").update(JSON.stringify(environment)).digest("hex");
     if (this.requestedContext?.fingerprint === fingerprint) return this.requestedContext;
     const manager = this.injectedCliManager || new CodexRuntimeManager({ environment });
@@ -805,17 +812,30 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     return this.requestedContext;
   }
 
-  private cliEnvironmentPending(): boolean {
-    if (!this.isManagedRuntimeRunning()) return false;
+  private requestedEnvironmentState(): { pending: boolean; environment?: NodeJS.ProcessEnv; problem: StatusProblem | null } {
+    if (!this.isManagedRuntimeRunning()) return { pending: false, problem: null };
     const applied = readManagedRuntimeStatus(this.runtimeStatusFile);
-    return !applied || applied.launcherPid !== this.managedPid || !applied.codexEnvironmentFingerprint ||
-      applied.codexEnvironmentFingerprint !== codexChildEnvironmentFingerprint(commandEnvironment(this.envFile));
+    if (!applied || applied.launcherPid !== this.managedPid || !applied.codexEnvironmentFingerprint) {
+      return { pending: true, problem: null };
+    }
+    try {
+      const environment = commandEnvironment(this.envFile);
+      return { pending: applied.codexEnvironmentFingerprint !== codexChildEnvironmentFingerprint(environment),
+        environment, problem: null };
+    } catch (error) {
+      return { pending: true, problem: runtimeConfigurationProblem(safeErrorMessage(error)) };
+    }
+  }
+
+  private cliEnvironmentPending(): boolean {
+    return this.requestedEnvironmentState().pending;
   }
 
   async codexRuntime(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot> {
     const { manager, service } = this.selectedCliContext();
     this.watchManager(manager);
-    const environmentPending = this.cliEnvironmentPending();
+    const requestState = this.requestedEnvironmentState();
+    const environmentPending = requestState.pending;
     if (environmentPending && ["login", "select", "install", "update", "reinstall", "retry", "rollback", "remove", "apply-pending"].includes(request.action)) {
       throw new Error("CODEX_ENVIRONMENT_PENDING: Restart the managed runtime after current work finishes before using the changed Codex environment.");
     }
@@ -827,15 +847,25 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       case "status": {
         const base = await manager.snapshot();
         const appliedEnvironment = cliEnvironmentSummary(manager, service, base);
-        const requested = environmentPending ? this.requestedCliContext() : null;
-        const requestedEnvironment = requested
-          ? cliEnvironmentSummary(requested.manager, requested.service,
-              await requested.manager.snapshot({ selectInitial: false })) : null;
         const kind = "app-server" as const;
+        const billing = await service.billing.configuration();
+        const account = base.selection?.available
+          ? request.includeAccount === false ? service.cachedAccount(kind) : await service.readAccount(kind, true) || service.cachedAccount(kind) : null;
+        let requestedEnvironment: CliEnvironmentSummary | null = null;
+        let requestedEnvironmentProblem = requestState.problem;
+        if (environmentPending && !requestedEnvironmentProblem && requestState.environment) {
+          try {
+            const requested = this.requestedCliContext(requestState.environment);
+            requestedEnvironment = cliEnvironmentSummary(requested.manager, requested.service);
+            requestedEnvironment = cliEnvironmentSummary(requested.manager, requested.service,
+              await requested.manager.snapshot({ selectInitial: false }));
+          } catch (error) {
+            requestedEnvironmentProblem = requestedContextProblem(error);
+          }
+        }
         const snapshot = { ...base, environmentPending, appliedEnvironment,
           runningEnvironment: this.isManagedRuntimeRunning() ? appliedEnvironment : null,
-          requestedEnvironment, billing: await service.billing.configuration(), account: base.selection?.available
-          ? request.includeAccount === false ? service.cachedAccount(kind) : await service.readAccount(kind, true) || service.cachedAccount(kind) : null };
+          requestedEnvironment, requestedEnvironmentProblem, billing, account };
         if (snapshot.selection?.source === "bridge" && snapshot.preferences.notifications && !this.cliUpdateCheck &&
             (!snapshot.checkedAt || Date.now() - Date.parse(snapshot.checkedAt) > 24 * 60 * 60_000)) {
           this.cliUpdateCheck = manager.checkUpdates().catch(() => undefined).finally(() => { this.cliUpdateCheck = undefined; });
@@ -968,8 +998,16 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
           }
           if (request.configuration) prepareRuntimeEnvUpdate(this.envFile, request.configuration);
           const changesRuntime = ["start", "restart", "repair", "configure", "helper-replace"].includes(request.kind);
-          const cli = changesRuntime ? await this.requestedCliManager().activationTarget() : undefined;
+          // A start request is a no-op when this helper can adopt the running launcher.
+          // Its requested environment may be broken, but that must not prevent adoption.
+          if (request.kind === "start") {
+            this.reconcileManagedRuntime();
+            if (!this.isManagedRuntimeRunning()) await this.adoptExistingRuntime();
+          }
+          const existingRun = request.kind === "start" ? this.lifecycleRunIdentity() : null;
+          const cli = changesRuntime && !existingRun ? await this.requestedCliManager().activationTarget() : undefined;
           return { request, target: { cli, helperInstance: this.helperInstance,
+            ...(existingRun ? { existingRun } : {}),
             ...(request.configuration ? { environmentFingerprint: this.environmentFingerprint() } : {}) }, description: cli?.description };
         },
         inspect: record => this.inspectLifecycle(record),
@@ -1070,6 +1108,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   private async validateLifecycleTarget(record: LifecycleRecord): Promise<void> {
+    if (record.target.existingRun && record.target.existingRun !== this.lifecycleRunIdentity()) {
+      throw new Error("LIFECYCLE_TARGET_CHANGED: The running bridge changed after this start was accepted.");
+    }
     const expectedCli = record.target.cli as { revision: number; command: string | null } | undefined;
     if (expectedCli) {
       const cli = await this.requestedCliManager().activationTarget();
@@ -1318,6 +1359,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (this.closed) throw new Error("LIFECYCLE_CLOSED: The helper is shutting down.");
     await this.finishPendingProcessCleanup();
     this.reconcileManagedRuntime();
+    if (this.executingLifecycle?.target.existingRun) await this.validateLifecycleTarget(this.executingLifecycle);
     if (this.isManagedRuntimeRunning()) return this.snapshot();
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
@@ -2633,15 +2675,21 @@ function commandEnvironment(envFile?: string): NodeJS.ProcessEnv {
 function cliEnvironmentSummary(
   manager: CodexRuntimeManager,
   service: CodexService,
-  snapshot: CliRuntimeSnapshot
+  snapshot?: CliRuntimeSnapshot
 ): CliEnvironmentSummary {
   const environment = service.environment;
   return {
     runtimeHome: manager.root,
     codexHome: environment.CODEX_HOME || path.join(environment.HOME || homedir(), ".codex"),
-    configuredCommand: snapshot.configuredCommand || null,
-    selection: snapshot.selection
+    configuredCommand: snapshot?.configuredCommand || environment.CODEX_MCP_BRIDGE_CODEX || environment.CODEX_GPT_BRIDGE_CODEX || null,
+    selection: snapshot?.selection || null
   };
+}
+
+function requestedContextProblem(error: unknown): StatusProblem {
+  const message = safeErrorMessage(error);
+  return statusProblem(message.startsWith("CODEX_STATE_INVALID:")
+    ? "codex-requested-state-invalid" : "codex-requested-state-unavailable");
 }
 
 function readRegisteredProjectRoots(
