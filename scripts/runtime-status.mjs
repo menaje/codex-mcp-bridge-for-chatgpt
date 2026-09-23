@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { readPrivateFile, writePrivateFileAtomic } from "./managed-file.mjs";
 import { parseJsonUtf8Strict } from "./text-integrity.mjs";
+import { CODEX_APPLIED_ENV_KEYS, codexChildEnvironmentFingerprint } from "./runtime-env.mjs";
 
 export const MANAGED_RUNTIME_STATUS_PROTOCOL = "codex-mcp-bridge-launcher-status";
 export const MANAGED_RUNTIME_STATUS_VERSION = 1;
@@ -48,6 +49,9 @@ export function readManagedRuntimeStatus(filePath, { maximumAgeMs = 20_000 } = {
       typeof parsed.runtimeBuildId !== "string" ||
       !(parsed.codexEnvironmentFingerprint === undefined ||
         (typeof parsed.codexEnvironmentFingerprint === "string" && /^[a-f0-9]{64}$/.test(parsed.codexEnvironmentFingerprint))) ||
+      !validCodexEnvironment(parsed.codexEnvironment) ||
+      (parsed.codexEnvironment !== undefined &&
+        parsed.codexEnvironmentFingerprint !== codexChildEnvironmentFingerprint(parsed.codexEnvironment)) ||
       !parsed.tunnel ||
       typeof parsed.tunnel !== "object" ||
       typeof parsed.tunnel.phase !== "string" ||
@@ -80,6 +84,15 @@ export function readManagedRuntimeStatus(filePath, { maximumAgeMs = 20_000 } = {
   } catch {
     return null;
   }
+}
+
+function validCodexEnvironment(value) {
+  if (value === undefined) return true; // Older launchers do not publish it.
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const allowed = new Set(CODEX_APPLIED_ENV_KEYS);
+  return Object.entries(value).every(([name, entry]) =>
+    allowed.has(name) && typeof entry === "string" && entry.length <= 32_768
+  ) && JSON.stringify(value).length <= 128 * 1024;
 }
 
 function validStatusProblem(value) {

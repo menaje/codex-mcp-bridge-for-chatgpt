@@ -55,6 +55,8 @@ export function codexChildEnvironment(
   inherited?: NodeJS.ProcessEnv
 ): NodeJS.ProcessEnv;
 export function codexChildEnvironmentFingerprint(environment: NodeJS.ProcessEnv): string;
+export const CODEX_APPLIED_ENV_KEYS: readonly string[];
+export function codexAppliedEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
 export function codexProcessEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
 
 export type PreparedRuntimeEnvUpdate = {

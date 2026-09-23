@@ -50,6 +50,9 @@ export type CliRuntimeSnapshot = {
   selection: CliCandidate | null; candidates: CliCandidate[]; selectionRequired: boolean;
   configuredCommand?: string;
   environmentPending?: boolean;
+  appliedEnvironment?: CliEnvironmentSummary;
+  runningEnvironment?: CliEnvironmentSummary | null;
+  requestedEnvironment?: CliEnvironmentSummary | null;
   pendingSelection: CliSelection | null; installedVersion: string | null; runningVersions: string[];
   updateVersion: string | null; latestVersion: string | null; checkedAt: string | null; lastSuccessfulCheckAt?: string | null; updateCheckError?: string | null;
   preferences: RuntimePreferences; operation: RuntimeState["operation"];
@@ -59,6 +62,12 @@ export type CliRuntimeSnapshot = {
   billing?: import("./codexBilling.js").CodexBillingSnapshot;
   account?: import("./codexAccount.js").CodexAccountSnapshot | null;
   managedVersions: { version: string; bytes: number; active: boolean; staged: boolean; recovery: boolean }[];
+};
+export type CliEnvironmentSummary = {
+  runtimeHome: string;
+  codexHome: string;
+  configuredCommand: string | null;
+  selection: CliCandidate | null;
 };
 export type RuntimeInstaller = (options: {
   directory: string; version: string; previousCommand?: string;
@@ -198,11 +207,11 @@ export class CodexRuntimeManager {
     return [...unique.values()];
   }
 
-  async snapshot(): Promise<CliRuntimeSnapshot> {
+  async snapshot(options: { selectInitial?: boolean } = {}): Promise<CliRuntimeSnapshot> {
     let state = await this.readState();
     const candidates = await this.discover(state);
     const configuredCommand = this.configuredCommand();
-    if (!configuredCommand && !state.selection && !state.selectionRequired) {
+    if (options.selectInitial !== false && !configuredCommand && !state.selection && !state.selectionRequired) {
       const external = candidates.filter(candidate => candidate.source !== "bridge");
       const initial = external.length === 1 ? external[0] : external.length === 0
         ? candidates.find(candidate => state.managed.find(install => install.id === state.activeId && this.managedCommand(install) === candidate.command))
@@ -325,7 +334,7 @@ export class CodexRuntimeManager {
   }
 
   /** Seal the selection and its usage record under the same lock as activation/removal. */
-  async acquire(explicitCommand: string | undefined = this.configuredCommand()): Promise<{ selection: CliSelection; release: () => Promise<void> }> {
+  async acquire(explicitCommand: string | undefined = this.configuredCommand()): Promise<{ selection: CliSelection; fingerprint: string; release: () => Promise<void> }> {
     const selection = await this.resolve(explicitCommand);
     return withRuntimeLock(this.root, "cli", async () => {
       const state = await this.readState();
@@ -335,7 +344,13 @@ export class CodexRuntimeManager {
       const inspected = await this.inspectSelection(selection);
       if (!inspected.available) throw new Error("CODEX_SELECTION_UNAVAILABLE: The selected installation needs recovery.");
       assertCompatibleSelection(inspected);
-      return { selection, release: await this.lease(selection) };
+      const release = await this.lease(selection);
+      try {
+        return { selection, fingerprint: this.appliedContextFingerprint(), release };
+      } catch (error) {
+        await release();
+        throw error;
+      }
     });
   }
 

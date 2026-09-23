@@ -115,6 +115,9 @@ it("runs the built launcher and MCP model path against the private-file runtime 
     const status = JSON.parse(readFileSync(statusFile, "utf8"));
     const appliedEnvironment = { ...environment, ...codexChildEnvironment(envFile, environment) };
     expect(status.codexEnvironmentFingerprint).toBe(codexChildEnvironmentFingerprint(appliedEnvironment));
+    expect(status.codexEnvironment.CODEX_MCP_BRIDGE_RUNTIME_HOME).toBe(runtimeHome);
+    expect(status.codexEnvironment.CONTROL_PLANE_API_KEY).toBeUndefined();
+    expect(status.codexEnvironment.CONTROL_PLANE_TUNNEL_ID).toBeUndefined();
   } finally {
     await client.close();
     if (child.exitCode === null) child.kill("SIGTERM");

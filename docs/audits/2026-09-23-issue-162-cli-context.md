@@ -1,5 +1,7 @@
 # Issue 162: selected Codex CLI context
 
+Follow-up review identified a model-cache publication race and applied/requested environment gaps. See the [context boundary follow-up](2026-09-23-issue-162-context-boundary-followup.md) for the corrective work and updated verification scope.
+
 Source baseline: `origin/dev` at `2ee4e450ef0325f2b2945831e62786d0dc101af0` on 2026-09-23 KST. The issue's earlier static baseline was `38fb4a057feb5b938ae0e189cd6e1b2b603313d9`. The installed macOS app inspected during this work carried build `dc7c70ac0167:226fc3c1ab70` and source commit `dc7c70ac0167323a0f1aecc5cfa86e58e488666d`; it was not replaced. The installed private environment file had no explicit Codex executable, runtime home, Codex home, proxy or certificate value. Its saved selection was an app CLI at version `0.153.4` with no pending selection. These observations do not establish that the private-file-only mismatch occurred in that installed session.
 
 ## Product call map

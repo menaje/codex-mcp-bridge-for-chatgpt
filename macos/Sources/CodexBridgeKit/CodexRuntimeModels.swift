@@ -67,6 +67,9 @@ public struct CodexRuntimeSnapshot: Codable, Sendable, Equatable {
     public let selectionRequired: Bool
     public let configuredCommand: String?
     public let environmentPending: Bool?
+    public let appliedEnvironment: CodexRuntimeEnvironment?
+    public let runningEnvironment: CodexRuntimeEnvironment?
+    public let requestedEnvironment: CodexRuntimeEnvironment?
     public let pendingSelection: CodexInstallation?
     public let installedVersion: String?
     public let runningVersions: [String]
@@ -89,6 +92,13 @@ public struct CodexRuntimeSnapshot: Codable, Sendable, Equatable {
     public var showsMenuUpdate: Bool {
         selection?.source == "bridge" && actions.update && preferences.notifications
     }
+}
+
+public struct CodexRuntimeEnvironment: Codable, Sendable, Equatable {
+    public let runtimeHome: String
+    public let codexHome: String
+    public let configuredCommand: String?
+    public let selection: CodexInstallation?
 }
 
 public struct CodexRuntimeRequest: Encodable, Sendable {

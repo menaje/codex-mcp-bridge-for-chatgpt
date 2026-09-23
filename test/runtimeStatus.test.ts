@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import {
   readManagedRuntimeStatus,
   writeManagedRuntimeStatus
 } from "../scripts/runtime-status.mjs";
+import { codexAppliedEnvironment, codexChildEnvironmentFingerprint } from "../scripts/runtime-env.mjs";
 
 describe("managed runtime status", () => {
   it("requires a recent successful control-plane poll even when the daemon is ready", () => {
@@ -75,6 +76,24 @@ describe("managed runtime status", () => {
       launcherPid: process.pid,
       stale: false
     });
+  });
+
+  it("seals the applied Codex environment in a private status file", () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "codex-applied-status-")), "run", "status.json");
+    const environment = codexAppliedEnvironment({ HOME: "/fixture/home", PATH: "/fixture/bin",
+      CODEX_HOME: "/fixture/codex", CONTROL_PLANE_API_KEY: "sk-tunnel-only" });
+    writeManagedRuntimeStatus(file, { phase: "running", runtimeBuildId: "build-one",
+      codexEnvironment: environment,
+      codexEnvironmentFingerprint: codexChildEnvironmentFingerprint(environment),
+      tunnel: connectedTunnel() });
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(readManagedRuntimeStatus(file)?.codexEnvironment).toEqual(environment);
+    expect(readFileSync(file, "utf8")).not.toContain("sk-tunnel-only");
+
+    const changed = JSON.parse(readFileSync(file, "utf8"));
+    changed.codexEnvironment.CODEX_HOME = "/fixture/other";
+    writeFileSync(file, `${JSON.stringify(changed)}\n`, { mode: 0o600 });
+    expect(readManagedRuntimeStatus(file)).toBeNull();
   });
 
   it("rejects status timestamps implausibly far in the future", () => {

@@ -20,7 +20,6 @@ export function writeFakeLauncher(
     snapshotDelayFile?: string;
     healthDelayFile?: string;
     admissionFile?: string;
-    recordCodexEnvironmentFingerprint?: boolean;
   } = {}
 ): void {
   const runtimeEnvModule = new URL("../../scripts/runtime-env.mjs", import.meta.url).href;
@@ -29,7 +28,7 @@ import { appendFileSync, mkdirSync, readFileSync, rmdirSync, unlinkSync, writeFi
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import path from "node:path";
-import { codexChildEnvironmentFingerprint } from ${JSON.stringify(runtimeEnvModule)};
+import { codexAppliedEnvironment, codexChildEnvironmentFingerprint } from ${JSON.stringify(runtimeEnvModule)};
 const socketPath = process.env.CODEX_MCP_BRIDGE_COMPANION_SOCKET;
 const statusIndex = process.argv.indexOf("--runtime-status-file");
 const runtimeStatusFile = statusIndex >= 0 ? process.argv[statusIndex + 1] : null;
@@ -82,7 +81,8 @@ if (runtimeStatusFile) {
     launcherPid: process.pid,
     phase: "running",
     runtimeBuildId: "development",
-    codexEnvironmentFingerprint: ${options.recordCodexEnvironmentFingerprint ? "codexChildEnvironmentFingerprint(process.env)" : "undefined"},
+    codexEnvironmentFingerprint: codexChildEnvironmentFingerprint(process.env),
+    codexEnvironment: codexAppliedEnvironment(process.env),
     tunnel: {
       phase: "connected",
       profile: ${JSON.stringify(options.runtimeProfile || null)} || profile,

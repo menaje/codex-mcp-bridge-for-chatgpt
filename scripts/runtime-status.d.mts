@@ -23,6 +23,7 @@ export type ManagedRuntimeStatus = {
   phase: string;
   runtimeBuildId: string;
   codexEnvironmentFingerprint?: string;
+  codexEnvironment?: NodeJS.ProcessEnv;
   tunnel: ManagedTunnelStatus;
   stale: boolean;
 };

@@ -9,6 +9,7 @@ import { parseLauncherArgs, requiredBuildOutputs } from "./launcher-options.mjs"
 import {
   codexChildEnvironment,
   codexChildEnvironmentFingerprint,
+  codexAppliedEnvironment,
   codexProcessEnvironment,
   CODEX_CHILD_ENV_KEYS,
   loadRuntimeEnvFile,
@@ -694,6 +695,7 @@ function publishRuntimeStatus() {
     phase: runtimePhase,
     runtimeBuildId: activeRuntimeBuildId,
     codexEnvironmentFingerprint: codexChildEnvironmentFingerprint(process.env),
+    codexEnvironment: codexAppliedEnvironment(process.env),
     tunnel: tunnelState
   });
 }
