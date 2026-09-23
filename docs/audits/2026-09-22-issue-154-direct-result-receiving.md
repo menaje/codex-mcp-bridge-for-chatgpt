@@ -165,8 +165,8 @@ Job 정책·lease 부재가 Bridge 재시작 뒤에도 유지되는지를 추가
 
 2026-09-23 08:23 KST에 확인한 실제 설치본 Runtime `dist/build-info.json`의
 commit은 `50b115c24bd4c254609ee6c6ff959a44710b9821`이다. #154 변경이 없는
-이전 빌드이므로 **현재 설치본에서 실험 기능을 쓸 수 있다고 주장하지 않는다.**
-설치 전환과 연결 재확인 결과는 별도로 기록해야 한다.
+당시 빌드이므로 **그 시점에는 설치본에서 실험 기능을 쓸 수 없었다.** 이후
+설치 전환과 연결 재확인 결과는 문서 끝에 별도로 기록했다.
 
 후속 변경본에서 실행한 검사는 다음과 같다.
 
@@ -184,3 +184,25 @@ commit은 `50b115c24bd4c254609ee6c6ff959a44710b9821`이다. #154 변경이 없�
 실패했다. 같은 시험 단독 재실행과 macOS 빌드가 끝난 후 TypeScript 전체
 재실행은 모두 통과했다. 이 현상을 #154 기능 결함이나 첫 실행의 통과로
 치환하지 않는다.
+
+## 2026-09-23 서명 빌드 설치 및 재연결
+
+사용자가 메뉴바 앱을 정상 종료한 뒤 메뉴바 앱, helper, Bridge, Tunnel 프로세스가
+모두 내려간 것을 확인했다. 교체 전 설치본, LaunchAgent, 운영·진단 DB의
+복구용 사본을 별도 보관했고 앱 서명과 두 SQLite 백업의 `quick_check`, 운영 DB
+`foreign_key_check`를 확인했다. 종료 전 `runtime.snapshot`에서 active Job,
+pending admission/interaction, memory-only thread, background process는 모두
+0이었다.
+
+깨끗한 `dev` 커밋 `c5b08a0e452c4d544b9088aa4dca26208244e527`의 서명
+번들 `c5b08a0e452c:238e6deb0e3f`을 `/Applications`에 설치했다. 설치 경로의
+서명 검증과 `dist/build-info.json`의 정확한 빌드 ID 대조를 통과했다. 재기동 후
+launcher 상태는 같은 빌드 ID에 `running`, Tunnel은 `connected`와
+`doctorPassed=true`를 보고했다. helper도 `running`/Tunnel `connected`였고,
+Bridge `runtime.snapshot`은 `acceptingNewJobs=true`, active Job 및 pending
+admission/interaction 0, background process `confirmed`/0을 보고했다.
+
+운영 Settings는 schema 7로 이관됐고 실험 스위치는 기본값 `false`를 유지했다.
+따라서 **새 기능이 현재 설치본에 포함되고 연결된 것**까지 확인했다. 이 설치
+검증만으로 설정 ON 상태의 실제 ChatGPT 수신, native background 또는 화면 잠금
+행렬을 통과했다고 주장하지 않는다.
