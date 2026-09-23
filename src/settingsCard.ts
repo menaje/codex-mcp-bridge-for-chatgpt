@@ -146,6 +146,12 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     .model-description-official { margin:10px 0; font-size:11px; }
     .model-description-official summary { cursor:pointer; color:var(--muted); }
     .model-description-error { font-size:12px; color:var(--danger); line-height:1.5; }
+    .model-description-history { margin-top:10px; padding:10px; border:1px solid var(--border); border-radius:8px; }
+    .model-description-history-version { padding:7px 0; border-top:1px solid var(--border); }
+    .model-description-history-version:first-child { border-top:0; }
+    .model-description-history-version summary { cursor:pointer; font-size:12px; }
+    .model-description-history-content { padding:8px 0 2px; font-size:12px; }
+    .model-description-history-content strong { display:block; margin-top:8px; }
     input[type="checkbox"] { width:auto; min-height:auto; padding:0; accent-color:var(--accent); }
     .policy-panel { border:1px solid var(--border); border-radius:10px; padding:12px; }
     .policy-panel[hidden] { display:none; }
@@ -306,7 +312,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     const LANGUAGE_LABELS = ${JSON.stringify(UI_LANGUAGE_LABELS)};
     const LOCALE_RESOLUTION = ${JSON.stringify(UI_LOCALE_RESOLUTION)};
     const KNOWN_EFFORTS = new Set(["minimal","low","medium","high","xhigh","max","ultra"]);
-    ${MODEL_DESCRIPTION_EDITOR_SCRIPT}
+    ${MODEL_DESCRIPTION_EDITOR_SCRIPT.replace(/\n\s+/g, "")}
     const descriptionEditor = createModelDescriptionEditor(byId("model-descriptions"), {
       text: (key) => t["settings.modelDescriptions." + key],
       cancelText: () => t["common.cancel"],
@@ -315,6 +321,18 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
         operation: { kind: "patch", settings: { modelDescriptionOverrides: overrides } }
       })),
       reload: async () => unwrap(await callTool("codex_ui_read", { view: "settings" })),
+      history: async (modelId, beforeVersion) => {
+        const result = normalizeHostToolResult(await callTool("codex_ui_read", {
+          view: "model-description-history", modelId,
+          ...(beforeVersion ? { beforeVersion } : {})
+        }));
+        const page = result?.structuredContent || parsedToolText(result);
+        if (result?.isError || page?.kind !== "model-description-history" || page.modelId !== modelId || !Array.isArray(page.versions)) {
+          throw new Error(t["settings.invalidResponse"]);
+        }
+        return page;
+      },
+      formatDate: (value) => new Intl.DateTimeFormat(localeTag, { dateStyle: "short", timeStyle: "short" }).format(new Date(value)),
       committed: (next, previousRevision) => {
         // Rebase unrelated local fields only when the saved settings baseline still matches.
         if (view && view.settings.settingsRevision === previousRevision) view = next;
@@ -472,4 +490,6 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
   </script>
 </body>
 </html>
-`;
+`.replace(/(<style>)([\s\S]*?)(<\/style>)/, (_match, open, css, close) =>
+  open + css.replace(/\n[ \t]+/g, " ") + close
+);

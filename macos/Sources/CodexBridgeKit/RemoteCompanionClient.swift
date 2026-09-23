@@ -284,6 +284,12 @@ public struct RemoteCompanionClient: RemoteBridgeApplicationClient, Sendable {
         try await call("settings.update", params: mutation, timeout: 30)
     }
 
+    public func modelDescriptionHistory(modelID: String, beforeVersion: Int? = nil) async throws -> ModelDescriptionHistoryPage {
+        try await call("settings.model-description-history",
+                       params: ModelDescriptionHistoryParameters(modelId: modelID, beforeVersion: beforeVersion),
+                       timeout: 20)
+    }
+
     public func skillLibrary() async throws -> BridgeSkillLibrarySnapshot {
         try await call("skills.snapshot", params: EmptyParameters(), timeout: 20)
     }

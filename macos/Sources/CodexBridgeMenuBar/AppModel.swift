@@ -2682,6 +2682,11 @@ final class AppModel: ObservableObject {
         )
     }
 
+    func modelDescriptionHistory(modelID: String, beforeVersion: Int? = nil) async throws -> ModelDescriptionHistoryPage {
+        let client = try await bridgeClient()
+        return try await client.modelDescriptionHistory(modelID: modelID, beforeVersion: beforeVersion)
+    }
+
     func saveModelDescription(
         modelID: String,
         description: String?,

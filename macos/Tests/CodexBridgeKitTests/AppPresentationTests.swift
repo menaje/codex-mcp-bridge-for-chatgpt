@@ -995,6 +995,48 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testModelDescriptionHistoryDecodesAndLoadsThroughRemoteClient() async throws {
+        let policy: [String: Any] = [
+            "mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+            "constraints": ["allowDelegation": true]
+        ]
+        let legacy = try settingsSnapshot(policy: policy, catalogModels: [])
+        XCTAssertNil(legacy.modelDescriptionHistoryModelIds)
+        let snapshot = try settingsSnapshot(
+            policy: policy,
+            modelDescriptionOverrides: [:],
+            modelDescriptionHistoryModelIds: ["missing-model"],
+            catalogModels: []
+        )
+        XCTAssertEqual(snapshot.modelDescriptionHistoryModelIds, ["missing-model"])
+        let page = try JSONDecoder().decode(ModelDescriptionHistoryPage.self, from: Data(
+            #"{"kind":"model-description-history","modelId":"missing-model","versions":[{"version":2,"description":null,"createdAt":"2026-09-23T00:00:00.000Z"},{"version":1,"description":"Earlier text","createdAt":null}],"nextBeforeVersion":null}"#.utf8
+        ))
+        XCTAssertNil(page.versions[0].description)
+        XCTAssertNil(page.versions[1].createdAt)
+        let profile = remoteProfile(id: "11111111-1111-4111-8111-111111111111", name: "Description history")
+        let client = TestRemoteClient(
+            profile: profile,
+            dashboard: try dashboardStatus(scope: "description-history"),
+            settings: snapshot,
+            modelDescriptionHistoryPage: page
+        )
+        let model = AppModel(
+            loginItemController: TestLoginItemController(status: .notRegistered),
+            connectionStore: TestConnectionStore(BridgeConnectionPreferences(mode: .remoteClient, activeServerId: profile.serverId, profiles: [profile])),
+            credentialStore: TestCredentialStore([profile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE"]),
+            remoteClientFactory: { _, _ in client }
+        )
+        await model.start()
+        let loaded = try await model.modelDescriptionHistory(modelID: "missing-model", beforeVersion: 3)
+        XCTAssertEqual(loaded.versions.map(\.version), [2, 1])
+        XCTAssertEqual(client.lastModelDescriptionHistoryModelID, "missing-model")
+        XCTAssertEqual(client.lastModelDescriptionHistoryBeforeVersion, 3)
+        let stopped = await model.shutdownApplication(force: false)
+        XCTAssertTrue(stopped)
+    }
+
+    @MainActor
     func testModelDescriptionSaveAndRestorePatchOnlyUserTextAndPreserveUnavailableModels() async throws {
         let policy: [String: Any] = [
             "mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
@@ -1809,12 +1851,15 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
     private let dashboardValue: DashboardSnapshot
     private let settingsValue: SettingsSnapshot
     private let settingsAfterUpdate: SettingsSnapshot?
+    private let modelDescriptionHistoryPage: ModelDescriptionHistoryPage?
     private let dashboardDelayNanoseconds: UInt64
     private let helloDelayNanoseconds: UInt64
     private let lock = NSLock()
     private var runtimeCalls = 0
     private var settingsUpdateCalls = 0
     private var latestSettingsMutation: SettingsMutation?
+    private var latestHistoryModelID: String?
+    private var latestHistoryBeforeVersion: Int?
     private var factoryCalls = 0
     private var closeCalls = 0
     private var remainingHelloFailures: Int
@@ -1826,6 +1871,7 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
         dashboard: DashboardSnapshot,
         settings: SettingsSnapshot,
         settingsAfterUpdate: SettingsSnapshot? = nil,
+        modelDescriptionHistoryPage: ModelDescriptionHistoryPage? = nil,
         dashboardDelayNanoseconds: UInt64 = 0,
         helloFailures: Int = 0,
         helloDelayNanoseconds: UInt64 = 0
@@ -1851,6 +1897,7 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
         dashboardValue = dashboard
         settingsValue = settings
         self.settingsAfterUpdate = settingsAfterUpdate
+        self.modelDescriptionHistoryPage = modelDescriptionHistoryPage
         self.dashboardDelayNanoseconds = dashboardDelayNanoseconds
         self.helloDelayNanoseconds = helloDelayNanoseconds
         remainingHelloFailures = helloFailures
@@ -1861,6 +1908,8 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
     var dashboardCallCount: Int { lock.withLock { dashboardCalls } }
     var settingsUpdateCallCount: Int { lock.withLock { settingsUpdateCalls } }
     var lastSettingsMutation: SettingsMutation? { lock.withLock { latestSettingsMutation } }
+    var lastModelDescriptionHistoryModelID: String? { lock.withLock { latestHistoryModelID } }
+    var lastModelDescriptionHistoryBeforeVersion: Int? { lock.withLock { latestHistoryBeforeVersion } }
     var factoryCallCount: Int { lock.withLock { factoryCalls } }
     var closeCallCount: Int { lock.withLock { closeCalls } }
 
@@ -1908,6 +1957,17 @@ private final class TestRemoteClient: RemoteBridgeApplicationClient, @unchecked 
             latestSettingsMutation = mutation
         }
         return settingsAfterUpdate ?? settingsValue
+    }
+
+    func modelDescriptionHistory(modelID: String, beforeVersion: Int?) async throws -> ModelDescriptionHistoryPage {
+        lock.withLock {
+            latestHistoryModelID = modelID
+            latestHistoryBeforeVersion = beforeVersion
+        }
+        guard let modelDescriptionHistoryPage else {
+            throw NSError(domain: "MODEL_DESCRIPTION_HISTORY_UNAVAILABLE", code: 1)
+        }
+        return modelDescriptionHistoryPage
     }
 
     func runtimeStatus(inspectBackgroundProcesses: Bool) async throws -> RuntimeAdmissionSnapshot {
@@ -2086,6 +2146,7 @@ private func settingsSnapshot(
     policy: [String: Any],
     legacyPreferredModel: String? = nil,
     modelDescriptionOverrides: [String: String]? = nil,
+    modelDescriptionHistoryModelIds: [String]? = nil,
     catalogModels: [[String: Any]],
     operatorCeiling: [ModelChoice]? = nil
 ) throws -> SettingsSnapshot {
@@ -2122,7 +2183,7 @@ private func settingsSnapshot(
     if let operatorCeiling {
         capabilities["operatorModelCeiling"] = operatorCeiling.map(choiceObject)
     }
-    let object: [String: Any] = [
+    var object: [String: Any] = [
         "settings": settings,
         "operatorDefaults": settings,
         "capabilities": capabilities,
@@ -2143,6 +2204,9 @@ private func settingsSnapshot(
             "developerModeRefreshRequired": false
         ]
     ]
+    if let modelDescriptionHistoryModelIds {
+        object["modelDescriptionHistoryModelIds"] = modelDescriptionHistoryModelIds
+    }
     let data = try JSONSerialization.data(withJSONObject: object)
     return try JSONDecoder().decode(SettingsSnapshot.self, from: data)
 }

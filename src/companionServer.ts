@@ -59,6 +59,7 @@ const requestSchema = z.strictObject({
     "dashboard.problem",
     "thread.handoff",
     "settings.snapshot",
+    "settings.model-description-history",
     "settings.update",
     "skills.snapshot",
     "skills.read",
@@ -106,6 +107,10 @@ const dashboardHistoryDetailParamsSchema = z.strictObject({
 const settingsSnapshotParamsSchema = z.strictObject({
   refreshModels: z.boolean().optional(),
   locale: z.string().min(1).max(100).optional()
+});
+const modelDescriptionHistoryParamsSchema = z.strictObject({
+  modelId: z.string().min(1).max(200),
+  beforeVersion: z.number().int().positive().optional()
 });
 const bridgeSkillReferenceSchema = z.strictObject({
   skillId: z.string().regex(/^bridge_[a-f0-9]{32}$/),
@@ -290,23 +295,24 @@ export const REMOTE_COMPANION_APPLICATION_METHODS = new Set([
   "dashboard.history-detail",
   "dashboard.history",
   "dashboard.problem",
-    "settings.snapshot",
-    "settings.update",
-    "skills.snapshot",
-    "skills.read",
-    "skills.read-file",
-    "skills.versions",
-    "skills.create",
-    "skills.update",
-    "skills.restore",
-    "skills.set-enabled",
-    "skills.delete",
-    "skills.package-upload.begin",
-    "skills.package-upload.chunk",
-    "skills.package-upload.inspect",
-    "skills.package.create",
-    "skills.package.update",
-    "skills.package.export",
+  "settings.snapshot",
+  "settings.model-description-history",
+  "settings.update",
+  "skills.snapshot",
+  "skills.read",
+  "skills.read-file",
+  "skills.versions",
+  "skills.create",
+  "skills.update",
+  "skills.restore",
+  "skills.set-enabled",
+  "skills.delete",
+  "skills.package-upload.begin",
+  "skills.package-upload.chunk",
+  "skills.package-upload.inspect",
+  "skills.package.create",
+  "skills.package.update",
+  "skills.package.export",
   "runtime.snapshot"
 ]);
 
@@ -564,6 +570,10 @@ async function dispatchRequest(
       });
       return localizeSettingsView(view, params.locale);
     }
+    case "settings.model-description-history":
+      return applicationService.modelDescriptionHistory(
+        modelDescriptionHistoryParamsSchema.parse(request.params || {})
+      );
     case "settings.update": {
       const { mutation, locale } = splitSettingsMutationPresentation(request.params);
       const view = await applicationService.updateSettings(mutation);

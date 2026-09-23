@@ -67,7 +67,7 @@ const RELEASE_ASSET_NAMES = [
   "macos-x64-app",
   "release-checksums"
 ];
-const STATE_SOURCE_SCHEMAS = Array.from({ length: 22 }, (_, index) => index + 3);
+const STATE_SOURCE_SCHEMAS = Array.from({ length: 23 }, (_, index) => index + 3);
 const STATE_MIGRATION_DEFINITIONS = [
   [3, 4, "migrateV3ToV4", "a49f5314925897e254c6f34dd9c956cbf31eb1d8", [
     ["src/stateStore.ts", "stableUuid"], ["src/stateStore.ts", "normalizeOptionalString"],
@@ -138,6 +138,9 @@ const STATE_MIGRATION_DEFINITIONS = [
   ]],
   [24, 25, "migrateV24ToV25", "b763dba44d802483e4aad16fad9cc8df478b26a7", [
     ["src/operationalCommandReceipt.ts", "V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA"]
+  ]],
+  [25, 26, "migrateV25ToV26", "950d1f436b2e13cc2727f7077e585f169fafcc6a", [
+    ["src/stateSchema.ts", "V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA"]
   ]]
 ];
 const STATE_FIXTURE_DEFINITIONS = [
@@ -341,7 +344,7 @@ export function validateReleaseManifest(value) {
     ],
     "stateCompatibility"
   );
-  if (stateCompatibility.currentSchema !== 25) fail("stateCompatibility.currentSchema must be 25");
+  if (stateCompatibility.currentSchema !== 26) fail("stateCompatibility.currentSchema must be 26");
   if (
     !Array.isArray(stateCompatibility.supportedSourceSchemas) ||
     stateCompatibility.supportedSourceSchemas.length !== STATE_SOURCE_SCHEMAS.length ||
@@ -680,7 +683,7 @@ export function expectedStateMigrationCatalog(repoRoot = DEFAULT_REPO_ROOT) {
   return {
     catalogVersion: 1,
     immutabilityPolicy: "append-only-after-release-v1",
-    currentSchema: 25,
+    currentSchema: 26,
     supportedSourceSchemas: [...STATE_SOURCE_SCHEMAS],
     unsupportedSourceSchemas: [1, 2],
     retiredLegacyImports: [

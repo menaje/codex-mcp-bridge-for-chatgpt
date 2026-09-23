@@ -631,6 +631,7 @@ function capabilityForMethod(method: string, payload?: unknown): string {
     case "dashboard.history-detail":
       return "dashboard.read";
     case "settings.snapshot":
+    case "settings.model-description-history":
       return "settings.read";
     case "settings.update":
     case "dashboard.history":

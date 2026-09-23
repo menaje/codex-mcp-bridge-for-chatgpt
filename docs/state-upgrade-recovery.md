@@ -1,8 +1,8 @@
 # State upgrade and recovery runbook
 
 This runbook owns the release-time contract for the bridge SQLite database.
-The current target is schema 25. Supported source schemas are 3 through 24;
-schemas 1 and 2, databases newer than 25, and the retired standalone Settings,
+The current target is schema 26. Supported source schemas are 3 through 25;
+schemas 1 and 2, databases newer than 26, and the retired standalone Settings,
 session, and Job JSON stores are rejected. `release-manifest.json` and
 `state-migrations.json` are the machine-readable authorities.
 
@@ -53,7 +53,7 @@ Every persistent HTTP and stdio startup follows the same lifecycle:
    product/build, and time. A durable pending record closes the crash window
    between the schema commit and its provenance record.
 6. Validate the complete applied path, database integrity, foreign keys, and
-   schema 25 before registering the runtime owner and opening a transport.
+   schema 26 before registering the runtime owner and opening a transport.
 
 The private status file beside the DB ends in `.migration-status.json` and
 records `preflight`, `backup`, `migrating`, `verifying`, `completed`, or
@@ -74,8 +74,8 @@ For a source schema `S`, the migration creates these mode-0600 files beside the
 database:
 
 ```text
-state.sqlite.pre-vS-to-v25.sqlite
-state.sqlite.migration-vS-to-v25.backup.json
+state.sqlite.pre-vS-to-v26.sqlite
+state.sqlite.migration-vS-to-v26.backup.json
 ```
 
 The JSON sidecar binds the snapshot to the logical and physical source database,
@@ -113,7 +113,7 @@ Stop every bridge/helper process, then inspect the exact pair:
 ```bash
 node dist/stateRecovery.js inspect \
   --database /absolute/path/state.sqlite \
-  --backup /absolute/path/state.sqlite.pre-v18-to-v25.sqlite
+  --backup /absolute/path/state.sqlite.pre-v18-to-v26.sqlite
 ```
 
 Inspection verifies the current target schema, service-open marker, live owners,
@@ -136,7 +136,7 @@ rollback pair. Then run:
 ```bash
 node dist/stateRecovery.js restore \
   --database /absolute/path/state.sqlite \
-  --backup /absolute/path/state.sqlite.pre-v18-to-v25.sqlite \
+  --backup /absolute/path/state.sqlite.pre-v18-to-v26.sqlite \
   --source-product-version 0.3.0 \
   --source-build-id exact-recorded-build-id
 ```

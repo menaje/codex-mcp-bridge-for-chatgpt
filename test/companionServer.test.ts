@@ -419,6 +419,25 @@ describe("native companion server", () => {
     })).toHaveProperty("error");
   });
 
+  it("loads a bounded model description history page through the settings read capability", async () => {
+    const socketPath = temporarySocketPath(), applicationService = fakeApplicationService();
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService }));
+    const params = { modelId: "gpt-current", beforeVersion: 3 };
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "description-history", method: "settings.model-description-history", params
+    })).toMatchObject({ result: {
+      kind: "model-description-history", modelId: "gpt-current",
+      versions: [{ version: 2, description: "Previous" }]
+    } });
+    expect(applicationService.modelDescriptionHistory).toHaveBeenCalledWith(params);
+    expect(REMOTE_COMPANION_APPLICATION_METHODS.has("settings.model-description-history")).toBe(true);
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "invalid-history", method: "settings.model-description-history",
+      params: { modelId: "gpt-current", beforeVersion: -1 }
+    })).toHaveProperty("error");
+    expect(applicationService.modelDescriptionHistory).toHaveBeenCalledTimes(1);
+  });
+
   it("routes Dashboard and Settings through the shared application service", async () => {
     const socketPath = temporarySocketPath();
     const applicationService = fakeApplicationService();
@@ -737,6 +756,11 @@ function fakeApplicationService(): BridgeApplicationService {
     settingsSnapshot: vi.fn(async () => ({
       settings: { settingsRevision: 3 }
     }) as SettingsView),
+    modelDescriptionHistory: vi.fn(async ({ modelId }) => ({
+      kind: "model-description-history" as const, modelId,
+      versions: [{ version: 2, description: "Previous", createdAt: null }],
+      nextBeforeVersion: null
+    })),
     updateSettings: vi.fn(async () => ({
       settings: { settingsRevision: 3 }
     }) as SettingsView),

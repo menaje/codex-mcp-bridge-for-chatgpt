@@ -39,8 +39,15 @@ description** and **Use official description** alongside it. Clearing the
 text also restores the official description. Saving untouched official text
 does not create a saved copy.
 
-Shared settings persist only `modelDescriptionOverrides: { [modelId]: text }`.
-The full Settings catalog remains official data. In automatic mode, an overridden
+Shared settings persist the currently active descriptions in
+`modelDescriptionOverrides: { [modelId]: text }`. A separate, per-model database
+history records each real change. **Version history** loads up to 20 entries at a
+time when opened in either editor. Each entry shows its save time, or **Imported
+description** for an override saved before history existed. The editor compares
+the selected version with the current text and the latest official catalog text.
+Applying an older version creates a new version so the change can be undone.
+Saving unchanged text creates no version. The full Settings catalog remains
+official data. In automatic mode, an overridden
 `codex_models.models[]` entry has `descriptionSource: "user"`; otherwise its shape
 and official description remain unchanged. User text is selection guidance, not
 a verified capability claim, and cannot expand the executable choices or alter
@@ -55,10 +62,14 @@ the comparison for modified models. Restoring uses the current catalog result,
 not a copy saved when editing began.
 
 Fixed mode retains user descriptions but ignores them. A model removed from the
-catalog keeps its saved text and remains visible in the editor for editing or
-restoration; that does not make the model executable. Settings reset removes all
-user descriptions. Older saved settings without the map load as an empty map.
-The current native app expects the bridge's current editor contract.
+catalog keeps its saved text and history and remains visible in the editor for
+editing or restoration; that does not make the model executable. **Use official
+description** and a general Settings reset remove active overrides while retaining
+history. Those changes are also recorded as versions that reference the current
+official description without copying its text. Older saved settings without the
+map load as an empty map. On schema upgrade, each existing active description
+becomes that model's first version; no missing earlier versions are inferred.
+Older bridge builds do not expose the history control in either editor.
 
 Edits allow up to 2,000 UTF-16 code units per description, 100 stored entries, and
 64 KiB of serialized override data. The editors save the description separately
@@ -118,8 +129,9 @@ Its report, snapshots and screenshots are written to `output/playwright/ultra-po
 The [dated completion review](audits/2026-09-09-ultra-policy.md) records acceptance
 criteria, executed checks and the limits of runtime verification.
 
-Model-description tests cover persistence, legacy settings, current-catalog
-restoration, fixed-mode behavior, unchanged execution references and concurrent
-edits. Run `npm run test:model-descriptions-browser` for the card flow against
+Model-description tests cover persistence, migration and backup, paged history,
+rollback, reset, failed writes, current-catalog restoration, fixed-mode behavior,
+unchanged execution references and concurrent edits. Run
+`npm run test:model-descriptions-browser` for the card flow against
 the real in-memory MCP settings path and a simulated upstream catalog. It writes
 its report and screenshots to `output/playwright/model-descriptions/`.

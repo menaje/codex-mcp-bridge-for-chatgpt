@@ -87,6 +87,12 @@ public struct BridgeCompanionClient: Sendable {
         try await rpc.call("settings.update", params: mutation, timeout: 30)
     }
 
+    public func modelDescriptionHistory(modelID: String, beforeVersion: Int? = nil) async throws -> ModelDescriptionHistoryPage {
+        try await rpc.call("settings.model-description-history",
+                           params: ModelDescriptionHistoryParameters(modelId: modelID, beforeVersion: beforeVersion),
+                           timeout: 20)
+    }
+
     public func skillLibrary() async throws -> BridgeSkillLibrarySnapshot {
         try await rpc.call("skills.snapshot", params: EmptyParameters(), timeout: 20)
     }

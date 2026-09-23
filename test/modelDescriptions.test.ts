@@ -1,6 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import {
@@ -32,6 +33,8 @@ describe("user model descriptions", () => {
     expect(restarted.current.modelDescriptionOverrides).toEqual({
       "model-a": description.trim(), "temporarily-unavailable": "Keep this."
     });
+    expect(restarted.modelDescriptionHistory("model-a").versions.map((entry) => entry.description))
+      .toEqual([description.trim()]);
     const model = { id: "model-a", description: "New official description" };
     expect(modelDescriptionProjection(model, restarted.current.modelDescriptionOverrides, true)).toEqual({
       description: description.trim(), descriptionSource: "user"
@@ -40,10 +43,13 @@ describe("user model descriptions", () => {
     expect(modelDescriptionProjection(model, restarted.current.modelDescriptionOverrides, false)).toEqual({ description: model.description });
     restarted.update({ modelPolicy: automatic }, 2);
     expect(restarted.current.modelDescriptionOverrides["model-a"]).toBe(description.trim());
+    expect(restarted.modelDescriptionHistory("model-a").versions).toHaveLength(1);
     restarted.update({ modelDescriptionOverrides: { "model-a": " \n\t", "temporarily-unavailable": "Keep this." } }, 3);
     expect(modelDescriptionProjection(model, restarted.current.modelDescriptionOverrides, true)).toEqual({ description: model.description });
     expect(readFileSync(databaseFile).includes(Buffer.from(model.description))).toBe(false);
     expect(restarted.current.modelDescriptionOverrides).toEqual({ "temporarily-unavailable": "Keep this." });
+    expect(restarted.modelDescriptionHistory("model-a").versions.map((entry) => entry.description))
+      .toEqual([null, description.trim()]);
     restartedState.close();
   });
 
@@ -73,6 +79,8 @@ describe("user model descriptions", () => {
     expect(store.executionPolicyRef()).toBe(executionRef);
     expect(store.taskExecutionEnvelopeRef()).toBe(envelopeRef);
     expect(() => store.update({ modelDescriptionOverrides: { "model-a": "Stale." } }, 0)).toThrow(SETTINGS_REVISION_CONFLICT);
+    expect(store.modelDescriptionHistory("model-a").versions.map((entry) => entry.description))
+      .toEqual(["First."]);
     const read = store.current;
     read.modelDescriptionOverrides["model-a"] = "Mutated snapshot";
     expect(store.current.modelDescriptionOverrides["model-a"]).toBe("First.");
@@ -92,5 +100,84 @@ describe("user model descriptions", () => {
     const hostile = normalizeModelDescriptionOverrides(JSON.parse('{"__proto__":"User text","constructor":"Another model"}'));
     expect(modelDescriptionProjection({ id: "__proto__" }, hostile, true).description).toBe("User text");
     expect(modelDescriptionProjection({ id: "toString" }, hostile, true)).toEqual({});
+  });
+
+  it("records changed text, official selection, reset and rollback as per-model versions", () => {
+    let now = 1_700_000_000_000;
+    const state = new BridgeStateStore({ file: ":memory:" });
+    const store = new UserSettingsStore(config(), { stateStore: state, now: () => now });
+    const save = (description: string | null) => {
+      const overrides = description === null ? {} : { "model-a": description };
+      store.update({ modelDescriptionOverrides: overrides }, store.current.settingsRevision);
+      now += 1_000;
+    };
+    save("First");
+    save("First");
+    expect(store.modelDescriptionHistory("model-a").versions).toHaveLength(1);
+    save("Second");
+    save(null);
+    expect(store.modelDescriptionHistoryIds).toEqual(["model-a"]);
+    expect(store.modelDescriptionHistory("model-a", undefined, 2)).toEqual({
+      kind: "model-description-history", modelId: "model-a",
+      versions: [
+        { version: 3, description: null, createdAt: new Date(1_700_000_003_000).toISOString() },
+        { version: 2, description: "Second", createdAt: new Date(1_700_000_002_000).toISOString() }
+      ],
+      nextBeforeVersion: 2
+    });
+    expect(store.modelDescriptionHistory("model-a", 2).versions).toEqual([
+      { version: 1, description: "First", createdAt: new Date(1_700_000_000_000).toISOString() }
+    ]);
+    save("First");
+    store.reset(store.current.settingsRevision);
+    expect(store.current.modelDescriptionOverrides).toEqual({});
+    expect(store.modelDescriptionHistory("model-a").versions.map((entry) => entry.description))
+      .toEqual([null, "First", null, "Second", "First"]);
+    expect(modelDescriptionProjection({ id: "model-a", description: "Live official" }, store.current.modelDescriptionOverrides, true))
+      .toEqual({ description: "Live official" });
+    state.close();
+  });
+
+  it("rolls back both active settings and history if recording fails", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "model-descriptions-atomic-"));
+    directories.push(directory);
+    const file = path.join(directory, "state.sqlite");
+    const state = new BridgeStateStore({ file });
+    const store = new UserSettingsStore(config(), { stateStore: state });
+    store.update({ modelDescriptionOverrides: { "model-a": "First" } }, 0);
+    const database = new Database(file);
+    database.exec(`CREATE TRIGGER reject_model_description_version BEFORE INSERT ON model_description_versions
+      WHEN NEW.version = 2 BEGIN SELECT RAISE(ABORT, 'history insert rejected'); END`);
+    database.close();
+    expect(() => store.update({ modelDescriptionOverrides: { "model-a": "Second" } }, 1))
+      .toThrow("history insert rejected");
+    expect(store.current.settingsRevision).toBe(1);
+    expect(store.current.modelDescriptionOverrides).toEqual({ "model-a": "First" });
+    expect(store.modelDescriptionHistory("model-a").versions.map((entry) => entry.description)).toEqual(["First"]);
+    state.close();
+  });
+
+  it("imports only the current override as version one when upgrading a schema-25 database", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "model-descriptions-upgrade-"));
+    directories.push(directory);
+    const file = path.join(directory, "state.sqlite");
+    const state = new BridgeStateStore({ file });
+    const store = new UserSettingsStore(config(), { stateStore: state });
+    store.update({ modelDescriptionOverrides: { "model-a": "Saved before versions" } }, 0);
+    state.close();
+    const database = new Database(file);
+    database.exec(`DROP TABLE model_description_versions;
+      UPDATE bridge_meta SET value='25' WHERE key='schema_version';
+      DELETE FROM bridge_meta WHERE key='schema_v26_created_at';`);
+    database.close();
+    const upgradedState = new BridgeStateStore({ file });
+    const upgraded = new UserSettingsStore(config(), { stateStore: upgradedState });
+    expect(upgradedState.schemaVersion).toBe(26);
+    expect(existsSync(`${file}.pre-v25-to-v26.sqlite`)).toBe(true);
+    expect(upgraded.current.modelDescriptionOverrides).toEqual({ "model-a": "Saved before versions" });
+    expect(upgraded.modelDescriptionHistory("model-a").versions).toEqual([
+      { version: 1, description: "Saved before versions", createdAt: null }
+    ]);
+    upgradedState.close();
   });
 });
