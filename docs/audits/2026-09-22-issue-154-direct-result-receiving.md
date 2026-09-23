@@ -358,3 +358,20 @@ runtime을 drain 종료했다. 설치 앱의 운영 DB 단일 소유자를 복�
 helper `running`, Bridge/Tunnel `connected`, 운영 실험 설정 OFF, 운영
 active Job·대기 요청·백그라운드 프로세스 0건을 확인했다. 수정 빌드는 현재
 설치돼 있으나 실험 기능은 운영 프로필에서 여전히 기본 OFF다.
+
+## 2026-09-23 사용자 선택 경계 추가 시도 — 판정 보류
+
+PR #161 병합 뒤 승인·질문 경계를 별도로 확인하려고 다시 분리된 development
+프로필을 연결했다. 같은 ChatGPT Work 대화에 첫 읽기 전용 Job만 승인하고,
+결과를 본 뒤 사용자가 A/B 중 다음 검사를 선택할 때까지 두 번째 Job을 만들지
+말라는 요청을 전송했다. GPT 화면에는 “첫 Job만 실행하고 A/B를 묻겠다”는
+진행 문구가 나타났으나 **첫 Job 자체가 접수되지 않았다.** 해당 시험 시각 이후
+development DB의 새 Job은 0건이었다.
+
+브라우저 진단에는 02:18:45 UTC에 `The conversation is stale, please reload
+and try again` 오류가 있었다. 대화를 새로고침해도 진행 문구만 남고 Job 접수나
+최종 질문은 관측되지 않았다. 그러므로 “두 번째 Job을 만들지 않았다”는 사실을
+사용자 경계 준수의 성공으로 계산할 수 없다. #154의 승인·질문 경계 완료 항목은
+열린 상태로 둔다. 시험 runtime은 active Job·대기 요청·백그라운드 프로세스가
+모두 0건임을 확인한 뒤 drain 종료했으며, 설치 앱은 운영 DB 단일 소유자,
+기본 OFF, helper `running`, Bridge/Tunnel `connected` 상태로 복원했다.
