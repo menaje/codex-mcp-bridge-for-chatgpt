@@ -135,8 +135,14 @@ try {
     check(stored.catalog.models.find(x=>x.id==='gpt-6-astra').description===official,'Catalog still contains official text');
     await row.locator('summary').click();
     check((await row.locator('details p').textContent())===official,'Compare official text');
+    await action('history').click();
+    await row.locator('.model-description-history-version').first().waitFor();
+    const historyReadsBeforeGeneralSave=await page.evaluate(()=>window.__descriptionCalls.filter(x=>x.name==='codex_ui_read'&&x.args.view==='model-description-history').length);
     await page.locator('#save').click();
     await page.waitForFunction(()=>!document.querySelector('#save').disabled);
+    await page.waitForFunction(before=>window.__descriptionCalls.filter(x=>x.name==='codex_ui_read'&&x.args.view==='model-description-history').length>before,historyReadsBeforeGeneralSave);
+    check((await row.locator('.model-description-history-version').first().textContent()).includes(custom),'Expanded history remains visible after general settings change');
+    await action('history').click();
     check((await tool('codex_ui_read',{view:'settings'})).structuredContent.settings.maxConcurrentJobs===7,'General save after description save uses current revision');
     check((await tool('codex_ui_read',{view:'settings'})).structuredContent.settings.historyRetentionDays===90,'Real settings mutation saves retention');
     check((await page.locator('#history-settings-policy').innerText()).includes('90일'),'Saved policy updates notice');
@@ -254,7 +260,7 @@ try {
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth),'No mobile overflow');
     await page.locator('.model-descriptions-panel').screenshot({path:${JSON.stringify(path.join(output, "settings-model-descriptions-mobile-ko.png"))}});
     check((await page.evaluate(()=>window.__cardErrors)).length===0,'No page errors');
-    return {realMcp:true,canonicalEfforts:true,officialAndCustom:true,unchangedNoOverride:true,cancel:true,restore:true,blank:true,cacheExpiryUnchanged:true,conflictRetainsDraft:true,modeSwitch:true,unavailableModelRetained:true,historyOnlyModelRetained:true,resetRetainsHistory:true,plainText:true,versionHistory:true,versionRollback:true,locales};
+    return {realMcp:true,canonicalEfforts:true,officialAndCustom:true,unchangedNoOverride:true,cancel:true,restore:true,blank:true,cacheExpiryUnchanged:true,conflictRetainsDraft:true,modeSwitch:true,unavailableModelRetained:true,historyOnlyModelRetained:true,resetRetainsHistory:true,expandedHistoryRefresh:true,plainText:true,versionHistory:true,versionRollback:true,locales};
   }`);
   writeFileSync(path.join(output, "report.txt"), result);
   console.log(result);

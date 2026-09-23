@@ -55,6 +55,7 @@ struct ModelDescriptionsSettingsSection: View {
                     modelID: id,
                     catalogModel: models[id],
                     override: snapshot.settings.modelDescriptionOverrides?[id],
+                    settingsRevision: snapshot.settings.settingsRevision,
                     historyAvailable: snapshot.modelDescriptionHistoryModelIds != nil,
                     edit: Binding(get: { edits[id] }, set: { edits[id] = $0 })
                 )
@@ -68,6 +69,7 @@ private struct ModelDescriptionSettingsRow: View {
     let modelID: String
     let catalogModel: CatalogModel?
     let override: String?
+    let settingsRevision: Int
     let historyAvailable: Bool
     @Binding var edit: ModelDescriptionEdit?
     @State private var officialExpanded = false
@@ -139,7 +141,6 @@ private struct ModelDescriptionSettingsRow: View {
                             )
                             if saved {
                                 edit = nil; failed = false
-                                if historyOpen { await loadHistory() }
                             }
                             else {
                                 failed = true
@@ -172,7 +173,6 @@ private struct ModelDescriptionSettingsRow: View {
                 Button("settings.modelDescriptions.restore") {
                     Task {
                         failed = !(await model.saveModelDescription(modelID: modelID, description: nil, expectedOverride: override))
-                        if !failed, historyOpen { await loadHistory() }
                     }
                 }
                 .disabled(busy)
@@ -216,7 +216,6 @@ private struct ModelDescriptionSettingsRow: View {
                                                     description: version.description,
                                                     expectedOverride: override
                                                 ))
-                                                if !failed { await loadHistory() }
                                             }
                                         }
                                         .disabled(busy)
@@ -244,6 +243,9 @@ private struct ModelDescriptionSettingsRow: View {
             }
         }
         .padding(.vertical, 6)
+        .onChange(of: settingsRevision) { _ in
+            if historyOpen { Task { await loadHistory() } }
+        }
     }
 
     private func historyTitle(_ version: ModelDescriptionVersion) -> String {
