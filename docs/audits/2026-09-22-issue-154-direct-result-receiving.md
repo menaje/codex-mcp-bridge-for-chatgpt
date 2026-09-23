@@ -29,12 +29,10 @@ user-input 경계에서는 자동 진행을 중단한다. terminal 결과를 받
 포함한 전 행렬 완료를 주장하지 않는다.
 
 **2026-09-23 후속 검토:** 아래 기존 host 시험 요청문은 exact wait와 카드 금지를
-명시했다. 그러므로 이 시험은 직접 경로의 작동을 확인하지만, 설정만 켠 평소
-요청에서 GPT가 스스로 그 경로를 선택하는지는 증명하지 않는다. Job 2가 원 대화
-복귀보다 먼저 접수됐다는 당시 관찰도 복귀 시각의 별도 원기록이 없어 독립적으로
-대조할 수 없다. 아래의 2-Job DB 기록은 순서와 중복 부재의 증거이지, 복귀
-시각의 증거로 대체하지 않는다. 이 두 조건과 native 앱 background/화면 잠금은
-완료 승인 전에 별도로 다뤄야 한다.
+명시했다. 그 시험만으로는 설정을 켠 평소 요청의 동작이나 Job 2의 원 대화
+복귀 전 접수 시각을 독립적으로 입증할 수 없었다. 문서 끝의 별도 일반 요청
+재시험에서 두 조건을 확인했다. native 앱 background/화면 잠금은 여전히 이
+재시험 범위 밖이다.
 
 ## 제품 계약
 
@@ -208,3 +206,50 @@ admission/interaction 0, background process `confirmed`/0을 보고했다.
 따라서 **새 기능이 현재 설치본에 포함되고 연결된 것**까지 확인했다. 이 설치
 검증만으로 설정 ON 상태의 실제 ChatGPT 수신, native background 또는 화면 잠금
 행렬을 통과했다고 주장하지 않는다.
+
+## 2026-09-23 일반 요청·복귀 전 후속 Job 재시험
+
+설치된 동일 빌드 `c5b08a0e452c:238e6deb0e3f`을 사용하되 운영 DB와 분리한
+`development` profile에서 실험 스위치를 켰다. 전환 전 운영 runtime에는 active
+Job/admission/interaction/background process가 모두 0이었고, 안전 종료 뒤
+development DB를 연 단일 상태 소유자와 연결된 Tunnel을 확인했다. 시험 대화는
+ChatGPT Work에서 Bridge connector가 선택된 기존 대화였다. 공개 감사 문서에
+대화 URL·scope ID·전체 Job ID는 남기지 않는다.
+
+사용자는 먼저 “두 단계 읽기 전용 점검”을 요청했다. 첫 응답은 등록 프로젝트의
+정확한 이름을 물었으며 Job을 만들지 않았다. 사용자가 승인한 다음 한 문장으로
+프로젝트 이름 `issue154-live`만 보충하고 앞선 두 점검을 그대로 진행하도록 했다.
+어느 사용자 메시지에도 exact wait 반복, `direct-wait` 선택, 카드 금지 같은
+기술적 지시는 없었다. 이 후속 메시지는 2026-09-23 01:02:23 UTC에 전송됐다.
+
+| 관측 | UTC 시각 | 원증거 |
+| --- | --- | --- |
+| Job A 접수 | 01:02:44 | development DB `513c57f3…`, `direct-wait` |
+| Job A 완료·직접 결과 offer | 01:02:56 | 같은 Job의 terminal 및 delivery audit |
+| 원 대화 이탈 시작 | 01:03:02 이후 | 다른 ChatGPT 페이지로 이동하기 직전 시계 기록 |
+| Job B 접수 | 01:03:08 | development DB `877049f2…`, A와 같은 scope, `direct-wait` |
+| 다른 페이지 표시 확인 | 01:03:09 | 원 대화가 아닌 새 채팅 화면 관측 |
+| Job B 완료·직접 결과 offer | 01:03:16 | 같은 Job의 terminal 및 delivery audit |
+| 원 대화 복귀 | 01:04:09 | 대화 재진입 직후 시계 기록 및 GPT final 관측 |
+
+따라서 **Job B가 사용자의 원 대화 복귀보다 약 1분 먼저 접수·완료된 것**은
+시각으로 확인된다. 다만 Job B 접수는 이탈 탐색이 완료되기 약 1초 전이므로,
+“다른 화면에 완전히 도착한 뒤 Job B가 시작됐다”는 더 강한 문장은 이 자료로
+주장하지 않는다. GPT final은 Job A 결과를 먼저 검토한 뒤 별도 Job B의 결과를
+보고했다. A에서는 `package.json`의 `name`과 README 제목이 같은 프로젝트를
+가리키는지, B에서는 `package.json`과 `release-manifest.json`의 제품 버전이
+모두 `0.4.1`인지 읽기 전용으로 확인했다. 두 Job은 같은 대화 scope에만 있고
+시험 전후 Job 수 증가가 정확히 2개라 후속 Job은 1개다. 각 delivery audit은
+`attempt_count=0`, direct offer 있음, live-card lease 없음이었다. 이 관측은
+설정 ON 상태의 일반 요청에서 직접 경로가 선택되고 GPT가 후속 작업을 수행한
+실제 host 수락 증거다.
+
+시험 뒤 두 Job이 terminal임을 확인하고 development runtime을 drain 종료했다.
+설치 앱을 다시 시작하자 상태 소유자는 운영 `state.sqlite`를 열었고 helper
+`running`, Tunnel `connected`, Bridge `connected`를 확인했다. 운영 Settings의
+실험 스위치는 여전히 `false`이고 운영 DB에는 이 시험 시각의 신규 Job이 0개다.
+현재 설치본에는 실험 기능이 있으나 일상 사용에서는 기본 경로가 유지된다.
+
+이 재시험은 ChatGPT Work의 브라우저 대화 전환을 검증한다. native ChatGPT 앱의
+foreground/background 전환과 실제 macOS 화면 잠금은 검증하지 않았으므로 해당
+지원 범위와 #154의 전체 수락 여부는 별도로 남는다.
