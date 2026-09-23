@@ -106,8 +106,11 @@ Codex execution remains independent if navigation, backgrounding, screen lock,
 or connection loss ends the GPT wait. Automatic continuation is host-dependent,
 not guaranteed for every such state. The 2026-09-23 [#154 host audit](audits/2026-09-22-issue-154-direct-result-receiving.md)
 observed ordered continuation through one screen lock and one short macOS
-Clamshell Sleep in ChatGPT Work's in-app browser; it did not test the separate
-native ChatGPT app, a terminated GPT run, or whole-device network loss.
+Clamshell Sleep in ChatGPT Work's in-app browser. A later local Work task also
+continued while the desktop app was behind Finder, and another survived a
+temporary Tunnel degradation. These observations do not prove that a terminated
+GPT run will resume, that an in-flight host request was aborted in the Tunnel
+test, or that whole-device network loss is supported.
 
 A bounded wait timeout is not the end of a GPT run: while the run is active, it
 repeats the exact Job wait. If the host ends the GPT run itself, the Bridge does
