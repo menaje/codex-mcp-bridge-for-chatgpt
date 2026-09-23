@@ -30,8 +30,16 @@ enum ApplicationQuitConfirmationPolicy {
     }
 }
 
+private struct DashboardUsageFrame: PreferenceKey {
+    static var defaultValue: CGRect? { nil }
+    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) {
+        value = nextValue() ?? value
+    }
+}
+
 struct DashboardPopoverView: View {
     var onContentSizeChange: ((CGSize) -> Void)?
+    var onUsageFrameChange: ((CGRect?) -> Void)?
     var onRequestClose: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppModel
@@ -45,9 +53,11 @@ struct DashboardPopoverView: View {
 
     init(
         onContentSizeChange: ((CGSize) -> Void)? = nil,
+        onUsageFrameChange: ((CGRect?) -> Void)? = nil,
         onRequestClose: (() -> Void)? = nil
     ) {
         self.onContentSizeChange = onContentSizeChange
+        self.onUsageFrameChange = onUsageFrameChange
         self.onRequestClose = onRequestClose
     }
 
@@ -79,6 +89,7 @@ struct DashboardPopoverView: View {
         }
         .frame(width: DashboardPopoverLayout.width)
         .fixedSize(horizontal: false, vertical: true)
+        .coordinateSpace(name: "dashboard-popover")
         .background(DashboardPopoverScreen {
             screenHeight = $0
         })
@@ -90,6 +101,7 @@ struct DashboardPopoverView: View {
             guard size.width > 0, size.height > 0 else { return }
             onContentSizeChange?(size)
         }
+        .onPreferenceChange(DashboardUsageFrame.self) { onUsageFrameChange?($0) }
         .environment(\.locale, model.interfaceLocale)
         .task {
             if model.isRemoteClient ? model.remoteHello == nil : model.helperStatus == nil {
@@ -363,16 +375,26 @@ struct DashboardPopoverView: View {
                             .textSelection(.enabled)
                     }
                 }
-                if model.shouldShowCodexWeeklyUsage {
-                    if let account = dashboard.codexAccount {
-                        CodexMenuAccountView(account: account, fallbackWeekly: dashboard.weeklyUsage)
-                    } else if let usage = dashboard.weeklyUsage {
-                        WeeklyUsageView(usage: usage)
+                Group {
+                    if model.shouldShowCodexWeeklyUsage {
+                        if let account = dashboard.codexAccount {
+                            CodexMenuAccountView(account: account, fallbackWeekly: dashboard.weeklyUsage)
+                        } else if let usage = dashboard.weeklyUsage {
+                            WeeklyUsageView(usage: usage)
+                        } else {
+                            UsageUnconfirmedView(loginRequired: false)
+                        }
                     } else {
-                        UsageUnconfirmedView(loginRequired: false)
+                        UsageUnconfirmedView(loginRequired: true)
                     }
-                } else {
-                    UsageUnconfirmedView(loginRequired: true)
+                }
+                .background {
+                    if onUsageFrameChange != nil {
+                        GeometryReader { geometry in
+                            Color.clear.preference(key: DashboardUsageFrame.self,
+                                value: geometry.frame(in: .named("dashboard-popover")))
+                        }
+                    }
                 }
                 DashboardSummary(counts: dashboard.counts)
                 dashboardBackgroundStatus(dashboard)

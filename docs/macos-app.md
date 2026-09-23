@@ -83,10 +83,14 @@ evidence is included in later structural snapshots without an upstream call.
 Usage display has a separate identity from the short-lived request cache: a
 same-account token refresh starts a new read but keeps the last confirmed
 numbers and their original check time. Missing or failed usage fields in either
-snapshot stage leave the usage card in place while counts and connection status
-continue to update. A confirmed new account, sign-out, authentication mode or
-server change clears those numbers; an unprovable identity does not reuse old
-quota and shows an unconfirmed card until a fresh read succeeds. A confirmed
+snapshot stage or a stored-history page leave the usage card in place while
+counts, rows and connection status continue to update. When the server already
+retained a newer valid usage reading, the app compares the usage check times
+and keeps that reading instead of restoring an older screen value. The account
+read time does not stand in for the usage check time. A confirmed new account,
+sign-out, authentication mode or server change clears those numbers; an
+unprovable identity does not reuse old quota and shows an unconfirmed card
+until a fresh read succeeds. A confirmed
 zero or a confirmed response with no usage replaces the old value.
 Status buttons classify the loaded index locally, so switching or collapsing
 them cannot clear counts, reorder data, or start a request. Pagination reads
