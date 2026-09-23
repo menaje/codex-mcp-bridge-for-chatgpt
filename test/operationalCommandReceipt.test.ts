@@ -237,7 +237,7 @@ describe("operational command receipts", () => {
 
     try {
       const store = new BridgeStateStore({ file });
-      expect(store.schemaVersion).toBe(25);
+      expect(store.schemaVersion).toBe(26);
       expect(store.getMeta("schema_v25_operational_command_receipts"))
         .toBe("durable-command-receipts-v1");
       store.close();
@@ -249,7 +249,7 @@ describe("operational command receipts", () => {
       expect(migrated.pragma("integrity_check", { simple: true })).toBe("ok");
       expect(migrated.pragma("foreign_key_check")).toEqual([]);
       migrated.close();
-      expect(existsSync(`${file}.pre-v24-to-v25.sqlite`)).toBe(true);
+      expect(existsSync(`${file}.pre-v24-to-v26.sqlite`)).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

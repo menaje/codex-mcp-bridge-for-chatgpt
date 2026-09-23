@@ -1,6 +1,6 @@
 # State schema ownership catalog
 
-This catalog is the schema-25 operational inventory and telemetry schema
+This catalog is the schema-26 operational inventory and telemetry schema
 inventory required by issues #142 and #143. In production the operational
 state-owner process is the only `state.sqlite` writer, the read process opens it
 read-only, and the telemetry process is the only `telemetry.sqlite` writer.
@@ -20,6 +20,7 @@ queries only.
 | `project_registry` | project/settings mutations | task admission and project projection refresh | monotonic registry revision | state |
 | `projects` | project/settings mutations | admission, Settings and Dashboard projections | project identity, archived/deleted state and pinned path | state |
 | `user_settings` | `UserSettingsStore` mutation | Settings and task admission | execution policy and settings revision | state |
+| `model_description_versions` | `UserSettingsStore` mutation through `BridgeStateStore` | macOS Settings and Settings card history reads | retained user-authored description versions and official-selection markers | state |
 | `sessions` | `SessionRegistry` and Activity admission UoW | resume, Agent thread and backend routing queries | retained backend context and persistence classification | state |
 | `activities` | `CodexJobRegistry` Activity commands and Job UoW | exact status, Dashboard, completion and recovery | goal lifecycle, version and terminal counters | state |
 | `agents` | Agent commands and Job assignment UoW | admission, Dashboard and recovery | execution owner, lifecycle and current Job/thread | state |

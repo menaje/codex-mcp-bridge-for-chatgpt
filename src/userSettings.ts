@@ -11,7 +11,12 @@ import {
   type ModelPolicy
 } from "./modelPolicy.js";
 import { isUiLocalePreference, type UiLocalePreference } from "./uiI18n.js";
-import { normalizeModelDescriptionOverrides, type ModelDescriptionOverrides } from "./modelDescriptions.js";
+import {
+  modelDescriptionId,
+  normalizeModelDescriptionOverrides,
+  type ModelDescriptionHistoryPage,
+  type ModelDescriptionOverrides
+} from "./modelDescriptions.js";
 import {
   MAX_REGISTERED_PROJECTS,
   PROJECT_REQUIRED,
@@ -121,6 +126,21 @@ export class UserSettingsStore {
   }
 
   get historyPolicy() { return this.stateStore.workHistory.policy(this.settings.historyRetentionDays); }
+
+  get modelDescriptionHistoryIds(): string[] {
+    return this.stateStore.modelDescriptionHistoryIds();
+  }
+
+  modelDescriptionHistory(modelId: string, beforeVersion?: number, limit = 20): ModelDescriptionHistoryPage {
+    modelDescriptionId(modelId);
+    if (beforeVersion !== undefined && (!Number.isSafeInteger(beforeVersion) || beforeVersion < 1)) {
+      throw new Error("MODEL_DESCRIPTION_HISTORY_CURSOR_INVALID: Invalid version cursor.");
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
+      throw new Error("MODEL_DESCRIPTION_HISTORY_LIMIT_INVALID: Request 1 to 20 versions.");
+    }
+    return this.stateStore.modelDescriptionHistory(modelId, beforeVersion, limit);
+  }
 
   get persistent(): boolean {
     return this.stateStore.persistent;
@@ -326,6 +346,11 @@ export class UserSettingsStore {
         this.stateStore.writeSettings(
           persisted,
           expectedSettingsRevision as number,
+          now
+        );
+        this.stateStore.appendModelDescriptionVersionChanges(
+          this.settings.modelDescriptionOverrides,
+          candidate.modelDescriptionOverrides,
           now
         );
         committedSettings = this.validateGeneral(persisted);

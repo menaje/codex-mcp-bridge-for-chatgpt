@@ -10,8 +10,10 @@ import {
   V20_ASYNC_EXECUTION_MIGRATION_SCHEMA,
   V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA,
   V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA,
-  V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA
+  V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA,
+  V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA
 } from "./stateSchema.js";
+import type { ModelDescriptionHistoryPage, ModelDescriptionOverrides } from "./modelDescriptions.js";
 import {
   MAINTENANCE_COMMAND_RECEIPT_RETENTION_BATCH,
   MAINTENANCE_COMMAND_RECEIPT_RETENTION_MS,
@@ -735,12 +737,14 @@ export class BridgeStateStore {
           this.database.exec(V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA);
           this.database.exec(V24_DECISION_CARD_MIGRATION_SCHEMA);
           this.database.exec(V25_OPERATIONAL_COMMAND_RECEIPT_MIGRATION_SCHEMA);
+          this.database.exec(V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
           this.setMeta("schema_v21_created_at", new Date().toISOString());
           this.setMeta("schema_v22_created_at", new Date().toISOString());
           this.setMeta("schema_v23_created_at", new Date().toISOString());
           this.setMeta("schema_v24_created_at", new Date().toISOString());
           this.setMeta("schema_v25_created_at", new Date().toISOString());
+          this.setMeta("schema_v26_created_at", new Date().toISOString());
           this.setMeta("state_migration_catalog_version", String(STATE_MIGRATION_CATALOG_VERSION));
           this.setMeta("state_database_id", randomUUID());
           this.recordSchemaOrigin("fresh");
@@ -3632,6 +3636,53 @@ export class BridgeStateStore {
     });
   }
 
+  modelDescriptionHistoryIds(): string[] {
+    return (this.database.prepare(`
+      SELECT DISTINCT model_id FROM model_description_versions ORDER BY model_id
+    `).all() as Array<{ model_id: string }>).map((row) => row.model_id);
+  }
+
+  modelDescriptionHistory(
+    modelId: string,
+    beforeVersion: number | undefined,
+    limit: number
+  ): ModelDescriptionHistoryPage {
+    const rows = this.database.prepare(`
+      SELECT version, description, created_at FROM model_description_versions
+       WHERE model_id = ? AND version < ? ORDER BY version DESC LIMIT ?
+    `).all(modelId, beforeVersion ?? Number.MAX_SAFE_INTEGER, limit + 1) as Array<{
+      version: number; description: string | null; created_at: number | null
+    }>;
+    const visible = rows.slice(0, limit);
+    return {
+      kind: "model-description-history",
+      modelId,
+      versions: visible.map((row) => ({
+        version: row.version,
+        description: row.description,
+        createdAt: row.created_at === null ? null : new Date(row.created_at).toISOString()
+      })),
+      nextBeforeVersion: rows.length > limit ? visible.at(-1)!.version : null
+    };
+  }
+
+  appendModelDescriptionVersionChanges(
+    previous: ModelDescriptionOverrides,
+    next: ModelDescriptionOverrides,
+    now: number
+  ): void {
+    const insert = this.database.prepare(`
+      INSERT INTO model_description_versions(model_id, version, description, created_at)
+      SELECT ?, COALESCE(MAX(version), 0) + 1, ?, ?
+        FROM model_description_versions WHERE model_id = ?
+    `);
+    for (const modelId of new Set([...Object.keys(previous), ...Object.keys(next)])) {
+      const before = Object.prototype.hasOwnProperty.call(previous, modelId) ? previous[modelId] : null;
+      const after = Object.prototype.hasOwnProperty.call(next, modelId) ? next[modelId] : null;
+      if (before !== after) insert.run(modelId, after, now, modelId);
+    }
+  }
+
   getProjectRegistrySnapshot(): ProjectRegistrySnapshot {
     const registry = this.database
       .prepare(`
@@ -4205,6 +4256,7 @@ export class BridgeStateStore {
     this.runMigration("22", "23", originalSourceSchema, () => this.migrateV22ToV23());
     this.runMigration("23", "24", originalSourceSchema, () => this.migrateV23ToV24());
     this.runMigration("24", "25", originalSourceSchema, () => this.migrateV24ToV25());
+    this.runMigration("25", "26", originalSourceSchema, () => this.migrateV25ToV26());
     if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
       throw new Error(`Bridge state migration stopped at unsupported schema version ${this.getMeta("schema_version")}.`);
     }
@@ -5608,6 +5660,15 @@ export class BridgeStateStore {
       this.setMeta("schema_version", "25");
       this.setMeta("schema_v25_operational_command_receipts", "durable-command-receipts-v1");
       this.setMeta("schema_v25_migrated_at", new Date().toISOString());
+    });
+  }
+
+  private migrateV25ToV26(): void {
+    this.transaction(() => {
+      this.database.exec(V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "26");
+      this.setMeta("schema_v26_model_description_versions", "per-model-history-v1");
+      this.setMeta("schema_v26_migrated_at", new Date().toISOString());
     });
   }
 

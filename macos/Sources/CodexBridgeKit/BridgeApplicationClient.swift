@@ -19,6 +19,7 @@ public protocol BridgeApplicationClient: Sendable {
     ) async throws -> SettingsSnapshot
 
     func updateSettings(_ mutation: SettingsMutation) async throws -> SettingsSnapshot
+    func modelDescriptionHistory(modelID: String, beforeVersion: Int?) async throws -> ModelDescriptionHistoryPage
 
     func skillLibrary() async throws -> BridgeSkillLibrarySnapshot
     func readBridgeSkill(_ reference: BridgeSkillReference) async throws -> BridgeSkill
@@ -52,6 +53,10 @@ public protocol BridgeApplicationClient: Sendable {
 }
 
 public extension BridgeApplicationClient {
+    func modelDescriptionHistory(modelID: String, beforeVersion: Int? = nil) async throws -> ModelDescriptionHistoryPage {
+        throw NSError(domain: "MODEL_DESCRIPTION_HISTORY_UNAVAILABLE", code: 1)
+    }
+
     func dashboardWithProblems(limit: Int, terminalOffset: Int, idleOffset: Int, enrich: Bool,
                                statusFilter: DashboardStatusFilter, problems: ProblemQuery) async throws -> DashboardSnapshot {
         try await dashboard(limit: limit, terminalOffset: terminalOffset, idleOffset: idleOffset, enrich: enrich, statusFilter: statusFilter)

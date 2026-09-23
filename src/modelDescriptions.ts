@@ -7,10 +7,35 @@ import {
 } from "./textIntegrity.js";
 
 export type ModelDescriptionOverrides = Record<string, string>;
+export type ModelDescriptionVersion = {
+  version: number;
+  description: string | null;
+  /** Unknown for the current value imported from pre-history settings. */
+  createdAt: string | null;
+};
+export type ModelDescriptionHistoryPage = {
+  kind: "model-description-history";
+  modelId: string;
+  versions: ModelDescriptionVersion[];
+  nextBeforeVersion: number | null;
+};
 
 export const MAX_MODEL_DESCRIPTION_LENGTH = 2_000;
 export const MAX_MODEL_DESCRIPTION_OVERRIDES = 100;
 export const MAX_MODEL_DESCRIPTION_OVERRIDES_BYTES = 64 * 1_024;
+
+export function modelDescriptionId(id: string): string {
+  try {
+    const modelId = opaqueIdentifier(id, {
+      field: "Model ID", maxCharacters: 200,
+      rejectControlCharacters: true, rejectNul: true
+    });
+    if (!modelId || modelId !== modelId.trim()) throw new Error("invalid model id");
+    return modelId;
+  } catch {
+    throw new Error("MODEL_DESCRIPTIONS_INVALID: Invalid model ID.");
+  }
+}
 
 /** Only user-authored text is persisted. Catalog descriptions remain upstream data. */
 export function normalizeModelDescriptionOverrides(value: unknown): ModelDescriptionOverrides {
@@ -23,19 +48,8 @@ export function normalizeModelDescriptionOverrides(value: unknown): ModelDescrip
   }
   const normalized: Array<[string, string]> = [];
   for (const [id, raw] of entries) {
-    let modelId: string;
-    try {
-      // A catalog model ID is protocol-owned and opaque; do not NFC it.
-      modelId = opaqueIdentifier(id, {
-        field: "Model ID",
-        maxCharacters: 200,
-        rejectControlCharacters: true,
-        rejectNul: true
-      });
-      if (!modelId || modelId !== modelId.trim()) throw new Error("invalid model id");
-    } catch {
-      throw new Error("MODEL_DESCRIPTIONS_INVALID: Each model ID must have a text description.");
-    }
+    // A catalog model ID is protocol-owned and opaque; do not NFC it.
+    const modelId = modelDescriptionId(id);
     let description: string;
     try {
       description = canonicalHumanText(raw, {

@@ -40,6 +40,7 @@ struct ModelDescriptionsSettingsSection: View {
     private var modelIDs: [String] {
         Set(models.keys)
             .union(snapshot.settings.modelDescriptionOverrides?.keys.map { $0 } ?? [])
+            .union(snapshot.modelDescriptionHistoryModelIds ?? [])
             .union(edits.keys)
             .sorted()
     }
@@ -54,6 +55,7 @@ struct ModelDescriptionsSettingsSection: View {
                     modelID: id,
                     catalogModel: models[id],
                     override: snapshot.settings.modelDescriptionOverrides?[id],
+                    historyAvailable: snapshot.modelDescriptionHistoryModelIds != nil,
                     edit: Binding(get: { edits[id] }, set: { edits[id] = $0 })
                 )
             }
@@ -66,9 +68,17 @@ private struct ModelDescriptionSettingsRow: View {
     let modelID: String
     let catalogModel: CatalogModel?
     let override: String?
+    let historyAvailable: Bool
     @Binding var edit: ModelDescriptionEdit?
     @State private var officialExpanded = false
     @State private var failed = false
+    @State private var historyOpen = false
+    @State private var historyVersions: [ModelDescriptionVersion] = []
+    @State private var nextHistoryVersion: Int?
+    @State private var historyLoaded = false
+    @State private var historyLoading = false
+    @State private var historyError: String?
+    @State private var historyRequestGeneration = 0
 
     private var busy: Bool { model.isBusy || model.generalSettingsSaveState.isActive }
     private var officialText: String {
@@ -127,7 +137,10 @@ private struct ModelDescriptionSettingsRow: View {
                                 description: currentEdit.valueToSave(officialDescription: catalogModel?.description),
                                 expectedOverride: currentEdit.expectedOverride
                             )
-                            if saved { edit = nil; failed = false }
+                            if saved {
+                                edit = nil; failed = false
+                                if historyOpen { await loadHistory() }
+                            }
                             else {
                                 failed = true
                                 edit?.expectedOverride = model.settings?.settings.modelDescriptionOverrides?[modelID]
@@ -159,14 +172,120 @@ private struct ModelDescriptionSettingsRow: View {
                 Button("settings.modelDescriptions.restore") {
                     Task {
                         failed = !(await model.saveModelDescription(modelID: modelID, description: nil, expectedOverride: override))
+                        if !failed, historyOpen { await loadHistory() }
                     }
                 }
                 .disabled(busy)
+            }
+            if historyAvailable {
+                Button("settings.modelDescriptions.history") {
+                    historyOpen.toggle()
+                    if historyOpen { Task { await loadHistory() } }
+                }
+                .disabled(busy)
+                if historyOpen {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if historyLoading { ProgressView().controlSize(.small) }
+                        if let historyError {
+                            Text(historyError).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                        }
+                        if historyLoaded && historyVersions.isEmpty {
+                            Text("settings.modelDescriptions.historyEmpty")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        ForEach(historyVersions) { version in
+                            DisclosureGroup(historyTitle(version)) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("settings.modelDescriptions.historyVersionText")
+                                        .font(.caption).bold()
+                                    Text(version.description ?? BridgeAppLocalization.string(
+                                        "settings.modelDescriptions.official", locale: model.interfaceLocale
+                                    ))
+                                        .textSelection(.enabled)
+                                    Text("settings.modelDescriptions.historyCurrent")
+                                        .font(.caption).bold()
+                                    Text(override ?? officialText).textSelection(.enabled)
+                                    Text("settings.modelDescriptions.official")
+                                        .font(.caption).bold()
+                                    Text(officialText).textSelection(.enabled)
+                                    if edit == nil && version.description != override {
+                                        Button("settings.modelDescriptions.historyApply") {
+                                            Task {
+                                                failed = !(await model.saveModelDescription(
+                                                    modelID: modelID,
+                                                    description: version.description,
+                                                    expectedOverride: override
+                                                ))
+                                                if !failed { await loadHistory() }
+                                            }
+                                        }
+                                        .disabled(busy)
+                                    }
+                                }
+                                .font(.caption)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 4)
+                            }
+                        }
+                        if nextHistoryVersion != nil {
+                            Button("settings.modelDescriptions.historyMore") {
+                                Task { await loadHistory(append: true) }
+                            }
+                            .disabled(busy || historyLoading)
+                        }
+                    }
+                    .padding(9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
+                }
             }
             if failed, let message = model.settingsErrorMessage {
                 Text(message).font(.caption).foregroundStyle(.red).textSelection(.enabled)
             }
         }
         .padding(.vertical, 6)
+    }
+
+    private func historyTitle(_ version: ModelDescriptionVersion) -> String {
+        let label = BridgeAppLocalization.string(
+            "settings.modelDescriptions.historyVersion", locale: model.interfaceLocale
+        ) + " \(version.version)"
+        let preview = version.description.map { String($0.prefix(80)) } ?? BridgeAppLocalization.string(
+            "settings.modelDescriptions.official", locale: model.interfaceLocale
+        )
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let value = version.createdAt,
+              let date = formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value) else {
+            return label + " · " + BridgeAppLocalization.string(
+                "settings.modelDescriptions.historyImported", locale: model.interfaceLocale
+            ) + " · " + preview
+        }
+        return label + " · " + date.formatted(date: .abbreviated, time: .shortened) + " · " + preview
+    }
+
+    private func loadHistory(append: Bool = false) async {
+        if append && (historyLoading || nextHistoryVersion == nil) { return }
+        historyRequestGeneration += 1
+        let generation = historyRequestGeneration
+        historyLoading = true
+        historyError = nil
+        do {
+            let page = try await model.modelDescriptionHistory(
+                modelID: modelID,
+                beforeVersion: append ? nextHistoryVersion : nil
+            )
+            guard generation == historyRequestGeneration else { return }
+            guard page.kind == "model-description-history", page.modelId == modelID else {
+                throw NSError(domain: "MODEL_DESCRIPTION_HISTORY_INVALID", code: 1)
+            }
+            historyVersions = append ? historyVersions + page.versions : page.versions
+            nextHistoryVersion = page.nextBeforeVersion
+            historyLoaded = true
+        } catch {
+            guard generation == historyRequestGeneration else { return }
+            historyError = error.localizedDescription
+        }
+        historyLoading = false
     }
 }

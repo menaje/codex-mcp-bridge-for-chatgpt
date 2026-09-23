@@ -2,7 +2,8 @@ import { MAX_MODEL_DESCRIPTION_LENGTH } from "./modelDescriptions.js";
 
 // Serialized as source so retained cards do not depend on compiler-generated helpers.
 export const MODEL_DESCRIPTION_EDITOR_SCRIPT = String.raw`function createModelDescriptionEditor(root, options) {
-      const edits = new Map(), expanded = new Set();
+      const edits = new Map(), expanded = new Set(), historyExpanded = new Set();
+      const histories = new Map(), historyLoads = new Map(), historyGenerations = new Map();
       const limit = ${MAX_MODEL_DESCRIPTION_LENGTH};
       let snapshot = null, blocked = false;
       const copy = (key) => options.text(key);
@@ -32,12 +33,36 @@ export const MODEL_DESCRIPTION_EDITOR_SCRIPT = String.raw`function createModelDe
         const row = [...root.children].find((element) => element.dataset.model === id);
         if (row) row.querySelector("textarea").focus();
       }
-      async function persist(id, restore) {
+      async function loadHistory(id, append = false) {
+        const previous = histories.get(id);
+        const beforeVersion = append ? previous && previous.nextBeforeVersion : undefined;
+        if (append && !beforeVersion) return;
+        const generation = (historyGenerations.get(id) || 0) + 1;
+        historyGenerations.set(id, generation);
+        historyLoads.set(id, generation);
+        render();
+        try {
+          const page = await options.history(id, beforeVersion);
+          if (historyGenerations.get(id) !== generation) return;
+          histories.set(id, {
+            versions: append ? [...(previous?.versions || []), ...page.versions] : page.versions,
+            nextBeforeVersion: page.nextBeforeVersion
+          });
+          historyLoads.delete(id);
+          render();
+        } catch (error) {
+          if (historyGenerations.get(id) !== generation) return;
+          historyLoads.delete(id);
+          options.error(error);
+          render();
+        }
+      }
+      async function persist(id, restore, historicalValue, fromHistory = false) {
         if (!snapshot || blocked) return;
         const edit = edits.get(id), current = saved(id);
         const official = models().get(id)?.description || "";
-        let nextValue = null;
-        if (!restore && edit) {
+        let nextValue = fromHistory ? historicalValue : null;
+        if (!restore && !fromHistory && edit) {
           const trimmed = edit.text.trim();
           if (trimmed.length > limit) { edit.error = "tooLong"; render(); return; }
           nextValue = trimmed === edit.initialText.trim() ? edit.initialOverride
@@ -59,9 +84,13 @@ export const MODEL_DESCRIPTION_EDITOR_SCRIPT = String.raw`function createModelDe
           const next = await options.save(overrides, expectedRevision);
           snapshot = next;
           edits.delete(id);
+          histories.delete(id);
+          historyGenerations.set(id, (historyGenerations.get(id) || 0) + 1);
+          historyLoads.delete(id);
           options.committed(next, expectedRevision);
           render();
-          options.busy(false, copy(restore || nextValue === null ? "restored" : "saved"));
+          options.busy(false, copy(fromHistory ? "historyApplied" : restore || nextValue === null ? "restored" : "saved"));
+          if (historyExpanded.has(id)) void loadHistory(id);
         } catch (error) {
           if (String(error && error.message || error).includes("SETTINGS_REVISION_CONFLICT")) {
             try {
@@ -80,7 +109,7 @@ export const MODEL_DESCRIPTION_EDITOR_SCRIPT = String.raw`function createModelDe
         root.parentElement.hidden = !snapshot.settings.modelDescriptionOverrides;
         root.replaceChildren();
         const catalog = models();
-        const ids = [...new Set([...catalog.keys(), ...Object.keys(snapshot.settings.modelDescriptionOverrides || {}), ...edits.keys()])].sort();
+        const ids = [...new Set([...catalog.keys(), ...Object.keys(snapshot.settings.modelDescriptionOverrides || {}), ...(snapshot.modelDescriptionHistoryModelIds || []), ...edits.keys()])].sort();
         for (const id of ids) {
           const model = catalog.get(id), override = saved(id), edit = edits.get(id);
           const official = model && model.description || "";
@@ -126,6 +155,43 @@ export const MODEL_DESCRIPTION_EDITOR_SCRIPT = String.raw`function createModelDe
             row.append(details);
           }
           if (override !== null && !edit) row.append(button(copy("restore"), "restore", () => void persist(id, true)));
+          if (Array.isArray(snapshot.modelDescriptionHistoryModelIds)) {
+            const historyButton = button(copy("history"), "history", () => {
+              if (historyExpanded.has(id)) historyExpanded.delete(id);
+              else {
+                historyExpanded.add(id);
+                void loadHistory(id);
+              }
+              render();
+            });
+            row.append(historyButton);
+            if (historyExpanded.has(id)) {
+              const panel = node("div", undefined, "model-description-history");
+              const history = histories.get(id);
+              if (!history) panel.append(node("p", copy(historyLoads.has(id) ? "historyLoading" : "historyEmpty"), "hint"));
+              else if (!history.versions.length) panel.append(node("p", copy("historyEmpty"), "hint"));
+              for (const version of history?.versions || []) {
+                const item = node("details", undefined, "model-description-history-version");
+                const date = version.createdAt ? options.formatDate(version.createdAt) : copy("historyImported");
+                const preview = version.description === null ? copy("official") : version.description.replace(/\s+/g, " ").slice(0, 80);
+                item.append(node("summary", copy("historyVersion") + " " + version.version + " · " + date + " · " + preview));
+                const content = node("div", undefined, "model-description-history-content");
+                content.append(node("strong", copy("historyVersionText")));
+                content.append(node("p", version.description === null ? copy("official") : version.description, "model-description-text"));
+                content.append(node("strong", copy("historyCurrent")));
+                content.append(node("p", override === null ? official || copy("empty") : override, "model-description-text"));
+                content.append(node("strong", copy("official")));
+                content.append(node("p", official || copy("empty"), "model-description-text hint"));
+                if (!edit && version.description !== override) {
+                  content.append(button(copy("historyApply"), "history-apply", () => void persist(id, false, version.description, true)));
+                }
+                item.append(content);
+                panel.append(item);
+              }
+              if (history?.nextBeforeVersion) panel.append(button(copy("historyMore"), "history-more", () => void loadHistory(id, true)));
+              row.append(panel);
+            }
+          }
           root.append(row);
         }
       }
@@ -136,7 +202,7 @@ export const MODEL_DESCRIPTION_EDITOR_SCRIPT = String.raw`function createModelDe
           render();
         },
         refresh: render,
-        reset() { edits.clear(); },
+        reset() { edits.clear(); histories.clear(); historyExpanded.clear(); },
         setDisabled(value) {
           blocked = value;
           for (const element of root.querySelectorAll("button,textarea")) element.disabled = value || element.dataset.invalid === "true";

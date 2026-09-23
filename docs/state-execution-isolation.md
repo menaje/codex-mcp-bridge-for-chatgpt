@@ -103,13 +103,13 @@ state/execution topology and installed acceptance are recorded in
 
 Unclassified or mixed-use data remains in `state.sqlite`. Importance is decided
 by consumers and recovery semantics, not by a table or event name.
-The exhaustive schema-25 table, index, trigger, consumer, recovery and file
+The exhaustive schema-26 table, index, trigger, consumer, recovery and file
 security inventory is maintained in
 [State schema ownership catalog](state-schema-ownership-catalog.md).
 
 ### `state.sqlite`
 
-The following current schema-25 tables remain authoritative operational state:
+The following current schema-26 tables remain authoritative operational state:
 
 | Domain | Tables | Reason |
 | --- | --- | --- |

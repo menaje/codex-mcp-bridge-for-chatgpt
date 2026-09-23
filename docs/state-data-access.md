@@ -1,6 +1,6 @@
 # State data access and maintenance ownership
 
-This document is the schema-25 operational ownership contract. Authoritative
+This document is the schema-26 operational ownership contract. Authoritative
 state remains one durable `state.sqlite` database; best-effort diagnostics use
 the separate `telemetry.sqlite` described by issue #142. A shared operational
 file does not imply shared write authority.
@@ -26,7 +26,7 @@ Activity-event and result-hold cleanup is scheduled by the event-retention
 slice but executed through `EventRetentionMaintenanceRepository` commands
 implemented by the State Unit of Work.
 
-## Schema 25 ownership matrix
+## Schema 26 ownership matrix
 
 “State UoW” below means `BridgeStateStore`. Read models never appear in the
 writer column.
@@ -39,6 +39,7 @@ writer column.
 | `project_registry` | State UoW / project repository | State UoW | settings, Session/Job project projections | none |
 | `projects` | State UoW / project repository | State UoW | admission, Dashboard, shared helper inspection | explicit project commands only |
 | `user_settings` | State UoW / settings repository | State UoW | settings and retention policy reads | none |
+| `model_description_versions` | State UoW / settings history repository | State UoW in the same settings transaction | per-model paged Settings history | retained through general Settings reset |
 | `sessions` | State UoW / Session repository | State UoW | Session registry, Dashboard | explicit Session capacity command |
 | `activities` | State UoW / Activity repository | State UoW | Activity API, Dashboard, retention protection | State UoW reconciliation |
 | `agents` | State UoW / Agent repository | State UoW | Agent API, Dashboard, recovery | State UoW reconciliation |

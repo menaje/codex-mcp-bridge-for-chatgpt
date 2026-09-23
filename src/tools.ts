@@ -213,6 +213,7 @@ import { assertRuntimeEnvOutsideProjectRoots } from "./runtimeEnvProjectGuard.js
 import {
   MAX_MODEL_DESCRIPTION_LENGTH,
   modelDescriptionProjection,
+  type ModelDescriptionHistoryPage,
   type ModelDescriptionOverrides
 } from "./modelDescriptions.js";
 import {
@@ -819,6 +820,17 @@ const dashboardHistoryDetailOutputSchema = z.strictObject({
   historyRevision: z.string().regex(/^[a-f0-9]{64}$/).optional()
 });
 
+const modelDescriptionHistoryPageOutputSchema = z.strictObject({
+  kind: z.literal("model-description-history"),
+  modelId: z.string(),
+  versions: z.array(z.strictObject({
+    version: z.number().int().positive(),
+    description: z.string().nullable(),
+    createdAt: z.string().nullable()
+  })),
+  nextBeforeVersion: z.number().int().positive().nullable()
+});
+
 export const DASHBOARD_VIEW_PRIVATE_MAX_BYTES = 512 * 1_024;
 export const dashboardViewPrivateMetadataSchema = z.strictObject({
   kind: z.literal("codex/dashboardView"),
@@ -902,6 +914,7 @@ const catalogModelOutputSchema = z.strictObject({
 
 const settingsViewOutputSchema = z.strictObject({
   historyPolicy: workHistoryPolicyOutputSchema.optional(),
+  modelDescriptionHistoryModelIds: z.array(z.string()).optional(),
   settings: bridgeUserSettingsOutputSchema,
   operatorDefaults: bridgeUserSettingsOutputSchema,
   capabilities: z.strictObject({
@@ -1641,7 +1654,7 @@ export const OPERATOR_OUTPUT_SCHEMAS = Object.freeze({
   codex_agent_recovery_detach: mutationOutputSchema, codex_diagnostics: diagnosticsOutputSchema
 });
 export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
-  codex_ui_read: z.union([dashboardViewOutputSchema, dashboardHistoryDetailOutputSchema, settingsViewOutputSchema, uiControlSummaryOutputSchema]),
+  codex_ui_read: z.union([dashboardViewOutputSchema, dashboardHistoryDetailOutputSchema, settingsViewOutputSchema, modelDescriptionHistoryPageOutputSchema, uiControlSummaryOutputSchema]),
   codex_ui_completion: jobCompletionDeliveryOutputSchema,
   codex_ui_decision: decisionUiOutputSchema,
   codex_ui_problem: problemActionResultSchema,
@@ -5120,6 +5133,9 @@ export function registerBridgeTools(
       cardPerformance.record("settings.serialization", Date.now() - serializationStartedAt);
       return view;
     },
+    async modelDescriptionHistory(input) {
+      return userSettings.modelDescriptionHistory(input.modelId, input.beforeVersion);
+    },
     updateSettings(input) {
       return applySettingsMutation(input);
     },
@@ -7352,6 +7368,20 @@ export function registerBridgeTools(
         "snapshot"
       );
     };
+  const modelDescriptionHistoryInput = z.strictObject({
+    view: z.literal("model-description-history"),
+    modelId: z.string().min(1).max(200),
+    beforeVersion: z.number().int().positive().optional()
+  });
+  const readModelDescriptionHistory: ToolCallback<typeof modelDescriptionHistoryInput> = async (args) => {
+    const page = await applicationService.modelDescriptionHistory({
+      modelId: args.modelId, beforeVersion: args.beforeVersion
+    });
+    return {
+      content: [{ type: "text", text: "Model description history loaded." }],
+      structuredContent: modelDescriptionHistoryPageOutputSchema.parse(page)
+    };
+  };
 
   const settingsAccessStrategyInput = config.allowDangerFullAccess
     ? z.enum(["read-only", "adaptive", "always-full"])
@@ -8145,6 +8175,7 @@ export function registerBridgeTools(
       dashboardSnapshotInput.extend({ view: z.literal("dashboard") }),
       dashboardHistoryDetailInput,
       settingsSnapshotInput.extend({ view: z.literal("settings") }),
+      modelDescriptionHistoryInput,
       controlDetailInput,
       problemControlDetailInput
     ]),
@@ -8157,6 +8188,7 @@ export function registerBridgeTools(
     if (args.view === "dashboard-history") return readDashboardHistoryDetail(args, extra);
     if (args.view === "dashboard") { const { view, ...input } = args; return readDashboard(input, extra); }
     if (args.view === "settings") { const { view, ...input } = args; return readSettings(input, extra); }
+    if (args.view === "model-description-history") return readModelDescriptionHistory(args, extra);
     throw new Error("UI_VIEW_UNSUPPORTED: Refresh the card and choose a supported view.");
   });
   server.registerTool("codex_ui_problem", {
@@ -10640,6 +10672,7 @@ export type BridgeApplicationService = {
     enrichment: BridgeDashboardEnrichment
   ): Promise<DashboardView>;
   settingsSnapshot(options?: BridgeSettingsSnapshotOptions): Promise<SettingsView>;
+  modelDescriptionHistory(input: { modelId: string; beforeVersion?: number }): Promise<ModelDescriptionHistoryPage>;
   updateSettings(input: BridgeSettingsMutationInput): Promise<SettingsView>;
   runtimeSnapshot(options?: BridgeRuntimeSnapshotOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
   runtimeHealth?(): BridgeRuntimeAdmissionSnapshot;
@@ -13617,6 +13650,7 @@ async function buildSettingsView(
   }
   return {
     historyPolicy: userSettings.historyPolicy,
+    modelDescriptionHistoryModelIds: userSettings.modelDescriptionHistoryIds,
     settings: userSettings.current,
     operatorDefaults: userSettings.defaults,
     capabilities: {

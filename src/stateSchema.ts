@@ -1,9 +1,9 @@
 /**
  * Schema 19 remains the immutable released base DDL used by its recorded
- * migration. Fresh databases apply the v20 through v25 projections below in the
+ * migration. Fresh databases apply the v20 through v26 projections below in the
  * same transaction; older databases follow the append-only migration catalog.
  */
-export const CURRENT_STATE_SCHEMA_VERSION = "25";
+export const CURRENT_STATE_SCHEMA_VERSION = "26";
 
 export const CURRENT_STATE_SCHEMA = `
   CREATE TABLE scopes (
@@ -571,4 +571,21 @@ export const V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA = `
   UPDATE job_completion_deliveries
      SET direct_result_offered_at=result_read_at
    WHERE result_read_at IS NOT NULL AND result_read_source='direct-job-query';
+`;
+
+/** User-authored model descriptions have a durable, per-model history. The
+ * active override remains in user_settings; the catalog text is never copied.
+ * Legacy rows have no reliable description save time, so their time is NULL. */
+export const V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA = `
+  CREATE TABLE model_description_versions (
+    model_id TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK(version >= 1),
+    description TEXT,
+    created_at INTEGER,
+    PRIMARY KEY(model_id, version)
+  ) STRICT;
+  INSERT INTO model_description_versions(model_id, version, description, created_at)
+    SELECT json_each.key, 1, json_each.value, NULL
+      FROM user_settings, json_each(user_settings.payload, '$.modelDescriptionOverrides')
+     WHERE json_each.type = 'text' AND json_each.value <> '';
 `;

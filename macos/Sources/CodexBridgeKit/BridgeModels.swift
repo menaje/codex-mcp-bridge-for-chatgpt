@@ -293,6 +293,8 @@ public struct ThreadHandoffStatus: Codable, Sendable {
 
 public struct SettingsSnapshot: Codable, Sendable {
     public var historyPolicy: WorkHistoryPolicy? = nil
+    /// Missing on older bridge builds. Full text is fetched only when opened.
+    public var modelDescriptionHistoryModelIds: [String]? = nil
     public let settings: BridgeSettings
     public let operatorDefaults: BridgeSettings
     public let capabilities: SettingsCapabilities
@@ -300,6 +302,31 @@ public struct SettingsSnapshot: Codable, Sendable {
     public let warnings: [String]
     public let scopeNotice: String
     public let policyActivation: PolicyActivation
+}
+
+public struct ModelDescriptionVersion: Codable, Sendable, Identifiable {
+    public let version: Int
+    public let description: String?
+    public let createdAt: String?
+
+    public var id: Int { version }
+}
+
+public struct ModelDescriptionHistoryPage: Codable, Sendable {
+    public let kind: String
+    public let modelId: String
+    public let versions: [ModelDescriptionVersion]
+    public let nextBeforeVersion: Int?
+}
+
+public struct ModelDescriptionHistoryParameters: Encodable, Sendable {
+    public let modelId: String
+    public let beforeVersion: Int?
+
+    public init(modelId: String, beforeVersion: Int? = nil) {
+        self.modelId = modelId
+        self.beforeVersion = beforeVersion
+    }
 }
 
 public struct BridgeSettings: Codable, Sendable {
