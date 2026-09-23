@@ -1,0 +1,30 @@
+{
+  "description": "Check repository integration before a task ends and guard common branch/worktree deletion commands.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/git-lifecycle.mjs\" stop",
+            "timeout": 10,
+            "statusMessage": "Checking Git integration"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.codex/hooks/git-lifecycle.mjs\" pre-tool-use",
+            "timeout": 10,
+            "statusMessage": "Checking Git cleanup"
+          }
+        ]
+      }
+    ]
+  }
+}
