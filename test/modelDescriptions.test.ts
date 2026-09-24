@@ -4,6 +4,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
+import { V24_DECISION_CARD_MIGRATION_SCHEMA } from "../src/decisionCardStore.js";
 import {
   MAX_MODEL_DESCRIPTION_LENGTH,
   modelDescriptionProjection,
@@ -166,14 +167,15 @@ describe("user model descriptions", () => {
     store.update({ modelDescriptionOverrides: { "model-a": "Saved before versions" } }, 0);
     state.close();
     const database = new Database(file);
+    database.exec(V24_DECISION_CARD_MIGRATION_SCHEMA);
     database.exec(`DROP TABLE model_description_versions;
       UPDATE bridge_meta SET value='25' WHERE key='schema_version';
-      DELETE FROM bridge_meta WHERE key='schema_v26_created_at';`);
+      DELETE FROM bridge_meta WHERE key IN ('schema_v26_created_at','schema_v27_created_at');`);
     database.close();
     const upgradedState = new BridgeStateStore({ file });
     const upgraded = new UserSettingsStore(config(), { stateStore: upgradedState });
-    expect(upgradedState.schemaVersion).toBe(26);
-    expect(existsSync(`${file}.pre-v25-to-v26.sqlite`)).toBe(true);
+    expect(upgradedState.schemaVersion).toBe(27);
+    expect(existsSync(`${file}.pre-v25-to-v27.sqlite`)).toBe(true);
     expect(upgraded.current.modelDescriptionOverrides).toEqual({ "model-a": "Saved before versions" });
     expect(upgraded.modelDescriptionHistory("model-a").versions).toEqual([
       { version: 1, description: "Saved before versions", createdAt: null }

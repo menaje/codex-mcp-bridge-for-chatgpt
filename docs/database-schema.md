@@ -1,11 +1,11 @@
 # Bridge database schema and lifecycle
 
-Schema 26 is the current SQLite schema. `src/stateSchema.ts` contains the complete
+Schema 27 is the current SQLite schema. `src/stateSchema.ts` contains the complete
 DDL and projections used for a new installation. `src/stateStore.ts` contains
-upgrade code for schemas 3 through 25; schemas 1 and 2 are rejected. The published v0.2 and
+upgrade code for schemas 3 through 26; schemas 1 and 2 are rejected. The published v0.2 and
 v0.3 line used schema 3, and the pre-change development installation used schema
 18. Every supported upgrade ends with the same tables, columns, constraints,
-indexes, and triggers as direct schema-26 creation.
+indexes, and triggers as direct schema-27 creation.
 
 The database is the only bridge state authority. Settings, projects, retained
 sessions, and Jobs no longer have parallel JSON files or JSON mirrors. SQLite
@@ -52,7 +52,7 @@ input state. There is no `job_summaries` table, and progress events do not write
 full Job document. `scopes.version` is the one scope CAS/event sequence; there is
 no `scope_versions` mirror.
 
-## Complete schema-26 table matrix
+## Complete schema-27 table matrix
 
 The retention column describes bridge cleanup. SQLite free pages are reusable but
 remain allocated until an offline compaction; physical erasure is therefore a
@@ -72,14 +72,15 @@ legacy rows default to `live-card`, while `direct-wait` rows cannot claim the
 live-card lease. This payload-compatible addition does not require a table
 migration. Schema 24
 added GPT–user Decision Card tables. The feature was retired in #141, but this
-migration remains immutable for older database upgrades. New runtime code leaves
-those tables dormant and does not perform Decision retention. Schema 25
+migration remains immutable for older database upgrades. Schema 25
 adds compact operational command receipts in the same transaction as the
 isolated state mutation so an IPC response-loss retry cannot duplicate work.
 Schema 26 adds version history for user-authored model descriptions. The active
 override stays in `user_settings`; a history row contains user text or a marker
 for using the current official catalog description. Existing active overrides
 are imported as the first version without inventing a save time.
+Schema 27 removes the four retired Decision Card tables without changing Codex
+Jobs, questions, answers, completion delivery, or operational receipts.
 
 | Table | Current consumer and authoritative fields | Decision and retention |
 | --- | --- | --- |
@@ -108,10 +109,6 @@ are imported as the first version without inventing a save time.
 | `transport_observations` | Rollback/direct-runtime compatibility for bounded aborted/detached/presentation diagnostics | Non-authoritative and disposable. Isolated production writes the separate telemetry database instead, so this table grants no replay or execution authority. |
 | `user_questions` | Question request/answer state and response reference | Keep until its explicit expiry; startup removes expired rows. Payload is question state, not a Job mirror. |
 | `codex_question_deliveries` | Codex-originated question delivery idempotency | Keep one scoped request/question-reference receipt so restart cannot redeliver the same question as new. |
-| `decision_cards` | Dormant legacy card identity and expiry from schema 24; no current product consumer | No new writes or periodic cleanup. Preserve until a separately approved forward migration decides physical deletion. |
-| `decision_card_versions` | Dormant legacy sanitized HTML and semantic field records; no current product consumer | No current rendering or result authority. Preserve as legacy state pending a forward migration. |
-| `decision_card_requests` | Dormant legacy create/revise replay records; no current product consumer | No request replay through retired tools. Preserve pending a forward migration. |
-| `decision_submissions` | Dormant legacy submitted intent and delivery evidence; no current product consumer | No new delivery or Codex authority. Former 30-day automatic cleanup does not run after retirement; deletion needs a separate forward migration. |
 | `thread_connections` | App Server connection ownership, handoff/release and recovery inspection | Keep current connection evidence independently of `sessions`: a saved execution context does not prove a live connection. Unfinished-work checks join indexed Job/interactions/cancellation fields. |
 | `event_budget` | Trigger-maintained Job-event row and payload-byte counters | Derived singleton. Rebuilt during migration and updated by three triggers; it is not a DB/WAL or backup size limit. |
 | `event_retention_state` | Event cleanup policy generation and restartable event cursor | Keep typed singleton because the cursor has transactional cleanup semantics. Replaces dynamic `bridge_meta` keys. |
@@ -130,7 +127,7 @@ their schema-19 owners rather than by compatibility tables.
 
 ## Index and query contract
 
-The schema defines 48 non-SQLite indexes and three event-budget triggers. The
+The schema defines 44 non-SQLite indexes and three event-budget triggers. The
 indexes below are correctness or bounded-work contracts rather than incidental
 optimizations:
 
@@ -188,7 +185,7 @@ copy, not end-to-end service latency or evidence of a live replacement.
 
 ## Upgrade and legacy-data rules
 
-A fresh database creates schema 26 directly. A persistent supported older database
+A fresh database creates schema 27 directly. A persistent supported older database
 is inspected before a writable SQLite connection opens. The canonical-file lock,
 live-owner check, integrity and foreign-key checks, permissions, free-space
 calculation, verified backup, sequential conversion, and final verification all
@@ -197,7 +194,7 @@ Development and candidate packages use separate default state profiles; selectin
 the stable DB requires an explicit profile or absolute-file override.
 
 The upgrade gets one private, mode-0600 backup named
-`state.sqlite.pre-v<SOURCE>-to-v26.sqlite` and a bound metadata sidecar. The
+`state.sqlite.pre-v<SOURCE>-to-v27.sqlite` and a bound metadata sidecar. The
 sidecar records the logical/physical database identity, source and target runtime
 facts, migration path/checksums, snapshot checksum, integrity/foreign-key results,
 and a digest of table row counts. Retrying the same upgrade reuses and fully
@@ -226,6 +223,9 @@ Schema 25 adds an empty command-receipt table and index without backfilling or
 changing existing domain state.
 Schema 26 imports each active user-authored model description as version 1 with
 an unknown save time, then records later changes without copying official text.
+Schema 27 drops the four retired Decision Card tables, including their legacy
+submissions. The original migration snapshot must be disposed of after service
+acceptance under the [runbook policy](state-upgrade-recovery.md#retired-decision-data-and-backup-disposal).
 An interrupted or invalid conversion rolls its transaction back and can be retried
 after the source problem is corrected. The full operational and restore procedure is in the
 [state upgrade and recovery runbook](state-upgrade-recovery.md).
@@ -242,8 +242,8 @@ relationship. Migration never creates a project from a slug, name, cwd, or old
 snapshot.
 
 The supported schema-3 fixture is taken from the published v0.3.0 implementation
-and passes every fixed checkpoint through schema 26. Exact deployed-development
-fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 25 are generated
+and passes every fixed checkpoint through schema 27. Exact deployed-development
+fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 26 are generated
 only as named, committed checkpoints from those sources. `state-migrations.json` binds
 their provenance and hashes to the shipped implementation. Schemas 1 and 2 are
 outside the supported release floor and are rejected before a backup or mutation.
@@ -252,7 +252,7 @@ restarts.
 
 ## Capacity, backups, and offline compaction
 
-The schema-26 table/write/read/maintenance ownership matrix and the command,
+The schema-27 table/write/read/maintenance ownership matrix and the command,
 query, and bounded scheduler contracts are documented in
 [State data access and maintenance ownership](state-data-access.md).
 The selected two-database process, IPC, readiness, migration and fault contract
@@ -279,7 +279,7 @@ ends and the upgraded database has survived normal restarts, remove older backup
 as a deliberate operator action. Backups contain the same private material as the
 source database and require the same access controls. The bridge does not silently
 delete them because release and rollback policy belong to the operator. Keep each
-backup with its `.migration-v<SOURCE>-to-v26.backup.json` sidecar. Supported
+backup with its `.migration-v<SOURCE>-to-v27.backup.json` sidecar. Supported
 snapshot restore is allowed only while the migrated DB records that neither HTTP
 nor stdio service-open occurred; after that boundary, preserve current state and
 use forward repair or explicit data reconciliation. See the
@@ -304,7 +304,7 @@ the live database untouched. A report with `liveDatabaseReplacementPerformed:
 false` is implementation evidence, not evidence that an operator has compacted or
 released a production installation.
 
-The complete schema-26 table, explicit index and trigger ownership inventory,
+The complete schema-27 table, explicit index and trigger ownership inventory,
 including command/query consumers, recovery dependencies, future destination and
 two-database file security rules, is in
 [State schema ownership catalog](state-schema-ownership-catalog.md).
