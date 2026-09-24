@@ -70,8 +70,8 @@ try {
   source = new Database(baselineFile, { readonly: true, fileMustExist: true });
   const sourceVersion = version(source);
   assert.ok(
-    sourceVersion >= 18 && sourceVersion <= 25,
-    `Storage audit supports source schemas 18 through 25, received ${sourceVersion}`
+    sourceVersion >= 18 && sourceVersion <= 27,
+    `Storage audit supports source schemas 18 through 27, received ${sourceVersion}`
   );
   const threadIds = representativeThreadIds(source);
   const sourceConnection = connectionAudit(source, sourceVersion, threadIds);
@@ -85,16 +85,16 @@ try {
   source = undefined;
   await chmod(workingFile, 0o600);
 
-  if (sourceVersion < 25) {
+  if (sourceVersion < 27) {
     const store = new BridgeStateStore({ file: workingFile });
     store.close();
   }
   working = new Database(workingFile, { fileMustExist: true });
-  assert.equal(version(working), 25);
+  assert.equal(version(working), 27);
   assert.equal(String(working.pragma("integrity_check", { simple: true })), "ok");
   assert.deepEqual(working.pragma("foreign_key_check"), []);
 
-  const currentConnection = connectionAudit(working, 25, threadIds);
+  const currentConnection = connectionAudit(working, 27, threadIds);
   assert.deepEqual(
     currentConnection.results,
     sourceConnection.results,
@@ -121,16 +121,19 @@ try {
         WHERE h.job_id=jobs.job_id AND h.expired_at IS NOT NULL)`).get() as {count:number}).count),
     jobEvents: count(working, "job_events")
   };
-  report.dormantLegacyRows = {
-    decisionSubmissions: count(working, "decision_submissions")
-  };
+  report.retiredDecisionTablesAbsent = [
+    "decision_cards", "decision_card_versions", "decision_card_requests", "decision_submissions"
+  ].every((table) => working!.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?"
+  ).get(table) === undefined);
+  assert.equal(report.retiredDecisionTablesAbsent, true);
   report.maintenancePlanDecision = {
     resultHoldsExpiryIndex: "deferred: sparse operator-created rows, 500-row slice, 30-day maximum hold",
     historyCandidateIndex: "deferred: indexed status/range seek plus cursor and 25ms cooperative budget; temporary sort remains audited",
     oldestEventScan: "accepted: integer-primary-key order with a 500-row slice"
   };
   report.currentRows = rowTotals(working);
-  const currentSerialization = serializationMetrics(working, 25);
+  const currentSerialization = serializationMetrics(working, 27);
   assert.equal(
     (currentSerialization.interactions as { structuredDuplicateFields: number })
       .structuredDuplicateFields,
@@ -167,7 +170,7 @@ try {
     assert.equal(String(compact.pragma("integrity_check", { simple: true })), "ok");
     assert.deepEqual(compact.pragma("foreign_key_check"), []);
     assert.deepEqual(tableCounts(compact), beforeCompactCounts);
-    assert.equal(version(compact), 25);
+    assert.equal(version(compact), 27);
     report.compactedCapacity = await capacity(compact, compactFile);
   } finally {
     compact.close();

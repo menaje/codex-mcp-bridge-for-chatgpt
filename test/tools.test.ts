@@ -262,7 +262,8 @@ describe("current bridge tool contracts", () => {
     const database = new Database(path.join(root, "state.sqlite"), { readonly: true });
     try {
       for (const table of ["decision_cards", "decision_card_versions", "decision_card_requests", "decision_submissions"]) {
-        expect(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 0 });
+        expect(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table))
+          .toBeUndefined();
       }
     } finally {
       database.close();

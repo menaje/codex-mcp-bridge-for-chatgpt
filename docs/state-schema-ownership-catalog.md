@@ -1,6 +1,6 @@
 # State schema ownership catalog
 
-This catalog is the schema-26 operational inventory and telemetry schema
+This catalog is the schema-27 operational inventory and telemetry schema
 inventory required by issues #142 and #143. In production the operational
 state-owner process is the only `state.sqlite` writer, the read process opens it
 read-only, and the telemetry process is the only `telemetry.sqlite` writer.
@@ -41,10 +41,6 @@ queries only.
 | `steering_deliveries` | steering UoW | duplicate lookup and recovery | prepared/dispatching/delivered uncertainty journal | state |
 | `user_questions` | `QuestionStore` commands | question/result tools and expiry maintenance | user-response authority and expiry | state |
 | `codex_question_deliveries` | `QuestionStore` delivery commands | question notification recovery | delivery claim and uncertainty evidence | state |
-| `decision_cards` | schema-24 migration history only | no current product read or write | dormant legacy Decision Card state; no execution or answer authority | state |
-| `decision_card_versions` | schema-24 migration history only | no current product read or write | dormant legacy Decision Card state; no execution or answer authority | state |
-| `decision_card_requests` | schema-24 migration history only | no current product read or write | dormant legacy Decision Card state; no execution or answer authority | state |
-| `decision_submissions` | schema-24 migration history only | no current product read or write | dormant legacy Decision Card state; no execution or answer authority | state |
 | `thread_connections` | `ThreadConnectionStore` commands | admission and connection controller | unfinished-work and handoff/release state | state |
 | `work_history_state` | `WorkHistoryStore` commands and history maintenance | Dashboard/history projections | acknowledgement and expiry state | state |
 | `work_history_control` | `WorkHistoryStore` policy commands | retention policy | cleanup policy revision | state |
@@ -56,7 +52,7 @@ queries only.
 
 ## Index inventory
 
-The current schema contains these explicit indexes, including dormant legacy Decision Card indexes. Every name is tied to its
+The current schema contains these explicit indexes. Every name is tied to its
 parent table and is covered by the same owner above.
 
 - `activities`: `activities_continuation`, `activities_project_pin`,
@@ -74,10 +70,6 @@ parent table and is covered by the same owner above.
 - `cancellation_operations`: `cancellation_operations_target_activity`,
   `cancellation_operations_target_job`
 - `completion_outbox`: `completion_outbox_pending`
-- `decision_card_versions`: `decision_card_versions_scope_recent`
-- `decision_cards`: `decision_cards_scope_recent`
-- `decision_submissions`: `decision_submissions_delivery`,
-  `decision_submissions_scope_recent`
 - `job_completion_deliveries`: `job_completion_deliveries_claimable`
 - `job_events`: `job_events_job_cursor`, `job_events_scope_cursor`
 - `job_interactions`: `job_interactions_blocking`

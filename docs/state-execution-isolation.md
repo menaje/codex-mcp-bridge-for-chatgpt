@@ -103,13 +103,13 @@ state/execution topology and installed acceptance are recorded in
 
 Unclassified or mixed-use data remains in `state.sqlite`. Importance is decided
 by consumers and recovery semantics, not by a table or event name.
-The exhaustive schema-26 table, index, trigger, consumer, recovery and file
+The exhaustive schema-27 table, index, trigger, consumer, recovery and file
 security inventory is maintained in
 [State schema ownership catalog](state-schema-ownership-catalog.md).
 
 ### `state.sqlite`
 
-The following current schema-26 tables remain authoritative operational state:
+The following current schema-27 tables remain authoritative operational state:
 
 | Domain | Tables | Reason |
 | --- | --- | --- |
@@ -120,7 +120,6 @@ The following current schema-26 tables remain authoritative operational state:
 | mutation certainty | `agent_mutations`, `cancellation_operations`, `cancellation_intents`, `steering_deliveries` | idempotency, provenance and uncertain-effect recovery |
 | completion delivery | `completion_outbox`, `job_completion_deliveries` | pending delivery, lease, receipt and acceptance certainty |
 | questions | `user_questions`, `codex_question_deliveries` | user-response authority and delivery recovery |
-| legacy Decision Card state | `decision_cards`, `decision_card_versions`, `decision_card_requests`, `decision_submissions` | dormant schema-24 compatibility only; no current authority |
 | history and recovery | `work_history_state`, `work_history_control`, `runtime_problem_resolutions`, `automatic_recovery`, `automatic_recovery_incidents` | review, recovery budgets and restart evidence |
 | mixed event/control history | `activity_events`, `job_events`, `event_budget`, `event_retention_state` | current cursors, usage/status projection and recovery consumers prevent whole-table movement |
 | state IPC certainty | `operational_command_receipts` | atomically resolves commit-then-response-loss without rerunning a different logical command |

@@ -1,8 +1,8 @@
 # State upgrade and recovery runbook
 
 This runbook owns the release-time contract for the bridge SQLite database.
-The current target is schema 26. Supported source schemas are 3 through 25;
-schemas 1 and 2, databases newer than 26, and the retired standalone Settings,
+The current target is schema 27. Supported source schemas are 3 through 26;
+schemas 1 and 2, databases newer than 27, and the retired standalone Settings,
 session, and Job JSON stores are rejected. `release-manifest.json` and
 `state-migrations.json` are the machine-readable authorities.
 
@@ -53,7 +53,7 @@ Every persistent HTTP and stdio startup follows the same lifecycle:
    product/build, and time. A durable pending record closes the crash window
    between the schema commit and its provenance record.
 6. Validate the complete applied path, database integrity, foreign keys, and
-   schema 26 before registering the runtime owner and opening a transport.
+   schema 27 before registering the runtime owner and opening a transport.
 
 The private status file beside the DB ends in `.migration-status.json` and
 records `preflight`, `backup`, `migrating`, `verifying`, `completed`, or
@@ -74,8 +74,8 @@ For a source schema `S`, the migration creates these mode-0600 files beside the
 database:
 
 ```text
-state.sqlite.pre-vS-to-v26.sqlite
-state.sqlite.migration-vS-to-v26.backup.json
+state.sqlite.pre-vS-to-v27.sqlite
+state.sqlite.migration-vS-to-v27.backup.json
 ```
 
 The JSON sidecar binds the snapshot to the logical and physical source database,
@@ -100,6 +100,31 @@ Record the deletion in the operational change log. If there is not enough space
 to retain the original, stop; reducing the rollback window is not an automatic
 fallback.
 
+## Retired Decision data and backup disposal
+
+Schema 27 removes `decision_cards`, `decision_card_versions`,
+`decision_card_requests`, and `decision_submissions` in one forward migration.
+The historical schema-24 migration and its recorded checksum stay unchanged,
+so a schema-23 or schema-24 source still follows its original path before the
+schema-27 deletion. No Decision row becomes a Codex question, answer, execution
+request, or approval. The migration does not change `user_questions` or
+`codex_question_deliveries`.
+
+A pre-v27 source snapshot necessarily contains the original rows until the
+rollback window ends. Never attach it or a row export to an issue or release.
+After the upgraded service passes integrity and foreign-key checks, two
+restarts, and an accepted recovery rehearsal, stop the bridge and inspect all
+operator-managed `state.sqlite` snapshots and migration backups. Create and
+verify one fresh, owner-only schema-27 backup for continued recovery. Checkpoint
+and truncate the live WAL, run an offline `VACUUM`, and verify the live database
+again. Delete each identified pre-v27 backup containing Decision tables and its
+matching migration sidecar; retain unrelated backups without those tables.
+Record the file paths, schema versions, table-presence results, and deletion
+time in a private operational log, without recording submission contents.
+External filesystem snapshots or separately managed backup services need their
+own retention review. Recovery from a retained pre-v27 source is allowed only
+through the schema-27 migration, which removes the tables again.
+
 ## Decide whether snapshot restore is allowed
 
 Migration writes `state_service_opened_after_migration=0`. The HTTP runtime
@@ -113,7 +138,7 @@ Stop every bridge/helper process, then inspect the exact pair:
 ```bash
 node dist/stateRecovery.js inspect \
   --database /absolute/path/state.sqlite \
-  --backup /absolute/path/state.sqlite.pre-v18-to-v26.sqlite
+  --backup /absolute/path/state.sqlite.pre-v18-to-v27.sqlite
 ```
 
 Inspection verifies the current target schema, service-open marker, live owners,
@@ -136,7 +161,7 @@ rollback pair. Then run:
 ```bash
 node dist/stateRecovery.js restore \
   --database /absolute/path/state.sqlite \
-  --backup /absolute/path/state.sqlite.pre-v18-to-v26.sqlite \
+  --backup /absolute/path/state.sqlite.pre-v18-to-v27.sqlite \
   --source-product-version 0.3.0 \
   --source-build-id exact-recorded-build-id
 ```

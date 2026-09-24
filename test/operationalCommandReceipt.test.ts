@@ -215,7 +215,45 @@ describe("operational command receipts", () => {
     }
   });
 
-  it("upgrades schema 24 and preserves dormant Decision rows through restart and backup restore", () => {
+  it("upgrades schema 23 through the immutable Decision migration without retaining its tables", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "decision-retirement-v23-"));
+    const file = path.join(root, "state.sqlite");
+    const legacy = new Database(file);
+    try {
+      legacy.exec("CREATE TABLE bridge_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL) STRICT;");
+      legacy.exec(CURRENT_STATE_SCHEMA);
+      legacy.exec(V20_ASYNC_EXECUTION_MIGRATION_SCHEMA);
+      legacy.exec(V21_JOB_COMPLETION_DELIVERY_MIGRATION_SCHEMA);
+      legacy.exec(V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA);
+      legacy.exec(V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA);
+      legacy.prepare("INSERT INTO bridge_meta(key,value) VALUES ('schema_version','23')").run();
+      legacy.prepare("INSERT INTO bridge_meta(key,value) VALUES ('state_database_id',?)")
+        .run(randomUUID());
+    } finally {
+      legacy.close();
+    }
+
+    try {
+      const store = new BridgeStateStore({ file });
+      expect(store.schemaVersion).toBe(27);
+      store.close();
+      const upgraded = new Database(file, { readonly: true });
+      const names = (upgraded.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>)
+        .map((row) => row.name);
+      for (const table of ["decision_cards", "decision_card_versions", "decision_card_requests", "decision_submissions"]) {
+        expect(names).not.toContain(table);
+      }
+      expect(names).toEqual(expect.arrayContaining(["user_questions", "codex_question_deliveries"]));
+      expect(upgraded.pragma("integrity_check", { simple: true })).toBe("ok");
+      expect(upgraded.pragma("foreign_key_check")).toEqual([]);
+      upgraded.close();
+      expect(existsSync(`${file}.pre-v23-to-v27.sqlite`)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("drops legacy Decision tables when upgrading schema 24 and restoring its source snapshot", () => {
     const root = mkdtempSync(path.join(tmpdir(), "operational-receipt-v24-"));
     const file = path.join(root, "state.sqlite");
     const databaseId = randomUUID();
@@ -253,9 +291,11 @@ describe("operational command receipts", () => {
 
     try {
       const store = new BridgeStateStore({ file });
-      expect(store.schemaVersion).toBe(26);
+      expect(store.schemaVersion).toBe(27);
       expect(store.getMeta("schema_v25_operational_command_receipts"))
         .toBe("durable-command-receipts-v1");
+      expect(store.getMeta("schema_v27_decision_card_retirement"))
+        .toBe("legacy-tables-dropped-v1");
       store.maintainRetention();
       store.close();
 
@@ -264,7 +304,8 @@ describe("operational command receipts", () => {
 
       const migrated = new Database(file, { readonly: true });
       for (const table of ["decision_cards", "decision_card_versions", "decision_card_requests", "decision_submissions"]) {
-        expect(migrated.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 1 });
+        expect(migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table))
+          .toBeUndefined();
       }
       expect(migrated.prepare(
         "SELECT COUNT(*) AS count FROM operational_command_receipts"
@@ -272,16 +313,21 @@ describe("operational command receipts", () => {
       expect(migrated.pragma("integrity_check", { simple: true })).toBe("ok");
       expect(migrated.pragma("foreign_key_check")).toEqual([]);
       migrated.close();
-      expect(existsSync(`${file}.pre-v24-to-v26.sqlite`)).toBe(true);
+      expect(existsSync(`${file}.pre-v24-to-v27.sqlite`)).toBe(true);
+
+      const source = new Database(`${file}.pre-v24-to-v27.sqlite`, { readonly: true });
+      expect(source.prepare("SELECT COUNT(*) AS count FROM decision_submissions").get())
+        .toEqual({ count: 1 });
+      source.close();
 
       const restoredFile = path.join(root, "restored.sqlite");
-      copyFileSync(`${file}.pre-v24-to-v26.sqlite`, restoredFile);
+      copyFileSync(`${file}.pre-v24-to-v27.sqlite`, restoredFile);
       const restored = new BridgeStateStore({ file: restoredFile });
-      expect(restored.schemaVersion).toBe(26);
+      expect(restored.schemaVersion).toBe(27);
       restored.close();
       const backup = new Database(restoredFile, { readonly: true });
-      expect(backup.prepare("SELECT COUNT(*) AS count FROM decision_submissions").get())
-        .toEqual({ count: 1 });
+      expect(backup.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='decision_submissions'").get())
+        .toBeUndefined();
       expect(backup.pragma("integrity_check", { simple: true })).toBe("ok");
       expect(backup.pragma("foreign_key_check")).toEqual([]);
       backup.close();
