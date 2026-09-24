@@ -68,7 +68,8 @@ an authentic schema-24 database, upgrades to schema 26, runs general
 maintenance, restarts, and verifies all rows, SQLite integrity, and foreign
 keys. It also reopens the pre-upgrade backup through the forward migration and
 checks the legacy submission survives. Physical table deletion is deferred to
-a separately reviewed forward schema migration. The former 30-day Decision
+the separately reviewed forward schema migration decision in
+[#177](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/177). The former 30-day Decision
 retention sweep no longer runs; this retention change is explicit in the
 database and retirement documentation.
 
