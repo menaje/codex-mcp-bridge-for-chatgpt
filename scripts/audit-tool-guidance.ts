@@ -42,7 +42,7 @@ const server = createBridgeMcpServer(config, upstream, new SessionRegistry({ sta
 const connection = await connectCurrentMcpServer(server, { name: "offline-tool-guidance-audit", version: "1" });
 const { client } = connection;
 const source: Record<string, { file: string; line: number; descriptionLine?: number }> = {};
-for (const file of ["src/tools.ts", "src/questionTools.ts", "src/decisionCard.ts"]) {
+for (const file of ["src/tools.ts", "src/questionTools.ts"]) {
   const body = await readFile(file, "utf8");
   const tree = ts.createSourceFile(file, body, ts.ScriptTarget.Latest, true);
   const visit = (node: ts.Node): void => {
@@ -100,15 +100,6 @@ try {
       annotations: tool.annotations, input: schemaFacts(tool.inputSchema), output: schemaFacts(tool.outputSchema) };
   });
   const task = inventory.find(t => t.name === "codex_task")!;
-  const decision = inventory.find(t => t.name === "codex_decision")!;
-  assert.ok(decision, "codex_decision must be discoverable.");
-  const decisionDiscovery = JSON.stringify({ description: decision.description, inputSchema: decision.inputSchema });
-  for (const requiredGuidance of [
-    "operation", "native input", "stable name", "visible label", "data-decision-label",
-    "data-decision-unit", "data-decision-output-for", "Static inline SVG", "Minimal example"
-  ]) assert.match(decisionDiscovery, new RegExp(requiredGuidance, "i"));
-  assert.ok(Buffer.byteLength(decisionDiscovery) < 12_000,
-    "Decision authoring guidance should stay compact enough for normal discovery.");
   const properties = task.inputSchema.properties as Record<string, any>;
   const probes: Array<Record<string, unknown>> = [];
   const meta = { "openai/session": "offline-tool-guidance-audit" };
@@ -140,20 +131,11 @@ try {
     requestId: randomUUID(), jobId: "not-an-audit-job", questionRef: "a".repeat(64),
     answers: { audit: ["offline"] }
   });
-  const correctionRequestId = randomUUID();
-  await probe("invalid-decision-authoring", "codex_decision", {
-    operation: "create", requestId: correctionRequestId, title: "Authoring correction probe",
-    html: '<input type="radio" name="plan" value="staged">'
-  });
-  await probe("corrected-decision-authoring", "codex_decision", {
-    operation: "create", requestId: correctionRequestId, title: "Authoring correction probe",
-    html: '<fieldset><legend>Plan</legend><label><input type="radio" name="plan" value="staged" required>Staged</label><label><input type="radio" name="plan" value="direct">Direct</label></fieldset>'
-  });
   const unexpectedRetiredTools = [
     "codex_ask_user", "codex_user_answer", "codex_question_action", "codex_activity",
     "codex_activity_rehydrate", "codex_activity_snapshot", "codex_activity_handoff",
     "codex_activity_job_cancel", "codex_background_process_terminate", "codex_job_steer",
-    "codex_ui_history"
+    "codex_ui_history", "codex_decision", "codex_decision_result", "codex_ui_decision"
   ].filter((name) => inventory.some((tool) => tool.name === name));
   assert.deepEqual(unexpectedRetiredTools, [], "Retired question or Activity tools are still discoverable.");
   probes.push({

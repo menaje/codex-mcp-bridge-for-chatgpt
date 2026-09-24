@@ -49,21 +49,18 @@ describe("single-file UI resource lifecycle", () => {
       const initial = syncUiResources(root, manifest);
       expect(initial.resources.settings.uri).toBe("ui://codex-mcp-bridge/settings/v3.html");
       expect(initial.resources.dashboard.uri).toBe("ui://codex-mcp-bridge/dashboard/v2.html");
-      expect(initial.resources.decision.uri).toBe("ui://codex-mcp-bridge/decision/v1.html");
-      expect(sourceFiles(root)).toEqual(["dashboard.html", "decision.html", "settings.html"]);
-      expect(packagedFiles(root)).toEqual(["dashboard.html", "decision.html", "settings.html"]);
+      expect(sourceFiles(root)).toEqual(["dashboard.html", "settings.html"]);
+      expect(packagedFiles(root)).toEqual(["dashboard.html", "settings.html"]);
       expect(checkUiResources(root, manifest)).toEqual(initial);
 
       writeRenderer(root, "updated");
       const updated = syncUiResources(root, manifest);
       expect(updated.resources.settings.uri).toBe(initial.resources.settings.uri);
       expect(updated.resources.dashboard.uri).toBe(initial.resources.dashboard.uri);
-      expect(updated.resources.decision.uri).toBe(initial.resources.decision.uri);
       expect(updated.resources.settings.digest).not.toBe(initial.resources.settings.digest);
       expect(updated.resources.dashboard.digest).not.toBe(initial.resources.dashboard.digest);
-      expect(updated.resources.decision.digest).not.toBe(initial.resources.decision.digest);
-      expect(sourceFiles(root)).toEqual(["dashboard.html", "decision.html", "settings.html"]);
-      expect(packagedFiles(root)).toEqual(["dashboard.html", "decision.html", "settings.html"]);
+      expect(sourceFiles(root)).toEqual(["dashboard.html", "settings.html"]);
+      expect(packagedFiles(root)).toEqual(["dashboard.html", "settings.html"]);
       expect(readFileSync(path.join(root, "ui-resources", "settings.html"), "utf8"))
         .toContain("settings-updated");
 
@@ -76,10 +73,10 @@ describe("single-file UI resource lifecycle", () => {
       writeFileSync(path.join(legacyDirectory, `${"b".repeat(64)}.html`), "legacy", "utf8");
       expect(() => checkUiResources(root, manifest)).toThrow(/ui-resources file inventory/);
       syncUiResources(root, manifest);
-      expect(sourceFiles(root)).toEqual(["dashboard.html", "decision.html", "settings.html"]);
+      expect(sourceFiles(root)).toEqual(["dashboard.html", "settings.html"]);
 
       expect(copyUiResourcesToDist(root)).toEqual(updated);
-      expect(packagedFiles(root)).toEqual(["dashboard.html", "decision.html", "settings.html"]);
+      expect(packagedFiles(root)).toEqual(["dashboard.html", "settings.html"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -87,10 +84,10 @@ describe("single-file UI resource lifecycle", () => {
 });
 
 function writeRenderer(root: string, marker: string): void {
-  const resources = Object.fromEntries(["settings", "dashboard", "decision"].map((name) => [
+  const resources = Object.fromEntries(["settings", "dashboard"].map((name) => [
     name,
     {
-      uri: `ui://codex-mcp-bridge/${name}/${name === "settings" ? "v3" : name === "dashboard" ? "v2" : "v1"}.html`,
+      uri: `ui://codex-mcp-bridge/${name}/${name === "settings" ? "v3" : "v2"}.html`,
       html: `<!doctype html><html><body>${name}-${marker}</body></html>`,
       metadata: {
         descriptor: {
@@ -115,10 +112,8 @@ function writeDescriptorSource(root: string): void {
     [
       'const SETTINGS_CARD_URI = "ui://codex-mcp-bridge/settings/v2.html";',
       'const DASHBOARD_CARD_URI = "ui://codex-mcp-bridge/dashboard/v2.html";',
-      'const DECISION_CARD_URI = "ui://codex-mcp-bridge/decision/v1.html";',
       'const settings = { ui: { resourceUri: SETTINGS_CARD_URI }, "openai/outputTemplate": SETTINGS_CARD_URI };',
-      'const dashboard = { ui: { resourceUri: DASHBOARD_CARD_URI }, "openai/outputTemplate": DASHBOARD_CARD_URI };',
-      'const decision = { ui: { resourceUri: DECISION_CARD_URI }, "openai/outputTemplate": DECISION_CARD_URI };'
+      'const dashboard = { ui: { resourceUri: DASHBOARD_CARD_URI }, "openai/outputTemplate": DASHBOARD_CARD_URI };'
     ].join("\n"),
     "utf8"
   );

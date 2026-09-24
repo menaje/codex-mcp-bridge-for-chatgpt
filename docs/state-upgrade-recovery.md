@@ -219,11 +219,12 @@ fork. Recovery must not recreate or execute that context. Activity-only schema
 and pending delivery removal remain governed by #53; any selected removal needs
 a new catalogued migration and user transition before release.
 
-Schema 23 to 24 adds only the independent decision-card tables. It does not
-backfill a card or submission from Jobs, Questions, Activities, or completion
-delivery. Decision leases found unresolved after restart become
-`acceptance-unknown`; this preserves the stored semantic decision without
-blindly replaying a possibly accepted `ui/message`.
+Schema 23 to 24 adds only the historical independent Decision Card tables. It
+does not backfill a card or submission from Jobs, Questions, Activities, or
+completion delivery. The feature was retired in #141. Current runtimes keep
+the migration but do not read, submit, recover, or prune Decision state. Older
+runtimes marked unresolved leases `acceptance-unknown`; a current runtime does
+not interpret them as execution or answer authority.
 
 ## Candidate evidence
 

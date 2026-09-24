@@ -4,17 +4,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import Database from "better-sqlite3";
 import { loadConfig } from "../src/config.js";
 import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import { createHttpServer, type BridgeHttpServer } from "../src/server.js";
 import { BRIDGE_SKILL_LIMITS } from "../src/skillLibrary.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { DASHBOARD_CARD_URI } from "../src/dashboardCard.js";
-import {
-  DECISION_CARD_METADATA_KEY,
-  DECISION_CARD_MINIMAL_HTML_EXAMPLE,
-  DECISION_CARD_URI
-} from "../src/decisionCard.js";
 import type {
   CodexInteractionResponse,
   CodexPendingInteraction,
@@ -204,7 +200,7 @@ describe("current bridge tool contracts", () => {
   it("publishes one current tool surface without compatibility tiers", async () => {
     const tools = await client.listTools();
     const names = new Set(tools.tools.map((tool) => tool.name));
-    for (const current of ["codex_task", "codex_cancel", "codex_models", "codex_settings", "codex_dashboard", "codex_decision", "codex_decision_result", "codex_ui_decision", "codex_ui_read", "bridge_skill", "bridge_skill_manage"]) {
+    for (const current of ["codex_task", "codex_cancel", "codex_models", "codex_settings", "codex_dashboard", "codex_ui_read", "bridge_skill", "bridge_skill_manage"]) {
       expect(names.has(current)).toBe(true);
     }
     for (const retired of [
@@ -215,7 +211,10 @@ describe("current bridge tool contracts", () => {
       "codex_question_card",
       "codex_question_submit",
       "codex_question_notify",
-      "codex_ui_stop"
+      "codex_ui_stop",
+      "codex_decision",
+      "codex_decision_result",
+      "codex_ui_decision"
     ]) expect(names.has(retired)).toBe(false);
     const bridgeSkill = tools.tools.find((tool) => tool.name === "bridge_skill")!;
     const bridgeSkillManage = tools.tools.find((tool) => tool.name === "bridge_skill_manage")!;
@@ -229,390 +228,48 @@ describe("current bridge tool contracts", () => {
     expect(tools.tools.some((tool) => "codex/registrationTier" in (tool._meta || {}))).toBe(false);
   });
 
-  it("publishes a compact, complete decision-card authoring contract in MCP discovery", async () => {
-    const tools = await client.listTools();
-    const decision = tools.tools.find((tool) => tool.name === "codex_decision")!;
-    const discovery = JSON.stringify({ description: decision.description, inputSchema: decision.inputSchema });
-
-    for (const guidance of [
-      "operation", "native input", "stable name", "visible label", "data-decision-label",
-      "data-decision-unit", "data-decision-output-for", "required", "Static inline SVG",
-      "scripts", "remote resources", "96", "64", "100"
-    ]) expect(discovery).toContain(guidance);
-    expect(decision.description).toContain(DECISION_CARD_MINIMAL_HTML_EXAMPLE);
-    expect(Buffer.byteLength(discovery, "utf8")).toBeLessThan(12_000);
-    expect(decision.annotations).toMatchObject({
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false
-    });
-    expect(tools.tools.some((tool) => tool.name === "codex_decision_guide")).toBe(false);
-
-    const branches = (decision.inputSchema as any).oneOf as Array<{ required?: string[] }>;
-    expect(branches).toHaveLength(2);
-    expect(branches.every((branch) => branch.required?.includes("operation"))).toBe(true);
-  });
-
-  it("returns an actionable authoring error and accepts a corrected retry without Codex work", async () => {
-    const requestId = randomUUID();
-    const invalid = await client.callTool({
-      name: "codex_decision",
-      arguments: {
-        operation: "create",
-        requestId,
-        title: "Choose a rollout",
-        html: '<input type="radio" name="plan" value="staged">'
+  it("rejects stale Decision Card calls without changing Codex or state", async () => {
+    const retired = [
+      {
+        name: "codex_decision",
+        arguments: {
+          operation: "create", requestId: randomUUID(), title: "Former card",
+          html: '<label>Plan <input name="plan" value="staged"></label>'
+        }
       },
-      _meta: metadata
-    });
-    expect(invalid.isError).toBe(true);
-    expect(JSON.stringify(invalid)).toMatch(
-      /DECISION_FIELD_LABEL_REQUIRED: plan\..*(wrapping <label>|label for|data-decision-label)/
-    );
-
-    const corrected = await client.callTool({
-      name: "codex_decision",
-      arguments: {
-        operation: "create",
-        requestId,
-        title: "Choose a rollout",
-        html: `
-          <fieldset><legend>Rollout plan</legend>
-            <label><input type="radio" name="plan" value="staged" required>Staged rollout</label>
-            <label><input type="radio" name="plan" value="direct">Direct rollout</label>
-          </fieldset>
-        `
+      {
+        name: "codex_decision_result",
+        arguments: { receipt: `decision_${"a".repeat(64)}` }
       },
-      _meta: metadata
-    });
-    expect(corrected.isError, JSON.stringify(corrected)).not.toBe(true);
-    expect(corrected.structuredContent).toMatchObject({ kind: "decision-card", fieldCount: 1 });
+      {
+        name: "codex_ui_decision",
+        arguments: {
+          operation: "submit", cardId: randomUUID(), cardVersion: 1,
+          presentationRef: "b".repeat(64), widgetInstanceId: randomUUID(),
+          submissionId: randomUUID(), intent: "confirm",
+          fields: [{ name: "plan", values: ["staged"] }]
+        }
+      }
+    ];
+    const listed = (await client.listTools()).tools.map(tool => tool.name);
+    const resources = (await client.listResources()).resources.map(resource => resource.uri);
+    for (const { name, arguments: args } of retired) {
+      expect(listed).not.toContain(name);
+      await expect(client.callTool({ name, arguments: args, _meta: metadata }))
+        .rejects.toThrow(/not found/i);
+    }
+    expect(resources.some(uri => uri.includes("/decision/"))).toBe(false);
+    const database = new Database(path.join(root, "state.sqlite"), { readonly: true });
+    try {
+      for (const table of ["decision_cards", "decision_card_versions", "decision_card_requests", "decision_submissions"]) {
+        expect(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 0 });
+      }
+    } finally {
+      database.close();
+    }
+    expect(state.listJobs()).toEqual([]);
+    expect(state.listActivities()).toEqual([]);
     expect(upstream.calls).toEqual([]);
-    expect(state.listJobs()).toEqual([]);
-    expect(state.listActivities()).toEqual([]);
-  });
-
-  it("runs a Job-independent decision card through durable submission and same-conversation retrieval", async () => {
-    const opened = await client.callTool({
-      name: "codex_decision",
-      arguments: {
-        operation: "create",
-        requestId: randomUUID(),
-        title: "Choose the migration path",
-        html: `
-          <section><h2>Options</h2><table><tr><th>Path</th><th>Risk</th></tr><tr><td>Staged</td><td>Low</td></tr></table>
-          <label>Path <select name="path" required><option value="staged">Staged transition</option><option value="rewrite">Immediate rewrite</option></select></label>
-          <label>Condition <textarea name="condition"></textarea></label></section>
-        `
-      },
-      _meta: metadata
-    });
-    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    expect(opened.structuredContent).toMatchObject({
-      kind: "decision-card",
-      operation: "create",
-      state: "open",
-      fieldCount: 2
-    });
-    const hydration = (opened._meta as any)[DECISION_CARD_METADATA_KEY];
-    expect(hydration).toMatchObject({
-      kind: "codex/decisionCard",
-      card: {
-        html: expect.stringContaining("<table>"),
-        policy: { scripts: "blocked", externalNetwork: "blocked" }
-      }
-    });
-    expect(JSON.stringify(opened.structuredContent)).not.toContain("<table>");
-    expect((await client.listResources()).resources.map((resource) => resource.uri)).toContain(DECISION_CARD_URI);
-    expect(state.listJobs()).toEqual([]);
-    expect(state.listActivities()).toEqual([]);
-
-    const widgetInstanceId = randomUUID();
-    const identity = {
-      cardId: hydration.card.cardId,
-      cardVersion: hydration.card.cardVersion,
-      presentationRef: hydration.card.presentationRef,
-      widgetInstanceId
-    };
-    const submitted = await client.callTool({
-      name: "codex_ui_decision",
-      arguments: {
-        operation: "submit",
-        ...identity,
-        submissionId: randomUUID(),
-        intent: "confirm",
-        fields: [
-          { name: "path", values: ["staged"] },
-          { name: "condition", values: ["Keep the existing API during rollout."] }
-        ],
-        comment: "Stop if error rate rises."
-      },
-      _meta: metadata
-    });
-    expect(submitted.isError, JSON.stringify(submitted)).not.toBe(true);
-    expect(submitted.structuredContent).toMatchObject({
-      kind: "decision-ui",
-      operation: "submit",
-      deliveryState: "stored",
-      send: false,
-      submission: {
-        summary: expect.stringContaining("Path: Staged transition"),
-        attemptCount: 0
-      }
-    });
-    const receipt = (submitted.structuredContent as any).receipt;
-    const claimed = await client.callTool({
-      name: "codex_ui_decision",
-      arguments: { operation: "claim", ...identity, receipt },
-      _meta: metadata
-    });
-    expect(claimed.structuredContent).toMatchObject({
-      deliveryState: "leased",
-      send: true,
-      submission: { attemptCount: 1 }
-    });
-    const accepted = await client.callTool({
-      name: "codex_ui_decision",
-      arguments: { operation: "outcome", ...identity, receipt, outcome: "accepted" },
-      _meta: metadata
-    });
-    expect(accepted.structuredContent).toMatchObject({ deliveryState: "host-accepted" });
-
-    const foreign = await client.callTool({
-      name: "codex_decision_result",
-      arguments: { receipt },
-      _meta: { "openai/session": "foreign-decision-tool-contract-test" }
-    });
-    expect(foreign.isError).toBe(true);
-
-    const result = await client.callTool({
-      name: "codex_decision_result",
-      arguments: { receipt },
-      _meta: metadata
-    });
-    expect(result.isError, JSON.stringify(result)).not.toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      kind: "decision-result",
-      card: { title: "Choose the migration path" },
-      submission: {
-        intent: "confirm",
-        deliveryState: "host-accepted",
-        resultOfferedAt: expect.any(String),
-        selections: [
-          expect.objectContaining({ label: "Path", values: [{ value: "staged", label: "Staged transition" }] }),
-          expect.objectContaining({ label: "Condition", values: [{ value: "Keep the existing API during rollout.", label: "Keep the existing API during rollout." }] })
-        ]
-      },
-      authority: { executionApproved: false }
-    });
-    expect((result.content[0] as any).text).toContain("Stop if error rate rises.");
-    expect(state.listJobs()).toEqual([]);
-  });
-
-  it("keeps a card decision separate from a live Codex question, execution policy, and answer dispatch", async () => {
-    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
-    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
-    const project = settings.current.projects[0]!;
-    const hold = upstream.holdNextCall();
-    const task = await client.callTool({
-      name: "codex_task",
-      arguments: {
-        requestId: randomUUID(),
-        taskContractVersion: properties.taskContractVersion?.const,
-        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
-        prompt: "Ask which rollout should be documented, then wait for the exact answer without changing files.",
-        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
-        selection
-      },
-      _meta: metadata
-    });
-    expect(task.isError, JSON.stringify(task)).not.toBe(true);
-    const jobId = (task.structuredContent as { jobId: string }).jobId;
-    await hold.started;
-    hold.assign(fixtureThreadId, fixtureTurnId);
-    await eventually(() => state.listJobs().some((job) =>
-      job.jobId === jobId && job.threadId === fixtureThreadId && job.upstreamRequestId === fixtureTurnId
-    ));
-
-    const question: CodexPendingInteraction = {
-      interactionId: "rollout-question",
-      kind: "user-input",
-      origin: "codex-question",
-      isBlocking: true,
-      threadId: fixtureThreadId,
-      turnId: fixtureTurnId,
-      itemId: "rollout-question-item",
-      summary: "Choose the rollout to document",
-      questions: [{
-        id: "rollout",
-        header: "Rollout",
-        question: "Which rollout should be documented?",
-        isSecret: false,
-        isOther: false,
-        options: [
-          { label: "Staged rollout", description: "Document a reversible staged rollout." },
-          { label: "Direct rollout", description: "Document one immediate transition." }
-        ]
-      }]
-    };
-    hold.progress({
-      progress: 1,
-      event: {
-        eventId: "rollout-question",
-        type: "input-required",
-        phase: "updated",
-        createdAt: Date.now(),
-        summary: question.summary,
-        details: { interaction: question }
-      }
-    });
-    await eventually(() => state.listJobs().some((job) =>
-      job.jobId === jobId && job.pendingInteractions.some((input) => input.interactionId === question.interactionId)
-    ));
-
-    const beforeInput = await client.callTool({
-      name: "codex_status",
-      arguments: { query: { kind: "input", jobId } },
-      _meta: metadata
-    });
-    expect(beforeInput.isError, JSON.stringify(beforeInput)).not.toBe(true);
-    const inputSnapshot = beforeInput.structuredContent as any;
-    expect(inputSnapshot).toMatchObject({
-      kind: "codex-input",
-      active: true,
-      questions: [{
-        questionRef: expect.stringMatching(/^[a-f0-9]{64}$/),
-        questions: [{ id: "rollout", options: [{ label: "Staged rollout" }, { label: "Direct rollout" }] }]
-      }],
-      approvals: []
-    });
-    const questionRef = inputSnapshot.questions[0].questionRef as string;
-    const jobBeforeCard = state.listJobs().find((job) => job.jobId === jobId)!;
-    const activityCount = state.listActivities(jobBeforeCard.scopeId).length;
-    const agentCount = state.listAgents(jobBeforeCard.scopeId).length;
-    const jobCount = state.listJobs().filter((job) => job.scopeId === jobBeforeCard.scopeId).length;
-    const accessStrategy = settings.current.accessStrategy;
-    const executionDecision = structuredClone(jobBeforeCard.executionDecision);
-    expect(jobBeforeCard).toMatchObject({ status: "running", trackingState: "connected", sandbox: "read-only" });
-    expect(upstream.calls).toHaveLength(1);
-    expect(upstream.calls[0]!.args).toMatchObject({ sandbox: "read-only", "approval-policy": "on-request" });
-
-    const opened = await client.callTool({
-      name: "codex_decision",
-      arguments: {
-        operation: "create",
-        requestId: randomUUID(),
-        title: "Choose the rollout to document",
-        html: `
-          <fieldset><legend>Rollout</legend>
-            <label><input type="radio" name="rollout" value="staged" required>Staged rollout</label>
-            <label><input type="radio" name="rollout" value="direct">Direct rollout</label>
-          </fieldset>
-          <label>Documentation condition <textarea name="condition"></textarea></label>
-        `
-      },
-      _meta: metadata
-    });
-    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const hydration = (opened._meta as any)[DECISION_CARD_METADATA_KEY];
-    const identity = {
-      cardId: hydration.card.cardId,
-      cardVersion: hydration.card.cardVersion,
-      presentationRef: hydration.card.presentationRef,
-      widgetInstanceId: randomUUID()
-    };
-    const submitted = await client.callTool({
-      name: "codex_ui_decision",
-      arguments: {
-        operation: "submit",
-        ...identity,
-        submissionId: randomUUID(),
-        intent: "confirm",
-        fields: [
-          { name: "rollout", values: ["staged"] },
-          { name: "condition", values: ["Documentation only; do not change files."] }
-        ]
-      },
-      _meta: metadata
-    });
-    const receipt = (submitted.structuredContent as any).receipt as string;
-    await client.callTool({
-      name: "codex_ui_decision",
-      arguments: { operation: "claim", ...identity, receipt },
-      _meta: metadata
-    });
-    await client.callTool({
-      name: "codex_ui_decision",
-      arguments: { operation: "outcome", ...identity, receipt, outcome: "accepted" },
-      _meta: metadata
-    });
-    const decision = await client.callTool({
-      name: "codex_decision_result",
-      arguments: { receipt },
-      _meta: metadata
-    });
-    expect(decision.isError, JSON.stringify(decision)).not.toBe(true);
-    expect(decision.structuredContent).toMatchObject({
-      submission: {
-        selections: [
-          expect.objectContaining({ label: "Rollout", values: [{ value: "staged", label: "Staged rollout" }] }),
-          expect.objectContaining({ label: "Documentation condition", values: [{ value: "Documentation only; do not change files.", label: "Documentation only; do not change files." }] })
-        ]
-      },
-      authority: { scope: "same-conversation", executionApproved: false }
-    });
-
-    const afterInput = await client.callTool({
-      name: "codex_status",
-      arguments: { query: { kind: "input", jobId, afterCursor: inputSnapshot.cursor, waitMs: 0 } },
-      _meta: metadata
-    });
-    expect(afterInput.structuredContent).toMatchObject({
-      kind: "codex-input",
-      changed: false,
-      active: true,
-      questions: [{ questionRef }],
-      approvals: []
-    });
-    const jobAfterCard = state.listJobs().find((job) => job.jobId === jobId)!;
-    expect(jobAfterCard.pendingInteractions).toEqual([question]);
-    expect(jobAfterCard.sandbox).toBe(jobBeforeCard.sandbox);
-    expect(jobAfterCard.executionDecision).toEqual(executionDecision);
-    expect(settings.current.accessStrategy).toBe(accessStrategy);
-    expect(state.listActivities(jobBeforeCard.scopeId)).toHaveLength(activityCount);
-    expect(state.listAgents(jobBeforeCard.scopeId)).toHaveLength(agentCount);
-    expect(state.listJobs().filter((job) => job.scopeId === jobBeforeCard.scopeId)).toHaveLength(jobCount);
-    expect(upstream.calls).toHaveLength(1);
-    expect(upstream.interactionResponses).toEqual([]);
-
-    const answered = await client.callTool({
-      name: "codex_answer",
-      arguments: {
-        requestId: randomUUID(),
-        jobId,
-        questionRef,
-        answers: { rollout: ["Staged rollout"] }
-      },
-      _meta: metadata
-    });
-    expect(answered.isError, JSON.stringify(answered)).not.toBe(true);
-    expect(answered.structuredContent).toMatchObject({
-      kind: "codex-answer",
-      jobId,
-      questionRef,
-      delivery: "delivered",
-      answersPersisted: false
-    });
-    expect(upstream.interactionResponses).toEqual([{
-      interactionId: question.interactionId,
-      response: { answers: { rollout: ["Staged rollout"] } }
-    }]);
-    expect(state.listJobs().find((job) => job.jobId === jobId)?.pendingInteractions).toEqual([]);
-    expect(upstream.calls).toHaveLength(1);
-
-    hold.release();
-    await eventually(() => state.listJobs().some((job) => job.jobId === jobId && job.status === "completed"));
   });
 
   it("lets GPT search, read, and version Bridge Markdown skills without starting Codex", async () => {

@@ -119,7 +119,9 @@ try {
       WHERE archived_at IS NOT NULL AND status IN ('completed','failed','interrupted','cancelled')
       AND NOT EXISTS (SELECT 1 FROM work_history_state h
         WHERE h.job_id=jobs.job_id AND h.expired_at IS NOT NULL)`).get() as {count:number}).count),
-    jobEvents: count(working, "job_events"),
+    jobEvents: count(working, "job_events")
+  };
+  report.dormantLegacyRows = {
     decisionSubmissions: count(working, "decision_submissions")
   };
   report.maintenancePlanDecision = {

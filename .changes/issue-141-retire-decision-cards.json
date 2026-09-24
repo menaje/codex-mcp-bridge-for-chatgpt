@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "BREAKING: Retire Bridge Decision Card tools and resources; use standalone GPT-authored HTML for complex choices.",
+  "breaking": true,
+  "migration": "Refresh the ChatGPT connector after deployment. Cached Decision Cards cannot submit or retrieve results; copy any needed decision into the conversation, then use current Codex status and question references before answering or executing. Legacy schema-24 tables remain for migration compatibility."
+}

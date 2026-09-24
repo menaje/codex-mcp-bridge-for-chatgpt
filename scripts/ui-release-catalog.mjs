@@ -4,8 +4,8 @@ import path from "node:path";
 import { parseJsonUtf8Strict } from "./text-integrity.mjs";
 
 export const UI_RELEASE_CATALOG_FILENAME = "ui-release-catalog.json";
-export const UI_RESOURCE_NAMES = Object.freeze(["settings", "dashboard", "decision"]);
-export const UI_ACTIVE_RESOURCE_NAMES = Object.freeze(["settings", "dashboard", "decision"]);
+export const UI_RESOURCE_NAMES = Object.freeze(["settings", "dashboard"]);
+export const UI_ACTIVE_RESOURCE_NAMES = Object.freeze(["settings", "dashboard"]);
 export const UI_COMPATIBILITY_RESOURCE_NAMES = Object.freeze([]);
 
 const TOOL_PATTERN = /^codex_[a-z0-9_]+$/;

@@ -1165,7 +1165,7 @@ export function checkUiResources(repoRoot = DEFAULT_REPO_ROOT, manifest = loadRe
     drift.push(UI_GENERATED_SOURCE);
   }
 
-  const descriptorFiles = ["src/tools.ts", "src/decisionCard.ts"]
+  const descriptorFiles = ["src/tools.ts"]
     .filter((relative) => existsSync(path.join(repoRoot, relative)));
   const descriptorSource = descriptorFiles.map((relative) =>
     readTextFile(path.join(repoRoot, relative), relative)

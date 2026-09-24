@@ -9,7 +9,7 @@ Use ChatGPT to run Codex against projects on your own computer, keep work organi
 - Organize work as reusable Agents and goal-oriented Activities instead of isolated terminal calls.
 - See running work, requests needing a response, and problems from the native macOS menu-bar app or the ChatGPT status card. Select a summary count to filter current work, or open Run History. The card starts with this conversation when it has retained work, with a switch to all conversations.
 - Every admitted Codex Job opens its exact Dashboard by default. While that originating card remains live, terminal completion sends one scoped follow-up to the same ChatGPT conversation and retrieves the retained exact Job result. The off-by-default experimental direct-result setting changes only newly admitted Jobs to bounded exact-Job waits; a closed or disconnected host remains a degraded state rather than a claimed wake-up capability.
-- When a complex choice benefits from comparison or editable conditions, GPT can open an independent sanitized free-form decision card. The user's semantic choice is stored before same-conversation delivery and never counts as Codex execution approval.
+- For complex choices, GPT can create a standalone HTML file for full-window comparison and local interaction. The user sends the chosen summary back to this conversation; the file does not call Bridge tools or approve Codex execution.
 - Choose which project folders Codex may use, find reusable procedures through the bridge skill library, and control model, reasoning, concurrency, and access policy centrally.
 - Run one Mac as the server and use another Mac as a client for status and settings.
 - Keep the normal starting policy read-only and place an operator-controlled ceiling on broader access.
@@ -44,7 +44,7 @@ On macOS, open the menu-bar icon to check the selected server without opening Ch
 | Windows or Linux will run Codex work | Node.js server | Bridge, Tunnel, and Codex |
 | macOS without the native app | Node.js server | Bridge, Tunnel, and Codex |
 
-The native client-only mode is currently available on macOS. Windows and Linux users run the Node.js server and use the ChatGPT Settings, Dashboard, and Decision cards.
+The native client-only mode is currently available on macOS. Windows and Linux users run the Node.js server and use the ChatGPT Settings and Dashboard cards.
 
 <p align="center">
   <img src="docs/images/macos-connection-setup-light-en.png" alt="English macOS first-run assistant in light appearance showing the local server and existing server roles" width="720">
@@ -145,7 +145,7 @@ Use remote management only on a private LAN or private VPN that you control. See
 - [ChatGPT integration](docs/chatgpt-setup.md) — connection, refresh, current tool use, and smoke checks
 - [MCP 2026-07-28 migration](docs/mcp-2026-07-28-migration.md) — breaking protocol, tool-contract, and card-resource changes
 - [Security model](docs/security.md) — trust boundaries, authentication, access policy, and remaining risks
-- [GPT–user decision cards](docs/decision-cards.md) — free-form HTML boundary, semantic inputs, durable delivery states, and limitations
+- [Standalone decision HTML](docs/standalone-decision-html.md) — full-window decision aids, copyable summaries, and Codex question boundaries; [retired Decision Cards](docs/decision-cards.md) explains migration
 - [Database schema and lifecycle](docs/database-schema.md) — state ownership, every table, upgrades, retention, capacity, backups, and offline compaction
 - [State upgrade and recovery runbook](docs/state-upgrade-recovery.md) — release-stage profiles, migration preflight, verified restore, and post-service recovery
 - [Input/output contracts](docs/input-contracts.md), [bridge skill library](docs/skills.md) — public and app-private protocol details, versioned bridge skills, model-facing lookup, and per-turn Codex delivery

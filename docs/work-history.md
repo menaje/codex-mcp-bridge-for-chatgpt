@@ -189,8 +189,8 @@ authorization. The official model-description disclosure uses the shared full-ro
 button and leading-aligned, selectable text.
 
 Current resource generations are recorded in the generated UI manifest.
-Dashboard, Settings, and the independent Decision runtime are current resources;
+Dashboard and Settings are current resources;
 each has one current HTML file and an explicit URI version. The Dashboard HTML
 budget is 200 KiB, including problem review, history actions and policy copy in
-all nine supported languages. Decision-card state and retention do not belong to
-Job run history.
+all nine supported languages. Retired Decision Card state remains dormant in
+schema 24 and does not belong to Job run history.

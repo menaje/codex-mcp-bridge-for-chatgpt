@@ -181,6 +181,10 @@ controls. GPT asks for ordinary user decisions directly in the current ChatGPT
 conversation; original Codex approvals and non-ordinary input remain in the
 Dashboard work detail.
 
+For a complex choice, GPT may create a [standalone HTML file](standalone-decision-html.md).
+The user sends its decision summary back to this conversation. That file cannot
+call Bridge tools or approve a Codex action.
+
 By default, a new Job's task result includes an exact Dashboard render action.
 GPT opens it immediately. While that originating card is live, terminal
 completion uses one server lease and a standard `ui/message` to resume the same
@@ -208,7 +212,10 @@ deploying a change to either:
    [the UI release policy](ui-release-compatibility.md).
 
 The bridge offers no old resource URI or old descriptor fallback. A conversation
-that cached a previous resource must refresh and use the current card.
+that cached a previous resource must refresh and use the current card. Retired
+Decision Card tools and the Decision v1 resource are absent after Refresh.
+Previously mounted Decision Cards cannot submit or retrieve old receipts; send
+any needed decision in the conversation instead.
 
 Treat the refresh as a connector-contract transition. Keep the old connection
 available until the current bridge is serving, refresh the connection, then
@@ -231,7 +238,7 @@ In a fresh ChatGPT conversation:
 
 1. Open Settings and register a project.
 2. Open Dashboard and Settings; confirm both load and the experimental direct-result switch is off by default.
-3. Ask for a small comparison decision card; confirm one selection and verify GPT reads its exact semantic result in the same conversation without starting Codex.
+3. Ask GPT for a small standalone HTML comparison, open it, change one condition, copy the summary, and send it in the same conversation without starting Codex.
 4. Call `codex_models` and confirm its one current catalog response.
 5. Start a harmless task with contract version 6 and its exact envelope
    constant.

@@ -1,5 +1,7 @@
 # #127 Decision-card CSS and CSP hardening — 2026-09-19
 
+> Historical audit: Decision Cards were retired in [#141](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/141). This document records the former implementation and tests; it does not describe current tools or resources.
+
 Related issues: [#127](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/127),
 [#131](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/131),
 [#132](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/132), and

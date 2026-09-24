@@ -188,9 +188,6 @@ export function executeOperationalStateCommand(
     const report = store.maintainQuestionRetention();
     changed = report.expiredQuestionsRemoved + report.deliveredJournalsRemoved +
       report.notificationsMarkedUncertain;
-  } else if (command.slice === "decisions") {
-    const report = store.maintainDecisionRetention();
-    changed = report.expiredLeasesMarkedUnknown + report.expiredCardsRemoved;
   } else if (command.slice === "recovery") {
     const report = store.maintainRecoveryRetention();
     changed = report.recordsRemoved + report.incidentsRemoved;

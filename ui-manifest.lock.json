@@ -4,16 +4,14 @@
   "hashAlgorithm": "sha256",
   "minimumContractGeneration": {
     "settings": 9,
-    "dashboard": 6,
-    "decision": 1
+    "dashboard": 6
   },
   "releaseInventory": {
     "catalog": "ui-release-catalog.json",
-    "catalogSha256": "eff14a09c7d0a7e599f423d0a08148ce3a025e27f8540c4ba746acf183f868a9",
+    "catalogSha256": "56a20b4eb7c2777c7b2b257042b60707fa58f58e90fcbd0b84ce2f8db4210c3e",
     "activeResources": [
       "settings",
-      "dashboard",
-      "decision"
+      "dashboard"
     ],
     "compatibilityResources": [],
     "retirement": {
@@ -80,24 +78,6 @@
           "codex_ui_problem",
           "codex_ui_read",
           "codex_interaction_respond"
-        ]
-      },
-      {
-        "name": "decision",
-        "uriVersion": 1,
-        "digest": "9f22a96c8634230ca28565bf651aa3f2150b2e6ab0bcd016e24f4e9a9b2d262c",
-        "uri": "ui://codex-mcp-bridge/decision/v1.html",
-        "inventories": [
-          "development-current"
-        ],
-        "sourceIds": [
-          "rendered-current"
-        ],
-        "presenterTool": "codex_decision",
-        "requiredTools": [
-          "codex_decision",
-          "codex_decision_result",
-          "codex_ui_decision"
         ]
       }
     ]
@@ -193,50 +173,6 @@
           "codex_ui_problem",
           "codex_ui_read",
           "codex_interaction_respond"
-        ]
-      }
-    },
-    "decision": {
-      "uriVersion": 1,
-      "digest": "9f22a96c8634230ca28565bf651aa3f2150b2e6ab0bcd016e24f4e9a9b2d262c",
-      "uri": "ui://codex-mcp-bridge/decision/v1.html",
-      "metadata": {
-        "descriptor": {
-          "title": "Codex MCP Bridge for ChatGPT Decision",
-          "description": "A trusted decision-card runtime for server-sanitized, free-form HTML and semantic user confirmation.",
-          "mimeType": "text/html;profile=mcp-app"
-        },
-        "content": {
-          "ui": {
-            "prefersBorder": false,
-            "csp": {
-              "connectDomains": [],
-              "resourceDomains": []
-            },
-            "domain": "https://web-sandbox.oaiusercontent.com"
-          },
-          "openai/widgetDescription": "Displays one GPT-authored decision aid as sanitized free-form HTML, collects semantic native inputs, stores explicit user confirmation, and returns it to this conversation without executing the decision.",
-          "openai/widgetPrefersBorder": false,
-          "openai/widgetCSP": {
-            "connect_domains": [],
-            "resource_domains": []
-          },
-          "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 1
-        }
-      },
-      "releaseProvenance": {
-        "inventories": [
-          "development-current"
-        ],
-        "sourceIds": [
-          "rendered-current"
-        ],
-        "presenterTool": "codex_decision",
-        "requiredTools": [
-          "codex_decision",
-          "codex_decision_result",
-          "codex_ui_decision"
         ]
       }
     }

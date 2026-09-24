@@ -14,7 +14,7 @@ const writes = (statements: string[]) => statements.filter((sql) =>
 describe("state access ownership", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("keeps question and decision queries free of cleanup writes", () => {
+  it("keeps question queries free of cleanup writes", () => {
     let now = Date.parse("2026-09-19T00:00:00.000Z");
     vi.spyOn(Date, "now").mockImplementation(() => now);
     const sql: string[] = [];
@@ -28,34 +28,13 @@ describe("state access ownership", () => {
       const answered = store.questions.submit(question, { choice: ["A"] });
       store.questions.claimNotification(answered);
 
-      const card = store.decisionCards.create(SCOPE, {
-        requestId: randomUUID(),
-        title: "Confirm",
-        html: "<p>Proceed?</p>"
-      });
-      const proof = { cardId: card.cardId, cardVersion: card.version, presentationRef: card.presentationRef };
-      const submission = store.decisionCards.submit(SCOPE, proof, {
-        submissionId: randomUUID(), intent: "confirm", fields: []
-      });
-      store.decisionCards.claimDelivery({
-        scopeId: SCOPE,
-        proof,
-        receipt: submission.receipt,
-        leaseOwner: randomUUID()
-      });
-
       now += 21_000;
       sql.length = 0;
       expect(store.questions.get(SCOPE, question.questionId).notification).toBe("uncertain");
       expect(store.questions.readResponses(SCOPE, answered.responseRef)).toHaveLength(1);
-      expect(store.decisionCards.get(SCOPE, card.cardId)).toMatchObject({ cardId: card.cardId });
-      expect(store.decisionCards.latestSubmission(SCOPE, card.cardId)).toMatchObject({
-        deliveryState: "acceptance-unknown"
-      });
       expect(writes(sql)).toEqual([]);
 
       store.maintainQuestionRetention(now);
-      store.maintainDecisionRetention(now);
       expect(writes(sql).some((statement) => /UPDATE/iu.test(statement))).toBe(true);
     } finally {
       store.close();

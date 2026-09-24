@@ -26,7 +26,7 @@ authorize a project, a task, a cancellation, or a settings change.
 
 ## Tool and card boundary
 
-The current discovery inventory contains 14 model-visible tools and 6 app-only
+The current discovery inventory contains 12 model-visible tools and 5 app-only
 tools. Each has a closed JSON Schema 2020-12 input contract and a
 validated output projection. The model-visible inventory does not expose
 card-proof operations, private IDs, paths, complete settings, raw prompts, or
@@ -36,25 +36,16 @@ App-only tools require their normal proof, scope, revision, ownership, and
 permission checks. A card can use those tools only within the same bridge
 authorization boundary; a widget identifier or resource URI is not authority.
 
-There are three active immutable card resources: Settings, Dashboard, and
-Decision. Prior
+There are two active immutable card resources: Settings and Dashboard. Prior
 card URIs are not registered or served. Removing a card revision does not delete
 its Activity, Agent, Job, result, legacy question, or idempotency records.
 
-The Decision resource is a trusted runtime around untrusted generated content.
-The server parses and allowlist-sanitizes free-form HTML and inline SVG before
-storage and rendering. Scripts, event handlers, frames, objects, navigation,
-external links and media, SVG links, generated JavaScript, unsafe CSS, and unknown
-attributes are removed. Inline CSS is parsed as declarations before the normal
-property allowlist is applied; comments and CSS identifier escapes are normalized,
-and unknown or resource-loading value functions are rejected. SVG paint values
-allow plain colors and exact local `url(#id)` references, never external URLs.
-Only embedded raster `data:` images and static inline SVG are supported; the
-resource CSP declares no network or resource domains.
-Generated markup cannot own host messaging or tool calls. Labeled native controls
-are converted to a stored semantic field contract, and the server rejects
-unknown fields, invalid choices, and values outside stored bounds when the trusted
-runtime submits them.
+The retired Decision Card sanitizer and renderer are no longer part of the
+Bridge. A GPT-authored [standalone HTML file](standalone-decision-html.md) runs
+outside the Bridge trust boundary and must not carry credentials or private
+Bridge state. Keep its assets local and avoid network requests. A user must
+explicitly return a decision summary to the conversation; the file cannot call
+Bridge tools, answer a Codex question, or grant an approval.
 
 ## Project and execution boundary
 
@@ -90,15 +81,10 @@ requires current ChatGPT conversation metadata and ignores explicit scope IDs
 as an authorization substitute. Host acceptance uncertainty suppresses replay
 so a lost acknowledgement cannot create an automatic duplicate.
 
-Decision-card IDs, presentation references, submission IDs, and receipts are also
-correlation identifiers, not bearer tokens. Every create/revise replay, mounted
-read, submit, delivery claim/outcome, and result read binds the authenticated
-conversation scope and exact card version. The semantic decision is stored before
-delivery. Definite host rejection permits only a bounded explicit retry; a lost
-or timed-out acknowledgement becomes acceptance-unknown and is never replayed
-automatically. Host acceptance and the later server result offer remain separate
-evidence. Neither proves what GPT said, authorizes execution, answers a Codex
-approval, or bypasses project and policy checks.
+Historical Decision Card IDs, presentation references, submission IDs, and
+receipts remain inert legacy data. Their tools no longer read, submit, or
+deliver a decision, and the Bridge never treats an old receipt as execution or
+answer authority.
 
 Activity, Agent, Job, and thread IDs are opaque references, not authority. The
 bridge rechecks scope and ownership on every read and mutation. A missing
@@ -126,7 +112,7 @@ metadata cannot replace protocol-owned values.
 ## Data handling
 
 The bridge stores settings, project registrations, scopes, Activities, Agents,
-Jobs, bounded results, questions, decision-card versions and submissions,
+Jobs, bounded results, questions, dormant legacy decision-card versions and submissions,
 requests, and idempotency records in a
 private SQLite database. File ownership and mode are part of setup checks.
 Retention and backup procedures are documented in
@@ -160,10 +146,6 @@ Secure MCP Tunnel discovery, tool call, and card open. If the host rejects the
 current protocol or schema, record a deployment blocker. Do not re-enable a
 legacy wire or tool contract.
 
-For a Decision-content or resource-policy change, also run the production
-Decision Chromium regression with escaped CSS/SVG resource payloads. Separately
-enable actual-host CSP enforcement for the acceptance session, verify the host
-installs a policy that excludes unapproved resource/connect destinations, and
-restore the operator's original global setting afterward. A clean sanitizer run
-does not by itself prove host CSP enforcement, and a dependency advisory scan is
-not a security audit of custom sanitization or authorization logic.
+For standalone HTML decision aids, verify that embedded interaction works
+without external resource or network requests and that submitting a copied
+summary still follows the current Codex question and approval contracts.

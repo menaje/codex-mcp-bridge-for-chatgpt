@@ -10,7 +10,6 @@ export const STATE_MAINTENANCE_SLICES = [
   "events",
   "history",
   "questions",
-  "decisions",
   "recovery",
   "receipts",
   "jobs"
