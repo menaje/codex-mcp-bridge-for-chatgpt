@@ -87,10 +87,41 @@ database and retirement documentation.
   confirmed view after a read timeout and made no duplicate compatibility
   call. This existing shared browser regression now covers only active cards.
 
-## ChatGPT connector observation
+## ChatGPT connector acceptance
 
-Before installing this change, the connected ChatGPT developer-mode plugin
-management screen still listed `codex_decision`, `codex_decision_result`, and
-the `ui://codex-mcp-bridge/decision/v1.html` template. This confirms the
-pre-Refresh host baseline. The host currently uses the installed macOS app,
-which is running. Refresh-after-deployment acceptance remains to be recorded.
+The macOS app installed from integrated `dev` commit
+`bb0257155a5cddae8e8e2456eccad899e87fe943` was shut down through its
+graceful lifecycle protocol, replaced with the signed build, and restarted.
+The helper reported a running bridge and connected tunnel. The installed
+bundle contains only Dashboard and Settings UI files.
+
+Before Refresh, ChatGPT's developer-mode plugin screen still showed the old
+`codex_decision`, `codex_decision_result`, and Decision v1 template metadata.
+A create call using that cached descriptor returned the protocol error
+`Tool codex_decision not found`. The existing Decision row counts and total
+Job count were unchanged after the call. No card or execution was created.
+
+After Refresh, the same ChatGPT screen listed neither retired public tool nor
+the Decision v1 template. Dashboard v2 and Settings v3 remained. In a new
+ChatGPT conversation, the model called `codex_dashboard`, `codex_settings`,
+and `codex_status` successfully; both cards rendered and status reported no
+running Jobs. A short read-only Codex Job in a temporary, dedicated project
+completed through the connector, and ChatGPT read its terminal result with
+`codex_status`.
+
+The default Codex CLI configuration on this host did not expose an ordinary
+question tool to a new Job. The test therefore used a temporary, trusted
+project with `default_mode_request_user_input` enabled in that project's
+Codex configuration. ChatGPT observed a live Blue/Red question through
+`codex_status` kind `input`, then refreshed the question in a separate user
+turn and called `codex_answer` once with Blue. The delivery was reported as
+`delivered`. That first Job was subsequently interrupted because the runtime
+process supervisor lost its independent process-table observation and killed
+the worker (`worker-observation-failed`); this is recorded as a host execution
+limitation, not a successful terminal question run. A single retry created
+another ordinary question. ChatGPT read its current `questionRef` and sent
+Blue with `codex_answer` once. The Job then completed. The Codex agent did
+not include the requested probe marker in its final prose, so the result
+proves question transport, answer delivery, and terminal status, not exact
+prompt adherence. The temporary project registration and scoped Codex
+configuration were removed after the test.
