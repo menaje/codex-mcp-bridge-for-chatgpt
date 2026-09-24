@@ -281,6 +281,12 @@ export type DashboardRetainedJobSummary = {
   };
 };
 
+export type ArchivedJobAdmissionReceipt = {
+  jobId: string;
+  requestId: string;
+  status: string;
+};
+
 type JsonRow = { payload: string };
 type CountRow = { count: number };
 type ProjectStorageRow = {
@@ -1291,6 +1297,27 @@ export class BridgeStateStore {
       `)
       .all()
       .map((row) => hydrateJobPayload(row as JobStorageRow));
+  }
+
+  /** Exact scoped admission proof after the result body leaves ordinary Job retention. */
+  getArchivedJobAdmissionReceipt(
+    scopeId: string,
+    query: { kind: "job"; id: string } | { kind: "request"; requestId: string }
+  ): ArchivedJobAdmissionReceipt | undefined {
+    const column = query.kind === "job" ? "job_id" : "request_id";
+    const value = query.kind === "job" ? query.id : query.requestId;
+    const row = this.database.prepare(`
+      SELECT job_id, request_id, status
+        FROM jobs
+       WHERE scope_id = ? AND ${column} = ? AND archived_at IS NOT NULL
+    `).get(scopeId, value) as {
+      job_id: string;
+      request_id: string;
+      status: string;
+    } | undefined;
+    return row
+      ? { jobId: row.job_id, requestId: row.request_id, status: row.status }
+      : undefined;
   }
 
   /** Includes completed and archived work when selecting the initial card scope. */
@@ -5909,7 +5936,7 @@ export class BridgeStateStore {
     if (requestCollision) {
       throw new Error(
         requestCollision.archived_at
-          ? "requestId belongs to an archived Codex job in this scope; its result body is no longer retained. Use a fresh requestId for a new logical turn."
+          ? "requestId belongs to an archived Codex job in this scope; its result body is no longer retained. Read codex_status query kind='request' for the terminal admission fact. A new logical turn requires a new requestId."
           : "requestId was already used by another Codex job in this scope."
       );
     }

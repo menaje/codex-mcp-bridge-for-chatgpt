@@ -5867,7 +5867,7 @@ export function registerBridgeTools(
   }).refine(
     (query) => query.waitMs === undefined || query.waitFor !== undefined,
     "waitFor is required whenever waitMs is sent."
-  ).describe("Read one exact Job, optionally waiting for a change or terminal state.");
+  ).describe("Read one exact Job or its minimal expired-result admission receipt, optionally waiting for a change or terminal state.");
   const statusRequestQueryInput = z.strictObject({
     kind: z.literal("request"),
     requestId: scopeIdSchema().describe(
@@ -5878,7 +5878,7 @@ export function registerBridgeTools(
   }).refine(
     (query) => query.waitMs === undefined || query.waitFor !== undefined,
     "waitFor is required whenever waitMs is sent."
-  ).describe("Resolve one exact retained Job by its scope-bound logical requestId.");
+  ).describe("Resolve one exact Job or minimal expired-result admission receipt by its scope-bound logical requestId.");
   const statusCompletionQueryInput = z.strictObject({
     kind: z.literal("completion"),
     receipt: z.string().regex(/^completion-[a-f0-9]{64}$/).describe(
@@ -6008,7 +6008,33 @@ export function registerBridgeTools(
         const initial = jobQuery.kind === "job"
           ? jobs.get(jobQuery.id)
           : jobs.peekRequest(scopeId, jobQuery.requestId);
-        if (!initial || initial.scopeId !== scopeId) throw scopedHandleUnavailable("job");
+        if (!initial || initial.scopeId !== scopeId) {
+          const receipt = jobs.admissionStateStore.getArchivedJobAdmissionReceipt(scopeId, jobQuery);
+          if (!receipt) throw scopedHandleUnavailable("job");
+          const completed = receipt.status === "completed";
+          const structured = compactStatusProjection({
+            kind: "job",
+            jobId: receipt.jobId,
+            status: receipt.status,
+            terminal: true,
+            replay: true,
+            delivery: completed ? "omitted" : "none",
+            result: {
+              availability: completed ? "omitted" : "unavailable",
+              bytes: null,
+              omitted: completed
+            },
+            scopeView: { mode: "scoped", source: scopeResolution?.source },
+            message:
+              "This exact request was admitted and reached a terminal state. Its result body is no longer retained; do not start a replacement for the same logical work. A new logical turn needs its own requestId and must remain within the user's authorization."
+          });
+          return contractedToolResult(
+            statusResultContract,
+            receipt,
+            structured,
+            { text: statusCompatibilityText(structured) }
+          );
+        }
         let wait: CodexJobWaitResult | undefined;
         if (jobQuery.waitFor) {
           let observedAbort = false;
@@ -7708,11 +7734,19 @@ export function registerBridgeTools(
         };
         signal?.addEventListener("abort", onAbort, { once: true });
         removeTaskAbortObserver = () => signal?.removeEventListener("abort", onAbort);
-        resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         const existingRequest = jobs.peekRequest(scope.scopeId, args.requestId);
+        if (!existingRequest && jobs.admissionStateStore.getArchivedJobAdmissionReceipt(
+          scope.scopeId,
+          { kind: "request", requestId: args.requestId }
+        )) {
+          throw new Error(
+            "TASK_RESULT_EXPIRED: This requestId already admitted a terminal Codex Job whose result body is no longer retained. Read codex_status query kind='request' for its terminal admission fact. Use a new requestId only for a newly authorized logical turn."
+          );
+        }
+        resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         if (existingRequest && existingRequest.requestHashVersion !== CURRENT_TASK_REQUEST_HASH_VERSION) {
           throw new Error(
-            "TASK_REPLAY_VERSION_UNSUPPORTED: This requestId belongs to a retired task contract. Use a new requestId and the current descriptor."
+            "TASK_REPLAY_VERSION_UNSUPPORTED: This requestId belongs to a retired task contract. Read the existing Job with codex_status query kind='request' before considering a new logical turn."
           );
         }
         admitTaskContractForNewCall({
@@ -13354,7 +13388,7 @@ function codexTaskInputSchema(
     "Choose an exact existing Agent or create one. Omission creates an Agent for new Activities and reuses the sole candidate for existing Activities."
   );
   const requestId = scopeIdSchema().describe(
-    "Unique idempotency UUID for one logical Codex call. Reuse it only for an exact retry. Never reuse it to group different tasks or multiple calls in one GPT response."
+    "Unique idempotency UUID for one logical Codex call. Keep it through response loss or parent-result replay; reuse it only for an exact retry. Never reuse it to group different tasks or multiple calls in one GPT response."
   );
   const prompt = verbatimInput(config.maxPromptChars, "Codex prompt").describe("Instruction for Codex.");
   const project = currentProjectSelectionZod().optional().describe(
