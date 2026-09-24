@@ -1,9 +1,9 @@
 /**
  * Schema 19 remains the immutable released base DDL used by its recorded
- * migration. Fresh databases apply the v20 through v26 projections below in the
+ * migration. Fresh databases apply the v20 through v27 projections below in the
  * same transaction; older databases follow the append-only migration catalog.
  */
-export const CURRENT_STATE_SCHEMA_VERSION = "26";
+export const CURRENT_STATE_SCHEMA_VERSION = "27";
 
 export const CURRENT_STATE_SCHEMA = `
   CREATE TABLE scopes (
@@ -588,4 +588,13 @@ export const V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA = `
     SELECT json_each.key, 1, json_each.value, NULL
       FROM user_settings, json_each(user_settings.payload, '$.modelDescriptionOverrides')
      WHERE json_each.type = 'text' AND json_each.value <> '';
+`;
+
+/** The retired GPT–user Decision Card state has no current reader or writer.
+ * Keep schema 24 intact for historical upgrades, then remove its four tables. */
+export const V27_DECISION_CARD_RETIREMENT_MIGRATION_SCHEMA = `
+  DROP TABLE decision_card_requests;
+  DROP TABLE decision_submissions;
+  DROP TABLE decision_card_versions;
+  DROP TABLE decision_cards;
 `;
