@@ -34,6 +34,15 @@ admission response is lost, recover the receipt with
 `codex_status({"query":{"kind":"request","requestId":"..."}})` in the same
 scope. Reusing the ID with different task input is a conflict.
 
+For an already approved follow-up turn, retain its own `requestId` when the
+parent Job result is read again or its admission response is lost. First query
+that ID to recover an uncertain admission; do not create a replacement ID for
+the same logical turn. A new branch, revision, or expressly requested rerun is
+a new logical turn with its own ID. The bridge does not infer follow-up identity
+from matching prompts or the Agent's thread. If the follow-up ID itself is lost,
+the existing request contract cannot prove that two new IDs mean the same step.
+Do not treat `HANDLE_UNAVAILABLE` as proof that an old request was never admitted.
+
 All new work uses one asynchronous admission path. The bridge persists the Job,
 request receipt, versions, and requery handles before returning. It does not wait
 for Codex completion in the task call, and losing the MCP or HTTP connection does
@@ -84,8 +93,15 @@ requires one. A later policy change is rechecked at admission.
 ## Read, mutation, and card inputs
 
 `codex_status` has closed query variants for an exact request receipt, Job,
-completion receipt, Activity, thread, project, or bounded input wait. Completion
-receipt reads require current ChatGPT conversation metadata; an explicit
+completion receipt, Activity, thread, project, or bounded input wait.
+
+An exact Job or request query can return a compact terminal admission receipt
+after the full result is pruned. It confirms that the request already ran and
+gives its Job ID and terminal state, but cannot restore the expired result.
+Such a receipt does not authorize a replacement or a dependent step whose
+required result is absent. Missing and foreign handles remain indistinguishable.
+
+Completion receipt reads require current ChatGPT conversation metadata; an explicit
 compatibility `scopeId` is not authority. When an authenticated exact Job or
 request query returns a retained terminal result, the Bridge records only that
 it offered the result. That evidence neither proves GPT received it nor settles,

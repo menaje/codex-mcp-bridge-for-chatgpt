@@ -40,6 +40,11 @@ model-authoritative answer or a completed delivery without its answer.
 `resultAvailability` and `resultOmitted` state whether an exact result must be
 read separately or was deliberately not included.
 
+After result retention expires, an exact `codex_status` Job/request query can
+return a scoped terminal admission receipt with `replay: true`, the original
+Job ID, and an omitted or unavailable result. It confirms prior admission but
+contains no recovered answer; missing and foreign handles use the same error.
+
 ## Structured next actions
 
 Model-visible `nextActions` is a closed union, never a free-form string list.

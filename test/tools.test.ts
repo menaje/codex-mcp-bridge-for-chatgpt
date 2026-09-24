@@ -38,6 +38,11 @@ class FixtureUpstream implements CodexUpstream {
   readonly calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   readonly interactionResponses: Array<{ interactionId: string; response: CodexInteractionResponse }> = [];
   private heldCall?: HeldFixtureCall;
+  private nextThreadId?: string;
+
+  setNextThreadId(threadId: string): void {
+    this.nextThreadId = threadId;
+  }
 
   async listTools(): Promise<unknown> {
     return { tools: [{ name: "codex" }] };
@@ -58,8 +63,10 @@ class FixtureUpstream implements CodexUpstream {
       held.started();
       return held.result;
     }
+    const threadId = this.nextThreadId || fixtureThreadId;
+    this.nextThreadId = undefined;
     return {
-      structuredContent: { threadId: fixtureThreadId, content: "Completed fixture work." },
+      structuredContent: { threadId, content: "Completed fixture work." },
       content: [{ type: "text", text: "Completed fixture work." }]
     };
   }
@@ -1430,6 +1437,311 @@ describe("current bridge tool contracts", () => {
 
     hold.release();
     await eventually(() => state.listJobs().some((job) => job.jobId === jobId && job.status === "completed"));
+  });
+
+  it("recovers an approved second turn after response loss and repeated parent reads without stalling independent work", async () => {
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const scopeId = randomUUID();
+    const common = {
+      scopeId,
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const
+    };
+    const parent = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        ...common,
+        requestId: randomUUID(),
+        prompt: "Read the harmless fixture value for stage A.",
+        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+        selection
+      },
+      _meta: metadata
+    });
+    expect(parent.isError, JSON.stringify(parent)).not.toBe(true);
+    const parentJob = parent.structuredContent as { jobId: string; agentId: string; activityId: string };
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === parentJob.jobId && job.status === "completed"
+    ));
+    const readParent = () => client.callTool({
+      name: "codex_status",
+      arguments: { scopeId, query: { kind: "job", id: parentJob.jobId } },
+      _meta: metadata
+    });
+    const firstParentRead = await readParent();
+    expect(firstParentRead.isError, JSON.stringify(firstParentRead)).not.toBe(true);
+
+    const followUpRequestId = randomUUID();
+    const followUp = {
+      ...common,
+      requestId: followUpRequestId,
+      prompt: "Review the stage A fixture value for stage B.",
+      activity: { mode: "existing", id: parentJob.activityId },
+      agent: { mode: "existing", id: parentJob.agentId, context: "continue" }
+    };
+    const hold = upstream.holdNextCall();
+    let loseFollowUpResponse = true;
+    const lossyFetch: typeof globalThis.fetch = async (input, init) => {
+      const response = await globalThis.fetch(input, init);
+      if (
+        loseFollowUpResponse &&
+        typeof init?.body === "string" &&
+        init.body.includes('"name":"codex_task"')
+      ) {
+        loseFollowUpResponse = false;
+        await response.body?.cancel();
+        throw new TypeError("simulated lost follow-up admission response");
+      }
+      return response;
+    };
+    const lossyClient = new Client(
+      { name: "follow-up-response-loss-test", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+    );
+    await lossyClient.connect(new StreamableHTTPClientTransport(endpoint, { fetch: lossyFetch }));
+    let followUpJobId: string | undefined;
+    try {
+      await expect(lossyClient.callTool({
+        name: "codex_task", arguments: followUp, _meta: metadata
+      })).rejects.toThrow("simulated lost follow-up admission response");
+      await hold.started;
+      const secondParentRead = await readParent();
+      expect((secondParentRead.structuredContent as any).items[0]).toMatchObject({
+        id: parentJob.jobId,
+        state: "completed",
+        answer: (firstParentRead.structuredContent as any).items[0].answer,
+        result: (firstParentRead.structuredContent as any).items[0].result
+      });
+
+      const recovered = await client.callTool({
+        name: "codex_status",
+        arguments: { scopeId, query: { kind: "request", requestId: followUpRequestId } },
+        _meta: metadata
+      });
+      expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
+      followUpJobId = (recovered.structuredContent as any).items[0].id;
+      expect((recovered.structuredContent as any).items[0].state).toBe("running");
+
+      const retries = await Promise.all([0, 1].map(() => client.callTool({
+        name: "codex_task", arguments: followUp, _meta: metadata
+      })));
+      for (const retry of retries) {
+        expect(retry.isError, JSON.stringify(retry)).not.toBe(true);
+        expect(retry.structuredContent).toMatchObject({ jobId: followUpJobId, replay: true });
+      }
+      const conflict = await client.callTool({
+        name: "codex_task",
+        arguments: { ...followUp, prompt: "A different stage cannot reuse B's request ID." },
+        _meta: metadata
+      });
+      expect(conflict.isError).toBe(true);
+      expect(state.listJobs().filter((job) => job.requestId === followUpRequestId)).toHaveLength(1);
+      expect(upstream.calls).toHaveLength(2);
+
+      upstream.setNextThreadId(randomUUID());
+      const independent = await client.callTool({
+        name: "codex_task",
+        arguments: {
+          ...common,
+          requestId: randomUUID(),
+          prompt: "Document a separate harmless fixture value.",
+          project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+          activity: { mode: "new", title: "Independent fixture branch" },
+          agent: { mode: "new", name: "Independent fixture agent" },
+          selection
+        },
+        _meta: metadata
+      });
+      expect(independent.isError, JSON.stringify(independent)).not.toBe(true);
+      await eventually(() => state.listJobs().some((job) =>
+        job.jobId === (independent.structuredContent as any).jobId &&
+        ["completed", "failed", "interrupted", "cancelled"].includes(job.status)
+      ));
+      const independentJob = state.listJobs().find((job) =>
+        job.jobId === (independent.structuredContent as any).jobId
+      );
+      expect(independentJob?.error).toBeUndefined();
+      expect(independentJob?.status).toBe("completed");
+      expect(upstream.calls).toHaveLength(3);
+    } finally {
+      hold.release();
+      await lossyClient.close();
+    }
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === followUpJobId && job.status === "completed"
+    ));
+    const terminal = await client.callTool({
+      name: "codex_status",
+      arguments: { scopeId, query: { kind: "request", requestId: followUpRequestId } },
+      _meta: metadata
+    });
+    expect(terminal.structuredContent).toMatchObject({
+      kind: "job",
+      items: [expect.objectContaining({ id: followUpJobId, state: "completed", result: { availability: "delivered", omitted: false } })]
+    });
+
+    // A fresh ID remains available for a separately approved rerun. If a host
+    // accidentally changes B's ID after replaying A, current admission cannot
+    // distinguish that mistake from this legitimate new turn.
+    const rerunRequestId = randomUUID();
+    upstream.setNextThreadId("tool-contract-thread");
+    const rerun = await client.callTool({
+      name: "codex_task",
+      arguments: { ...followUp, requestId: rerunRequestId },
+      _meta: metadata
+    });
+    expect(rerun.isError, JSON.stringify(rerun)).not.toBe(true);
+    expect((rerun.structuredContent as any).jobId).not.toBe(followUpJobId);
+    await eventually(() => state.listJobs().some((job) =>
+      job.requestId === rerunRequestId && job.status === "completed"
+    ));
+    expect(upstream.calls).toHaveLength(4);
+
+    await client.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    state.close();
+    state = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    settings = new UserSettingsStore(config, { stateStore: state });
+    upstream = new FixtureUpstream();
+    server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+    client = new Client(
+      { name: "follow-up-restart-recovery-test", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+    await client.connect(new StreamableHTTPClientTransport(endpoint));
+    const afterRestart = await client.callTool({
+      name: "codex_status",
+      arguments: { scopeId, query: { kind: "request", requestId: followUpRequestId } },
+      _meta: metadata
+    });
+    expect(afterRestart.isError, JSON.stringify(afterRestart)).not.toBe(true);
+    expect(afterRestart.structuredContent).toMatchObject({
+      kind: "job",
+      items: [expect.objectContaining({ id: followUpJobId, state: "completed", result: { availability: "delivered", omitted: false } })]
+    });
+    expect(upstream.calls).toHaveLength(0);
+  });
+
+  it("recovers a scoped terminal admission fact after its result expires and the bridge restarts", async () => {
+    settings.update({ experimentalDirectResultDelivery: true }, settings.current.revision);
+    const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const scopeId = randomUUID();
+    const parent = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        scopeId,
+        requestId: randomUUID(),
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Produce the harmless parent result before stage B.",
+        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+        selection
+      },
+      _meta: metadata
+    });
+    expect(parent.isError, JSON.stringify(parent)).not.toBe(true);
+    const parentJob = parent.structuredContent as { jobId: string; agentId: string; activityId: string };
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === parentJob.jobId && job.status === "completed"
+    ));
+    const parentResult = await client.callTool({
+      name: "codex_status",
+      arguments: { scopeId, query: { kind: "job", id: parentJob.jobId } },
+      _meta: metadata
+    });
+    expect(parentResult.isError, JSON.stringify(parentResult)).not.toBe(true);
+    const requestId = randomUUID();
+    const arguments_ = {
+      scopeId,
+      requestId,
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Review the parent result in stage B before retention expires.",
+      activity: { mode: "existing", id: parentJob.activityId },
+      agent: { mode: "existing", id: parentJob.agentId, context: "continue" }
+    };
+    const admitted = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    const jobId = (admitted.structuredContent as any).jobId as string;
+    await eventually(() => state.listJobs().some((job) =>
+      job.jobId === jobId && job.status === "completed"
+    ));
+    const admittedScopeId = state.listJobs().find((job) => job.jobId === jobId)!.scopeId;
+
+    await client.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    expect(state.deleteJob(jobId)).toBe(true);
+    expect(state.getArchivedJobAdmissionReceipt(admittedScopeId, { kind: "request", requestId }))
+      .toMatchObject({ jobId, requestId, status: "completed" });
+    state.maintainRetention(Date.now() + 100 * 86_400_000);
+    expect(state.getArchivedJobAdmissionReceipt(admittedScopeId, { kind: "request", requestId }))
+      .toMatchObject({ jobId, requestId, status: "completed" });
+    state.close();
+
+    state = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    settings = new UserSettingsStore(config, { stateStore: state });
+    upstream = new FixtureUpstream();
+    server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+    client = new Client(
+      { name: "expired-result-recovery-test", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+    await client.connect(new StreamableHTTPClientTransport(endpoint));
+
+    for (const query of [
+      { kind: "request", requestId },
+      { kind: "job", id: jobId, waitFor: "terminal", waitMs: 1 }
+    ]) {
+      const recovered = await client.callTool({
+        name: "codex_status",
+        arguments: { scopeId, query },
+        _meta: metadata
+      });
+      expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
+      expect(recovered.structuredContent).toMatchObject({
+        kind: "job",
+        items: [expect.objectContaining({
+          id: jobId,
+          state: "completed",
+          terminal: true,
+          replay: true,
+          result: { availability: "omitted", omitted: true },
+          message: expect.stringContaining("result body is no longer retained")
+        })]
+      });
+      expect(JSON.stringify(recovered)).not.toContain("Completed fixture work.");
+    }
+
+    const foreignMetadata = { "openai/session": "foreign-expired-result-test" };
+    const unavailableText = async (id: string) => {
+      const result = await client.callTool({
+        name: "codex_status",
+        arguments: { query: { kind: "request", requestId: id } },
+        _meta: foreignMetadata
+      });
+      expect(result.isError).toBe(true);
+      return JSON.stringify(result.content);
+    };
+    const [foreign, missing] = await Promise.all([
+      unavailableText(requestId),
+      unavailableText(randomUUID())
+    ]);
+    expect(foreign).toBe(missing);
+    expect(foreign).toContain("HANDLE_UNAVAILABLE");
+
+    const repeatedTask = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
+    expect(repeatedTask.isError).toBe(true);
+    expect(JSON.stringify(repeatedTask)).toContain("codex_status query kind='request'");
+    expect(state.listJobs().filter((job) => job.requestId === requestId)).toHaveLength(0);
+    expect(upstream.calls).toHaveLength(0);
   });
 
   it("does not distinguish scope-mismatched handles from missing handles", async () => {
