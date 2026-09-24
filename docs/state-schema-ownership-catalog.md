@@ -41,10 +41,10 @@ queries only.
 | `steering_deliveries` | steering UoW | duplicate lookup and recovery | prepared/dispatching/delivered uncertainty journal | state |
 | `user_questions` | `QuestionStore` commands | question/result tools and expiry maintenance | user-response authority and expiry | state |
 | `codex_question_deliveries` | `QuestionStore` delivery commands | question notification recovery | delivery claim and uncertainty evidence | state |
-| `decision_cards` | `DecisionCardStore` commands | decision card read and retention | current card identity and lifecycle | state |
-| `decision_card_versions` | `DecisionCardStore` version UoW | exact rendered decision read | submitted presentation proof | state |
-| `decision_card_requests` | `DecisionCardStore` create command | duplicate request lookup | create idempotency receipt | state |
-| `decision_submissions` | `DecisionCardStore` submission/delivery UoW | decision result and recovery | user intent, receipt and acceptance uncertainty | state |
+| `decision_cards` | schema-24 migration history only | no current product read or write | dormant legacy Decision Card state; no execution or answer authority | state |
+| `decision_card_versions` | schema-24 migration history only | no current product read or write | dormant legacy Decision Card state; no execution or answer authority | state |
+| `decision_card_requests` | schema-24 migration history only | no current product read or write | dormant legacy Decision Card state; no execution or answer authority | state |
+| `decision_submissions` | schema-24 migration history only | no current product read or write | dormant legacy Decision Card state; no execution or answer authority | state |
 | `thread_connections` | `ThreadConnectionStore` commands | admission and connection controller | unfinished-work and handoff/release state | state |
 | `work_history_state` | `WorkHistoryStore` commands and history maintenance | Dashboard/history projections | acknowledgement and expiry state | state |
 | `work_history_control` | `WorkHistoryStore` policy commands | retention policy | cleanup policy revision | state |
@@ -56,7 +56,7 @@ queries only.
 
 ## Index inventory
 
-The current schema contains these explicit indexes. Every name is tied to its
+The current schema contains these explicit indexes, including dormant legacy Decision Card indexes. Every name is tied to its
 parent table and is covered by the same owner above.
 
 - `activities`: `activities_continuation`, `activities_project_pin`,

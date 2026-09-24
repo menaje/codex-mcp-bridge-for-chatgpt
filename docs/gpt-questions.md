@@ -5,7 +5,7 @@
 직접 물은 뒤 원래 Codex turn에 답한다.
 
 도구 구성이 바뀐 빌드를 설치하면 ChatGPT 연결을 **Refresh(새로고침)**해야
-한다. 현행 기본 구성은 모델용 10개와 앱 전용 5개, 총 15개 도구이며 Question
+한다. 현행 기본 구성은 모델용 12개와 앱 전용 5개, 총 17개 도구이며 Question
 리소스와 질문 카드 도구는 등록하지 않는다.
 
 ## 실행 흐름
@@ -30,24 +30,20 @@
 메시지의 `final_answer` phase는 turn 완료 근거가 아니며, 최종 판단은 정확한
 Job 상태와 결과에서 한다.
 
-## 의사결정카드를 함께 쓰는 경우
+## 독립 HTML로 숙고하는 경우
 
-실행 중인 Codex 질문을 설명하거나 비교하는 데 카드가 유용해도 두 계약은
-결합되지 않는다. 다음 순서를 유지한다.
+비교나 조건 변경이 필요하면 GPT가 [독립 HTML 파일](standalone-decision-html.md)을
+만들 수 있다. 사용자는 선택과 조건 요약을 현재 대화에 명시적으로 보낸다.
+파일은 Bridge 도구를 호출하거나 Codex 질문에 답하지 않는다.
 
 1. `codex_status`의 input query로 현재 질문과 정확한 `questionRef`를 읽는다.
-2. 필요할 때만 독립적인 `codex_decision` 카드를 만들고, 제출 결과는
-   `codex_decision_result`로 읽는다.
-3. 카드 결과를 받은 뒤 `codex_status`의 input query를 다시 호출해 같은 질문이
-   아직 현재 상태인지 확인한다.
-4. 사용자가 별도로 답변 전송을 원하고 질문이 여전히 유효할 때만 현재
+2. 사용자 숙고와 HTML 검토 후 input query를 다시 호출한다.
+3. 사용자가 답변 전송을 원하고 동일 질문이 여전히 유효할 때만 현재
    `questionRef`로 `codex_answer`를 호출한다.
 
-카드 생성·제출·결과 조회만으로는 Codex 질문에 답하지 않고 Job을 시작하거나
-계속하지 않는다. Job의 sandbox, access strategy, execution decision, Activity,
-Agent, Job 수를 바꾸지 않으며 실행 승인이나 권한 승인도 부여하지 않는다.
-승인 요청은 카드나 `codex_answer`로 해결하지 않고 Dashboard의 원본 승인
-경로를 사용한다.
+승인 요청은 HTML이나 `codex_answer`로 해결하지 않고 Dashboard의 원본 승인
+경로를 사용한다. 사용자의 요약만으로 Job을 시작하거나 sandbox, access
+strategy, execution decision, Activity, Agent, Job 수를 바꾸지 않는다.
 
 ## 범위와 재전송 규칙
 

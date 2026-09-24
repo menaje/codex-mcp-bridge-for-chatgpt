@@ -1,5 +1,7 @@
 # #132 Decision Card–Codex permission-boundary verification — 2026-09-19
 
+> Historical audit: Decision Cards were retired in [#141](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/141). This document records the former implementation and tests; it does not describe current tools or resources.
+
 ## Conclusion
 
 A production Decision Card was exercised in an actual ChatGPT Work

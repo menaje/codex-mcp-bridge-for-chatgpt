@@ -355,7 +355,6 @@ describe("release manifest", () => {
 
     expect(semverOnly.resources.settings.uri).toBe(initial.resources.settings.uri);
     expect(semverOnly.resources.dashboard.uri).toBe(initial.resources.dashboard.uri);
-    expect(semverOnly.resources.decision.uri).toBe(initial.resources.decision.uri);
 
     const metadataChanged = structuredClone(rendered);
     metadataChanged.resources.settings.metadata.content["openai/widgetPrefersBorder"] = true;
@@ -363,7 +362,6 @@ describe("release manifest", () => {
     expect(afterMetadata.resources.settings.uri).toBe(initial.resources.settings.uri);
     expect(afterMetadata.resources.settings.digest).not.toBe(initial.resources.settings.digest);
     expect(afterMetadata.resources.dashboard.digest).toBe(initial.resources.dashboard.digest);
-    expect(afterMetadata.resources.decision.digest).toBe(initial.resources.decision.digest);
 
     const htmlChanged = structuredClone(rendered);
     htmlChanged.resources.dashboard.html += "<!-- compatible change -->";
@@ -381,7 +379,6 @@ describe("release manifest", () => {
     expect(afterBreakingChange.resources.settings.uri).not.toBe(initial.resources.settings.uri);
     expect(afterBreakingChange.resources.settings.digest).toBe(initial.resources.settings.digest);
     expect(afterBreakingChange.resources.dashboard.uri).toBe(initial.resources.dashboard.uri);
-    expect(afterBreakingChange.resources.decision.uri).toBe(initial.resources.decision.uri);
   });
 
   it("selects only the current UI files without accumulating revision history", () => {
@@ -393,10 +390,10 @@ describe("release manifest", () => {
     expect(selected).toEqual(lock);
     expect(selected.manifestVersion).toBe(3);
     expect(selected.strategy).toBe("versioned-uri");
-    expect(selected.releaseInventory.selected).toHaveLength(3);
+    expect(selected.releaseInventory.selected).toHaveLength(2);
     expect(selected.resources.settings).not.toHaveProperty("previous");
     expect(selected.resources.dashboard).not.toHaveProperty("previous");
-    expect(selected.resources.decision).not.toHaveProperty("previous");
+    expect(selected.resources).not.toHaveProperty("decision");
     expect(selected.releaseInventory.retirement.activity).toMatchObject({
       lifecycle: "historical-revisions-retired",
       newPresentations: false,

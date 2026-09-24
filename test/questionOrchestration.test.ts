@@ -55,10 +55,10 @@ describe("current Codex input contract", () => {
     expect(names.has("codex_status")).toBe(true);
     expect(names.has("codex_answer")).toBe(true);
     expect(tools.find((tool) => tool.name === "codex_answer")?.description).toMatch(
-      /Refresh codex_status kind=input after any intervening user deliberation or decision card/
+      /Refresh codex_status kind=input after any intervening user deliberation/
     );
     expect(BRIDGE_MCP_INSTRUCTIONS).toContain(
-      "Creating, submitting, or reading a card never answers a Codex question"
+      "A standalone HTML decision aid and a copied decision summary never answer a Codex question"
     );
     for (const retired of ["codex_ask_user", "codex_user_answer", "codex_question_action"]) {
       expect(names.has(retired)).toBe(false);

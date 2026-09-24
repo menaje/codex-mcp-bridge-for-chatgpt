@@ -13,11 +13,11 @@ integrity checks; it is not part of the file name or URI.
 | --- | --- | --- | --- |
 | Settings | `ui-resources/settings.html` | `dist/ui/settings.html` | `ui://codex-mcp-bridge/settings/v3.html` |
 | Dashboard | `ui-resources/dashboard.html` | `dist/ui/dashboard.html` | `ui://codex-mcp-bridge/dashboard/v2.html` |
-| Decision | `ui-resources/decision.html` | `dist/ui/decision.html` | `ui://codex-mcp-bridge/decision/v1.html` |
 
-Activity and Question are retired presentation resources. Their work,
-question, result, settings, authorization, and idempotency state remains in the
-bridge; no historical card HTML is selected or packaged.
+Activity, Question, and Decision are retired presentation resources. Their
+historical state remains only where migration or current orchestration requires
+it; no historical card HTML is selected or packaged. Decision Card tools and
+`ui://codex-mcp-bridge/decision/v1.html` are unavailable after connector Refresh.
 
 ## URI versions
 
@@ -35,7 +35,7 @@ safely. The increment creates a new URI such as `v2.html`; it does not create a
 second source or package file.
 
 Product SemVer and card URI versions are independent. A product release does
-not change a card URI by itself, and the three cards can advance their URI
+not change a card URI by itself, and the two cards can advance their URI
 versions separately.
 
 ## Release rules
@@ -50,7 +50,7 @@ versions separately.
 
 Synchronization removes legacy digest-named files. Release validation rejects
 extra files under `ui-resources/`, a missing current file, mismatched HTML or
-metadata digests, URI drift, and package output other than the three current
+metadata digests, URI drift, and package output other than the two current
 files.
 
 ## ChatGPT cache behavior

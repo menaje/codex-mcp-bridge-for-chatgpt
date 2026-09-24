@@ -181,7 +181,7 @@ See [Remote client mode](remote-client.md) for the complete security and lifecyc
 
 ## Node.js server on Windows or Linux
 
-There is currently no native Windows or Linux app. These systems run the same Bridge as a Node.js service, while user settings, status, and independent decisions remain available through the ChatGPT Settings, Dashboard, and Decision cards.
+There is currently no native Windows or Linux app. These systems run the same Bridge as a Node.js service, with user settings and status available through the ChatGPT Settings and Dashboard cards. Complex user decisions can use a standalone HTML file that returns a summary to the conversation.
 
 The following source installation works for a terminal-managed server:
 

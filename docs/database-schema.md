@@ -71,8 +71,9 @@ Job payload also retains the immutable admission-time `completionDeliveryPolicy`
 legacy rows default to `live-card`, while `direct-wait` rows cannot claim the
 live-card lease. This payload-compatible addition does not require a table
 migration. Schema 24
-adds Job-independent GPT–user decision cards with immutable sanitized versions,
-idempotent mutations, semantic submissions, and delivery evidence. Schema 25
+added GPT–user Decision Card tables. The feature was retired in #141, but this
+migration remains immutable for older database upgrades. New runtime code leaves
+those tables dormant and does not perform Decision retention. Schema 25
 adds compact operational command receipts in the same transaction as the
 isolated state mutation so an IPC response-loss retry cannot duplicate work.
 Schema 26 adds version history for user-authored model descriptions. The active
@@ -107,10 +108,10 @@ are imported as the first version without inventing a save time.
 | `transport_observations` | Rollback/direct-runtime compatibility for bounded aborted/detached/presentation diagnostics | Non-authoritative and disposable. Isolated production writes the separate telemetry database instead, so this table grants no replay or execution authority. |
 | `user_questions` | Question request/answer state and response reference | Keep until its explicit expiry; startup removes expired rows. Payload is question state, not a Job mirror. |
 | `codex_question_deliveries` | Codex-originated question delivery idempotency | Keep one scoped request/question-reference receipt so restart cannot redeliver the same question as new. |
-| `decision_cards` | Current GPT–user decision-card version, conversation scope, expiry, and latest activity time | Independent of projects, Activities, Agents, and Jobs. Expired inactive cards are deleted after the decision recovery window; scope and installation capacity limits prevent unbounded growth. |
-| `decision_card_versions` | Immutable sanitized HTML, title, semantic field contract, content digest, presentation proof, and per-version expiry | A revision appends a version and advances `decision_cards.current_version`; old mounted versions fail closed. Generated code and remote resources are never stored as executable authority. |
-| `decision_card_requests` | Scoped create/revise request replay; operation digest and exact resulting version | Durable idempotency receipt. Reusing a request ID with changed content or expected version is rejected. Delete with its card. |
-| `decision_submissions` | Canonical intent, label-preserving selections, conditions/comment, semantic digest, revision chain, receipt, lease, host outcome, and result-offer time | Store before same-conversation delivery. Identical semantic double-clicks coalesce; modified resubmissions supersede rather than overwrite. Host acceptance, uncertain acceptance, and result offer remain distinct and never authorize execution. Delete with its card after the recovery window. |
+| `decision_cards` | Dormant legacy card identity and expiry from schema 24; no current product consumer | No new writes or periodic cleanup. Preserve until a separately approved forward migration decides physical deletion. |
+| `decision_card_versions` | Dormant legacy sanitized HTML and semantic field records; no current product consumer | No current rendering or result authority. Preserve as legacy state pending a forward migration. |
+| `decision_card_requests` | Dormant legacy create/revise replay records; no current product consumer | No request replay through retired tools. Preserve pending a forward migration. |
+| `decision_submissions` | Dormant legacy submitted intent and delivery evidence; no current product consumer | No new delivery or Codex authority. Former 30-day automatic cleanup does not run after retirement; deletion needs a separate forward migration. |
 | `thread_connections` | App Server connection ownership, handoff/release and recovery inspection | Keep current connection evidence independently of `sessions`: a saved execution context does not prove a live connection. Unfinished-work checks join indexed Job/interactions/cancellation fields. |
 | `event_budget` | Trigger-maintained Job-event row and payload-byte counters | Derived singleton. Rebuilt during migration and updated by three triggers; it is not a DB/WAL or backup size limit. |
 | `event_retention_state` | Event cleanup policy generation and restartable event cursor | Keep typed singleton because the cursor has transactional cleanup semantics. Replaces dynamic `bridge_meta` keys. |
@@ -141,7 +142,6 @@ optimizations:
 | Event cursors and per-Job cleanup | `activity_events_*_cursor`, `job_events_*_cursor` |
 | Pending native Activity completion delivery | `completion_outbox_pending` |
 | Claimable exact Job live-card delivery | `job_completion_deliveries_claimable` |
-| Scoped decision cards, versions, and delivery recovery | `decision_cards_scope_recent`, `decision_card_versions_scope_recent`, `decision_submissions_scope_recent`, `decision_submissions_delivery` |
 | History cleanup and review | `jobs_status_recent`, `work_history_state` primary key, `work_history_expired` |
 | Question and hold expiry | `user_questions_expiry`; bounded `result_holds` scan of at most 500 rows |
 | Connection/recovery maintenance | `thread_connections_idle`, `thread_connections_agent`, `automatic_recovery_scope`, `automatic_recovery_job` |

@@ -64,7 +64,7 @@ import {
   type ThreadPersistence
 } from "./threadConnections.js";
 import { QuestionStore, V13_QUESTION_STORE_MIGRATION_SCHEMA } from "./questionStore.js";
-import { DecisionCardStore, V24_DECISION_CARD_MIGRATION_SCHEMA } from "./decisionCardStore.js";
+import { V24_DECISION_CARD_MIGRATION_SCHEMA } from "./decisionCardStore.js";
 import {
   DashboardReadModel,
   StatusReadModel,
@@ -646,7 +646,6 @@ export type StateMigrationProgress = {
  */
 export class BridgeStateStore {
   readonly questions: QuestionStore;
-  readonly decisionCards: DecisionCardStore;
   readonly threadConnections: ThreadConnectionStore;
   readonly eventRetention: EventRetention;
   readonly workHistory: WorkHistoryStore;
@@ -690,7 +689,6 @@ export class BridgeStateStore {
           );
         }
         this.questions = new QuestionStore(this.database, { readOnly: true });
-        this.decisionCards = new DecisionCardStore(this.database, { readOnly: true });
         this.eventRetention = new EventRetention(this.database, {
           readSummary: (jobId) => this.readJobSummary(jobId),
           saveSummary: (jobId, summary) => this.saveJobSummary(jobId, summary)
@@ -792,17 +790,6 @@ export class BridgeStateStore {
           }));
         }
         return questions;
-      });
-      this.decisionCards = this.transaction(() => {
-        const decisions = new DecisionCardStore(this.database);
-        if (Object.values(decisions.startupMaintenance).some((count) => count > 0)) {
-          this.setMeta("state_decision_maintenance_last", JSON.stringify({
-            reason: "decision-delivery-and-retention-recovery",
-            at: new Date().toISOString(),
-            ...decisions.startupMaintenance
-          }));
-        }
-        return decisions;
       });
       this.eventRetention = new EventRetention(this.database, {
         readSummary: (jobId) => this.readJobSummary(jobId),
@@ -1628,10 +1615,6 @@ export class BridgeStateStore {
 
   maintainQuestionRetention(now = Date.now()): ReturnType<QuestionStore["maintain"]> {
     return this.transaction(() => this.questions.maintain(now));
-  }
-
-  maintainDecisionRetention(now = Date.now()): ReturnType<DecisionCardStore["maintain"]> {
-    return this.transaction(() => this.decisionCards.maintain(now));
   }
 
   /** Compatibility entry point. Each domain commits an independent bounded

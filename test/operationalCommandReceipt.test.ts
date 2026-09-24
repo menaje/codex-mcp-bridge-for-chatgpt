@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -215,7 +215,7 @@ describe("operational command receipts", () => {
     }
   });
 
-  it("upgrades an authentic schema-24 database without changing domain rows", () => {
+  it("upgrades schema 24 and preserves dormant Decision rows through restart and backup restore", () => {
     const root = mkdtempSync(path.join(tmpdir(), "operational-receipt-v24-"));
     const file = path.join(root, "state.sqlite");
     const databaseId = randomUUID();
@@ -228,6 +228,22 @@ describe("operational command receipts", () => {
       legacy.exec(V22_JOB_COMPLETION_RESULT_SOURCE_MIGRATION_SCHEMA);
       legacy.exec(V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA);
       legacy.exec(V24_DECISION_CARD_MIGRATION_SCHEMA);
+      const cardId = randomUUID();
+      const scopeId = randomUUID();
+      legacy.prepare(`INSERT INTO decision_cards
+        (card_id,scope_id,current_version,created_at,updated_at,expires_at)
+        VALUES (?,?,1,1,1,1)`).run(cardId, scopeId);
+      legacy.prepare(`INSERT INTO decision_card_versions
+        (card_id,scope_id,version,title,html,content_digest,fields,policy,presentation_ref,created_at,expires_at)
+        VALUES (?,?,1,'Legacy choice','<p>Legacy</p>',?, '[]','{}',?,1,1)`)
+        .run(cardId, scopeId, "a".repeat(64), "b".repeat(64));
+      legacy.prepare(`INSERT INTO decision_card_requests
+        (scope_id,request_id,operation_hash,card_id,version,created_at)
+        VALUES (?,?,?,?,1,1)`).run(scopeId, randomUUID(), "c".repeat(64), cardId);
+      legacy.prepare(`INSERT INTO decision_submissions
+        (submission_id,card_id,scope_id,card_version,sequence,receipt,intent,selections,summary,decision_digest,delivery_state,created_at,updated_at)
+        VALUES (?,?,?,1,1,?,'confirm','[]','Legacy choice',?,'stored',1,1)`)
+        .run(randomUUID(), cardId, scopeId, "r".repeat(73), "d".repeat(64));
       legacy.prepare("INSERT INTO bridge_meta(key,value) VALUES ('schema_version','24')").run();
       legacy.prepare("INSERT INTO bridge_meta(key,value) VALUES ('state_database_id',?)")
         .run(databaseId);
@@ -240,9 +256,16 @@ describe("operational command receipts", () => {
       expect(store.schemaVersion).toBe(26);
       expect(store.getMeta("schema_v25_operational_command_receipts"))
         .toBe("durable-command-receipts-v1");
+      store.maintainRetention();
       store.close();
 
+      const restarted = new BridgeStateStore({ file });
+      restarted.close();
+
       const migrated = new Database(file, { readonly: true });
+      for (const table of ["decision_cards", "decision_card_versions", "decision_card_requests", "decision_submissions"]) {
+        expect(migrated.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 1 });
+      }
       expect(migrated.prepare(
         "SELECT COUNT(*) AS count FROM operational_command_receipts"
       ).get()).toEqual({ count: 0 });
@@ -250,6 +273,18 @@ describe("operational command receipts", () => {
       expect(migrated.pragma("foreign_key_check")).toEqual([]);
       migrated.close();
       expect(existsSync(`${file}.pre-v24-to-v26.sqlite`)).toBe(true);
+
+      const restoredFile = path.join(root, "restored.sqlite");
+      copyFileSync(`${file}.pre-v24-to-v26.sqlite`, restoredFile);
+      const restored = new BridgeStateStore({ file: restoredFile });
+      expect(restored.schemaVersion).toBe(26);
+      restored.close();
+      const backup = new Database(restoredFile, { readonly: true });
+      expect(backup.prepare("SELECT COUNT(*) AS count FROM decision_submissions").get())
+        .toEqual({ count: 1 });
+      expect(backup.pragma("integrity_check", { simple: true })).toBe("ok");
+      expect(backup.pragma("foreign_key_check")).toEqual([]);
+      backup.close();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

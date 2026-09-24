@@ -67,10 +67,10 @@ writer column.
 | `automatic_recovery` | `AutomaticRecoveryStore` | `AutomaticRecoveryStore` | recovery controller and Dashboard | recovery slice |
 | `automatic_recovery_incidents` | `AutomaticRecoveryStore` | `AutomaticRecoveryStore` | recovery controller | recovery slice |
 | `job_completion_deliveries` | State UoW / exact completion repository | State UoW | completion delivery and retention protection | central history-expiry UoW |
-| `decision_cards` | `DecisionCardStore` | `DecisionCardStore` | decision query/card paths | decision slice and startup recovery |
-| `decision_card_versions` | `DecisionCardStore` | `DecisionCardStore` | decision query/card paths | cascades from decision-card expiry |
-| `decision_card_requests` | `DecisionCardStore` | `DecisionCardStore` | decision idempotency commands | cascades from decision-card expiry |
-| `decision_submissions` | `DecisionCardStore` | `DecisionCardStore` | decision query/delivery paths | decision lease slice and startup recovery |
+| `decision_cards` | legacy schema-24 migration only | no runtime writes | no current product query | dormant until a later forward migration |
+| `decision_card_versions` | legacy schema-24 migration only | no runtime writes | no current product query | dormant until a later forward migration |
+| `decision_card_requests` | legacy schema-24 migration only | no runtime writes | no current product query | dormant until a later forward migration |
+| `decision_submissions` | legacy schema-24 migration only | no runtime writes | no current product query | dormant until a later forward migration |
 | `operational_command_receipts` | State UoW / isolated command receipt repository | State UoW in the same mutation transaction | command replay and outcome-unknown recovery | idempotent maintenance receipts: 24-hour uncertainty window, 500-row bounded slice; business-command receipts require a separate reference-aware policy |
 
 `jobs.summary` is part of the Job repository even though event retention derives
@@ -86,12 +86,6 @@ cross-domain `UPDATE jobs` statements.
 - `QuestionStore.get` and `readResponses` do not prune or acknowledge. An
   expired record is hidden by its timestamp; `consumeResponse` is the explicit
   acknowledgement command.
-- `DecisionCardStore.get`, `snapshot`, and `latestSubmission` do not recover
-  leases in SQLite. They may project an expired lease as uncertain in memory;
-  the decision maintenance slice persists that transition. Commands that act
-  on one submission recover only that exact expired lease, and delivery outcome
-  updates atomically require the same owner, card/version, leased state, and an
-  unexpired lease.
 - `DashboardReadModel.archivedByAgent` uses a SQL window and materializes at
   most one archived row per Agent for ordinary overview, or thirteen only for
   the explicitly requested history view. Representative selection is explicit:
@@ -121,7 +115,6 @@ failure record; the connection controller neither invokes nor owns maintenance.
 | Events | 500 policy rows, 500 age rows, bounded per-Job/global deletion loops |
 | History | 500 candidates and a 25 ms cooperative loop deadline |
 | Questions | 500 expirations, journals, and stale notification leases |
-| Decisions | 500 expired leases and 500 expired cards |
 | Recovery | 500 recovery rows and 500 incident rows |
 | Command receipts | 500 expired maintenance receipts; business receipts are preserved |
 | Jobs | Registry defaults to 64 inspected candidates and 32 removals (hard caps 256/64) with a 10 ms cooperative planning deadline; the state owner revalidates the transmitted candidates under the same bounded execution deadline before atomically archiving eligible rows |

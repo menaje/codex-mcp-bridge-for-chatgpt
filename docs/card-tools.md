@@ -1,6 +1,6 @@
 # Current tool and card contract
 
-The default MCP discovery surface has 20 tools: 14 model-visible tools and 6
+The default MCP discovery surface has 17 tools: 12 model-visible tools and 5
 app-only tools. Recovery-only tools are opt-in and do not appear in the default
 inventory. There are no compatibility registrations, aliases, Question-card
 presenters, or Activity-card presenters.
@@ -14,8 +14,6 @@ presenters, or Activity-card presenters.
 | `codex_status` | Read a Job, Activity, thread, project, or bounded input wait. |
 | `codex_cancel` | Explicitly cancel an exact Job or Activity. |
 | `codex_answer` | Answer a current ordinary Codex question. |
-| `codex_decision` | Create or revise an independent sanitized free-form decision card. |
-| `codex_decision_result` | Read one exact stored semantic decision by its same-conversation receipt. |
 | `codex_dashboard` | Open the Dashboard card. |
 | `codex_models` | Read the saved selection mode and allowed model catalog. |
 | `codex_settings` | Open the Settings card. |
@@ -33,7 +31,6 @@ presenters, or Activity-card presenters.
 | `codex_interaction_respond` | Respond to an original Codex approval or non-ordinary input request. |
 | `codex_ui_problem` | Resolve a verified UI problem. |
 | `codex_ui_completion` | Lease and record one exact live-Dashboard completion delivery attempt. |
-| `codex_ui_decision` | Read, store, lease, and record delivery for one mounted Decision card. |
 
 Each app-only action has a closed schema and requires its normal mounted
 Dashboard proof, scope, revision, and ownership checks. Model-visible tools do
@@ -41,29 +38,20 @@ not receive those proof-bearing operations.
 
 ## Cards, ordinary questions, and completion follow-up
 
-Settings, Dashboard, and Decision are the current UI resources.
-`codex_settings` and `codex_dashboard` open the first two and load authoritative
-data through `codex_ui_read`. `codex_decision` opens the shared Decision runtime
-with a private, scoped snapshot of one immutable sanitized card version; its
-app-only actions use `codex_ui_decision`.
-
-Decision cards are a GPT–user aid, not a Codex Question presenter. They require no
-project, Activity, Agent, or Job. GPT uses ordinary conversation for simple
-questions and may create a card when comparison, editable constraints, or a
-visual explanation materially helps. The free-form HTML body is parser-sanitized
-and inert; native labeled inputs become a server-owned semantic contract. User
-confirmation is durably stored before a same-conversation `ui/message` attempt.
-That message carries a receipt lookup instruction, and GPT must call
-`codex_decision_result` to receive exact labels, values, units, intent, conditions,
-and comments. Card confirmation has `executionApproved: false` and never answers
-a Codex input request or starts work. See [GPT–user decision cards](decision-cards.md).
+Settings and Dashboard are the current UI resources. `codex_settings` and
+`codex_dashboard` open them and load authoritative data through `codex_ui_read`.
+The Decision Card tools and resource are retired; see the
+[retirement note](decision-cards.md). For complex GPT–user choices, a
+[standalone HTML artifact](standalone-decision-html.md) can present comparisons
+and generate a summary that the user explicitly returns to the conversation.
+It cannot call Bridge tools or authorize Codex execution.
 
 Ordinary Codex questions stay in the ChatGPT conversation. GPT reads a current
 question with `codex_status({query:{kind:"input", ...}})`, asks the user in the
 normal conversation if their decision is needed, then sends a valid current
 answer through `codex_answer`. The retired `codex_ask_user`,
 `codex_user_answer`, and `codex_question_action` routes have no Codex-question
-card replacement. The independent Decision card does not change that contract.
+card replacement. Standalone HTML does not change that contract.
 
 Dashboard creation and live-card completion delivery remain the default
 orchestration policy. Unless the experimental direct-result setting was enabled

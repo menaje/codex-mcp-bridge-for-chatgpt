@@ -62,19 +62,18 @@ replacement for a logical `requestId`.
 
 ## Cards
 
-The release catalog contains exactly three active resources, each backed by one
+The release catalog contains exactly two active resources, each backed by one
 current HTML file:
 
 | Card | Current resource |
 | --- | --- |
 | Settings | `ui://codex-mcp-bridge/settings/v3.html` |
 | Dashboard | `ui://codex-mcp-bridge/dashboard/v2.html` |
-| Decision | `ui://codex-mcp-bridge/decision/v1.html` |
 
 `ui-release-catalog.json` has no published-baseline or temporary compatibility
 entries. The package selector emits only these resources. Earlier files may
 remain in Git history, but the working tree and package contain only
-`settings.html`, `dashboard.html`, and `decision.html`. Compatible changes preserve these URIs;
+`settings.html` and `dashboard.html`. Compatible changes preserve these URIs;
 cache-incompatible changes increment the affected card's explicit URI version.
 
 ## Verification and deployment evidence

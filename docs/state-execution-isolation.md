@@ -119,7 +119,8 @@ The following current schema-26 tables remain authoritative operational state:
 | Job state | `jobs`, `job_interactions`, `result_holds` | admission receipt, exact state, input and retained-result protection |
 | mutation certainty | `agent_mutations`, `cancellation_operations`, `cancellation_intents`, `steering_deliveries` | idempotency, provenance and uncertain-effect recovery |
 | completion delivery | `completion_outbox`, `job_completion_deliveries` | pending delivery, lease, receipt and acceptance certainty |
-| questions and decisions | `user_questions`, `codex_question_deliveries`, `decision_cards`, `decision_card_versions`, `decision_card_requests`, `decision_submissions` | user-response authority and delivery recovery |
+| questions | `user_questions`, `codex_question_deliveries` | user-response authority and delivery recovery |
+| legacy Decision Card state | `decision_cards`, `decision_card_versions`, `decision_card_requests`, `decision_submissions` | dormant schema-24 compatibility only; no current authority |
 | history and recovery | `work_history_state`, `work_history_control`, `runtime_problem_resolutions`, `automatic_recovery`, `automatic_recovery_incidents` | review, recovery budgets and restart evidence |
 | mixed event/control history | `activity_events`, `job_events`, `event_budget`, `event_retention_state` | current cursors, usage/status projection and recovery consumers prevent whole-table movement |
 | state IPC certainty | `operational_command_receipts` | atomically resolves commit-then-response-loss without rerunning a different logical command |
