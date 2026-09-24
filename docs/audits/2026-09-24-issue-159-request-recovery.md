@@ -50,16 +50,19 @@ approved workflow.
 
 The new `test/tools.test.ts` two-stage case names synthetic Jobs A, B, and an
 independent C. It exercises the real HTTP MCP handler and temporary state DB,
-with a fixture upstream. IDs are deliberately omitted from this record.
+with a fixture upstream. The restart checks close and recreate the HTTP server,
+client, and state-store objects and reopen SQLite within the same test process;
+they do not launch or terminate a separate bridge OS process. IDs are
+deliberately omitted from this record.
 
 | Boundary | Observation | Coverage limit |
 | --- | --- | --- |
 | A result read twice; B admission response dropped after commit | Both A reads retained the same answer. B was found `running` by its own request ID. Two concurrent identical B retries returned one B Job; A and B produced two upstream calls. A changed Activity version after B admission, so full status envelopes were correctly not compared byte for byte. | The fixture retains B's ID. A host that generates a new B ID has a different case below. |
 | Same B ID with different prompt | Conflict returned; no extra upstream call. | Existing request-hash protection, now checked in a two-stage flow. |
 | Independent C while B is held | C reached `completed` before B was released; three upstream calls total for A, B, C. | Shows no new global wait or block in the fixture, not production throughput. |
-| B result and restart | B completed and its exact terminal result was retrieved. A new bridge process recovered B by request ID with no new upstream call. | Restart was after B completed. Existing `test/activityStore.test.ts` covers a running Job restart being recovered as `interrupted`; this review does not claim the old execution automatically resumes. |
+| B result and server/store recreation | B completed and its exact terminal result was retrieved. After the HTTP server and state store were recreated and SQLite reopened in the same test process, B was recovered by request ID with no new upstream call. | Recreation was after B completed. No separate OS process was killed or restarted. Existing `test/activityStore.test.ts` covers a running Job restart being recovered as `interrupted`; this review does not claim the old execution automatically resumes. |
 | Intentional new turn with B's same prompt | A fresh ID produced another Job and a fourth upstream call. | This also demonstrates the remaining risk if a host mistakenly changes B's ID while reprocessing A. The bridge has no stable step key to distinguish those intents. |
-| Result and history expiry, then restart | An exact scoped Job/request query returned a compact terminal receipt with `replay: true`, original Job ID, and an omitted result. No original answer leaked. Recalling `codex_task` with that ID failed before Agent selection and made zero upstream calls. | A dependent next step requiring the expired result cannot be inferred or automatically continued. |
+| Result and history expiry, then server/store recreation | After reopening SQLite in the same test process, an exact scoped Job/request query returned a compact terminal receipt with `replay: true`, original Job ID, and an omitted result. No original answer leaked. Recalling `codex_task` with that ID failed before Agent selection and made zero upstream calls. | This new expired-result test uses a completed Job. It does not separately exercise archived failed, cancelled, or interrupted Jobs, nor recover a dependent step requiring the expired result. |
 | Foreign or missing expired ID | Both produced identical `HANDLE_UNAVAILABLE` errors. | Neither error proves that the target was never admitted in some other context. |
 
 Earlier single-request regressions in `test/tools.test.ts` cover loss before
@@ -100,7 +103,7 @@ new source. Values are per-test median wall times reported by Vitest, in ms.
 | Ordinary durable admission | 344 | 335 |
 | Lost admission response recovery | 280 | 272 |
 | Exact request replay/conflict | 258 | 255 |
-| A → B response loss, reads, C branch, restart | 418 | 416 |
+| A → B response loss, reads, C branch, server/store recreation | 418 | 416 |
 
 The raw baseline/changed runs respectively were: admission
 `[585, 344, 338]`/`[343, 333, 335]`, lost response
@@ -118,7 +121,7 @@ uncertain. No performance threshold was invented from these measurements.
 | Proposal | Decision and reason |
 | --- | --- |
 | Scoped request identity, durable admission, exact replay, bounded waits, Job delivery policy | Already satisfied; retain and reuse. |
-| Two-stage lost-ack, concurrent replay, separate branch, deliberate rerun, restart and expiry checks | Verification strengthened. The tested stable-ID flow recovers B without another execution and continues through its retained result. |
+| Two-stage lost-ack, concurrent replay, separate branch, deliberate rerun, same-process server/store recreation and expiry checks | Verification strengthened. The tested stable-ID flow recovers B without another execution and continues through its retained result. |
 | Compact exact admission receipt after result expiry and safer retry guidance | Adopted. It prevents an expired exact request from looking merely absent and fixes a misleading pre-admission error ordering. |
 | Durable parent-result → follow-up-step linkage | Structural candidate deferred. With only a newly chosen UUID and prompt, the server cannot distinguish accidental B-2 from an expressly approved rerun. A mandatory plan/registration protocol would add a new failure and user-flow dependency; no observed operating incident or stable host-provided step key currently justifies it. |
 | Additional display or large diagnostic subsystem | Optional and deferred. Existing Job, delivery, and offer records distinguish execution from server offer. They do not establish GPT consumption, and display state cannot become execution authority. |
@@ -150,4 +153,10 @@ comparison (416 JSON and 827 TypeScript files), the Node build and all 895
 tests in 101 files, and the macOS localization check and Swift suite (212
 tests, 2 intentionally skipped, 0 failures). `git diff --check` passed. The
 validation used the temporary fixture data described above and did not test a
-real ChatGPT host resumption, installed app upgrade, or production latency.
+separate bridge process restart, real ChatGPT host resumption, installed app
+upgrade, or production latency. This is a local validation report; PR #180 had
+no GitHub check runs, and these full-suite results were not independently
+reproduced by a separate reviewer. The 2026-09-24 documentation correction
+also passed `npm run validate:full` locally with the same pinned CLI: 895 Node
+tests and 212 macOS tests (2 skipped, 0 failures). It did not expand the host
+or process-restart acceptance scope.
