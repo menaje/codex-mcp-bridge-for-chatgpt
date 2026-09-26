@@ -1,6 +1,10 @@
 # Issue #185: execution lifetime and control recovery
 
 Implementation baseline: PR #184, `cb052932c5813b1b313077d54b323225889010b3`.
+
+The original receipt limits and ACK scheduling below were corrected by
+[#189](issue-189-execution-retention.md); use that audit for current capacity,
+release acknowledgement, and diagnostic behavior.
 This supersedes the global observation fences and parent-IPC lifetime rules in
 the historical #142/#182 audits. Those audits remain records of their tested builds.
 

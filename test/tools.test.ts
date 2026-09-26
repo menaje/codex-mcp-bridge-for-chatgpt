@@ -235,6 +235,40 @@ describe("current bridge tool contracts", () => {
     expect(tools.tools.some((tool) => "codex/registrationTier" in (tool._meta || {}))).toBe(false);
   });
 
+  it("keeps physical background-read slots across repeated native snapshot timeouts", async () => {
+    const scopeId = randomUUID();
+    for (let index = 0; index < 80; index++) {
+      const agent = state.createAgent({ scopeId, agentName: `retention-${index}` });
+      state.linkAgentThread({ agentId: agent.agentId, threadId: `retention-thread-${index}`,
+        backendKind: "app-server", cwd: root, sandbox: "read-only", contextMode: "fresh" });
+    }
+    const releases: Array<() => void> = [];
+    let blocked = true;
+    const inspect = vi.fn(() => blocked ? new Promise<[]>(resolve => releases.push(() => resolve([]))) : Promise.resolve([]));
+    Object.assign(upstream, { listLoadedBackgroundTerminals: inspect });
+    vi.useFakeTimers();
+    try {
+      for (let index = 0; index < 5; index++) {
+        const pending = server.applicationService.runtimeSnapshot({ inspectBackgroundProcesses: true });
+        await vi.advanceTimersByTimeAsync(1600);
+        expect((await pending).backgroundProcessState).toBe("unknown");
+        expect(inspect).toHaveBeenCalledTimes(8);
+      }
+      blocked = false; for (const release of releases) release();
+      await vi.advanceTimersByTimeAsync(1);
+      expect((await server.applicationService.runtimeSnapshot({ inspectBackgroundProcesses: true })).backgroundProcessState).toBe("confirmed");
+    } finally { for (const release of releases) release(); vi.useRealTimers(); }
+  });
+
+  it("explains removed Agent archive as a structured error without mutating history", async () => {
+    const result = await client.callTool({ name: "codex_agent", _meta: metadata,
+      arguments: { requestId: randomUUID(), agentId: randomUUID(), operation: { kind: "archive" } } });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ ok: false, code: "AGENT_ARCHIVE_REMOVED" });
+    expect(upstream.calls).toHaveLength(0);
+    expect(state.listJobs()).toHaveLength(0);
+  });
+
   it("rejects stale Decision Card calls without changing Codex or state", async () => {
     const retired = [
       {

@@ -5,6 +5,9 @@ type Entry = {
   fingerprint: string;
   retained: boolean;
   control: boolean;
+  lane: ExecutionLane;
+  createdAt: number;
+  completedAt?: number;
   sequence: number;
   sent: number;
   events: Map<string, Message>;
@@ -17,12 +20,23 @@ type Entry = {
 const RESULT_BYTES = 8 * 1024 * 1024;
 const EVENT_BYTES = 8 * 1024 * 1024;
 const ORDINARY_PROGRESS_BYTES = 64 * 1024;
-const MAX_ENTRIES = 36;
-const CONTROL_RESERVE = 6;
+export const EXECUTION_LANE_CAPACITIES = { execution: 30, inspection: 8, metadata: 8, control: 6 } as const;
+export type ExecutionLane = keyof typeof EXECUTION_LANE_CAPACITIES;
+export type ExecutionJournalStatus = {
+  observedAt: number;
+  lanes: Record<ExecutionLane, { capacity: number; used: number; active: number;
+    awaitingAcknowledgement: number; awaitingCommitAcknowledgement: number; oldestAcknowledgementMs: number }>;
+};
+export function executionLane(operation: string, control: boolean): ExecutionLane {
+  if (control) return "control";
+  if (["callTool", "startThread", "continueThread", "forkThread"].includes(operation)) return "execution";
+  if (["probeThread", "listBackgroundTerminals", "listLoadedBackgroundTerminals"].includes(operation)) return "inspection";
+  return "metadata";
+}
 
 /**
  * Bounded execution receipts, owned by the process holding the Codex pipes.
- * At most 36 * (8 MiB result + 8 MiB events) are reserved. Results are released
+ * At most 52 * (8 MiB result + 8 MiB events) are reserved. Results are released
  * only after the DB owner acknowledges its commit. No database is opened here.
  * Ordinary progress is a snapshot; live questions and exact terminal outcomes
  * are retained. An exhausted per-request reservation is explicit containment,
@@ -51,12 +65,14 @@ export class ExecutionJournal {
       return "existing";
     }
     if (this.acknowledged.has(id)) { this.replyError(id, "EXECUTION_ALREADY_ACKNOWLEDGED"); return "rejected"; }
-    if (this.entries.size >= MAX_ENTRIES ||
-      (!control && [...this.entries.values()].filter(entry => !entry.control).length >= MAX_ENTRIES - CONTROL_RESERVE)) {
-      this.replyError(id, "EXECUTION_RETENTION_CAPACITY");
+    const lane = executionLane(request.operation, control);
+    const used = [...this.entries.values()].filter(entry => entry.lane === lane).length;
+    if (used >= EXECUTION_LANE_CAPACITIES[lane]) {
+      const code = lane === "execution" ? "EXECUTION_RETENTION_CAPACITY" : `EXECUTION_${lane.toUpperCase()}_CAPACITY`;
+      this.replyError(id, code, `${lane} receipts are full (${used}/${EXECUTION_LANE_CAPACITIES[lane]}). Retry after active requests settle and receipt acknowledgements drain. Agent/Activity history does not occupy this capacity.`);
       return "rejected";
     }
-    this.entries.set(id, { fingerprint, retained: request.retained === true, control,
+    this.entries.set(id, { fingerprint, retained: request.retained === true, control, lane, createdAt: Date.now(),
       sequence: 0, sent: 0, events: new Map() });
     return "new";
   }
@@ -96,6 +112,16 @@ export class ExecutionJournal {
   }
   disconnect(): void { this.epoch += 1; this.link = undefined; this.sending = false; this.auxiliary.clear(); }
   get size(): number { return this.entries.size; }
+  status(now = Date.now()): ExecutionJournalStatus {
+    const lanes = Object.fromEntries(Object.entries(EXECUTION_LANE_CAPACITIES).map(([lane, capacity]) => {
+      const entries = [...this.entries.values()].filter(entry => entry.lane === lane);
+      const completed = entries.filter(entry => entry.terminal);
+      return [lane, { capacity, used: entries.length, active: entries.length - completed.length,
+        awaitingAcknowledgement: completed.length, awaitingCommitAcknowledgement: completed.filter(entry => entry.retained).length,
+        oldestAcknowledgementMs: completed.reduce((oldest, entry) => Math.max(oldest, now - entry.completedAt!), 0) }];
+    })) as ExecutionJournalStatus["lanes"];
+    return { observedAt: now, lanes };
+  }
   send(message: Message): void {
     const entry = message.requestId ? this.entries.get(message.requestId) : undefined;
     if (!entry || !["progress", "assignment", "response"].includes(message.type)) {
@@ -111,6 +137,7 @@ export class ExecutionJournal {
     const event = { ...message, sequence: ++entry.sequence };
     if (message.type === "response") {
       if (entry.abandoned || entry.acknowledged) { this.entries.delete(message.requestId!); return; }
+      entry.completedAt = Date.now();
       if (entry.deliveryFailure || encodedBytes(event) > RESULT_BYTES || !Number.isFinite(encodedBytes(event))) {
         entry.terminal = { type: "response", generation: this.generation, requestId: message.requestId,
           sequence: event.sequence, ok: false,

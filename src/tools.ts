@@ -6518,9 +6518,10 @@ export function registerBridgeTools(
       const _meta = extra.mcpReq._meta;
       const action = args.operation.kind;
       if (action !== "rename") {
-        throw new Error(
-          "AGENT_ARCHIVE_REMOVED: Agent archive and restore are no longer supported. Existing archived Agents were restored during migration."
-        );
+        return { ...mutationToolResult({ ok: false, action, code: "AGENT_ARCHIVE_REMOVED",
+          warning: "Agent archive and restore are not supported. Agent history does not occupy executor receipt slots; archiving is not a retention recovery action.",
+          nextActions: [guidance("Use runtime diagnostics to inspect execution receipts and pending acknowledgements. Agent management supports rename only.")]
+        }, "model", "codex_agent"), isError: true };
       }
       const agentName = args.operation.name;
       const scope = scopeResolver.require(
@@ -7122,6 +7123,13 @@ export function registerBridgeTools(
       );
       const existing = jobs.getActivity(args.activityId);
       if (!existing || existing.scopeId !== scope.scopeId) throw scopedHandleUnavailable("activity");
+      if (existing.version !== args.expectedVersion) {
+        return { ...mutationToolResult({ ok: false, action: operation.kind, code: "STALE_ACTIVITY_VERSION",
+          activity: formatActivitySummary(existing),
+          warning: "Activity version changed. Read the current Activity before retrying; no mutation was applied.",
+          nextActions: [statusAction({ query: { kind: "activity", id: existing.activityId } }, "Read the current Activity version.")]
+        }, "model", "codex_activity_update"), isError: true };
+      }
       let activity!: BridgeActivity;
       const cancelledJobIds: string[] = [];
       jobs.activityTransaction(() => {
@@ -10750,6 +10758,8 @@ export type BridgeRuntimeAdmissionSnapshot = {
   };
   /** Codex work executor; it has no SQLite connection or state authority. */
   executionService?: {
+    journal?: import("./executionJournal.js").ExecutionJournalStatus;
+    pendingAcknowledgements?: number;
     observationStatus?: "ready" | "degraded";
     connectionStatus?: "connected" | "disconnected";
     heartbeatStatus?: "fresh" | "delayed";
@@ -11413,6 +11423,9 @@ function listAllDashboardAgents(jobs: CodexJobRegistry, scopeId?: string): Bridg
   return agents;
 }
 
+type BackgroundInspection = { state: "loaded"; count: number } | { state: "unloaded" } | { state: "unknown" };
+const backgroundImpactReads = new WeakMap<CodexUpstream, DisplayReadPool<BackgroundInspection>>();
+
 async function inspectBridgeBackgroundProcessImpact(
   jobs: CodexJobRegistry,
   upstream: CodexUpstream
@@ -11441,39 +11454,27 @@ async function inspectBridgeBackgroundProcessImpact(
   let processes = 0;
   let agents = 0;
   let unknownAgents = 0;
-  type InspectionResult =
-    | { state: "loaded"; count: number }
-    | { state: "unloaded" }
-    | { state: "unknown" };
-  const inspect = (
+  const pool = backgroundImpactReads.get(upstream) || new DisplayReadPool<BackgroundInspection>(DASHBOARD_RUNTIME_PROBE_CONCURRENCY);
+  backgroundImpactReads.set(upstream, pool);
+  const inspect = async (
     thread: Pick<BridgeAgentThread, "threadId" | "backendKind">,
     timeoutMs: number
-  ): Promise<InspectionResult> => {
+  ): Promise<BackgroundInspection> => {
     if (!backendSupports(thread.backendKind, "supportsBackgroundTerminals")) {
       return Promise.resolve(upstream.canResumeThread?.(thread.threadId, thread.backendKind as CodexBackendKind) === true
         ? { state: "unknown" } : { state: "unloaded" });
     }
-    return new Promise((resolve) => {
-      let settled = false;
-      const finish = (value: InspectionResult): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(value);
-      };
-      const timer = setTimeout(() => finish({ state: "unknown" }), timeoutMs);
-      void upstream.listLoadedBackgroundTerminals!(
-        thread.threadId,
-        thread.backendKind as CodexBackendKind
-      ).then(
-        (terminals) => finish(
-          terminals === null
-            ? { state: "unloaded" }
-            : { state: "loaded", count: terminals.length }
-        ),
-        () => finish({ state: "unknown" })
-      );
-    });
+    // A display timeout ends this wait, not the underlying read. Share its
+    // physical reservation across repeated/native snapshot requests.
+    const read = pool.start(`${thread.backendKind}\0${thread.threadId}`, async () => {
+      try {
+        const terminals = await upstream.listLoadedBackgroundTerminals!(thread.threadId, thread.backendKind as CodexBackendKind);
+        return terminals === null ? { state: "unloaded" } : { state: "loaded", count: terminals.length };
+      } catch { return { state: "unknown" }; }
+    }, () => {});
+    if (!read) return { state: "unknown" };
+    const waited = await waitForDisplay(read, timeoutMs);
+    return waited.pending ? { state: "unknown" } : waited.value;
   };
   const worker = async (): Promise<void> => {
     while (nextIndex < candidates.length) {
