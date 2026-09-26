@@ -44,6 +44,20 @@ export class CodexBackendRouter implements CodexUpstream {
     if (!this.backends.has(defaultBackend)) throw new Error(`Codex backend ${defaultBackend} is not installed or enabled.`);
   }
 
+  supportsExecutionRecovery?: () => boolean;
+  async recoverExecution(jobId: string, onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void): Promise<ToolResult> {
+    const backend = this.backend(this.defaultBackend);
+    if (!backend.recoverExecution) throw new Error("EXECUTION_RECOVERY_UNSUPPORTED");
+    return backend.recoverExecution(jobId, onProgress, assignment => {
+      if (assignment.threadId) this.bindThread(assignment.threadId, this.defaultBackend);
+      this.workerBackends.set(assignment.workerId, this.defaultBackend);
+      onAssigned?.(assignment);
+    });
+  }
+  async acknowledgeExecution(jobId: string): Promise<void> { await this.backend(this.defaultBackend).acknowledgeExecution?.(jobId); }
+  async detachExecution(): Promise<void> { await this.backend(this.defaultBackend).detachExecution?.(); }
+
   bindThread(threadId: string, backendKind: CodexBackendKind): void {
     this.threadBackends.set(threadId, backendKind);
   }

@@ -125,7 +125,10 @@ diagnostic events.
 - The telemetry child inherits only a minimal process environment and its local
   IPC channel. The Codex executor receives the CLI environment but explicitly
   receives no Bridge database path, bearer token, skills path or companion
-  socket. The state owner receives authoritative command payloads; the read
+  socket. Its separate private execution socket and finite in-memory receipt
+  journal survive a control reconnect; its auxiliary ownership ledger contains
+  process identities, not Job payloads or another state database. The state owner
+  receives authoritative command payloads; the read
   child has read-only database authority and opens no listener.
 - `state.sqlite` backups are sensitive operational artifacts and receive the
   same permissions and retention handling as the live database. A backup must

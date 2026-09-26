@@ -200,6 +200,11 @@ export type CodexWeeklyUsage = {
 };
 
 export type CodexUpstream = {
+  supportsExecutionRecovery?(): boolean;
+  recoverExecution?(jobId: string, onProgress?: (progress: CodexProgress) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment) => void): Promise<ToolResult>;
+  acknowledgeExecution?(jobId: string): void | Promise<void>;
+  detachExecution?(): void | Promise<void>;
   listTools(): Promise<unknown>;
   /** Read-only contract check, before durable task admission. */
   prepareExecution?(input: { backendKind: CodexBackendKind; contextMode: "fresh" | "continue" | "fork" }): Promise<void>;

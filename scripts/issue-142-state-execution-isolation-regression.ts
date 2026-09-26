@@ -103,36 +103,13 @@ async function main(): Promise<void> {
       process.kill(executionProcessId, "SIGSTOP");
       executionStopped = true;
       await waitForCondition(
-        () => fixture.server.applicationService.runtimeHealth?.().executionService?.status ===
-          "stale",
-        8_000,
-        "stale execution readiness"
+        () => fixture.server.applicationService.runtimeHealth?.().executionService?.heartbeatStatus === "delayed",
+        8_000, "delayed execution heartbeat"
       );
       const readiness = await probe(fixture.baseUrl, "/readyz");
       executionAdmissionReadiness = readiness.body;
-      assert.equal(readiness.status, 503);
-      assert.equal((readiness.body as { reason?: string }).reason, "execution-stale");
-      assert.equal(
-        (await fixture.server.applicationService.runtimeSnapshot()).acceptingNewJobs,
-        false
-      );
-      assert.equal(readJobCount(fixture.stateFile), 0);
-      const blocked = await executionClient.callTool({
-        name: "codex_task",
-        arguments: {
-          scopeId: randomUUID(),
-          requestId: randomUUID(),
-          taskContractVersion: taskProperties.taskContractVersion?.const,
-          executionEnvelopeRef: taskProperties.executionEnvelopeRef?.const,
-          prompt: "This Job must not be created while the execution child is stale."
-        }
-      });
-      assert.equal(blocked.isError, true);
-      assert.equal(
-        (blocked.structuredContent as { error?: { code?: string } } | undefined)?.error?.code,
-        "EXECUTION_UNAVAILABLE"
-      );
-      assert.equal(readJobCount(fixture.stateFile), 0);
+      assert.equal(readiness.status, 200);
+      assert.equal((await fixture.server.applicationService.runtimeSnapshot()).acceptingNewJobs, true);
       blockedAdmissionJobCount = readJobCount(fixture.stateFile);
     } finally {
       if (executionStopped) process.kill(executionProcessId, "SIGCONT");
@@ -414,8 +391,8 @@ async function main(): Promise<void> {
       },
       executionAdmission: {
         staleReadiness: executionAdmissionReadiness,
-        acceptingNewJobs: false,
-        blockedBeforeJobCreation: true,
+        acceptingNewJobs: true,
+        heartbeatDoesNotBlockAdmission: true,
         retainedJobs: blockedAdmissionJobCount
       },
       healthyStateCommands: summarize(healthySorted, HEALTHY_COMMAND_TARGET_MS),

@@ -49,7 +49,7 @@ export type JsonRpcTerminationResult = JsonRpcProcessIdentity & {
   exited: boolean;
   escalated: boolean;
   signal: "SIGTERM" | "SIGKILL" | null;
-  mode: "process-group" | "turn-interrupt";
+  mode: "process-group" | "turn-interrupt" | "already-completed";
   workerExited: boolean;
 };
 

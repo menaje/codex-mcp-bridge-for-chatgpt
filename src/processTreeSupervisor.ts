@@ -12,18 +12,21 @@ const PROCESS_TABLE_LATE_TIMER_TOLERANCE_MS = 250;
 const PROCESS_TABLE_RESUME_GRACE_MS = 5_000;
 const PROCESS_TABLE_SETTLE_MS = 100;
 const OBSERVATION_DIAGNOSTIC_MAX_MS = 86_400_000;
-const PROCESS_EXIT_POLL_MS = 25;
+const PROCESS_EXIT_POLL_MS = 100;
 const MAX_SUPERVISED_PROCESSES_PER_TREE = 4_096;
 
 export type SupervisedProcessIdentity = {
   pid: number;
   parentPid: number;
   processGroupId: number;
+  /** OS process birth stamp, compared before signaling retained descendants. */
+  startedAt?: string;
 };
 
 export type SupervisedProcessTreeSnapshot = {
   root: JsonRpcProcessIdentity;
   processes: SupervisedProcessIdentity[];
+  rootExited?: boolean;
 };
 
 type ProcessTableEntry = SupervisedProcessIdentity & {
@@ -33,6 +36,8 @@ type ProcessTableEntry = SupervisedProcessIdentity & {
 type SupervisedProcessTree = {
   root: JsonRpcProcessIdentity;
   captured: Map<number, SupervisedProcessIdentity>;
+  ownedRoot: boolean;
+  rootExited: boolean;
 };
 
 export type ProcessObservationFailure = {
@@ -61,17 +66,15 @@ export function processObservationFailure(error: unknown): ProcessObservationFai
 }
 
 /**
- * Retains an independently owned process-tree ledger for App Server workers.
- *
- * A Unix child may create another process group, so the App Server's original
- * PGID is not sufficient cleanup evidence. While the root is alive, this
- * registry continuously folds descendants into a durable in-memory ledger.
- * Cleanup then verifies every captured PID/PGID and every owned group before
- * allowing the execution service to replace the worker generation.
+ * Auxiliary, bounded ledger for owned worker descendants. Spawn/exit events
+ * establish root lifetime; process-table snapshots add birth-verified children.
+ * No observation result grants authority to fail a Job or kill the executor.
+ * Detached children never observed before reparenting cannot be proven owned.
  */
 export class SupervisedProcessTreeRegistry {
   private readonly trees = new Map<string, SupervisedProcessTree>();
   private tail: Promise<void> = Promise.resolve();
+  constructor(private readonly readTable: () => Promise<ProcessTableEntry[]> = readProcessTable) {}
 
   get size(): number {
     return this.trees.size;
@@ -91,6 +94,7 @@ export class SupervisedProcessTreeRegistry {
   snapshots(): SupervisedProcessTreeSnapshot[] {
     return [...this.trees.values()].map((tree) => ({
       root: { ...tree.root },
+      rootExited: tree.rootExited,
       processes: [...tree.captured.values()].map((entry) => ({ ...entry }))
     }));
   }
@@ -98,6 +102,7 @@ export class SupervisedProcessTreeRegistry {
   merge(snapshot: SupervisedProcessTreeSnapshot): void {
     const tree = this.trees.get(supervisedProcessKey(snapshot.root));
     if (!tree || snapshot.processes.length > MAX_SUPERVISED_PROCESSES_PER_TREE) return;
+    tree.rootExited ||= snapshot.rootExited === true;
     for (const entry of snapshot.processes) {
       if (!validProcessIdentity(entry)) continue;
       tree.captured.set(entry.pid, { ...entry });
@@ -108,28 +113,31 @@ export class SupervisedProcessTreeRegistry {
     this.trees.delete(supervisedProcessKey(identity));
   }
 
+  remember(identity: JsonRpcProcessIdentity, ownedRoot = false): void {
+    validateRootIdentity(identity);
+    const key = supervisedProcessKey(identity);
+    if (this.trees.has(key)) return;
+    this.trees.set(key, { root: { ...identity }, ownedRoot, rootExited: false,
+      captured: new Map([[identity.pid, { pid: identity.pid, parentPid: 0,
+        processGroupId: identity.processGroupId ?? identity.pid }]]) });
+  }
+
+  markExited(identity: JsonRpcProcessIdentity): void {
+    const tree = this.trees.get(supervisedProcessKey(identity));
+    if (tree) { tree.rootExited = true; tree.ownedRoot = false; }
+  }
+
   register(identity: JsonRpcProcessIdentity): Promise<void> {
     validateRootIdentity(identity);
     const key = supervisedProcessKey(identity);
-    if (!this.trees.has(key)) {
-      this.trees.set(key, {
-        root: { ...identity },
-        captured: new Map([
-          [identity.pid, {
-            pid: identity.pid,
-            parentPid: 0,
-            processGroupId: identity.processGroupId ?? identity.pid
-          }]
-        ])
-      });
-    }
+    this.remember(identity, true);
     return this.enqueue(async () => {
       if (process.platform === "win32") return;
       const tree = this.trees.get(key);
       if (!tree) return;
       const startedAt = performance.now();
       try {
-        const rows = await readProcessTable();
+        const rows = await this.readTable();
         observeTree(tree, rows);
         const root = rows.find((entry) => entry.pid === identity.pid);
         if (!root || root.processGroupId !== identity.processGroupId || isZombie(root)) {
@@ -150,7 +158,7 @@ export class SupervisedProcessTreeRegistry {
       if (this.trees.size === 0) return;
       const startedAt = performance.now();
       try {
-        const rows = await readProcessTable();
+        const rows = await this.readTable();
         for (const tree of this.trees.values()) observeTree(tree, rows);
       } catch (error) {
         throw withObservationDuration(error, startedAt);
@@ -163,7 +171,7 @@ export class SupervisedProcessTreeRegistry {
     return this.enqueue(async () => {
       const tree = this.trees.get(key);
       if (!tree) return true;
-      const exited = await terminateTree(tree, graceMs);
+      const exited = await terminateTree(tree, graceMs, this.readTable);
       if (exited) this.trees.delete(key);
       return exited;
     });
@@ -175,7 +183,7 @@ export class SupervisedProcessTreeRegistry {
       if (entries.length === 0) return true;
       const results = await Promise.all(entries.map(async ([key, tree]) => {
         try {
-          const exited = await terminateTree(tree, graceMs);
+          const exited = await terminateTree(tree, graceMs, this.readTable);
           if (exited) this.trees.delete(key);
           return exited;
         } catch {
@@ -208,7 +216,8 @@ export function supervisedProcessKey(identity: JsonRpcProcessIdentity): string {
 
 async function terminateTree(
   tree: SupervisedProcessTree,
-  graceMs: number
+  graceMs: number,
+  readTable: () => Promise<ProcessTableEntry[]> = readProcessTable
 ): Promise<boolean> {
   if (!Number.isSafeInteger(graceMs) || graceMs < 0) {
     throw new Error("Invalid supervised process termination grace period.");
@@ -221,18 +230,21 @@ async function terminateTree(
     return waitForPidExit(tree.root.pid, graceMs);
   }
 
-  let rows = await readProcessTable();
+  let rows = await readTable();
   observeTree(tree, rows);
   let running = runningTreeProcesses(tree, rows);
-  if (running.length === 0) return true;
+  if (running.length === 0) {
+    // An unobserved root/group is not verified cleanup and retains its slot.
+    return !rows.some(row => !isZombie(row) && row.processGroupId === tree.root.processGroupId);
+  }
   signalTreeProcesses(running, rows, "SIGTERM");
-  running = await waitForTreeExit(tree, graceMs);
+  running = await waitForTreeExit(tree, graceMs, readTable);
   if (running.length === 0) return true;
-  rows = await readProcessTable();
+  rows = await readTable();
   observeTree(tree, rows);
   running = runningTreeProcesses(tree, rows);
   signalTreeProcesses(running, rows, "SIGKILL");
-  return (await waitForTreeExit(tree, graceMs)).length === 0;
+  return (await waitForTreeExit(tree, graceMs, readTable)).length === 0;
 }
 
 function observeTree(
@@ -250,17 +262,18 @@ function observeTree(
 
   const pending: number[] = [];
   const ownedGroups = new Set<number>();
-  if (tree.root.processGroupId !== null) ownedGroups.add(tree.root.processGroupId);
   for (const captured of tree.captured.values()) {
     const observed = current.get(captured.pid);
-    if (observed && observed.processGroupId === captured.processGroupId && !isZombie(observed)) {
+    const ownedLiveRoot = captured.pid === tree.root.pid && tree.ownedRoot && !tree.rootExited;
+    if (observed && observed.processGroupId === captured.processGroupId && !isZombie(observed) &&
+        (ownedLiveRoot || captured.startedAt !== undefined && captured.startedAt === observed.startedAt)) {
       pending.push(observed.pid);
       ownedGroups.add(observed.processGroupId);
     }
   }
 
-  // A root can exit before its same-group children. The group is still owned
-  // even when no surviving process retains the root as its PPID.
+  // Only a currently verified member establishes group ownership. A stored
+  // numeric PGID alone is not authority after PID/PGID reuse.
   for (const row of rows) {
     if (!isZombie(row) && ownedGroups.has(row.processGroupId)) pending.push(row.pid);
   }
@@ -282,7 +295,8 @@ function observeTree(
     tree.captured.set(row.pid, {
       pid: row.pid,
       parentPid: row.parentPid,
-      processGroupId: row.processGroupId
+      processGroupId: row.processGroupId,
+      startedAt: row.startedAt
     });
     if (!ownedGroups.has(row.processGroupId)) {
       ownedGroups.add(row.processGroupId);
@@ -301,25 +315,23 @@ function runningTreeProcesses(
   rows: readonly ProcessTableEntry[]
 ): ProcessTableEntry[] {
   observeTree(tree, rows);
-  const capturedGroups = new Set<number>();
-  if (tree.root.processGroupId !== null) capturedGroups.add(tree.root.processGroupId);
-  for (const entry of tree.captured.values()) capturedGroups.add(entry.processGroupId);
   return rows.filter((row) => {
     if (isZombie(row)) return false;
-    if (capturedGroups.has(row.processGroupId)) return true;
     const captured = tree.captured.get(row.pid);
-    return captured?.processGroupId === row.processGroupId;
+    return captured?.processGroupId === row.processGroupId &&
+      captured.startedAt !== undefined && captured.startedAt === row.startedAt;
   });
 }
 
 async function waitForTreeExit(
   tree: SupervisedProcessTree,
-  timeoutMs: number
+  timeoutMs: number,
+  readTable: () => Promise<ProcessTableEntry[]>
 ): Promise<ProcessTableEntry[]> {
   const deadline = Date.now() + timeoutMs;
   let running: ProcessTableEntry[] = [];
   do {
-    const rows = await readProcessTable();
+    const rows = await readTable();
     running = runningTreeProcesses(tree, rows);
     if (running.length === 0) return running;
     if (Date.now() >= deadline) return running;
@@ -329,27 +341,12 @@ async function waitForTreeExit(
 
 function signalTreeProcesses(
   running: readonly ProcessTableEntry[],
-  rows: readonly ProcessTableEntry[],
+  _rows: readonly ProcessTableEntry[],
   signal: NodeJS.Signals
 ): void {
-  const supervisorGroup = rows.find((entry) => entry.pid === process.pid)?.processGroupId;
-  const groups = new Set(running.map((entry) => entry.processGroupId));
-  const individuallySignaled = new Set<number>();
-  for (const group of groups) {
-    if (group <= 1 || group === supervisorGroup) {
-      for (const entry of running) {
-        if (entry.processGroupId !== group || individuallySignaled.has(entry.pid)) continue;
-        signalPid(entry.pid, signal);
-        individuallySignaled.add(entry.pid);
-      }
-      continue;
-    }
-    try {
-      process.kill(-group, signal);
-    } catch (error) {
-      if (!isNoSuchProcess(error) && !isPermissionDenied(error)) throw error;
-    }
-  }
+  // Signal only birth-verified PIDs. A remembered numeric process group may
+  // have gained unrelated members; group-wide signaling would include them.
+  for (const entry of running) signalPid(entry.pid, signal);
 }
 
 function signalPid(pid: number, signal: NodeJS.Signals): void {
@@ -366,7 +363,8 @@ function signalPid(pid: number, signal: NodeJS.Signals): void {
 /** @internal Exported for bounded probe and suspend/resume regressions. */
 export function readProcessTable(
   spawnProbe: () => ChildProcess = () =>
-    spawn("/bin/ps", ["-axo", "pid=,ppid=,pgid=,stat="], {
+    spawn("/bin/ps", ["-axo", "pid=,ppid=,pgid=,stat=,lstart="], {
+      env: { ...process.env, LC_ALL: "C" },
       stdio: ["ignore", "pipe", "pipe"]
     })
 ): Promise<ProcessTableEntry[]> {
@@ -465,14 +463,15 @@ export function readProcessTable(
           .split("\n")
           .map((line) => line.trim())
           .filter(Boolean)
-          .map((line) => line.split(/\s+/, 4))
-          .map(([pid, parentPid, processGroupId, state]) => ({
+          .map((line) => line.split(/\s+/))
+          .map(([pid, parentPid, processGroupId, state, ...birth]) => ({
             pid: Number(pid),
             parentPid: Number(parentPid),
             processGroupId: Number(processGroupId),
-            state: state || ""
+            state: state || "",
+            startedAt: birth.length ? birth.join(" ") : undefined
           }));
-        if (entries.length === 0 || !entries.every((entry): entry is ProcessTableEntry =>
+        if (entries.length === 0 || !entries.every((entry) =>
             Number.isSafeInteger(entry.pid) && entry.pid > 0 &&
             Number.isSafeInteger(entry.parentPid) && entry.parentPid >= 0 &&
             Number.isSafeInteger(entry.processGroupId) && entry.processGroupId > 0 &&

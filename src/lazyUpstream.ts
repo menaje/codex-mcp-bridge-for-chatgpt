@@ -14,6 +14,9 @@ export class LazyCodexUpstream implements CodexUpstream {
   constructor(private readonly kind: CodexBackendKind, private readonly features: BackendCapabilities,
     private readonly factory: () => Promise<CodexUpstream>, private readonly dispose?: () => Promise<void>, private readonly guard?: () => void) {}
 
+  async recoverExecution(...args: Args<"recoverExecution">) { return (await this.method("recoverExecution"))(...args); }
+  async acknowledgeExecution(...args: Args<"acknowledgeExecution">) { return (await this.method("acknowledgeExecution"))(...args); }
+  async detachExecution() { await this.starting?.catch(() => {}); await this.instance?.detachExecution?.(); }
   capabilities(): BackendCapabilities { return this.instance?.capabilities?.(this.kind) || this.features; }
   async prepareExecution(...args: Args<"prepareExecution">) { return (await this.method("prepareExecution"))(...args); }
   listTools() { return this.instance?.listTools() || Promise.resolve({ backendKind: this.kind, initialized: false, capabilities: this.features }); }

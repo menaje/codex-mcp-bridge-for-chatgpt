@@ -153,12 +153,14 @@ export function createBridgeMcpServer(
     maxJobs: config.maxRetainedJobs,
     maxResultBytes: config.maxJobResultBytes,
     staleAfterMs: config.jobStaleAfterMs,
+    recoverExecutions: upstream.supportsExecutionRecovery?.() === true,
     stateStore: fallbackStateStore,
     allowedRoots: config.allowedRoots
   });
   const settingsStore = userSettings || new UserSettingsStore(config, {
     stateStore: fallbackStateStore
   });
+  jobRegistry.attachUpstream(upstream, sessionRegistry);
   jobRegistry.configureThreadConnections(upstream, config.threadIdleMs);
   jobRegistry.configureStateMaintenance();
   if (settingsStore.admissionStateStore !== jobRegistry.admissionStateStore) {
@@ -263,11 +265,13 @@ export function createHttpServer(
     maxJobs: config.maxRetainedJobs,
     maxResultBytes: config.maxJobResultBytes,
     staleAfterMs: config.jobStaleAfterMs,
+    recoverExecutions: upstream.supportsExecutionRecovery?.() === true,
     stateStore,
     telemetry: runtimeOptions.telemetry,
     allowedRoots: config.allowedRoots
   });
   const modelCatalog = modelCatalogOverride || createModelCatalog(config, upstream);
+  jobs.attachUpstream(upstream, sessions);
   jobs.configureThreadConnections(upstream, config.threadIdleMs);
   const cardPerformance = new CardPerformanceTracker();
   const userSettings = new UserSettingsStore(config, { stateStore });

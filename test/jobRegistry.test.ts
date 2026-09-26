@@ -696,6 +696,50 @@ describe("CodexJobRegistry persistence", () => {
     expect(store.listCompletionOutbox(job.activityId)).toEqual([]);
   });
 
+  it.each(["completed", "failed"] as const)("acknowledges a recovered %s outcome only after its durable commit", async (status) => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    const store = registry.admissionStateStore;
+    const originalUpsert = store.upsertJob.bind(store);
+    const acknowledgeExecution = vi.fn();
+    registry.attachUpstream({
+      async listTools() { return { tools: [] }; },
+      async callTool() { return result("unused"); },
+      async close() {},
+      supportsExecutionRecovery: () => true,
+      acknowledgeExecution
+    });
+    let blocked = true;
+    let attempts = 0;
+    vi.spyOn(store, "upsertJob").mockImplementation(value => {
+      if (blocked && (value as { status?: unknown }).status === status) {
+        attempts += 1;
+        throw new Error("injected busy terminal transaction");
+      }
+      return originalUpsert(value);
+    });
+    try {
+      const job = registry.start(jobInput(root), async () => {
+        if (status === "failed") throw new Error("exact upstream failure");
+        return result("exact-completed-thread");
+      });
+      await waitForCondition(() => attempts > 0, 1000);
+      expect(job.status).toBe("running");
+      expect(store.listJobs()[0]).toMatchObject({ status: "running" });
+      expect(acknowledgeExecution).not.toHaveBeenCalled();
+      blocked = false;
+      await job.promise;
+      expect(job.status).toBe(status);
+      expect(store.listJobs()[0]).toMatchObject(status === "completed"
+        ? { status, result: { structuredContent: { threadId: "exact-completed-thread" } } }
+        : { status, error: "exact upstream failure" });
+      expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(job.jobId);
+    } finally {
+      await registry.closeThreadConnections();
+      store.close();
+    }
+  });
+
   it("does not start deferred execution when the enclosing admission transaction rolls back", async () => {
     const root = temporaryRoot();
     const registry = persistentRegistry(root, path.join(root, "private", "state.sqlite"));
@@ -1003,6 +1047,63 @@ describe("CodexJobRegistry persistence", () => {
       result: { structuredContent: { threadId: "naturally-completed" } }
     });
     expect(registry.runningCount()).toBe(0);
+  });
+
+  it("preserves a deferred completion through DB contention when cancellation arrives too late", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    const store = registry.admissionStateStore;
+    const originalUpsert = store.upsertJob.bind(store);
+    const acknowledgeExecution = vi.fn();
+    let finish!: (value: ToolResult) => void;
+    const run = new Promise<ToolResult>(resolve => { finish = resolve; });
+    let originalPromise!: Promise<void>;
+    registry.attachUpstream({
+      async listTools() { return { tools: [] }; },
+      async callTool() { return result("unused"); },
+      async close() {},
+      supportsExecutionRecovery: () => true,
+      acknowledgeExecution,
+      async forceTerminateWorker(assignment) {
+        finish(result("completion-won-race"));
+        await originalPromise;
+        return { ...assignment, mode: "already-completed", exited: true, workerExited: false, escalated: false };
+      }
+    });
+    let blocked = true;
+    let attempts = 0;
+    vi.spyOn(store, "upsertJob").mockImplementation(value => {
+      if (blocked && (value as { status?: unknown }).status === "completed") {
+        attempts += 1;
+        throw new Error("injected busy terminal transaction");
+      }
+      return originalUpsert(value);
+    });
+    try {
+      const job = registry.start(jobInput(root), async (_progress, assigned) => {
+        assigned({ backendKind: "app-server", workerId: "race-worker", workerGeneration: 1,
+          upstreamRequestId: "original-turn" });
+        return run;
+      });
+      originalPromise = job.promise;
+      await Promise.resolve();
+      const intent = durableCancelIntent(registry, job.jobId, REQUEST_B);
+      await registry.cancel(job.jobId, intent);
+      expect(attempts).toBe(1);
+      expect(job.status).toBe("running");
+      expect(registry.getCancellationIntent(intent.intentId)?.status).toBe("no-op");
+      expect(acknowledgeExecution).not.toHaveBeenCalled();
+      blocked = false;
+      await job.promise;
+      expect(job).toMatchObject({ status: "completed", result: {
+        structuredContent: { threadId: "completion-won-race" }
+      } });
+      expect(store.listJobs()[0]).toMatchObject({ status: "completed" });
+      expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(job.jobId);
+    } finally {
+      await registry.closeThreadConnections();
+      store.close();
+    }
   });
 
   it("keeps a termination-failed job active when no terminal evidence exists", async () => {
