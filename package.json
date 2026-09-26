@@ -79,6 +79,7 @@
     "test:issue-138-state-access": "tsx scripts/issue-138-state-access-regression.ts",
     "test:issue-185-execution-recovery": "tsx scripts/issue-185-execution-recovery-regression.ts",
     "test:issue-186-observation": "tsx scripts/issue-186-observation-regression.ts",
+    "test:issue-189-retention": "tsx scripts/issue-189-retention-regression.ts",
     "test:issue-142-state-execution-isolation": "tsx scripts/issue-142-state-execution-isolation-regression.ts",
     "test:issue-143-connection-reliability": "npm run test:issue-143-connection-reliability:characterization",
     "test:issue-143-connection-reliability:characterization": "tsx scripts/issue-143-connection-reliability-regression.ts",

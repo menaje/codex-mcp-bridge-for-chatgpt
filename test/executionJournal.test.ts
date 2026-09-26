@@ -4,6 +4,23 @@ import { ExecutionJournal } from "../src/executionJournal.js";
 const request = (id: string) => ({ type: "request", requestId: id, operation: "callTool", args: [id], retained: true });
 const tick = () => new Promise(resolve => setTimeout(resolve, 20));
 
+it("keeps inspection and metadata saturation outside execution and control reservations", () => {
+  const journal = new ExecutionJournal("g", vi.fn());
+  for (const operation of ["probeThread", "listModels"]) {
+    for (let index = 0; index < 8; index++) {
+      expect(journal.admit({ ...request(`${operation}-${index}`), operation, retained: false }, false)).toBe("new");
+    }
+    expect(journal.admit({ ...request(`${operation}-overflow`), operation, retained: false }, false)).toBe("rejected");
+  }
+  for (let index = 0; index < 30; index++) expect(journal.admit(request(`job-${index}`), false)).toBe("new");
+  for (let index = 0; index < 6; index++) expect(journal.admit(request(`control-${index}`), true)).toBe("new");
+  expect(journal.size).toBe(52);
+  expect(journal.status().lanes).toMatchObject({
+    execution: { used: 30, active: 30, awaitingAcknowledgement: 0 },
+    inspection: { used: 8 }, metadata: { used: 8 }, control: { used: 6 }
+  });
+});
+
 it("retains exact completion through a send failure and releases it only on acknowledgement", async () => {
   const journal = new ExecutionJournal("g", vi.fn());
   const received: any[] = [];

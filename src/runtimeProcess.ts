@@ -1299,6 +1299,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
               : {}),
             inFlight: execution.inFlight,
             capacity: execution.capacity,
+            ...(execution.journal ? { journal: execution.journal } : {}),
+            pendingAcknowledgements: execution.pendingAcknowledgements,
             ...(execution.supervisedWorkers !== undefined
               ? { supervisedWorkers: execution.supervisedWorkers }
               : {}),

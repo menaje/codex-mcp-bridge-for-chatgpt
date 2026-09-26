@@ -1,5 +1,5 @@
 import { currentExecutionIdentity } from "./executionIdentity.js";
-import { ExecutionJournal } from "./executionJournal.js";
+import { ExecutionJournal, type ExecutionJournalStatus } from "./executionJournal.js";
 import { ExecutionPeer, executionEndpoint, listenExecutionOwner, readExecutionRecord,
   writeExecutionRecord, clearExitedExecutionOwner, type ExecutionEndpoint } from "./executionTransport.js";
 import { randomUUID } from "node:crypto";
@@ -59,6 +59,9 @@ const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 const MAX_REQUEST_BYTES_IN_FLIGHT = 32 * 1024 * 1024;
 const CONTROL_REQUEST_BYTES_RESERVE = 8 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const ACK_WINDOW = 16;
+const ACK_REPLY_RESERVE = 8;
+const ACK_RETRY_MS = 1_000;
 
 const EXECUTION_OPERATIONS = [
   "listTools",
@@ -187,6 +190,7 @@ type ReadyMessage = {
   generation: string;
   heartbeatAt: number;
   capabilities: BackendCapabilities;
+  journal?: ExecutionJournalStatus;
 };
 
 type HeartbeatMessage = {
@@ -194,6 +198,7 @@ type HeartbeatMessage = {
   generation: string;
   heartbeatAt: number;
   inFlight: number;
+  journal?: ExecutionJournalStatus;
 };
 
 type ProgressMessage = {
@@ -308,7 +313,7 @@ type ChildMessage =
   | WorkerCleanupStartedMessage
   | WorkerExitedMessage
   | FatalMessage
-  | { type: "acknowledged"; generation: string; requestId: string };
+  | { type: "acknowledged"; generation: string; requestId: string; journal?: ExecutionJournalStatus };
 
 type PendingRequest = {
   operation: ExecutionOperation;
@@ -345,6 +350,8 @@ export type CodexExecutionServiceHealth = {
   processId?: number;
   supervisedWorkers?: number;
   supervisedProcesses?: number;
+  journal?: ExecutionJournalStatus;
+  pendingAcknowledgements?: number;
 };
 
 export type ChildProcessCodexExecutionServiceOptions = {
@@ -376,7 +383,10 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   private capabilitiesValue: BackendCapabilities = UNVERIFIED_APP_SERVER_CAPABILITIES;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly acknowledgements = new Set<string>();
-  private acknowledgementInFlight?: string;
+  private readonly acknowledgementsInFlight = new Set<string>();
+  private acknowledgementTimer?: NodeJS.Timeout;
+  private readonly releasedReplies = new Map<string, () => void>();
+  private journal?: ExecutionJournalStatus;
   private pendingBytes = 0;
   private ordinaryPending = 0;
   private ordinaryPendingBytes = 0;
@@ -567,7 +577,8 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       : Math.max(0, now - this.lastHeartbeatAt);
     const status = !connected
       ? this.starting ? "starting" : "recovering"
-      : this.pending.size >= this.requestLimits.maxPendingRequests ||
+      : (this.journal && this.journal.lanes.execution.used >= this.journal.lanes.execution.capacity) ||
+          this.pending.size >= this.requestLimits.maxPendingRequests ||
             this.pendingBytes >= this.requestLimits.maxBytesInFlight ||
             this.ordinaryPending >=
               this.requestLimits.maxPendingRequests - this.requestLimits.controlRequestReserve ||
@@ -584,6 +595,8 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       ...(this.generation ? { generation: this.generation } : {}),
       ...(heartbeatAgeMs !== undefined ? { heartbeatAgeMs } : {}),
       inFlight: this.pending.size,
+      ...(this.journal ? { journal: this.journal } : {}),
+      pendingAcknowledgements: this.acknowledgements.size,
       capacity: this.requestLimits.maxPendingRequests,
       ordinaryInFlight: this.ordinaryPending,
       ordinaryCapacity:
@@ -743,16 +756,44 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   }
 
   private sendNextAcknowledgement(): void {
-    if (this.acknowledgementInFlight || !this.child?.connected || !this.generation) return;
-    const requestId = this.acknowledgements.values().next().value;
-    if (!requestId) return;
-    this.acknowledgementInFlight = requestId;
-    this.child.send({ type: "acknowledge", generation: this.generation, requestId }, () => {});
+    if (!this.child?.connected || !this.generation || this.closed || this.detached) return;
+    // Commit acknowledgements may remain unconfirmed for a long time. They
+    // cannot occupy the reply-release slots needed by metadata and controls.
+    for (const requestId of [...this.releasedReplies.keys(), ...this.acknowledgements]) {
+      if (this.acknowledgementsInFlight.size >= ACK_WINDOW) break;
+      if (this.acknowledgementsInFlight.has(requestId)) continue;
+      if (!this.releasedReplies.has(requestId) &&
+          [...this.acknowledgementsInFlight].filter(id => !this.releasedReplies.has(id)).length >= ACK_WINDOW - ACK_REPLY_RESERVE) continue;
+      this.acknowledgementsInFlight.add(requestId);
+      this.child.send({ type: "acknowledge", generation: this.generation, requestId }, () => {});
+    }
+    if (this.acknowledgements.size && !this.acknowledgementTimer) {
+      // Retry the same identities, never the original execution. A dropped ACK
+      // or ACK reply must not permanently pin the release queue on a live link.
+      this.acknowledgementTimer = setTimeout(() => {
+        this.acknowledgementTimer = undefined;
+        this.acknowledgementsInFlight.clear();
+        this.sendNextAcknowledgement();
+      }, ACK_RETRY_MS);
+      this.acknowledgementTimer.unref();
+    }
+  }
+
+  private finishReleasedReplies(): void {
+    if (this.acknowledgementTimer) clearTimeout(this.acknowledgementTimer);
+    this.acknowledgementTimer = undefined;
+    this.acknowledgementsInFlight.clear();
+    this.acknowledgements.clear();
+    // These replies already have an authoritative terminal response. Only the
+    // reuse of their transport reservation was waiting for an ACK.
+    for (const reply of this.releasedReplies.values()) reply();
+    this.releasedReplies.clear();
   }
 
   /** Detaches a restarting controller without closing the execution owner. */
   detachExecution(): void {
     this.detached = true;
+    this.finishReleasedReplies();
     this.closed = true;
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.child?.detach();
@@ -790,15 +831,17 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
         if (value.type === "ready") {
           if (value.version !== PROTOCOL_VERSION) { finish(new Error("EXECUTION_INCOMPATIBLE")); child.detach(); return; }
           if (this.generation && this.generation !== value.generation) {
+            this.finishReleasedReplies();
             for (const [id] of this.pending) this.takePending(id)?.reject(new Error("CODEX_WORKER_LOST: The original execution owner exited."));
           }
           this.generation = value.generation;
           this.lastHeartbeatAt = Date.now();
           this.capabilitiesValue = value.capabilities;
+          this.journal = value.journal;
           this.starting = false;
           if (child.pid !== undefined) this.options.onProcessSpawn?.(child.pid);
           finish();
-          this.acknowledgementInFlight = undefined;
+          this.acknowledgementsInFlight.clear();
           this.sendNextAcknowledgement();
           void this.replayControlState(child);
           return;
@@ -824,7 +867,10 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     for (const threadId of this.protectedThreads) {
       if (!await send({ type: "protect", generation: this.generation, threadId })) return;
     }
-    for (const pending of this.pending.values()) {
+    for (const [requestId, pending] of this.pending) {
+      // A terminal reply waiting only for release must never replay its work,
+      // even if the owner received the ACK but its confirmation was lost.
+      if (this.releasedReplies.has(requestId)) continue;
       if (!await send({ ...pending.message, generation: this.generation, afterSequence: pending.sequence })) return;
     }
   }
@@ -833,13 +879,21 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     if (message.type === "fatal" || message.type === "ready") return;
     if (message.generation !== this.generation) return;
     if (message.type === "acknowledged") {
+      if (message.journal) this.journal = message.journal;
       this.acknowledgements.delete(message.requestId);
-      if (this.acknowledgementInFlight === message.requestId) this.acknowledgementInFlight = undefined;
+      this.acknowledgementsInFlight.delete(message.requestId);
+      const reply = this.releasedReplies.get(message.requestId);
+      this.releasedReplies.delete(message.requestId);
+      reply?.();
+      if (!this.acknowledgements.size && this.acknowledgementTimer) {
+        clearTimeout(this.acknowledgementTimer); this.acknowledgementTimer = undefined;
+      }
       this.sendNextAcknowledgement();
       return;
     }
     if (message.type === "heartbeat") {
       this.lastHeartbeatAt = message.heartbeatAt;
+      if (message.journal) this.journal = message.journal;
       return;
     }
     if (message.type === "late-response") {
@@ -895,7 +949,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       return;
     }
     const pending = this.pending.get(message.requestId);
-    if (!pending) return;
+    if (!pending || this.releasedReplies.has(message.requestId)) return;
     const sequence = (message as ChildMessage & { sequence?: number }).sequence;
     if (sequence !== undefined && sequence <= pending.sequence) return;
     if (message.type === "progress") {
@@ -920,24 +974,26 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       if (sequence !== undefined) pending.sequence = sequence;
       return;
     }
-    const completed = this.takePending(message.requestId);
-    if (!completed) return;
-    if (!completed.retained) this.acknowledgeExecution(message.requestId);
+    const completed = pending;
     for (const threadId of completed.activeThreadIds) this.activeThreads.delete(threadId);
-    if (message.ok) {
-      if (message.capabilities) this.capabilitiesValue = message.capabilities;
-      this.observeResult(
-        completed.operation,
-        message.result,
-        completed.interactionId,
-        completed.subjectThreadId
-      );
-      completed.resolve(message.result);
-    } else {
-      completed.reject(new Error(
-        `${message.error?.code || "EXECUTION_REQUEST_FAILED"}: ` +
-        (message.error?.message || "Codex execution request failed.")
-      ));
+    const deliver = () => {
+      this.takePending(message.requestId);
+      if (message.ok) {
+        if (message.capabilities) this.capabilitiesValue = message.capabilities;
+        this.observeResult(completed.operation, message.result, completed.interactionId, completed.subjectThreadId);
+        completed.resolve(message.result);
+      } else {
+        completed.reject(new Error(`${message.error?.code || "EXECUTION_REQUEST_FAILED"}: ` +
+          (message.error?.message || "Codex execution request failed.")));
+      }
+    };
+    if (completed.retained) deliver();
+    else {
+      // Keep a bounded caller from issuing its next read while the previous
+      // reply still consumes a journal slot. Durable Jobs instead ACK after DB commit.
+      // Keep its parent request/byte reservation until release as well.
+      this.releasedReplies.set(message.requestId, deliver);
+      this.acknowledgeExecution(message.requestId);
     }
   }
 
@@ -988,6 +1044,8 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     child.detach();
     this.child = undefined;
     this.generation = undefined;
+    this.journal = undefined;
+    this.finishReleasedReplies();
     this.lastHeartbeatAt = undefined;
     this.starting = false;
     this.activeThreads.clear();
@@ -1065,6 +1123,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   private async closeInternal(): Promise<void> {
     if (this.detached) return;
     this.closed = true;
+    this.finishReleasedReplies();
     if (this.restartTimer) clearTimeout(this.restartTimer);
     if (this.workerCleanupTimer) clearTimeout(this.workerCleanupTimer);
     for (const [requestId] of this.pending) {
@@ -1181,7 +1240,7 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
   const observerTimer = setInterval(() => { void observe(); }, WORKER_TREE_OBSERVATION_MS);
   observerTimer.unref();
   const heartbeat = setInterval(() => send({ type: "heartbeat", generation,
-    heartbeatAt: Date.now(), inFlight: active.size }), HEARTBEAT_MS);
+    heartbeatAt: Date.now(), inFlight: active.size, journal: journal.status() }), HEARTBEAT_MS);
   heartbeat.unref();
   let closeServer: (() => Promise<void>) | undefined;
   const close = async () => {
@@ -1199,7 +1258,7 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
     connected(link, controllerId) {
       // ready precedes any receipt replay.
       link({ type: "ready", protocol: PROTOCOL, version: PROTOCOL_VERSION,
-        generation, heartbeatAt: Date.now(), capabilities: pool.capabilities() });
+        generation, heartbeatAt: Date.now(), capabilities: pool.capabilities(), journal: journal.status() });
       journal.connect(link, controllerId);
       try { persistTrees(true); } catch { /* observation is advisory */ }
     },
@@ -1216,7 +1275,7 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
       }
       if (value.type === "acknowledge" && typeof value.requestId === "string") {
         journal.acknowledge(value.requestId);
-        send({ type: "acknowledged", generation, requestId: value.requestId });
+        send({ type: "acknowledged", generation, requestId: value.requestId, journal: journal.status() });
         return;
       }
       if (!isParentMessage(value)) return;
@@ -1500,6 +1559,7 @@ function isParentMessage(value: unknown): value is ParentMessage {
 
 function isChildMessage(value: unknown): value is ChildMessage {
   if (!isRecord(value)) return false;
+  if (value.journal !== undefined && !isJournalStatus(value.journal)) return false;
   if (value.type === "fatal") return typeof value.message === "string";
   if (value.type === "ready") {
     return value.protocol === PROTOCOL && Number.isSafeInteger(value.version) &&
@@ -1556,6 +1616,17 @@ function isChildMessage(value: unknown): value is ChildMessage {
   }
   if (!["progress", "assignment", "response", "acknowledged"].includes(String(value.type))) return false;
   return typeof value.generation === "string" && typeof value.requestId === "string";
+}
+
+function isJournalStatus(value: unknown): value is ExecutionJournalStatus {
+  if (!isRecord(value) || !Number.isSafeInteger(value.observedAt) || !isRecord(value.lanes)) return false;
+  return ["execution", "inspection", "metadata", "control"].every(lane => {
+    const state = value.lanes[lane];
+    return isRecord(state) && ["capacity", "used", "active", "awaitingAcknowledgement",
+      "awaitingCommitAcknowledgement", "oldestAcknowledgementMs"].every(key => Number.isSafeInteger(state[key]) && state[key] >= 0) &&
+      state.capacity > 0 && state.used <= state.capacity && state.active + state.awaitingAcknowledgement === state.used &&
+      state.awaitingCommitAcknowledgement <= state.awaitingAcknowledgement;
+  });
 }
 
 function isProcessObservationFailure(value: unknown): value is ProcessObservationFailure {
