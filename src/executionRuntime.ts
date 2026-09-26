@@ -11,6 +11,7 @@ import { codexProcessEnvironment } from "../scripts/runtime-env.mjs";
 import {
   ChildProcessCodexExecutionService,
   type CodexExecutionServiceHealth,
+  type ExecutorExitReason,
   type WorkerObservationIncident
 } from "./executionServiceProcess.js";
 
@@ -19,6 +20,7 @@ export type ExecutionRuntimeIsolationOptions = {
   /** Test/diagnostic hook; never exposed through public status payloads. */
   onExecutionProcessSpawn?: (processId: number) => void;
   onExecutionObservationIncident?: (incident: WorkerObservationIncident) => void;
+  onExecutionExitIntent?: (reason: ExecutorExitReason) => void;
 };
 
 export function createExecutionRuntime(
@@ -68,7 +70,8 @@ export function createExecutionRuntime(
           protocolOptions: options,
           onLateResponse: options.onLateResponse,
           onProcessSpawn: isolation.onExecutionProcessSpawn,
-          onObservationIncident: isolation.onExecutionObservationIncident
+          onObservationIncident: isolation.onExecutionObservationIncident,
+          onExitIntent: isolation.onExecutionExitIntent
         });
         return executionService;
       } finally {

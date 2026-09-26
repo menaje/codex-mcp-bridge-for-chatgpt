@@ -4,7 +4,10 @@ import type { JsonRpcProcessIdentity } from "./jsonRpcProcess.js";
 import { decodeUtf8Strict } from "./textIntegrity.js";
 
 const PROCESS_TABLE_MAX_BYTES = 4 * 1024 * 1024;
-const PROCESS_TABLE_TIMEOUT_MS = 1_000;
+// /bin/ps is normally quick, but the installed runtime has observed genuine
+// 1.1-1.2 second probes under concurrent Codex work. Keep a finite bound while
+// allowing a transient scheduler/process-table delay to settle.
+const PROCESS_TABLE_TIMEOUT_MS = 3_000;
 const PROCESS_TABLE_LATE_TIMER_TOLERANCE_MS = 250;
 const PROCESS_TABLE_RESUME_GRACE_MS = 5_000;
 const PROCESS_TABLE_SETTLE_MS = 100;

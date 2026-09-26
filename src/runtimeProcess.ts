@@ -1159,6 +1159,12 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
           generation,
           processId
         }),
+        onExecutionExitIntent: reason => {
+          telemetry?.recordDiagnosticEvent({
+            severity: "error", component: "execution",
+            code: `executor-exit-intent.${reason}`
+          });
+        },
         onExecutionObservationIncident: incident => {
           const failure = incident.failure;
           const base = `worker-observation.${incident.side}.${incident.phase}.${failure.kind}`;

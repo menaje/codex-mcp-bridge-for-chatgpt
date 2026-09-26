@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Keep active Codex Jobs running through transient process observation outages, fence new admissions until verified recovery, and report executor exit causes.",
+  "breaking": false,
+  "migration": null
+}

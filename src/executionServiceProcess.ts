@@ -41,7 +41,7 @@ import {
 
 const CHILD_FLAG = "--codex-execution-child";
 const PROTOCOL = "bridge-codex-execution" as const;
-const PROTOCOL_VERSION = 4 as const;
+const PROTOCOL_VERSION = 5 as const;
 const HEARTBEAT_MS = 250;
 const HEARTBEAT_STALE_MS = 2_000;
 const STALE_RESTART_MS = 10_000;
@@ -49,8 +49,6 @@ const WATCHDOG_INTERVAL_MS = 1_000;
 const WATCHDOG_PAUSE_THRESHOLD_MS = 3_000;
 const STARTUP_TIMEOUT_MS = 20_000;
 const FORCE_CLOSE_MS = 5_000;
-const WORKER_REGISTRATION_TIMEOUT_MS = 5_000;
-const WORKER_CLEANUP_TIMEOUT_MS = 10_000;
 const WORKER_TREE_OBSERVATION_MS = 250;
 const WORKER_OBSERVATION_RETRY_DELAY_MS = 100;
 const ORPHAN_CLEANUP_GRACE_MS = 1_500;
@@ -272,9 +270,23 @@ type WorkerObservedMessage = {
 
 export type WorkerObservationIncident = {
   side: "parent" | "child";
-  phase: "refresh" | "registration";
+  phase: "refresh" | "registration" | "cleanup";
   state: "degraded" | "recovered" | "failed";
   failure: ProcessObservationFailure;
+};
+
+export type ExecutorExitReason =
+  | "worker-observation-failed"
+  | "worker-cleanup-unconfirmed"
+  | "ipc-send-failed"
+  | "ipc-serialization-failed"
+  | "ipc-message-too-large"
+  | "ipc-capacity-exceeded";
+
+type ExecutorExitIntentMessage = {
+  type: "executor-exit-intent";
+  generation: string;
+  reason: ExecutorExitReason;
 };
 
 type WorkerObservationStatusMessage = {
@@ -295,6 +307,7 @@ type ChildMessage =
   | WorkerStartedMessage
   | WorkerObservedMessage
   | WorkerObservationStatusMessage
+  | ExecutorExitIntentMessage
   | WorkerCleanupStartedMessage
   | WorkerExitedMessage
   | FatalMessage;
@@ -339,6 +352,7 @@ export type ChildProcessCodexExecutionServiceOptions = {
   /** Test/diagnostic hook. Process identity is never exposed over MCP. */
   onProcessSpawn?: (processId: number) => void;
   onObservationIncident?: (incident: WorkerObservationIncident) => void;
+  onExitIntent?: (reason: ExecutorExitReason) => void;
   /** Test-only override for deterministic ordinary/control saturation coverage. */
   requestLimits?: Partial<CodexExecutionRequestLimits>;
 };
@@ -376,9 +390,12 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   private workerCleanupPromise: Promise<boolean> = Promise.resolve(true);
   private workerObservationInFlight = false;
   private parentObservationFenced = false;
+  private parentRefreshFailureReported = false;
   private childObservationFenced = false;
-  private firstObservationFailure?: WorkerObservationIncident;
+  private readonly activeObservationFailures = new Map<string, WorkerObservationIncident>();
+  private childExitIntent?: ExecutorExitReason;
   private readonly supervisionKillReasons = new WeakMap<ChildProcess, string>();
+  private readonly workerRegistrationsInFlight = new Set<string>();
   private readonly workerCleanupsInFlight = new Set<string>();
   private stderr = "";
   private readonly requestLimits: CodexExecutionRequestLimits;
@@ -552,7 +569,8 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       : Math.max(0, now - this.lastHeartbeatAt);
     const status = !connected
       ? this.starting ? "starting" : "recovering"
-      : this.workerCleanupsInFlight.size > 0 ||
+      : this.workerRegistrationsInFlight.size > 0 ||
+          this.workerCleanupsInFlight.size > 0 ||
           this.parentObservationFenced || this.childObservationFenced
         ? "recovering"
         : heartbeatAgeMs === undefined || heartbeatAgeMs > HEARTBEAT_STALE_MS
@@ -611,9 +629,14 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     const generation = this.generation;
     const health = this.health();
     const control = CONTROL_EXECUTION_OPERATIONS.has(operation);
+    const controlDuringObservation = control && health.status === "recovering" &&
+      health.heartbeatAgeMs !== undefined &&
+      health.heartbeatAgeMs <= HEARTBEAT_STALE_MS &&
+      (this.parentObservationFenced || this.childObservationFenced ||
+        this.workerRegistrationsInFlight.size > 0 || this.workerCleanupsInFlight.size > 0);
     if (
       this.closed || !child?.connected || !generation ||
-      !["ready", "capacity"].includes(health.status)
+      (!["ready", "capacity"].includes(health.status) && !controlDuringObservation)
     ) {
       return Promise.reject(new Error(
         "EXECUTION_UNAVAILABLE: The isolated Codex execution service is not ready."
@@ -744,8 +767,11 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     this.lastHeartbeatAt = undefined;
     this.stderr = "";
     this.parentObservationFenced = false;
+    this.parentRefreshFailureReported = false;
     this.childObservationFenced = false;
-    this.firstObservationFailure = undefined;
+    this.activeObservationFailures.clear();
+    this.childExitIntent = undefined;
+    this.workerRegistrationsInFlight.clear();
     if (child.pid !== undefined) this.options.onProcessSpawn?.(child.pid);
     child.stderr?.on("data", chunk => {
       const value = String(chunk);
@@ -802,11 +828,14 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       });
       child.once("exit", (code, signal) => {
         const supervisionReason = this.supervisionKillReasons.get(child);
+        const unresolvedObservation = this.activeObservationFailures.values().next().value;
         const error = new Error(
           `EXECUTION_PROCESS_EXITED: code=${code}, signal=${signal}.` +
           (supervisionReason ? ` supervisor=${supervisionReason}.` : "") +
-          (this.firstObservationFailure
-            ? ` first_observation=${formatObservationIncident(this.firstObservationFailure)}.`
+          (this.childExitIntent ? ` exit_intent=${this.childExitIntent}.` :
+            !this.closed && (code !== 0 || signal !== null) ? " exit_intent=unconfirmed." : "") +
+          (unresolvedObservation
+            ? ` first_observation=${formatObservationIncident(unresolvedObservation)}.`
             : "") +
           (this.stderr ? ` ${this.stderr}` : "")
         );
@@ -829,8 +858,14 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     }
     if (message.type === "worker-observation-status") {
       const incident = message.incident;
-      this.childObservationFenced = incident.state !== "recovered";
       this.recordObservationIncident(incident);
+      this.childObservationFenced = [...this.activeObservationFailures.keys()]
+        .some(key => key.startsWith("child."));
+      return;
+    }
+    if (message.type === "executor-exit-intent") {
+      this.childExitIntent = message.reason;
+      try { this.options.onExitIntent?.(message.reason); } catch { /* Diagnostics are best effort. */ }
       return;
     }
     if (message.type === "worker-started") {
@@ -965,7 +1000,9 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     this.interactionInputs.clear();
     this.resumableThreads.clear();
     this.workerCleanupsInFlight.clear();
+    this.workerRegistrationsInFlight.clear();
     this.parentObservationFenced = false;
+    this.parentRefreshFailureReported = false;
     this.childObservationFenced = false;
     for (const [requestId] of this.pending) {
       const pending = this.takePending(requestId);
@@ -984,19 +1021,42 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     const child = this.child;
     const generation = this.generation;
     if (!child?.connected || !generation) return;
+    let firstFailure: ProcessObservationFailure | undefined;
     try {
-      await this.workerProcesses.register(message.identity);
-    } catch (error) {
-      this.recordObservationIncident({
-        side: "parent", phase: "registration", state: "failed",
-        failure: processObservationFailure(error)
-      });
-      // A worker that cannot be independently observed is never admitted. The
-      // executor exit path retains the root identity and performs cleanup.
-      if (this.child === child && this.generation === generation) {
-        this.killForSupervision(child, "worker-registration-failed");
+      while (this.child === child && this.generation === generation && child.connected) {
+        try {
+          await this.workerProcesses.register(message.identity);
+          if (firstFailure && this.child === child) {
+            this.recordObservationIncident({
+              side: "parent", phase: "registration", state: "recovered",
+              failure: firstFailure
+            });
+          }
+          break;
+        } catch (error) {
+          const failure = processObservationFailure(error);
+          if (retriableObservationFailure(failure)) {
+            if (!firstFailure) {
+              firstFailure = failure;
+              this.workerRegistrationsInFlight.add(message.registrationId);
+              this.recordObservationIncident({
+                side: "parent", phase: "registration", state: "degraded", failure
+              });
+            }
+            await new Promise(resolve => setTimeout(resolve, WORKER_OBSERVATION_RETRY_DELAY_MS));
+            continue;
+          }
+          this.recordObservationIncident({
+            side: "parent", phase: "registration", state: "failed",
+            failure
+          });
+          // An invalid or vanished root cannot be admitted or safely ignored.
+          if (this.child === child) this.killForSupervision(child, "worker-registration-failed");
+          return;
+        }
       }
-      return;
+    } finally {
+      this.workerRegistrationsInFlight.delete(message.registrationId);
     }
     if (this.child !== child || this.generation !== generation || !child.connected) return;
     child.send({
@@ -1011,11 +1071,36 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     const generation = this.generation;
     if (!child?.connected || !generation) return;
     let ok = false;
+    let firstFailure: ProcessObservationFailure | undefined;
     this.workerCleanupsInFlight.add(message.cleanupId);
-    try {
-      ok = await this.workerProcesses.release(message.identity, ORPHAN_CLEANUP_GRACE_MS);
-    } catch {
-      ok = false;
+    while (this.child === child && this.generation === generation && child.connected) {
+      try {
+        ok = await this.workerProcesses.release(message.identity, ORPHAN_CLEANUP_GRACE_MS);
+        if (ok && firstFailure) this.recordObservationIncident({
+          side: "parent", phase: "cleanup", state: "recovered", failure: firstFailure
+        });
+        if (!ok) this.recordObservationIncident({
+          side: "parent", phase: "cleanup", state: "failed",
+          failure: processObservationFailure(undefined)
+        });
+        break;
+      } catch (error) {
+        const failure = processObservationFailure(error);
+        if (retriableObservationFailure(failure)) {
+          if (!firstFailure) {
+            firstFailure = failure;
+            this.recordObservationIncident({
+              side: "parent", phase: "cleanup", state: "degraded", failure
+            });
+          }
+          await new Promise(resolve => setTimeout(resolve, WORKER_OBSERVATION_RETRY_DELAY_MS));
+          continue;
+        }
+        this.recordObservationIncident({
+          side: "parent", phase: "cleanup", state: "failed", failure
+        });
+        break;
+      }
     }
     if (ok) this.workerCleanupsInFlight.delete(message.cleanupId);
     if (this.child !== child || this.generation !== generation || !child.connected) return;
@@ -1028,44 +1113,75 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   }
 
   private observeWorkerProcesses(): void {
-    if (this.workerObservationInFlight || this.workerProcesses.size === 0) return;
+    if (this.workerObservationInFlight) return;
+    if (this.workerProcesses.size === 0) {
+      const failure = this.activeObservationFailures.get("parent.refresh")?.failure;
+      this.parentObservationFenced = false;
+      this.parentRefreshFailureReported = false;
+      if (failure) this.recordObservationIncident({
+        side: "parent", phase: "refresh", state: "recovered", failure
+      });
+      return;
+    }
     const child = this.child;
     this.workerObservationInFlight = true;
     void this.workerProcesses.refresh()
+      .then(() => {
+        if (this.child !== child || !this.parentObservationFenced) return;
+        const failure = this.activeObservationFailures.get("parent.refresh")?.failure;
+        this.parentObservationFenced = false;
+        this.parentRefreshFailureReported = false;
+        if (failure) this.recordObservationIncident({
+          side: "parent", phase: "refresh", state: "recovered", failure
+        });
+      })
       .catch(async error => {
         if (this.workerProcesses.size === 0 || this.child !== child || !child) return;
+        const wasFenced = this.parentObservationFenced;
         this.parentObservationFenced = true;
         const failure = processObservationFailure(error);
-        this.recordObservationIncident({
+        if (!wasFenced || !retriableObservationFailure(failure)) {
+          this.recordObservationIncident({
           side: "parent", phase: "refresh",
           state: retriableObservationFailure(failure) ? "degraded" : "failed", failure
-        });
+          });
+        }
         if (!retriableObservationFailure(failure)) {
           this.killForSupervision(child, "worker-observation-failed");
           return;
         }
-        // Existing turns continue while ordinary admission is fenced. A second
-        // independent observation must succeed before admission resumes.
+        // A slow /bin/ps probe is not evidence that an active worker is unsafe.
+        // Keep admission fenced and let the next independent probe recover it.
         await new Promise(resolve => setTimeout(resolve, WORKER_OBSERVATION_RETRY_DELAY_MS));
         if (this.child !== child) return;
         if (this.workerProcesses.size === 0) {
           this.parentObservationFenced = false;
+          this.parentRefreshFailureReported = false;
+          this.recordObservationIncident({
+            side: "parent", phase: "refresh", state: "recovered", failure
+          });
           return;
         }
         try {
           await this.workerProcesses.refresh();
           if (this.child === child) {
             this.parentObservationFenced = false;
+            this.parentRefreshFailureReported = false;
             this.recordObservationIncident({
               side: "parent", phase: "refresh", state: "recovered", failure
             });
           }
         } catch (retryError) {
-          if (this.child === child) {
+          const retryFailure = processObservationFailure(retryError);
+          if (this.child === child &&
+              (!this.parentRefreshFailureReported || !retriableObservationFailure(retryFailure))) {
+            this.parentRefreshFailureReported = true;
             this.recordObservationIncident({
               side: "parent", phase: "refresh", state: "failed",
-              failure: processObservationFailure(retryError)
+              failure: retryFailure
             });
+          }
+          if (this.child === child && !retriableObservationFailure(retryFailure)) {
             this.killForSupervision(child, "worker-observation-failed");
           }
         }
@@ -1074,8 +1190,13 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   }
 
   private recordObservationIncident(incident: WorkerObservationIncident): void {
-    if (incident.state === "degraded" || incident.state === "failed") {
-      this.firstObservationFailure ??= incident;
+    const key = `${incident.side}.${incident.phase}`;
+    if (incident.state === "recovered") {
+      this.activeObservationFailures.delete(key);
+    } else {
+      if (!this.activeObservationFailures.has(key)) {
+        this.activeObservationFailures.set(key, incident);
+      }
     }
     try { this.options.onObservationIncident?.(incident); } catch { /* Diagnostics are best effort. */ }
   }
@@ -1209,20 +1330,36 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
   const workerRegistrations = new Map<string, {
     resolve: () => void;
     reject: (error: Error) => void;
-    timer: NodeJS.Timeout;
   }>();
   const workerCleanups = new Map<string, {
     resolve: () => void;
     reject: (error: Error) => void;
-    timer: NodeJS.Timeout;
   }>();
-  const outbound = createExecutionChildSender();
+  const reportExitIntent = (reason: ExecutorExitReason): Promise<void> =>
+    new Promise(resolve => {
+      if (!process.connected || !process.send) { resolve(); return; }
+      const timer = setTimeout(resolve, 250);
+      timer.unref();
+      try {
+        process.send({ type: "executor-exit-intent", generation, reason }, () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      } catch {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+  const outbound = createExecutionChildSender(reportExitIntent);
   const send = outbound.send;
   const workerObserver = new SupervisedProcessTreeRegistry();
   const lastWorkerObservations = new Map<string, string>();
   let periodicObservationInFlight = false;
   let observationRefreshInFlight: Promise<void> | undefined;
-  let observationDegraded = false;
+  const observationFences = new Set<"refresh">();
+  const registrationFences = new Map<string, ProcessObservationFailure>();
+  let refreshFailure: ProcessObservationFailure | undefined;
+  let refreshFailureReported = false;
   let observationExitScheduled = false;
   const reportObservation = (
     phase: WorkerObservationIncident["phase"],
@@ -1235,7 +1372,10 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
   const exitAfterObservationFailure = () => {
     if (closing || observationExitScheduled) return;
     observationExitScheduled = true;
-    void outbound.drain(250).finally(() => process.exit(1));
+    void Promise.all([
+      outbound.drain(250),
+      reportExitIntent("worker-observation-failed")
+    ]).finally(() => process.exit(1));
   };
   const sendWorkerObservation = () => {
     const trees = workerObserver.snapshots()
@@ -1263,13 +1403,24 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
       try {
         await workerObserver.refresh();
         sendWorkerObservation();
+        if (observationFences.delete("refresh") && refreshFailure) {
+          reportObservation("refresh", "recovered", refreshFailure);
+        }
+        refreshFailure = undefined;
+        refreshFailureReported = false;
       } catch (error) {
-        observationDegraded = true;
         const firstFailure = processObservationFailure(error);
-        reportObservation("refresh",
-          retriableObservationFailure(firstFailure) ? "degraded" : "failed",
-          firstFailure);
+        if (!observationFences.has("refresh")) {
+          observationFences.add("refresh");
+          refreshFailure = firstFailure;
+          reportObservation("refresh",
+            retriableObservationFailure(firstFailure) ? "degraded" : "failed",
+            firstFailure);
+        }
         if (!retriableObservationFailure(firstFailure)) {
+          if (observationFences.has("refresh") && refreshFailure !== firstFailure) {
+            reportObservation("refresh", "failed", firstFailure);
+          }
           exitAfterObservationFailure();
           throw error;
         }
@@ -1277,12 +1428,23 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
         try {
           await workerObserver.refresh();
           sendWorkerObservation();
-          observationDegraded = false;
-          reportObservation("refresh", "recovered", firstFailure);
+          observationFences.delete("refresh");
+          reportObservation("refresh", "recovered", refreshFailure || firstFailure);
+          refreshFailure = undefined;
+          refreshFailureReported = false;
         } catch (retryError) {
-          reportObservation("refresh", "failed", processObservationFailure(retryError));
-          exitAfterObservationFailure();
-          throw retryError;
+          const retryFailure = processObservationFailure(retryError);
+          if (!refreshFailureReported || !retriableObservationFailure(retryFailure)) {
+            refreshFailureReported = true;
+            reportObservation("refresh", "failed", retryFailure);
+          }
+          if (!retriableObservationFailure(retryFailure)) {
+            exitAfterObservationFailure();
+            throw retryError;
+          }
+          // The parent maintains an independent tree ledger. Keep active turns
+          // running while both sides keep admission fenced until observation
+          // recovers; a probe deadline alone cannot establish worker loss.
         }
       }
     })();
@@ -1302,34 +1464,57 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
         response
       }),
       onWorkerProcessStarted: async identity => {
-        try {
-          await workerObserver.register(identity);
-        } catch (error) {
-          observationDegraded = true;
-          const failure = processObservationFailure(error);
-          reportObservation("registration", "failed", failure);
-          const cleaned = await workerObserver.cleanupAll(ORPHAN_CLEANUP_GRACE_MS)
-            .catch(() => false);
-          if (cleaned) {
-            observationDegraded = false;
-            reportObservation("registration", "recovered", failure);
+        const key = supervisedProcessKey(identity);
+        while (!closing && process.connected) {
+          try {
+            await workerObserver.register(identity);
+            const failure = registrationFences.get(key);
+            registrationFences.delete(key);
+            if (failure && registrationFences.size === 0) {
+              reportObservation("registration", "recovered", failure);
+            }
+            break;
+          } catch (error) {
+            const failure = processObservationFailure(error);
+            if (retriableObservationFailure(failure)) {
+              if (!registrationFences.has(key)) {
+                const firstFailure = registrationFences.size === 0;
+                registrationFences.set(key, failure);
+                if (firstFailure) {
+                  reportObservation("registration", "degraded", failure);
+                }
+              }
+              await new Promise(resolve => setTimeout(resolve, WORKER_OBSERVATION_RETRY_DELAY_MS));
+              continue;
+            }
+            registrationFences.set(key, failure);
+            reportObservation("registration", "failed", failure);
+            let cleaned = false;
+            while (!closing && process.connected) {
+              try {
+                cleaned = await workerObserver.release(identity, ORPHAN_CLEANUP_GRACE_MS);
+                break;
+              } catch (releaseError) {
+                const cleanupFailure = processObservationFailure(releaseError);
+                if (!retriableObservationFailure(cleanupFailure)) break;
+                await new Promise(resolve => setTimeout(resolve, WORKER_OBSERVATION_RETRY_DELAY_MS));
+              }
+            }
+            if (cleaned) {
+              registrationFences.delete(key);
+              if (registrationFences.size === 0) {
+                reportObservation("registration", "recovered", failure);
+              }
+            } else {
+              exitAfterObservationFailure();
+            }
+            throw error;
           }
-          throw error;
         }
+        if (closing || !process.connected) throw new Error("EXECUTION_CLOSED");
         await new Promise<void>((resolve, reject) => {
           const registrationId = randomUUID();
-          const registrationTimer = setTimeout(() => {
-            workerRegistrations.delete(registrationId);
-            reject(new Error(
-              "EXECUTION_WORKER_REGISTRATION_TIMEOUT: The state owner did not acknowledge the worker."
-            ));
-          }, WORKER_REGISTRATION_TIMEOUT_MS);
-          registrationTimer.unref();
-          workerRegistrations.set(registrationId, {
-            resolve,
-            reject,
-            timer: registrationTimer
-          });
+          workerRegistrations.set(registrationId, { resolve, reject });
           send({
             type: "worker-started",
             generation,
@@ -1360,13 +1545,9 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
           return;
         }
         const cleanup = new Promise<void>((resolve, reject) => {
-          const cleanupTimer = setTimeout(() => {
-            workerCleanups.delete(cleanupId);
-            reject(new Error(
-              "EXECUTION_WORKER_CLEANUP_TIMEOUT: The state owner did not confirm worker cleanup."
-            ));
-          }, WORKER_CLEANUP_TIMEOUT_MS);
-          workerCleanups.set(cleanupId, { resolve, reject, timer: cleanupTimer });
+          // The parent keeps admission fenced until it can verify cleanup.
+          // Elapsed time alone must not turn this into a worker-loss event.
+          workerCleanups.set(cleanupId, { resolve, reject });
           send({
             type: "worker-exited",
             generation,
@@ -1375,10 +1556,16 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
           });
         });
         void cleanup.catch(() => {
-          if (!closing) setImmediate(() => process.exit(1));
+          if (!closing) {
+            void reportExitIntent("worker-cleanup-unconfirmed")
+              .finally(() => process.exit(1));
+          }
         });
         await cleanup;
         workerObserver.forget(identity);
+        if (workerObserver.size === 0 && observationFences.has("refresh")) {
+          await refreshWorkerObservation();
+        }
       }
     }
   );
@@ -1407,21 +1594,18 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
       resolve(false);
     }
     releaseChecks.clear();
-    for (const { reject, timer: registrationTimer } of workerRegistrations.values()) {
-      clearTimeout(registrationTimer);
+    for (const { reject } of workerRegistrations.values()) {
       reject(new Error("EXECUTION_CLOSED: Worker registration was interrupted."));
     }
     workerRegistrations.clear();
     if (!process.connected) {
-      for (const { reject, timer: cleanupTimer } of workerCleanups.values()) {
-        clearTimeout(cleanupTimer);
+      for (const { reject } of workerCleanups.values()) {
         reject(new Error("EXECUTION_CLOSED: The state-owner connection was lost."));
       }
       workerCleanups.clear();
     }
     await pool.close().catch(() => undefined);
-    for (const { reject, timer: cleanupTimer } of workerCleanups.values()) {
-      clearTimeout(cleanupTimer);
+    for (const { reject } of workerCleanups.values()) {
       reject(new Error("EXECUTION_CLOSED: Worker cleanup confirmation was interrupted."));
     }
     workerCleanups.clear();
@@ -1450,7 +1634,6 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
         const pending = workerRegistrations.get(value.registrationId);
         if (!pending) return;
         workerRegistrations.delete(value.registrationId);
-        clearTimeout(pending.timer);
         pending.resolve();
         return;
       }
@@ -1458,7 +1641,6 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
         const pending = workerCleanups.get(value.cleanupId);
         if (!pending) return;
         workerCleanups.delete(value.cleanupId);
-        clearTimeout(pending.timer);
         if (value.ok) pending.resolve();
         else pending.reject(new Error(
           "EXECUTION_ORPHAN_CLEANUP_FAILED: The state owner could not clean the worker tree."
@@ -1478,7 +1660,8 @@ async function runChild(configuration: ChildConfiguration): Promise<void> {
         pool.protectThreadFromImplicitResume(value.threadId);
         return;
       }
-      if (observationDegraded) {
+      if ((observationFences.size > 0 || registrationFences.size > 0) &&
+          !CONTROL_EXECUTION_OPERATIONS.has(value.operation)) {
         send({
           type: "response", generation, requestId: value.requestId, ok: false,
           error: {
@@ -1541,7 +1724,9 @@ type OutboundEntry = {
  * buffer. Semantic milestones and results retain order in the critical lane;
  * ordinary updated progress is latest-value coalesced per execution request.
  */
-function createExecutionChildSender(): {
+function createExecutionChildSender(
+  reportExitIntent: (reason: ExecutorExitReason) => Promise<void>
+): {
   send(message: ChildMessage): void;
   drain(timeoutMs: number): Promise<void>;
 } {
@@ -1553,10 +1738,10 @@ function createExecutionChildSender(): {
   let inFlight = false;
   let failedClosed = false;
 
-  const failClosed = () => {
+  const failClosed = (reason: ExecutorExitReason) => {
     if (failedClosed) return;
     failedClosed = true;
-    setImmediate(() => process.exit(1));
+    void reportExitIntent(reason).finally(() => process.exit(1));
   };
   const removeProgress = (key: string) => {
     const previous = progress.get(key);
@@ -1589,14 +1774,14 @@ function createExecutionChildSender(): {
       process.send(entry.message, error => {
         inFlight = false;
         if (error && process.connected) {
-          failClosed();
+          failClosed("ipc-send-failed");
           return;
         }
         pump();
       });
     } catch {
       inFlight = false;
-      if (process.connected) failClosed();
+      if (process.connected) failClosed("ipc-send-failed");
     }
   };
   const send = (message: ChildMessage) => {
@@ -1605,11 +1790,13 @@ function createExecutionChildSender(): {
     try {
       bytes = Buffer.byteLength(JSON.stringify(message), "utf8");
     } catch {
-      failClosed();
+      failClosed("ipc-serialization-failed");
       return;
     }
     if (bytes > MAX_OUTBOUND_MESSAGE_BYTES) {
-      if (message.type !== "progress" || isCriticalExecutionProgress(message)) failClosed();
+      if (message.type !== "progress" || isCriticalExecutionProgress(message)) {
+        failClosed("ipc-message-too-large");
+      }
       return;
     }
     const entry = { message, bytes };
@@ -1636,7 +1823,7 @@ function createExecutionChildSender(): {
         critical.length > MAX_OUTBOUND_CRITICAL_MESSAGES ||
         criticalBytes > MAX_OUTBOUND_CRITICAL_BYTES
       ) {
-        failClosed();
+        failClosed("ipc-capacity-exceeded");
         return;
       }
     }
@@ -1961,9 +2148,15 @@ function isChildMessage(value: unknown): value is ChildMessage {
     const failure = isRecord(incident) ? incident.failure : undefined;
     return typeof value.generation === "string" &&
       isRecord(incident) && incident.side === "child" &&
-      ["refresh", "registration"].includes(incident.phase) &&
+      ["refresh", "registration", "cleanup"].includes(incident.phase) &&
       ["degraded", "recovered", "failed"].includes(incident.state) &&
       isProcessObservationFailure(failure);
+  }
+  if (value.type === "executor-exit-intent") {
+    return typeof value.generation === "string" &&
+      ["worker-observation-failed", "worker-cleanup-unconfirmed",
+        "ipc-send-failed", "ipc-serialization-failed",
+        "ipc-message-too-large", "ipc-capacity-exceeded"].includes(value.reason);
   }
   if (value.type === "worker-cleanup-started") {
     return typeof value.generation === "string" &&
