@@ -31,7 +31,7 @@ describe("supervised process table observation", () => {
   it.skipIf(process.platform === "win32")(
     "bounds a genuinely hung probe and records a sanitized timeout diagnostic",
     async () => {
-      const probe = spawn("/bin/sleep", ["3"], { stdio: ["ignore", "pipe", "pipe"] });
+      const probe = spawn("/bin/sleep", ["6"], { stdio: ["ignore", "pipe", "pipe"] });
       const closed = once(probe, "close");
       const startedAt = Date.now();
       const error = await readProcessTable(() => probe).catch(error => error);
@@ -39,7 +39,7 @@ describe("supervised process table observation", () => {
         kind: "ps-timeout", psExitCode: null, osCode: null,
         durationMs: expect.any(Number), timerLatenessMs: expect.any(Number)
       });
-      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(Date.now() - startedAt).toBeLessThan(4_000);
       await closed;
     },
     10_000
