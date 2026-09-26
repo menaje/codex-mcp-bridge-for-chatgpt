@@ -1158,7 +1158,33 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
           type: "execution-process",
           generation,
           processId
-        })
+        }),
+        onExecutionObservationIncident: incident => {
+          const failure = incident.failure;
+          const base = `worker-observation.${incident.side}.${incident.phase}.${failure.kind}`;
+          telemetry?.recordDiagnosticEvent({
+            severity: incident.state === "failed" ? "error" :
+              incident.state === "degraded" ? "warning" : "info",
+            component: "execution",
+            code: `${base}.${incident.state}`
+          });
+          if (failure.psExitCode !== null) telemetry?.recordDiagnosticEvent({
+            severity: "warning", component: "execution",
+            code: `worker-observation.ps-exit.${failure.psExitCode}`
+          });
+          if (failure.osCode !== null) telemetry?.recordDiagnosticEvent({
+            severity: "warning", component: "execution",
+            code: `worker-observation.os-code.${failure.osCode.toLowerCase()}`
+          });
+          telemetry?.recordRuntimeMeasurement({
+            component: "execution", metric: `${base}.duration`,
+            durationMs: failure.durationMs
+          });
+          telemetry?.recordRuntimeMeasurement({
+            component: "execution", metric: `${base}.timer-lateness`,
+            durationMs: failure.timerLatenessMs
+          });
+        }
       }
     );
     const canAcceptExecution = () => {

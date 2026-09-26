@@ -1,15 +1,19 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ChildProcessCodexExecutionService,
-  type CodexExecutionRequestLimits
+  type CodexExecutionRequestLimits,
+  type WorkerObservationIncident
 } from "../src/executionServiceProcess.js";
 import type { CodexPendingInteraction, UpstreamWorkerAssignment } from "../src/upstream.js";
+import { readProcessTable } from "../src/processTreeSupervisor.js";
 
 const fixture = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -399,6 +403,155 @@ describe("isolated Codex execution process", () => {
     }
   }, 20_000);
 
+  it("keeps two in-flight Jobs across a 1.1 second synchronous SQLite pause", async () => {
+    const service = await createService();
+    const assignments: UpstreamWorkerAssignment[] = [];
+    const running = [1, 2].map(index => service.callTool(
+      "codex", task(`hold for steering ${index}`), undefined,
+      assignment => { assignments.push(assignment); }
+    ));
+    const settled = running.map(turn => turn.catch(error => error));
+    try {
+      await eventually(() => assignments.length > 0 && service.health().inFlight === 2);
+      const executorPid = service.processId;
+      const database = new Database(":memory:");
+      try {
+        database.function("pause_for_test", () => {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_100);
+          return 1;
+        });
+        database.prepare("SELECT pause_for_test()").get();
+      } finally {
+        database.close();
+      }
+      await eventually(() => service.health().status === "ready");
+      expect(service.processId).toBe(executorPid);
+      for (let index = 0; index < 2; index += 1) {
+        await eventually(() => assignments.length > index);
+        await service.steerThread(assignments[index].threadId!, `resume ${index}`);
+      }
+      const results = await Promise.all(running);
+      expect(results.map(result => result.structuredContent?.turnStatus))
+        .toEqual(["completed", "completed"]);
+    } finally {
+      await service.close();
+      await Promise.all(settled);
+    }
+  }, 25_000);
+
+  it.skipIf(process.platform === "win32")(
+    "retains an active turn after the executor event loop resumes",
+    async () => {
+      const service = await createService();
+      let assignment: UpstreamWorkerAssignment | undefined;
+      const running = service.callTool(
+        "codex", task("hold for steering executor pause"), undefined,
+        value => { assignment = value; }
+      );
+      try {
+        await eventually(() => Boolean(assignment));
+        const executorPid = service.processId!;
+        process.kill(executorPid, "SIGSTOP");
+        try {
+          await new Promise(resolve => setTimeout(resolve, 1_100));
+        } finally {
+          process.kill(executorPid, "SIGCONT");
+        }
+        await eventually(() => service.health().status === "ready");
+        expect(service.processId).toBe(executorPid);
+        await service.steerThread(assignment!.threadId!, "after executor pause");
+        await expect(running).resolves.toMatchObject({
+          content: [{ text: "STEERED:after executor pause" }]
+        });
+      } finally {
+        await service.close();
+        await Promise.allSettled([running]);
+      }
+    }, 20_000);
+
+  it("fences admission during one failed parent observation and retains active turns", async () => {
+    const incidents: WorkerObservationIncident[] = [];
+    const service = await createService({}, undefined,
+      incident => incidents.push(incident));
+    let assignment: UpstreamWorkerAssignment | undefined;
+    const running = service.callTool(
+      "codex", task("hold for steering observation retry"), undefined,
+      value => { assignment = value; }
+    );
+    try {
+      await eventually(() => Boolean(assignment));
+      const executorPid = service.processId;
+      const registry = (service as unknown as {
+        workerProcesses: { refresh(): Promise<void> };
+        observeWorkerProcesses(): void;
+      }).workerProcesses;
+      const originalRefresh = registry.refresh.bind(registry);
+      const timeoutError = await timedOutProbeError();
+      const spy = vi.spyOn(registry, "refresh")
+        .mockRejectedValueOnce(timeoutError)
+        .mockImplementation(() => originalRefresh());
+      (service as unknown as { observeWorkerProcesses(): void }).observeWorkerProcesses();
+      await eventually(() => service.health().status === "recovering");
+      await expect(service.callTool("codex", task("admission fenced")))
+        .rejects.toThrow(/EXECUTION_UNAVAILABLE/);
+      await eventually(() => service.health().status === "ready");
+      spy.mockRestore();
+      expect(service.processId).toBe(executorPid);
+      expect(incidents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ side: "parent", phase: "refresh", state: "degraded",
+          failure: expect.objectContaining({ kind: "ps-timeout" }) }),
+        expect.objectContaining({ side: "parent", phase: "refresh", state: "recovered" })
+      ]));
+      await service.steerThread(assignment!.threadId!, "after observation retry");
+      await expect(running).resolves.toMatchObject({
+        content: [{ text: "STEERED:after observation retry" }]
+      });
+    } finally {
+      await service.close();
+      await Promise.allSettled([running]);
+    }
+  }, 20_000);
+
+  it.skipIf(process.platform === "win32")(
+    "cleans detached descendants when both parent observations fail",
+    async () => {
+      const root = await mkdtemp(path.join(tmpdir(), "execution-observation-failure-"));
+      roots.push(root);
+      const observation = path.join(root, "descendants.jsonl");
+      const incidents: WorkerObservationIncident[] = [];
+      const service = await createService({
+        CODEX_TEST_DESCENDANT_OBSERVATION: observation
+      }, undefined, incident => incidents.push(incident));
+      const running = service.callTool(
+        "codex", task("execution descendant hold detached ignore descendant term")
+      );
+      try {
+        await eventually(() => readDescendantObservations(observation).length === 1 &&
+          (service.health().supervisedProcesses || 0) >= 2);
+        const firstPid = service.processId;
+        const [{ appServerPid, childPid }] = readDescendantObservations(observation);
+        const registry = (service as unknown as {
+          workerProcesses: { refresh(): Promise<void> };
+          observeWorkerProcesses(): void;
+        }).workerProcesses;
+        const timeoutError = await timedOutProbeError();
+        const spy = vi.spyOn(registry, "refresh")
+          .mockRejectedValue(timeoutError);
+        (service as unknown as { observeWorkerProcesses(): void }).observeWorkerProcesses();
+        await expect(running).rejects.toThrow(/CODEX_WORKER_LOST.*first_observation=parent,refresh,ps-timeout/s);
+        spy.mockRestore();
+        await eventually(() => !isProcessAlive(appServerPid) && !isProcessAlive(childPid), 10_000);
+        await eventually(() => service.processId !== undefined &&
+          service.processId !== firstPid && service.health().status === "ready", 10_000);
+        expect(incidents.filter(incident => incident.state === "failed")).toHaveLength(1);
+        await expect(service.callTool("codex", task("after observation failure recovery")))
+          .resolves.toMatchObject({ structuredContent: { turnStatus: "completed" } });
+      } finally {
+        await service.close();
+        await Promise.allSettled([running]);
+      }
+    }, 30_000);
+
   it("bounds executor progress IPC while the state owner cannot receive messages", async () => {
     const service = await createService();
     const progress: unknown[] = [];
@@ -423,7 +576,8 @@ describe("isolated Codex execution process", () => {
 
 async function createService(
   extraEnvironment: NodeJS.ProcessEnv = {},
-  requestLimits?: Partial<CodexExecutionRequestLimits>
+  requestLimits?: Partial<CodexExecutionRequestLimits>,
+  onObservationIncident?: (incident: WorkerObservationIncident) => void
 ): Promise<ChildProcessCodexExecutionService> {
   const home = await mkdtemp(path.join(tmpdir(), "execution-service-"));
   roots.push(home);
@@ -436,7 +590,8 @@ async function createService(
       CODEX_HOME: path.join(home, ".codex"),
       ...extraEnvironment
     },
-    ...(requestLimits ? { requestLimits } : {})
+    ...(requestLimits ? { requestLimits } : {}),
+    ...(onObservationIncident ? { onObservationIncident } : {})
   });
 }
 
@@ -483,6 +638,14 @@ function task(prompt: string): Record<string, unknown> {
     sandbox: "read-only",
     "approval-policy": "on-request"
   };
+}
+
+async function timedOutProbeError(): Promise<Error> {
+  const probe = spawn("/bin/sleep", ["3"], { stdio: ["ignore", "pipe", "pipe"] });
+  const closed = once(probe, "close");
+  const error = await readProcessTable(() => probe).catch(error => error);
+  await closed;
+  return error as Error;
 }
 
 async function eventually(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
