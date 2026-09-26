@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Record the executor supervision regression and verify installed Jobs, controls, and independent admission survive sustained observation failures with bounded retries.",
+  "breaking": false,
+  "migration": null
+}

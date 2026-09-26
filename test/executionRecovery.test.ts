@@ -16,11 +16,12 @@ afterEach(async () => {
   for (const service of services.splice(0)) await service.close();
   for (const dir of directories.splice(0)) await rm(dir, { recursive: true, force: true });
 });
-async function setup(extra: NodeJS.ProcessEnv = {}, endpoint = executionEndpoint()) {
+async function setup(extra: NodeJS.ProcessEnv = {}, endpoint = executionEndpoint(),
+  onObservationIncident?: Parameters<typeof Service.start>[0]["onObservationIncident"]) {
   directories.push(endpoint.directory);
   const home = await mkdtemp(path.join(tmpdir(), "exec-recovery-"));
   directories.push(home);
-  const options = { command: fixture, poolSize: 2, endpoint,
+  const options = { command: fixture, poolSize: 2, endpoint, onObservationIncident,
     environment: { ...process.env, CODEX_TEST_PROCESS_SCOPED_THREAD_IDS: "1", HOME: home, CODEX_HOME: path.join(home, ".codex"), ...extra } };
   const service = await Service.start(options); services.push(service);
   return { service, options };
@@ -128,16 +129,22 @@ it("lets exact completion win a late cancellation without killing another turn o
   await expect(running).resolves.toMatchObject({ content: [{ text: "STEERED:still active after late cancellation" }] });
 }, 20_000);
 
-it.each(["slow", "output-limit", "exit"])("completes old and new turns throughout continuous ps %s failure", async mode => {
+it.each([
+  ["slow", "ps-timeout"], ["spawn", "ps-spawn"], ["exit", "ps-exit"],
+  ["output-limit", "ps-output-limit"], ["output-invalid", "ps-output-invalid"], ["output-utf8", "ps-output-invalid"]
+])("completes old and new turns throughout continuous ps %s failure", async (mode, expectedKind) => {
   const dir = await mkdtemp(path.join(tmpdir(), "ps-fault-")); directories.push(dir);
   const gate = path.join(dir, "fault"); await writeFile(gate, mode);
-  const { service } = await setup({ NODE_OPTIONS: `--import=${preload}`, CODEX_TEST_PS_FAULT: gate });
+  const kinds: string[] = [];
+  const { service } = await setup({ NODE_OPTIONS: `--import=${preload}`, CODEX_TEST_PS_FAULT: gate },
+    executionEndpoint(), incident => { if (incident.state === "degraded") kinds.push(incident.failure.kind); });
   let assignment: UpstreamWorkerAssignment | undefined;
   const running = service.callTool("codex", task("hold observer outage"), undefined, value => { assignment = value; });
   void running.catch(() => {});
   await until(() => Boolean(assignment?.threadId));
   const pid = service.processId;
   await until(() => service.health().observationStatus === "degraded");
+  expect(kinds).toContain(expectedKind);
   // At least two full slow-probe deadlines elapse; recovery is deliberately absent.
   if (mode === "slow") await new Promise(r => setTimeout(r, 7000));
   await expect(service.callTool("codex", task("new independent task")))

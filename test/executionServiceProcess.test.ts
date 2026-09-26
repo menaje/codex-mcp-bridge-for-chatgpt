@@ -267,6 +267,50 @@ describe("isolated Codex execution process", () => {
   }, 30_000);
 
   it.skipIf(process.platform === "win32")(
+    "contains actual worker loss while its sibling completes and its detached descendant is cleaned",
+    async () => {
+      const root = await mkdtemp(path.join(tmpdir(), "issue-186-worker-loss-")); roots.push(root);
+      const descendants = path.join(root, "descendants.jsonl");
+      const turns = path.join(root, "turns.jsonl");
+      const service = await createService({ CODEX_TEST_PROCESS_SCOPED_THREAD_IDS: "1",
+        CODEX_TEST_DESCENDANT_OBSERVATION: descendants, CODEX_TEST_TURN_OBSERVATION: turns }, undefined, undefined, 2);
+      let a: UpstreamWorkerAssignment | undefined;
+      let b: UpstreamWorkerAssignment | undefined;
+      const lost = service.callTool("codex", task("execution descendant hold detached ignore descendant term"),
+        undefined, value => { a = value; });
+      void lost.catch(() => {});
+      let sibling: Promise<unknown> | undefined;
+      try {
+        await eventually(() => Boolean(a?.upstreamRequestId) && readDescendantObservations(descendants).length === 1);
+        sibling = service.callTool("codex", task("hold unrelated worker B"), undefined, value => { b = value; });
+        void sibling.catch(() => {});
+        await eventually(() => Boolean(b?.upstreamRequestId) && (service.health().supervisedProcesses || 0) >= 3);
+        const owner = service.processId;
+        const [{ childPid }] = readDescendantObservations(descendants);
+        expect(a!.workerPid).not.toBe(b!.workerPid);
+        process.kill(a!.workerPid!, "SIGKILL");
+        await expect(lost).rejects.toThrow(/CODEX_WORKER_LOST/);
+        expect(isProcessAlive(b!.workerPid!)).toBe(true);
+        await expect(service.callTool("codex", task("independent work while A cleans")))
+          .resolves.toHaveProperty("content");
+        await service.steerThread(b!.threadId!, "unrelated B survives actual loss");
+        await expect(sibling).resolves.toMatchObject({ content: [{ text: "STEERED:unrelated B survives actual loss" }] });
+        await eventually(() => !isProcessAlive(childPid) && service.health().supervisedWorkers === 1, 10_000);
+        let replacement: UpstreamWorkerAssignment | undefined;
+        await service.callTool("codex", task("new work after confirmed cleanup"), undefined, value => { replacement = value; });
+        expect(replacement!.workerId).toBe(a!.workerId);
+        expect(replacement!.workerGeneration).toBeGreaterThan(a!.workerGeneration);
+        expect(service.processId).toBe(owner);
+        const observations = readFileSync(turns, "utf8").trim().split("\n").map(line => JSON.parse(line));
+        expect(observations.filter(turn => turn.turnId === a!.upstreamRequestId && turn.pid === a!.workerPid)).toHaveLength(1);
+      } finally {
+        await service.close();
+        await sibling?.catch(() => {});
+      }
+    }, 25_000
+  );
+
+  it.skipIf(process.platform === "win32")(
     "kills a detached descendant group before replacing a crashed executor",
     async () => {
     const root = await mkdtemp(path.join(tmpdir(), "execution-descendant-"));
