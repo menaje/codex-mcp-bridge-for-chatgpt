@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { performance } from "node:perf_hooks";
 import type { JsonRpcProcessIdentity } from "./jsonRpcProcess.js";
 import { decodeUtf8Strict } from "./textIntegrity.js";
 
@@ -6,6 +7,8 @@ const PROCESS_TABLE_MAX_BYTES = 4 * 1024 * 1024;
 const PROCESS_TABLE_TIMEOUT_MS = 1_000;
 const PROCESS_TABLE_LATE_TIMER_TOLERANCE_MS = 250;
 const PROCESS_TABLE_RESUME_GRACE_MS = 5_000;
+const PROCESS_TABLE_SETTLE_MS = 100;
+const OBSERVATION_DIAGNOSTIC_MAX_MS = 86_400_000;
 const PROCESS_EXIT_POLL_MS = 25;
 const MAX_SUPERVISED_PROCESSES_PER_TREE = 4_096;
 
@@ -28,6 +31,31 @@ type SupervisedProcessTree = {
   root: JsonRpcProcessIdentity;
   captured: Map<number, SupervisedProcessIdentity>;
 };
+
+export type ProcessObservationFailure = {
+  kind: "ps-timeout" | "ps-spawn" | "ps-exit" | "ps-output-limit" |
+    "ps-output-invalid" | "ledger-limit" | "registration-lost" | "unknown";
+  durationMs: number;
+  timerLatenessMs: number;
+  psExitCode: number | null;
+  osCode: string | null;
+};
+
+class ProcessObservationError extends Error {
+  constructor(readonly failure: ProcessObservationFailure) {
+    super(`Process observation failed: ${failure.kind}.`);
+  }
+}
+
+export function processObservationFailure(error: unknown): ProcessObservationFailure {
+  return error instanceof ProcessObservationError ? error.failure : {
+    kind: "unknown",
+    durationMs: 0,
+    timerLatenessMs: 0,
+    psExitCode: null,
+    osCode: null
+  };
+}
 
 /**
  * Retains an independently owned process-tree ledger for App Server workers.
@@ -96,13 +124,19 @@ export class SupervisedProcessTreeRegistry {
       if (process.platform === "win32") return;
       const tree = this.trees.get(key);
       if (!tree) return;
-      const rows = await readProcessTable();
-      observeTree(tree, rows);
-      const root = rows.find((entry) => entry.pid === identity.pid);
-      if (!root || root.processGroupId !== identity.processGroupId || isZombie(root)) {
-        throw new Error(
-          `SUPERVISED_PROCESS_REGISTRATION_LOST: Worker ${identity.pid} exited before registration.`
-        );
+      const startedAt = performance.now();
+      try {
+        const rows = await readProcessTable();
+        observeTree(tree, rows);
+        const root = rows.find((entry) => entry.pid === identity.pid);
+        if (!root || root.processGroupId !== identity.processGroupId || isZombie(root)) {
+          throw new ProcessObservationError({
+            kind: "registration-lost", durationMs: 0, timerLatenessMs: 0,
+            psExitCode: null, osCode: null
+          });
+        }
+      } catch (error) {
+        throw withObservationDuration(error, startedAt);
       }
     });
   }
@@ -111,8 +145,13 @@ export class SupervisedProcessTreeRegistry {
     if (this.trees.size === 0 || process.platform === "win32") return Promise.resolve();
     return this.enqueue(async () => {
       if (this.trees.size === 0) return;
-      const rows = await readProcessTable();
-      for (const tree of this.trees.values()) observeTree(tree, rows);
+      const startedAt = performance.now();
+      try {
+        const rows = await readProcessTable();
+        for (const tree of this.trees.values()) observeTree(tree, rows);
+      } catch (error) {
+        throw withObservationDuration(error, startedAt);
+      }
     });
   }
 
@@ -149,6 +188,15 @@ export class SupervisedProcessTreeRegistry {
     this.tail = result.then(() => undefined, () => undefined);
     return result;
   }
+}
+
+function withObservationDuration(error: unknown, startedAt: number): ProcessObservationError {
+  const failure = processObservationFailure(error);
+  if (failure.kind.startsWith("ps-") && error instanceof ProcessObservationError) return error;
+  return new ProcessObservationError({
+    ...failure,
+    durationMs: boundedObservationMs(performance.now() - startedAt)
+  });
 }
 
 export function supervisedProcessKey(identity: JsonRpcProcessIdentity): string {
@@ -223,7 +271,10 @@ function observeTree(
     if (!row || isZombie(row)) continue;
     if (!tree.captured.has(row.pid) &&
         tree.captured.size >= MAX_SUPERVISED_PROCESSES_PER_TREE) {
-      throw new Error("Supervised process tree exceeded its bounded identity ledger.");
+      throw new ProcessObservationError({
+        kind: "ledger-limit", durationMs: 0, timerLatenessMs: 0,
+        psExitCode: null, osCode: null
+      });
     }
     tree.captured.set(row.pid, {
       pid: row.pid,
@@ -309,66 +360,101 @@ function signalPid(pid: number, signal: NodeJS.Signals): void {
   }
 }
 
-/** @internal Exported for the suspend/resume regression of the live probe. */
-export function readProcessTable(): Promise<ProcessTableEntry[]> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("/bin/ps", ["-axo", "pid=,ppid=,pgid=,stat="], {
+/** @internal Exported for bounded probe and suspend/resume regressions. */
+export function readProcessTable(
+  spawnProbe: () => ChildProcess = () =>
+    spawn("/bin/ps", ["-axo", "pid=,ppid=,pgid=,stat="], {
       stdio: ["ignore", "pipe", "pipe"]
-    });
+    })
+): Promise<ProcessTableEntry[]> {
+  return new Promise((resolve, reject) => {
+    const startedAt = performance.now();
+    let child;
+    try {
+      child = spawnProbe();
+    } catch (error) {
+      reject(new ProcessObservationError({
+        kind: "ps-spawn", durationMs: boundedObservationMs(performance.now() - startedAt),
+        timerLatenessMs: 0, psExitCode: null, osCode: safeOsCode(error)
+      }));
+      return;
+    }
     const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
     let outputBytes = 0;
     let timedOut = false;
-    let expectedTimeoutAt = Date.now() + PROCESS_TABLE_TIMEOUT_MS;
+    let outputLimitExceeded = false;
+    let timerLatenessMs = 0;
+    let expectedTimeoutAt = performance.now() + PROCESS_TABLE_TIMEOUT_MS;
+    let stage: "initial" | "settle" | "resume" = "initial";
     let timeout: NodeJS.Timeout;
+    const failure = (
+      kind: ProcessObservationFailure["kind"],
+      psExitCode: number | null = null,
+      osCode: string | null = null
+    ) => new ProcessObservationError({
+      kind,
+      durationMs: boundedObservationMs(performance.now() - startedAt),
+      timerLatenessMs,
+      psExitCode,
+      osCode
+    });
+    const schedule = (ms: number) => {
+      expectedTimeoutAt = performance.now() + ms;
+      timeout = setTimeout(onTimeout, ms);
+      timeout.unref();
+    };
     const onTimeout = () => {
-      if (Date.now() - expectedTimeoutAt > PROCESS_TABLE_LATE_TIMER_TOLERANCE_MS) {
+      timerLatenessMs = Math.max(timerLatenessMs,
+        boundedObservationMs(performance.now() - expectedTimeoutAt));
+      if (stage !== "resume" &&
+          timerLatenessMs > PROCESS_TABLE_LATE_TIMER_TOLERANCE_MS) {
         // /bin/ps and its supervisor can both be suspended with the machine.
         // A late timer firing on wake is not proof that process observation
         // failed. Give this same bounded probe a short post-resume interval.
-        expectedTimeoutAt = Date.now() + PROCESS_TABLE_RESUME_GRACE_MS;
-        timeout = setTimeout(onTimeout, PROCESS_TABLE_RESUME_GRACE_MS);
-        timeout.unref();
+        stage = "resume";
+        schedule(PROCESS_TABLE_RESUME_GRACE_MS);
+        return;
+      }
+      if (stage === "initial") {
+        // A completed ps may have a queued close event behind this timer when
+        // the owner event loop resumes near the original deadline.
+        stage = "settle";
+        schedule(PROCESS_TABLE_SETTLE_MS);
         return;
       }
       timedOut = true;
       child.kill("SIGKILL");
+      reject(failure("ps-timeout"));
     };
-    timeout = setTimeout(onTimeout, PROCESS_TABLE_TIMEOUT_MS);
-    timeout.unref();
+    schedule(PROCESS_TABLE_TIMEOUT_MS);
     const capture = (target: Buffer[], chunk: Buffer): void => {
       outputBytes += chunk.length;
       if (outputBytes > PROCESS_TABLE_MAX_BYTES) {
+        outputLimitExceeded = true;
         child.kill("SIGKILL");
+        reject(failure("ps-output-limit"));
         return;
       }
       target.push(chunk);
     };
     child.stdout?.on("data", (chunk: Buffer) => capture(stdout, chunk));
-    child.stderr?.on("data", (chunk: Buffer) => capture(stderr, chunk));
+    child.stderr?.on("data", (chunk: Buffer) => capture([], chunk));
     child.once("error", error => {
       clearTimeout(timeout);
-      reject(error);
+      reject(failure("ps-spawn", null, safeOsCode(error)));
     });
     child.once("close", (code) => {
       clearTimeout(timeout);
       if (timedOut) {
-        reject(new Error("Process table observation timed out."));
+        reject(failure("ps-timeout"));
         return;
       }
-      if (outputBytes > PROCESS_TABLE_MAX_BYTES) {
-        reject(new Error("Process table output exceeded the supervision limit."));
+      if (outputLimitExceeded) {
+        reject(failure("ps-output-limit"));
         return;
       }
       if (code !== 0) {
-        let detail = "";
-        try {
-          detail = decodeUtf8Strict(Buffer.concat(stderr), "Process table stderr").trim();
-        } catch {
-          reject(new Error("Process table emitted invalid UTF-8 diagnostics."));
-          return;
-        }
-        reject(new Error(detail || `/bin/ps exited with status ${code ?? "unknown"}.`));
+        reject(failure("ps-exit", code));
         return;
       }
       try {
@@ -382,19 +468,28 @@ export function readProcessTable(): Promise<ProcessTableEntry[]> {
             parentPid: Number(parentPid),
             processGroupId: Number(processGroupId),
             state: state || ""
-          }))
-          .filter((entry): entry is ProcessTableEntry =>
+          }));
+        if (entries.length === 0 || !entries.every((entry): entry is ProcessTableEntry =>
             Number.isSafeInteger(entry.pid) && entry.pid > 0 &&
             Number.isSafeInteger(entry.parentPid) && entry.parentPid >= 0 &&
             Number.isSafeInteger(entry.processGroupId) && entry.processGroupId > 0 &&
             typeof entry.state === "string" && entry.state.length > 0
-          );
+          )) throw new Error("Invalid process table rows.");
         resolve(entries);
-      } catch (error) {
-        reject(error);
+      } catch {
+        reject(failure("ps-output-invalid"));
       }
     });
   });
+}
+
+function safeOsCode(error: unknown): string | null {
+  const code = error && typeof error === "object" ? (error as NodeJS.ErrnoException).code : undefined;
+  return typeof code === "string" && /^[A-Z0-9_]{1,24}$/u.test(code) ? code : null;
+}
+
+function boundedObservationMs(durationMs: number): number {
+  return Math.min(OBSERVATION_DIAGNOSTIC_MAX_MS, Math.max(0, Math.round(durationMs)));
 }
 
 function validateRootIdentity(identity: JsonRpcProcessIdentity): void {

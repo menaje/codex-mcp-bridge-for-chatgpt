@@ -10,13 +10,15 @@ import { UNVERIFIED_APP_SERVER_CAPABILITIES } from "./cliProtocol.js";
 import { codexProcessEnvironment } from "../scripts/runtime-env.mjs";
 import {
   ChildProcessCodexExecutionService,
-  type CodexExecutionServiceHealth
+  type CodexExecutionServiceHealth,
+  type WorkerObservationIncident
 } from "./executionServiceProcess.js";
 
 export type ExecutionRuntimeIsolationOptions = {
   isolateCodexExecution?: boolean;
   /** Test/diagnostic hook; never exposed through public status payloads. */
   onExecutionProcessSpawn?: (processId: number) => void;
+  onExecutionObservationIncident?: (incident: WorkerObservationIncident) => void;
 };
 
 export function createExecutionRuntime(
@@ -65,7 +67,8 @@ export function createExecutionRuntime(
           environment: codexEnvironment,
           protocolOptions: options,
           onLateResponse: options.onLateResponse,
-          onProcessSpawn: isolation.onExecutionProcessSpawn
+          onProcessSpawn: isolation.onExecutionProcessSpawn,
+          onObservationIncident: isolation.onExecutionObservationIncident
         });
         return executionService;
       } finally {
