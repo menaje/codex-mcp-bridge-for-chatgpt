@@ -274,8 +274,10 @@ contains no project or Job data.
 - telemetry and read-worker degradation are reported through private runtime
   health/presentation state but do not by themselves make mutation admission
   false;
-- a started execution child that is stale, recovering or at capacity disables
-  new Job admission while state queries and public liveness remain available.
+- a disconnected/starting execution control link or actual request capacity limit
+  disables new Job admission. Execution heartbeat age and auxiliary process
+  observation are independent diagnostics and do not deny admission or controls.
+  `execution-stale` remains a compatibility reason code, not a heartbeat kill policy.
 
 `runtime.health` remains in-memory and adds the last state-service heartbeat,
 read/telemetry availability and feature reason codes. The native helper presents
@@ -296,36 +298,42 @@ same bounded phase/freshness form for Dashboard and Settings projections.
 
 ## Failure and restart rules
 
-Each child uses bounded exponential restart. A read, telemetry or Codex
-execution child crash does not restart ingress or the operational state owner.
-An execution crash rejects active turns as `CODEX_WORKER_LOST`; the durable Job
-becomes interrupted/worker-lost and enters the existing reconciliation path,
-never completed or cancelled by inference. Every App Server root is registered
-with and acknowledged by the state owner before protocol initialization or user
-work. The executor and state owner then retain a bounded PID/PPID/PGID ledger of
-the live worker tree, including descendants that create a separate process
-group. Observing the App Server root exit starts cleanup; it does not remove the
-ledger. The state owner terminates and verifies every captured group, returns a
-cleanup acknowledgement, and only then permits another App Server or execution
-generation. New Job admission stays closed throughout cleanup and restart. If
-tree observation itself becomes unavailable, the executor fails closed instead
-of weakening this guarantee.
+Read and telemetry children use bounded exponential restart. The Codex execution
+owner has an authenticated, reconnectable private local socket (execution protocol
+6). Its lifetime is independent of the state owner's IPC connection. A broken
+control link reconnects to the existing owner; it neither closes worker pipes nor
+creates a replacement turn. Heartbeats describe freshness and never authorize a
+kill. See the [issue #185 policy and evidence](audits/issue-185-execution-lifetime.md).
 
-A state-owner crash makes new mutations fail closed while ingress `/healthz`
-remains live. Because the state owner is the lifecycle supervisor for its three
-children, its replacement starts fresh read, telemetry and execution
-generations after the old owner exits. This deliberately avoids orphaned Codex
-effects that no state authority can observe. Durable cancellation, interaction,
-terminal and completion-delivery evidence already committed in `state.sqlite`
-is preserved; an active turn without a terminal receipt is recovered as
-interrupted/worker-lost, not replayed automatically.
+An actual execution-owner exit rejects its active turns as `CODEX_WORKER_LOST`.
+Before replacement, the controller cleans the retained, birth-verified worker
+ledger. Auxiliary observation failure retains uncertain capacity; it does not
+constitute proof of death. Each App Server spawn event establishes root ownership
+without a global process-table prerequisite. One auxiliary observer in the owner
+runs at most once every two seconds, with one probe in flight. There is no parallel
+parent scan or command-start scan. Worker cleanup reserves only that worker slot;
+other healthy workers and free slots remain available.
+
+A state-owner crash temporarily makes authoritative state mutations unavailable
+while ingress `/healthz` remains live. Its replacement reopens the same single-writer
+DB lease and reattaches active, recoverable Jobs by their original Job/request IDs.
+The execution owner retains exact assignment, live question and terminal receipts;
+results are acknowledged only after a durable terminal commit. No prompt or new
+turn is automatically replayed. The controller's read and telemetry processes can
+restart independently. A normal explicit application shutdown still closes the
+execution owner after the application's existing drain policy.
+
+Legacy active Jobs without execution receipts retain their previous restart
+reconciliation. A missing owner receipt is reported explicitly; recovery does not
+invent a result or execute the prompt again. Existing durable answer/steering
+journals preserve uncertain delivery when a controller dies during dispatch.
 
 State-child recovery follows this order:
 
 1. acquire the canonical database lease and reject any live older owner;
 2. validate schema, integrity boundary and worker generation;
 3. resolve durable receipts and prepared/dispatching/uncertain domain journals;
-4. reconcile Jobs whose prior worker generation disappeared without replaying
+4. reattach exact recoverable Jobs, or reconcile a confirmed lost owner without replaying
    work;
 5. start fresh read, telemetry and execution generations;
 6. publish a fresh heartbeat and only then re-enable admission.

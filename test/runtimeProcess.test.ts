@@ -310,40 +310,15 @@ describe("isolated production runtime", () => {
         runtime.server.applicationService,
         "ready",
         8_000,
-        () => runtime.server.applicationService.runtimeHealth?.().executionService?.status ===
-          "stale"
+        () => runtime.server.applicationService.runtimeHealth?.().executionService?.heartbeatStatus === "delayed"
       );
-      const unavailable = await fetch(`${runtime.baseUrl}/readyz`);
-      expect(unavailable.status).toBe(503);
-      await expect(unavailable.json()).resolves.toMatchObject({
-        reason: "execution-stale",
-        limitations: ["execution-stale"]
-      });
-      await expect(runtime.server.applicationService.runtimeSnapshot()).resolves.toMatchObject({
-        acceptingNewJobs: false
-      });
+      const available = await fetch(`${runtime.baseUrl}/readyz`);
+      expect(available.status).toBe(200);
+      await expect(runtime.server.applicationService.runtimeSnapshot()).resolves.toMatchObject({ acceptingNewJobs: true });
       expect(runtime.server.applicationService.runtimeHealth?.()).toMatchObject({
         stateService: { status: "ready" },
-        executionService: { status: "stale" }
+        executionService: { status: "ready", heartbeatStatus: "delayed" }
       });
-      const blocked = await taskClient.client.callTool({
-        name: "codex_task",
-        arguments: taskClient.taskArguments()
-      });
-      expect(blocked.isError).toBe(true);
-      expect(blocked.structuredContent).toMatchObject({
-        jobId: null,
-        error: { code: "EXECUTION_UNAVAILABLE", retryable: true }
-      });
-      const inspection = new Database(path.join(runtime.root, "state.sqlite"), {
-        readonly: true
-      });
-      try {
-        expect(inspection.prepare("SELECT COUNT(*) AS count FROM jobs").get())
-          .toEqual({ count: 0 });
-      } finally {
-        inspection.close();
-      }
     } finally {
       if (executionStopped) process.kill(executionProcessIds[0]!, "SIGCONT");
       await taskClient.client.close();

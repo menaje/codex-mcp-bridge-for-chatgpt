@@ -243,15 +243,15 @@ describe("isolated Codex execution process", () => {
       expect(processGroupId(childPid)).toBe(processGroupId(appServerPid));
       await writeFile(exitGate, "exit\n");
       await expect(interrupted).rejects.toThrow(/CODEX_WORKER_LOST/);
-      expect(service.health().status).toBe("recovering");
+      expect(service.health().status).toBe("ready");
       await expect(service.callTool("codex", task("blocked during App Server cleanup")))
-        .rejects.toThrow(/EXECUTION_UNAVAILABLE/);
+        .rejects.toThrow(/CODEX_WORKER_CAPACITY/);
       await new Promise(resolve => setTimeout(resolve, 100));
       expect(isProcessAlive(appServerPid)).toBe(false);
       expect(isProcessAlive(childPid)).toBe(true);
 
       await eventually(() => !isProcessAlive(childPid), 10_000);
-      await eventually(() => service.health().status === "ready");
+      await eventually(() => service.health().supervisedWorkers === 0);
       await expect(service.callTool("codex", task("after App Server cleanup"))).resolves.toMatchObject({
         structuredContent: { turnStatus: "completed" }
       });
@@ -450,7 +450,7 @@ describe("isolated Codex execution process", () => {
         value => { assignment = value; }
       );
       try {
-        await eventually(() => Boolean(assignment));
+        await eventually(() => Boolean(assignment?.upstreamRequestId));
         const executorPid = service.processId!;
         process.kill(executorPid, "SIGSTOP");
         try {
@@ -469,204 +469,6 @@ describe("isolated Codex execution process", () => {
         await Promise.allSettled([running]);
       }
     }, 25_000);
-
-  it("fences admission during one failed parent observation and retains active turns", async () => {
-    const incidents: WorkerObservationIncident[] = [];
-    const service = await createService({}, undefined,
-      incident => incidents.push(incident));
-    let assignment: UpstreamWorkerAssignment | undefined;
-    const running = service.callTool(
-      "codex", task("hold for steering observation retry"), undefined,
-      value => { assignment = value; }
-    );
-    try {
-      await eventually(() => Boolean(assignment));
-      const executorPid = service.processId;
-      const registry = (service as unknown as {
-        workerProcesses: { refresh(): Promise<void> };
-        observeWorkerProcesses(): void;
-      }).workerProcesses;
-      const originalRefresh = registry.refresh.bind(registry);
-      const timeoutError = await timedOutProbeError();
-      const spy = vi.spyOn(registry, "refresh")
-        .mockRejectedValueOnce(timeoutError)
-        .mockImplementation(() => originalRefresh());
-      (service as unknown as { observeWorkerProcesses(): void }).observeWorkerProcesses();
-      await eventually(() => service.health().status === "recovering");
-      await expect(service.callTool("codex", task("admission fenced")))
-        .rejects.toThrow(/EXECUTION_UNAVAILABLE/);
-      await eventually(() => service.health().status === "ready");
-      spy.mockRestore();
-      expect(service.processId).toBe(executorPid);
-      expect(incidents).toEqual(expect.arrayContaining([
-        expect.objectContaining({ side: "parent", phase: "refresh", state: "degraded",
-          failure: expect.objectContaining({ kind: "ps-timeout" }) }),
-        expect.objectContaining({ side: "parent", phase: "refresh", state: "recovered" })
-      ]));
-      await service.steerThread(assignment!.threadId!, "after observation retry");
-      await expect(running).resolves.toMatchObject({
-        content: [{ text: "STEERED:after observation retry" }]
-      });
-      const later = service.callTool("codex", task("hold for steering after recovery"));
-      await eventually(() => service.health().inFlight === 1);
-      process.kill(executorPid!, "SIGKILL");
-      const laterError = await later.catch(error => error);
-      expect(String(laterError)).toContain("CODEX_WORKER_LOST");
-      expect(String(laterError)).toContain("exit_intent=unconfirmed");
-      expect(String(laterError)).not.toContain("first_observation=");
-    } finally {
-      await service.close();
-      await Promise.allSettled([running]);
-    }
-  }, 20_000);
-
-  it.skipIf(process.platform === "win32")(
-    "keeps active turns when repeated parent probes fail and resumes after recovery",
-    async () => {
-      const root = await mkdtemp(path.join(tmpdir(), "execution-observation-failure-"));
-      roots.push(root);
-      const observation = path.join(root, "descendants.jsonl");
-      const incidents: WorkerObservationIncident[] = [];
-      const service = await createService({
-        CODEX_TEST_DESCENDANT_OBSERVATION: observation
-      }, undefined, incident => incidents.push(incident));
-      let assignment: UpstreamWorkerAssignment | undefined;
-      let appServerPid = 0;
-      let childPid = 0;
-      const running = service.callTool(
-        "codex", task("execution descendant hold detached ignore descendant term"),
-        undefined, value => { assignment = value; }
-      );
-      try {
-        await eventually(() => Boolean(assignment) &&
-          readDescendantObservations(observation).length === 1 &&
-          (service.health().supervisedProcesses || 0) >= 2);
-        const firstPid = service.processId;
-        [{ appServerPid, childPid }] = readDescendantObservations(observation);
-        const registry = (service as unknown as {
-          workerProcesses: { refresh(): Promise<void> };
-          observeWorkerProcesses(): void;
-        }).workerProcesses;
-        const timeoutError = await timedOutProbeError();
-        const originalRefresh = registry.refresh.bind(registry);
-        const spy = vi.spyOn(registry, "refresh")
-          .mockRejectedValue(timeoutError);
-        (service as unknown as { observeWorkerProcesses(): void }).observeWorkerProcesses();
-        await eventually(() => service.health().status === "recovering" &&
-          incidents.some(incident => incident.state === "failed"));
-        await expect(service.callTool("codex", task("admission fenced during blind probe")))
-          .rejects.toThrow(/EXECUTION_UNAVAILABLE/);
-        expect(service.processId).toBe(firstPid);
-        expect(isProcessAlive(appServerPid)).toBe(true);
-        expect(isProcessAlive(childPid)).toBe(true);
-        await service.steerThread(assignment!.threadId!, "continue during observer outage");
-        await expect(running).resolves.toMatchObject({
-          content: [{ text: "STEERED:continue during observer outage" }]
-        });
-        spy.mockImplementation(() => originalRefresh());
-        await eventually(() => service.health().status === "ready", 10_000);
-        spy.mockRestore();
-        expect(service.processId).toBe(firstPid);
-        expect(incidents.filter(incident => incident.state === "failed")).toHaveLength(1);
-        await expect(service.callTool("codex", task("after observation failure recovery")))
-          .resolves.toMatchObject({ structuredContent: { turnStatus: "completed" } });
-      } finally {
-        await service.close();
-        await Promise.allSettled([running]);
-      }
-      await eventually(() => !isProcessAlive(appServerPid) && !isProcessAlive(childPid), 10_000);
-    }, 30_000);
-
-  it("waits for verified worker cleanup after a transient process-table failure", async () => {
-    const incidents: WorkerObservationIncident[] = [];
-    const service = await createService({}, undefined, incident => incidents.push(incident));
-    try {
-      const executorPid = service.processId;
-      const registry = (service as unknown as {
-        workerProcesses: {
-          release(identity: { pid: number; processGroupId: number | null }, graceMs: number):
-            Promise<boolean>;
-        };
-      }).workerProcesses;
-      const originalRelease = registry.release.bind(registry);
-      const timeoutError = await timedOutProbeError();
-      const spy = vi.spyOn(registry, "release")
-        .mockRejectedValueOnce(timeoutError)
-        .mockImplementation((identity, graceMs) => originalRelease(identity, graceMs));
-      const release = (service as unknown as {
-        releaseWorkerProcess(message: {
-          type: "worker-exited";
-          generation: string;
-          cleanupId: string;
-          identity: { pid: number; processGroupId: number | null };
-        }): Promise<void>;
-      }).releaseWorkerProcess.bind(service);
-      const pending = release({
-        type: "worker-exited",
-        generation: service.health().generation!,
-        cleanupId: "transient-cleanup-test",
-        identity: { pid: 999_999, processGroupId: 999_999 }
-      });
-      await eventually(() => service.health().status === "recovering");
-      await pending;
-      spy.mockRestore();
-      expect(service.processId).toBe(executorPid);
-      expect(service.health().status).toBe("ready");
-      expect(incidents).toEqual(expect.arrayContaining([
-        expect.objectContaining({ side: "parent", phase: "cleanup", state: "degraded" }),
-        expect.objectContaining({ side: "parent", phase: "cleanup", state: "recovered" })
-      ]));
-    } finally {
-      await service.close();
-    }
-  }, 20_000);
-
-  it.skipIf(process.platform === "win32")(
-    "reports an unverified cleanup before an executor exit affects another active turn",
-    async () => {
-      const root = await mkdtemp(path.join(tmpdir(), "execution-cleanup-intent-"));
-      roots.push(root);
-      const observation = path.join(root, "descendants.jsonl");
-      const exitGate = path.join(root, "exit-app-server");
-      const exitReasons: ExecutorExitReason[] = [];
-      const service = await createService({
-        CODEX_TEST_DESCENDANT_OBSERVATION: observation,
-        CODEX_TEST_APP_SERVER_EXIT_GATE: exitGate
-      }, undefined, undefined, 2, reason => exitReasons.push(reason));
-      let retainedAssignment: UpstreamWorkerAssignment | undefined;
-      const retained = service.callTool("codex", task("hold for steering"), undefined,
-        value => { retainedAssignment = value; });
-      let exiting: Promise<unknown> | undefined;
-      let descendantPid = 0;
-      try {
-        await eventually(() => Boolean(retainedAssignment));
-        exiting = service.callTool("codex", task("execution descendant hold app server exits first"));
-        void exiting.catch(() => undefined);
-        await eventually(() => readDescendantObservations(observation).length === 1 &&
-          service.health().supervisedWorkers === 2);
-        descendantPid = readDescendantObservations(observation)[0]!.childPid;
-        const registry = (service as unknown as {
-          workerProcesses: {
-            release(identity: { pid: number; processGroupId: number | null }, graceMs: number):
-              Promise<boolean>;
-          };
-        }).workerProcesses;
-        const originalRelease = registry.release.bind(registry);
-        const spy = vi.spyOn(registry, "release")
-          .mockResolvedValueOnce(false)
-          .mockImplementation((identity, graceMs) => originalRelease(identity, graceMs));
-        await writeFile(exitGate, "exit\n");
-        const retainedError = await retained.catch(error => error);
-        spy.mockRestore();
-        expect(String(retainedError)).toContain("CODEX_WORKER_LOST");
-        expect(String(retainedError)).toContain("exit_intent=worker-cleanup-unconfirmed");
-        expect(exitReasons).toContain("worker-cleanup-unconfirmed");
-        await eventually(() => !isProcessAlive(descendantPid), 10_000);
-      } finally {
-        await service.close();
-        await Promise.allSettled([retained, ...(exiting ? [exiting] : [])]);
-      }
-    }, 30_000);
 
   it("bounds executor progress IPC while the state owner cannot receive messages", async () => {
     const service = await createService();

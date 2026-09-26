@@ -1092,7 +1092,7 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
     });
   };
 
-  const close = async (code = 0) => {
+  const close = async (code = 0, stopExecution = true) => {
     if (closing) return;
     closing = true;
     if (heartbeat) clearInterval(heartbeat);
@@ -1114,6 +1114,7 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
       ));
     });
     await closeStep(() => stdioRuntime?.close());
+    if (!stopExecution) await closeStep(() => upstream?.detachExecution?.());
     await closeStep(() => upstream?.close());
     await closeStep(() => readProjection?.close());
     await closeStep(() => store?.close());
@@ -1289,6 +1290,9 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         ...(execution ? {
           executionService: {
             status: execution.status,
+            observationStatus: execution.observationStatus,
+            connectionStatus: execution.connectionStatus,
+            heartbeatStatus: execution.heartbeatStatus,
             ...(execution.generation ? { generation: execution.generation } : {}),
             ...(execution.heartbeatAgeMs !== undefined
               ? { heartbeatAgeMs: execution.heartbeatAgeMs }
@@ -1368,13 +1372,13 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         }
       );
     });
-    if (transport === "stdio") process.stdin.once("end", () => { void close(); });
-    process.once("disconnect", () => { void close(); });
-    process.once("SIGTERM", () => { void close(); });
-    process.once("SIGINT", () => { void close(); });
+    if (transport === "stdio") process.stdin.once("end", () => { void close(0, false); });
+    process.once("disconnect", () => { void close(0, false); });
+    process.once("SIGTERM", () => { void close(0, false); });
+    process.once("SIGINT", () => { void close(0, false); });
   } catch (error) {
     send({ type: "fatal", message: error instanceof Error ? error.message : String(error) });
-    await close(1);
+    await close(1, false);
   }
 }
 

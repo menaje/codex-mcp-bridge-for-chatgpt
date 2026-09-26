@@ -1,3 +1,4 @@
+import { executionEndpoint } from "./executionTransport.js";
 import { CodexService } from "./codexService.js";
 import type { CodexUpstream } from "./upstream.js";
 import type { CodexBackendKind } from "./config.js";
@@ -65,6 +66,7 @@ export function createExecutionRuntime(
         const command = await resolveCli();
         executionService = await ChildProcessCodexExecutionService.start({
           command,
+          endpoint: executionEndpoint(config.stateDatabaseFile),
           poolSize: config.upstreamPoolSize,
           environment: codexEnvironment,
           protocolOptions: options,
@@ -83,6 +85,7 @@ export function createExecutionRuntime(
   );
   const router = new CodexBackendRouter("app-server", new Map<CodexBackendKind, CodexUpstream>([["app-server", app]]));
   if (isolation.isolateCodexExecution) {
+    router.supportsExecutionRecovery = () => true;
     service.setAccountReader(() => app.readAccountSnapshot());
     router.executionHealth = (): CodexExecutionServiceHealth =>
       executionService?.health() || {

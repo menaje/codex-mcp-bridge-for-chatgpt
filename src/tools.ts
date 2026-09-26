@@ -1,3 +1,4 @@
+import { withExecutionIdentity } from "./executionIdentity.js";
 import { dashboardHistoryActionInput, ISSUE_ATTENTION_DAYS, type HistoryRetentionDays, type DashboardHistoryActionInput } from "./workHistory.js";
 import { DASHBOARD_STATUS_FILTERS, dashboardSummaryCategory, type DashboardStatusFilter } from "./dashboardPresentation.js";
 import { problemActionSchema, problemActionResultSchema, problemQuerySchema, problemOperationSchema,
@@ -1830,6 +1831,7 @@ function mountedWidgetInstanceId(
 type CompletionDeliveryPolicy = "live-card" | "direct-wait";
 
 type CodexJob = {
+  executionReceipt?: boolean;
   threadPersistence?: UpstreamWorkerAssignment["threadPersistence"];
   jobId: string;
   activityId: string;
@@ -1946,6 +1948,7 @@ type CodexJobStartInput = Omit<
 };
 
 export type CodexJobRegistryOptions = {
+  recoverExecutions?: boolean;
   maxConcurrentJobs?: number;
   ttlMs?: number;
   maxJobs?: number;
@@ -2154,6 +2157,9 @@ export class CodexJobRegistry {
     storageError?: BridgeStorageAdmissionError;
   } = { acceptingNewJobs: true, pendingAdmissions: 0 };
   private upstream?: CodexUpstream;
+  private readonly recoverExecutions: boolean;
+  private readonly recoveryJobs = new Set<string>();
+  private recoveryStarted = false;
   private readonly terminations = new Map<
     string,
     { intentId: string; promise: Promise<CodexJob> }
@@ -2284,6 +2290,7 @@ export class CodexJobRegistry {
     this.stateStore = options.stateStore;
     this.telemetry = options.telemetry;
     this.projectionOnly = options.projectionOnly === true;
+    this.recoverExecutions = options.recoverExecutions === true;
     this.activityStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
     this.allowedRoots = options.allowedRoots || [];
     this.progressPersistenceQueue = new ScopeFairQueue<ProgressPersistenceSnapshot>({
@@ -2327,11 +2334,73 @@ export class CodexJobRegistry {
     return this.jobs.size;
   }
 
-  attachUpstream(upstream: CodexUpstream): void {
+  attachUpstream(upstream: CodexUpstream, sessions?: SessionRegistry): void {
     if (this.upstream && this.upstream !== upstream) {
       throw new Error("Codex job registry is already attached to another upstream.");
     }
     this.upstream = upstream;
+    if (this.recoveryStarted || !this.recoverExecutions || !sessions || this.projectionOnly) return;
+    this.recoveryStarted = true;
+    const record = (job: CodexJob, threadId: string | undefined, lineage: { sessionId?: string; forkedFromThreadId?: string }) => {
+      const agent = job.agentId ? this.getAgent(job.agentId) : undefined;
+      if (!threadId || !agent || !job.executionDecision || !isCodexBackendKind(job.backendKind)) return;
+      return recordAdmittedThread({ sessions, jobs: this, sessionDecision: job.sessionDecision,
+        agent, threadId, scopeId: job.scopeId, cwd: job.cwd, sandbox: job.sandbox,
+        ...(job.projectId && job.projectName ? { projectAdmission: { projectId: job.projectId, projectName: job.projectName } } : {}),
+        selection: job.executionDecision.effectiveSelection, policyRevision: job.executionDecision.policyRevision,
+        backendKind: job.backendKind, visibleInCodexApp: job.threadPersistence !== "ephemeral",
+        contextMode: job.contextMode || "fresh", ...lineage });
+    };
+    for (const job of this.jobs.values()) {
+      if (job.executionReceipt && isTerminalActivityJobStatus(job.status)) {
+        this.acknowledgeSettledExecution(job); continue;
+      }
+      if (!this.recoveryJobs.has(job.jobId) || !upstream.recoverExecution) continue;
+      // A cancellation dispatch whose controller vanished is unconfirmed,
+      // not proof of a stopped turn. Exact terminal replay settles the race.
+      if (job.status === "terminating") job.status = "termination-failed";
+      job.promise = upstream.recoverExecution(job.jobId,
+        progress => this.recordProgress(job, progress),
+        assignment => { this.recordWorkerAssignment(job, assignment); record(job, assignment.threadId, assignment); })
+        .then(result => this.settleExecutionResult(job, result,
+          value => record(job, extractThreadId(value), extractResultThreadLineage(value))))
+        .catch(error => this.settleExecutionError(job, error))
+        .finally(() => this.acknowledgeSettledExecution(job));
+    }
+  }
+
+  private acknowledgeSettledExecution(job: CodexJob): void {
+    if (job.executionReceipt && isTerminalActivityJobStatus(job.status) && job.terminalOrigin) {
+      void Promise.resolve(this.upstream?.acknowledgeExecution?.(job.jobId)).catch(() => {});
+    }
+  }
+
+  private async settleExecutionResult(job: CodexJob, result: ToolResult, onComplete?: JobCompletionCallback): Promise<void> {
+    return this.settleExecution(job, { kind: "resolved", result, onComplete });
+  }
+
+  private async settleExecutionError(job: CodexJob, error: unknown): Promise<void> {
+    return this.settleExecution(job, { kind: "rejected", error });
+  }
+
+  private async settleExecution(job: CodexJob, settlement: DeferredJobSettlement): Promise<void> {
+    while (!this.stateMaintenanceClosed) {
+      if (job.status === "terminating") {
+        this.deferredSettlements.set(job.jobId, settlement);
+        return;
+      }
+      try {
+        if (settlement.kind === "resolved") this.settleResolvedJob(job, settlement.result, settlement.onComplete);
+        else this.settleRejectedJob(job, settlement.error);
+        return;
+      }
+      catch (error) {
+        if (!job.executionReceipt || !(error instanceof JobTerminalCommitError)) throw error;
+        // Keep the exact outcome reserved at the owner until the DB commit
+        // succeeds. A busy DB must not replace a completed turn's outcome.
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
   }
 
   get(jobId: string): CodexJob | undefined {
@@ -3064,6 +3133,7 @@ export class CodexJobRegistry {
       requestHashVersion: input.requestHashVersion || CURRENT_TASK_REQUEST_HASH_VERSION,
       completionDeliveryPolicy: input.completionDeliveryPolicy || "live-card",
       jobId: randomUUID(),
+      executionReceipt: this.upstream?.supportsExecutionRecovery?.() === true,
       createdAt: now,
       updatedAt: now,
       lastProgressAt: now,
@@ -3082,28 +3152,28 @@ export class CodexJobRegistry {
     }
     const execute = () => Promise.resolve()
       .then(() =>
-        run(
+        withExecutionIdentity(job.jobId, () => run(
           (progress) => this.recordProgress(job, progress),
           (assignment) => {
             this.recordWorkerAssignment(job, assignment);
             onAssigned?.(assignment);
           }
-        )
+        ))
       )
       .then((result) => {
         if (job.status === "terminating") {
           this.deferredSettlements.set(job.jobId, { kind: "resolved", result, onComplete });
           return;
         }
-        this.settleResolvedJob(job, result, onComplete);
+        return this.settleExecutionResult(job, result, onComplete);
       })
       .catch((error: unknown) => {
         if (job.status === "terminating") {
           this.deferredSettlements.set(job.jobId, { kind: "rejected", error });
           return;
         }
-        this.settleRejectedJob(job, error);
-      });
+        return this.settleExecutionError(job, error);
+      }).finally(() => this.acknowledgeSettledExecution(job));
     if (deferExecution) {
       job.promise = new Promise<void>((resolve, reject) => {
         let settled = false;
@@ -3281,6 +3351,7 @@ export class CodexJobRegistry {
       Object.assign(job, candidate);
     } catch (commitError) {
       const failure = new JobTerminalCommitError(commitError);
+      if (job.executionReceipt) throw failure;
       const fallback: CodexJob = {
         ...job,
         status: "failed",
@@ -3318,15 +3389,9 @@ export class CodexJobRegistry {
     const settlement = this.deferredSettlements.get(job.jobId);
     if (!settlement) return;
     this.deferredSettlements.delete(job.jobId);
-    if (settlement.kind === "rejected") {
-      this.settleRejectedJob(job, settlement.error);
-      return;
-    }
-    try {
-      this.settleResolvedJob(job, settlement.result, settlement.onComplete);
-    } catch (error) {
-      this.settleRejectedJob(job, error);
-    }
+    job.promise = this.settleExecution(job, settlement)
+      .catch(error => this.settleExecutionError(job, error))
+      .finally(() => this.acknowledgeSettledExecution(job));
   }
 
   terminationImpact(jobId: string): { targetJobId: string; affectedJobIds: string[]; collateralJobIds: string[] } {
@@ -3605,6 +3670,7 @@ export class CodexJobRegistry {
     );
     let resolvedInteractionId: string | undefined;
     let interaction: CodexPendingInteraction | undefined;
+    if (publicEvent && job.publicEvents.some(event => event.eventId === publicEvent.eventId)) return;
     if (publicEvent) {
       if (isCodexInputEvent(publicEvent)) job.inputEvents = [...(job.inputEvents || []), publicEvent].slice(-40);
       job.publicEvents = [...job.publicEvents, publicEvent].slice(-200);
@@ -3669,7 +3735,7 @@ export class CodexJobRegistry {
   }
 
   private recordWorkerAssignment(job: CodexJob, assignment: UpstreamWorkerAssignment): void {
-    if (job.status !== "running") return;
+    if (job.status !== "running" && job.status !== "termination-failed") return;
     if (job.workerId && (job.workerId !== assignment.workerId || job.workerGeneration !== assignment.workerGeneration ||
         job.upstreamRequestId && assignment.upstreamRequestId && job.upstreamRequestId !== assignment.upstreamRequestId)) {
       job.pendingInteractions = [];
@@ -3831,6 +3897,22 @@ export class CodexJobRegistry {
         undefined,
         options.interruptOnly ? {interruptOnly:true} : undefined
       );
+      if (result.mode === "already-completed") {
+        this.activityTransaction(() => {
+          for (const job of initiallyTerminating) {
+            job.status = "running";
+            job.cancellationIntentId = undefined;
+            job.error = undefined;
+            this.recordChange(job);
+          }
+          for (const intent of impactIntentByJobId.values()) this.setCancellationIntentStatus(intent.intentId, "no-op");
+        });
+        for (const job of initiallyTerminating) {
+          this.flushDeferredSettlement(job);
+          this.acknowledgeSettledExecution(job);
+        }
+        return this.get(jobId) as CodexJob;
+      }
       if (options.interruptOnly && (result.mode !== "turn-interrupt" || result.workerExited)) {
         throw new Error("PRECISE_INTERRUPTION_UNCONFIRMED: The backend did not confirm an isolated turn interruption.");
       }
@@ -3873,6 +3955,7 @@ export class CodexJobRegistry {
           }
         }
       });
+      for (const job of actuallyAffected) this.acknowledgeSettledExecution(job);
     } catch (error) {
       this.activityTransaction(() => {
         for (const job of initiallyTerminating) {
@@ -4124,7 +4207,10 @@ export class CodexJobRegistry {
         this.jobs.set(job.jobId, job);
         continue;
       }
-      if (isActiveActivityJobStatus(job.status)) {
+      if (isActiveActivityJobStatus(job.status) && this.recoverExecutions && job.executionReceipt) {
+        job.trackingState = "liveness-unknown";
+        this.recoveryJobs.add(job.jobId);
+      } else if (isActiveActivityJobStatus(job.status)) {
         job.status = "interrupted";
         job.terminalOrigin = "bridge-restart";
         job.trackingState = "orphaned";
@@ -4614,7 +4700,7 @@ export function registerBridgeTools(
   applicationService: BridgeApplicationService;
   dispose(): void;
 } {
-  jobs.attachUpstream(upstream);
+  jobs.attachUpstream(upstream, sessions);
   // MCP 2026 list results must be deterministic. Register immutable card
   // resources in URI order; input tools do not add a resource.
   registerDashboardCardResource(server);
@@ -9092,7 +9178,7 @@ function recordAdmittedThread(input: {
   threadId: string;
   scopeId: string;
   cwd: string;
-  projectAdmission?: TaskProjectAdmission;
+  projectAdmission?: Pick<TaskProjectAdmission, "projectId" | "projectName">;
   sandbox: SandboxMode;
   selection: ExecutionDecision["effectiveSelection"];
   policyRevision: number;
@@ -10664,6 +10750,9 @@ export type BridgeRuntimeAdmissionSnapshot = {
   };
   /** Codex work executor; it has no SQLite connection or state authority. */
   executionService?: {
+    observationStatus?: "ready" | "degraded";
+    connectionStatus?: "connected" | "disconnected";
+    heartbeatStatus?: "fresh" | "delayed";
     status: "idle" | "starting" | "ready" | "stale" | "recovering" | "capacity";
     generation?: string;
     heartbeatAgeMs?: number;
@@ -14542,6 +14631,7 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
   }
   return {
     jobId,
+    executionReceipt: value.executionReceipt === true,
     activityId,
     ...(project || {}),
     ...(projectRequest ? { projectRequest } : {}),

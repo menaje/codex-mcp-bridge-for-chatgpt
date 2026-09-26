@@ -321,6 +321,8 @@ lines.on("line", (line) => {
       return;
     }
     const turnId = `fake-turn-${++turnSequence}`;
+    if (process.env.CODEX_TEST_TURN_OBSERVATION) appendFileSync(process.env.CODEX_TEST_TURN_OBSERVATION,
+      JSON.stringify({ pid: process.pid, threadId: message.params.threadId, turnId }) + "\n");
     const prompt = message.params.input?.[0]?.text || "";
     const context = {
       threadId: message.params.threadId,
@@ -703,6 +705,14 @@ function beginTurn(context) {
       cpuPercent: 1.5,
       rssKb: 2048
     }]);
+  }
+  if (prompt.includes("controller restart gate") && process.env.CODEX_TEST_COMPLETION_GATE) {
+    const timer = setInterval(() => {
+      if (!existsSync(process.env.CODEX_TEST_COMPLETION_GATE)) return;
+      clearInterval(timer);
+      finishTurn(context, "completed", `RECOVERED:${prompt}`);
+    }, 20);
+    return;
   }
   if (prompt.includes("delayed isolated completion")) {
     setTimeout(() => finishTurn(context, "completed", "ISOLATED COMPLETION"), 100);

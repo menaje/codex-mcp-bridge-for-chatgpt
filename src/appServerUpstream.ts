@@ -96,9 +96,9 @@ export type CodexAppServerProtocolOptions = {
    * payloads must be sanitized before logging or persistence.
    */
   onLateResponse?: (response: CodexAppServerLateResponse) => void;
-  /** Internal executor-supervision handshake completed before protocol initialization. */
+  /** Records the owned spawn before protocol initialization; ps is not an admission gate. */
   onWorkerProcessStarted?: (identity: JsonRpcProcessIdentity) => Promise<void> | void;
-  /** Resolves only after the independent supervisor verifies the full worker tree exited. */
+  /** Resolves after cleanup of the retained owned tree; reserves only this worker until then. */
   onWorkerProcessExited?: (identity: JsonRpcProcessIdentity) => Promise<void> | void;
 };
 
@@ -757,7 +757,9 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   private leastBusyWorker(): AppWorker {
-    return this.workers.reduce((selected, candidate) =>
+    const available = this.workers.filter(worker => !worker.maintenance);
+    if (!available.length) throw new Error("CODEX_WORKER_CAPACITY: All worker slots are reserved for unconfirmed cleanup.");
+    return available.reduce((selected, candidate) =>
       candidate.activeCalls < selected.activeCalls ||
       (candidate.activeCalls === selected.activeCalls && candidate.index < selected.index)
         ? candidate
@@ -913,9 +915,8 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
         if (worker.maintenance === cleanup) worker.maintenance = undefined;
       });
     worker.maintenance = cleanup;
-    // A failed cleanup deliberately leaves the rejected maintenance fence in
-    // place. The execution child fails closed and the state owner retries the
-    // same retained tree before it admits a replacement generation.
+    // A failed cleanup reserves this worker slot. Other workers remain usable;
+    // only verified cleanup may release capacity for a replacement generation.
     void cleanup.catch(() => undefined);
     this.forgetWorkerThreads(worker.index);
   }
@@ -1534,6 +1535,16 @@ class AppServerConnection {
     }
     const turnId = assignment.upstreamRequestId;
     const context = turnId ? this.activeTurns.get(turnId) : undefined;
+    if (turnId && this.terminalTurns.has(turnId)) {
+      // Completion can win the race while its receipt is still crossing the
+      // control link. That is never permission to kill other turns on this worker.
+      return { ...identity, exited: true, escalated: false, signal: null,
+        mode: "already-completed", workerExited: false };
+    }
+    if (turnId && !context) {
+      const code = options?.interruptOnly ? "PRECISE_INTERRUPTION_UNCONFIRMED" : "TURN_OWNERSHIP_UNCONFIRMED";
+      throw new Error(`${code}: The exact turn is not active on this worker; no process termination was authorized.`);
+    }
     if (turnId && context) {
       try {
         this.emit(context, {

@@ -1,9 +1,34 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { describe, expect, it } from "vitest";
-import { processObservationFailure, readProcessTable } from "../src/processTreeSupervisor.js";
+import { describe, expect, it, vi } from "vitest";
+import { processObservationFailure, readProcessTable, SupervisedProcessTreeRegistry } from "../src/processTreeSupervisor.js";
 
 describe("supervised process table observation", () => {
+  it("does not signal a reused PID/PGID with a different birth stamp", async () => {
+    const pid = 999_991;
+    const registry = new SupervisedProcessTreeRegistry(async () => [{
+      pid, parentPid: 1, processGroupId: pid, state: "S", startedAt: "new incarnation"
+    }]);
+    registry.remember({ pid, processGroupId: pid });
+    registry.merge({ root: { pid, processGroupId: pid }, rootExited: true,
+      processes: [{ pid, parentPid: 1, processGroupId: pid, startedAt: "original incarnation" }] });
+    const signal = vi.spyOn(process, "kill");
+    try {
+      expect(await registry.release({ pid, processGroupId: pid }, 0)).toBe(false);
+      expect(signal).not.toHaveBeenCalled();
+      expect(registry.size).toBe(1);
+    } finally { signal.mockRestore(); }
+  });
+
+  it("does not treat unknown or ledger-limit observation as worker death", async () => {
+    const registry = new SupervisedProcessTreeRegistry(async () => { throw new Error("unknown observer fault"); });
+    const identity = { pid: 999_990, processGroupId: 999_990 };
+    registry.remember(identity, true);
+    await expect(registry.refresh()).rejects.toThrow(/unknown/);
+    expect(registry.size).toBe(1);
+    expect(await registry.cleanupAll(0)).toBe(false);
+    expect(registry.size).toBe(1);
+  });
   it.skipIf(process.platform === "win32")(
     "settles a completed probe across the 1.0 to 1.25 second pause boundary",
     async () => {

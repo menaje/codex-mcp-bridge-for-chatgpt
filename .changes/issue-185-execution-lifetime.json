@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Preserve exact Codex Jobs across control restarts and isolate observation, cleanup, and delivery failures to their affected workers or requests.",
+  "breaking": false,
+  "migration": null
+}
