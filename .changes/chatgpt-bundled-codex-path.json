@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Discover Codex at the current ChatGPT app bundle path so users can replace an unavailable saved installation and restore login checks.",
+  "breaking": false,
+  "migration": null
+}

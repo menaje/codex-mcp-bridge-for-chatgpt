@@ -86,6 +86,15 @@ export type RuntimeManagerOptions = {
 };
 type RuntimeLease = { pid: number; selection: CliSelection; startedAt: string };
 
+export function defaultCodexAppPaths(home = homedir(), applicationsDirectory = "/Applications"): string[] {
+  const userApplicationsDirectory = path.join(home, "Applications");
+  return [applicationsDirectory, userApplicationsDirectory].flatMap(directory => [
+    path.join(directory, "Codex.app/Contents/Resources/codex"),
+    path.join(directory, "ChatGPT.app/Contents/Resources/codex"),
+    path.join(directory, "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex")
+  ]);
+}
+
 /** One saved choice. Discovery never changes an existing choice or an explicit removal. */
 export class CodexRuntimeManager {
   private readonly changeListeners = new Set<() => void>();
@@ -178,11 +187,7 @@ export class CodexRuntimeManager {
   async discover(savedState?: RuntimeState): Promise<CliCandidate[]> {
     const state = savedState || await this.readState();
     const managedPaths = await this.managedPaths(state);
-    const apps = this.options.discoverExternal === false ? [] : this.options.appPaths || [
-      "/Applications/Codex.app/Contents/Resources/codex", "/Applications/ChatGPT.app/Contents/Resources/codex",
-      path.join(homedir(), "Applications/Codex.app/Contents/Resources/codex"),
-      path.join(homedir(), "Applications/ChatGPT.app/Contents/Resources/codex")
-    ];
+    const apps = this.options.discoverExternal === false ? [] : this.options.appPaths || defaultCodexAppPaths();
     const paths: { command: string; source: CliSelection["source"] }[] = [
       ...apps.map(command => ({ command, source: "app" as const })),
       ...(this.options.discoverExternal === false ? "" : this.environment.PATH || "").split(path.delimiter).filter(Boolean)

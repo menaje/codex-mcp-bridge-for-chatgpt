@@ -406,6 +406,10 @@ This is normal briefly while the helper and Tunnel establish their control-plane
 
 Bridge status and previously available usage information can load independently from the current Codex CLI authentication check. Complete **Start Codex Browser Login**, then select **Refresh Status** if the result does not update.
 
+### Codex login status cannot be checked while the Dashboard shows current usage
+
+The login check starts a new process from the selected Codex installation. An existing execution worker can still obtain current usage when that saved executable path has disappeared. Open **Settings → Codex** and check the selected installation. If it is unavailable, explicitly select an available installation, then refresh status. Recent ChatGPT app versions bundle Codex at `ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`; older Bridge builds do not discover that path. Update Bridge if the current app-bundled installation is absent from the list. If the selected installation is available, inspect **Diagnostic Logs** for the account check error.
+
 ### A client cannot reach the server
 
 Confirm that:

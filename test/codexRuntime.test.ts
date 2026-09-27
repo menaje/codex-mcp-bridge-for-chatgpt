@@ -4,7 +4,7 @@ import path from "node:path";
 import { inspectClientRequestContract } from "../src/cliProtocol.js";
 import protocolContract from "./fixtures/app-server-request-contract.json";
 import { afterEach, describe, expect, it } from "vitest";
-import { CodexRuntimeManager, type RuntimeInstaller, type RuntimeManagerOptions } from "../src/codexRuntime.js";
+import { CodexRuntimeManager, defaultCodexAppPaths, type RuntimeInstaller, type RuntimeManagerOptions } from "../src/codexRuntime.js";
 
 const temporary: string[] = [];
 afterEach(async () => { for (const file of temporary.splice(0)) await rm(file, { recursive: true, force: true }); });
@@ -58,6 +58,28 @@ describe("Codex installation ownership and selection", () => {
     await rm(command);
     await expect(reentered.resolve()).rejects.toThrow("CODEX_SELECTION_UNAVAILABLE");
     expect((await reentered.snapshot()).selection?.command).toBe(command);
+  });
+  it("discovers the moved ChatGPT bundled CLI and lets the user replace the missing saved path", async () => {
+    const f = await fixture();
+    const applications = path.join(f.directory, "system-applications");
+    const appPaths = defaultCodexAppPaths(f.directory, applications);
+    const oldCommand = path.join(applications, "ChatGPT.app/Contents/Resources/codex");
+    const newCommand = path.join(applications, "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex");
+    await mkdir(path.dirname(oldCommand), { recursive: true });
+    await writeFile(oldCommand, "version=0.153.4", { mode: 0o700 });
+    const manager = new CodexRuntimeManager({ ...f.options, environment: { PATH: "" }, appPaths });
+    expect((await manager.snapshot()).selection?.command).toBe(oldCommand);
+
+    await rm(oldCommand);
+    await mkdir(path.dirname(newCommand), { recursive: true });
+    await writeFile(newCommand, "version=0.158.0", { mode: 0o700 });
+    const snapshot = await manager.snapshot();
+    expect(snapshot.selection).toMatchObject({ command: oldCommand, available: false });
+    const replacement = snapshot.candidates.find(candidate => candidate.command === newCommand);
+    expect(replacement).toMatchObject({ source: "app", available: true });
+    await expect(manager.resolve()).rejects.toThrow("CODEX_SELECTION_UNAVAILABLE");
+    await manager.select(replacement!.id);
+    expect((await manager.resolve()).command).toBe(newCommand);
   });
   it("deduplicates symlinks but keeps independent copies of the same version", async () => {
     const f = await fixture(); const app = await f.external("app");
