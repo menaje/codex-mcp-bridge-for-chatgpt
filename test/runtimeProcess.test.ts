@@ -958,6 +958,257 @@ describe("isolated production runtime", () => {
     }
   }, 15_000);
 
+  it("applies the same bounded exact-read reservation to declared and chunked bodies", async () => {
+    const runtime = await start();
+    const sockets: Socket[] = [];
+    const call = JSON.stringify({
+      jsonrpc: "2.0", id: "chunked-exact", method: "tools/call",
+      params: { name: "codex_status", arguments: {
+        scopeId: randomUUID(), query: { kind: "job", id: randomUUID() }
+      }, _meta: {
+        "io.modelcontextprotocol/protocolVersion": CURRENT_PROTOCOL,
+        "io.modelcontextprotocol/clientInfo": { name: "runtime-process-regression", version: "1.0.0" },
+        "io.modelcontextprotocol/clientCapabilities": {}
+      } }
+    });
+    const headers = {
+      accept: "application/json", "content-type": "application/json",
+      "mcp-protocol-version": CURRENT_PROTOCOL,
+      "mcp-method": "tools/call", "mcp-name": "codex_status"
+    };
+    const exactResponses = async () => {
+      const declared = await fetch(`${runtime.baseUrl}/mcp`, {
+        method: "POST", headers, body: call
+      });
+      expect(declared.status).toBe(200);
+      await expect(declared.json()).resolves.toMatchObject({
+        jsonrpc: "2.0", id: "chunked-exact", result: { isError: true }
+      });
+      const chunked = await postMcpChunks(runtime.baseUrl, [
+        Buffer.from(call.slice(0, 40)), Buffer.from(call.slice(40))
+      ], headers);
+      expect(chunked).toMatchObject({
+        status: 200, body: { jsonrpc: "2.0", id: "chunked-exact", result: { isError: true } }
+      });
+    };
+    try {
+      for (const headroom of [64, 0]) {
+        for (let index = 0; index < 3; index += 1) {
+          sockets.push(await openIncompleteMcpRequest(runtime.baseUrl,
+            8 * 1024 * 1024 - (index === 2 ? headroom : 0)));
+        }
+        const deadline = Date.now() + 3_000;
+        while (Date.now() < deadline && await observedStateInFlight(runtime.baseUrl) !== 3) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        expect(await observedStateInFlight(runtime.baseUrl)).toBe(3);
+        await exactResponses();
+        const ordinary = await postMcpChunks(runtime.baseUrl, [Buffer.from("{}")]);
+        expect(ordinary.status === 503).toBe(headroom === 0);
+        if (headroom === 64) {
+          const largeOrdinary = await postMcpChunks(runtime.baseUrl, [Buffer.from(
+            JSON.stringify({ jsonrpc: "2.0", params: { padding: "x".repeat(300_000) },
+              method: "ping", id: "large-ordinary" })
+          )]);
+          expect(largeOrdinary).toMatchObject({
+            status: 503, body: { jsonrpc: "2.0", id: "large-ordinary" }
+          });
+        }
+        for (const socket of sockets.splice(0)) socket.destroy();
+        await waitUntilReady(runtime.baseUrl);
+      }
+    } finally {
+      for (const socket of sockets) socket.destroy();
+    }
+  }, 20_000);
+
+  it("keeps completion waits out of the control reserve while admitting delivery decisions", async () => {
+    const runtime = await start();
+    const sockets: Socket[] = [];
+    const body = (operation: string, id: string) => JSON.stringify({
+      jsonrpc: "2.0", id, method: "tools/call",
+      params: { name: "codex_ui_completion", arguments: {
+        operation, jobId: randomUUID(), presentationRef: "0".repeat(64),
+        widgetInstanceId: randomUUID(), receipt: "completion-" + "0".repeat(64)
+      }, _meta: {
+        "io.modelcontextprotocol/protocolVersion": CURRENT_PROTOCOL,
+        "io.modelcontextprotocol/clientInfo": { name: "runtime-process-regression", version: "1.0.0" },
+        "io.modelcontextprotocol/clientCapabilities": {}
+      } }
+    });
+    try {
+      for (let index = 0; index < 112; index += 1) {
+        sockets.push(await openIncompleteMcpRequest(runtime.baseUrl));
+      }
+      await waitUntilCapacity(runtime.baseUrl);
+      const waits = await Promise.all(Array.from({ length: 16 }, (_, index) =>
+        postMcpChunks(runtime.baseUrl, [Buffer.from(body("wait", `card-wait-${index}`))])
+      ));
+      expect(waits.every(result => result.status === 503 &&
+        (result.body.error as { data?: { outcome?: string } })?.data?.outcome === "not-observed"))
+        .toBe(true);
+      expect(await observedStateInFlight(runtime.baseUrl)).toBe(112);
+      const decision = await postMcpChunks(runtime.baseUrl,
+        [Buffer.from(body("accepted", "card-accepted"))], {
+          accept: "application/json", "content-type": "application/json",
+          "mcp-protocol-version": CURRENT_PROTOCOL,
+          "mcp-method": "tools/call", "mcp-name": "codex_ui_completion"
+        });
+      expect(decision.status).toBe(200);
+      expect(decision.body).toMatchObject({
+        jsonrpc: "2.0", id: "card-accepted", result: { isError: true }
+      });
+      // Invalid fixture references reach the real handler and fail its scope
+      // checks. They cannot turn into a successful host receipt.
+      expect(await observedStateInFlight(runtime.baseUrl)).toBe(112);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+    }
+  }, 20_000);
+
+  it("finishes valid question, cancellation, result and host receipt controls during observer saturation", async () => {
+    const runtime = await start(undefined, undefined, {
+      CODEX_MCP_BRIDGE_CODEX: path.join(process.cwd(), "test/fixtures/fake-codex-app-server.mjs"),
+      CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "2",
+      CODEX_TEST_PROCESS_SCOPED_THREAD_IDS: "1"
+    });
+    const sockets: Socket[] = [];
+    const client = new Client(
+      { name: "runtime-priority-controls", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: CURRENT_PROTOCOL } } }
+    );
+    const until = async (predicate: () => boolean | Promise<boolean>) => {
+      const deadline = Date.now() + 12_000;
+      while (!await predicate()) {
+        if (Date.now() >= deadline) throw new Error("Priority control fixture did not settle.");
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    };
+    const jobRow = (db: Database.Database, jobId: string) => db.prepare(
+      "SELECT status, job_version AS version FROM jobs WHERE job_id = ?"
+    ).get(jobId) as { status: string; version: number } | undefined;
+    const readJob = (jobId: string) => {
+      const db = new Database(path.join(runtime.root, "state.sqlite"), { readonly: true });
+      try { return jobRow(db, jobId); } finally { db.close(); }
+    };
+    try {
+      await runtime.server.applicationService.updateSettings({
+        expectedRegistryRevision: 0,
+        operation: { kind: "patch", settings: {
+          projectOperations: [{ kind: "add", project: {
+            name: "Priority control fixture", cwd: runtime.root
+          } }]
+        } }
+      });
+      const db = new Database(path.join(runtime.root, "state.sqlite"), { readonly: true });
+      const project = db.prepare(
+        "SELECT name, project_ref AS projectRef, project_revision AS projectRevision " +
+        "FROM projects WHERE archived_at IS NULL AND deleted_at IS NULL LIMIT 1"
+      ).get() as { name: string; projectRef: string; projectRevision: number };
+      db.close();
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${runtime.baseUrl}/mcp`)));
+      const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+      const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+      const task = async (prompt: string) => {
+        const metadata = { "openai/session": randomUUID() };
+        const result = await client.callTool({
+          name: "codex_task", _meta: metadata,
+          arguments: {
+            requestId: randomUUID(),
+            taskContractVersion: properties.taskContractVersion?.const,
+            executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+            prompt, project,
+            selection: { model: "gpt-5.6-sol", reasoningEffort: "max" }
+          }
+        });
+        expect(result.isError, JSON.stringify(result)).not.toBe(true);
+        return { ...(result.structuredContent as { jobId: string; nextActions: Array<{
+          kind: string; tool?: string; arguments?: Record<string, unknown>
+        }> }), metadata };
+      };
+      const finished = await task("complete priority fixture");
+      await until(() => readJob(finished.jobId)?.status === "completed");
+      const question = await task("blocking input");
+      const cancelling = await task("hold priority fixture");
+      let questionRef: string | undefined;
+      await until(async () => {
+        const input = await client.callTool({
+          name: "codex_status", _meta: question.metadata,
+          arguments: { query: { kind: "input", jobId: question.jobId } }
+        });
+        expect(input.isError, JSON.stringify(input)).not.toBe(true);
+        questionRef = (input.structuredContent as any).questions?.[0]?.questionRef;
+        return Boolean(questionRef);
+      });
+      const render = finished.nextActions.find(action =>
+        action.kind === "tool" && action.tool === "codex_dashboard")!;
+      expect(render).toBeDefined();
+      const opened = await client.callTool({
+        name: "codex_dashboard", arguments: render.arguments!, _meta: finished.metadata
+      });
+      expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+      const widgetInstanceId = randomUUID();
+      const claimed = await client.callTool({
+        name: "codex_ui_completion", _meta: finished.metadata,
+        arguments: { operation: "wait", jobId: finished.jobId,
+          presentationRef: render.arguments!.presentationRef, widgetInstanceId }
+      });
+      expect(claimed.isError, JSON.stringify(claimed)).not.toBe(true);
+      const receipt = (claimed.structuredContent as any).receipt as string;
+      expect(receipt).toMatch(/^completion-/);
+
+      for (let index = 0; index < 112; index += 1) {
+        sockets.push(await openIncompleteMcpRequest(runtime.baseUrl));
+      }
+      await waitUntilCapacity(runtime.baseUrl);
+      const answer = await client.callTool({
+        name: "codex_answer", _meta: question.metadata,
+        arguments: { requestId: randomUUID(), jobId: question.jobId,
+          questionRef: questionRef!, answers: { color: ["blue"] } }
+      });
+      expect(answer.isError, JSON.stringify(answer)).not.toBe(true);
+      expect(answer.structuredContent, JSON.stringify(answer.structuredContent))
+        .toMatchObject({ delivery: "delivered" });
+      const cancelVersion = readJob(cancelling.jobId)!.version;
+      const cancelled = await client.callTool({
+        name: "codex_cancel", _meta: cancelling.metadata,
+        arguments: { requestId: randomUUID(),
+          target: { kind: "job", id: cancelling.jobId },
+          expectedVersion: cancelVersion, reason: "Priority control fixture" }
+      });
+      expect(cancelled.isError, JSON.stringify(cancelled)).not.toBe(true);
+      const accepted = await client.callTool({
+        name: "codex_ui_completion", _meta: finished.metadata,
+        arguments: { operation: "accepted", jobId: finished.jobId,
+          presentationRef: render.arguments!.presentationRef,
+          widgetInstanceId, receipt }
+      });
+      expect(accepted.isError, JSON.stringify(accepted)).not.toBe(true);
+      expect(accepted.structuredContent).toMatchObject({ deliveryState: "host-accepted" });
+      const exact = await client.callTool({
+        name: "codex_status", _meta: finished.metadata,
+        arguments: { query: { kind: "job", id: finished.jobId } }
+      });
+      expect(exact.isError, JSON.stringify(exact)).not.toBe(true);
+      expect(exact.structuredContent).toMatchObject({
+        items: [expect.objectContaining({ id: finished.jobId, state: "completed",
+          completionEvidence: expect.objectContaining({
+            deliveryRecord: "host-accepted", jobRecord: "terminal-committed"
+          }) })]
+      });
+      await until(() => readJob(question.jobId)?.status === "completed");
+      expect(readJob(cancelling.jobId)?.status).toBe("cancelled");
+      expect(await observedStateInFlight(runtime.baseUrl)).toBe(112);
+      for (const socket of sockets.splice(0)) socket.destroy();
+      await until(async () => await observedStateInFlight(runtime.baseUrl) === 0);
+      await waitUntilReady(runtime.baseUrl);
+      expect(await observedStateInFlight(runtime.baseUrl)).toBe(0);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await client.close().catch(() => {});
+    }
+  }, 35_000);
+
   it("reserves native control capacity when incomplete MCP requests saturate the proxy", async () => {
     const runtime = await start();
     const sockets: Socket[] = [];

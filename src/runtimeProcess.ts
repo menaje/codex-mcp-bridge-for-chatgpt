@@ -588,19 +588,19 @@ class IsolatedRuntimeController {
   proxy(
     incoming: import("node:http").IncomingMessage,
     outgoing: import("node:http").ServerResponse,
-    priorityRequest?: { body: Buffer; capture: McpRequestIdCapture }
+    bufferedRequest?: { body: Buffer; capture: McpRequestIdCapture; priority: boolean }
   ): void {
     if (this.port === undefined || !this.child?.connected) {
-      if (priorityRequest) {
+      if (bufferedRequest) {
         this.activeProxyRequests -= 1;
-        writeUnavailable(outgoing, this.readiness(), "not-observed", {}, priorityRequest.capture.id());
+        writeUnavailable(outgoing, this.readiness(), "not-observed", {}, bufferedRequest.capture.id());
       } else writeMcpUnavailable(incoming, outgoing, this.readiness(), "not-observed");
       return;
     }
     const declaredLength = requestContentLength(incoming.headers);
     if (declaredLength !== undefined && declaredLength > MAX_RPC_BYTES) {
-      priorityRequest?.capture.dispose();
-      if (priorityRequest) this.activeProxyRequests -= 1;
+      bufferedRequest?.capture.dispose();
+      if (bufferedRequest) this.activeProxyRequests -= 1;
       writeJson(outgoing, 413, {
         ok: false,
         code: "RUNTIME_REQUEST_TOO_LARGE",
@@ -608,46 +608,56 @@ class IsolatedRuntimeController {
       });
       return;
     }
-    if (!priorityRequest && declaredLength !== undefined &&
+    if (!bufferedRequest && declaredLength !== undefined &&
         this.activeProxyBytes + declaredLength > MAX_PROXY_BYTES_IN_FLIGHT) {
       writeMcpUnavailable(incoming, outgoing, this.readiness(), "not-observed", {
         reason: "state-capacity", limitations: ["state-capacity"]
       });
       return;
     }
-    if (!priorityRequest && (
+    // A small chunked MCP body can cross the ordinary byte boundary only
+    // when the existing reservations are within one priority-body width of it.
+    // Classify before forwarding in that window; no request is replayed.
+    const unknownLengthAtBoundary = declaredLength === undefined &&
+      incoming.method === "POST" &&
+      new URL(incoming.url || "/", "http://bridge.invalid").pathname === "/mcp" &&
+      this.activeProxyBytes > MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT - MAX_PRIORITY_MCP_REQUEST_BYTES;
+    if (!bufferedRequest && (
       this.outstanding >= MAX_PENDING_REQUESTS ||
       this.activeProxyRequests >= MAX_PROXY_REQUESTS ||
       this.activeProxyBytes + (declaredLength ?? 0) > MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT ||
-      declaredLength === undefined &&
-        this.activeProxyBytes >= MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT
+      unknownLengthAtBoundary
     )) {
-      if (incoming.method === "POST" && this.outstanding < MAX_PENDING_REQUESTS) {
+      if (incoming.method === "POST" && this.outstanding < MAX_PENDING_REQUESTS &&
+          this.activeProxyRequests < MAX_PENDING_REQUESTS) {
         this.classifyReservedMcpRequest(incoming, outgoing);
       } else {
         writeMcpUnavailable(incoming, outgoing, this.readiness(), "not-observed");
       }
       return;
     }
-    if (
-      (declaredLength !== undefined || priorityRequest) &&
-      this.activeProxyBytes + (priorityRequest?.body.length ?? declaredLength ?? 0) > MAX_PROXY_BYTES_IN_FLIGHT
-    ) {
+    const bufferedOrdinaryOverCapacity = bufferedRequest && !bufferedRequest.priority && (
+      this.activeProxyRequests > MAX_PROXY_REQUESTS ||
+      this.activeProxyBytes + bufferedRequest.body.length > MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT
+    );
+    if (bufferedOrdinaryOverCapacity ||
+        (declaredLength !== undefined || bufferedRequest) &&
+        this.activeProxyBytes + (bufferedRequest?.body.length ?? declaredLength ?? 0) > MAX_PROXY_BYTES_IN_FLIGHT) {
       const failure = { reason: "state-capacity" as const, limitations: ["state-capacity"] };
-      if (priorityRequest) {
+      if (bufferedRequest) {
         this.activeProxyRequests -= 1;
-        writeUnavailable(outgoing, this.readiness(), "not-observed", failure, priorityRequest.capture.id());
+        writeUnavailable(outgoing, this.readiness(), "not-observed", failure, bufferedRequest.capture.id());
       } else writeMcpUnavailable(incoming, outgoing, this.readiness(), "not-observed", failure);
       return;
     }
     const port = this.port;
-    if (!priorityRequest) this.activeProxyRequests += 1;
-    let requestBytes = priorityRequest?.body.length ?? declaredLength ?? 0;
+    if (!bufferedRequest) this.activeProxyRequests += 1;
+    let requestBytes = bufferedRequest?.body.length ?? declaredLength ?? 0;
     this.activeProxyBytes += requestBytes;
     let responseStarted = false;
     let settled = false;
     let requestOutcome: ProxyRequestOutcome = "not-observed";
-    const requestIdCapture = priorityRequest?.capture || new McpRequestIdCapture();
+    const requestIdCapture = bufferedRequest?.capture || new McpRequestIdCapture();
     const finish = () => {
       if (settled) return;
       settled = true;
@@ -740,11 +750,11 @@ class IsolatedRuntimeController {
       proxied.destroy();
       finish();
     });
-    if (!priorityRequest) incoming.on("data", chunk => {
+    if (!bufferedRequest) incoming.on("data", chunk => {
       requestIdCapture.append(chunk);
     });
-    if (!priorityRequest) incoming.once("end", () => requestIdCapture.complete());
-    if (declaredLength === undefined && !priorityRequest) {
+    if (!bufferedRequest) incoming.once("end", () => requestIdCapture.complete());
+    if (declaredLength === undefined && !bufferedRequest) {
       incoming.on("data", chunk => {
         if (settled) return;
         const bytes = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk));
@@ -756,7 +766,7 @@ class IsolatedRuntimeController {
         }
       });
     }
-    if (priorityRequest) proxied.end(priorityRequest.body);
+    if (bufferedRequest) proxied.end(bufferedRequest.body);
     else incoming.pipe(proxied);
   }
 
@@ -769,6 +779,11 @@ class IsolatedRuntimeController {
     this.activeProxyRequests += 1;
     const capture = new McpRequestIdCapture();
     let settled = false;
+    let reservedBytes = 0;
+    const releaseBytes = () => {
+      this.activeProxyBytes = Math.max(0, this.activeProxyBytes - reservedBytes);
+      reservedBytes = 0;
+    };
     const cleanup = () => {
       clearTimeout(timer);
       incoming.off("data", onData);
@@ -780,6 +795,7 @@ class IsolatedRuntimeController {
       if (settled) return;
       settled = true;
       cleanup();
+      releaseBytes();
       this.activeProxyRequests -= 1;
       const id = capture.id();
       capture.dispose();
@@ -788,17 +804,29 @@ class IsolatedRuntimeController {
       }, id);
     };
     const onData = (chunk: Buffer | string) => {
-      if (!capture.append(chunk)) reject();
+      const bytes = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
+      if (reservedBytes + bytes > MAX_RPC_BYTES ||
+          this.activeProxyBytes + bytes > MAX_PROXY_BYTES_IN_FLIGHT ||
+          !capture.append(chunk)) { reject(); return; }
+      reservedBytes += bytes;
+      this.activeProxyBytes += bytes;
     };
     const onEnd = () => {
       if (settled) return;
       capture.complete();
       const body = capture.body();
+      const priority = body ? isPriorityMcpRequest(body) : false;
+      const ordinaryFits = !priority && body &&
+        this.activeProxyRequests <= MAX_PROXY_REQUESTS &&
+        this.activeProxyBytes <= MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT;
       if (!body || new URL(incoming.url || "/", "http://bridge.invalid").pathname !== "/mcp" ||
-          !isPriorityMcpRequest(body)) { reject(); return; }
+          !priority && !ordinaryFits) {
+        reject(); return;
+      }
       settled = true;
       cleanup();
-      this.proxy(incoming, outgoing, { body, capture });
+      releaseBytes();
+      this.proxy(incoming, outgoing, { body, capture, priority });
     };
     const onClose = () => reject();
     const timer = setTimeout(reject, MCP_REJECTION_BODY_WAIT_MS);
@@ -1777,8 +1805,14 @@ function isPriorityMcpRequest(body: Buffer): boolean {
     const params = request.params as Record<string, unknown>;
     const name = params.name;
     if (name === "codex_answer" || name === "codex_cancel" ||
-        name === "codex_steer" || name === "codex_interaction_respond" ||
-        name === "codex_ui_completion") return true;
+        name === "codex_steer" || name === "codex_interaction_respond") return true;
+    if (name === "codex_ui_completion") {
+      const args = params.arguments;
+      if (!args || typeof args !== "object" || Array.isArray(args)) return false;
+      return ["accepted", "rejected", "uncertain", "release"].includes(
+        String((args as Record<string, unknown>).operation)
+      );
+    }
     if (name !== "codex_status" || !params.arguments ||
         typeof params.arguments !== "object" || Array.isArray(params.arguments)) return false;
     const query = (params.arguments as Record<string, unknown>).query;

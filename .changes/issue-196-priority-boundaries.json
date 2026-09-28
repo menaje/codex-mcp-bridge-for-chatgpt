@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Keep completion waits out of the MCP control reserve and apply the same bounded reservation policy to declared and chunked exact requests near the ordinary byte limit.",
+  "breaking": false,
+  "migration": null
+}

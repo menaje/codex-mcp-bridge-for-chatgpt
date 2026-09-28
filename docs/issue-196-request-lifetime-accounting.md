@@ -2,9 +2,9 @@
 
 ## 기준과 판정
 
-검토 기준은 `origin/dev`의 `e068a45ab9f6`(state schema 29, package 0.4.1)이다. 이 문서는 격리된 제품 경로와 기존 회귀로 확인한 사실만 기록한다. 운영 중인 앱이나 실제 ChatGPT 터널을 교체하거나 장애 주입하지 않았다.
+PR #201 당시 검토 기준은 `origin/dev`의 `e068a45ab9f6`(state schema 29, package 0.4.1)이다. 아래 후속 보완은 #200 통합 커밋 `3555bd392d2c`를 기준으로 한다. 이 문서는 격리된 제품 경로와 기존 회귀로 확인한 사실만 기록한다. 운영 중인 앱이나 실제 ChatGPT 터널을 교체하거나 장애 주입하지 않았다.
 
-실행 사실은 [#200 책임 계약](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/200)의 정확한 App Server 사건과 실행 소유자 근거를 따른다. 아래의 프로세스 로컬 카운터나 DB `running` 행은 실제 turn의 생존·종료를 판정하는 근거가 아니다. 이 문서의 범위는 그 실행을 둘러싼 자원 예약·반환과 필수 제어의 통로다. #200의 공통 inventory·표시 변경은 해당 이슈에서 계속 다룬다.
+실행 사실은 [#200 책임 계약](execution-authority-and-evidence.md)의 정확한 App Server 사건과 실행 소유자 근거를 따른다. 아래의 프로세스 로컬 카운터나 DB `running` 행은 실제 turn의 생존·종료를 판정하는 근거가 아니다. 이 문서의 범위는 그 실행을 둘러싼 자원 예약·반환과 필수 제어의 통로다. #200의 공통 inventory·표시 변경은 PR #202로 `dev`에 먼저 통합됐다.
 
 | 경계 | 이미 충족된 부분 | 확인된 공백과 이번 보완 |
 | --- | --- | --- |
@@ -20,7 +20,7 @@
 
 | 소유자·단위 | 예약과 상태 전이 | 반환·재시작 근거 | 필수 제어 영향 |
 | --- | --- | --- | --- |
-| HTTP supervisor: 프록시 건수, request bytes, ID capture allocation | headers 수신 시 일반 요청을 예약한다. 일반 건수/바이트 한도에 닿으면 분류 후보를 먼저 전체 128건 안에 예약하고, 완전한 본문을 최대 1초/8 MiB/전역 capture 40 MiB 안에서 읽는다. 우선 처리 가능한 본문은 256 KiB 이하로 제한한다. | 비해당/불완전 본문은 후보 예약을 즉시 반환한다. 전달된 요청의 프록시 예약은 응답 완료·caller disconnect·하위 소켓 종료 중 최초 사건에서만 반환한다. supervisor 재시작 시 소켓과 메모리 카운터가 함께 사라진다. 하위에서 이미 처리된 명령의 결과는 이 반환과 별개다. | `codex_answer`, `codex_cancel`, `codex_steer`, 앱의 interaction/completion 응답, `codex_status`의 **무대기** exact job/request/completion/input만 예약 대상이다. long-poll·전체 목록·페이지·이력은 제외한다. SDK의 인증·scope·버전·현재 질문 검증이 그대로 뒤따른다. |
+| HTTP supervisor: 프록시 건수, request bytes, ID capture allocation | headers 수신 시 일반 요청을 예약한다. 일반 건수/바이트 한도에 닿거나 길이 미정 요청이 일반 바이트 경계 근처에 오면 후보를 먼저 전체 128건 안에 예약한다. 완전한 본문을 최대 1초/8 MiB/전역 capture 40 MiB 안에서 읽으며 수신 바이트도 32 MiB 프록시 예산에 포함한다. 우선 본문은 256 KiB 이하로 제한한다. | 비해당/불완전 본문은 후보 예약을 즉시 반환한다. 작은 일반 본문이 112건·24 MiB 안에 실제로 들어가면 그대로 한 번 전달하고, 우선 본문은 128건·32 MiB 안에서 한 번 전달한다. 전달된 요청의 프록시 예약은 응답 완료·caller disconnect·하위 소켓 종료 중 최초 사건에서만 반환한다. supervisor 재시작 시 소켓과 메모리 카운터가 함께 사라진다. 하위에서 이미 처리된 명령의 결과는 이 반환과 별개다. | `codex_answer`, `codex_cancel`, `codex_steer`, 앱의 interaction 응답과 `codex_ui_completion`의 `accepted/rejected/uncertain/release`, `codex_status`의 **무대기** exact job/request/completion/input만 예약 대상이다. `codex_ui_completion.wait`, 다른 long-poll·전체 목록·페이지·이력은 제외한다. SDK의 인증·scope·버전·현재 질문 검증이 그대로 뒤따른다. |
 | Native companion: 물리 소켓 16, 일반 dispatch 8, 변화 listener 4 | 완전한 한 줄을 읽은 후 JSON-RPC method로 처리 등급을 정한다. `changes.wait`는 별도의 listener/timer 4개를 사용한다. | dispatch 실제 완료 때 일반 슬롯 반환. socket close는 변화 대기를 abort하지만 이미 전달된 다른 명령의 완료로 간주하지 않는다. 프로세스 재시작 시 소켓/메모리 관측은 닫히고 명령 결과는 state owner의 지속성 계약을 따른다. | completion claim/delivered/release, runtime health/drain, 확인된 retry-stop/인계 취소가 예약 처리된다. 단순 큰 snapshot·history는 일반 등급이다. |
 | State owner: Job wait listener/timer 최대 128 | 짧은 `get()`과 scope 검증 후 대기 등록. change/terminal/input 모두 같은 카운터를 쓴다. | wake·timeout·AbortSignal 중 최초 사건에서 timer/listener/abort handler와 슬롯을 한 번만 반환한다. 재시작은 대기를 끝내지만 durable Job은 그대로다. | 정확한 무대기 결과 조회·질문 응답·취소는 이 listener 수에 묶이지 않는다. |
 | Supervisor native RPC: pending/abandoned/HTTP 합계 최대 128 | IPC 전송 전에 request ID 예약; timeout은 pending에서 abandoned로 이전하며 총량은 변하지 않는다. 일반 native 120건 상한. | matching response 또는 runtime child exit 때 반환. restart 후 미확정 결과는 새 명령으로 재실행하지 않는다. | native control 8건을 보존한다. |
@@ -63,3 +63,34 @@
 - 운영 앱/ChatGPT 터널 적용 효과는 별도다. 새 소스·격리 시험·번들 생성만 이번 검증의 범위다.
 
 격리 검증 결과: Node 전체 957/957, MCP 2026-07-28 29/29, macOS 212개 중 2개 건너뜀·실패 0. CI 기준 Codex CLI 0.153.3으로 App Server schema lock(416 JSON, 827 TypeScript 파일)도 일치했다. #137/#142/#185/#186(90초 관측 장애)/#189의 소스 회귀는 모두 통과했다. 별도 경로에 생성해 서명·SQLite 모듈을 확인한 macOS 번들에서는 #185/#189와 #186(30초 관측 장애)을 다시 통과했다. 번들의 `sourceHash`는 `34bf40bdd0b991638bdfc29c0d39a938d323647d57dc8b684ccda19f88a977e8`이다. 이 번들을 운영 앱으로 교체하지 않았다.
+
+## PR #201 후속 예약 경계 보완
+
+위 수치와 번들 해시는 PR #201 당시의 기록이다. #200이 PR #202로 먼저
+통합된 뒤, 같은 `dev`를 기준으로 다음 두 조건을 보완했다.
+
+1. `codex_ui_completion.wait`는 Job의 종료를 최대 10초 기다릴 수 있으므로
+   관측 대기 등급에 둔다. `accepted/rejected/uncertain/release`는 이미 있는
+   전달 기록을 확정·해제하는 짧은 제어 동작으로 분류한다. 도구 이름만으로
+   대기에 제어용 예약을 주지 않는다.
+2. `Content-Length`가 없는 MCP POST가 일반 24 MiB 경계를 작은 본문으로
+   넘을 수 있는 구간에서는, 원래 하위 요청을 보내기 전에 본문을 완성해
+   분류한다. 일반 본문이 남은 일반 건수·바이트 안에 들어가면 일반 경로로,
+   실제 우선 본문이면 예약 경로로 보낸다. 어느 경우든 하위로 한 번만
+   전달하며, 큰 본문·불완전 본문·호출자 연결 종료는 유한한 예약을 반환한다.
+
+격리 HTTP 회귀는 일반 112건 포화 중 카드 `wait` 16건이 제어용 슬롯을
+점유하지 않는지, 카드 전달 결정이 기존 scope 검증까지 도달하는지,
+24 MiB 직전과 정확한 경계에서 같은 조회의 선언 길이/청크 전송이 같은
+정책을 따르는지 확인한다. 별도 실제 제품 경로 시험은 원본 질문이 있는
+Job의 답변, 실제 실행 중인 Job의 명시 취소, 완료 Job의 정확한 결과와
+유효한 live-card 수락 receipt를 포화 중 처리하고 슬롯 반환을 확인한다.
+이 시험들은 격리된 소스 런타임과 가짜 App Server를 사용하므로 운영 앱,
+실제 Codex 또는 ChatGPT 호스트 수락을 입증하지 않는다.
+
+후속 검증에서는 Node 전체 960/960, MCP 규격 29/29가 통과했다. #185의
+state owner 재시작·원본 결과/질문 회수와 #189의 16건 terminal commit ACK
+지연·120건 완료 Job 회귀도 동일 소스에서 통과했으며, 두 시험 모두 중복 turn
+0건과 격리 DB `quick_check=ok`를 보고했다. 이 후속 변경의 macOS 소스는
+수정하지 않았고, 앞서 #200 통합 시 macOS 212개 중 2개 건너뜀·실패 0을
+확인했다. 운영 설치본 교체 및 실제 호스트 왕복 검증은 수행하지 않았다.
