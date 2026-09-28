@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
+import { BackgroundWorkSlice, RECOVERY_WORK_LIMITS } from "./backgroundWorkBudget.js";
 
 export type AutomaticRecoveryKind = "recheck" | "retry-stop" | "release";
 export type AutomaticRecoveryState = "retrying" | "resolved" | "blocked";
@@ -44,6 +45,31 @@ export class AutomaticRecoveryStore {
     return new Set((this.db.prepare(
       "SELECT recovery_key FROM automatic_recovery WHERE state='blocked'"
     ).all() as Array<{ recovery_key: string }>).map(row => row.recovery_key));
+  }
+
+  isBlocked(key: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM automatic_recovery WHERE recovery_key=? AND state='blocked'").get(key));
+  }
+
+  isBlockedRecheckIdentity(identityKey: string): boolean {
+    return Boolean(this.db.prepare(`SELECT 1 FROM automatic_recovery_incidents incident
+      JOIN automatic_recovery recovery ON recovery.recovery_key=incident.recovery_key
+      WHERE incident.identity_key=? AND incident.active=1 AND recovery.state='blocked'`).get(identityKey));
+  }
+
+  pendingForAgent(agentId: string, afterKey = "", limit = 32): AutomaticRecoveryRecord[] {
+    return this.db.prepare(`SELECT * FROM automatic_recovery WHERE agent_id=? AND state='retrying'
+      AND recovery_key>? ORDER BY recovery_key LIMIT ?`)
+      .all(agentId,afterKey,Math.max(1,Math.min(32,Math.floor(limit))))
+      .map(row => this.decode(row as Record<string, unknown>));
+  }
+
+  dueAgentIds(now: number, limit = 4): string[] {
+    const rows = this.db.prepare(`SELECT agent_id FROM automatic_recovery
+      WHERE state='retrying' AND next_attempt_at<=? AND attempts<?
+      ORDER BY next_attempt_at,recovery_key LIMIT ?`).all(
+        now,AUTOMATIC_RECOVERY_ATTEMPTS,Math.max(1,Math.min(4,Math.floor(limit)))) as Array<{agent_id:string}>;
+    return [...new Set(rows.map(row => row.agent_id))];
   }
 
   blockedRecheckIdentityKeys(): Set<string> {
@@ -143,9 +169,12 @@ export class AutomaticRecoveryStore {
     })();
   }
 
-  reconcileInterrupted(now: number): void {
-    this.db.prepare(`UPDATE automatic_recovery SET state='blocked',updated_at=?,reason='recovery-interrupted',evidence=NULL
-      WHERE state='retrying' AND attempts>=?`).run(now,AUTOMATIC_RECOVERY_ATTEMPTS);
+  reconcileInterrupted(now: number, limit = 32): number {
+    const boundedLimit = Math.max(1, Math.min(32, Math.floor(limit)));
+    return this.db.prepare(`UPDATE automatic_recovery SET state='blocked',updated_at=?,reason='recovery-interrupted',evidence=NULL
+      WHERE recovery_key IN (SELECT recovery_key FROM automatic_recovery
+        WHERE state='retrying' AND attempts>=? ORDER BY recovery_key LIMIT ?)`)
+      .run(now,AUTOMATIC_RECOVERY_ATTEMPTS,boundedLimit).changes;
   }
 
   confirm(key: string, reason: string, evidence: string, now: number): void {
@@ -161,9 +190,9 @@ export class AutomaticRecoveryStore {
     this.db.prepare("UPDATE automatic_recovery_incidents SET active=0,updated_at=? WHERE recovery_key=?").run(now,key);
   }
 
-  prune(retentionDays: number, now = Date.now(), limit = 500): { recordsRemoved: number; incidentsRemoved: number } {
+  prune(retentionDays: number, now = Date.now(), limit = 64): { recordsRemoved: number; incidentsRemoved: number } {
     if (retentionDays === 0) return { recordsRemoved: 0, incidentsRemoved: 0 };
-    const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+    const boundedLimit = Math.max(1, Math.min(64, Math.floor(limit)));
     // Keep every unresolved attempt budget while its original work still exists.
     const recordsRemoved = this.db.prepare(`DELETE FROM automatic_recovery WHERE recovery_key IN (
       SELECT recovery_key FROM automatic_recovery WHERE updated_at<? AND
@@ -172,10 +201,9 @@ export class AutomaticRecoveryStore {
       ORDER BY updated_at,recovery_key LIMIT ?
     )`).run(now - retentionDays * 86_400_000, boundedLimit).changes;
     const incidentsRemoved = this.db.prepare(`DELETE FROM automatic_recovery_incidents WHERE identity_key IN (
-      SELECT identity_key FROM automatic_recovery_incidents WHERE
+      SELECT identity_key FROM automatic_recovery_incidents WHERE updated_at<? AND (
         NOT EXISTS (SELECT 1 FROM agents WHERE agent_id=automatic_recovery_incidents.agent_id)
-        OR updated_at<? AND NOT EXISTS
-          (SELECT 1 FROM automatic_recovery WHERE recovery_key=automatic_recovery_incidents.recovery_key)
+        OR NOT EXISTS (SELECT 1 FROM automatic_recovery WHERE recovery_key=automatic_recovery_incidents.recovery_key))
       ORDER BY updated_at,identity_key LIMIT ?
     )`).run(now - retentionDays * 86_400_000, boundedLimit).changes;
     return { recordsRemoved, incidentsRemoved };
@@ -189,18 +217,30 @@ export class AutomaticRecoveryStore {
   }
 }
 
+export type AutomaticRecoverySweepObservation = {
+  agents: number; candidates: number; dispatched: number; durationMs: number;
+  plannedRoundTrips: number; full: boolean;
+};
+
+/** One recovery tick may inspect at most one small Agent page. The cursor is
+ * reconstructible: after restart a new pass begins at the first Agent, while
+ * the durable incident journal keeps attempt and backoff authority. */
 export class AutomaticRecoveryController {
   lastError?: string;
+  lastObservation?: AutomaticRecoverySweepObservation;
   private timer?: NodeJS.Timeout;
   private scheduled?: NodeJS.Timeout;
   private pending?: Promise<void>;
   private closed = false;
-  private cursor = "";
+  private candidateCursor = "";
+  private agentCursor = "";
   private fullScanScheduled = false;
   private readonly scheduledAgents = new Set<string>();
   readonly now: () => number;
   constructor(private readonly store: AutomaticRecoveryStore, private readonly options: {
     candidates: (agentId?: string) => AutomaticRecoveryCandidate[] | Promise<AutomaticRecoveryCandidate[]>;
+    pageAgents?: (afterAgentId: string, limit: number) => string[];
+    agentForJob?: (jobId: string) => string | undefined;
     attempt: (candidate: AutomaticRecoveryCandidate) => Promise<AutomaticRecoveryResult>;
     changed?: () => void; enabled?: () => boolean; now?: () => number; intervalMs?: number;
   }) { this.now = options.now || (() => Date.now()); }
@@ -215,20 +255,37 @@ export class AutomaticRecoveryController {
 
   schedule(agentId?: string): void {
     if (this.closed) return;
-    if (agentId) this.scheduledAgents.add(agentId);
-    else this.fullScanScheduled = true;
+    if (agentId) {
+      if (this.scheduledAgents.size < 128 || this.scheduledAgents.has(agentId)) {
+        this.scheduledAgents.add(agentId);
+      } else {
+        // The periodic keyset pass remains authoritative after a dirty-set
+        // overflow. Do not retain an unbounded queue during a progress storm.
+        this.fullScanScheduled = true;
+      }
+    } else this.fullScanScheduled = true;
     if (this.scheduled) return;
     this.scheduled = setTimeout(() => {
       this.scheduled = undefined;
       const full = this.fullScanScheduled;
-      const agents = [...this.scheduledAgents];
       this.fullScanScheduled = false;
-      this.scheduledAgents.clear();
+      const agents = [...this.scheduledAgents].slice(0, 8);
+      for (const id of agents) this.scheduledAgents.delete(id);
       void (async () => {
         await this.pending;
+        for (const id of agents) await this.sweep(undefined, id);
         if (full) await this.sweep();
-        else for (const id of agents) await this.sweep(undefined, id);
+        if (this.scheduledAgents.size || this.fullScanScheduled) this.scheduleNext();
       })();
+    }, 100);
+    this.scheduled.unref();
+  }
+
+  private scheduleNext(): void {
+    if (this.closed || this.scheduled) return;
+    this.scheduled = setTimeout(() => {
+      this.scheduled = undefined;
+      this.schedule(this.scheduledAgents.values().next().value);
     }, 100);
     this.scheduled.unref();
   }
@@ -242,7 +299,7 @@ export class AutomaticRecoveryController {
 
   async recoverJob(jobId: string): Promise<void> {
     await this.pending;
-    await this.sweep(jobId);
+    await this.sweep(jobId, this.options.agentForJob?.(jobId));
   }
 
   async close(): Promise<void> {
@@ -254,36 +311,86 @@ export class AutomaticRecoveryController {
 
   private async runSweep(jobId?: string, agentId?: string): Promise<void> {
     if (this.options.enabled?.() === false) return;
+    this.store.reconcileInterrupted(this.now());
+    const budget = new BackgroundWorkSlice(RECOVERY_WORK_LIMITS);
+    budget.roundTrips = 1; // bounded interrupted-attempt reconciliation
+    let agents = 0, candidates = 0, dispatched = 0;
+    const full = !agentId;
+    try {
+      if (!agentId && this.options.pageAgents) {
+        const due = this.store.dueAgentIds(this.now());
+        for (const id of due) {
+          if (this.closed || dispatched >= 3 || !budget.take(12)) break;
+          const result = await this.survey(id, jobId, 3 - dispatched);
+          agents++;
+          candidates += result.candidates;
+          dispatched += result.dispatched;
+          if (budget.targets % budget.limits.yieldEvery === 0) await budget.yieldIfNeeded();
+        }
+        let page = this.options.pageAgents(this.agentCursor, budget.limits.maxTargets);
+        if (page.length === 0 && this.agentCursor) {
+          this.agentCursor = "";
+          page = this.options.pageAgents("", budget.limits.maxTargets);
+        }
+        for (const id of page) {
+          if (this.closed || dispatched >= 4 || !budget.take(12)) break;
+          if (!due.includes(id)) {
+            const result = await this.survey(id, jobId, 4 - dispatched);
+            agents++;
+            candidates += result.candidates;
+            dispatched += result.dispatched;
+          }
+          this.agentCursor = id;
+          if (budget.targets % budget.limits.yieldEvery === 0) await budget.yieldIfNeeded();
+        }
+        return;
+      }
+      budget.take(12);
+      const result = await this.survey(agentId, jobId, 4);
+      agents = 1;
+      candidates = result.candidates;
+      dispatched = result.dispatched;
+    } finally {
+      this.lastObservation = {agents,candidates,dispatched,durationMs:budget.durationMs,
+        plannedRoundTrips:budget.roundTrips,full};
+    }
+  }
+
+  private async survey(agentId: string | undefined, jobId: string | undefined, dispatchLimit: number): Promise<{candidates:number;dispatched:number}> {
     const available = await this.options.candidates(agentId);
-    let keys = new Set(available.map(candidate => candidate.key));
-    for (const record of this.store.list()) {
-      if (agentId && record.agentId !== agentId) continue;
+    const keys = new Set(available.map(candidate => candidate.key));
+    // A production Agent has at most three current candidate kinds. Every
+    // nonmatching retry is resolved in this pass, so repeated first pages
+    // drain historical records without retaining a cursor for every Agent.
+    const records = agentId ? this.store.pendingForAgent(agentId)
+      : this.store.list().filter(record => record.state === "retrying");
+    for (const record of records) {
       if (jobId && record.jobId !== jobId) continue;
-      if (record.state === "retrying" && !keys.has(record.key)) {
+      if (!keys.has(record.key)) {
         this.store.finish(record.key,record.attempts,{resolved:false,reason:"work-changed",retryable:false},this.now());
         this.options.changed?.();
       }
     }
-    const candidates = available.filter(candidate => !jobId || candidate.jobId === jobId).sort((a,b) => a.key.localeCompare(b.key));
-    const after = candidates.filter(candidate => candidate.key > this.cursor);
-    const before = candidates.filter(candidate => candidate.key <= this.cursor);
+    const candidates = available.filter(candidate => !jobId || candidate.jobId === jobId)
+      .sort((a,b) => a.key.localeCompare(b.key));
+    const after = candidates.filter(candidate => candidate.key > this.candidateCursor);
+    const before = candidates.filter(candidate => candidate.key <= this.candidateCursor);
     let dispatched = 0;
     for (const candidate of [...after,...before]) {
-      if (this.closed || dispatched >= 4) break;
-      this.cursor = candidate.key;
-      if (!keys.has(candidate.key)) continue;
+      if (this.closed || dispatched >= dispatchLimit) break;
+      this.candidateCursor = candidate.key;
       const attempt = this.store.begin(candidate,this.now());
       if (!attempt) continue;
-      dispatched += 1;
+      dispatched++;
       this.options.changed?.();
       let result: AutomaticRecoveryResult;
       try { result = await this.options.attempt(candidate); }
       catch { result = {resolved:false,reason:"recovery-unconfirmed"}; }
       this.store.finish(candidate.key,attempt.attempts,result,this.now());
       this.options.changed?.();
-      // One verified shared-worker release can settle several initial
-      // candidates. Do not invent another attempt for a peer already released.
-      keys = new Set((await this.options.candidates(agentId)).map(current => current.key));
+      // A shared-worker release may resolve a peer. Its durable state is
+      // checked by begin() on the next candidate; no global rediscovery here.
     }
+    return {candidates:candidates.length,dispatched};
   }
 }

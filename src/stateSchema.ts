@@ -1,9 +1,9 @@
 /**
  * Schema 19 remains the immutable released base DDL used by its recorded
- * migration. Fresh databases apply the v20 through v28 projections below in the
+ * migration. Fresh databases apply the v20 through v29 projections below in the
  * same transaction; older databases follow the append-only migration catalog.
  */
-export const CURRENT_STATE_SCHEMA_VERSION = "28";
+export const CURRENT_STATE_SCHEMA_VERSION = "29";
 
 export const CURRENT_STATE_SCHEMA = `
   CREATE TABLE scopes (
@@ -603,4 +603,32 @@ export const V27_DECISION_CARD_RETIREMENT_MIGRATION_SCHEMA = `
 export const V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA = `
   CREATE INDEX IF NOT EXISTS jobs_agent_recent_history
     ON jobs(agent_id, created_at DESC, updated_at DESC, job_id DESC);
+`;
+
+/** Exact recovery and connection peers keep each background slice independent
+ * of the size of the retained incident and connection catalogs. */
+export const V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA = `
+  CREATE INDEX IF NOT EXISTS automatic_recovery_agent_state
+    ON automatic_recovery(agent_id, state, recovery_key);
+  CREATE INDEX IF NOT EXISTS automatic_recovery_interrupted
+    ON automatic_recovery(state, attempts, recovery_key);
+  CREATE INDEX IF NOT EXISTS automatic_recovery_due
+    ON automatic_recovery(state, next_attempt_at, recovery_key);
+  CREATE INDEX IF NOT EXISTS automatic_recovery_retention
+    ON automatic_recovery(updated_at, recovery_key);
+  CREATE INDEX IF NOT EXISTS automatic_recovery_incident_retention
+    ON automatic_recovery_incidents(updated_at, identity_key);
+  CREATE INDEX IF NOT EXISTS jobs_history_retention
+    ON jobs(updated_at, job_id)
+    WHERE archived_at IS NOT NULL AND status IN ('completed','failed','interrupted','cancelled');
+  CREATE INDEX IF NOT EXISTS thread_connections_worker
+    ON thread_connections(worker_pid, thread_id);
+  CREATE INDEX IF NOT EXISTS thread_connections_handoff
+    ON thread_connections(handoff_requested, thread_id);
+  CREATE INDEX IF NOT EXISTS thread_connections_protected
+    ON thread_connections(thread_id)
+    WHERE handoff_requested=1 OR phase!='connected';
+  CREATE INDEX IF NOT EXISTS thread_connections_release_due
+    ON thread_connections(persistence, last_finished_at, thread_id)
+    WHERE phase != 'released';
 `;

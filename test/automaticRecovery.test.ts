@@ -8,6 +8,111 @@ import { AutomaticRecoveryController, automaticRecoveryKey } from "../src/automa
 const candidate = {key:automaticRecoveryKey("recheck",["agent-a",1]),scopeId:"scope-a",agentId:"agent-a",jobId:"job-a",kind:"recheck" as const};
 
 describe("bounded automatic recovery", () => {
+  it("drains more than one page of obsolete retries without per-Agent cursor state", async () => {
+    const state = new BridgeStateStore({file:":memory:"});
+    const scopeId = "11111111-1111-4111-8111-111111111111";
+    const agent = state.createAgent({scopeId,agentName:"Historical retries"});
+    for (let index = 0; index < 96; index++) {
+      const stale = {...candidate,scopeId,agentId:agent.agentId,
+        key:automaticRecoveryKey("recheck",[agent.agentId,index])};
+      state.automaticRecovery.begin(stale,1_000);
+      state.automaticRecovery.finish(stale.key,1,
+        {resolved:false,reason:"inspection-unconfirmed"},1_001);
+    }
+    const controller = new AutomaticRecoveryController(state.automaticRecovery,{
+      pageAgents:(after,limit)=>state.recoveryAgentIds(after,limit),
+      candidates:()=>[],attempt:async()=>({resolved:false,reason:"unused"}),
+      now:()=>1_002
+    });
+    try {
+      for (let page = 0; page < 3; page++) await controller.sweep();
+      expect(state.automaticRecovery.pendingForAgent(agent.agentId)).toEqual([]);
+      expect(state.automaticRecovery.list()).toHaveLength(96);
+      expect(state.automaticRecovery.list().every(record => record.state === "blocked")).toBe(true);
+    } finally {await controller.close();state.close();}
+  });
+
+  it("prioritizes a due retry outside the current reconciliation page", async () => {
+    const state = new BridgeStateStore({file:":memory:"});
+    const scopeId = "11111111-1111-4111-8111-111111111111";
+    const agents = Array.from({length:80},(_,index) => state.createAgent({
+      scopeId,agentName:`Due Agent ${index}`
+    }));
+    const owner = [...agents].sort((a,b) => a.agentId.localeCompare(b.agentId)).at(-1)!;
+    const due = {...candidate,agentId:owner.agentId,key:automaticRecoveryKey("recheck",[owner.agentId,"due"])};
+    const first = state.automaticRecovery.begin(due,1_000)!;
+    state.automaticRecovery.finish(due.key,first.attempts,{resolved:false,reason:"inspection-unconfirmed"},1_001);
+    let attempts = 0;
+    const controller = new AutomaticRecoveryController(state.automaticRecovery,{
+      pageAgents:(after,limit)=>state.recoveryAgentIds(after,limit),
+      candidates:agentId=>agentId===owner.agentId?[due]:[],
+      attempt:async()=>{attempts++;return {resolved:true,reason:"runtime-confirmed",evidence:"runtime-observed"};},
+      now:()=>6_000
+    });
+    try {
+      await controller.sweep();
+      expect(attempts).toBe(1);
+      expect(state.automaticRecovery.get(due.key)).toMatchObject({state:"resolved",attempts:2});
+      expect(controller.lastObservation!.agents).toBeLessThanOrEqual(32);
+    } finally {
+      await controller.close();state.close();
+    }
+  });
+
+  it("surveys 1,200 Agents and retained Jobs in small indexed pages, then reaches a late incident", async () => {
+    const statements: string[] = [];
+    let tracing = false;
+    const state = new BridgeStateStore({ file: ":memory:", traceSql: sql => {
+      if (tracing) statements.push(sql);
+    } });
+    const scopeId = "11111111-1111-4111-8111-111111111111";
+    const agents = [];
+    for (let index = 0; index < 1_200; index++) {
+      const agent = state.createAgent({scopeId,agentName:`Scale Agent ${index}`});
+      agents.push(agent);
+      state.upsertJob({jobId:`${index.toString(16).padStart(8,"0")}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`,
+        scopeId,requestId:`scale-request-${index}`,agentId:agent.agentId,status:"failed",updatedAt:index+1});
+      if (index < 600) {
+        const blocked = {...candidate,agentId:agent.agentId,
+          key:automaticRecoveryKey("recheck",[agent.agentId,"blocked"])};
+        state.automaticRecovery.begin(blocked, 1_000);
+        state.automaticRecovery.finish(blocked.key,1,{resolved:false,reason:"inspection-unconfirmed",retryable:false},1_001);
+      }
+    }
+    const lastAgent = [...agents].sort((a,b) => a.agentId.localeCompare(b.agentId)).at(-1)!;
+    const late = {...candidate,agentId:lastAgent.agentId,
+      key:automaticRecoveryKey("recheck",[lastAgent.agentId,"late"])};
+    let dispatched = 0;
+    const controller = new AutomaticRecoveryController(state.automaticRecovery, {
+      pageAgents: (after,limit) => state.recoveryAgentIds(after,limit),
+      candidates: agentId => {
+        expect(agentId).toBeDefined();
+        state.getAgent(agentId!);
+        state.threadConnections.listForAgent(agentId!);
+        state.automaticRecovery.isBlocked(automaticRecoveryKey("recheck",[agentId,"blocked"]));
+        return agentId === lastAgent.agentId ? [late] : [];
+      },
+      attempt: async () => { dispatched++;return {resolved:true,reason:"runtime-confirmed",evidence:"runtime-observed"}; }
+    });
+    try {
+      tracing = true;
+      await controller.sweep();
+      tracing = false;
+      expect(controller.lastObservation).toMatchObject({dispatched:0,full:true});
+      expect(controller.lastObservation!.agents).toBeGreaterThan(0);
+      expect(controller.lastObservation!.agents).toBeLessThanOrEqual(32);
+      expect(statements.length).toBeLessThan(180);
+      expect(statements.some(sql => /SELECT \* FROM automatic_recovery\s+WHERE agent_id=/u.test(sql))).toBe(true);
+      expect(statements.some(sql => /SELECT recovery_key FROM automatic_recovery WHERE state='blocked'/u.test(sql))).toBe(false);
+      for (let page = 0; page < 200 && dispatched === 0; page++) await controller.sweep();
+      expect(dispatched).toBe(1);
+      expect(state.automaticRecovery.get(late.key)).toMatchObject({state:"resolved",attempts:1});
+    } finally {
+      await controller.close();
+      state.close();
+    }
+  }, 60_000);
+
   it("surveys a changed Agent without reconciling another Agent's pending incident", async () => {
     vi.useFakeTimers();
     const state = new BridgeStateStore({ file: ":memory:" });

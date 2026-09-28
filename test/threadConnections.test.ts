@@ -20,6 +20,27 @@ function fake(release: (threadId: string, options: ThreadReleaseOptions) => Prom
 }
 
 describe("durable thread connection lifetime", () => {
+  it("streams only protected thread IDs through the startup protection index", () => {
+    const root = mkdtempSync(path.join(tmpdir(),"thread-protection-plan-"));
+    const file = path.join(root,"state.sqlite");
+    const store = new BridgeStateStore({file});
+    store.threadConnections.register({threadId:"handoff",scopeId,persistence:"persistent"});
+    store.threadConnections.register({threadId:"blocked",scopeId,persistence:"persistent"});
+    store.threadConnections.register({threadId:"connected",scopeId,persistence:"persistent"});
+    store.threadConnections.requestHandoff("handoff");
+    store.threadConnections.update("blocked",{phase:"blocked"});
+    expect([...store.threadConnections.protectedThreadIds()].sort()).toEqual(["blocked","handoff"]);
+    store.close();
+    const database = new Database(file,{readonly:true});
+    try {
+      const plan = database.prepare(`EXPLAIN QUERY PLAN SELECT thread_id FROM thread_connections
+        INDEXED BY thread_connections_protected
+        WHERE handoff_requested=1 OR phase!='connected'`).all()
+        .map(row => String((row as {detail:string}).detail));
+      expect(plan).toContainEqual(expect.stringContaining("thread_connections_protected"));
+    } finally {database.close();}
+  });
+
   it("keeps unfinished Agent work on the active-only index after adding the history index", () => {
     const root = mkdtempSync(path.join(tmpdir(), "thread-active-plan-"));
     const file = path.join(root, "state.sqlite");
@@ -174,8 +195,9 @@ describe("durable thread connection lifetime", () => {
     const controller = new ThreadConnectionController(store.threadConnections,fake(async () => {
       released++;return {phase:"released",evidence:"worker-exited"};
     }),{now:()=>2000+DEFAULT_THREAD_IDLE_MS});
-    await controller.sweep();expect(released).toBe(0);
-    await controller.sweep();expect(released).toBe(1);
+    await controller.sweep();
+    expect(released).toBe(1);
+    expect(store.threadConnections.get("blocked-016")?.phase).toBe("waiting");
     await controller.close();store.close();
   });
 

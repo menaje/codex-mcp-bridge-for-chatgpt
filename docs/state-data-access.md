@@ -1,6 +1,6 @@
 # State data access and maintenance ownership
 
-This document is the schema-28 operational ownership contract. Authoritative
+This document is the schema-29 operational ownership contract. Authoritative
 state remains one durable `state.sqlite` database; best-effort diagnostics use
 the separate `telemetry.sqlite` described by issue #142. A shared operational
 file does not imply shared write authority.

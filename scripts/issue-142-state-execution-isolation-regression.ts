@@ -215,8 +215,10 @@ async function main(): Promise<void> {
     stateLocker.close();
     stateLocker = undefined;
     const lockedOutcome = await lockedMutation;
-    assert.equal(lockedOutcome.outcome, "unknown");
-    assert.match("error" in lockedOutcome ? lockedOutcome.error : "", /RUNTIME_RESPONSE_UNCONFIRMED/u);
+    // This injected lock is shorter than the state owner's busy timeout.
+    // The command therefore remains pending and returns its committed result
+    // after the lock clears; a stale heartbeat alone must not discard it.
+    assert.equal(lockedOutcome.outcome, "confirmed");
     await waitForReady(fixture.baseUrl, 10_000);
     await waitForCondition(
       () => readSettingsRevision(fixture.stateFile) === lockedTargetRevision,
@@ -406,7 +408,7 @@ async function main(): Promise<void> {
       },
       stateLock: {
         holdMs: STATE_LOCK_MS,
-        mutationOutcomeBeforeLateConfirmation: lockedOutcome.outcome,
+        mutationOutcomeAfterLockRelease: lockedOutcome.outcome,
         authoritativeRevisionAfterRelease: revision,
         healthz: summarize(healthSorted, HEALTH_TARGET_MS),
         ingressEventLoopLag: summarize(eventLoopSorted, EVENT_LOOP_TARGET_MS),

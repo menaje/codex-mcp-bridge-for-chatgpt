@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { CodexJobRegistry } from "../src/tools.js";
@@ -187,12 +188,15 @@ describe("CodexJobRegistry persistence", () => {
     let emitProgress: ((progress: CodexProgress) => void) | undefined;
     let complete: (value: ToolResult) => void = () => undefined;
     try {
+      const agent = registry.admissionStateStore.createAgent({
+        scopeId: SCOPE_A, agentName: "Progress survey Agent"
+      });
       registry.configureAutomaticRecovery({
         candidates: () => { surveys += 1; return []; },
         attempt: async () => ({ resolved: false, reason: "unused" }),
         intervalMs: 60_000
       });
-      const job = registry.start(jobInput(root), async progress => {
+      const job = registry.start({ ...jobInput(root), agentId: agent.agentId }, async progress => {
         emitProgress = progress;
         return new Promise<ToolResult>(resolve => { complete = resolve; });
       });
@@ -215,6 +219,90 @@ describe("CodexJobRegistry persistence", () => {
       vi.useRealTimers();
     }
   });
+
+  it("coalesces a multi-Job progress storm without scheduling recovery discovery", async () => {
+    vi.useFakeTimers();
+    const root = temporaryRoot();
+    const registry = new CodexJobRegistry({allowedRoots:[root],maxConcurrentJobs:20,maxJobs:100});
+    const emitters: Array<(progress:CodexProgress)=>void> = [];
+    const completions: Array<(result:ToolResult)=>void> = [];
+    let surveys = 0;
+    try {
+      registry.configureAutomaticRecovery({candidates: () => { surveys++; return []; },
+        attempt: async () => ({resolved:false,reason:"unused"}),intervalMs:60_000});
+      const jobs = Array.from({length:20},(_,index) => registry.start({
+        ...jobInput(root),requestId:randomUUID(),requestHash:index.toString(16).padStart(64,"0")
+      }, async progress => {
+        emitters.push(progress);
+        return new Promise<ToolResult>(resolve => { completions.push(resolve); });
+      }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(150);
+      expect(emitters).toHaveLength(20);
+      const before = surveys;
+      for (let progress = 0; progress < 30; progress++) {
+        for (const emit of emitters) emit({progress:progress/30});
+      }
+      await vi.advanceTimersByTimeAsync(150);
+      expect(surveys).toBe(before);
+      for (const complete of completions) complete(result("storm-complete"));
+      await Promise.all(jobs.map(job => job.promise));
+      await vi.advanceTimersByTimeAsync(150);
+      expect(surveys).toBeGreaterThan(before);
+    } finally {
+      await registry.closeThreadConnections();
+      registry.admissionStateStore.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it("admits exact reads and durable control while recovery and retention share the event loop", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root,path.join(root,"state.sqlite"));
+    const state = registry.admissionStateStore;
+    const agents = Array.from({length:1_200},(_,index) => state.createAgent({
+      scopeId:SCOPE_A,agentName:`Foreground priority ${index}`
+    }));
+    let finishActive: (value:ToolResult)=>void = () => undefined;
+    let inspected = 0;
+    try {
+      const active = registry.start({...jobInput(root),agentId:agents[0]!.agentId},
+        async () => new Promise<ToolResult>(resolve => {finishActive=resolve;}));
+      const completed = registry.start({...jobInput(root),requestId:REQUEST_B,
+        requestHash:"b".repeat(64)},async()=>result("exact-result"));
+      await completed.promise;
+      registry.configureAutomaticRecovery({
+        pageAgents:(after,limit)=>state.recoveryAgentIds(after,limit),
+        candidates:agentId=>{inspected++;state.getAgent(agentId!);return [];},
+        attempt:async()=>({resolved:false,reason:"unused"}),intervalMs:60_000
+      });
+      const foreground = new Promise<{durationMs:number;inspectedAtRead:number}>((resolve,reject) =>
+        setImmediate(() => { void (async () => {
+          const started = performance.now();
+          state.eventRetention.sweep();
+          expect(registry.listAgents(SCOPE_A,12)).toHaveLength(12);
+          expect(registry.get(completed.jobId)?.result?.structuredContent)
+            .toMatchObject({threadId:"exact-result"});
+          expect((await registry.waitForInput(active.jobId,undefined,0)).timedOut).toBe(false);
+          const intent = durableCancelIntent(registry,active.jobId,randomUUID());
+          expect(registry.getCancellationIntent(intent.intentId)?.status).toBe("recorded");
+          return {durationMs:performance.now()-started,inspectedAtRead:inspected};
+        })().then(resolve,reject); }));
+      const sweep = registry.sweepAutomaticRecovery();
+      const read = await foreground;
+      await sweep;
+      expect(read.inspectedAtRead).toBeLessThan(32);
+      expect(read.durationMs).toBeLessThan(250);
+      expect(inspected).toBeGreaterThan(0);
+      expect(inspected).toBeLessThanOrEqual(32);
+      finishActive(result("active-finished"));
+      await active.promise;
+    } finally {
+      await registry.closeThreadConnections();
+      state.close();
+    }
+  },30_000);
 
   it("bounds simultaneous Dashboard and model terminal watchers under public-event load", async () => {
     const root = temporaryRoot();

@@ -13,7 +13,8 @@ import {
   V23_JOB_COMPLETION_RESULT_OFFER_MIGRATION_SCHEMA,
   V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA,
   V27_DECISION_CARD_RETIREMENT_MIGRATION_SCHEMA,
-  V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA
+  V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA,
+  V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA
 } from "./stateSchema.js";
 import type { ModelDescriptionHistoryPage, ModelDescriptionOverrides } from "./modelDescriptions.js";
 import {
@@ -746,6 +747,7 @@ export class BridgeStateStore {
           this.database.exec(V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA);
           this.database.exec(V27_DECISION_CARD_RETIREMENT_MIGRATION_SCHEMA);
           this.database.exec(V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA);
+          this.database.exec(V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
           this.setMeta("schema_v21_created_at", new Date().toISOString());
           this.setMeta("schema_v22_created_at", new Date().toISOString());
@@ -755,6 +757,7 @@ export class BridgeStateStore {
           this.setMeta("schema_v26_created_at", new Date().toISOString());
           this.setMeta("schema_v27_created_at", new Date().toISOString());
           this.setMeta("schema_v28_created_at", new Date().toISOString());
+          this.setMeta("schema_v29_created_at", new Date().toISOString());
           this.setMeta("state_migration_catalog_version", String(STATE_MIGRATION_CATALOG_VERSION));
           this.setMeta("state_database_id", randomUUID());
           this.recordSchemaOrigin("fresh");
@@ -1924,6 +1927,15 @@ export class BridgeStateStore {
     return row ? readAgentRow(row) : undefined;
   }
 
+  /** Stable keyset for background reconciliation. A restart may revisit rows,
+   * but never needs to hydrate the entire Agent table before serving reads. */
+  recoveryAgentIds(afterAgentId: string, limit: number): string[] {
+    const boundedLimit = Math.max(1, Math.min(32, Math.floor(limit)));
+    return (this.database.prepare(`SELECT agent_id FROM agents WHERE agent_id > ?
+      ORDER BY agent_id LIMIT ?`).all(afterAgentId, boundedLimit) as Array<{agent_id:string}>)
+      .map(row => row.agent_id);
+  }
+
   getAgentForThread(threadId: string): BridgeAgent | undefined {
     const row = this.database
       .prepare(`
@@ -1982,6 +1994,15 @@ export class BridgeStateStore {
         LEFT JOIN projects p ON p.project_id=s.project_id
         WHERE t.is_current = 1 ORDER BY t.linked_at ASC`)
       .all() as AgentThreadStorageRow[]).map(readAgentThreadRow);
+  }
+
+  currentAgentThread(agentId: string): BridgeAgentThread | undefined {
+    const row = this.database.prepare(`SELECT t.*,s.session_id,s.scope_id,s.project_id,
+      p.name AS project_name,s.backend_kind,s.cwd,s.sandbox,s.forked_from_thread_id
+      FROM agent_threads t JOIN sessions s ON s.thread_id=t.thread_id
+      LEFT JOIN projects p ON p.project_id=s.project_id
+      WHERE t.agent_id=? AND t.is_current=1`).get(agentId) as AgentThreadStorageRow | undefined;
+    return row ? readAgentThreadRow(row) : undefined;
   }
 
   listAgentThreads(agentId: string): BridgeAgentThread[] {
@@ -4275,6 +4296,7 @@ export class BridgeStateStore {
     this.runMigration("25", "26", originalSourceSchema, () => this.migrateV25ToV26());
     this.runMigration("26", "27", originalSourceSchema, () => this.migrateV26ToV27());
     this.runMigration("27", "28", originalSourceSchema, () => this.migrateV27ToV28());
+    this.runMigration("28", "29", originalSourceSchema, () => this.migrateV28ToV29());
     if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
       throw new Error(`Bridge state migration stopped at unsupported schema version ${this.getMeta("schema_version")}.`);
     }
@@ -5714,6 +5736,15 @@ export class BridgeStateStore {
       this.setMeta("schema_version", "28");
       this.setMeta("schema_v28_job_history_index", "agent-recent-v1");
       this.setMeta("schema_v28_migrated_at", new Date().toISOString());
+    });
+  }
+
+  private migrateV28ToV29(): void {
+    this.transaction(() => {
+      this.database.exec(V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "29");
+      this.setMeta("schema_v29_background_work_indexes", "recovery-agent-and-worker-v1");
+      this.setMeta("schema_v29_migrated_at", new Date().toISOString());
     });
   }
 
