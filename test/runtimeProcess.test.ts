@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { request as httpRequest } from "node:http";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -189,6 +190,36 @@ function openIncompleteMcpRequest(
       );
       resolve(socket);
     });
+  });
+}
+
+function postMcpChunks(
+  baseUrl: string,
+  chunks: readonly Buffer[],
+  headers: Record<string, string> = {}
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(`${baseUrl}/mcp`, {
+      method: "POST", headers: { "content-type": "application/json", ...headers }
+    }, response => {
+      const received: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => received.push(chunk));
+      response.once("error", reject);
+      response.once("end", () => {
+        try {
+          resolve({ status: response.statusCode || 0,
+            body: JSON.parse(Buffer.concat(received).toString("utf8")) as Record<string, unknown> });
+        } catch (error) { reject(error); }
+      });
+    });
+    request.once("error", reject);
+    void (async () => {
+      for (const chunk of chunks) {
+        request.write(chunk);
+        await new Promise(resolve => setTimeout(resolve, 15));
+      }
+      request.end();
+    })().catch(reject);
   });
 }
 
@@ -778,6 +809,43 @@ describe("isolated production runtime", () => {
     await waitUntilReady(runtime.baseUrl);
   }, 15_000);
 
+  it("preserves a complete split UTF-8 ID when the forwarded response is lost", async () => {
+    const processIds: number[] = [];
+    const runtime = await start(
+      processId => processIds.push(processId), undefined,
+      { NODE_ENV: "test", CODEX_MCP_BRIDGE_TEST_CONFORMANCE_DELAY_MS: "5000" }, true
+    );
+    const body = Buffer.from(JSON.stringify({
+      jsonrpc: "2.0", id: "한글", method: "tools/call",
+      params: { name: "test_logging_tool", arguments: {}, _meta: {
+        "io.modelcontextprotocol/protocolVersion": CURRENT_PROTOCOL,
+        "io.modelcontextprotocol/clientInfo": { name: "split-id-regression", version: "1" },
+        "io.modelcontextprotocol/clientCapabilities": {}
+      } }
+    }));
+    const splitAt = Buffer.byteLength('{"jsonrpc":"2.0","id":"') + 1;
+    const pending = postMcpChunks(runtime.baseUrl,
+      [body.subarray(0, splitAt), body.subarray(splitAt)], {
+        accept: "application/json",
+        "mcp-protocol-version": CURRENT_PROTOCOL,
+        "mcp-method": "tools/call",
+        "mcp-name": "test_logging_tool"
+      });
+    const deadline = Date.now() + 2_000;
+    let forwarded = false;
+    while (!forwarded && Date.now() < deadline) {
+      forwarded = (await observedStateInFlight(runtime.baseUrl) || 0) >= 1;
+      if (!forwarded) await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(forwarded).toBe(true);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    process.kill(processIds[0]!, "SIGKILL");
+    expect(await pending).toMatchObject({ status: 503, body: {
+      jsonrpc: "2.0", id: "한글",
+      error: { data: { code: "RUNTIME_RESPONSE_UNCONFIRMED", outcome: "unknown" } }
+    } });
+  }, 15_000);
+
   it("separates a proxy connection failure from still-fresh runtime readiness", async () => {
     const runtime = await start(undefined, undefined, {
       NODE_ENV: "test",
@@ -906,6 +974,48 @@ describe("isolated production runtime", () => {
           reason: "state-capacity", outcome: "not-observed"
         } }
       });
+
+      const numeric = await postMcpChunks(runtime.baseUrl, [
+        Buffer.from('{"jsonrpc":"2.0","id":12'),
+        Buffer.from('34,"method":"ping"}')
+      ]);
+      expect(numeric).toMatchObject({ status: 503, body: {
+        jsonrpc: "2.0", id: 1234,
+        error: { data: { reason: "state-capacity", outcome: "not-observed" } }
+      } });
+
+      const exponent = await postMcpChunks(runtime.baseUrl, [
+        Buffer.from('{"jsonrpc":"2.0","id":1e3,"method":"ping"}')
+      ]);
+      expect(exponent).toMatchObject({ status: 503, body: {
+        jsonrpc: "2.0", id: 1000
+      } });
+
+      const unicode = Buffer.from('{"jsonrpc":"2.0","id":"한글","method":"ping"}');
+      const splitAt = Buffer.byteLength('{"jsonrpc":"2.0","id":"') + 1;
+      const splitUnicode = await postMcpChunks(runtime.baseUrl, [
+        unicode.subarray(0, splitAt), unicode.subarray(splitAt)
+      ]);
+      expect(splitUnicode).toMatchObject({ status: 503, body: {
+        jsonrpc: "2.0", id: "한글"
+      } });
+
+      const afterLargeParams = await postMcpChunks(runtime.baseUrl, [
+        Buffer.from(JSON.stringify({ jsonrpc: "2.0", params: {
+          id: "nested-is-not-the-request-id", padding: "x".repeat(70 * 1024)
+        }, id: "after-large-params", method: "ping" }))
+      ]);
+      expect(afterLargeParams).toMatchObject({ status: 503, body: {
+        jsonrpc: "2.0", id: "after-large-params"
+      } });
+
+      const incomplete = await postMcpChunks(runtime.baseUrl, [
+        Buffer.from('{"jsonrpc":"2.0","id":12')
+      ]);
+      expect(incomplete).toMatchObject({ status: 503, body: {
+        code: "RUNTIME_RESPONSE_UNCONFIRMED", reason: "state-capacity"
+      } });
+      expect(incomplete.body).not.toHaveProperty("id");
     } finally {
       for (const socket of sockets) socket.destroy();
     }

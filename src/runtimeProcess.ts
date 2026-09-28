@@ -32,6 +32,7 @@ import type {
   BridgeApplicationService,
   BridgeRuntimeAdmissionSnapshot
 } from "./tools.js";
+import { decodeUtf8Strict } from "./textIntegrity.js";
 
 type RuntimeStateServiceStatus = NonNullable<
   BridgeRuntimeAdmissionSnapshot["stateService"]
@@ -55,7 +56,9 @@ const CRITICAL_RPC_RESERVE = 16;
 const MAX_PROXY_REQUESTS = MAX_PENDING_REQUESTS - CRITICAL_RPC_RESERVE;
 const MAX_RPC_BYTES = 8 * 1024 * 1024;
 const MAX_PROXY_BYTES_IN_FLIGHT = 32 * 1024 * 1024;
-const MAX_MCP_ID_PREFIX_BYTES = 64 * 1024;
+// Only request bodies admitted by the existing RPC byte limit can supply an
+// error ID. Bound retained bodies across both proxied and rejected requests.
+const MAX_MCP_ID_CAPTURE_BYTES_IN_FLIGHT = MAX_PROXY_BYTES_IN_FLIGHT + MAX_RPC_BYTES;
 const MCP_REJECTION_BODY_WAIT_MS = 1_000;
 const RESTART_BASE_DELAY_MS = 250;
 const RESTART_MAX_DELAY_MS = 10_000;
@@ -616,11 +619,11 @@ class IsolatedRuntimeController {
     let responseStarted = false;
     let settled = false;
     let requestOutcome: ProxyRequestOutcome = "not-observed";
-    let requestPrefix = "";
-    let requestId: string | number | undefined;
+    const requestIdCapture = new McpRequestIdCapture();
     const finish = () => {
       if (settled) return;
       settled = true;
+      requestIdCapture.dispose();
       this.activeProxyRequests = Math.max(0, this.activeProxyRequests - 1);
       this.activeProxyBytes = Math.max(0, this.activeProxyBytes - requestBytes);
     };
@@ -639,7 +642,7 @@ class IsolatedRuntimeController {
           writeUnavailable(outgoing, this.readiness(), "not-observed", {
             reason: "state-capacity",
             limitations: ["state-capacity"]
-          }, requestId);
+          }, requestIdCapture.id());
         }
       } else if (!outgoing.destroyed) {
         outgoing.destroy();
@@ -675,7 +678,7 @@ class IsolatedRuntimeController {
     proxied.setTimeout(PROXY_IDLE_TIMEOUT_MS, () => {
       proxied.destroy(new Error("RUNTIME_RESPONSE_UNCONFIRMED"));
       if (!responseStarted && !outgoing.headersSent) {
-        writeUnavailable(outgoing, this.readiness(), requestOutcome, {}, requestId);
+        writeUnavailable(outgoing, this.readiness(), requestOutcome, {}, requestIdCapture.id());
       } else if (!outgoing.destroyed) {
         outgoing.destroy();
       }
@@ -691,7 +694,7 @@ class IsolatedRuntimeController {
             reason: "state-recovering",
             limitations: ["state-response-unconfirmed"]
           },
-          requestId
+          requestIdCapture.id()
         );
       } else if (!outgoing.destroyed) {
         outgoing.destroy(error);
@@ -710,16 +713,9 @@ class IsolatedRuntimeController {
       finish();
     });
     incoming.on("data", chunk => {
-      if (requestId !== undefined || requestPrefix.length >= MAX_MCP_ID_PREFIX_BYTES) return;
-      requestPrefix += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
-      if (requestPrefix.length > MAX_MCP_ID_PREFIX_BYTES) {
-        requestPrefix = requestPrefix.slice(0, MAX_MCP_ID_PREFIX_BYTES);
-      }
-      requestId = mcpRequestId(requestPrefix, false);
+      requestIdCapture.append(chunk);
     });
-    incoming.once("end", () => {
-      if (requestId === undefined) requestId = mcpRequestId(requestPrefix, true);
-    });
+    incoming.once("end", () => requestIdCapture.complete());
     if (declaredLength === undefined) {
       incoming.on("data", chunk => {
         if (settled) return;
@@ -1608,25 +1604,73 @@ const HOP_BY_HOP_HEADERS = [
   "upgrade"
 ] as const;
 
-function mcpRequestId(prefix: string, complete: boolean): string | number | undefined {
-  if (complete) {
-    try {
-      const value: unknown = JSON.parse(prefix);
-      if (value && typeof value === "object" && !Array.isArray(value)) {
-        const id = (value as Record<string, unknown>).id;
-        if (typeof id === "string" || typeof id === "number" && Number.isFinite(id)) return id;
+let mcpIdCaptureBytesInFlight = 0;
+
+/** Keeps a bounded raw request body until its complete JSON can be parsed. */
+class McpRequestIdCapture {
+  private buffer?: Buffer;
+  private bytes = 0;
+  private ended = false;
+  private available = true;
+
+  append(chunk: Buffer | string): boolean {
+    if (!this.available || this.ended) return false;
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8");
+    const nextBytes = this.bytes + bytes.length;
+    if (nextBytes > MAX_RPC_BYTES) {
+      this.dispose();
+      return false;
+    }
+    if (nextBytes > (this.buffer?.length || 0)) {
+      const capacity = Math.min(MAX_RPC_BYTES,
+        Math.max(nextBytes, (this.buffer?.length || 1_024) * 2));
+      const previousCapacity = this.buffer?.length || 0;
+      const additionalCapacity = capacity - previousCapacity;
+      if (mcpIdCaptureBytesInFlight + additionalCapacity > MAX_MCP_ID_CAPTURE_BYTES_IN_FLIGHT) {
+        this.dispose();
+        return false;
       }
-    } catch {
-      // A bounded prefix may end before the request body does.
+      // One allocation per growth step keeps thousands of tiny HTTP chunks
+      // from retaining thousands of backing buffers outside the byte budget.
+      const replacement = Buffer.allocUnsafeSlow(capacity);
+      this.buffer?.copy(replacement, 0, 0, this.bytes);
+      this.buffer = replacement;
+      mcpIdCaptureBytesInFlight += additionalCapacity;
+    }
+    bytes.copy(this.buffer!, this.bytes);
+    this.bytes = nextBytes;
+    return true;
+  }
+
+  complete(): void { this.ended = true; }
+
+  id(): string | number | undefined {
+    if (!this.available || !this.ended) return;
+    try {
+      return mcpRequestId(this.buffer?.subarray(0, this.bytes) || Buffer.alloc(0));
+    } finally {
+      this.dispose();
     }
   }
-  const match = /^\s*\{\s*"jsonrpc"\s*:\s*"2\.0"\s*,\s*"id"\s*:\s*("(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?)/u.exec(prefix);
-  if (!match) return;
+
+  dispose(): void {
+    mcpIdCaptureBytesInFlight -= this.buffer?.length || 0;
+    this.bytes = 0;
+    this.buffer = undefined;
+    this.available = false;
+  }
+}
+
+function mcpRequestId(body: Buffer): string | number | undefined {
   try {
-    const id: unknown = JSON.parse(match[1]!);
-    return typeof id === "string" || typeof id === "number" && Number.isFinite(id)
-      ? id : undefined;
-  } catch { return; }
+    const value: unknown = JSON.parse(decodeUtf8Strict(body, "MCP request body"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const id = (value as Record<string, unknown>).id;
+    return typeof id === "string" || typeof id === "number" && Number.isFinite(id) ? id : undefined;
+  } catch {
+    // Malformed, incomplete, or oversized bodies cannot justify an ID guess.
+    return;
+  }
 }
 
 function writeMcpUnavailable(
@@ -1640,30 +1684,25 @@ function writeMcpUnavailable(
     writeUnavailable(outgoing, readiness, outcome, failure);
     return;
   }
-  let prefix = "";
+  const capture = new McpRequestIdCapture();
   let finished = false;
-  const finish = (id?: string | number) => {
+  const finish = () => {
     if (finished) return;
     finished = true;
     clearTimeout(timer);
     incoming.off("data", onData);
     incoming.off("end", onEnd);
     incoming.off("close", onClose);
+    const id = capture.id();
+    capture.dispose();
     writeUnavailable(outgoing, readiness, outcome, failure, id);
   };
   const onData = (chunk: Buffer | string) => {
-    prefix += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
-    if (prefix.length > MAX_MCP_ID_PREFIX_BYTES) {
-      prefix = prefix.slice(0, MAX_MCP_ID_PREFIX_BYTES);
-    }
-    const id = mcpRequestId(prefix, false);
-    if (id !== undefined) finish(id);
-    else if (prefix.length >= MAX_MCP_ID_PREFIX_BYTES) finish();
+    if (!capture.append(chunk)) finish();
   };
-  const onEnd = () => finish(mcpRequestId(prefix, true));
-  const onClose = () => finish(mcpRequestId(prefix, false));
-  const timer = setTimeout(() => finish(mcpRequestId(prefix, false)),
-    MCP_REJECTION_BODY_WAIT_MS);
+  const onEnd = () => { capture.complete(); finish(); };
+  const onClose = () => finish();
+  const timer = setTimeout(finish, MCP_REJECTION_BODY_WAIT_MS);
   timer.unref();
   incoming.on("data", onData);
   incoming.once("end", onEnd);
