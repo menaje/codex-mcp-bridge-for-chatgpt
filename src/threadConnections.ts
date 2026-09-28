@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { CodexUpstream } from "./upstream.js";
+import { BackgroundWorkSlice, CONNECTION_WORK_LIMITS } from "./backgroundWorkBudget.js";
 
 export type ThreadPersistence = "persistent" | "ephemeral" | "unknown";
 export type ThreadConnectionPhase = "connected" | "waiting" | "releasing" | "unsubscribed" | "released" | "blocked";
@@ -73,6 +74,30 @@ export class ThreadConnectionStore {
     return this.db.prepare(`SELECT * FROM thread_connections WHERE worker_pid=?
       AND persistence='persistent' AND phase NOT IN ('released','releasing')
       ORDER BY thread_id LIMIT ?`).all(workerPid, Math.max(1, Math.min(32, Math.floor(limit))))
+      .map(row => this.decode(row as Record<string, unknown>));
+  }
+
+  *protectedThreadIds(): IterableIterator<string> {
+    // This safety pass must finish before admitting turns, but only projected
+    // IDs are visited and no all-record array is retained at startup.
+    const rows = this.db.prepare(`SELECT thread_id FROM thread_connections INDEXED BY thread_connections_protected
+      WHERE handoff_requested=1 OR phase!='connected'`).iterate() as IterableIterator<{thread_id:string}>;
+    for (const row of rows) yield row.thread_id;
+  }
+
+  handoffCandidates(afterThreadId: string, limit = 16): ThreadConnectionRecord[] {
+    return this.db.prepare(`SELECT * FROM thread_connections
+      WHERE handoff_requested=1 AND phase!='released' AND thread_id>?
+      ORDER BY thread_id LIMIT ?`).all(afterThreadId, Math.max(1, Math.min(16, Math.floor(limit))))
+      .map(row => this.decode(row as Record<string, unknown>));
+  }
+
+  idleCandidates(after: {finishedAt:number;threadId:string}, dueAt: number, limit = 16): ThreadConnectionRecord[] {
+    return this.db.prepare(`SELECT * FROM thread_connections INDEXED BY thread_connections_release_due
+      WHERE persistence='persistent' AND phase!='released' AND last_finished_at<=?
+        AND (last_finished_at>? OR (last_finished_at=? AND thread_id>?))
+      ORDER BY last_finished_at,thread_id LIMIT ?`).all(
+        dueAt,after.finishedAt,after.finishedAt,after.threadId,Math.max(1, Math.min(16, Math.floor(limit))))
       .map(row => this.decode(row as Record<string, unknown>));
   }
 
@@ -200,6 +225,7 @@ export class ThreadConnectionController {
   private timer?: NodeJS.Timeout;
   private pending?: Promise<void>;
   private sweepCursor = "";
+  private idleCursor = {finishedAt:0,threadId:""};
   private closed = false;
   private readonly now: () => number;
 
@@ -210,9 +236,7 @@ export class ThreadConnectionController {
 
   start(): void {
     if (this.timer || this.closed) return;
-    for (const connection of this.store.list()) {
-      if (connection.handoffRequested || connection.phase !== "connected") this.upstream.protectThreadFromImplicitResume?.(connection.threadId);
-    }
+    for (const threadId of this.store.protectedThreadIds()) this.upstream.protectThreadFromImplicitResume?.(threadId);
     this.timer = setInterval(() => { void this.sweep(); }, this.options.intervalMs ?? 30_000);
     this.timer.unref();
     void this.sweep();
@@ -245,16 +269,32 @@ export class ThreadConnectionController {
   }
 
   private async runSweep(): Promise<void> {
-    const records = this.store.list();
-    const eligible = records.filter(record => record.phase !== "released" && this.eligible(record)).map(record => record.threadId);
-    const candidates = records.filter(record => record.phase !== "released" && (record.handoffRequested || eligible.includes(record.threadId)))
-      .sort((a, b) => a.threadId.localeCompare(b.threadId));
-    // Persistently blocked requests must not starve later eligible conversations.
-    const after = candidates.filter(record => record.threadId.localeCompare(this.sweepCursor) > 0);
-    const before = candidates.filter(record => record.threadId.localeCompare(this.sweepCursor) <= 0);
-    for (const initial of [...after, ...before].slice(0, 100)) {
-      if (this.closed) return;
-      this.sweepCursor = initial.threadId;
+    const budget = new BackgroundWorkSlice(CONNECTION_WORK_LIMITS);
+    let handoffs = this.store.handoffCandidates(this.sweepCursor, 16);
+    if (!handoffs.length && this.sweepCursor) {
+      this.sweepCursor = "";
+      handoffs = this.store.handoffCandidates("", 16);
+    }
+    const idleMs = this.options.idleMs ?? DEFAULT_THREAD_IDLE_MS;
+    let idle = idleMs > 0
+      ? this.store.idleCandidates(this.idleCursor, this.now() - idleMs, 16) : [];
+    if (!idle.length && this.idleCursor.finishedAt > 0 && idleMs > 0) {
+      this.idleCursor = {finishedAt:0,threadId:""};
+      idle = this.store.idleCandidates(this.idleCursor, this.now() - idleMs, 16);
+    }
+    const candidates = [...new Map([...handoffs,...idle].map(record => [record.threadId,record])).values()];
+    const handoffIds = new Set(handoffs.map(record => record.threadId));
+    const idleIds = new Set(idle.map(record => record.threadId));
+    // A loaded peer is only ever acted on after canRelease rechecks the exact
+    // durable connection. This list may contain a protected peer safely.
+    const eligibleThreadIds = candidates.map(record => record.threadId);
+    for (const initial of candidates) {
+      if (this.closed || !budget.take(6)) return;
+      if (handoffIds.has(initial.threadId)) this.sweepCursor = initial.threadId;
+      if (idleIds.has(initial.threadId)) this.idleCursor = {
+        finishedAt:initial.lastFinishedAt!,threadId:initial.threadId
+      };
+      if (budget.targets % budget.limits.yieldEvery === 0) await budget.yieldIfNeeded();
       const current = this.store.get(initial.threadId)!;
       if (current.phase === "released") continue;
       const reason = current.persistence !== "persistent" ? current.persistence === "ephemeral" ? "ephemeral" : "persistence-unknown"
@@ -276,7 +316,7 @@ export class ThreadConnectionController {
       };
       let result: ThreadReleaseResult;
       try {
-        result = await this.upstream.releaseThreadConnection!(current.threadId, { eligibleThreadIds: eligible, canRelease, previousWorkerPid: current.workerPid });
+        result = await this.upstream.releaseThreadConnection!(current.threadId, { eligibleThreadIds, canRelease, previousWorkerPid: current.workerPid });
       } catch { result = { phase: "blocked", reason: "release-unconfirmed" }; }
       if (this.closed) return;
       // An acknowledgement alone never becomes proof of unload or relinquished writing.

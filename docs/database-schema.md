@@ -1,11 +1,11 @@
 # Bridge database schema and lifecycle
 
-Schema 28 is the current SQLite schema. `src/stateSchema.ts` contains the complete
+Schema 29 is the current SQLite schema. `src/stateSchema.ts` contains the complete
 DDL and projections used for a new installation. `src/stateStore.ts` contains
-upgrade code for schemas 3 through 27; schemas 1 and 2 are rejected. The published v0.2 and
+upgrade code for schemas 3 through 28; schemas 1 and 2 are rejected. The published v0.2 and
 v0.3 line used schema 3, and the pre-change development installation used schema
 18. Every supported upgrade ends with the same tables, columns, constraints,
-indexes, and triggers as direct schema-28 creation.
+indexes, and triggers as direct schema-29 creation.
 
 The database is the only bridge state authority. Settings, projects, retained
 sessions, and Jobs no longer have parallel JSON files or JSON mirrors. SQLite
@@ -52,7 +52,7 @@ input state. There is no `job_summaries` table, and progress events do not write
 full Job document. `scopes.version` is the one scope CAS/event sequence; there is
 no `scope_versions` mirror.
 
-## Complete schema-28 table matrix
+## Complete schema-29 table matrix
 
 The retention column describes bridge cleanup. SQLite free pages are reusable but
 remain allocated until an offline compaction; physical erasure is therefore a
@@ -185,7 +185,7 @@ copy, not end-to-end service latency or evidence of a live replacement.
 
 ## Upgrade and legacy-data rules
 
-A fresh database creates schema 28 directly. A persistent supported older database
+A fresh database creates schema 29 directly. A persistent supported older database
 is inspected before a writable SQLite connection opens. The canonical-file lock,
 live-owner check, integrity and foreign-key checks, permissions, free-space
 calculation, verified backup, sequential conversion, and final verification all
@@ -194,7 +194,7 @@ Development and candidate packages use separate default state profiles; selectin
 the stable DB requires an explicit profile or absolute-file override.
 
 The upgrade gets one private, mode-0600 backup named
-`state.sqlite.pre-v<SOURCE>-to-v28.sqlite` and a bound metadata sidecar. The
+`state.sqlite.pre-v<SOURCE>-to-v29.sqlite` and a bound metadata sidecar. The
 sidecar records the logical/physical database identity, source and target runtime
 facts, migration path/checksums, snapshot checksum, integrity/foreign-key results,
 and a digest of table row counts. Retrying the same upgrade reuses and fully
@@ -244,8 +244,8 @@ relationship. Migration never creates a project from a slug, name, cwd, or old
 snapshot.
 
 The supported schema-3 fixture is taken from the published v0.3.0 implementation
-and passes every fixed checkpoint through schema 28. Exact deployed-development
-fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 27 are generated
+and passes every fixed checkpoint through schema 29. Exact deployed-development
+fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 28 are generated
 only as named, committed checkpoints from those sources. `state-migrations.json` binds
 their provenance and hashes to the shipped implementation. Schemas 1 and 2 are
 outside the supported release floor and are rejected before a backup or mutation.
@@ -254,7 +254,7 @@ restarts.
 
 ## Capacity, backups, and offline compaction
 
-The schema-28 table/write/read/maintenance ownership matrix and the command,
+The schema-29 table/write/read/maintenance ownership matrix and the command,
 query, and bounded scheduler contracts are documented in
 [State data access and maintenance ownership](state-data-access.md).
 The selected two-database process, IPC, readiness, migration and fault contract
@@ -281,7 +281,7 @@ ends and the upgraded database has survived normal restarts, remove older backup
 as a deliberate operator action. Backups contain the same private material as the
 source database and require the same access controls. The bridge does not silently
 delete them because release and rollback policy belong to the operator. Keep each
-backup with its `.migration-v<SOURCE>-to-v28.backup.json` sidecar. Supported
+backup with its `.migration-v<SOURCE>-to-v29.backup.json` sidecar. Supported
 snapshot restore is allowed only while the migrated DB records that neither HTTP
 nor stdio service-open occurred; after that boundary, preserve current state and
 use forward repair or explicit data reconciliation. See the
@@ -306,7 +306,7 @@ the live database untouched. A report with `liveDatabaseReplacementPerformed:
 false` is implementation evidence, not evidence that an operator has compacted or
 released a production installation.
 
-The complete schema-28 table, explicit index and trigger ownership inventory,
+The complete schema-29 table, explicit index and trigger ownership inventory,
 including command/query consumers, recovery dependencies, future destination and
 two-database file security rules, is in
 [State schema ownership catalog](state-schema-ownership-catalog.md).

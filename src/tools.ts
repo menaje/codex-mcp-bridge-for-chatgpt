@@ -2215,8 +2215,8 @@ export class CodexJobRegistry {
     this.unsubscribeRecovery = this.subscribeChanges((reason, agentId) => {
       // Scope-only Dashboard notifications have no recovery identity. The
       // periodic keyset pass covers them without triggering a global survey.
-      if (reason && reason !== "progress") this.recoveryController?.schedule(agentId);
-      else if (agentId) this.recoveryController?.schedule(agentId);
+      if (reason === "progress") return;
+      if (agentId || reason) this.recoveryController?.schedule(agentId);
     });
     this.recoveryController.start();
   }
@@ -2240,6 +2240,7 @@ export class CodexJobRegistry {
       intervalMs,
       changed: () => { for (const listener of this.changeListeners) listener(); },
       shouldDefer: () => this.runtimeAdmission.pendingAdmissions > 0 || this.observedRunningCount() > 0,
+      maxDeferMs: 30_000,
       command: slice => this.stateMaintenanceCommand(slice),
       completed: (command, result) => this.applyStateMaintenanceResult(command, result)
     });
@@ -2592,6 +2593,10 @@ export class CodexJobRegistry {
 
   listCurrentAgentThreads(): BridgeAgentThread[] {
     return this.activityStore.listCurrentAgentThreads();
+  }
+
+  currentAgentThread(agentId: string): BridgeAgentThread | undefined {
+    return this.activityStore.currentAgentThread(agentId);
   }
 
   listAgentThreads(agentId: string): BridgeAgentThread[] {
@@ -4125,7 +4130,10 @@ export class CodexJobRegistry {
       if (
         isActiveActivityJobStatus(job.status) ||
         isTerminalActivityJobStatus(job.status) && !this.retentionProtectedJobs.has(jobId)
-      ) reservations++;
+      ) {
+        reservations++;
+        if (reservations > this.maxJobs) break;
+      }
     }
     return reservations;
   }
@@ -4163,40 +4171,19 @@ export class CodexJobRegistry {
     this.retainedJobMaintenanceTimer.unref();
   }
 
-  /** One-time startup normalization. Runtime maintenance uses the bounded
-   * resumable slice below. */
-  private pruneLoadedJobsAtStartup(): string[] {
-    const removed: string[] = [];
+  /** Protect a small first slice before admission; the maintenance scheduler
+   * continues classification and pruning after startup. This prevents restart
+   * from synchronously checking every historical Job's protection authorities. */
+  private classifyLoadedJobsAtStartup(): void {
+    let inspected = 0;
     const now = Date.now();
-    const cutoff = now - this.ttlMs;
-    const unprotected = [...this.jobs.values()]
-      .filter(job => isTerminalActivityJobStatus(job.status))
-      .sort((left, right) => left.updatedAt - right.updatedAt || left.jobId.localeCompare(right.jobId))
-      .filter(job => {
-        const protectedJob = this.activityStore.retentionProtection(
-          job.jobId,
-          now,
-          this.ttlMs
-        ).length > 0;
-        if (protectedJob) this.retentionProtectedJobs.add(job.jobId);
-        else this.retentionProtectedJobs.delete(job.jobId);
-        return !protectedJob;
-      });
-    const expired = new Set(
-      unprotected.filter(job => job.updatedAt < cutoff).map(job => job.jobId)
-    );
-    const retained = unprotected.filter(job => !expired.has(job.jobId));
-    const overLimit = new Set(
-      retained.slice(0, Math.max(0, retained.length - this.maxJobs)).map(job => job.jobId)
-    );
-    for (const job of unprotected) {
-      if (!expired.has(job.jobId) && !overLimit.has(job.jobId)) continue;
-      this.deleteIndexedJob(job.jobId);
-      this.lastWake.delete(job.jobId);
-      this.retentionProtectedJobs.delete(job.jobId);
-      removed.push(job.jobId);
+    for (const job of this.jobs.values()) {
+      if (!isTerminalActivityJobStatus(job.status)) continue;
+      if (++inspected > 32) break;
+      if (this.activityStore.retentionProtection(job.jobId, now, this.ttlMs).length > 0) {
+        this.retentionProtectedJobs.add(job.jobId);
+      }
     }
-    return removed;
   }
 
   private load(): void {
@@ -4230,17 +4217,6 @@ export class CodexJobRegistry {
     const loaded = [...byRequest.values()].sort((a, b) => a.updatedAt - b.updatedAt);
     if (loaded.length !== valid.length) changed = true;
     for (const persisted of loaded) {
-      const requestConflict = [...this.jobs.values()].find(
-        (job) =>
-          job.jobId !== persisted.jobId &&
-          job.scopeId === persisted.scopeId &&
-          job.requestId === persisted.requestId
-      );
-      if (requestConflict) {
-        changed = true;
-        if (requestConflict.updatedAt >= persisted.updatedAt) continue;
-        this.deleteIndexedJob(requestConflict.jobId);
-      }
       const job: CodexJob = { ...persisted, promise: Promise.resolve() };
       if (this.projectionOnly) {
         this.setIndexedJob(job);
@@ -4272,7 +4248,8 @@ export class CodexJobRegistry {
       this.setIndexedJob(job);
     }
     if (this.projectionOnly) return changed || loaded.length !== values.length;
-    changed = this.pruneLoadedJobsAtStartup().length > 0 || changed || loaded.length !== values.length;
+    this.classifyLoadedJobsAtStartup();
+    changed = changed || loaded.length !== values.length;
     return changed;
   }
 
@@ -8411,17 +8388,18 @@ function configureAutomaticRecovery(
     if (!agent) return [];
     const latest = jobs.observedLatestJobForAgent(agentId);
     const current = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
-    const connections = store.threadConnections.listForAgent(agentId)
-      .filter(connection => connection.persistence === "persistent" &&
-        connection.lastJobId && !["released", "releasing"].includes(connection.phase));
+    const thread = jobs.currentAgentThread(agentId);
+    if (!thread || thread.backendKind !== "app-server") return [];
+    const connection = store.threadConnections.get(thread.threadId);
+    const releasableConnection = connection?.persistence === "persistent" &&
+      connection.lastJobId && !["released", "releasing"].includes(connection.phase)
+      ? connection : undefined;
     const recheckIdentity = recheckRecoveryIdentity(jobs, agent, latest);
-    const couldRelease = connections.some(connection =>
+    const couldRelease = releasableConnection &&
       !store.automaticRecovery.isBlocked(automaticRecoveryKey("release",
-        [connection.threadId,connection.lastJobId])));
+        [releasableConnection.threadId,releasableConnection.lastJobId]));
     if (store.automaticRecovery.isBlockedRecheckIdentity(recheckIdentity.key) && !couldRelease &&
         current?.status !== "termination-failed") return [];
-    const thread = jobs.listAgentThreads(agentId).find(thread => thread.isCurrent);
-    if (!thread || thread.backendKind !== "app-server") return [];
     const result: AutomaticRecoveryCandidate[] = [];
     if (current?.status === "termination-failed" && current.cancellationIntentId) {
       const intent = jobs.getCancellationIntent(current.cancellationIntentId);
@@ -8442,14 +8420,13 @@ function configureAutomaticRecovery(
     const unresolvedOrphan = agent.lifecycle === "orphaned" && !store.workHistory.runtimeResolution(agent.agentId,identity.revision);
     const recheck = store.automaticRecovery.recheckCandidate(recheckIdentity,Boolean(unknown || unresolvedOrphan));
     if (recheck && !store.automaticRecovery.isBlocked(recheck.key)) result.push(recheck);
-    const connection = connections.find(connection => connection.threadId === thread.threadId);
-    const retained = connection && !current ? store.workHistory.latestJob(agent.agentId) : undefined;
-    if (!current && connection?.lastJobId &&
-        retained?.jobId === connection.lastJobId && ["failed","interrupted","cancelled"].includes(retained.status) &&
+    const retained = releasableConnection && !current ? store.workHistory.latestJob(agent.agentId) : undefined;
+    if (!current && releasableConnection?.lastJobId &&
+        retained?.jobId === releasableConnection.lastJobId && ["failed","interrupted","cancelled"].includes(retained.status) &&
         !store.threadConnections.hasUnfinishedWork(thread.threadId)) {
-      const key = automaticRecoveryKey("release",[thread.threadId,connection.lastJobId]);
+      const key = automaticRecoveryKey("release",[thread.threadId,releasableConnection.lastJobId]);
       if (!store.automaticRecovery.isBlocked(key)) result.push({key,
-        scopeId:agent.scopeId,agentId:agent.agentId,jobId:connection.lastJobId,kind:"release"});
+        scopeId:agent.scopeId,agentId:agent.agentId,jobId:releasableConnection.lastJobId,kind:"release"});
     }
     return result;
   };
@@ -8458,7 +8435,7 @@ function configureAutomaticRecovery(
       return {resolved:false,reason:"work-changed",retryable:false};
     }
     const agent = jobs.getAgent(candidate.agentId)!;
-    const thread = jobs.listAgentThreads(agent.agentId).find(thread => thread.isCurrent)!;
+    const thread = jobs.currentAgentThread(agent.agentId)!;
     if (candidate.kind === "retry-stop") {
       const job = candidate.jobId ? jobs.get(candidate.jobId) : undefined;
       const previous = job?.cancellationIntentId ? jobs.getCancellationIntent(job.cancellationIntentId) : undefined;

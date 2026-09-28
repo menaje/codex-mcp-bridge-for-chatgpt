@@ -200,10 +200,15 @@ describe("operational command receipts", () => {
       for (let index = 0; index < 501; index += 1) {
         commit(randomUUID(), "maintain", index + 3);
       }
+      let removed = 0;
+      for (let slice = 0; slice < 8; slice++) {
+        const result = store.maintainOperationalCommandReceiptRetention(now, 1_000);
+        expect(result.receiptsRemoved).toBeLessThanOrEqual(64);
+        removed += result.receiptsRemoved;
+      }
+      expect(removed).toBe(501);
       expect(store.maintainOperationalCommandReceiptRetention(now, 1_000))
-        .toEqual({ receiptsRemoved: 500 });
-      expect(store.maintainOperationalCommandReceiptRetention(now, 1_000))
-        .toEqual({ receiptsRemoved: 1 });
+        .toEqual({ receiptsRemoved: 0 });
       expect(store.getOperationalCommandReceipt(recent)).toBeDefined();
       expect(store.getOperationalCommandReceipt(business)).toBeDefined();
       expect(() => store.maintainOperationalCommandReceiptRetention(-1))
@@ -235,7 +240,7 @@ describe("operational command receipts", () => {
 
     try {
       const store = new BridgeStateStore({ file });
-      expect(store.schemaVersion).toBe(28);
+      expect(store.schemaVersion).toBe(29);
       store.close();
       const upgraded = new Database(file, { readonly: true });
       const names = (upgraded.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>)
@@ -247,7 +252,7 @@ describe("operational command receipts", () => {
       expect(upgraded.pragma("integrity_check", { simple: true })).toBe("ok");
       expect(upgraded.pragma("foreign_key_check")).toEqual([]);
       upgraded.close();
-      expect(existsSync(`${file}.pre-v23-to-v28.sqlite`)).toBe(true);
+      expect(existsSync(`${file}.pre-v23-to-v29.sqlite`)).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -291,7 +296,7 @@ describe("operational command receipts", () => {
 
     try {
       const store = new BridgeStateStore({ file });
-      expect(store.schemaVersion).toBe(28);
+      expect(store.schemaVersion).toBe(29);
       expect(store.getMeta("schema_v25_operational_command_receipts"))
         .toBe("durable-command-receipts-v1");
       expect(store.getMeta("schema_v27_decision_card_retirement"))
@@ -313,17 +318,17 @@ describe("operational command receipts", () => {
       expect(migrated.pragma("integrity_check", { simple: true })).toBe("ok");
       expect(migrated.pragma("foreign_key_check")).toEqual([]);
       migrated.close();
-      expect(existsSync(`${file}.pre-v24-to-v28.sqlite`)).toBe(true);
+      expect(existsSync(`${file}.pre-v24-to-v29.sqlite`)).toBe(true);
 
-      const source = new Database(`${file}.pre-v24-to-v28.sqlite`, { readonly: true });
+      const source = new Database(`${file}.pre-v24-to-v29.sqlite`, { readonly: true });
       expect(source.prepare("SELECT COUNT(*) AS count FROM decision_submissions").get())
         .toEqual({ count: 1 });
       source.close();
 
       const restoredFile = path.join(root, "restored.sqlite");
-      copyFileSync(`${file}.pre-v24-to-v28.sqlite`, restoredFile);
+      copyFileSync(`${file}.pre-v24-to-v29.sqlite`, restoredFile);
       const restored = new BridgeStateStore({ file: restoredFile });
-      expect(restored.schemaVersion).toBe(28);
+      expect(restored.schemaVersion).toBe(29);
       restored.close();
       const backup = new Database(restoredFile, { readonly: true });
       expect(backup.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='decision_submissions'").get())

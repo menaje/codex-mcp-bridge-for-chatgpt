@@ -58,12 +58,12 @@ export class QuestionStore {
   }
 
   /** Explicit bounded maintenance. Query methods never call this path. */
-  maintain(now = Date.now(), limit = 500): {
+  maintain(now = Date.now(), limit = 64): {
     expiredQuestionsRemoved: number;
     deliveredJournalsRemoved: number;
     notificationsMarkedUncertain: number;
   } {
-    const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+    const boundedLimit = Math.max(1, Math.min(64, Math.floor(limit)));
     const cleanup = this.prune(now, boundedLimit);
     const stale = this.db.prepare(`
       SELECT question_id,scope_id,payload
@@ -86,7 +86,7 @@ export class QuestionStore {
     return { ...cleanup, notificationsMarkedUncertain };
   }
 
-  private prune(now: number, limit = 500): {
+  private prune(now: number, limit = 64): {
     expiredQuestionsRemoved: number;
     deliveredJournalsRemoved: number;
   } {

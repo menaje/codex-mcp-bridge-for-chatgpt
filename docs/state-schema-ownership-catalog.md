@@ -1,6 +1,6 @@
 # State schema ownership catalog
 
-This catalog is the schema-28 operational inventory and telemetry schema
+This catalog is the schema-29 operational inventory and telemetry schema
 inventory required by issues #142 and #143. In production the operational
 state-owner process is the only `state.sqlite` writer, the read process opens it
 read-only, and the telemetry process is the only `telemetry.sqlite` writer.
@@ -63,7 +63,10 @@ parent table and is covered by the same owner above.
   `activity_events_scope_cursor`
 - `agent_threads`: `agent_threads_agent_history`, `agent_threads_one_current`
 - `agents`: `agents_scope_state_recent`
-- `automatic_recovery`: `automatic_recovery_job`, `automatic_recovery_scope`
+- `automatic_recovery`: `automatic_recovery_agent_state`, `automatic_recovery_due`,
+  `automatic_recovery_interrupted`, `automatic_recovery_job`,
+  `automatic_recovery_retention`, `automatic_recovery_scope`
+- `automatic_recovery_incidents`: `automatic_recovery_incident_retention`
 - `cancellation_intents`: `cancellation_intents_cascade`,
   `cancellation_intents_operation`, `cancellation_intents_target_activity`,
   `cancellation_intents_target_job`
@@ -74,13 +77,15 @@ parent table and is covered by the same owner above.
 - `job_events`: `job_events_job_cursor`, `job_events_scope_cursor`
 - `job_interactions`: `job_interactions_blocking`
 - `jobs`: `jobs_activity_recent`, `jobs_agent_active`, `jobs_agent_recent_history`, `jobs_scope_recent`,
-  `jobs_source_thread_active`, `jobs_status_recent`, `jobs_thread_active`
+  `jobs_history_retention`, `jobs_source_thread_active`, `jobs_status_recent`, `jobs_thread_active`
 - `operational_command_receipts`: `operational_command_receipts_committed`
 - `projects`: `projects_active_cwd`, `projects_active_name`, `projects_ordered`
 - `sessions`: `sessions_project_recent`, `sessions_scope_recent`
 - `steering_deliveries`: `steering_deliveries_job_recent`,
   `steering_deliveries_status_recent`
-- `thread_connections`: `thread_connections_agent`, `thread_connections_idle`
+- `thread_connections`: `thread_connections_agent`, `thread_connections_handoff`,
+  `thread_connections_idle`, `thread_connections_protected`,
+  `thread_connections_release_due`, `thread_connections_worker`
 - `transport_observations`: `transport_observations_recent`
 - `user_questions`: `user_questions_expiry`
 - `work_history_state`: `work_history_expired`
@@ -146,7 +151,7 @@ diagnostic events.
 
 ## Coverage rule
 
-`test/stateSchemaOwnership.test.ts` opens a fresh schema-28 fixture and requires
+`test/stateSchemaOwnership.test.ts` opens a fresh schema-29 fixture and requires
 every non-SQLite-internal table, explicit index and trigger in `sqlite_master` to
 appear in this catalog. Adding or renaming a schema object without updating its
 owner and destination therefore fails the test.

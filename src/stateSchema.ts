@@ -612,8 +612,23 @@ export const V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA = `
     ON automatic_recovery(agent_id, state, recovery_key);
   CREATE INDEX IF NOT EXISTS automatic_recovery_interrupted
     ON automatic_recovery(state, attempts, recovery_key);
+  CREATE INDEX IF NOT EXISTS automatic_recovery_due
+    ON automatic_recovery(state, next_attempt_at, recovery_key);
+  CREATE INDEX IF NOT EXISTS automatic_recovery_retention
+    ON automatic_recovery(updated_at, recovery_key);
+  CREATE INDEX IF NOT EXISTS automatic_recovery_incident_retention
+    ON automatic_recovery_incidents(updated_at, identity_key);
+  CREATE INDEX IF NOT EXISTS jobs_history_retention
+    ON jobs(updated_at, job_id)
+    WHERE archived_at IS NOT NULL AND status IN ('completed','failed','interrupted','cancelled');
   CREATE INDEX IF NOT EXISTS thread_connections_worker
     ON thread_connections(worker_pid, thread_id);
   CREATE INDEX IF NOT EXISTS thread_connections_handoff
     ON thread_connections(handoff_requested, thread_id);
+  CREATE INDEX IF NOT EXISTS thread_connections_protected
+    ON thread_connections(thread_id)
+    WHERE handoff_requested=1 OR phase!='connected';
+  CREATE INDEX IF NOT EXISTS thread_connections_release_due
+    ON thread_connections(persistence, last_finished_at, thread_id)
+    WHERE phase != 'released';
 `;

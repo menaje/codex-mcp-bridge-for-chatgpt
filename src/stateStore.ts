@@ -1996,6 +1996,15 @@ export class BridgeStateStore {
       .all() as AgentThreadStorageRow[]).map(readAgentThreadRow);
   }
 
+  currentAgentThread(agentId: string): BridgeAgentThread | undefined {
+    const row = this.database.prepare(`SELECT t.*,s.session_id,s.scope_id,s.project_id,
+      p.name AS project_name,s.backend_kind,s.cwd,s.sandbox,s.forked_from_thread_id
+      FROM agent_threads t JOIN sessions s ON s.thread_id=t.thread_id
+      LEFT JOIN projects p ON p.project_id=s.project_id
+      WHERE t.agent_id=? AND t.is_current=1`).get(agentId) as AgentThreadStorageRow | undefined;
+    return row ? readAgentThreadRow(row) : undefined;
+  }
+
   listAgentThreads(agentId: string): BridgeAgentThread[] {
     return (this.database
       .prepare(`SELECT t.*,s.session_id,s.scope_id,s.project_id,p.name AS project_name,

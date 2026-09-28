@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { performance } from "node:perf_hooks";
 import type Database from "better-sqlite3";
+import { BackgroundWorkSlice, RECOVERY_WORK_LIMITS } from "./backgroundWorkBudget.js";
 
 export type AutomaticRecoveryKind = "recheck" | "retry-stop" | "release";
 export type AutomaticRecoveryState = "retrying" | "resolved" | "blocked";
@@ -57,9 +57,19 @@ export class AutomaticRecoveryStore {
       WHERE incident.identity_key=? AND incident.active=1 AND recovery.state='blocked'`).get(identityKey));
   }
 
-  pendingForAgent(agentId: string): AutomaticRecoveryRecord[] {
+  pendingForAgent(agentId: string, afterKey = "", limit = 32): AutomaticRecoveryRecord[] {
     return this.db.prepare(`SELECT * FROM automatic_recovery WHERE agent_id=? AND state='retrying'
-      ORDER BY recovery_key`).all(agentId).map(row => this.decode(row as Record<string, unknown>));
+      AND recovery_key>? ORDER BY recovery_key LIMIT ?`)
+      .all(agentId,afterKey,Math.max(1,Math.min(32,Math.floor(limit))))
+      .map(row => this.decode(row as Record<string, unknown>));
+  }
+
+  dueAgentIds(now: number, limit = 4): string[] {
+    const rows = this.db.prepare(`SELECT agent_id FROM automatic_recovery
+      WHERE state='retrying' AND next_attempt_at<=? AND attempts<?
+      ORDER BY next_attempt_at,recovery_key LIMIT ?`).all(
+        now,AUTOMATIC_RECOVERY_ATTEMPTS,Math.max(1,Math.min(4,Math.floor(limit)))) as Array<{agent_id:string}>;
+    return [...new Set(rows.map(row => row.agent_id))];
   }
 
   blockedRecheckIdentityKeys(): Set<string> {
@@ -180,9 +190,9 @@ export class AutomaticRecoveryStore {
     this.db.prepare("UPDATE automatic_recovery_incidents SET active=0,updated_at=? WHERE recovery_key=?").run(now,key);
   }
 
-  prune(retentionDays: number, now = Date.now(), limit = 500): { recordsRemoved: number; incidentsRemoved: number } {
+  prune(retentionDays: number, now = Date.now(), limit = 64): { recordsRemoved: number; incidentsRemoved: number } {
     if (retentionDays === 0) return { recordsRemoved: 0, incidentsRemoved: 0 };
-    const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+    const boundedLimit = Math.max(1, Math.min(64, Math.floor(limit)));
     // Keep every unresolved attempt budget while its original work still exists.
     const recordsRemoved = this.db.prepare(`DELETE FROM automatic_recovery WHERE recovery_key IN (
       SELECT recovery_key FROM automatic_recovery WHERE updated_at<? AND
@@ -191,10 +201,9 @@ export class AutomaticRecoveryStore {
       ORDER BY updated_at,recovery_key LIMIT ?
     )`).run(now - retentionDays * 86_400_000, boundedLimit).changes;
     const incidentsRemoved = this.db.prepare(`DELETE FROM automatic_recovery_incidents WHERE identity_key IN (
-      SELECT identity_key FROM automatic_recovery_incidents WHERE
+      SELECT identity_key FROM automatic_recovery_incidents WHERE updated_at<? AND (
         NOT EXISTS (SELECT 1 FROM agents WHERE agent_id=automatic_recovery_incidents.agent_id)
-        OR updated_at<? AND NOT EXISTS
-          (SELECT 1 FROM automatic_recovery WHERE recovery_key=automatic_recovery_incidents.recovery_key)
+        OR NOT EXISTS (SELECT 1 FROM automatic_recovery WHERE recovery_key=automatic_recovery_incidents.recovery_key))
       ORDER BY updated_at,identity_key LIMIT ?
     )`).run(now - retentionDays * 86_400_000, boundedLimit).changes;
     return { recordsRemoved, incidentsRemoved };
@@ -210,7 +219,7 @@ export class AutomaticRecoveryStore {
 
 export type AutomaticRecoverySweepObservation = {
   agents: number; candidates: number; dispatched: number; durationMs: number;
-  full: boolean;
+  plannedRoundTrips: number; full: boolean;
 };
 
 /** One recovery tick may inspect at most one small Agent page. The cursor is
@@ -276,7 +285,7 @@ export class AutomaticRecoveryController {
     if (this.closed || this.scheduled) return;
     this.scheduled = setTimeout(() => {
       this.scheduled = undefined;
-      this.schedule();
+      this.schedule(this.scheduledAgents.values().next().value);
     }, 100);
     this.scheduled.unref();
   }
@@ -303,40 +312,58 @@ export class AutomaticRecoveryController {
   private async runSweep(jobId?: string, agentId?: string): Promise<void> {
     if (this.options.enabled?.() === false) return;
     this.store.reconcileInterrupted(this.now());
-    const started = performance.now();
+    const budget = new BackgroundWorkSlice(RECOVERY_WORK_LIMITS);
+    budget.roundTrips = 1; // bounded interrupted-attempt reconciliation
     let agents = 0, candidates = 0, dispatched = 0;
     const full = !agentId;
     try {
       if (!agentId && this.options.pageAgents) {
-        let page = this.options.pageAgents(this.agentCursor, 32);
-        if (page.length === 0 && this.agentCursor) {
-          this.agentCursor = "";
-          page = this.options.pageAgents("", 32);
-        }
-        for (const id of page) {
-          if (this.closed || dispatched >= 4 || agents > 0 && performance.now() - started >= 25) break;
-          const result = await this.survey(id, jobId, 4 - dispatched);
+        const due = this.store.dueAgentIds(this.now());
+        for (const id of due) {
+          if (this.closed || dispatched >= 3 || !budget.take(12)) break;
+          const result = await this.survey(id, jobId, 3 - dispatched);
           agents++;
           candidates += result.candidates;
           dispatched += result.dispatched;
+          if (budget.targets % budget.limits.yieldEvery === 0) await budget.yieldIfNeeded();
+        }
+        let page = this.options.pageAgents(this.agentCursor, budget.limits.maxTargets);
+        if (page.length === 0 && this.agentCursor) {
+          this.agentCursor = "";
+          page = this.options.pageAgents("", budget.limits.maxTargets);
+        }
+        for (const id of page) {
+          if (this.closed || dispatched >= 4 || !budget.take(12)) break;
+          if (!due.includes(id)) {
+            const result = await this.survey(id, jobId, 4 - dispatched);
+            agents++;
+            candidates += result.candidates;
+            dispatched += result.dispatched;
+          }
           this.agentCursor = id;
-          if (agents % 8 === 0) await new Promise<void>(resolve => setImmediate(resolve));
+          if (budget.targets % budget.limits.yieldEvery === 0) await budget.yieldIfNeeded();
         }
         return;
       }
+      budget.take(12);
       const result = await this.survey(agentId, jobId, 4);
       agents = 1;
       candidates = result.candidates;
       dispatched = result.dispatched;
     } finally {
-      this.lastObservation = {agents,candidates,dispatched,durationMs:performance.now()-started,full};
+      this.lastObservation = {agents,candidates,dispatched,durationMs:budget.durationMs,
+        plannedRoundTrips:budget.roundTrips,full};
     }
   }
 
   private async survey(agentId: string | undefined, jobId: string | undefined, dispatchLimit: number): Promise<{candidates:number;dispatched:number}> {
     const available = await this.options.candidates(agentId);
     const keys = new Set(available.map(candidate => candidate.key));
-    const records = agentId ? this.store.pendingForAgent(agentId) : this.store.list().filter(record => record.state === "retrying");
+    // A production Agent has at most three current candidate kinds. Every
+    // nonmatching retry is resolved in this pass, so repeated first pages
+    // drain historical records without retaining a cursor for every Agent.
+    const records = agentId ? this.store.pendingForAgent(agentId)
+      : this.store.list().filter(record => record.state === "retrying");
     for (const record of records) {
       if (jobId && record.jobId !== jobId) continue;
       if (!keys.has(record.key)) {
