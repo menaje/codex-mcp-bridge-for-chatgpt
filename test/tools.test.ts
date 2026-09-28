@@ -909,6 +909,13 @@ describe("current bridge tool contracts", () => {
         id: task.jobId,
         state: "running",
         completionDeliveryPolicy: "direct-wait",
+        completionEvidence: expect.objectContaining({
+          jobRecord: "active-last-known",
+          terminalOrigin: null,
+          deliveryRecord: null,
+          resultOffer: "none",
+          activityLifecycle: "open"
+        }),
         wait: expect.objectContaining({ waitFor: "terminal", timedOut: true }),
         nextActions: expect.arrayContaining([expect.objectContaining({
           tool: "codex_status",
@@ -965,6 +972,14 @@ describe("current bridge tool contracts", () => {
         id: task.jobId,
         state: "completed",
         completionDeliveryPolicy: "direct-wait",
+        completionEvidence: expect.objectContaining({
+          jobRecord: "terminal-committed",
+          ownerObservation: null,
+          terminalOrigin: "normal-completion",
+          deliveryRecord: "pending",
+          resultOffer: "none",
+          activityLifecycle: "open"
+        }),
         answer: expect.stringContaining("Completed delayed fixture work")
       })]
     });
@@ -973,6 +988,24 @@ describe("current bridge tool contracts", () => {
       state: "pending",
       attemptCount: 0,
       directResultOfferedAt: expect.any(Number)
+    });
+    const offeredAgain = await client.callTool({
+      name: "codex_status",
+      arguments: { query: { kind: "job", id: task.jobId } },
+      _meta: metadata
+    });
+    expect(offeredAgain.isError, JSON.stringify(offeredAgain)).not.toBe(true);
+    expect(offeredAgain.structuredContent).toMatchObject({
+      kind: "job",
+      items: [expect.objectContaining({
+        id: task.jobId,
+        completionEvidence: expect.objectContaining({
+          jobRecord: "terminal-committed",
+          resultOffer: "direct-query",
+          deliveryRecord: "pending",
+          activityLifecycle: "open"
+        })
+      })]
     });
     expect(state.claimJobCompletionDelivery(
       task.jobId,
@@ -2228,6 +2261,18 @@ describe("current bridge tool contracts", () => {
       _meta: metadata
     });
     expect(directReadAfterLease.isError, JSON.stringify(directReadAfterLease)).not.toBe(true);
+    expect(directReadAfterLease.structuredContent).toMatchObject({
+      kind: "job",
+      items: [expect.objectContaining({
+        id: origin!.jobId,
+        completionEvidence: expect.objectContaining({
+          jobRecord: "terminal-committed",
+          deliveryRecord: "leased",
+          resultOffer: "none",
+          activityLifecycle: "open"
+        })
+      })]
+    });
     expect(state.getJobCompletionDelivery(origin!.jobId, origin!.scopeId)).toMatchObject({
       state: "leased",
       directResultOfferedAt: expect.any(Number),
@@ -2276,7 +2321,16 @@ describe("current bridge tool contracts", () => {
     expect(exactCompletion.isError, JSON.stringify(exactCompletion)).not.toBe(true);
     expect(exactCompletion.structuredContent).toMatchObject({
       kind: "job",
-      items: [expect.objectContaining({ id: origin!.jobId, state: "completed" })]
+      items: [expect.objectContaining({
+        id: origin!.jobId,
+        state: "completed",
+        completionEvidence: expect.objectContaining({
+          terminalOrigin: "normal-completion",
+          deliveryRecord: "host-accepted",
+          resultOffer: "direct-query",
+          activityLifecycle: "open"
+        })
+      })]
     });
     expect(state.getJobCompletionDelivery(origin!.jobId, origin!.scopeId)).toMatchObject({
       state: "host-accepted",

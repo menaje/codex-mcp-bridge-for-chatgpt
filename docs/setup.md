@@ -377,8 +377,12 @@ Default server files are per-user:
                                       Development transport diagnostics
 ```
 
-This SQLite database is the sole bridge state authority; there are no parallel
-Settings, session, or Job JSON state files. The packaged release stage selects
+This SQLite database is the durable authority for Bridge admission, permissions,
+relationships, result storage and delivery receipts; there are no parallel
+Settings, session, or Job JSON state files. Live Codex turn and worker facts
+come from the App Server and execution owner, not from a historical database
+`running` row. See [execution authority and evidence](execution-authority-and-evidence.md).
+The packaged release stage selects
 the default profile. `CODEX_MCP_BRIDGE_STATE_PROFILE` selects `stable`,
 `candidate`, or `development`; an absolute
 `CODEX_MCP_BRIDGE_STATE_DATABASE_FILE` overrides it. Stop every owner before
