@@ -17,6 +17,37 @@ const PROJECT_REF_A = "prj_AAAAAAAAAAAAAAAAAAAAAA";
 const PROJECT_REF_B = "prj_BBBBBBBBBBBBBBBBBBBBBB";
 
 describe("CodexJobRegistry persistence", () => {
+  it("bounds shared Job wait listeners and returns their slots on abort and completion", async () => {
+    const root = temporaryRoot();
+    const registry = persistentRegistry(root, path.join(root, "state.sqlite"));
+    const store = registry.admissionStateStore;
+    let complete: (value: ToolResult) => void = () => undefined;
+    try {
+      const job = registry.start(jobInput(root), async () =>
+        new Promise<ToolResult>(resolve => { complete = resolve; })
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      const controllers = Array.from({ length: 128 }, () => new AbortController());
+      const waiting = controllers.map(controller => registry.wait(
+        job.jobId, "terminal", 5_000, controller.signal, "model-status"
+      ));
+      expect(registry.waitDiagnostics().active.total).toBe(128);
+      await expect(registry.waitForInput(job.jobId, undefined, 5_000))
+        .rejects.toThrow("JOB_WAIT_CAPACITY");
+      controllers[0]!.abort();
+      await expect(waiting[0]).rejects.toThrow("cancelled by the host");
+      const inputWait = registry.waitForInput(job.jobId, undefined, 5_000);
+      complete(result("wait-capacity-released"));
+      await job.promise;
+      await expect(Promise.all(waiting.slice(1))).resolves.toHaveLength(127);
+      await expect(inputWait).resolves.toMatchObject({ timedOut: false });
+      expect(registry.waitDiagnostics().active.total).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
   it.each(["persistent", "ephemeral"] as const)(
     "keeps %s progress writes on bounded state and event paths",
     async (mode) => {

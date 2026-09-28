@@ -365,6 +365,7 @@ export class TaskProjectAvailabilityProjection {
 }
 
 export const MAX_CODEX_STATUS_WAIT_MS = 60_000;
+const MAX_ACTIVE_JOB_OBSERVATION_WAITS = 128;
 /** Keep model-visible reads comfortably below common 60-second host lifetimes. */
 export const DEFAULT_CODEX_STATUS_WAIT_MS = 20_000;
 const JOB_PROGRESS_PERSIST_INTERVAL_MS = 30_000;
@@ -2139,6 +2140,7 @@ export class CodexJobRegistry {
   private readonly indexedJobAgent = new Map<string, string>();
   private readonly waiters = new Map<string, Set<(reason: CodexJobWakeReason) => void>>();
   private readonly terminalWaiters = new Map<string, Set<() => void>>();
+  private activeJobObservationWaits = 0;
   private readonly lastWake = new Map<string, { version: number; reason: CodexJobWakeReason }>();
   private readonly scopeWaiters = new Map<string, Set<() => void>>();
   private readonly waitDiagnosticsTracker = new JobWaitDiagnostics();
@@ -4038,6 +4040,10 @@ export class CodexJobRegistry {
     waitMs: number,
     signal?: AbortSignal
   ): Promise<CodexJobWakeReason | undefined> {
+    if (this.activeJobObservationWaits >= MAX_ACTIVE_JOB_OBSERVATION_WAITS) {
+      return Promise.reject(new Error("JOB_WAIT_CAPACITY: Active Job observation waits are at capacity."));
+    }
+    this.activeJobObservationWaits += 1;
     return new Promise((resolve, reject) => {
       let settled = false;
       const listeners = this.waiters.get(jobId) || new Set<(reason: CodexJobWakeReason) => void>();
@@ -4045,6 +4051,7 @@ export class CodexJobRegistry {
       const finish = (reason?: CodexJobWakeReason, error?: Error) => {
         if (settled) return;
         settled = true;
+        this.activeJobObservationWaits -= 1;
         clearTimeout(timer);
         listeners.delete(onChange);
         if (listeners.size === 0) this.waiters.delete(jobId);
@@ -4073,6 +4080,10 @@ export class CodexJobRegistry {
     waitMs: number,
     signal?: AbortSignal
   ): Promise<CodexJobWakeReason | undefined> {
+    if (this.activeJobObservationWaits >= MAX_ACTIVE_JOB_OBSERVATION_WAITS) {
+      return Promise.reject(new Error("JOB_WAIT_CAPACITY: Active Job observation waits are at capacity."));
+    }
+    this.activeJobObservationWaits += 1;
     return new Promise((resolve, reject) => {
       let settled = false;
       const listeners = this.terminalWaiters.get(jobId) || new Set<() => void>();
@@ -4080,6 +4091,7 @@ export class CodexJobRegistry {
       const finish = (reason?: CodexJobWakeReason, error?: Error) => {
         if (settled) return;
         settled = true;
+        this.activeJobObservationWaits -= 1;
         clearTimeout(timer);
         listeners.delete(onTerminal);
         if (listeners.size === 0) this.terminalWaiters.delete(jobId);

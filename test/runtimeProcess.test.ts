@@ -882,7 +882,7 @@ describe("isolated production runtime", () => {
     const runtime = await start();
     const sockets: Socket[] = [];
     try {
-      for (let index = 0; index < 4; index += 1) {
+      for (let index = 0; index < 3; index += 1) {
         sockets.push(await openIncompleteMcpRequest(
           runtime.baseUrl,
           7 * 1024 * 1024
@@ -912,6 +912,47 @@ describe("isolated production runtime", () => {
           limitations: []
         }
       });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+    }
+  }, 15_000);
+
+  it("reserves MCP byte capacity for exact recovery reads", async () => {
+    const runtime = await start();
+    const sockets: Socket[] = [];
+    try {
+      for (let index = 0; index < 3; index += 1) {
+        sockets.push(await openIncompleteMcpRequest(runtime.baseUrl, 8 * 1024 * 1024));
+      }
+      await waitUntilCapacity(runtime.baseUrl);
+      const exact = await fetch(`${runtime.baseUrl}/mcp`, {
+        method: "POST",
+        headers: {
+          accept: "application/json", "content-type": "application/json",
+          "mcp-protocol-version": CURRENT_PROTOCOL,
+          "mcp-method": "tools/call", "mcp-name": "codex_status"
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: "byte-reserved", method: "tools/call",
+          params: { name: "codex_status", arguments: {
+            scopeId: randomUUID(), query: { kind: "job", id: randomUUID() }
+          }, _meta: {
+            "io.modelcontextprotocol/protocolVersion": CURRENT_PROTOCOL,
+            "io.modelcontextprotocol/clientInfo": { name: "runtime-process-regression", version: "1.0.0" },
+            "io.modelcontextprotocol/clientCapabilities": {}
+          } }
+        })
+      });
+      expect(exact.status).toBe(200);
+      await expect(exact.json()).resolves.toMatchObject({
+        jsonrpc: "2.0", id: "byte-reserved", result: { isError: true }
+      });
+      const ordinary = await fetch(`${runtime.baseUrl}/mcp`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: "{}"
+      });
+      expect(ordinary.status).toBe(503);
+      expect(await observedStateInFlight(runtime.baseUrl)).toBe(3);
     } finally {
       for (const socket of sockets) socket.destroy();
     }
@@ -960,19 +1001,91 @@ describe("isolated production runtime", () => {
 
       const identified = await fetch(`${runtime.baseUrl}/mcp`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          accept: "application/json", "content-type": "application/json",
+          "mcp-protocol-version": CURRENT_PROTOCOL,
+          "mcp-method": "tools/call", "mcp-name": "codex_status"
+        },
         body: JSON.stringify({
           jsonrpc: "2.0", id: "capacity-identified", method: "tools/call",
-          params: { name: "codex_status", arguments: {} }
+          params: { name: "codex_status", arguments: {
+            scopeId: randomUUID(), query: { kind: "job", id: randomUUID() }
+          }, _meta: {
+            "io.modelcontextprotocol/protocolVersion": CURRENT_PROTOCOL,
+            "io.modelcontextprotocol/clientInfo": { name: "runtime-process-regression", version: "1.0.0" },
+            "io.modelcontextprotocol/clientCapabilities": {}
+          } }
         })
       });
-      expect(identified.status).toBe(503);
-      await expect(identified.json()).resolves.toMatchObject({
-        jsonrpc: "2.0", id: "capacity-identified",
-        error: { code: -32000, data: {
-          code: "RUNTIME_RESPONSE_UNCONFIRMED",
-          reason: "state-capacity", outcome: "not-observed"
-        } }
+      const identifiedBody = await identified.json() as { result?: { isError?: boolean }; error?: unknown };
+      expect({ status: identified.status, body: identifiedBody }).toMatchObject({ status: 200 });
+      expect(identifiedBody.error).toBeUndefined();
+      expect(identifiedBody.result?.isError).toBe(true);
+
+      for (const name of ["codex_answer", "codex_cancel", "codex_steer"] as const) {
+        const control = await fetch(`${runtime.baseUrl}/mcp`, {
+          method: "POST",
+          headers: {
+            accept: "application/json", "content-type": "application/json",
+            "mcp-protocol-version": CURRENT_PROTOCOL,
+            "mcp-method": "tools/call", "mcp-name": name
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: name, method: "tools/call",
+            params: { name, arguments: {}, _meta: {
+              "io.modelcontextprotocol/protocolVersion": CURRENT_PROTOCOL,
+              "io.modelcontextprotocol/clientInfo": { name: "runtime-process-regression", version: "1.0.0" },
+              "io.modelcontextprotocol/clientCapabilities": {}
+            } }
+          })
+        });
+        expect(control.status).not.toBe(503);
+        await expect(control.json()).resolves.toMatchObject({ jsonrpc: "2.0", id: name });
+      }
+
+      const broadStatus = await fetch(`${runtime.baseUrl}/mcp`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "broad-status", method: "tools/call",
+          params: { name: "codex_status", arguments: {} } })
+      });
+      expect(broadStatus.status).toBe(503);
+      await expect(broadStatus.json()).resolves.toMatchObject({
+        jsonrpc: "2.0", id: "broad-status", error: {
+          data: { reason: "state-capacity", outcome: "not-observed" }
+        }
+      });
+      const longWait = await fetch(`${runtime.baseUrl}/mcp`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "long-wait", method: "tools/call",
+          params: { name: "codex_status", arguments: {
+            scopeId: randomUUID(), query: {
+              kind: "job", id: randomUUID(), waitFor: "terminal", waitMs: 20_000
+            }
+          } } })
+      });
+      expect(longWait.status).toBe(503);
+
+      const mismatched = await fetch(`${runtime.baseUrl}/mcp`, {
+        method: "POST",
+        headers: {
+          accept: "application/json", "content-type": "application/json",
+          "mcp-protocol-version": CURRENT_PROTOCOL,
+          "mcp-method": "tools/call", "mcp-name": "codex_models"
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: "priority-mismatch", method: "tools/call",
+          params: { name: "codex_status", arguments: {
+            scopeId: randomUUID(), query: { kind: "job", id: randomUUID() }
+          }, _meta: {
+            "io.modelcontextprotocol/protocolVersion": CURRENT_PROTOCOL,
+            "io.modelcontextprotocol/clientInfo": { name: "runtime-process-regression", version: "1.0.0" },
+            "io.modelcontextprotocol/clientCapabilities": {}
+          } }
+        })
+      });
+      expect(mismatched.status).toBe(400);
+      await expect(mismatched.json()).resolves.toMatchObject({
+        jsonrpc: "2.0", id: "priority-mismatch", error: { code: -32020 }
       });
 
       const numeric = await postMcpChunks(runtime.baseUrl, [
@@ -1021,6 +1134,63 @@ describe("isolated production runtime", () => {
     }
   }, 20_000);
 
+  it("bounds MCP control reservations and releases disconnected observers", async () => {
+    const processIds: number[] = [];
+    const runtime = await start(processId => processIds.push(processId));
+    const sockets: Socket[] = [];
+    const controllers: AbortController[] = [];
+    const requests: Promise<unknown>[] = [];
+    let stopped = false;
+    try {
+      for (let index = 0; index < 112; index += 1) {
+        sockets.push(await openIncompleteMcpRequest(runtime.baseUrl));
+      }
+      await waitUntilCapacity(runtime.baseUrl);
+      process.kill(processIds[0]!, "SIGSTOP");
+      stopped = true;
+      for (let index = 0; index < 16; index += 1) {
+        const controller = new AbortController();
+        controllers.push(controller);
+        requests.push(fetch(`${runtime.baseUrl}/mcp`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: `priority-${index}`, method: "tools/call",
+            params: { name: "codex_status", arguments: {
+              scopeId: randomUUID(), query: { kind: "job", id: randomUUID() }
+            } }
+          }),
+          signal: controller.signal
+        }).catch(error => error));
+      }
+      const deadline = Date.now() + 3_000;
+      while (Date.now() < deadline && await observedStateInFlight(runtime.baseUrl) !== 128) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(await observedStateInFlight(runtime.baseUrl)).toBe(128);
+      const overflow = await fetch(`${runtime.baseUrl}/mcp`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "priority-overflow", method: "tools/call",
+          params: { name: "codex_status", arguments: {
+            scopeId: randomUUID(), query: { kind: "job", id: randomUUID() }
+          } } })
+      });
+      expect(overflow.status).toBe(503);
+      controllers.forEach(controller => controller.abort());
+      await Promise.all(requests);
+      const releaseDeadline = Date.now() + 3_000;
+      while (Date.now() < releaseDeadline &&
+        await observedStateInFlight(runtime.baseUrl) !== 112) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(await observedStateInFlight(runtime.baseUrl)).toBe(112);
+    } finally {
+      controllers.forEach(controller => controller.abort());
+      if (stopped) process.kill(processIds[0]!, "SIGCONT");
+      for (const socket of sockets) socket.destroy();
+    }
+  }, 15_000);
+
   it("releases the HTTP observer when a complete caller disconnects", async () => {
     const runtime = await start(undefined, undefined, {
       NODE_ENV: "test",
@@ -1067,15 +1237,25 @@ describe("isolated production runtime", () => {
     expect(processIds).toHaveLength(1);
     process.kill(processIds[0]!, "SIGSTOP");
     try {
-      const first = Array.from({ length: 128 }, () =>
+      const first = Array.from({ length: 120 }, () =>
         runtime.server.applicationService.settingsSnapshot().catch(error => error)
       );
       const settled = await Promise.all(first);
       expect(settled.every(value => value instanceof Error &&
         value.message.includes("RUNTIME_RESPONSE_UNCONFIRMED"))).toBe(true);
-      expect(await observedStateInFlight(runtime.baseUrl)).toBe(128);
       await expect(runtime.server.applicationService.settingsSnapshot())
         .rejects.toThrow(/RUNTIME_CAPACITY/);
+      const controls = await Promise.all(Array.from({ length: 8 }, () =>
+        runtime.server.applicationService.markNativeCompletionNotificationsDelivered({
+          outboxIds: [], leaseOwner: randomUUID()
+        }).catch(error => error)
+      ));
+      expect(controls.every(value => value instanceof Error &&
+        value.message.includes("RUNTIME_RESPONSE_UNCONFIRMED"))).toBe(true);
+      expect(await observedStateInFlight(runtime.baseUrl)).toBe(128);
+      await expect(runtime.server.applicationService.markNativeCompletionNotificationsDelivered({
+        outboxIds: [], leaseOwner: randomUUID()
+      })).rejects.toThrow(/RUNTIME_CAPACITY/);
     } finally {
       process.kill(processIds[0]!, "SIGCONT");
     }
