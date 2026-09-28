@@ -73,6 +73,42 @@ describe("native companion server", () => {
     expect(service.claimNativeCompletionNotifications).toHaveBeenCalledTimes(1);
   });
 
+  it("reserves native completion control while ordinary socket requests are stalled", async () => {
+    const socketPath = temporarySocketPath();
+    const service = fakeApplicationService();
+    const snapshot = await service.dashboardSnapshot();
+    const releases: Array<() => void> = [];
+    service.dashboardSnapshot = vi.fn(() => new Promise<DashboardView>(resolve => {
+      releases.push(() => resolve(snapshot));
+    }));
+    service.markNativeCompletionNotificationsDelivered = vi.fn(async () => undefined);
+    servers.push(await startBridgeCompanionServer({ socketPath, applicationService: service }));
+    const ordinary = Array.from({ length: 8 }, (_, index) => request(socketPath, {
+      jsonrpc: "2.0", id: `held-${index}`, method: "dashboard.snapshot", params: {}
+    }));
+    try {
+      const deadline = Date.now() + 3_000;
+      while (releases.length < 8 && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(releases).toHaveLength(8);
+      expect(await request(socketPath, {
+        jsonrpc: "2.0", id: "ordinary-overflow", method: "settings.snapshot", params: {}
+      })).toMatchObject({ error: { message: expect.stringContaining("COMPANION_CAPACITY") } });
+      const leaseOwner = randomUUID();
+      expect(await request(socketPath, {
+        jsonrpc: "2.0", id: "native-control", method: "completion.delivered",
+        params: { leaseOwner, outboxIds: [7] }
+      })).toMatchObject({ result: { ok: true } });
+      expect(service.markNativeCompletionNotificationsDelivered).toHaveBeenCalledWith({
+        leaseOwner, outboxIds: [7]
+      });
+    } finally {
+      for (const release of releases) release();
+      await Promise.allSettled(ordinary);
+    }
+  }, 12_000);
+
   it("keeps exact-target conversation handoff on the private local socket", async () => {
     const socketPath=temporarySocketPath(),service=fakeApplicationService();
     service.threadHandoff=vi.fn(async () => ({phase:"unsubscribed",reason:"upstream-unload-grace",requested:true,canOpen:false}));

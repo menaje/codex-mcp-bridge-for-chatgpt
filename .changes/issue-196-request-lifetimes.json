@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Reserve bounded request and byte capacity for exact Job recovery and essential controls across MCP and native ingress, and cap active observation waits.",
+  "breaking": false,
+  "migration": null
+}
