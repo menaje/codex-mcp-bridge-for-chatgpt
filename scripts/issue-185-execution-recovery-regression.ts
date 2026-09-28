@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
@@ -96,10 +97,19 @@ try {
   await until(() => jobPayload(questionJob.jobId)?.trackingState === "connected");
   const recoveredInput = (await client.callTool(inputRequest)).structuredContent as any;
   assert.equal(recoveredInput.questions[0].questionRef, initialInput.questions[0].questionRef);
+  const exactInputLatency = await measureExactRead(async () => {
+    const response = await client.callTool(inputRequest);
+    assert.notEqual(response.isError, true);
+    assert.equal((response.structuredContent as any).questions[0].questionRef,
+      recoveredInput.questions[0].questionRef);
+    return response.structuredContent;
+  });
   const answerRequest = { name: "codex_answer", _meta: { "openai/session": questionJob.session },
     arguments: { requestId: randomUUID(), jobId: questionJob.jobId,
       questionRef: recoveredInput.questions[0].questionRef, answers: { color: ["blue"] } } };
+  const answerStarted = performance.now();
   const answer = await client.callTool(answerRequest);
+  const answerDeliveryMs = Number((performance.now() - answerStarted).toFixed(3));
   assert.equal((answer.structuredContent as any).delivery, "delivered", JSON.stringify(answer));
   const duplicateAnswer = await client.callTool(answerRequest);
   assert.equal((duplicateAnswer.structuredContent as any).delivery, "delivered");
@@ -112,6 +122,17 @@ try {
     assert.equal(payload.terminalOrigin, "normal-completion");
     assert.equal(read(db => db.prepare("SELECT count(*) AS n FROM jobs WHERE request_id = ?").get(job.requestId)).n, 1);
   }
+  const exactTerminalLatency = await measureExactRead(async () => {
+    const response = await client.callTool({ name: "codex_status",
+      _meta: { "openai/session": questionJob.session },
+      arguments: { query: { kind: "job", id: questionJob.jobId } } });
+    assert.notEqual(response.isError, true);
+    const item = (response.structuredContent as any).items[0];
+    assert.equal(item.state, "completed");
+    assert.equal(item.completionEvidence.jobRecord, "terminal-committed");
+    assert.match(item.answer, /OPTIONAL INPUT COMPLETE/u);
+    return response.structuredContent;
+  });
   assert.equal(readFileSync(turnFile, "utf8").trim().split("\n").length, 3, "no replayed turn");
   assert.equal(new Set(ownerPids).size, 1, "the execution owner generation survived");
   assert.equal(read(db => db.pragma("quick_check", { simple: true })), "ok");
@@ -119,6 +140,9 @@ try {
     testedAt: new Date().toISOString(), runtime: dist || "source", productionDatabaseModified: false,
     stateOwnerRestarts: statePids.length - 1, stateOwnerRestarted: statePids.length === 3, executionOwnerPreserved: true,
     workers: 2, jobs: jobs.map(job => job.jobId), exactResultsRecovered: 3, recoveredQuestionAnsweredOnce: true,
+    exactProductReads: { input: exactInputLatency, terminalStatusAndResult: exactTerminalLatency },
+    answerDelivery: { samples: 1, durationMs: answerDeliveryMs,
+      meaning: "MCP delivery response; synthetic original request, not ChatGPT consumption" },
     duplicateJobs: 0, duplicateTurns: 0, databaseQuickCheck: "ok", passed: true }, null, 2));
 } catch (error) {
   console.error(JSON.stringify({ health: server.applicationService.runtimeHealth?.(), jobs: jobs.map(job => jobPayload(job.jobId)) }, null, 2));
@@ -133,6 +157,23 @@ try {
 function read<T>(fn: (db: Database.Database) => T): T {
   const db = new Database(stateFile, { readonly: true, fileMustExist: true });
   try { return fn(db); } finally { db.close(); }
+}
+async function measureExactRead(read: () => Promise<unknown>) {
+  for (let warmup = 0; warmup < 10; warmup++) await read();
+  const samples: number[] = [];
+  let responseBytes = 0;
+  for (let sample = 0; sample < 100; sample++) {
+    const started = performance.now();
+    const response = await read();
+    samples.push(performance.now() - started);
+    responseBytes += Buffer.byteLength(JSON.stringify(response));
+  }
+  samples.sort((left, right) => left - right);
+  const at = (proportion: number) => Number(samples[Math.ceil(samples.length * proportion) - 1]!.toFixed(3));
+  return { samples: samples.length, warmup: 10,
+    p50Ms: at(0.50), p95Ms: at(0.95), p99Ms: at(0.99),
+    maxMs: Number(samples.at(-1)!.toFixed(3)), meanResponseBytes: Math.round(responseBytes / 100),
+    boundary: "synthetic Codex through product MCP client and isolated state/execution owners" };
 }
 function jobPayload(id: string): any {
   const row = read(db => db.prepare("SELECT payload, status, thread_id AS threadId, upstream_request_id AS upstreamRequestId, terminal_origin AS terminalOrigin FROM jobs WHERE job_id=?").get(id)) as Record<string, any> | undefined;

@@ -684,14 +684,16 @@ async function waitForCondition(
 
 function summarize(values: number[], targetMs: number): Record<string, number | boolean> {
   assert.ok(values.length > 0);
+  const sufficientForP99 = values.length >= 100;
   return {
     samples: values.length,
     p50Ms: rounded(percentile(values, 0.50)),
     p95Ms: rounded(percentile(values, 0.95)),
-    p99Ms: rounded(percentile(values, 0.99)),
+    ...(sufficientForP99 ? { p99Ms: rounded(percentile(values, 0.99)) } : {}),
     maxMs: rounded(values.at(-1) || 0),
     targetMs,
-    targetMet: percentile(values, 0.99) < targetMs
+    targetMet: percentile(values, 0.99) < targetMs,
+    targetComparisonUsesObservedMax: !sufficientForP99
   };
 }
 
