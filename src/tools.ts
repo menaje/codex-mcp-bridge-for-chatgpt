@@ -1075,6 +1075,12 @@ const statusItemOutputSchema = z.strictObject({
   completionEvidence: z.strictObject({
     jobRecord: z.enum(["active-last-known", "terminal-committed"]),
     ownerObservation: z.enum(["connected", "liveness-unknown", "worker-lost", "orphaned"]).nullable(),
+    ownerTerminalResult: z.strictObject({
+      origin: z.enum(JOB_TERMINAL_ORIGINS),
+      // Date.now() is emitted as a fixed-width UTC ISO string. Keep the
+      // model-visible schema small while validating that wire shape.
+      observedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+    }).nullable(),
     terminalOrigin: z.enum(JOB_TERMINAL_ORIGINS).nullable(),
     deliveryRecord: z.enum([
       "pending", "leased", "host-rejected", "host-accepted", "acceptance-unknown", "result-read"
@@ -2197,6 +2203,13 @@ export class CodexJobRegistry {
     { responseHash: string; promise: Promise<CodexJob> }
   >();
   private readonly deferredSettlements = new Map<string, DeferredJobSettlement>();
+  // Exact owner outcomes waiting for the existing Job terminal transaction.
+  // This is observation only: it never advances the durable Job or releases
+  // the owner's retained result before the transaction commits.
+  private readonly pendingTerminalCommits = new WeakMap<
+    CodexJob,
+    { origin: JobTerminalOrigin; observedAt: number }
+  >();
   private readonly deferredExecutions = new Map<
     string,
     { launch(): void; discard(): void }
@@ -2416,15 +2429,31 @@ export class CodexJobRegistry {
       try {
         if (settlement.kind === "resolved") this.settleResolvedJob(job, settlement.result, settlement.onComplete);
         else this.settleRejectedJob(job, settlement.error);
+        this.pendingTerminalCommits.delete(job);
         return;
       }
       catch (error) {
         if (!job.executionReceipt || !(error instanceof JobTerminalCommitError)) throw error;
+        if (settlement.kind === "resolved" && !this.pendingTerminalCommits.has(job)) {
+          const turnStatus = extractResultTurnStatus(settlement.result);
+          this.pendingTerminalCommits.set(job, {
+            origin: turnStatus === "interrupted"
+              ? "app-server-interrupted"
+              : settlement.result.isError ? "upstream-failure" : "normal-completion",
+            observedAt: Date.now()
+          });
+        }
         // Keep the exact outcome reserved at the owner until the DB commit
         // succeeds. A busy DB must not replace a completed turn's outcome.
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
+    this.pendingTerminalCommits.delete(job);
+  }
+
+  pendingTerminalCommit(job: CodexJob): { origin: JobTerminalOrigin; observedAt: number } | null {
+    if (this.jobs.get(job.jobId) !== job || !job.executionReceipt || isTerminalActivityJobStatus(job.status)) return null;
+    return this.pendingTerminalCommits.get(job) || null;
   }
 
   get(jobId: string): CodexJob | undefined {
@@ -10290,6 +10319,7 @@ function formatJobStatus(
   replay = false
 ): Record<string, unknown> {
   const activity = formatJobActivity(job, staleAfterMs);
+  const pendingTerminalCommit = registry?.pendingTerminalCommit(job);
   const dashboard = dashboardPresentationHint(job, preferences, registry);
   const active = isActiveActivityJobStatus(job.status);
   const terminal = isTerminalActivityJobStatus(job.status);
@@ -10454,7 +10484,9 @@ function formatJobStatus(
     nextActions,
     message:
       active
-        ? job.status === "terminating"
+        ? pendingTerminalCommit
+          ? "The original execution owner reported a terminal result, but durable Job storage is still pending. Keep this exact Job and wait for its original result; do not start a replacement turn."
+          : job.status === "terminating"
           ? "Codex is terminating; refresh authoritative status until it reaches a terminal state."
           : job.status === "termination-failed"
             ? "Codex termination is unconfirmed; refresh status and retry the explicit cancellation if needed."
@@ -10476,15 +10508,21 @@ function formatJobStatus(
  * response is recorded only after its projection succeeds. */
 function exactJobCompletionEvidence(job: CodexJob, registry: CodexJobRegistry) {
   const delivery = registry.admissionStateStore.getJobCompletionDelivery(job.jobId, job.scopeId);
+  const terminal = isTerminalActivityJobStatus(job.status);
+  const pendingTerminalCommit = registry.pendingTerminalCommit(job);
   const direct = delivery?.directResultOfferedAt !== undefined;
   const completion = delivery?.completionResultOfferedAt !== undefined;
   return {
-    jobRecord: isTerminalActivityJobStatus(job.status)
+    jobRecord: terminal
       ? "terminal-committed" as const
       : "active-last-known" as const,
     // A terminal receipt is durable even after its owner exits. The saved
     // trackingState is not a fresh liveness measurement of that old owner.
-    ownerObservation: isTerminalActivityJobStatus(job.status) ? null : job.trackingState,
+    ownerObservation: terminal || pendingTerminalCommit ? null : job.trackingState,
+    ownerTerminalResult: pendingTerminalCommit ? {
+      origin: pendingTerminalCommit.origin,
+      observedAt: new Date(pendingTerminalCommit.observedAt).toISOString()
+    } : null,
     terminalOrigin: job.terminalOrigin || null,
     deliveryRecord: delivery?.state || null,
     resultOffer: direct && completion ? "both" as const

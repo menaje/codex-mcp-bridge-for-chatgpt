@@ -56,16 +56,21 @@ native compatibility; it is not a worker-liveness certificate.
 
 | Meaning | Current code/API evidence | Limit |
 | --- | --- | --- |
-| Execution terminal | `terminalOrigin` and exact owner result; `status` records a terminal Bridge Job only after state mutation | Worker loss/interruption and an App Server successful completion are distinct origins. An active last-known Job can have unknown liveness. |
-| Durable terminal storage | A terminal Job's state-writer transaction and `updatedAt` | While commit fails, the original result remains in the execution journal and the stored Job may still say `running`; it is not proof that the turn continues. |
+| Execution terminal | The exact owner's terminal result, exposed as `completionEvidence.ownerTerminalResult` while its commit is pending; a committed Job has `terminalOrigin` | Worker loss/interruption and an App Server successful completion are distinct origins. A null pending observation only means this state owner has not yet received a matching terminal result. |
+| Durable terminal storage | A terminal Job's state-writer transaction and `updatedAt`; `completionEvidence.jobRecord` remains `active-last-known` while an observed owner result awaits commit | While commit fails, the original result remains in the execution journal and the stored Job may still say `running`; it is not proof that the turn continues. |
 | Delivery/offer | `job_completion_deliveries` distinguishes pending, leased, host-accepted/rejected/unknown, result-read, and direct/completion offer times | `result.availability='delivered'` means answer bytes are present in the returned model payload, not observed consumption. A host ACK is not a new GPT execution. |
 | Activity completion | Versioned `activities.lifecycle`, verification and completion policy | Neither a terminal Job nor a host receipt automatically marks the user's goal complete. |
 
 An exact `codex_status` Job item exposes `completionEvidence`: whether its
-Bridge record is active-last-known or terminal-committed, the last owner
-observation for an active record (null for a terminal receipt),
-terminal origin, prior result-offer path, host delivery record and the separate
-Activity lifecycle. The current response is recorded as an offer only **after**
+Bridge record is active-last-known or terminal-committed, whether this state
+owner has received a matching terminal result while its durable commit is
+pending, the last owner observation when execution remains unconfirmed,
+committed terminal origin, prior result-offer path, host delivery record and the
+separate Activity lifecycle. `ownerTerminalResult` is transient observation,
+not a second durable Job status. It is cleared when the terminal commit succeeds;
+after state-owner restart, the same retained result must be recovered before
+this pending observation can be shown again. The current response is recorded
+as an offer only **after**
 its projection succeeds, so its evidence describes earlier offers. The existing
 Job status, result retention, terminal wait and Dashboard control contracts do
 not change. Card/native status labels already separate unknown from running
