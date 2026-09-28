@@ -46,6 +46,7 @@ import {
   ACTIVITY_HANDOFF_POLICIES,
   ACTIVITY_JOB_STATUSES,
   ACTIVITY_KINDS,
+  ACTIVITY_LIFECYCLES,
   isActiveActivityJobStatus,
   isTerminalActivityJobStatus,
   type ActivityCompletionTrigger,
@@ -1016,6 +1017,7 @@ const jobSemanticOutputSchema = z.strictObject({
   health: z.enum([
     "running",
     "no-progress-observed",
+    "liveness-unknown",
     "terminating",
     "termination-failed",
     "terminal",
@@ -1070,6 +1072,16 @@ const statusItemOutputSchema = z.strictObject({
   terminal: z.boolean().optional(),
   delivery: z.enum(["status", "primary-content", "omitted", "none"]).optional(),
   completionDeliveryPolicy: z.enum(["live-card", "direct-wait"]).optional(),
+  completionEvidence: z.strictObject({
+    jobRecord: z.enum(["active-last-known", "terminal-committed"]),
+    ownerObservation: z.enum(["connected", "liveness-unknown", "worker-lost", "orphaned"]).nullable(),
+    terminalOrigin: z.enum(JOB_TERMINAL_ORIGINS).nullable(),
+    deliveryRecord: z.enum([
+      "pending", "leased", "host-rejected", "host-accepted", "acceptance-unknown", "result-read"
+    ]).nullable(),
+    resultOffer: z.enum(["none", "direct-query", "completion-receipt", "both"]),
+    activityLifecycle: z.enum(ACTIVITY_LIFECYCLES).nullable()
+  }).optional(),
   replay: z.boolean().optional(),
   versions: z.strictObject({
     job: z.number().int().min(1),
@@ -6094,6 +6106,7 @@ export function registerBridgeTools(
         const structured = {
           kind: "job" as const,
           ...formatJobStatus(job, jobs.staleThresholdMs, undefined, userSettings.current, jobs),
+          completionEvidence: exactJobCompletionEvidence(job, jobs),
           inputs: {
             cursor: codexInputCursor(job),
             ordinaryQuestions: job.pendingInteractions.filter(ordinaryCodexQuestion).length,
@@ -6184,6 +6197,7 @@ export function registerBridgeTools(
         const structured = {
           kind: "job" as const,
           ...formatJobStatus(job, jobs.staleThresholdMs, wait, userSettings.current, jobs),
+          completionEvidence: exactJobCompletionEvidence(job, jobs),
           inputs: { cursor: codexInputCursor(job), ordinaryQuestions: job.pendingInteractions.filter(ordinaryCodexQuestion).length, approvalRequests: job.pendingInteractions.filter(q => !ordinaryCodexQuestion(q)).length, readTool: "codex_status", queryKind: "input" }
         };
         const projection = compactStatusProjection(structured);
@@ -10324,6 +10338,9 @@ function formatJobStatus(
     ...(activity.health === "no-progress-observed"
       ? ["No progress event has been observed within the configured window; process liveness is unknown."]
       : []),
+    ...(activity.health === "liveness-unknown"
+      ? ["The Bridge's last active Job record does not confirm that its original execution owner is currently reachable."]
+      : []),
     ...(job.status === "cancelled"
       ? ["Cancellation does not roll back partial filesystem changes."]
       : [])
@@ -10441,6 +10458,8 @@ function formatJobStatus(
           ? "Codex is terminating; refresh authoritative status until it reaches a terminal state."
           : job.status === "termination-failed"
             ? "Codex termination is unconfirmed; refresh status and retry the explicit cancellation if needed."
+            : job.trackingState === "liveness-unknown"
+              ? "This Job's last committed state is active, but current execution-owner liveness is unconfirmed. Recover the same Job and original result; do not start a replacement turn from this observation."
             : job.completionDeliveryPolicy === "direct-wait"
               ? "Codex is running independently in experimental direct-result mode. Keep the current orchestration active with bounded terminal waits on this exact Job; a timeout or aborted read does not cancel it."
               : "Codex is running independently. Query this exact Job when needed, handle any pending input, and retrieve its terminal result before reporting completion."
@@ -10449,6 +10468,29 @@ function formatJobStatus(
             ? "Codex completed, but the primary result exceeded the configured retention limit and was omitted."
             : "Codex completed; retrieve the exact Job result for its bounded model-authoritative answer."
           : error?.message || "Codex reached a terminal state."
+  };
+}
+
+/** Exact status separates a committed Bridge record from owner and host evidence.
+ * The result-offer fields describe earlier completed responses; the current
+ * response is recorded only after its projection succeeds. */
+function exactJobCompletionEvidence(job: CodexJob, registry: CodexJobRegistry) {
+  const delivery = registry.admissionStateStore.getJobCompletionDelivery(job.jobId, job.scopeId);
+  const direct = delivery?.directResultOfferedAt !== undefined;
+  const completion = delivery?.completionResultOfferedAt !== undefined;
+  return {
+    jobRecord: isTerminalActivityJobStatus(job.status)
+      ? "terminal-committed" as const
+      : "active-last-known" as const,
+    // A terminal receipt is durable even after its owner exits. The saved
+    // trackingState is not a fresh liveness measurement of that old owner.
+    ownerObservation: isTerminalActivityJobStatus(job.status) ? null : job.trackingState,
+    terminalOrigin: job.terminalOrigin || null,
+    deliveryRecord: delivery?.state || null,
+    resultOffer: direct && completion ? "both" as const
+      : direct ? "direct-query" as const
+        : completion ? "completion-receipt" as const : "none" as const,
+    activityLifecycle: registry.getActivity(job.activityId)?.lifecycle || null
   };
 }
 
@@ -13357,7 +13399,7 @@ function formatJobActivity(
   job: CodexJob,
   staleAfterMs: number
 ): {
-  health: "running" | "no-progress-observed" | "terminating" | "termination-failed" | "terminal" | "worker-lost" | "orphaned";
+  health: "running" | "no-progress-observed" | "liveness-unknown" | "terminating" | "termination-failed" | "terminal" | "worker-lost" | "orphaned";
   processLiveness: CodexJob["trackingState"] | "terminating" | "termination-unconfirmed";
   lastProgressAt: string;
   idleMs: number;
@@ -13375,8 +13417,10 @@ function formatJobActivity(
       ? "terminal"
       : job.status === "terminating"
         ? "terminating"
-        : job.status === "termination-failed"
+      : job.status === "termination-failed"
           ? "termination-failed"
+          : job.trackingState === "liveness-unknown"
+            ? "liveness-unknown"
           : idleMs >= staleAfterMs
             ? "no-progress-observed"
             : "running",
@@ -15511,6 +15555,9 @@ function statusItemProjection(
     ...(typeof input.delivery === "string" ? { delivery: input.delivery } : {}),
     ...(input.completionDeliveryPolicy === "live-card" || input.completionDeliveryPolicy === "direct-wait"
       ? { completionDeliveryPolicy: input.completionDeliveryPolicy }
+      : {}),
+    ...(isRecord(input.completionEvidence)
+      ? { completionEvidence: input.completionEvidence }
       : {}),
     ...(typeof input.replay === "boolean" ? { replay: input.replay } : {}),
     ...(versions ? { versions } : {}),

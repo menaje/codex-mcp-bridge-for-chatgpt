@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Clarify execution, storage, delivery, and Activity evidence in exact Job status and document the App Server, execution owner, and Bridge database authority boundary.",
+  "breaking": false,
+  "migration": null
+}

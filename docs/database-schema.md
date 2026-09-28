@@ -7,8 +7,13 @@ v0.3 line used schema 3, and the pre-change development installation used schema
 18. Every supported upgrade ends with the same tables, columns, constraints,
 indexes, and triggers as direct schema-29 creation.
 
-The database is the only bridge state authority. Settings, projects, retained
-sessions, and Jobs no longer have parallel JSON files or JSON mirrors. SQLite
+The database is the durable authority for Bridge business state: admission,
+scope and permission decisions, project and Activity relationships, request
+idempotency, result storage and delivery receipts. Actual Codex turn events and
+worker lifetime are established by the App Server and the execution owner, as
+described in [execution authority and evidence](execution-authority-and-evidence.md).
+Settings, projects, retained sessions, and Jobs no longer have parallel JSON
+files or JSON mirrors. SQLite
 payloads remain where their contents are inherently variable, but fields used for
 identity, joins, constraints, state transitions, or indexes are columns and are
 removed from those payloads.
