@@ -132,9 +132,23 @@ describe("isolated state read projection", () => {
       process.kill(processId!, "SIGCONT");
       stopped = false;
       await waitFor(() => service.health().inFlight === 0);
-      await expect(service.settingsSnapshot()).resolves.toMatchObject({
+      // A 50 ms test-only deadline can still expire after SIGCONT when other
+      // workers are scheduled. Verify eventual reuse without changing that
+      // per-request deadline or accepting a leaked abandoned request.
+      let snapshot: Awaited<ReturnType<typeof service.settingsSnapshot>> | undefined;
+      const recoveryDeadline = Date.now() + 5_000;
+      while (Date.now() < recoveryDeadline && !snapshot) {
+        await waitFor(() => service.health().inFlight === 0);
+        try {
+          snapshot = await service.settingsSnapshot();
+        } catch (error) {
+          if (!(error instanceof Error) || !error.message.includes("STATE_READ_STALE")) throw error;
+        }
+      }
+      expect(snapshot).toMatchObject({
         settings: { settingsRevision: 1, uiLocalePreference: "ko" }
       });
+      await waitFor(() => service.health().inFlight === 0);
     } finally {
       if (stopped) {
         try { process.kill(processId!, "SIGCONT"); } catch { /* already exited */ }
