@@ -104,6 +104,8 @@ async function run(spec) {
   let exitCode = null;
   let signal = null;
   let spawnError = null;
+  let timedOut = false;
+  const timeoutMs = spec.timeoutMs || 15 * 60_000;
   // The pinned CLI is a schema-generation input only. Product tests construct
   // their own selected-CLI fixtures and must not inherit this override.
   const childEnvironment = { ...process.env, ...spec.env };
@@ -114,12 +116,18 @@ async function run(spec) {
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32"
   });
-  const timer = setTimeout(() => {
+  let forceTimer;
+  const terminate = terminationSignal => {
     try {
-      if (process.platform !== "win32") process.kill(-child.pid, "SIGTERM");
-      else child.kill("SIGTERM");
+      if (process.platform !== "win32") process.kill(-child.pid, terminationSignal);
+      else child.kill(terminationSignal);
     } catch { /* already exited */ }
-  }, spec.timeoutMs || 15 * 60_000);
+  };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    terminate("SIGTERM");
+    forceTimer = setTimeout(() => terminate("SIGKILL"), 5_000);
+  }, timeoutMs);
   child.stdout.on("data", chunk => {
     log.write(chunk);
     standardOutput = (standardOutput + chunk.toString("utf8")).slice(-1024 * 1024);
@@ -128,17 +136,21 @@ async function run(spec) {
   try {
     [exitCode, signal] = await new Promise((resolve, reject) => {
       child.once("error", reject);
-      child.once("exit", (code, terminationSignal) => resolve([code, terminationSignal]));
+      // `exit` can precede the final stdout/stderr chunks. `close` means both
+      // pipes have drained, so the report and its log hash cover all output.
+      child.once("close", (code, terminationSignal) => resolve([code, terminationSignal]));
     });
   } catch (error) {
     spawnError = String(error);
   } finally {
     clearTimeout(timer);
+    clearTimeout(forceTimer);
     await new Promise(resolve => log.end(resolve));
   }
   const entry = {
     id: spec.id, command, startedAt, durationMs: Math.round(performance.now() - started),
-    exitCode, signal, status: exitCode === 0 ? "passed" : "failed",
+    timeoutMs, timedOut, exitCode, signal,
+    status: exitCode === 0 && !timedOut ? "passed" : "failed",
     ...(spawnError ? { spawnError } : {}),
     log: logName, logSha256: digest(logFile),
     ...(parseSummary(standardOutput) ? { observed: parseSummary(standardOutput) } : {})
