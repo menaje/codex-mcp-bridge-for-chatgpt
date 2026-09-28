@@ -824,6 +824,95 @@ describe("current bridge tool contracts", () => {
     ));
   });
 
+  it("reports an exact owner result awaiting terminal storage without claiming the Job is still executing", async () => {
+    const acknowledgeExecution = vi.fn();
+    Object.assign(upstream, {
+      supportsExecutionRecovery: () => true,
+      acknowledgeExecution
+    });
+    const originalUpsert = state.upsertJob.bind(state);
+    let blockTerminal = true;
+    let commitAttempts = 0;
+    vi.spyOn(state, "upsertJob").mockImplementation(value => {
+      if (blockTerminal && (value as { status?: unknown }).status === "completed") {
+        commitAttempts += 1;
+        throw new Error("injected busy terminal transaction");
+      }
+      return originalUpsert(value);
+    });
+
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const admitted = await client.callTool({
+      name: "codex_task",
+      arguments: {
+        scopeId: randomUUID(),
+        requestId: randomUUID(),
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Complete the retained owner result fixture.",
+        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+        selection
+      },
+      _meta: metadata
+    });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+    await hold.started;
+
+    const running = await client.callTool({
+      name: "codex_status", arguments: { query: { kind: "job", id: jobId } }, _meta: metadata
+    });
+    expect(running.structuredContent).toMatchObject({ items: [expect.objectContaining({
+      completionEvidence: expect.objectContaining({
+        ownerTerminalResult: null
+      })
+    })] });
+
+    hold.release();
+    await eventually(() => commitAttempts > 0);
+    const pending = await client.callTool({
+      name: "codex_status", arguments: { query: { kind: "job", id: jobId } }, _meta: metadata
+    });
+    expect(pending.isError, JSON.stringify(pending)).not.toBe(true);
+    expect(pending.structuredContent).toMatchObject({ items: [expect.objectContaining({
+      state: "running",
+      completionEvidence: expect.objectContaining({
+        jobRecord: "active-last-known",
+        ownerObservation: null,
+        ownerTerminalResult: { origin: "normal-completion", observedAt: expect.any(String) },
+        terminalOrigin: null,
+        resultOffer: "none",
+        activityLifecycle: "open"
+      }),
+      message: expect.stringContaining("durable Job storage is still pending")
+    })] });
+    expect(state.listJobs()).toContainEqual(expect.objectContaining({ jobId, status: "running" }));
+    expect(acknowledgeExecution).not.toHaveBeenCalled();
+
+    blockTerminal = false;
+    await eventually(() => state.listJobs().some(job => job.jobId === jobId && job.status === "completed"));
+    const committed = await client.callTool({
+      name: "codex_status", arguments: { query: { kind: "job", id: jobId } }, _meta: metadata
+    });
+    expect(committed.isError, JSON.stringify(committed)).not.toBe(true);
+    expect(committed.structuredContent).toMatchObject({ items: [expect.objectContaining({
+      state: "completed",
+      completionEvidence: expect.objectContaining({
+        jobRecord: "terminal-committed",
+        ownerTerminalResult: null,
+        terminalOrigin: "normal-completion",
+        activityLifecycle: "open"
+      }),
+      answer: expect.stringContaining("Completed delayed fixture work")
+    })] });
+    expect(upstream.calls).toHaveLength(1);
+    await eventually(() => acknowledgeExecution.mock.calls.length === 1);
+    expect(acknowledgeExecution).toHaveBeenCalledWith(jobId);
+  });
+
   it("snapshots experimental direct-result delivery per Job and keeps the default live-card path unchanged", async () => {
     const descriptorBefore = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
     const properties = descriptorBefore.inputSchema.properties as Record<string, { const?: string }>;
