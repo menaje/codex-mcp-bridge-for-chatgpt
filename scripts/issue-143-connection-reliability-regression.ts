@@ -477,6 +477,11 @@ async function runProductionLongStall(root: string): Promise<Record<string, unkn
   const telemetryFile = path.join(runtimeRoot, "telemetry.sqlite");
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
+    // The production RPC observation budget is 120 seconds. This fault
+    // characterization needs a shorter, test-only budget to observe the
+    // uncertainty response before its 5-second native client deadline.
+    NODE_ENV: "test",
+    CODEX_MCP_BRIDGE_TEST_RPC_OBSERVATION_TIMEOUT_MS: "3000",
     CODEX_MCP_BRIDGE_NO_AUTH: "1",
     CODEX_MCP_BRIDGE_HOST: "127.0.0.1",
     CODEX_MCP_BRIDGE_CODEX: "/usr/bin/false",
