@@ -158,6 +158,12 @@ export class AutomaticRecoveryStore {
     return this.get(candidate.key);
   }
 
+  canBegin(candidate: AutomaticRecoveryCandidate, now: number): boolean {
+    const previous = this.get(candidate.key);
+    return !previous || previous.state === "retrying" &&
+      previous.attempts < AUTOMATIC_RECOVERY_ATTEMPTS && previous.nextAttemptAt <= now;
+  }
+
   finish(key: string, attempt: number, result: AutomaticRecoveryResult, now: number): void {
     this.db.transaction(() => {
       const confirmed = result.resolved && Boolean(result.evidence);
@@ -321,21 +327,21 @@ export class AutomaticRecoveryController {
         const due = this.store.dueAgentIds(this.now());
         for (const id of due) {
           if (this.closed || dispatched >= 3 || !budget.take(12)) break;
-          const result = await this.survey(id, jobId, 3 - dispatched);
+          const result = await this.survey(id, jobId, 3 - dispatched, budget);
           agents++;
           candidates += result.candidates;
           dispatched += result.dispatched;
           if (budget.targets % budget.limits.yieldEvery === 0) await budget.yieldIfNeeded();
         }
-        let page = this.options.pageAgents(this.agentCursor, budget.limits.maxTargets);
+        let page = this.options.pageAgents(this.agentCursor, Math.max(1,budget.limits.maxTargets-budget.targets));
         if (page.length === 0 && this.agentCursor) {
           this.agentCursor = "";
-          page = this.options.pageAgents("", budget.limits.maxTargets);
+          page = this.options.pageAgents("", Math.max(1,budget.limits.maxTargets-budget.targets));
         }
         for (const id of page) {
           if (this.closed || dispatched >= 4 || !budget.take(12)) break;
           if (!due.includes(id)) {
-            const result = await this.survey(id, jobId, 4 - dispatched);
+            const result = await this.survey(id, jobId, 4 - dispatched, budget);
             agents++;
             candidates += result.candidates;
             dispatched += result.dispatched;
@@ -346,7 +352,7 @@ export class AutomaticRecoveryController {
         return;
       }
       budget.take(12);
-      const result = await this.survey(agentId, jobId, 4);
+      const result = await this.survey(agentId, jobId, 4, budget);
       agents = 1;
       candidates = result.candidates;
       dispatched = result.dispatched;
@@ -356,8 +362,9 @@ export class AutomaticRecoveryController {
     }
   }
 
-  private async survey(agentId: string | undefined, jobId: string | undefined, dispatchLimit: number): Promise<{candidates:number;dispatched:number}> {
-    const available = await this.options.candidates(agentId);
+  private async survey(agentId: string | undefined, jobId: string | undefined, dispatchLimit: number,
+    budget: BackgroundWorkSlice): Promise<{candidates:number;dispatched:number}> {
+    const available = await budget.awaitExternal(this.options.candidates(agentId));
     const keys = new Set(available.map(candidate => candidate.key));
     // A production Agent has at most three current candidate kinds. Every
     // nonmatching retry is resolved in this pass, so repeated first pages
@@ -378,13 +385,21 @@ export class AutomaticRecoveryController {
     let dispatched = 0;
     for (const candidate of [...after,...before]) {
       if (this.closed || dispatched >= dispatchLimit) break;
+      if (candidate.kind === "release" && !this.store.canBegin(candidate,this.now())) {
+        this.candidateCursor = candidate.key;
+        continue;
+      }
+      // A shared-worker release can inspect 31 additional connections. Charge
+      // that work before persisting an attempt, so a deferred release keeps
+      // its retry budget and can run in a later Agent page.
+      if (candidate.kind === "release" && !budget.reserve(180)) break;
       this.candidateCursor = candidate.key;
       const attempt = this.store.begin(candidate,this.now());
       if (!attempt) continue;
       dispatched++;
       this.options.changed?.();
       let result: AutomaticRecoveryResult;
-      try { result = await this.options.attempt(candidate); }
+      try { result = await budget.awaitExternal(this.options.attempt(candidate)); }
       catch { result = {resolved:false,reason:"recovery-unconfirmed"}; }
       this.store.finish(candidate.key,attempt.attempts,result,this.now());
       this.options.changed?.();

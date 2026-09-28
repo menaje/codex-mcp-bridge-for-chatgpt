@@ -8372,7 +8372,7 @@ function recheckRecoveryIdentity(jobs: CodexJobRegistry, agent: BridgeAgent,
     scopeId:agent.scopeId,agentId:agent.agentId,jobId:agent.currentJobId || latest?.jobId,kind:"recheck"};
 }
 
-function configureAutomaticRecovery(
+export function configureAutomaticRecovery(
   jobs: CodexJobRegistry,
   upstream: CodexUpstream,
   service: BridgeApplicationService,
@@ -8472,19 +8472,37 @@ function configureAutomaticRecovery(
     if (!connection || connection.scopeId !== agent.scopeId || connection.persistence !== "persistent" || !upstream.releaseThreadConnection) {
       return {resolved:false,reason:"release-unavailable",retryable:false};
     }
-    const peers = connection.workerPid
-      ? store.threadConnections.listForWorker(connection.workerPid)
-      : [connection];
-    const eligible = new Map<string, {candidate:AutomaticRecoveryCandidate;agent:BridgeAgent;connection:ThreadConnectionRecord}>();
-    for (const peerConnection of peers) {
-      if (!peerConnection.agentId) continue;
-      const release = (await candidates(peerConnection.agentId)).find(item =>
-        item.kind === "release" && item.jobId === peerConnection.lastJobId);
-      const owner = jobs.getAgent(peerConnection.agentId);
-      if (release && owner) eligible.set(peerConnection.threadId,
-        {candidate:release,agent:owner,connection:peerConnection});
+    if (connection.lastJobId !== candidate.jobId ||
+        automaticRecoveryKey("release",[thread.threadId,connection.lastJobId]) !== candidate.key ||
+        ["released","releasing"].includes(connection.phase)) {
+      return {resolved:false,reason:"work-changed",retryable:false};
     }
-    if (!eligible.has(thread.threadId)) return {resolved:false,reason:"work-changed",retryable:false};
+    // The exact incident target is authoritative even when its thread ID is
+    // beyond the bounded worker peer page. Only the additional peers are paged.
+    const peers = connection.workerPid
+      ? store.threadConnections.listForWorker(connection.workerPid,31,connection.threadId)
+      : [];
+    const eligible = new Map<string, {candidate:AutomaticRecoveryCandidate;agent:BridgeAgent;connection:ThreadConnectionRecord}>([
+      [thread.threadId,{candidate,agent,connection}]
+    ]);
+    let visitedPeers = 0;
+    for (const peerConnection of peers) {
+      if (++visitedPeers % 8 === 0) await new Promise<void>(resolve => setImmediate(resolve));
+      // A peer without a terminal Job can never yield a release incident.
+      if (!peerConnection.agentId || !peerConnection.lastJobId) continue;
+      const key = automaticRecoveryKey("release",[peerConnection.threadId,peerConnection.lastJobId]);
+      if (store.automaticRecovery.isBlocked(key)) continue;
+      const owner = jobs.getAgent(peerConnection.agentId);
+      if (!owner || owner.scopeId !== peerConnection.scopeId || owner.currentJobId) continue;
+      const currentThread = jobs.currentAgentThread(owner.agentId);
+      if (currentThread?.threadId !== peerConnection.threadId || currentThread.backendKind !== "app-server") continue;
+      const retained = store.workHistory.latestJob(owner.agentId);
+      if (retained?.jobId !== peerConnection.lastJobId ||
+          !["failed","interrupted","cancelled"].includes(retained.status) ||
+          store.threadConnections.hasUnfinishedWork(peerConnection.threadId)) continue;
+      eligible.set(peerConnection.threadId,{candidate:{key,scopeId:owner.scopeId,agentId:owner.agentId,
+        jobId:retained.jobId,kind:"release"},agent:owner,connection:peerConnection});
+    }
     const releasing = store.threadConnections.update(thread.threadId,{phase:"releasing"},Date.now(),connection.revision);
     if (!releasing) return {resolved:false,reason:"work-changed",retryable:false};
     const canRelease = (id: string) => {
