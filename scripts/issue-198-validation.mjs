@@ -72,12 +72,12 @@ const fastFiles = [
   "test/stateReadProcess.test.ts", "test/telemetryService.test.ts"
 ];
 const scenarios = stage === "quick" ? [
-  npm("contract-and-release", "validate:fast"),
+  npm("contract-and-release", "validate:fast", { usePinnedCodexCli: true }),
   vitest("affected-product-paths", fastFiles),
   npm("wal-and-storage", "test:issue-197-storage")
 ] : stage === "integrated" ? [
   npm("full-node-build-and-tests", "check"),
-  npm("app-server-compatibility", "app-server:compat:check"),
+  npm("app-server-compatibility", "app-server:compat:check", { usePinnedCodexCli: true }),
   npm("macos-native-tests", "macos:check"),
   npm("mcp-conformance", "mcp:conformance"),
   tsx("background-work-scale-noop", "scripts/issue-193-work-budget-benchmark.ts"),
@@ -104,9 +104,13 @@ async function run(spec) {
   let exitCode = null;
   let signal = null;
   let spawnError = null;
+  // The pinned CLI is a schema-generation input only. Product tests construct
+  // their own selected-CLI fixtures and must not inherit this override.
+  const childEnvironment = { ...process.env, ...spec.env };
+  if (!spec.usePinnedCodexCli) delete childEnvironment.CODEX_MCP_BRIDGE_CODEX;
   const child = spawn(spec.command, spec.args, {
     cwd: root,
-    env: { ...process.env, ...spec.env },
+    env: childEnvironment,
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32"
   });
@@ -205,6 +209,8 @@ function save() {
   ].join("\n"));
 }
 
+// Preserve source identity even if the first scenario fails before finishing.
+save();
 try {
   if (stage === "installed") {
     if (dirty) throw new Error("Installed candidate validation requires a clean tracked source checkout.");
