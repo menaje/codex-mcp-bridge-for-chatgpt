@@ -1022,6 +1022,84 @@ describe("isolated production runtime", () => {
     }
   }, 20_000);
 
+  it("preserves a chunked exact read when another request fills ordinary bytes after its headers", async () => {
+    const runtime = await start();
+    const sockets: Socket[] = [];
+    const call = JSON.stringify({
+      jsonrpc: "2.0", id: "concurrent-chunked-exact", method: "tools/call",
+      params: { name: "codex_status", arguments: {
+        scopeId: randomUUID(), query: { kind: "job", id: randomUUID() }
+      }, _meta: {
+        "io.modelcontextprotocol/protocolVersion": CURRENT_PROTOCOL,
+        "io.modelcontextprotocol/clientInfo": { name: "runtime-process-regression", version: "1.0.0" },
+        "io.modelcontextprotocol/clientCapabilities": {}
+      } }
+    });
+    const headers = {
+      accept: "application/json", "content-type": "application/json",
+      "mcp-protocol-version": CURRENT_PROTOCOL,
+      "mcp-method": "tools/call", "mcp-name": "codex_status"
+    };
+    let delayedRequest: ReturnType<typeof httpRequest> | undefined;
+    try {
+      for (let index = 0; index < 3; index += 1) {
+        sockets.push(await openIncompleteMcpRequest(runtime.baseUrl,
+          8 * 1024 * 1024 - (index === 2 ? 512 * 1024 : 0)));
+      }
+      const beforeDeadline = Date.now() + 3_000;
+      while (Date.now() < beforeDeadline && await observedStateInFlight(runtime.baseUrl) !== 3) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(await observedStateInFlight(runtime.baseUrl)).toBe(3);
+
+      const delayedResponse = new Promise<{ status: number; body: Record<string, unknown> }>((resolve, reject) => {
+        delayedRequest = httpRequest(`${runtime.baseUrl}/mcp`, { method: "POST", headers }, response => {
+          const received: Buffer[] = [];
+          response.on("data", (chunk: Buffer) => received.push(chunk));
+          response.once("error", reject);
+          response.once("end", () => {
+            try {
+              resolve({ status: response.statusCode || 0,
+                body: JSON.parse(Buffer.concat(received).toString("utf8")) as Record<string, unknown> });
+            } catch (error) { reject(error); }
+          });
+        });
+        delayedRequest.once("error", reject);
+        delayedRequest.flushHeaders();
+      });
+      const headerDeadline = Date.now() + 3_000;
+      while (Date.now() < headerDeadline && await observedStateInFlight(runtime.baseUrl) !== 4) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(await observedStateInFlight(runtime.baseUrl)).toBe(4);
+
+      sockets.push(await openIncompleteMcpRequest(runtime.baseUrl, 512 * 1024));
+      const fullDeadline = Date.now() + 3_000;
+      while (Date.now() < fullDeadline && await observedStateInFlight(runtime.baseUrl) !== 5) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(await observedStateInFlight(runtime.baseUrl)).toBe(5);
+
+      delayedRequest.end(call);
+      expect(await delayedResponse).toMatchObject({
+        status: 200,
+        body: { jsonrpc: "2.0", id: "concurrent-chunked-exact", result: { isError: true } }
+      });
+      const declared = await fetch(`${runtime.baseUrl}/mcp`, { method: "POST", headers, body: call });
+      expect(declared.status).toBe(200);
+      await expect(declared.json()).resolves.toMatchObject({
+        jsonrpc: "2.0", id: "concurrent-chunked-exact", result: { isError: true }
+      });
+      expect(await observedStateInFlight(runtime.baseUrl)).toBe(4);
+    } finally {
+      delayedRequest?.destroy();
+      for (const socket of sockets) socket.destroy();
+    }
+    await waitUntilReady(runtime.baseUrl);
+    const ordinary = await postMcpChunks(runtime.baseUrl, [Buffer.from("{}")]);
+    expect(ordinary.status).not.toBe(503);
+  }, 20_000);
+
   it("keeps completion waits out of the control reserve while admitting delivery decisions", async () => {
     const runtime = await start();
     const sockets: Socket[] = [];
