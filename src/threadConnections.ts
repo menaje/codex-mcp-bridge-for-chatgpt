@@ -70,10 +70,10 @@ export class ThreadConnectionStore {
 
   /** Worker peers are considered only during a verified release, never in an
    * ordinary candidate survey. The caller must revalidate each peer. */
-  listForWorker(workerPid: number, limit = 32): ThreadConnectionRecord[] {
+  listForWorker(workerPid: number, limit = 32, excludingThreadId = ""): ThreadConnectionRecord[] {
     return this.db.prepare(`SELECT * FROM thread_connections WHERE worker_pid=?
-      AND persistence='persistent' AND phase NOT IN ('released','releasing')
-      ORDER BY thread_id LIMIT ?`).all(workerPid, Math.max(1, Math.min(32, Math.floor(limit))))
+      AND persistence='persistent' AND phase NOT IN ('released','releasing') AND thread_id!=?
+      ORDER BY thread_id LIMIT ?`).all(workerPid, excludingThreadId, Math.max(1, Math.min(32, Math.floor(limit))))
       .map(row => this.decode(row as Record<string, unknown>));
   }
 
@@ -226,6 +226,7 @@ export class ThreadConnectionController {
   private pending?: Promise<void>;
   private sweepCursor = "";
   private idleCursor = {finishedAt:0,threadId:""};
+  private idleFirst = false;
   private closed = false;
   private readonly now: () => number;
 
@@ -282,7 +283,18 @@ export class ThreadConnectionController {
       this.idleCursor = {finishedAt:0,threadId:""};
       idle = this.store.idleCandidates(this.idleCursor, this.now() - idleMs, 16);
     }
-    const candidates = [...new Map([...handoffs,...idle].map(record => [record.threadId,record])).values()];
+    // Rotate lanes within and across sweeps. A repeatedly unconfirmed handoff
+    // must not prevent an eligible idle connection from being attempted.
+    const candidatesById = new Map<string, ThreadConnectionRecord>();
+    const lanes = this.idleFirst ? [idle,handoffs] : [handoffs,idle];
+    this.idleFirst = !this.idleFirst;
+    for (let index = 0; index < Math.max(handoffs.length,idle.length); index++) {
+      for (const lane of lanes) {
+        const record = lane[index];
+        if (record) candidatesById.set(record.threadId, record);
+      }
+    }
+    const candidates = [...candidatesById.values()];
     const handoffIds = new Set(handoffs.map(record => record.threadId));
     const idleIds = new Set(idle.map(record => record.threadId));
     // A loaded peer is only ever acted on after canRelease rechecks the exact
@@ -316,7 +328,7 @@ export class ThreadConnectionController {
       };
       let result: ThreadReleaseResult;
       try {
-        result = await this.upstream.releaseThreadConnection!(current.threadId, { eligibleThreadIds, canRelease, previousWorkerPid: current.workerPid });
+        result = await budget.awaitExternal(this.upstream.releaseThreadConnection!(current.threadId, { eligibleThreadIds, canRelease, previousWorkerPid: current.workerPid }));
       } catch { result = { phase: "blocked", reason: "release-unconfirmed" }; }
       if (this.closed) return;
       // An acknowledgement alone never becomes proof of unload or relinquished writing.

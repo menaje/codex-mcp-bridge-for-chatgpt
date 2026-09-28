@@ -1,8 +1,10 @@
 import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
+import { setTimeout as delay } from "node:timers/promises";
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { DEFAULT_THREAD_IDLE_MS, THREAD_UNFINISHED_WORK_SQL, ThreadConnectionController, type ThreadReleaseOptions, type ThreadReleaseResult } from "../src/threadConnections.js";
 import type { CodexUpstream } from "../src/upstream.js";
@@ -199,6 +201,61 @@ describe("durable thread connection lifetime", () => {
     expect(released).toBe(1);
     expect(store.threadConnections.get("blocked-016")?.phase).toBe("waiting");
     await controller.close();store.close();
+  });
+
+  it("reaches idle releases despite repeatedly slow, unconfirmed handoffs", async () => {
+    const store = new BridgeStateStore({file:":memory:"});
+    store.threadConnections.register({threadId:"handoff",scopeId,persistence:"persistent"});
+    store.threadConnections.requestHandoff("handoff");
+    finish(store,"idle");
+    const calls: string[] = [];
+    const controller = new ThreadConnectionController(store.threadConnections,fake(async id => {
+      calls.push(id);
+      if (id === "handoff") {
+        await delay(40);
+        return {phase:"blocked",reason:"ownership-unconfirmed"};
+      }
+      return {phase:"released",evidence:"thread-unloaded"};
+    }),{now:()=>2000+DEFAULT_THREAD_IDLE_MS});
+    try {
+      let sweeps = 0;
+      while (sweeps < 6 && store.threadConnections.get("idle")?.phase !== "released") {
+        await controller.sweep();
+        sweeps++;
+      }
+      expect(calls).toContain("handoff");
+      expect(calls).toContain("idle");
+      expect(sweeps).toBeLessThanOrEqual(2);
+      expect(store.threadConnections.get("idle")?.phase).toBe("released");
+    } finally {await controller.close();store.close();}
+  });
+
+  it("rotates lane priority when synchronous handoff inspection exhausts a slice", async () => {
+    const store = new BridgeStateStore({file:":memory:"});
+    store.threadConnections.register({threadId:"handoff",scopeId,persistence:"persistent"});
+    store.threadConnections.requestHandoff("handoff");
+    finish(store,"idle");
+    const calls: string[] = [];
+    const original = store.threadConnections.hasUnfinishedWork.bind(store.threadConnections);
+    vi.spyOn(store.threadConnections,"hasUnfinishedWork").mockImplementation(id => {
+      if (id === "handoff") {
+        const until = performance.now()+30;
+        while (performance.now()<until) { /* model a slow synchronous lookup */ }
+        return true;
+      }
+      return original(id);
+    });
+    const controller = new ThreadConnectionController(store.threadConnections,fake(async id => {
+      calls.push(id);
+      return {phase:"released",evidence:"thread-unloaded"};
+    }),{now:()=>2000+DEFAULT_THREAD_IDLE_MS});
+    try {
+      await controller.sweep();
+      expect(calls).not.toContain("idle");
+      await controller.sweep();
+      expect(calls).toContain("idle");
+      expect(store.threadConnections.get("idle")?.phase).toBe("released");
+    } finally {await controller.close();store.close();}
   });
 
   it("keeps a released current conversation available after 30 days", () => {
