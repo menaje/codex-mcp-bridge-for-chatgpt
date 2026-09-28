@@ -588,7 +588,12 @@ class IsolatedRuntimeController {
   proxy(
     incoming: import("node:http").IncomingMessage,
     outgoing: import("node:http").ServerResponse,
-    bufferedRequest?: { body: Buffer; capture: McpRequestIdCapture; priority: boolean }
+    bufferedRequest?: {
+      body: Buffer;
+      capture: McpRequestIdCapture;
+      priority: boolean;
+      ordinarySlotReserved: boolean;
+    }
   ): void {
     if (this.port === undefined || !this.child?.connected) {
       if (bufferedRequest) {
@@ -615,29 +620,35 @@ class IsolatedRuntimeController {
       });
       return;
     }
-    // A small chunked MCP body can cross the ordinary byte boundary only
-    // when the existing reservations are within one priority-body width of it.
-    // Classify before forwarding in that window; no request is replayed.
-    const unknownLengthAtBoundary = declaredLength === undefined &&
+    // Another request can consume ordinary bytes after these headers arrive.
+    // Classify every unknown-length MCP body before its single dispatch so
+    // priority eligibility cannot depend on that arrival order.
+    const unknownLengthMcpPost = declaredLength === undefined &&
       incoming.method === "POST" &&
-      new URL(incoming.url || "/", "http://bridge.invalid").pathname === "/mcp" &&
-      this.activeProxyBytes > MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT - MAX_PRIORITY_MCP_REQUEST_BYTES;
-    if (!bufferedRequest && (
-      this.outstanding >= MAX_PENDING_REQUESTS ||
+      new URL(incoming.url || "/", "http://bridge.invalid").pathname === "/mcp";
+    const ordinarySlotReserved = this.activeProxyRequests < MAX_PROXY_REQUESTS &&
+      this.activeProxyBytes < MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT;
+    const needsPriorityReservation = this.outstanding >= MAX_PENDING_REQUESTS ||
       this.activeProxyRequests >= MAX_PROXY_REQUESTS ||
       this.activeProxyBytes + (declaredLength ?? 0) > MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT ||
-      unknownLengthAtBoundary
+      unknownLengthMcpPost &&
+        this.activeProxyBytes > MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT - MAX_PRIORITY_MCP_REQUEST_BYTES;
+    if (!bufferedRequest && (
+      needsPriorityReservation || unknownLengthMcpPost
     )) {
       if (incoming.method === "POST" && this.outstanding < MAX_PENDING_REQUESTS &&
           this.activeProxyRequests < MAX_PENDING_REQUESTS) {
-        this.classifyReservedMcpRequest(incoming, outgoing);
+        this.classifyReservedMcpRequest(incoming, outgoing, {
+          ordinarySlotReserved: unknownLengthMcpPost && ordinarySlotReserved,
+          normalAdmission: unknownLengthMcpPost && !needsPriorityReservation
+        });
       } else {
         writeMcpUnavailable(incoming, outgoing, this.readiness(), "not-observed");
       }
       return;
     }
     const bufferedOrdinaryOverCapacity = bufferedRequest && !bufferedRequest.priority && (
-      this.activeProxyRequests > MAX_PROXY_REQUESTS ||
+      (!bufferedRequest.ordinarySlotReserved && this.activeProxyRequests > MAX_PROXY_REQUESTS) ||
       this.activeProxyBytes + bufferedRequest.body.length > MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT
     );
     if (bufferedOrdinaryOverCapacity ||
@@ -772,7 +783,8 @@ class IsolatedRuntimeController {
 
   private classifyReservedMcpRequest(
     incoming: import("node:http").IncomingMessage,
-    outgoing: import("node:http").ServerResponse
+    outgoing: import("node:http").ServerResponse,
+    reservation: { ordinarySlotReserved: boolean; normalAdmission: boolean }
   ): void {
     // Reserve before reading so concurrent candidates cannot overfill the
     // physical HTTP limit. Failed classification releases this same slot.
@@ -791,7 +803,7 @@ class IsolatedRuntimeController {
       incoming.off("close", onClose);
       outgoing.off("close", onClose);
     };
-    const reject = () => {
+    const reject = (reason: "state-capacity" | "request-bytes" = "state-capacity") => {
       if (settled) return;
       settled = true;
       cleanup();
@@ -799,14 +811,20 @@ class IsolatedRuntimeController {
       this.activeProxyRequests -= 1;
       const id = capture.id();
       capture.dispose();
-      writeUnavailable(outgoing, this.readiness(), "not-observed", {
-        reason: "state-capacity", limitations: ["state-capacity"]
-      }, id);
+      if (reason === "request-bytes") {
+        writeJson(outgoing, 413, { ok: false, code: "RUNTIME_REQUEST_TOO_LARGE", reason });
+      } else {
+        writeUnavailable(outgoing, this.readiness(), "not-observed", {
+          reason: "state-capacity", limitations: ["state-capacity"]
+        }, id);
+      }
     };
     const onData = (chunk: Buffer | string) => {
+      if (settled) return;
+      if (reservation.normalAdmission) timer.refresh();
       const bytes = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
-      if (reservedBytes + bytes > MAX_RPC_BYTES ||
-          this.activeProxyBytes + bytes > MAX_PROXY_BYTES_IN_FLIGHT ||
+      if (reservedBytes + bytes > MAX_RPC_BYTES) { reject("request-bytes"); return; }
+      if (this.activeProxyBytes + bytes > MAX_PROXY_BYTES_IN_FLIGHT ||
           !capture.append(chunk)) { reject(); return; }
       reservedBytes += bytes;
       this.activeProxyBytes += bytes;
@@ -817,7 +835,7 @@ class IsolatedRuntimeController {
       const body = capture.body();
       const priority = body ? isPriorityMcpRequest(body) : false;
       const ordinaryFits = !priority && body &&
-        this.activeProxyRequests <= MAX_PROXY_REQUESTS &&
+        (reservation.ordinarySlotReserved || this.activeProxyRequests <= MAX_PROXY_REQUESTS) &&
         this.activeProxyBytes <= MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT;
       if (!body || new URL(incoming.url || "/", "http://bridge.invalid").pathname !== "/mcp" ||
           !priority && !ordinaryFits) {
@@ -826,10 +844,12 @@ class IsolatedRuntimeController {
       settled = true;
       cleanup();
       releaseBytes();
-      this.proxy(incoming, outgoing, { body, capture, priority });
+      this.proxy(incoming, outgoing, { body, capture, priority,
+        ordinarySlotReserved: reservation.ordinarySlotReserved });
     };
     const onClose = () => reject();
-    const timer = setTimeout(reject, MCP_REJECTION_BODY_WAIT_MS);
+    const timer = setTimeout(reject,
+      reservation.normalAdmission ? PROXY_IDLE_TIMEOUT_MS : MCP_REJECTION_BODY_WAIT_MS);
     timer.unref();
     incoming.on("data", onData);
     incoming.once("end", onEnd);

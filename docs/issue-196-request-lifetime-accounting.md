@@ -20,7 +20,7 @@ PR #201 당시 검토 기준은 `origin/dev`의 `e068a45ab9f6`(state schema 29, 
 
 | 소유자·단위 | 예약과 상태 전이 | 반환·재시작 근거 | 필수 제어 영향 |
 | --- | --- | --- | --- |
-| HTTP supervisor: 프록시 건수, request bytes, ID capture allocation | headers 수신 시 일반 요청을 예약한다. 일반 건수/바이트 한도에 닿거나 길이 미정 요청이 일반 바이트 경계 근처에 오면 후보를 먼저 전체 128건 안에 예약한다. 완전한 본문을 최대 1초/8 MiB/전역 capture 40 MiB 안에서 읽으며 수신 바이트도 32 MiB 프록시 예산에 포함한다. 우선 본문은 256 KiB 이하로 제한한다. | 비해당/불완전 본문은 후보 예약을 즉시 반환한다. 작은 일반 본문이 112건·24 MiB 안에 실제로 들어가면 그대로 한 번 전달하고, 우선 본문은 128건·32 MiB 안에서 한 번 전달한다. 전달된 요청의 프록시 예약은 응답 완료·caller disconnect·하위 소켓 종료 중 최초 사건에서만 반환한다. supervisor 재시작 시 소켓과 메모리 카운터가 함께 사라진다. 하위에서 이미 처리된 명령의 결과는 이 반환과 별개다. | `codex_answer`, `codex_cancel`, `codex_steer`, 앱의 interaction 응답과 `codex_ui_completion`의 `accepted/rejected/uncertain/release`, `codex_status`의 **무대기** exact job/request/completion/input만 예약 대상이다. `codex_ui_completion.wait`, 다른 long-poll·전체 목록·페이지·이력은 제외한다. SDK의 인증·scope·버전·현재 질문 검증이 그대로 뒤따른다. |
+| HTTP supervisor: 프록시 건수, request bytes, ID capture allocation | 헤더 수신 시 건수를 예약한다. 길이가 없는 MCP POST는 다른 요청의 예약량이 변해도 한 번만 분류·전달되도록 완전한 본문을 유한하게 보관한다. 요청당 8 MiB, 전체 프록시 32 MiB, 전역 ID capture 40 MiB, 우선 본문 256 KiB를 제한한다. 정상 접수의 무수신 제한은 120초, 포화 후보의 본문 완성 제한은 1초다. | 비해당·불완전 본문은 예약을 반환한다. 먼저 확보한 일반 건수 자리는 유지하며 일반 본문은 24 MiB에 맞을 때만 전달한다. 우선 본문은 128건·32 MiB 안에서 한 번 전달한다. 전달된 요청의 예약은 응답 완료·caller disconnect·하위 소켓 종료 중 최초 사건에서 반환한다. 재시작은 로컬 카운터를 지우지만 이미 처리된 명령의 효과를 취소하지 않는다. | `codex_answer`, `codex_cancel`, `codex_steer`, interaction 응답, `codex_ui_completion`의 `accepted/rejected/uncertain/release`, `codex_status`의 **무대기** exact job/request/completion/input만 우선 대상이다. 완료 대기·다른 long-poll·목록·페이지·이력은 제외하며 기존 scope·권한 검증을 유지한다. |
 | Native companion: 물리 소켓 16, 일반 dispatch 8, 변화 listener 4 | 완전한 한 줄을 읽은 후 JSON-RPC method로 처리 등급을 정한다. `changes.wait`는 별도의 listener/timer 4개를 사용한다. | dispatch 실제 완료 때 일반 슬롯 반환. socket close는 변화 대기를 abort하지만 이미 전달된 다른 명령의 완료로 간주하지 않는다. 프로세스 재시작 시 소켓/메모리 관측은 닫히고 명령 결과는 state owner의 지속성 계약을 따른다. | completion claim/delivered/release, runtime health/drain, 확인된 retry-stop/인계 취소가 예약 처리된다. 단순 큰 snapshot·history는 일반 등급이다. |
 | State owner: Job wait listener/timer 최대 128 | 짧은 `get()`과 scope 검증 후 대기 등록. change/terminal/input 모두 같은 카운터를 쓴다. | wake·timeout·AbortSignal 중 최초 사건에서 timer/listener/abort handler와 슬롯을 한 번만 반환한다. 재시작은 대기를 끝내지만 durable Job은 그대로다. | 정확한 무대기 결과 조회·질문 응답·취소는 이 listener 수에 묶이지 않는다. |
 | Supervisor native RPC: pending/abandoned/HTTP 합계 최대 128 | IPC 전송 전에 request ID 예약; timeout은 pending에서 abandoned로 이전하며 총량은 변하지 않는다. 일반 native 120건 상한. | matching response 또는 runtime child exit 때 반환. restart 후 미확정 결과는 새 명령으로 재실행하지 않는다. | native control 8건을 보존한다. |
@@ -94,3 +94,23 @@ state owner 재시작·원본 결과/질문 회수와 #189의 16건 terminal com
 0건과 격리 DB `quick_check=ok`를 보고했다. 이 후속 변경의 macOS 소스는
 수정하지 않았고, 앞서 #200 통합 시 macOS 212개 중 2개 건너뜀·실패 0을
 확인했다. 운영 설치본 교체 및 실제 호스트 왕복 검증은 수행하지 않았다.
+
+## PR #203 이후의 동시 청크 경합 보완
+
+기존 방식은 헤더 도착 시 일반 바이트 여유가 256 KiB 미만일 때만
+청크 본문을 사전 분류했다. 512 KiB 여유에서 먼저 도착한 정확 조회의
+본문을 기다리는 동안 다른 일반 요청이 512 KiB를 예약하면, 제어용
+8 MiB가 비어 있어도 먼저 온 조회가 503으로 거절됐다.
+
+길이가 없는 MCP POST를 하위로 보내기 전에 유한한 본문을 완성해
+실제 JSON-RPC 도구·동작을 검사한다. 정상 여유에서 먼저 접수된 일반
+요청의 건수 자리는 유지하고, 일반 본문이 24 MiB에 맞지 않으면
+그때 거절한다. 포화 후보의 1초 분류 한도와 정상 요청의 기존 120초
+무수신 한도를 구분한다. 본문 8 MiB, 전체 32 MiB 및 capture 40 MiB
+한도를 유지하고, 완성된 요청만 기존 state owner로 한 번 전달한다.
+
+격리 HTTP 회귀는 실제 소켓에서 23.5 MiB 일반 예약 → 청크 정확
+조회 헤더 → 다른 512 KiB 예약 → 원래 조회 본문 순서로 전송한다.
+같은 JSON의 선언 길이 요청과 청크 요청 모두 제어용 예약을 적용받고,
+소켓 해제 뒤 일반 요청도 다시 진입함을 확인한다. 운영 앱과 실제
+ChatGPT 호스트에 적용한 결과는 이 격리 시험으로 주장하지 않는다.
