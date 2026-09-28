@@ -62,6 +62,20 @@ export class ThreadConnectionStore {
       .map(row => this.decode(row as Record<string, unknown>));
   }
 
+  listForAgent(agentId: string): ThreadConnectionRecord[] {
+    return this.db.prepare("SELECT * FROM thread_connections WHERE agent_id=? ORDER BY thread_id")
+      .all(agentId).map(row => this.decode(row as Record<string, unknown>));
+  }
+
+  /** Worker peers are considered only during a verified release, never in an
+   * ordinary candidate survey. The caller must revalidate each peer. */
+  listForWorker(workerPid: number, limit = 32): ThreadConnectionRecord[] {
+    return this.db.prepare(`SELECT * FROM thread_connections WHERE worker_pid=?
+      AND persistence='persistent' AND phase NOT IN ('released','releasing')
+      ORDER BY thread_id LIMIT ?`).all(workerPid, Math.max(1, Math.min(32, Math.floor(limit))))
+      .map(row => this.decode(row as Record<string, unknown>));
+  }
+
   register(input: { threadId: string; agentId?: string; scopeId: string; persistence?: ThreadPersistence; workerPid?: number }, now = Date.now()): void {
     const previous = this.get(input.threadId);
     const persistence = input.persistence === "unknown" || !input.persistence

@@ -2135,6 +2135,8 @@ type SteeringMutationFallbacks = {
 
 export class CodexJobRegistry {
   private readonly jobs = new Map<string, CodexJob>();
+  private readonly jobsByAgent = new Map<string, Set<string>>();
+  private readonly indexedJobAgent = new Map<string, string>();
   private readonly waiters = new Map<string, Set<(reason: CodexJobWakeReason) => void>>();
   private readonly terminalWaiters = new Map<string, Set<() => void>>();
   private readonly lastWake = new Map<string, { version: number; reason: CodexJobWakeReason }>();
@@ -2211,7 +2213,10 @@ export class CodexJobRegistry {
     if (this.recoveryController) return;
     this.recoveryController = new AutomaticRecoveryController(this.activityStore.automaticRecovery, options);
     this.unsubscribeRecovery = this.subscribeChanges((reason, agentId) => {
-      if (reason !== "progress") this.recoveryController?.schedule(agentId);
+      // Scope-only Dashboard notifications have no recovery identity. The
+      // periodic keyset pass covers them without triggering a global survey.
+      if (reason && reason !== "progress") this.recoveryController?.schedule(agentId);
+      else if (agentId) this.recoveryController?.schedule(agentId);
     });
     this.recoveryController.start();
   }
@@ -2479,8 +2484,9 @@ export class CodexJobRegistry {
 
   listForAgent(agentId: string): CodexJob[] {
     this.refreshProjectIdentities();
-    return [...this.jobs.values()]
-      .filter((job) => job.agentId === agentId)
+    return [...(this.jobsByAgent.get(agentId) || [])]
+      .map(id => this.jobs.get(id))
+      .filter((job): job is CodexJob => job !== undefined)
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
@@ -2489,10 +2495,39 @@ export class CodexJobRegistry {
    * once; safety-sensitive lookups keep using get/listForAgent. */
   observedLatestJobForAgent(agentId: string): CodexJob | undefined {
     let latest: CodexJob | undefined;
-    for (const job of this.jobs.values()) {
-      if (job.agentId === agentId && (!latest || job.createdAt >= latest.createdAt)) latest = job;
+    for (const id of this.jobsByAgent.get(agentId) || []) {
+      const job = this.jobs.get(id);
+      if (job && (!latest || job.createdAt >= latest.createdAt)) latest = job;
     }
     return latest;
+  }
+
+  private setIndexedJob(job: CodexJob): void {
+    this.jobs.set(job.jobId, job);
+    const previousAgent = this.indexedJobAgent.get(job.jobId);
+    if (previousAgent && previousAgent !== job.agentId) {
+      const ids = this.jobsByAgent.get(previousAgent);
+      ids?.delete(job.jobId);
+      if (ids?.size === 0) this.jobsByAgent.delete(previousAgent);
+      this.indexedJobAgent.delete(job.jobId);
+    }
+    if (job.agentId) {
+      const ids = this.jobsByAgent.get(job.agentId) || new Set<string>();
+      ids.add(job.jobId);
+      this.jobsByAgent.set(job.agentId, ids);
+      this.indexedJobAgent.set(job.jobId, job.agentId);
+    }
+  }
+
+  private deleteIndexedJob(jobId: string): void {
+    this.jobs.delete(jobId);
+    const agentId = this.indexedJobAgent.get(jobId);
+    if (agentId) {
+      const ids = this.jobsByAgent.get(agentId);
+      ids?.delete(jobId);
+      if (ids?.size === 0) this.jobsByAgent.delete(agentId);
+      this.indexedJobAgent.delete(jobId);
+    }
   }
 
   activityTransaction<T>(operation: () => T): T {
@@ -2527,7 +2562,7 @@ export class CodexJobRegistry {
 
   createAgent(input: { scopeId: string; agentName: string }): BridgeAgent {
     const agent = this.activityStore.createAgent(input);
-    this.notifyScope(agent.scopeId);
+    this.notifyScope(agent.scopeId, agent.agentId);
     return agent;
   }
 
@@ -2579,14 +2614,14 @@ export class CodexJobRegistry {
   }): ActivityAgentAssignment {
     const assignment = this.activityStore.assignAgent(input);
     const agent = this.activityStore.getAgent(input.agentId);
-    if (agent) this.notifyScope(agent.scopeId);
+    if (agent) this.notifyScope(agent.scopeId, agent.agentId);
     return assignment;
   }
 
   releaseAgentAssignment(activityId: string, agentId: string): ActivityAgentAssignment | undefined {
     const assignment = this.activityStore.releaseAgentAssignment(activityId, agentId);
     const agent = this.activityStore.getAgent(agentId);
-    if (agent) this.notifyScope(agent.scopeId);
+    if (agent) this.notifyScope(agent.scopeId, agent.agentId);
     return assignment;
   }
 
@@ -2596,7 +2631,7 @@ export class CodexJobRegistry {
     expectedAgentVersion: number;
   }) {
     const detached = this.activityStore.detachIdleAgentAssignment(input);
-    this.notifyScope(detached.agent.scopeId);
+    this.notifyScope(detached.agent.scopeId, detached.agent.agentId);
     return detached;
   }
 
@@ -2613,7 +2648,7 @@ export class CodexJobRegistry {
     forkedFromThreadId?: string;
   }): BridgeAgentThread {
     const thread = this.activityStore.linkAgentThread(input);
-    this.notifyScope(thread.scopeId);
+    this.notifyScope(thread.scopeId, input.agentId);
     return thread;
   }
 
@@ -2623,13 +2658,13 @@ export class CodexJobRegistry {
     options: { currentJobId?: string; orphanedReason?: string } = {}
   ): BridgeAgent {
     const agent = this.activityStore.setAgentExecutionState(agentId, lifecycle, options);
-    this.notifyScope(agent.scopeId);
+    this.notifyScope(agent.scopeId, agent.agentId);
     return agent;
   }
 
   renameAgent(agentId: string, name: string): BridgeAgent {
     const agent = this.activityStore.renameAgent(agentId, name);
-    this.notifyScope(agent.scopeId);
+    this.notifyScope(agent.scopeId, agent.agentId);
     return agent;
   }
 
@@ -2651,7 +2686,7 @@ export class CodexJobRegistry {
 
   resolveHistoryRuntimeProblem(agent: BridgeAgent, revision: string): void {
     this.activityStore.transaction(() => this.activityStore.workHistory.resolveRuntimeProblem(agent.agentId, revision));
-    this.notifyScope(agent.scopeId);
+    this.notifyScope(agent.scopeId, agent.agentId);
   }
 
   recordAgentMutation(scopeId: string, requestId: string, actionHash: string, result: unknown): void {
@@ -3147,11 +3182,11 @@ export class CodexJobRegistry {
       pendingInteractions: [],
       promise: Promise.resolve()
     };
-    this.jobs.set(job.jobId, job);
+    this.setIndexedJob(job);
     try {
       this.persistJob(job);
     } catch (error) {
-      this.jobs.delete(job.jobId);
+      this.deleteIndexedJob(job.jobId);
       throw error;
     }
     const execute = () => Promise.resolve()
@@ -3209,7 +3244,7 @@ export class CodexJobRegistry {
     deferred.discard();
     this.deferredSettlements.delete(jobId);
     this.steeringPromptRedactions.delete(jobId);
-    this.jobs.delete(jobId);
+    this.deleteIndexedJob(jobId);
     this.progressPersistenceQueue.remove(snapshot => snapshot.jobId === jobId);
     this.progressPersisted.delete(jobId);
     this.lastWake.delete(jobId);
@@ -4074,8 +4109,8 @@ export class CodexJobRegistry {
     }
   }
 
-  private notifyScope(scopeId: string): void {
-    for (const listener of this.changeListeners) listener();
+  private notifyScope(scopeId: string, agentId?: string): void {
+    for (const listener of this.changeListeners) listener(undefined, agentId);
     for (const listener of [...(this.scopeWaiters.get(scopeId) || [])]) listener();
   }
 
@@ -4156,7 +4191,7 @@ export class CodexJobRegistry {
     );
     for (const job of unprotected) {
       if (!expired.has(job.jobId) && !overLimit.has(job.jobId)) continue;
-      this.jobs.delete(job.jobId);
+      this.deleteIndexedJob(job.jobId);
       this.lastWake.delete(job.jobId);
       this.retentionProtectedJobs.delete(job.jobId);
       removed.push(job.jobId);
@@ -4204,11 +4239,11 @@ export class CodexJobRegistry {
       if (requestConflict) {
         changed = true;
         if (requestConflict.updatedAt >= persisted.updatedAt) continue;
-        this.jobs.delete(requestConflict.jobId);
+        this.deleteIndexedJob(requestConflict.jobId);
       }
       const job: CodexJob = { ...persisted, promise: Promise.resolve() };
       if (this.projectionOnly) {
-        this.jobs.set(job.jobId, job);
+        this.setIndexedJob(job);
         continue;
       }
       if (isActiveActivityJobStatus(job.status) && this.recoverExecutions && job.executionReceipt) {
@@ -4234,7 +4269,7 @@ export class CodexJobRegistry {
         job.version += 1;
         changed = true;
       }
-      this.jobs.set(job.jobId, job);
+      this.setIndexedJob(job);
     }
     if (this.projectionOnly) return changed || loaded.length !== values.length;
     changed = this.pruneLoadedJobsAtStartup().length > 0 || changed || loaded.length !== values.length;
@@ -4265,6 +4300,7 @@ export class CodexJobRegistry {
       this.activityStore.upsertJob(persisted);
       for (const jobId of removed) this.activityStore.deleteJob(jobId);
     });
+    this.setIndexedJob(this.jobs.get(job.jobId) || job);
     const removedIds = new Set([job.jobId, ...removed]);
     this.progressPersistenceQueue.remove(snapshot => removedIds.has(snapshot.jobId));
     this.progressPersisted.set(job.jobId, {
@@ -4573,7 +4609,7 @@ export class CodexJobRegistry {
         this.retentionProtectedJobs.delete(classification.jobId);
       }
       if (classification.disposition !== "removed") continue;
-      this.jobs.delete(classification.jobId);
+      this.deleteIndexedJob(classification.jobId);
       this.progressPersistenceQueue.remove(
         snapshot => snapshot.jobId === classification.jobId
       );
@@ -8368,74 +8404,52 @@ function configureAutomaticRecovery(
   const store = jobs.admissionStateStore;
   const candidates = async (agentId?: string): Promise<AutomaticRecoveryCandidate[]> => {
     if (!acceptingNewJobs() || jobs.runtimeAdmission.pendingAdmissions > 0) return [];
-    const latestByAgent = new Map<string, CodexJob>();
-    const listedJobs = agentId ? jobs.listForAgent(agentId) : jobs.list(jobs.size);
-    const jobsById = new Map(listedJobs.map(job => [job.jobId, job]));
-    for (const job of listedJobs) {
-      if (!job.agentId) continue;
-      const previous = latestByAgent.get(job.agentId);
-      if (!previous || job.createdAt > previous.createdAt) latestByAgent.set(job.agentId, job);
-    }
-    const blockedKeys = store.automaticRecovery.blockedKeys();
-    const blockedRecheckIdentities = store.automaticRecovery.blockedRecheckIdentityKeys();
-    const connectionsByAgent = new Map<string, ThreadConnectionRecord[]>();
-    for (const connection of store.threadConnections.list()) {
-      if (!connection.agentId || connection.persistence !== "persistent" ||
-          !connection.lastJobId || ["released", "releasing"].includes(connection.phase)) continue;
-      const entries = connectionsByAgent.get(connection.agentId) || [];
-      entries.push(connection);
-      connectionsByAgent.set(connection.agentId, entries);
-    }
+    // Production reconciliation passes exactly one Agent. No changed-Agent
+    // event may materialize the global Job, incident, or connection catalog.
+    if (!agentId) return [];
+    const agent = jobs.getAgent(agentId);
+    if (!agent) return [];
+    const latest = jobs.observedLatestJobForAgent(agentId);
+    const current = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
+    const connections = store.threadConnections.listForAgent(agentId)
+      .filter(connection => connection.persistence === "persistent" &&
+        connection.lastJobId && !["released", "releasing"].includes(connection.phase));
+    const recheckIdentity = recheckRecoveryIdentity(jobs, agent, latest);
+    const couldRelease = connections.some(connection =>
+      !store.automaticRecovery.isBlocked(automaticRecoveryKey("release",
+        [connection.threadId,connection.lastJobId])));
+    if (store.automaticRecovery.isBlockedRecheckIdentity(recheckIdentity.key) && !couldRelease &&
+        current?.status !== "termination-failed") return [];
+    const thread = jobs.listAgentThreads(agentId).find(thread => thread.isCurrent);
+    if (!thread || thread.backendKind !== "app-server") return [];
     const result: AutomaticRecoveryCandidate[] = [];
-    let scanned = 0;
-    const agents = agentId ? [jobs.getAgent(agentId)].filter(
-      (agent): agent is BridgeAgent => agent !== undefined
-    ) : listAllDashboardAgents(jobs);
-    for (const agent of agents) {
-      // The full fallback survey yields frequently enough for status reads and
-      // heartbeats. Blocked incidents do not need their old work rehydrated.
-      if (++scanned % 16 === 0) await new Promise<void>(resolve => setImmediate(resolve));
-      const latest = latestByAgent.get(agent.agentId);
-      const current = agent.currentJobId ? jobsById.get(agent.currentJobId) : undefined;
-      const recheckIdentity = recheckRecoveryIdentity(jobs, agent, latest);
-      const couldRelease = (connectionsByAgent.get(agent.agentId) || []).some(connection =>
-        connection.lastJobId && !blockedKeys.has(automaticRecoveryKey("release",
-          [connection.threadId,connection.lastJobId])));
-      if (blockedRecheckIdentities.has(recheckIdentity.key) && !couldRelease &&
-          current?.status !== "termination-failed") continue;
-      const thread = jobs.listAgentThreads(agent.agentId).find(thread => thread.isCurrent);
-      if (!thread || thread.backendKind !== "app-server") continue;
-      if (current?.status === "termination-failed" && current.cancellationIntentId) {
-        const intent = jobs.getCancellationIntent(current.cancellationIntentId);
-        if (intent?.status === "failed" && intent.targetJobId === current.jobId && intent.scopeId === agent.scopeId &&
+    if (current?.status === "termination-failed" && current.cancellationIntentId) {
+      const intent = jobs.getCancellationIntent(current.cancellationIntentId);
+      if (intent?.status === "failed" && intent.targetJobId === current.jobId && intent.scopeId === agent.scopeId &&
           intent.source !== "assignment-containment" && current.upstreamRequestId && current.workerId && current.workerGeneration !== undefined &&
           intent.targetTurnId === current.upstreamRequestId && intent.targetThreadId === current.threadId) {
-          const key = automaticRecoveryKey("retry-stop",
-            [current.jobId,current.workerId,current.workerGeneration,current.upstreamRequestId,current.cancelRequestedAt]);
-          if (!blockedKeys.has(key)) result.push({key,
-            scopeId:agent.scopeId,agentId:agent.agentId,jobId:current.jobId,kind:"retry-stop"});
-        }
-        continue;
+        const key = automaticRecoveryKey("retry-stop",
+          [current.jobId,current.workerId,current.workerGeneration,current.upstreamRequestId,current.cancelRequestedAt]);
+        if (!store.automaticRecovery.isBlocked(key)) result.push({key,
+          scopeId:agent.scopeId,agentId:agent.agentId,jobId:current.jobId,kind:"retry-stop"});
       }
-      const observation = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
-      const unknown = observation?.stamp === dashboardRuntimeStamp(agent,latest) &&
-        (observation.unavailable || observation.observation.state === "unknown" || observation.observation.backgroundProcessState === "unknown");
-      const identity = dashboardRuntimeProblemIdentity(jobs,agent);
-      const unresolvedOrphan = agent.lifecycle === "orphaned" && !store.workHistory.runtimeResolution(agent.agentId,identity.revision);
-      // A new incident opens only on a fresh failed inspection. Cached unknown
-      // state cannot reopen a verified incident or reset its attempt budget.
-      const recheck = store.automaticRecovery.recheckCandidate(recheckIdentity,Boolean(unknown || unresolvedOrphan));
-      if (recheck && !blockedKeys.has(recheck.key)) result.push(recheck);
-      const connection = (connectionsByAgent.get(agent.agentId) || [])
-        .find(connection => connection.threadId === thread.threadId);
-      const retained = connection && !current ? store.workHistory.latestJob(agent.agentId) : undefined;
-      if (!current && connection?.persistence === "persistent" && connection.lastJobId && !["released","releasing"].includes(connection.phase) &&
+      return result;
+    }
+    const observation = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
+    const unknown = observation?.stamp === dashboardRuntimeStamp(agent,latest) &&
+      (observation.unavailable || observation.observation.state === "unknown" || observation.observation.backgroundProcessState === "unknown");
+    const identity = dashboardRuntimeProblemIdentity(jobs,agent);
+    const unresolvedOrphan = agent.lifecycle === "orphaned" && !store.workHistory.runtimeResolution(agent.agentId,identity.revision);
+    const recheck = store.automaticRecovery.recheckCandidate(recheckIdentity,Boolean(unknown || unresolvedOrphan));
+    if (recheck && !store.automaticRecovery.isBlocked(recheck.key)) result.push(recheck);
+    const connection = connections.find(connection => connection.threadId === thread.threadId);
+    const retained = connection && !current ? store.workHistory.latestJob(agent.agentId) : undefined;
+    if (!current && connection?.lastJobId &&
         retained?.jobId === connection.lastJobId && ["failed","interrupted","cancelled"].includes(retained.status) &&
         !store.threadConnections.hasUnfinishedWork(thread.threadId)) {
-        const key = automaticRecoveryKey("release",[thread.threadId,connection.lastJobId]);
-        if (!blockedKeys.has(key)) result.push({key,
-          scopeId:agent.scopeId,agentId:agent.agentId,jobId:connection.lastJobId,kind:"release"});
-      }
+      const key = automaticRecoveryKey("release",[thread.threadId,connection.lastJobId]);
+      if (!store.automaticRecovery.isBlocked(key)) result.push({key,
+        scopeId:agent.scopeId,agentId:agent.agentId,jobId:connection.lastJobId,kind:"release"});
     }
     return result;
   };
@@ -8481,11 +8495,19 @@ function configureAutomaticRecovery(
     if (!connection || connection.scopeId !== agent.scopeId || connection.persistence !== "persistent" || !upstream.releaseThreadConnection) {
       return {resolved:false,reason:"release-unavailable",retryable:false};
     }
-    const eligible = new Map((await candidates()).filter(item => item.kind === "release").flatMap(item => {
-      const owner = jobs.getAgent(item.agentId), currentThread = jobs.listAgentThreads(item.agentId).find(thread => thread.isCurrent);
-      const connection = currentThread ? store.threadConnections.get(currentThread.threadId) : undefined;
-      return owner && connection ? [[connection.threadId,{candidate:item,agent:owner,connection}] as const] : [];
-    }));
+    const peers = connection.workerPid
+      ? store.threadConnections.listForWorker(connection.workerPid)
+      : [connection];
+    const eligible = new Map<string, {candidate:AutomaticRecoveryCandidate;agent:BridgeAgent;connection:ThreadConnectionRecord}>();
+    for (const peerConnection of peers) {
+      if (!peerConnection.agentId) continue;
+      const release = (await candidates(peerConnection.agentId)).find(item =>
+        item.kind === "release" && item.jobId === peerConnection.lastJobId);
+      const owner = jobs.getAgent(peerConnection.agentId);
+      if (release && owner) eligible.set(peerConnection.threadId,
+        {candidate:release,agent:owner,connection:peerConnection});
+    }
+    if (!eligible.has(thread.threadId)) return {resolved:false,reason:"work-changed",retryable:false};
     const releasing = store.threadConnections.update(thread.threadId,{phase:"releasing"},Date.now(),connection.revision);
     if (!releasing) return {resolved:false,reason:"work-changed",retryable:false};
     const canRelease = (id: string) => {
@@ -8514,7 +8536,10 @@ function configureAutomaticRecovery(
       return {resolved:false,reason:"release-unconfirmed"};
     }
   };
-  jobs.configureAutomaticRecovery({candidates,attempt,enabled:() => acceptingNewJobs() && jobs.runtimeAdmission.pendingAdmissions === 0,
+  jobs.configureAutomaticRecovery({candidates,
+    pageAgents: (after, limit) => store.recoveryAgentIds(after, limit),
+    agentForJob: jobId => jobs.get(jobId)?.agentId,
+    attempt,enabled:() => acceptingNewJobs() && jobs.runtimeAdmission.pendingAdmissions === 0,
     changed:() => notifyCardObservation(upstream)});
 }
 
