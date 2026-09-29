@@ -23,7 +23,7 @@ const candidateSchema = z.strictObject({
     z.strictObject({ kind: z.literal("bridge-chatgpt"), profileId: z.string().uuid() }),
     z.strictObject({ kind: z.literal("bridge-api"), profileId: z.string().uuid() })
   ]),
-  status: z.enum(["prepared", "login-started", "verified"]),
+  status: z.enum(["prepared", "login-started", "login-completed", "login-failed", "verified"]),
   accountKey: z.string().nullable(),
   credentialKey: z.string().nullable(),
   verifiedCli: z.string().nullable(),
@@ -38,11 +38,14 @@ const stateSchema = z.strictObject({
   pending: connectionSchema.nullable(),
   candidate: candidateSchema.nullable()
 });
-export type AuthSelectionSnapshot = z.infer<typeof stateSchema> & {
+type AuthSelectionState = z.infer<typeof stateSchema>;
+export type AuthSelectionSnapshot = Omit<AuthSelectionState, "candidate"> & {
+  candidate: (Omit<NonNullable<AuthSelectionState["candidate"]>, "status"> & {
+    status: NonNullable<AuthSelectionState["candidate"]>["status"] | "login-unconfirmed";
+  }) | null;
   overrideActive: boolean;
   effective: AuthConnection;
 };
-type AuthSelectionState = z.infer<typeof stateSchema>;
 const initialState = (): AuthSelectionState => ({ schemaVersion: 1, revision: 0, generation: 0,
   applied: { kind: "shared" }, pending: null, candidate: null });
 const candidateLoginProcesses = new Map<string, ChildProcess>();
@@ -56,7 +59,10 @@ export class CodexAuthSelectionManager {
   async snapshot(environment: NodeJS.ProcessEnv): Promise<AuthSelectionSnapshot> {
     const state = await this.readState();
     const overrideActive = Boolean(environment.CODEX_HOME);
-    return { ...state, overrideActive,
+    const candidate = state.candidate?.status === "login-started" &&
+      !candidateLoginProcesses.has(state.candidate.id)
+      ? { ...state.candidate, status: "login-unconfirmed" as const } : state.candidate;
+    return { ...state, candidate, overrideActive,
       effective: overrideActive ? { kind: "shared" } : state.applied };
   }
 
@@ -88,13 +94,21 @@ export class CodexAuthSelectionManager {
         env: this.profileEnvironment(environment, state.candidate.connection.profileId),
         cwd: environment.HOME || process.cwd(), detached: true, stdio: "ignore"
       });
+      candidateLoginProcesses.set(candidateId, child);
+      child.once("exit", code => {
+        if (candidateLoginProcesses.get(candidateId) === child) candidateLoginProcesses.delete(candidateId);
+        void this.update(undefined, current => {
+          if (current.candidate?.id !== candidateId || current.candidate.status !== "login-started") return;
+          current.candidate.status = code === 0 ? "login-completed" : "login-failed";
+          current.revision++;
+        }).catch(() => { /* A later status read will report an unconfirmed result. */ });
+      });
       await new Promise<void>((resolve, reject) => {
         child.once("spawn", () => { child.unref(); resolve(); });
-        child.once("error", () => reject(new Error("CODEX_AUTH_LOGIN_START_FAILED: The selected Codex login could not start.")));
-      });
-      candidateLoginProcesses.set(candidateId, child);
-      child.once("exit", () => {
-        if (candidateLoginProcesses.get(candidateId) === child) candidateLoginProcesses.delete(candidateId);
+        child.once("error", () => {
+          if (candidateLoginProcesses.get(candidateId) === child) candidateLoginProcesses.delete(candidateId);
+          reject(new Error("CODEX_AUTH_LOGIN_START_FAILED: The selected Codex login could not start."));
+        });
       });
       state.candidate.status = "login-started";
       this.clearVerification(state.candidate);
@@ -131,7 +145,7 @@ export class CodexAuthSelectionManager {
     if (!succeeded) throw new Error("CODEX_AUTH_API_LOGIN_FAILED: Codex did not accept the API key in the candidate profile.");
     await this.update(undefined, state => {
       if (state.candidate?.id !== candidateId) throw new Error("CODEX_AUTH_CANDIDATE_CHANGED");
-      state.candidate.status = "login-started";
+      state.candidate.status = "login-completed";
       this.clearVerification(state.candidate);
       state.revision++;
     });
@@ -139,9 +153,16 @@ export class CodexAuthSelectionManager {
 
   async verify(candidateId: string, command: string, cliFingerprint: string,
     environment: NodeJS.ProcessEnv): Promise<AuthSelectionSnapshot> {
-    const candidate = await this.requireCandidate(candidateId);
+    const before = await this.readState();
+    const candidate = before.candidate;
+    if (!candidate || candidate.id !== candidateId) {
+      throw new Error("CODEX_AUTH_CANDIDATE_CHANGED: Refresh the authentication settings.");
+    }
+    if (candidate.status === "login-started" && candidateLoginProcesses.has(candidateId)) {
+      throw new Error("CODEX_AUTH_LOGIN_IN_PROGRESS: Wait for the selected Codex login to finish before verifying.");
+    }
     const observed = await this.probeCandidate(candidate, command, environment);
-    await this.update(undefined, state => {
+    await this.update(before.revision, state => {
       if (state.candidate?.id !== candidateId) throw new Error("CODEX_AUTH_CANDIDATE_CHANGED");
       state.candidate.status = "verified";
       state.candidate.accountKey = observed.accountKey;

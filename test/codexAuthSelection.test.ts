@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { CodexAppServerUpstreamPool } from "../src/appServerUpstream.js";
 import { CodexAuthSelectionManager } from "../src/codexAuthSelection.js";
 import { codexChildEnvironment, codexProcessEnvironment } from "../scripts/runtime-env.mjs";
 
@@ -137,7 +138,61 @@ process.stdin.on("end", () => {
   expect(JSON.parse(await readFile(path.join(home, "api-login-observation.json"), "utf8")))
     .toEqual({ args: ["login", "--with-api-key"], input: "sk-synthetic-fixture\n" });
   expect(await readFile(path.join(f.root, "auth-selection.json"), "utf8")).not.toContain("sk-synthetic-fixture");
-  expect((await f.manager.snapshot(f.environment)).candidate?.status).toBe("login-started");
+  expect((await f.manager.snapshot(f.environment)).candidate?.status).toBe("login-completed");
+});
+
+it.each([[0, "login-completed"], [1, "login-failed"]] as const)(
+  "records a browser-login process exit %i as %s until candidate verification", async (exitCode, status) => {
+    const f = await fixture();
+    const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
+    const command = path.join(f.root, `fake-login-${exitCode}.mjs`);
+    await writeFile(command, `#!/usr/bin/env node\nprocess.exit(${exitCode});\n`, { mode: 0o700 });
+    await f.manager.startChatGptLogin(candidate.id, command, f.environment);
+    await vi.waitFor(async () => expect((await f.manager.snapshot(f.environment)).candidate?.status).toBe(status));
+  }
+);
+
+it("reports an interrupted helper's unresolved browser login without claiming completion", async () => {
+  const f = await fixture();
+  const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
+  const stateFile = path.join(f.root, "auth-selection.json");
+  const state = JSON.parse(await readFile(stateFile, "utf8"));
+  state.candidate.status = "login-started";
+  await writeFile(stateFile, JSON.stringify(state));
+  expect((await f.manager.snapshot(f.environment)).candidate?.status).toBe("login-unconfirmed");
+  expect((await f.manager.snapshot(f.environment)).candidate?.id).toBe(candidate.id);
+});
+
+it("rejects a verification result that arrives after the same candidate starts another login", async () => {
+  const f = await fixture();
+  const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
+  await writeFile(path.join(f.root, "auth-profiles", candidate.id, "auth.json"),
+    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "synthetic-account" } }));
+  let entered!: () => void;
+  let release!: () => void;
+  const probeEntered = new Promise<void>(resolve => { entered = resolve; });
+  const probeRelease = new Promise<void>(resolve => { release = resolve; });
+  const original = CodexAppServerUpstreamPool.prototype.listModels;
+  const spy = vi.spyOn(CodexAppServerUpstreamPool.prototype, "listModels")
+    .mockImplementation(async function (this: CodexAppServerUpstreamPool) {
+      entered();
+      await probeRelease;
+      return original.call(this);
+    });
+  try {
+    const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+    const verification = f.manager.verify(candidate.id, command, "fixture-cli", f.environment);
+    await probeEntered;
+    const loginCommand = path.join(f.root, "new-login.mjs");
+    await writeFile(loginCommand, "#!/usr/bin/env node\nprocess.exit(0);\n", { mode: 0o700 });
+    await f.manager.startChatGptLogin(candidate.id, loginCommand, f.environment);
+    release();
+    await expect(verification).rejects.toThrow("CODEX_AUTH_REVISION_CHANGED");
+    expect((await f.manager.snapshot(f.environment)).candidate?.status).not.toBe("verified");
+  } finally {
+    release();
+    spy.mockRestore();
+  }
 });
 
 it("cancels an in-flight candidate key login without changing the applied connection", async () => {

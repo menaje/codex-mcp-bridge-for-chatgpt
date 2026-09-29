@@ -10,6 +10,13 @@ struct CodexAuthSelectionControls: View {
     @State private var billingConfirmed = false
 
     var body: some View {
+        authSelectionContent
+            .task {
+                if !model.isRemoteClient { await model.manageCodex(.init(action: "status")) }
+            }
+    }
+
+    @ViewBuilder private var authSelectionContent: some View {
         if model.isRemoteClient {
             VStack(alignment: .leading, spacing: 6) {
                 if let connection = model.remoteAuthConnection {
@@ -47,6 +54,10 @@ struct CodexAuthSelectionControls: View {
                         Text("macos.auth.disconnect").tag("disconnected")
                     }
                     .pickerStyle(.menu)
+                    .onChange(of: selectedKind) { _ in
+                        billingConfirmed = false
+                        apiKey = ""
+                    }
                     Text(explanationKey(selectedKind))
                         .font(.caption).foregroundStyle(.secondary)
                     if selectedKind == "bridge-api" || selectedKind == "shared" {
@@ -68,6 +79,16 @@ struct CodexAuthSelectionControls: View {
                 }
             }
             .onAppear { selectedKind = auth.pending?.kind ?? auth.applied.kind }
+            .task(id: auth.candidate?.status) {
+                guard auth.candidate?.status == "login-started" else { return }
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                    // The browser login exits asynchronously. Refresh its status
+                    // while this view is visible without polling account auth.
+                    await model.manageCodex(.init(action: "status", includeAccount: false))
+                    if model.codexRuntime?.authSelection?.candidate?.status != "login-started" { return }
+                }
+            }
         } else {
             Text("macos.auth.unavailable").font(.caption).foregroundStyle(.secondary)
         }
@@ -75,13 +96,12 @@ struct CodexAuthSelectionControls: View {
 
     @ViewBuilder private func candidateControls(_ auth: CodexAuthSelection) -> some View {
         if let candidate = auth.candidate, candidate.connection.kind == selectedKind {
-            LabeledContent("macos.auth.candidate", value: candidate.status == "verified"
-                           ? localized("macos.auth.verified") : localized("macos.auth.needsVerification"))
+            LabeledContent("macos.auth.candidate", value: candidateStatus(candidate.status))
             if selectedKind == "bridge-chatgpt" {
                 Button("macos.auth.startLogin") {
                     Task { await model.manageCodex(.init(action: "auth-login", authCandidateId: candidate.id)) }
                 }
-                .disabled(model.isBusy || candidate.status == "verified")
+                .disabled(model.isBusy || !["prepared", "login-failed"].contains(candidate.status))
             } else if candidate.status != "verified" {
                 SecureField("macos.auth.apiKey", text: $apiKey)
                     .textContentType(.password)
@@ -96,7 +116,7 @@ struct CodexAuthSelectionControls: View {
             Button("macos.auth.verify") {
                 Task { await model.manageCodex(.init(action: "auth-verify", authCandidateId: candidate.id)) }
             }
-            .disabled(model.isBusy)
+            .disabled(model.isBusy || candidate.status == "login-started")
             Button("macos.auth.requestChange") {
                 Task {
                     await model.manageCodex(.init(action: "auth-apply", authKind: selectedKind,
@@ -135,6 +155,17 @@ struct CodexAuthSelectionControls: View {
         case "bridge-api": "macos.auth.bridgeApi"
         case "disconnected": "macos.auth.disconnect"
         default: "macos.auth.shared"
+        }
+        return localized(key)
+    }
+
+    private func candidateStatus(_ status: String) -> String {
+        let key: String = switch status {
+        case "verified": "macos.auth.verified"
+        case "login-started": "macos.auth.loginInProgress"
+        case "login-failed": "macos.auth.loginFailed"
+        case "login-unconfirmed": "macos.auth.loginUnconfirmed"
+        default: "macos.auth.needsVerification"
         }
         return localized(key)
     }

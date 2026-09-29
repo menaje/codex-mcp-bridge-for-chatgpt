@@ -19,6 +19,9 @@ reported as completed login. API billing needs explicit confirmation before
 the connection can be requested. A failed candidate remains separate from the
 currently applied connection. Canceling a candidate does not replay an old
 OAuth file or log out another client.
+The UI distinguishes a running login, a CLI process that exited successfully,
+a failed process, and an unconfirmed result after Helper restart. Successful
+CLI exit still requires a separate account and model verification.
 
 When the existing local Codex configuration contains a parseable top-level
 `forced_login_method` or `forced_chatgpt_workspace_id`, bridge-owned profiles
