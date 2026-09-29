@@ -606,6 +606,51 @@ createInterface({ input: process.stdin }).on("line", line => {
     await expect(guard()).resolves.toBeUndefined();
     expect(f.service.sessionAuthBoundary().key).toBe(boundary);
   });
+  it("retains displayed file usage after a read-only policy check without authorizing execution", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    const authFile = path.join(home, "auth.json");
+    const auth = (token: string) => JSON.stringify({ auth_mode: "chatgpt", tokens: {
+      account_id: "workspace-a", id_token: syntheticIdToken("fixture-user", "workspace-a"), access_token: token
+    } });
+    await writeFile(authFile, auth("one"));
+    const account = projectCodexAccount(
+      { account: { type: "chatgpt", email: "fixture@example.invalid", planType: "plus" } },
+      { rateLimitsByLimitId: { codex: { primary: { usedPercent: 20, windowDurationMins: 10080 } } } }
+    );
+    let store = "file";
+    f.service.setAuthPolicyReader(async () => ({
+      config: { config: { cliAuthCredentialsStore: store } }, requirements: { requirements: null }
+    }));
+    const read = vi.spyOn(f.service, "readCliAccount").mockResolvedValue(account);
+
+    await f.service.readAccount("app-server");
+    expect(f.service.accountDisplayContext()).toBeTruthy();
+    expect(f.service.cachedAccount("app-server")).toEqual(account);
+    expect(f.service.currentExecutionAuthBoundary()).toBeNull();
+
+    read.mockResolvedValueOnce(projectCodexAccount(
+      { account: { type: "chatgpt", email: "other@example.invalid", planType: "plus" },
+        workspaceRouting: { chatgptAccountId: "workspace-b" } },
+      { accountId: "workspace-b", rateLimitsByLimitId: { codex: {
+        primary: { usedPercent: 30, windowDurationMins: 10080 }
+      } } }
+    ));
+    await writeFile(authFile, auth("two"));
+    await f.service.readAccount("app-server");
+    expect(f.service.accountDisplayContext()).toBeNull();
+    expect(f.service.cachedAccount("app-server")).toBeNull();
+
+    await writeFile(authFile, auth("three"));
+    await f.service.readAccount("app-server");
+    expect(f.service.accountDisplayContext()).toBeTruthy();
+
+    store = "keyring";
+    await writeFile(authFile, auth("four"));
+    await f.service.readAccount("app-server");
+    expect(f.service.accountDisplayContext()).toBeNull();
+    expect(f.service.cachedAccount("app-server")).toBeNull();
+    expect(f.service.currentExecutionAuthBoundary()).toBeNull();
+  });
   it("keeps the last confirmed usage through a same-account token refresh and a failed read", async () => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
     const auth = path.join(home, "auth.json");

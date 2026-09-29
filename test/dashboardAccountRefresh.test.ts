@@ -36,6 +36,11 @@ describe("Dashboard account refresh presentation", () => {
     };
     const config = loadConfig(environment);
     const service = new CodexService(environment);
+    const readPolicy = vi.fn(async () => ({
+      config: { config: { cliAuthCredentialsStore: "file" } },
+      requirements: { requirements: null }
+    }));
+    service.setAuthPolicyReader(readPolicy);
     config.codexService = service;
     const codexHome = path.join(root, ".codex");
     await mkdir(codexHome);
@@ -91,7 +96,9 @@ describe("Dashboard account refresh presentation", () => {
       expect(structuralSnapshot).toHaveBeenCalledOnce();
       expect(readProjection.dashboardRuntimePlan).not.toHaveBeenCalled();
       expect(retained.codexAccount).toEqual(account);
+      expect(retained.usageContext).toBeTruthy();
       expect(retained.usageContext).toBe(service.accountDisplayContext());
+      expect(readPolicy).toHaveBeenCalled();
       expect(retained.enrichment.oldestObservationAt).toBe(
         new Date(account.usageObservedAt!).toISOString()
       );

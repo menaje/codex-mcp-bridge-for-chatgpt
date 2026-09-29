@@ -138,6 +138,9 @@ export class CodexService {
   private accountFailures = new Map<CodexBackendKind, { revision: string; error: unknown }>();
   private accountReader?: () => Promise<CodexAccountSnapshot | null>;
   private authPolicyReader?: () => Promise<CodexEffectiveAuthPolicy>;
+  /** Read-only evidence for reusing a displayed file-backed account. */
+  private displayPolicy: { localKey: string; effectiveKey: string; store: string | null } | null = null;
+  private displayPolicyReadGeneration = 0;
   private executionAdmissionGuard?: () => Promise<void>;
   private confirmedSessionOwnerKey: string | null = null;
   private confirmedSessionOwnerAt: number | null = null;
@@ -184,6 +187,8 @@ export class CodexService {
   }
   setAuthPolicyReader(reader: () => Promise<CodexEffectiveAuthPolicy>): void {
     this.authPolicyReader = reader;
+    this.displayPolicy = null;
+    this.displayPolicyReadGeneration += 1;
     this.effectivePolicyConfirmed = false;
     this.confirmedEffectiveCredentialStore = null;
     this.confirmedSessionOwnerKey = null;
@@ -210,10 +215,17 @@ export class CodexService {
   /** Stable display boundary, independent of token/config refresh inputs. */
   accountDisplayContext(): string | null {
     const home = this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
-    const fileMayBeActive = (!this.authPolicyReader || this.effectivePolicyConfirmed) &&
-      !["keyring", "auto", "ephemeral"].includes(this.confirmedEffectiveCredentialStore || "");
+    let effectiveKey: string | null = null;
+    if (this.authPolicyReader) {
+      let localKey: string;
+      try { localKey = digest(JSON.stringify(localAuthPolicy(home))); }
+      catch { return null; }
+      if (!this.displayPolicy || this.displayPolicy.localKey !== localKey) return null;
+      effectiveKey = this.displayPolicy.effectiveKey;
+    }
+    const fileMayBeActive = !["keyring", "auto", "ephemeral"].includes(this.displayPolicy?.store || "");
     const identity = fileMayBeActive ? this.authenticationIdentity(home) : null;
-    return identity ? digest(JSON.stringify([home, this.cli.appliedContextFingerprint(), identity])) : null;
+    return identity ? digest(JSON.stringify([home, this.cli.appliedContextFingerprint(), identity, effectiveKey])) : null;
   }
   /** Persisted work follows its proven owner; CLI compatibility stays in admission. */
   sessionAuthBoundary(): CodexSessionAuthBoundaryEvidence {
@@ -411,6 +423,12 @@ export class CodexService {
     // a failed request could later resurrect the old account.
     this.cachedAccount(kind);
     const revision = this.cacheRevision(), cached = this.accounts.get(kind);
+    const policyReader = this.authPolicyReader;
+    const policyGeneration = policyReader ? ++this.displayPolicyReadGeneration : 0;
+    // Observe display policy alongside the account request. This is not an
+    // execution admission check and cannot mark an owner as authorized.
+    const displayPolicyRequest = policyReader && this.authenticationIdentity()
+      ? Promise.resolve().then(policyReader).catch(() => null) : null;
     const request = cached?.revision === revision && cached.expires > Date.now() ? cached.request : (async () => {
       if (kind !== "app-server") return null;
       return this.readCliAccount();
@@ -432,6 +450,33 @@ export class CodexService {
     const value = includeBilling ? await this.withBilling(await request) : await request;
     if (revision !== this.cacheRevision()) return null;
     if (!value) return null;
+    if (displayPolicyRequest) {
+      const policy = await displayPolicyRequest;
+      if (revision !== this.cacheRevision()) return null;
+      if (policy && policyReader === this.authPolicyReader &&
+          policyGeneration === this.displayPolicyReadGeneration) {
+        try {
+          const store = effectiveCodexCredentialStore(policy);
+          if (store != null && !["file", "keyring", "auto", "ephemeral"].includes(String(store))) {
+            throw new Error("Unknown credential storage.");
+          }
+          const home = this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
+          const local = localAuthPolicy(home);
+          const file = credentialEvidence(home, this.environment, local);
+          if (!file || !value.authenticated || value.authMode !== file.authMode || value.ownershipConflict ||
+              value.workspaceKey && value.workspaceKey !== file.workspaceKey) {
+            throw new Error("The current account does not match the file-backed display identity.");
+          }
+          assertEffectiveCodexAuthPolicy(policy, value.authMode, value.workspaceKey || file.workspaceKey,
+            ["bridge-chatgpt", "bridge-api"].includes(this.environment.CODEX_MCP_BRIDGE_AUTH_SOURCE || ""));
+          this.displayPolicy = {
+            localKey: digest(JSON.stringify(local)),
+            effectiveKey: digest(effectiveCodexAuthPolicyIdentity(policy)),
+            store: typeof store === "string" ? store : null
+          };
+        } catch { this.displayPolicy = null; }
+      }
+    }
     const context = this.accountDisplayContext();
     if (revision !== this.cacheRevision()) return null;
     const previous = this.displayedAccounts.get(kind);
