@@ -7931,6 +7931,10 @@ export function registerBridgeTools(
         if (!existingRequest) releaseRuntimeAdmission = acquireRuntimeAdmission();
         const requestedActivity = validateActivityTaskRequest(args, jobs, scope.scopeId);
         const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, requestedActivity);
+        if (agentResolution.agent?.currentThreadId &&
+            sessions.belongsToAnotherAuthentication(agentResolution.agent.currentThreadId)) {
+          throw new Error("CODEX_AUTH_AGENT_BOUNDARY: This Agent belongs to another authentication connection. Create a new Agent after switching accounts.");
+        }
         validateTaskSelectionInput(args, preferences, requestedActivity, agentResolution);
         if (
           args.project === undefined &&
