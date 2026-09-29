@@ -16,6 +16,12 @@ export class LazyCodexUpstream implements CodexUpstream {
 
   async recoverExecution(...args: Args<"recoverExecution">) { return (await this.method("recoverExecution"))(...args); }
   async acknowledgeExecution(...args: Args<"acknowledgeExecution">) { return (await this.method("acknowledgeExecution"))(...args); }
+  ownsActiveExecution(...args: Args<"ownsActiveExecution">): boolean {
+    return this.instance?.ownsActiveExecution?.(...args) === true;
+  }
+  ownsRetainedResult(...args: Args<"ownsRetainedResult">): boolean {
+    return this.instance?.ownsRetainedResult?.(...args) === true;
+  }
   async detachExecution() { await this.starting?.catch(() => {}); await this.instance?.detachExecution?.(); }
   capabilities(): BackendCapabilities { return this.instance?.capabilities?.(this.kind) || this.features; }
   async prepareExecution(...args: Args<"prepareExecution">) { return (await this.method("prepareExecution"))(...args); }

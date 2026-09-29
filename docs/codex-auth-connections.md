@@ -62,6 +62,30 @@ not treat another process's unknown account as the same thread owner. Keyring
 thread resume after restart therefore needs a fresh account confirmation;
 until then those sessions stay hidden from execution.
 
+For ChatGPT execution ownership, a selected workspace ID alone is insufficient:
+different users can belong to that workspace. A file profile uses the login
+user claim in its selected ID token together with the selected workspace. A
+Keyring profile needs an official active-login user ID and selected workspace
+that agree with `account/read` routing. The bridge preserves an unverified
+account for display but blocks new work when the selected CLI does not expose
+both identifiers. The currently inspected CLI `0.158.0-alpha.2.1` exposes no
+callable active-session identity method; its Keyring ChatGPT combination
+therefore remains unsupported for new bridge work.
+Neither email nor the optional usage response proves the login user. Token
+refreshes that retain the same user and workspace keep the owner boundary.
+
+After a confirmed login change, logout, or failed current owner check, the
+last confirmed owner remains read-only history. It no longer authorizes new
+Jobs or request replay. A live Job can still answer its own pending question
+or be cancelled when its original worker generation and turn are verified.
+Its terminal result is acknowledged only when the original executor still
+holds that exact retained receipt. Additional guidance remains a new
+execution input and needs current authentication confirmation.
+After a full Bridge restart, persisted execution receipts remain dormant until
+the new operational process confirms the same owner. A failed startup check
+keeps them available for a later successful admission rather than recovering
+them under an unverified login.
+
 ## Live test credentials
 
 Normal build, package, unit, and CI checks use synthetic credentials and fake

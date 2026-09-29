@@ -15,6 +15,7 @@ import {
 } from "../src/executionServiceProcess.js";
 import type { CodexPendingInteraction, UpstreamWorkerAssignment } from "../src/upstream.js";
 import { readProcessTable } from "../src/processTreeSupervisor.js";
+import { withExecutionIdentity } from "../src/executionIdentity.js";
 
 const fixture = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -28,6 +29,28 @@ afterEach(async () => {
 });
 
 describe("isolated Codex execution process", () => {
+  it("binds existing controls and terminal ACK to the original IPC request and worker turn", async () => {
+    const service = await createService();
+    const jobId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let assignment: UpstreamWorkerAssignment | undefined;
+    try {
+      const running = withExecutionIdentity(jobId, () => service.callTool(
+        "codex", task("hold for steering"), undefined, value => { assignment = value; }
+      ));
+      await eventually(() => Boolean(assignment?.upstreamRequestId));
+      expect(service.ownsActiveExecution(jobId, assignment!)).toBe(true);
+      expect(service.ownsActiveExecution(jobId, { ...assignment!, workerGeneration: assignment!.workerGeneration + 1 })).toBe(false);
+      expect(service.ownsActiveExecution("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", assignment!)).toBe(false);
+      await service.steerThread(assignment!.threadId!, "complete original turn");
+      await running;
+      expect(service.ownsActiveExecution(jobId, assignment!)).toBe(false);
+      expect(service.ownsRetainedResult(jobId, assignment!)).toBe(true);
+      expect(service.ownsRetainedResult(jobId, { ...assignment!, upstreamRequestId: "other-turn" })).toBe(false);
+      service.acknowledgeExecution(jobId);
+      await eventually(() => !service.ownsRetainedResult(jobId, assignment!));
+    } finally { await service.close(); }
+  }, 20_000);
+
   it("runs turns, progress, account reads, and steering outside the state owner", async () => {
     const service = await createService();
     let assignment: UpstreamWorkerAssignment | undefined;

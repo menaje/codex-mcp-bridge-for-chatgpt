@@ -56,6 +56,12 @@ export class CodexBackendRouter implements CodexUpstream {
     });
   }
   async acknowledgeExecution(jobId: string): Promise<void> { await this.backend(this.defaultBackend).acknowledgeExecution?.(jobId); }
+  ownsActiveExecution(jobId: string, assignment: UpstreamWorkerAssignment): boolean {
+    return this.backend(assignment.backendKind).ownsActiveExecution?.(jobId, assignment) === true;
+  }
+  ownsRetainedResult(jobId: string, assignment: UpstreamWorkerAssignment): boolean {
+    return this.backend(assignment.backendKind).ownsRetainedResult?.(jobId, assignment) === true;
+  }
   async detachExecution(): Promise<void> { await this.backend(this.defaultBackend).detachExecution?.(); }
 
   bindThread(threadId: string, backendKind: CodexBackendKind): void {

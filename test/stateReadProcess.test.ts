@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
-import { projectCodexAccount } from "../src/codexAccount.js";
 import { CodexService, type CodexSessionAuthBoundaryEvidence } from "../src/codexService.js";
 import { ScopeResolver } from "../src/scopeResolver.js";
 import { SessionRegistry } from "../src/sessionRegistry.js";
 import { ChildProcessStateReadService } from "../src/stateReadProcess.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { UserSettingsStore } from "../src/userSettings.js";
+import { syntheticVerifiedAccount } from "./fixtures/syntheticAuth.js";
 
 const roots: string[] = [];
 
@@ -61,11 +61,11 @@ describe("isolated state read projection", () => {
       codex.setAuthPolicyReader(async () => ({
         config: { config: { cliAuthCredentialsStore: "keyring" } }, requirements: { requirements: null }
       }));
-      codex.setAccountReader(async () => projectCodexAccount({
+      codex.setAccountReader(async () => syntheticVerifiedAccount({
         account: { type: "chatgpt", email: "same@example.invalid" },
         workspaceRouting: { chatgptAccountId: accountId, backendOrigin: "https://example.invalid",
           accountRoutingOverride: "NO_CONSTRAINT" }
-      }, null));
+      }, null, "fixture-user", accountId));
       await codex.assertCurrentAdmission();
       return codex;
     };

@@ -719,6 +719,13 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     return result;
   }
 
+  ownsActiveExecution(_jobId: string, assignment: UpstreamWorkerAssignment): boolean {
+    const worker = this.workers.find(candidate => `app-${candidate.index}` === assignment.workerId);
+    return Boolean(worker?.connection && worker.generation === assignment.workerGeneration &&
+      assignment.threadId && assignment.upstreamRequestId &&
+      worker.connection.hasExactTurn(assignment.threadId, assignment.upstreamRequestId));
+  }
+
   private requireThreadAccess(threadId: string): ExecutionAccessRequest {
     const access = this.threadAccessRequests.get(threadId);
     if (!access) throw new Error("EXECUTION_ACCESS_REQUIRED: The thread has no known execution policy; supply cwd, sandbox, and approvalPolicy.");
@@ -1489,6 +1496,10 @@ class AppServerConnection {
 
   hasActiveTurn(threadId: string): boolean {
     return this.threadTurns.has(threadId);
+  }
+
+  hasExactTurn(threadId: string, turnId: string): boolean {
+    return this.threadTurns.get(threadId) === turnId;
   }
 
   interactionInput(interactionId: string): CodexInteractionInput | undefined {

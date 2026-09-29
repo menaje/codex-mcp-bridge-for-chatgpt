@@ -4,9 +4,11 @@ export type CodexAccountSnapshot = {
   authMode: "chatgpt" | "api-key" | "unknown";
   authenticated: boolean;
   accountKey: string | null;
-  /** Hash of an explicit account/workspace ID; an email never proves execution ownership. */
+  /** Hash of the selected workspace, used for policy checks, never for execution ownership. */
+  workspaceKey: string | null;
+  /** Hash of the active login user and selected workspace. */
   ownershipKey: string | null;
-  /** Two official account replies named different selected workspaces. */
+  /** Official account and usage replies disagreed about the selected workspace. */
   ownershipConflict: boolean;
   planType: string | null;
   windows: { limitId: string; limitName: string | null; usedPercent: number; remainingPercent: number; windowDurationMins: number; resetsAt: number | null }[];
@@ -24,6 +26,10 @@ const finite = (value: unknown): value is number => typeof value === "number" &&
 
 export function codexChatgptOwnerKey(accountId: string): string {
   return createHash("sha256").update(JSON.stringify(["chatgpt", accountId])).digest("hex");
+}
+
+export function codexChatgptPrincipalKey(userId: string, workspaceId: string): string {
+  return createHash("sha256").update(JSON.stringify(["chatgpt-owner-v3", userId, workspaceId])).digest("hex");
 }
 
 /** No credentials, email, or raw account payload leave this projection. Unknown is never zero. */
@@ -62,18 +68,20 @@ export function projectCodexAccount(accountResponse: unknown, limitsResponse: un
   const usageId = authMode === "chatgpt" && typeof limits.accountId === "string" && limits.accountId.trim()
     ? limits.accountId : null;
   const ownershipConflict = Boolean(routedId && usageId && routedId !== usageId);
-  const accountId = ownershipConflict ? null : routedId || usageId;
-  const ownershipKey = accountId ? codexChatgptOwnerKey(accountId) : null;
-  // Email is useful for display continuity when limits are unavailable, but
-  // the ownership key alone may authorize a keyring-backed execution.
-  const displayIdentity = ownershipKey || (typeof account.email === "string" && account.email.trim()
+  const workspaceKey = !ownershipConflict && routedId ? codexChatgptOwnerKey(routedId) : null;
+  // The callable account protocol has no login user ID. A workspace cannot
+  // authorize Keyring execution, even when the usage reply agrees with it.
+  const ownershipKey = null;
+  // Email and usage are display correlations only.
+  const displayIdentity = workspaceKey || (usageId ? codexChatgptOwnerKey(usageId) : null) ||
+    (typeof account.email === "string" && account.email.trim()
     ? createHash("sha256").update(`display:${authMode}:${account.email}`).digest("hex") : null);
   const usageStatus = authMode !== "chatgpt" ? "none"
     : limitsResponse === null || limitsResponse === undefined ? "unavailable"
     : windows.length ? "available"
     : buckets.length ? "unavailable" : "none";
   return { authMode, authenticated: authMode !== "unknown",
-    accountKey: displayIdentity, ownershipKey, ownershipConflict,
+    accountKey: displayIdentity, workspaceKey, ownershipKey, ownershipConflict,
     planType: typeof account.planType === "string" ? account.planType : null, windows, credits,
     resetCredits: authMode === "chatgpt" && finite(reset.availableCount) && reset.availableCount >= 0 ? { availableCount: Math.floor(reset.availableCount) } : null,
     billing: { kind: authMode === "chatgpt" ? "chatgpt-plan" : authMode === "api-key" ? "api" : "unknown", costsAvailable: false,

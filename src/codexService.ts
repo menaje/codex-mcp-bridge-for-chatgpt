@@ -6,7 +6,7 @@ import path from "node:path";
 import { CodexRuntimeManager, type CliSelection } from "./codexRuntime.js";
 import type { CodexBackendKind } from "./config.js";
 import { JsonRpcProcess } from "./jsonRpcProcess.js";
-import { codexChatgptOwnerKey, projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
+import { codexChatgptOwnerKey, codexChatgptPrincipalKey, projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
 import { assertEffectiveCodexAuthPolicy, effectiveCodexAuthPolicyIdentity,
   effectiveCodexCredentialStore, parseCodexLocalAuthPolicy,
   type CodexEffectiveAuthPolicy, type CodexLocalAuthPolicy } from "./codexAuthPolicy.js";
@@ -44,7 +44,24 @@ function localAuthPolicy(directory: string): CodexLocalAuthPolicy {
   }
 }
 
-type CredentialEvidence = { identity: string; ownerKey: string; authMode: "chatgpt" | "api-key" };
+type CredentialEvidence = { identity: string; ownerKey: string; workspaceKey: string | null;
+  authMode: "chatgpt" | "api-key" };
+
+function fileTokenUserId(token: unknown, workspaceId: string): string | null {
+  if (typeof token !== "string" || token.length > 32_768) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3 || parts.some(part => !part)) return null;
+  try {
+    const claims = parseJsonUtf8Strict<Record<string, unknown>>(
+      Buffer.from(parts[1]!, "base64url"), "Codex ID token claims");
+    const auth = claims["https://api.openai.com/auth"];
+    if (!auth || typeof auth !== "object" || Array.isArray(auth)) return null;
+    const fields = auth as Record<string, unknown>;
+    if (typeof fields.chatgpt_account_id === "string" && fields.chatgpt_account_id !== workspaceId) return null;
+    const userId = fields.chatgpt_user_id || fields.user_id;
+    return typeof userId === "string" && userId.trim() === userId && userId.length > 0 ? userId : null;
+  } catch { return null; }
+}
 function credentialEvidence(directory: string, environment: NodeJS.ProcessEnv,
   policy: CodexLocalAuthPolicy): CredentialEvidence | null {
   // In auto mode the keyring can win while an older auth.json remains on
@@ -56,17 +73,19 @@ function credentialEvidence(directory: string, environment: NodeJS.ProcessEnv,
     );
     // A token subject may name a person while the selected account_id names a
     // workspace. Do not silently substitute one for the other.
-    const subject = typeof auth.tokens?.account_id === "string" && auth.tokens.account_id || null;
+    const workspaceId = typeof auth.tokens?.account_id === "string" && auth.tokens.account_id || null;
     const restrictions = [policy.forcedMethod, policy.workspaceId];
-    if (auth.auth_mode === "chatgpt" && subject) return {
-      identity: digest(JSON.stringify(["chatgpt", subject, restrictions])),
-      ownerKey: digest(JSON.stringify(["chatgpt", subject])), authMode: "chatgpt"
+    const userId = workspaceId ? fileTokenUserId(auth.tokens?.id_token, workspaceId) : null;
+    if (auth.auth_mode === "chatgpt" && workspaceId && userId) return {
+      identity: digest(JSON.stringify(["chatgpt", userId, workspaceId, restrictions])),
+      ownerKey: codexChatgptPrincipalKey(userId, workspaceId),
+      workspaceKey: codexChatgptOwnerKey(workspaceId), authMode: "chatgpt"
     };
     if (auth.auth_mode === "apiKey") {
       const key = auth.OPENAI_API_KEY || environment.OPENAI_API_KEY || environment.CODEX_API_KEY;
       if (typeof key === "string" && key) return {
         identity: digest(JSON.stringify(["apiKey", key, restrictions])),
-        ownerKey: digest(JSON.stringify(["api-key", key])), authMode: "api-key"
+        ownerKey: digest(JSON.stringify(["api-key", key])), workspaceKey: null, authMode: "api-key"
       };
     }
   } catch { /* Keyring, absent, or unreadable; seek an account observation. */ }
@@ -81,6 +100,11 @@ export function codexCredentialIdentity(directory: string, environment: NodeJS.P
 
 export function codexCredentialOwnerKey(directory: string, environment: NodeJS.ProcessEnv = process.env): string | null {
   try { return credentialEvidence(directory, environment, localAuthPolicy(directory))?.ownerKey || null; }
+  catch { return null; }
+}
+
+export function codexCredentialWorkspaceKey(directory: string, environment: NodeJS.ProcessEnv = process.env): string | null {
+  try { return credentialEvidence(directory, environment, localAuthPolicy(directory))?.workspaceKey || null; }
   catch { return null; }
 }
 
@@ -116,8 +140,13 @@ export class CodexService {
   private confirmedSessionOwnerKey: string | null = null;
   private confirmedSessionOwnerAt: number | null = null;
   private confirmedSessionLocalPolicyKey: string | null = null;
+  private confirmedSessionSource: "file" | "account" | null = null;
   private confirmedEffectiveCredentialStore: string | null = null;
   private effectivePolicyConfirmed = false;
+  private currentOwnerConfirmed = false;
+  private currentExecutionBoundaryKey: string | null = null;
+  private currentExecutionPolicyKey: string | null = null;
+  private currentExecutionCliFingerprint: string | null = null;
   private readonly unknownSessionIdentity = randomUUID();
   constructor(readonly environment: NodeJS.ProcessEnv = process.env, cli?: CodexRuntimeManager) {
     this.cli = cli || new CodexRuntimeManager({ environment: codexProcessEnvironment(environment) });
@@ -157,6 +186,11 @@ export class CodexService {
     this.confirmedSessionOwnerKey = null;
     this.confirmedSessionOwnerAt = null;
     this.confirmedSessionLocalPolicyKey = null;
+    this.confirmedSessionSource = null;
+    this.currentOwnerConfirmed = false;
+    this.currentExecutionBoundaryKey = null;
+    this.currentExecutionPolicyKey = null;
+    this.currentExecutionCliFingerprint = null;
   }
   setAppVisibility(visible: boolean): void {
     const saved = this.readRecord("policy", "visibility");
@@ -210,6 +244,23 @@ export class CodexService {
       snapshotAt
     };
   }
+  /** A successful current admission check, unlike read-only last-confirmed history. */
+  currentExecutionAuthBoundary(): string | null {
+    if (!this.currentOwnerConfirmed) return null;
+    const home = this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
+    try {
+      const policy = localAuthPolicy(home);
+      const policyKey = digest(JSON.stringify([policy.credentialStore, policy.forcedMethod, policy.workspaceId]));
+      const evidence = this.sessionAuthBoundary();
+      if (policyKey === this.currentExecutionPolicyKey &&
+          this.cli.appliedContextFingerprint() === this.currentExecutionCliFingerprint &&
+          evidence.ownerStatus !== "unverified" && evidence.key === this.currentExecutionBoundaryKey) {
+        return evidence.key;
+      }
+    } catch { /* A changed or unreadable local policy cannot authorize new execution. */ }
+    this.currentOwnerConfirmed = false;
+    return null;
+  }
   /** Confirm the owner before resolving any saved Agent or persisting a new Job. */
   assertCurrentAdmission(): Promise<void> {
     return this.admissionGuard()();
@@ -224,6 +275,7 @@ export class CodexService {
     let cliFingerprint: string | undefined;
     let pending: Promise<void> = Promise.resolve();
     const check = async () => {
+      this.currentOwnerConfirmed = false;
       if (this.environment.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED === "1") {
         throw new Error("CODEX_AUTH_DISCONNECTED: Connect a Codex authentication source before starting new work.");
       }
@@ -250,11 +302,13 @@ export class CodexService {
         ? null : credentialEvidence(directory, this.environment, policy);
       let current: string;
       let currentOwnerKey: string;
+      let currentWorkspaceKey: string | null;
       let currentSource: "file" | "account";
       let currentMode: "chatgpt" | "api-key";
       if (fileEvidence) {
         current = fileEvidence.identity;
         currentOwnerKey = fileEvidence.ownerKey;
+        currentWorkspaceKey = fileEvidence.workspaceKey;
         currentSource = "file";
         currentMode = fileEvidence.authMode;
       } else {
@@ -273,20 +327,21 @@ export class CodexService {
           ? undefined : this.environment.OPENAI_API_KEY || this.environment.CODEX_API_KEY;
         if (account.authMode === "unknown" ||
             !account.ownershipKey && !(account.authMode === "api-key" && environmentApiKey)) {
-          throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: The selected Codex CLI did not identify the active account or workspace; choose a verifiable profile before starting new work.");
+          throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: The selected Codex CLI did not identify both the active login user and workspace. This credential store cannot authorize new work until both are verifiable.");
         }
         currentOwnerKey = account.authMode === "api-key" && environmentApiKey
           ? digest(JSON.stringify(["api-key", environmentApiKey])) : account.ownershipKey!;
+        currentWorkspaceKey = account.workspaceKey;
         current = digest(JSON.stringify([account.authMode, currentOwnerKey, currentPolicyKey]));
         currentSource = "account";
         currentMode = account.authMode;
       }
       if (policy.forcedMethod && policy.forcedMethod !== (currentMode === "api-key" ? "api" : "chatgpt") ||
           policy.workspaceId && (currentMode !== "chatgpt" ||
-            codexChatgptOwnerKey(policy.workspaceId) !== currentOwnerKey)) {
+            codexChatgptOwnerKey(policy.workspaceId) !== currentWorkspaceKey)) {
         throw new Error("CODEX_AUTH_POLICY_MISMATCH: The current login conflicts with local Codex restrictions.");
       }
-      if (effectivePolicy) assertEffectiveCodexAuthPolicy(effectivePolicy, currentMode, currentOwnerKey,
+      if (effectivePolicy) assertEffectiveCodexAuthPolicy(effectivePolicy, currentMode, currentWorkspaceKey,
         this.environment.CODEX_MCP_BRIDGE_AUTH_SOURCE === "bridge-chatgpt" ||
         this.environment.CODEX_MCP_BRIDGE_AUTH_SOURCE === "bridge-api");
       const currentManagedPolicyKey = effectivePolicy
@@ -310,8 +365,13 @@ export class CodexService {
       this.confirmedSessionOwnerKey = currentOwnerKey;
       this.confirmedSessionOwnerAt = Date.now();
       this.confirmedSessionLocalPolicyKey = currentPolicyKey;
+      this.confirmedSessionSource = currentSource;
       this.confirmedEffectiveCredentialStore = typeof managedStore === "string" ? managedStore : null;
       this.effectivePolicyConfirmed = true;
+      this.currentExecutionBoundaryKey = this.sessionAuthBoundary().key;
+      this.currentExecutionPolicyKey = currentPolicyKey;
+      this.currentExecutionCliFingerprint = currentCliFingerprint;
+      this.currentOwnerConfirmed = true;
     };
     const guard = () => {
       pending = pending.then(check, check);
@@ -421,9 +481,15 @@ export class CodexService {
   }
   async readCliAccount(): Promise<CodexAccountSnapshot> {
     if (this.accountReader) {
-      const account = await this.accountReader();
-      if (!account) throw new Error("CODEX_ACCOUNT_UNAVAILABLE: Codex account information is unavailable.");
-      return account;
+      try {
+        const account = await this.accountReader();
+        if (!account) throw new Error("CODEX_ACCOUNT_UNAVAILABLE: Codex account information is unavailable.");
+        this.observeAccountOwner(account);
+        return account;
+      } catch (error) {
+        if (this.confirmedSessionSource === "account") this.currentOwnerConfirmed = false;
+        throw error;
+      }
     }
     const context = await this.acquireContext();
     const rpc = new JsonRpcProcess({ command: context.selection.command, args: ["app-server", "--listen", "stdio://"],
@@ -436,8 +502,20 @@ export class CodexService {
       const account = await rpc.request("account/read", { refreshToken: false }, { timeoutMs: 15_000 });
       const mode = projectCodexAccount(account, null).authMode;
       const limits = mode === "chatgpt" ? await rpc.request("account/rateLimits/read", undefined, { timeoutMs: 15_000 }).catch(() => null) : null;
-      return projectCodexAccount(account, limits);
+      const snapshot = projectCodexAccount(account, limits);
+      this.observeAccountOwner(snapshot);
+      return snapshot;
+    } catch (error) {
+      if (this.confirmedSessionSource === "account") this.currentOwnerConfirmed = false;
+      throw error;
     } finally { try { await rpc.close(); } finally { await context.release(); } }
+  }
+  private observeAccountOwner(account: CodexAccountSnapshot): void {
+    if (this.confirmedSessionSource === "account" && this.confirmedSessionOwnerKey &&
+        (!account.authenticated || !account.ownershipKey ||
+          account.ownershipKey !== this.confirmedSessionOwnerKey || account.ownershipConflict)) {
+      this.currentOwnerConfirmed = false;
+    }
   }
   private readRecord(group: string, id: string): Record<string, unknown> | null {
     try {

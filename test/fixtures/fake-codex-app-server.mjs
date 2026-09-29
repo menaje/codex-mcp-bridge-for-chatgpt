@@ -122,7 +122,10 @@ lines.on("line", (line) => {
     response(message.id, {
       account: process.argv.includes("--api-account") ? { type: "apiKey" }
         : { type: "chatgpt", email: "private-fixture@example.com", planType: "pro" },
-      requiresOpenaiAuth: true
+      requiresOpenaiAuth: true,
+      workspaceRouting: process.env.CODEX_TEST_ACCOUNT_ID
+        ? { chatgptAccountId: process.env.CODEX_TEST_ACCOUNT_ID,
+          backendOrigin: "https://example.invalid", accountRoutingOverride: "NO_CONSTRAINT" } : null
     });
     return;
   }

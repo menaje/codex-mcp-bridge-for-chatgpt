@@ -11,6 +11,7 @@ import { MacOSBridgeSupervisor } from "../src/macosHelperServer.js";
 import { createModelCatalog } from "../src/server.js";
 import type { CodexUpstream } from "../src/upstream.js";
 import protocolContract from "./fixtures/app-server-request-contract.json";
+import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
 
 const roots: string[] = [];
 const environmentNames = ["HOME", "PATH", "CODEX_MCP_BRIDGE_RUNTIME_HOME", "CODEX_MCP_BRIDGE_CODEX",
@@ -122,7 +123,7 @@ describe("issue 162 selected CLI across product entry points", () => {
     mkdirSync(configDirectory, { recursive: true, mode: 0o700 });
     mkdirSync(codexHome, { recursive: true, mode: 0o700 });
     writeFileSync(path.join(codexHome, "auth.json"),
-      JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "synthetic-issue-162-account" } }), { mode: 0o600 });
+      JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "synthetic-issue-162-account", id_token: syntheticIdToken("fixture-user", "synthetic-issue-162-account") } }), { mode: 0o600 });
     writeFileSync(envFile, [
       `CODEX_MCP_BRIDGE_RUNTIME_HOME=${runtimeHome}`,
       `CODEX_HOME=${codexHome}`,

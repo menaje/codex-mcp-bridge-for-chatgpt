@@ -327,11 +327,20 @@ type PendingRequest = {
   reject(error: Error): void;
   onProgress?: (progress: CodexProgress) => void;
   onAssigned?: (assignment: UpstreamWorkerAssignment) => void;
+  assignment?: UpstreamWorkerAssignment;
   activeThreadIds: Set<string>;
   interactionId?: string;
   subjectThreadId?: string;
   canRelease?: ThreadReleaseOptions["canRelease"];
 };
+
+function sameExecutionAssignment(left: UpstreamWorkerAssignment, right: UpstreamWorkerAssignment): boolean {
+  return Boolean(left.upstreamRequestId && right.upstreamRequestId &&
+    left.backendKind === right.backendKind && left.workerId === right.workerId &&
+    left.workerGeneration === right.workerGeneration &&
+    left.upstreamRequestId === right.upstreamRequestId &&
+    left.threadId && left.threadId === right.threadId);
+}
 
 export type CodexExecutionServiceHealth = {
   status: "idle" | "starting" | "ready" | "stale" | "recovering" | "capacity";
@@ -383,6 +392,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
   private lastHeartbeatAt?: number;
   private capabilitiesValue: BackendCapabilities = UNVERIFIED_APP_SERVER_CAPABILITIES;
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly retainedResults = new Map<string, UpstreamWorkerAssignment>();
   private readonly acknowledgements = new Set<string>();
   private readonly acknowledgementsInFlight = new Set<string>();
   private acknowledgementTimer?: NodeJS.Timeout;
@@ -743,6 +753,18 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
 
   supportsExecutionRecovery(): boolean { return true; }
 
+  ownsActiveExecution(jobId: string, assignment: UpstreamWorkerAssignment): boolean {
+    const pending = this.pending.get(jobId);
+    return this.child?.connected === true && Boolean(this.generation && pending?.retained &&
+      pending.assignment && sameExecutionAssignment(pending.assignment, assignment));
+  }
+
+  ownsRetainedResult(jobId: string, assignment: UpstreamWorkerAssignment): boolean {
+    const retained = this.retainedResults.get(jobId);
+    return this.child?.connected === true && Boolean(this.generation && retained &&
+      sameExecutionAssignment(retained, assignment));
+  }
+
   recoverExecution(jobId: string, onProgress?: (progress: CodexProgress) => void,
     onAssigned?: (assignment: UpstreamWorkerAssignment) => void): Promise<ToolResult> {
     if (this.pending.has(jobId)) return Promise.reject(new Error("EXECUTION_RECOVERY_ALREADY_ATTACHED"));
@@ -886,6 +908,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     if (message.type === "acknowledged") {
       if (message.journal) this.journal = message.journal;
       this.acknowledgements.delete(message.requestId);
+      this.retainedResults.delete(message.requestId);
       this.acknowledgementsInFlight.delete(message.requestId);
       const reply = this.releasedReplies.get(message.requestId);
       this.releasedReplies.delete(message.requestId);
@@ -968,6 +991,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       return;
     }
     if (message.type === "assignment") {
+      pending.assignment = message.assignment;
       this.capabilitiesValue = message.capabilities;
       const threadId = message.assignment.threadId;
       if (threadId) {
@@ -980,6 +1004,9 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       return;
     }
     const completed = pending;
+    if (completed.retained && completed.assignment) {
+      this.retainedResults.set(message.requestId, completed.assignment);
+    }
     for (const threadId of completed.activeThreadIds) this.activeThreads.delete(threadId);
     const deliver = () => {
       this.takePending(message.requestId);
@@ -1054,6 +1081,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     this.lastHeartbeatAt = undefined;
     this.starting = false;
     this.activeThreads.clear();
+    this.retainedResults.clear();
     this.interactionInputs.clear();
     this.resumableThreads.clear();
     this.workerCleanupsInFlight.clear();

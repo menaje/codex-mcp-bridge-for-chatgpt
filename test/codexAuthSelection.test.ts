@@ -5,8 +5,8 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { CodexAppServerUpstreamPool } from "../src/appServerUpstream.js";
 import { CodexAuthSelectionManager } from "../src/codexAuthSelection.js";
-import { codexChatgptOwnerKey } from "../src/codexAccount.js";
 import { codexChildEnvironment, codexProcessEnvironment } from "../scripts/runtime-env.mjs";
+import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -37,11 +37,11 @@ it("selects one of several saved bridge profiles without replacing its credentia
   const f = await fixture();
   const first = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
   const firstFile = path.join(f.root, "auth-profiles", first.id, "auth.json");
-  await writeFile(firstFile, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "saved-first" } }));
+  await writeFile(firstFile, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "saved-first", id_token: syntheticIdToken("fixture-user", "saved-first") } }));
   await f.manager.cancelCandidate(first.id, 1);
   const second = (await f.manager.prepare("bridge-chatgpt", 2, f.environment)).candidate!;
   await writeFile(path.join(f.root, "auth-profiles", second.id, "auth.json"),
-    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "saved-second" } }));
+    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "saved-second", id_token: syntheticIdToken("fixture-user", "saved-second") } }));
   await f.manager.cancelCandidate(second.id, 3);
   const selected = await f.manager.selectOwnedProfile(first.id, 4);
   expect(selected.candidate).toMatchObject({ id: first.id, reused: true, status: "prepared" });
@@ -110,7 +110,7 @@ it("carries local login restrictions into a separate profile and rejects policy 
   await writeFile(path.join(home, "config.toml"),
     'forced_login_method = "chatgpt"\nforced_chatgpt_workspace_id = "11111111-1111-4111-8111-111111111111"\n');
   await writeFile(path.join(f.root, "auth-profiles", candidate.id, "auth.json"),
-    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "synthetic-policy-account" } }));
+    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "synthetic-policy-account", id_token: syntheticIdToken("fixture-user", "synthetic-policy-account") } }));
   const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
   const verified = await f.manager.verify(candidate.id, command, "fixture-cli", f.environment);
   await f.manager.stage(candidate.connection, verified.revision, command, "fixture-cli", f.environment, false);
@@ -123,7 +123,7 @@ it("checks effective managed login, store, and workspace restrictions for a cand
   const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
   const home = path.join(f.root, "auth-profiles", candidate.id);
   const workspace = "11111111-1111-4111-8111-111111111111";
-  await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: workspace } }));
+  await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: workspace, id_token: syntheticIdToken("fixture-user", workspace) } }));
   const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
   const restricted = (requirements: object) => ({ ...f.environment,
     CODEX_TEST_AUTH_REQUIREMENTS: JSON.stringify(requirements) });
@@ -140,11 +140,22 @@ it("checks effective managed login, store, and workspace restrictions for a cand
   expect(verified.candidate?.accountKey).toMatch(/^[a-f0-9]{64}$/);
 });
 
+it("rejects a candidate when the selected CLI routes to a different workspace from its profile", async () => {
+  const f = await fixture();
+  const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
+  await writeFile(path.join(f.root, "auth-profiles", candidate.id, "auth.json"),
+    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "workspace-a",
+      id_token: syntheticIdToken("fixture-user", "workspace-a") } }));
+  await expect(f.manager.verify(candidate.id, path.resolve("test/fixtures/fake-codex-app-server.mjs"),
+    "cli", { ...f.environment, CODEX_TEST_ACCOUNT_ID: "workspace-b" }))
+    .rejects.toThrow("CODEX_AUTH_CANDIDATE_UNVERIFIED");
+});
+
 it("ignores a stale shared auth file when effective managed storage selects a different keyring account", async () => {
   const f = await fixture();
   const home = path.join(f.root, ".codex"); await mkdir(home);
   await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt",
-    tokens: { account_id: "stale-file-a" } }));
+    tokens: { account_id: "stale-file-a", id_token: syntheticIdToken("fixture-user", "stale-file-a") } }));
   await writeFile(path.join(f.root, "auth-selection.json"), JSON.stringify({
     schemaVersion: 1, revision: 0, applied: { kind: "disconnected" }, pending: null, candidate: null
   }));
@@ -152,16 +163,11 @@ it("ignores a stale shared auth file when effective managed storage selects a di
   const environment = { ...f.environment,
     CODEX_TEST_AUTH_CONFIG: JSON.stringify({ cliAuthCredentialsStore: "keyring" }),
     CODEX_TEST_ACCOUNT_ID: "live-keyring-b" };
-  const staged = await f.manager.stage({ kind: "shared" }, 0, command, "fixture-cli", environment, false);
-  expect(staged.pending).toEqual({ kind: "shared" });
-  const state = JSON.parse(await readFile(path.join(f.root, "auth-selection.json"), "utf8"));
-  expect(state.pendingVerification).toMatchObject({
-    accountKey: codexChatgptOwnerKey("live-keyring-b"), credentialKey: null
-  });
-  await f.manager.cancelPending(staged.revision);
-  await expect(f.manager.stage({ kind: "shared" }, staged.revision + 1, command, "fixture-cli",
-    { ...environment, CODEX_TEST_ACCOUNT_ID: undefined }, false))
+  await expect(f.manager.stage({ kind: "shared" }, 0, command, "fixture-cli", environment, false))
     .rejects.toThrow("CODEX_AUTH_IDENTITY_UNAVAILABLE");
+  const state = JSON.parse(await readFile(path.join(f.root, "auth-selection.json"), "utf8"));
+  expect(state.pending).toBeNull();
+  expect(await readFile(path.join(home, "auth.json"), "utf8")).toContain("stale-file-a");
 });
 
 it("keeps explicit CODEX_HOME authoritative and never forwards ambient API keys to a bridge profile", async () => {
@@ -266,7 +272,7 @@ it("rejects a verification result that arrives after the same candidate starts a
   const f = await fixture();
   const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
   await writeFile(path.join(f.root, "auth-profiles", candidate.id, "auth.json"),
-    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "synthetic-account" } }));
+    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "synthetic-account", id_token: syntheticIdToken("fixture-user", "synthetic-account") } }));
   let entered!: () => void;
   let release!: () => void;
   const probeEntered = new Promise<void>(resolve => { entered = resolve; });
@@ -321,7 +327,7 @@ it("rejects a candidate that changed account or CLI after verification, even whe
   const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
   const environment = { ...f.environment, PATH: process.env.PATH };
   const writeAccount = (accountId: string) => writeFile(path.join(home, "auth.json"),
-    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: accountId } }));
+    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: accountId, id_token: syntheticIdToken("fixture-user", accountId) } }));
   await writeAccount("synthetic-account-a");
   const verified = await f.manager.verify(candidate.id, command, "cli-fingerprint-a", environment);
   expect(verified.candidate?.status).toBe("verified");
@@ -353,7 +359,7 @@ it("revalidates a staged candidate at activation and preserves the pending choic
   const home = path.join(f.root, "auth-profiles", candidate.id);
   const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
   const credential = (id: string) => writeFile(path.join(home, "auth.json"),
-    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: id } }));
+    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: id, id_token: syntheticIdToken("fixture-user", id) } }));
   await credential("account-a");
   const verified = await f.manager.verify(candidate.id, command, "cli-a", f.environment);
   await f.manager.stage(candidate.connection, verified.revision, command, "cli-a", f.environment, false);
@@ -411,7 +417,7 @@ it("commits an owned profile only when the ready runtime reports its exact home"
   const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
   const home = path.join(f.root, "auth-profiles", candidate.id);
   await writeFile(path.join(home, "auth.json"),
-    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "profile-owner" } }));
+    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "profile-owner", id_token: syntheticIdToken("fixture-user", "profile-owner") } }));
   const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
   const verified = await f.manager.verify(candidate.id, command, "cli-a", f.environment);
   await f.manager.stage(candidate.connection, verified.revision, command, "cli-a", f.environment, false);
@@ -427,7 +433,7 @@ it("removes only an inactive bridge API credential without touching shared authe
   const f = await fixture();
   const shared = path.join(f.root, ".codex"); await mkdir(shared);
   const sharedFile = path.join(shared, "auth.json");
-  await writeFile(sharedFile, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "shared" } }));
+  await writeFile(sharedFile, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "shared", id_token: syntheticIdToken("fixture-user", "shared") } }));
   const candidate = (await f.manager.prepare("bridge-api", 0, f.environment)).candidate!;
   const file = path.join(f.root, "auth-profiles", candidate.id, "auth.json");
   await writeFile(file, JSON.stringify({ auth_mode: "apiKey", OPENAI_API_KEY: "sk-synthetic-profile" }));
@@ -450,10 +456,10 @@ it("logs out only an inactive bridge ChatGPT profile and records an uncertain re
   const f = await fixture();
   const shared = path.join(f.root, ".codex"); await mkdir(shared);
   const sharedFile = path.join(shared, "auth.json");
-  await writeFile(sharedFile, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "shared" } }));
+  await writeFile(sharedFile, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "shared", id_token: syntheticIdToken("fixture-user", "shared") } }));
   const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
   const file = path.join(f.root, "auth-profiles", candidate.id, "auth.json");
-  await writeFile(file, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "owned" } }));
+  await writeFile(file, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "owned", id_token: syntheticIdToken("fixture-user", "owned") } }));
   await f.manager.cancelCandidate(candidate.id, 1);
   const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
   await expect(f.manager.logoutOwnedChatGpt(candidate.id, 2, command, {
@@ -471,7 +477,7 @@ it("logs out only an inactive bridge ChatGPT profile and records an uncertain re
   expect(await readFile(sharedFile, "utf8")).toContain("shared");
   const second = (await f.manager.prepare("bridge-chatgpt", 3, f.environment)).candidate!;
   const secondFile = path.join(f.root, "auth-profiles", second.id, "auth.json");
-  await writeFile(secondFile, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "owned-two" } }));
+  await writeFile(secondFile, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "owned-two", id_token: syntheticIdToken("fixture-user", "owned-two") } }));
   await f.manager.cancelCandidate(second.id, 4);
   await f.manager.logoutOwnedChatGpt(second.id, 5, command, f.environment);
   await expect(readFile(secondFile)).rejects.toMatchObject({ code: "ENOENT" });

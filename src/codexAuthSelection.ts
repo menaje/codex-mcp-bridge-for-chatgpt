@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import { CodexAppServerUpstreamPool } from "./appServerUpstream.js";
-import { codexCredentialIdentity, codexCredentialOwnerKey } from "./codexService.js";
+import { codexCredentialIdentity, codexCredentialOwnerKey, codexCredentialWorkspaceKey } from "./codexService.js";
 import { assertEffectiveCodexAuthPolicy, effectiveCodexCredentialStore,
   parseCodexLocalAuthPolicy, type CodexLocalAuthPolicy } from "./codexAuthPolicy.js";
 import { atomicRuntimeJson, withRuntimeLock } from "./codexRuntime.js";
@@ -311,7 +311,12 @@ export class CodexAuthSelectionManager {
         throw new Error("CODEX_AUTH_CANDIDATE_UNVERIFIED: The candidate is not signed in with the selected method.");
       }
       const ownerKey = codexCredentialOwnerKey(profileEnvironment.CODEX_HOME!, profileEnvironment);
-      assertEffectiveCodexAuthPolicy(policy, expected, ownerKey || account.ownershipKey, true);
+      const fileWorkspaceKey = codexCredentialWorkspaceKey(profileEnvironment.CODEX_HOME!, profileEnvironment);
+      assertEffectiveCodexAuthPolicy(policy, expected,
+        fileWorkspaceKey || account.workspaceKey, true);
+      if (fileWorkspaceKey && account.workspaceKey && fileWorkspaceKey !== account.workspaceKey) {
+        throw new Error("CODEX_AUTH_CANDIDATE_UNVERIFIED: Codex reported a different workspace from the profile credential.");
+      }
       if (ownerKey && account.ownershipKey && ownerKey !== account.ownershipKey) {
         throw new Error("CODEX_AUTH_CANDIDATE_UNVERIFIED: Codex reported a different account from the profile credential.");
       }
@@ -415,12 +420,17 @@ export class CodexAuthSelectionManager {
       const fileMayBeActive = !["keyring", "auto", "ephemeral"].includes(String(managedStore));
       const credentialKey = fileMayBeActive ? codexCredentialIdentity(home, environment) : null;
       const ownerKey = fileMayBeActive ? codexCredentialOwnerKey(home, environment) : null;
-      assertEffectiveCodexAuthPolicy(effectivePolicy, account.authMode, ownerKey || account.ownershipKey, false);
+      const fileWorkspaceKey = fileMayBeActive ? codexCredentialWorkspaceKey(home, environment) : null;
+      assertEffectiveCodexAuthPolicy(effectivePolicy, account.authMode,
+        fileWorkspaceKey || account.workspaceKey, false);
+      if (fileWorkspaceKey && account.workspaceKey && fileWorkspaceKey !== account.workspaceKey) {
+        throw new Error("CODEX_AUTH_SHARED_UNAVAILABLE: Codex reported a different workspace from the shared credential.");
+      }
       if (ownerKey && account.ownershipKey && ownerKey !== account.ownershipKey) {
         throw new Error("CODEX_AUTH_SHARED_UNAVAILABLE: Codex reported a different account from the shared credential.");
       }
       if (!credentialKey && !account.ownershipKey) {
-        throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: The shared account has no verified ownership identity.");
+        throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: The selected CLI did not verify the shared login user and workspace; choose a verifiable profile.");
       }
       return { accountKey: ownerKey || account.ownershipKey, accountEmail, credentialKey };
     } finally { await pool.close(); }
