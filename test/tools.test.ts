@@ -351,7 +351,11 @@ describe("current bridge tool contracts", () => {
     }
   );
 
-  it.each([true, false])("keeps the original Job question and ACK after an external login change with worker proof %s", async (originalWorkerProof) => {
+  it.each([
+    { scenario: "live original worker", initialWorkerProof: true, loseReply: false },
+    { scenario: "worker proof recovered before send", initialWorkerProof: false, loseReply: false },
+    { scenario: "answer sent but reply lost", initialWorkerProof: true, loseReply: true }
+  ])("keeps the original Job question and ACK after an external login change: $scenario", async ({ initialWorkerProof, loseReply }) => {
     const home = path.join(root, ".codex");
     const authFile = path.join(home, "auth.json");
     await mkdir(home);
@@ -378,6 +382,10 @@ describe("current bridge tool contracts", () => {
       ownsRetainedResult: (_jobId: string, assignment: UpstreamWorkerAssignment) =>
         assignment.workerId === "fixture-worker" && assignment.workerGeneration === 1 &&
         assignment.threadId === "tool-contract-thread" && assignment.upstreamRequestId === fixtureTurnId,
+      respondToInteraction: async (interactionId: string, response: CodexInteractionResponse) => {
+        upstream.interactionResponses.push({ interactionId, response });
+        if (loseReply) throw new Error("Synthetic reply lost after the answer reached the original worker.");
+      },
       acknowledgeExecution
     });
     server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
@@ -429,15 +437,36 @@ describe("current bridge tool contracts", () => {
     expect(service.currentExecutionAuthBoundary()).toBeNull();
     const respond = (requestId: string) => client.callTool({ name: "codex_answer", _meta: metadata,
       arguments: { requestId, jobId, questionRef, answers: { answer: ["yes"] } } });
-    originalWorkerLive = originalWorkerProof;
-    const answered = await respond(randomUUID());
+    originalWorkerLive = initialWorkerProof;
+    const answerRequestId = randomUUID();
+    const answered = await respond(answerRequestId);
     expect(answered.isError, JSON.stringify(answered)).not.toBe(true);
-    expect(answered.structuredContent).toMatchObject(originalWorkerProof
-      ? { delivery: "delivered" }
-      : { delivery: "uncertain", answersPersisted: false });
-    expect(upstream.interactionResponses).toEqual(originalWorkerProof ? [{
+    expect(answered.structuredContent).toMatchObject({
+      delivery: !initialWorkerProof ? "not-delivered" : loseReply ? "uncertain" : "delivered",
+      answersPersisted: false
+    });
+    expect(upstream.interactionResponses).toHaveLength(initialWorkerProof ? 1 : 0);
+    if (!initialWorkerProof) {
+      const stillBlocked = await respond(answerRequestId);
+      expect(stillBlocked.structuredContent).toMatchObject({ delivery: "not-delivered" });
+      expect(upstream.interactionResponses).toHaveLength(0);
+      const differentRequest = await respond(randomUUID());
+      expect(differentRequest.isError).toBe(true);
+      expect(JSON.stringify(differentRequest)).toContain("QUESTION_ALREADY_DISPATCHED");
+      originalWorkerLive = true;
+      const recovered = await respond(answerRequestId);
+      expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
+      expect(recovered.structuredContent).toMatchObject({ delivery: "delivered" });
+    } else if (loseReply) {
+      const repeated = await respond(answerRequestId);
+      expect(repeated.structuredContent).toMatchObject({ delivery: "uncertain" });
+      const differentRequest = await respond(randomUUID());
+      expect(differentRequest.isError).toBe(true);
+      expect(JSON.stringify(differentRequest)).toContain("QUESTION_ALREADY_DISPATCHED");
+    }
+    expect(upstream.interactionResponses).toEqual([{
       interactionId, response: { answers: { answer: ["yes"] } }
-    }] : []);
+    }]);
     hold.release({
       structuredContent: { threadId: "tool-contract-thread", turnStatus: "completed" },
       content: [{ type: "text", text: "Original worker result." }]

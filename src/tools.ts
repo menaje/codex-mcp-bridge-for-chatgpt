@@ -38,6 +38,7 @@ import type { BridgeTelemetryService } from "./telemetryService.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
 import { ScopeFairQueue, type ScopeFairQueueStatus } from "./scopeFairQueue.js";
 import { registerCodexInputTools, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS } from "./questionTools.js";
+import { InteractionNotDispatchedError } from "./interactionDispatch.js";
 import path from "node:path";
 import * as z from "zod/v4";
 import { type McpServer, type Progress, type ToolCallback } from "@modelcontextprotocol/server";
@@ -3649,36 +3650,46 @@ export class CodexJobRegistry {
     interactionId: string,
     response: CodexInteractionResponse
   ): Promise<CodexJob> {
-    const job = this.get(jobId);
-    if (!job || !isActiveActivityJobStatus(job.status)) {
-      throw new Error("The selected Codex job is not active.");
+    let job: CodexJob;
+    let interaction: CodexPendingInteraction;
+    let sendResponse: NonNullable<CodexUpstream["respondToInteraction"]>;
+    try {
+      const current = this.get(jobId);
+      if (!current || !isActiveActivityJobStatus(current.status)) {
+        throw new Error("The selected Codex job is not active.");
+      }
+      this.assertOriginalJobControl(current);
+      if (this.authBoundary && current.authBoundary !== this.authBoundary() &&
+          current.workerId && current.workerGeneration !== undefined &&
+          !interactionId.startsWith(`${current.workerId}:${current.workerGeneration}:`)) {
+        throw new Error("CODEX_AUTH_JOB_BOUNDARY: The interaction does not belong to the original worker generation.");
+      }
+      const pending = current.pendingInteractions.find((entry) => entry.interactionId === interactionId);
+      if (!pending) throw new Error("Unknown or already resolved Codex interaction id for this job.");
+      if (pending.kind === "user-input" && !response.answers) {
+        throw new Error("This Codex interaction requires answers.");
+      }
+      if (pending.kind === "mcp-elicitation" && !response.elicitation) {
+        throw new Error("This MCP elicitation requires an elicitation response.");
+      }
+      if (!isInputInteraction(pending) && !response.decision) {
+        throw new Error("This Codex approval interaction requires a decision.");
+      }
+      if (response.decision && pending.availableDecisions &&
+          !pending.availableDecisions.includes(response.decision)) {
+        throw new Error("The selected decision is not available for this Codex approval request.");
+      }
+      const checkedUpstream = this.upstream;
+      if (!checkedUpstream?.respondToInteraction) throw new Error("The active Codex backend cannot accept interactions.");
+      job = current;
+      interaction = pending;
+      sendResponse = checkedUpstream.respondToInteraction.bind(checkedUpstream);
+    } catch (error) {
+      throw new InteractionNotDispatchedError(error);
     }
-    this.assertOriginalJobControl(job);
-    if (this.authBoundary && job.authBoundary !== this.authBoundary() &&
-        job.workerId && job.workerGeneration !== undefined &&
-        !interactionId.startsWith(`${job.workerId}:${job.workerGeneration}:`)) {
-      throw new Error("CODEX_AUTH_JOB_BOUNDARY: The interaction does not belong to the original worker generation.");
-    }
-    const interaction = job.pendingInteractions.find((entry) => entry.interactionId === interactionId);
-    if (!interaction) throw new Error("Unknown or already resolved Codex interaction id for this job.");
-    if (interaction.kind === "user-input" && !response.answers) {
-      throw new Error("This Codex interaction requires answers.");
-    }
-    if (interaction.kind === "mcp-elicitation" && !response.elicitation) {
-      throw new Error("This MCP elicitation requires an elicitation response.");
-    }
-    if (!isInputInteraction(interaction) && !response.decision) {
-      throw new Error("This Codex approval interaction requires a decision.");
-    }
-    if (
-      response.decision &&
-      interaction.availableDecisions &&
-      !interaction.availableDecisions.includes(response.decision)
-    ) {
-      throw new Error("The selected decision is not available for this Codex approval request.");
-    }
-    if (!this.upstream?.respondToInteraction) throw new Error("The active Codex backend cannot accept interactions.");
-    await this.upstream.respondToInteraction(interactionId, response);
+    // Keep the checked upstream instance and interaction together. An error
+    // from this call can mean the answer was sent; it must remain uncertain.
+    await sendResponse(interactionId, response);
     job.pendingInteractions = job.pendingInteractions.filter((entry) => entry.interactionId !== interactionId);
     this.recordProgress(job, {
       progress: (job.lastProgress?.progress || 0) + 1,

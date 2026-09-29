@@ -160,6 +160,16 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                     expecting: [expectedText]
                 )
             }
+            model.codexRuntime = try Self.codexRuntimeSnapshot(overrideActive: true)
+            model.requestedSettingsTab = SettingsNavigationPane.codex.rawValue
+            try await settle(settingsWindow, iterations: 16)
+            try await capture(
+                settingsWindow,
+                named: "settings-codex-override-en-light.png",
+                in: artifacts,
+                expecting: ["explicit CODEX_HOME", "Keyring ChatGPT user"]
+            )
+            model.codexRuntime = try Self.codexRuntimeSnapshot()
             model.requestedSettingsTab = SettingsNavigationPane.general.rawValue
             try await verifySettingsTitlebarIsClear(settingsWindow)
             try await settle(settingsWindow, iterations: 16)
@@ -756,7 +766,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
         return try decode(SettingsSnapshot.self, object)
     }
 
-    nonisolated private static func codexRuntimeSnapshot() throws -> CodexRuntimeSnapshot {
+    nonisolated private static func codexRuntimeSnapshot(overrideActive: Bool = false) throws -> CodexRuntimeSnapshot {
         let selection: [String: Any] = [
             "id": "visual-codex", "source": "terminal", "command": "/fixture/codex",
             "physicalPath": "/fixture/codex", "version": "0.153.3", "available": true, "compatible": true,
@@ -777,7 +787,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                               "appliedAccountEmail": "fixture@example.invalid",
                               "appliedWorkspaceKey": "abcdef0123456789",
                               "appliedBillingTarget": "chatgpt-plan",
-                              "effective": ["kind": "shared"], "overrideActive": false]
+                              "effective": ["kind": "shared"], "overrideActive": overrideActive]
         ])
     }
 

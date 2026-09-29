@@ -58,6 +58,11 @@ struct CodexAuthSelectionControls: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                if (auth.overrideActive ? auth.effective.kind == "shared" : selectedKind == "shared"),
+                   model.codexRuntime?.selection?.protocol?.accountSessionsList == false {
+                    Text("macos.auth.keyringSessionUnsupported")
+                        .font(.caption).foregroundStyle(.orange)
+                }
                 if auth.overrideActive {
                     Text("macos.auth.override")
                         .font(.caption).foregroundStyle(.secondary)
@@ -105,11 +110,6 @@ struct CodexAuthSelectionControls: View {
                     }
                     Text(explanationKey(selectedKind))
                         .font(.caption).foregroundStyle(.secondary)
-                    if selectedKind == "shared",
-                       model.codexRuntime?.selection?.protocol?.accountSessionsList == false {
-                        Text("macos.auth.keyringSessionUnsupported")
-                            .font(.caption).foregroundStyle(.orange)
-                    }
                     if selectedKind == "bridge-api" || selectedKind == "shared" {
                         Toggle("macos.auth.billingConsent", isOn: $billingConfirmed)
                     }

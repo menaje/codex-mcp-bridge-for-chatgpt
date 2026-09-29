@@ -164,6 +164,7 @@ const expectedCaptures = [
   "settings-model-execution-en-light.png",
   "settings-projects-en-light.png",
   "settings-codex-en-light.png",
+  "settings-codex-override-en-light.png",
   "settings-connection-en-light.png",
   "settings-server-en-light.png",
   "settings-titlebar-clean-en-light.png",
