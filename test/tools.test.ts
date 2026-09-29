@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +21,7 @@ import type {
   UpstreamWorkerAssignment
 } from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
+import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
 
 const selection = { model: "gpt-5.6-sol", reasoningEffort: "medium" };
 const metadata = { "openai/session": "current-tool-contract-test" };
@@ -76,7 +77,7 @@ class FixtureUpstream implements CodexUpstream {
     started: Promise<void>;
     assign(threadId: string, upstreamRequestId?: string): void;
     progress(progress: CodexProgress): void;
-    release(): void;
+    release(result?: ToolResult): void;
   } {
     let started!: () => void;
     let release!: (result: ToolResult) => void;
@@ -104,7 +105,7 @@ class FixtureUpstream implements CodexUpstream {
         }
         heldCall.onProgress(progress);
       },
-      release: () => release({
+      release: (result) => release(result || {
         structuredContent: { threadId: "tool-contract-thread", content: "Completed delayed fixture work." },
         content: [{ type: "text", text: "Completed delayed fixture work." }]
       })
@@ -259,6 +260,96 @@ describe("current bridge tool contracts", () => {
     expect(state.listJobs().filter(job => job.requestId === requestId)).toEqual([]);
     expect(upstream.calls).toEqual([]);
   });
+
+  it.each(["completed", "failed", "interrupted"] as const)(
+    "keeps an original Job's %s result and session with its owner through an external login change and commit retry",
+    async (terminalStatus) => {
+      const home = path.join(root, ".codex");
+      const authFile = path.join(home, "auth.json");
+      await mkdir(home);
+      const login = (userId: string) => JSON.stringify({ auth_mode: "chatgpt", tokens: {
+        account_id: "shared-workspace", id_token: syntheticIdToken(userId, "shared-workspace")
+      } });
+      await writeFile(authFile, login("user-a"));
+      const service = new CodexService({ HOME: root, CODEX_HOME: home, PATH: "",
+        CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+      config.codexService = service;
+      await service.assertCurrentAdmission();
+
+      await client.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      upstream = new FixtureUpstream();
+      const acknowledgeExecution = vi.fn();
+      Object.assign(upstream, {
+        supportsExecutionRecovery: () => true,
+        ownsRetainedResult: (_jobId: string, assignment: UpstreamWorkerAssignment) =>
+          assignment.threadId === "tool-contract-thread" && assignment.upstreamRequestId === fixtureTurnId,
+        acknowledgeExecution
+      });
+      server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+      client = new Client(
+        { name: "original-job-completion-owner-test", version: "1.0.0" },
+        { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+      );
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+      await client.connect(new StreamableHTTPClientTransport(endpoint));
+
+      const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+      const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+      const project = settings.current.projects[0]!;
+      const hold = upstream.holdNextCall();
+      const admitted = await client.callTool({ name: "codex_task", arguments: {
+        scopeId: randomUUID(), requestId: randomUUID(),
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Return a synthetic result from the original Job.",
+        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+        selection
+      }, _meta: metadata });
+      expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+      const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+      await hold.started;
+      hold.assign("tool-contract-thread");
+      const originalOwner = state.listJobs().find((job) => job.jobId === jobId)?.authBoundary;
+      expect(originalOwner).toMatch(/^[a-f0-9]{64}$/);
+      expect((state.listSessions() as Array<{ threadId: string; authBoundary: string }>))
+        .toContainEqual(expect.objectContaining({ threadId: "tool-contract-thread", authBoundary: originalOwner }));
+
+      await writeFile(authFile, login("user-b"));
+      expect(service.sessionAuthBoundary().key).not.toBe(originalOwner);
+      await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_CHANGED");
+      expect(service.currentExecutionAuthBoundary()).toBeNull();
+
+      const persistJob = state.upsertJob.bind(state);
+      let failedOnce = false;
+      vi.spyOn(state, "upsertJob").mockImplementation((job) => {
+        if (!failedOnce && job.status === terminalStatus) {
+          failedOnce = true;
+          throw new Error("synthetic terminal commit outage");
+        }
+        persistJob(job);
+      });
+      hold.release({
+        structuredContent: { threadId: "tool-contract-thread",
+          turnStatus: terminalStatus === "interrupted" ? "interrupted" : "completed" },
+        content: [{ type: "text", text: "Synthetic original Job result." }],
+        ...(terminalStatus === "failed" ? { isError: true } : {})
+      });
+      await eventually(() => state.listJobs().some((job) =>
+        job.jobId === jobId && job.status === terminalStatus
+      ), 5_000);
+      expect(failedOnce).toBe(true);
+      expect(upstream.calls).toHaveLength(1);
+      expect(state.listJobs().find((job) => job.jobId === jobId)?.authBoundary).toBe(originalOwner);
+      expect((state.listSessions() as Array<{ threadId: string; authBoundary: string }>))
+        .toContainEqual(expect.objectContaining({ threadId: "tool-contract-thread", authBoundary: originalOwner }));
+      expect((state.listSessions() as Array<{ threadId: string; authBoundary: string }>))
+        .not.toContainEqual(expect.objectContaining({ threadId: "tool-contract-thread",
+          authBoundary: service.sessionAuthBoundary().key }));
+      expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(jobId);
+    }
+  );
 
   it("keeps physical background-read slots across repeated native snapshot timeouts", async () => {
     const scopeId = randomUUID();

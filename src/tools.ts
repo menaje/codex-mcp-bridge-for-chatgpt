@@ -268,7 +268,7 @@ type ForceTerminateOptions = {
   requestedTargetIntents?: CancellationIntentRecord[];
 };
 
-type JobCompletionCallback = (result: ToolResult) => void | (() => void);
+type JobCompletionCallback = (result: ToolResult, job: CodexJob) => void | (() => void);
 
 class JobTerminalCommitError extends Error {
   constructor(cause: unknown) {
@@ -2407,6 +2407,7 @@ export class CodexJobRegistry {
       const agent = job.agentId ? this.getAgent(job.agentId) : undefined;
       if (!threadId || !agent || !job.executionDecision || !isCodexBackendKind(job.backendKind)) return;
       return recordAdmittedThread({ sessions, jobs: this, sessionDecision: job.sessionDecision,
+        authBoundary: job.authBoundary,
         agent, threadId, scopeId: job.scopeId, cwd: job.cwd, sandbox: job.sandbox,
         ...(job.projectId && job.projectName ? { projectAdmission: { projectId: job.projectId, projectName: job.projectName } } : {}),
         selection: job.executionDecision.effectiveSelection, policyRevision: job.executionDecision.policyRevision,
@@ -3236,7 +3237,7 @@ export class CodexJobRegistry {
     onComplete?: JobCompletionCallback,
     activeLimit = this.maxConcurrentJobs,
     rejectIfSelectionActive = false,
-    onAssigned?: (assignment: UpstreamWorkerAssignment) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment, job: CodexJob) => void,
     deferExecution = false
   ): CodexJob {
     const replay = this.findRequest(input.scopeId, input.requestId, input.requestHash);
@@ -3312,7 +3313,7 @@ export class CodexJobRegistry {
           (progress) => this.recordProgress(job, progress),
           (assignment) => {
             this.recordWorkerAssignment(job, assignment);
-            onAssigned?.(assignment);
+            onAssigned?.(assignment, job);
           }
         ))
       )
@@ -3393,7 +3394,7 @@ export class CodexJobRegistry {
     let undo: (() => void) | undefined;
     try {
       const next = this.activityStore.transaction(() => {
-        undo = onComplete?.(result) || undefined;
+        undo = onComplete?.(result, job) || undefined;
         const candidate: CodexJob = {
           ...job,
           threadId: job.sessionDecision.threadId,
@@ -3443,7 +3444,7 @@ export class CodexJobRegistry {
       const next = this.activityStore.transaction(() => {
         // A failed turn can still have created or resumed a durable thread.
         // Keep the same callback in the atomic terminal transaction.
-        undo = onComplete?.(result) || undefined;
+        undo = onComplete?.(result, job) || undefined;
         const candidate: CodexJob = {
           ...job,
           threadId: job.sessionDecision.threadId,
@@ -9399,6 +9400,7 @@ function resolveActivityForTask(
 function recordAdmittedThread(input: {
   sessions: SessionRegistry;
   jobs: CodexJobRegistry;
+  authBoundary?: string;
   sessionDecision: SessionDecision;
   agent: BridgeAgent;
   threadId: string;
@@ -9414,18 +9416,20 @@ function recordAdmittedThread(input: {
   sessionId?: string;
   forkedFromThreadId?: string;
 }): () => void {
-  const previousSession = input.sessions.get(input.threadId);
+  const previousSession = input.sessions.getForJob(input.threadId, input.authBoundary);
   const previousDecisionThreadId = input.sessionDecision.threadId;
+  const restoreSessions = input.sessions.captureInMemory();
+  let recorded = false;
   const restore = () => {
     if (previousDecisionThreadId) input.sessionDecision.threadId = previousDecisionThreadId;
     else delete input.sessionDecision.threadId;
-    input.sessions.restoreInMemory(input.threadId, previousSession);
+    if (recorded) restoreSessions();
   };
   try {
     input.jobs.activityTransaction(() => {
       input.sessionDecision.threadId = input.threadId;
       const now = Date.now();
-      input.sessions.record({
+      input.sessions.recordForJob({
         threadId: input.threadId,
         scopeId: input.scopeId,
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
@@ -9446,7 +9450,8 @@ function recordAdmittedThread(input: {
         updatedAt: now,
         createdAt: now,
         lastUsedAt: now
-      });
+      }, input.authBoundary);
+      recorded = true;
       input.jobs.linkAgentThread({
         agentId: input.agent.agentId,
         threadId: input.threadId,
@@ -9563,7 +9568,7 @@ async function startNewSession(input: {
           onAssigned
         )
       : input.upstream.callTool("codex", payload, onProgress, onAssigned),
-    onAssigned: (assignment, agent) => {
+    onAssigned: (assignment, agent, job) => {
       if (!assignment.threadId) return;
       // A cross-backend handoff becomes current only after turn/start accepts
       // the summary-bearing turn. If the worker exits after thread/start but
@@ -9573,6 +9578,7 @@ async function startNewSession(input: {
       recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent,
         threadId: assignment.threadId,
@@ -9591,13 +9597,14 @@ async function startNewSession(input: {
       });
     },
     onAdmitted: input.onAdmitted,
-    onComplete: (result, agent) => {
+    onComplete: (result, agent, job) => {
       const threadId = extractThreadId(result);
       if (!threadId) return;
       const lineage = extractResultThreadLineage(result);
       return recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent,
         threadId,
@@ -9748,42 +9755,52 @@ async function continueTrackedSession(input: {
       }
       return input.upstream.callTool("codex-reply", payload, onProgress, recordAssignment);
     },
-    onComplete: (result) => {
-      const previous = input.sessions.get(input.session.threadId);
+    onComplete: (result, _agent, job) => {
+      const restoreSessions = input.sessions.captureInMemory();
       const lineage = extractResultThreadLineage(result);
       const existingThread = input.jobs
         .listAgentThreads(input.agent.agentId)
         .find((thread) => thread.threadId === input.session.threadId);
-      input.sessions.record({
-        ...input.session,
-        ...lineage,
-        ...(input.projectAdmission
-          ? {
-              projectId: input.projectAdmission.projectId,
-              projectName: input.projectAdmission.projectName
-            }
-          : {}),
-        scopeId: input.adoptOnComplete ? input.routing.scopeId : input.session.scopeId,
-        selection: input.executionDecision.effectiveSelection,
-        policyRevision: input.executionDecision.policyRevision,
-        updatedAt: Date.now(),
-        lastUsedAt: Date.now()
-      });
-      input.jobs.linkAgentThread({
-        agentId: input.agent.agentId,
-        threadId: input.session.threadId,
-        sessionId: lineage.sessionId || existingThread?.sessionId || input.session.sessionId,
-        projectId: input.projectAdmission?.projectId,
-        projectName: input.projectAdmission?.projectName,
-        backendKind: input.session.backendKind,
-        cwd: input.session.cwd,
-        sandbox: input.session.sandbox,
-        // A continuation enriches legacy admission metadata; it does not
-        // rewrite how the existing thread originally entered the Agent.
-        contextMode: existingThread?.contextMode || "continue",
-        forkedFromThreadId: existingThread?.forkedFromThreadId
-      });
-      return () => input.sessions.restoreInMemory(input.session.threadId, previous);
+      let recorded = false;
+      const restore = () => {
+        if (recorded) restoreSessions();
+      };
+      try {
+        input.sessions.recordForJob({
+          ...input.session,
+          ...lineage,
+          ...(input.projectAdmission
+            ? {
+                projectId: input.projectAdmission.projectId,
+                projectName: input.projectAdmission.projectName
+              }
+            : {}),
+          scopeId: input.adoptOnComplete ? input.routing.scopeId : input.session.scopeId,
+          selection: input.executionDecision.effectiveSelection,
+          policyRevision: input.executionDecision.policyRevision,
+          updatedAt: Date.now(),
+          lastUsedAt: Date.now()
+        }, job.authBoundary);
+        recorded = true;
+        input.jobs.linkAgentThread({
+          agentId: input.agent.agentId,
+          threadId: input.session.threadId,
+          sessionId: lineage.sessionId || existingThread?.sessionId || input.session.sessionId,
+          projectId: input.projectAdmission?.projectId,
+          projectName: input.projectAdmission?.projectName,
+          backendKind: input.session.backendKind,
+          cwd: input.session.cwd,
+          sandbox: input.session.sandbox,
+          // A continuation enriches legacy admission metadata; it does not
+          // rewrite how the existing thread originally entered the Agent.
+          contextMode: existingThread?.contextMode || "continue",
+          forkedFromThreadId: existingThread?.forkedFromThreadId
+        });
+      } catch (error) {
+        restore();
+        throw error;
+      }
+      return restore;
     }
   });
 }
@@ -9865,11 +9882,12 @@ async function forkTrackedSession(input: {
       onProgress,
       onAssigned
     ) as Promise<ToolResult>,
-    onAssigned: (assignment) => {
+    onAssigned: (assignment, _agent, job) => {
       if (!assignment.threadId) return;
       recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent: input.agent,
         threadId: assignment.threadId,
@@ -9888,13 +9906,14 @@ async function forkTrackedSession(input: {
         forkedFromThreadId: assignment.forkedFromThreadId || input.session.threadId
       });
     },
-    onComplete: (result) => {
+    onComplete: (result, _agent, job) => {
       const threadId = extractThreadId(result);
       if (!threadId) return;
       const lineage = extractResultThreadLineage(result, input.session.threadId);
       return recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent: input.agent,
         threadId,
@@ -9946,8 +9965,8 @@ async function runCodex(input: {
     onProgress: (progress: Progress) => void,
     onAssigned: (assignment: UpstreamWorkerAssignment) => void
   ) => Promise<ToolResult>;
-  onAssigned?: (assignment: UpstreamWorkerAssignment, agent: BridgeAgent) => void;
-  onComplete?: (result: ToolResult, agent: BridgeAgent) => void | (() => void);
+  onAssigned?: (assignment: UpstreamWorkerAssignment, agent: BridgeAgent, job: CodexJob) => void;
+  onComplete?: (result: ToolResult, agent: BridgeAgent, job: CodexJob) => void | (() => void);
 }): Promise<ToolResult> {
   if (!input.agent && !input.newAgentName) {
     throw new Error("Codex task admission requires an existing Agent or a new Agent name.");
@@ -10057,12 +10076,12 @@ async function runCodex(input: {
         return input.run(onProgress, onAssigned);
       },
       input.onComplete
-        ? (result) => input.onComplete?.(result, agent)
+        ? (result, currentJob) => input.onComplete?.(result, agent, currentJob)
         : undefined,
       input.preferences.maxConcurrentJobs,
       input.rejectIfSelectionActive,
       input.onAssigned
-        ? (assignment) => input.onAssigned?.(assignment, agent)
+        ? (assignment, currentJob) => input.onAssigned?.(assignment, agent, currentJob)
         : undefined,
       true
     );

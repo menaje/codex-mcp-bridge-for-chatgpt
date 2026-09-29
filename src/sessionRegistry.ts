@@ -91,10 +91,33 @@ export class SessionRegistry {
   }
 
   record(session: TrackedCodexSession): void {
+    this.recordAtBoundary(session, this.currentAuthBoundary(), false);
+  }
+
+  /** Persist a result under the owner fixed when its Job was admitted. */
+  recordForJob(session: TrackedCodexSession, jobAuthBoundary: string | undefined): void {
+    if (!this.authBoundary) {
+      this.record(session);
+      return;
+    }
+    if (!jobAuthBoundary) {
+      throw new Error("CODEX_AUTH_THREAD_BOUNDARY: The Job has no confirmed authentication owner.");
+    }
+    this.recordAtBoundary(session, { key: jobAuthBoundary, allowLegacyShared: false }, true);
+  }
+
+  private recordAtBoundary(
+    session: TrackedCodexSession,
+    boundary: { key: string; allowLegacyShared: boolean } | undefined,
+    fromJob: boolean
+  ): void {
     const snapshot = [...this.sessions.entries()].map(([threadId, value]) => [threadId, { ...value }] as const);
     const existing = this.sessions.get(session.threadId);
-    if (existing && !this.isVisible(existing)) throw new Error("CODEX_AUTH_THREAD_BOUNDARY: The thread belongs to another authentication connection.");
-    const boundary = this.currentAuthBoundary();
+    if (existing && (fromJob
+      ? existing.authBoundary !== boundary?.key
+      : !this.matchesBoundary(existing, boundary))) {
+      throw new Error("CODEX_AUTH_THREAD_BOUNDARY: The thread belongs to another authentication connection.");
+    }
     if (boundary && session.authBoundary && session.authBoundary !== boundary.key) {
       throw new Error("CODEX_AUTH_THREAD_BOUNDARY: The thread belongs to another authentication connection.");
     }
@@ -137,7 +160,7 @@ export class SessionRegistry {
       createdAt: existing?.createdAt ?? session.createdAt,
       lastUsedAt: session.lastUsedAt
     });
-    const removed = this.enforceLimit();
+    const removed = this.enforceLimit(boundary);
     try {
       this.persistSession(this.sessions.get(session.threadId) || session, removed);
     } catch (error) {
@@ -151,6 +174,15 @@ export class SessionRegistry {
     this.refreshProjectIdentities();
     const session = this.sessions.get(threadId);
     return session && this.isVisible(session) ? cloneSession(session) : undefined;
+  }
+
+  /** Internal Job completion lookup; never substitutes the current login for the Job owner. */
+  getForJob(threadId: string, jobAuthBoundary: string | undefined): TrackedCodexSession | undefined {
+    if (!this.authBoundary) return this.get(threadId);
+    if (!jobAuthBoundary) return undefined;
+    this.refreshProjectIdentities();
+    const session = this.sessions.get(threadId);
+    return session?.authBoundary === jobAuthBoundary ? cloneSession(session) : undefined;
   }
 
   /** Distinguish an auth-hidden thread from an absent thread without exposing its data. */
@@ -223,6 +255,15 @@ export class SessionRegistry {
   restoreInMemory(threadId: string, session?: TrackedCodexSession): void {
     this.sessions.delete(threadId);
     if (session) this.sessions.set(threadId, cloneSession(session));
+  }
+
+  /** Undo a shared state transaction without losing another session evicted by the record limit. */
+  captureInMemory(): () => void {
+    const snapshot = [...this.sessions.entries()].map(([threadId, value]) => [threadId, cloneSession(value)] as const);
+    return () => {
+      this.sessions.clear();
+      for (const [threadId, value] of snapshot) this.sessions.set(threadId, cloneSession(value));
+    };
   }
 
   findCompatible(match: SessionMatch): TrackedCodexSession[] {
@@ -334,9 +375,8 @@ export class SessionRegistry {
     this.projectedProjectRevision = revision;
   }
 
-  private enforceLimit(): string[] {
+  private enforceLimit(boundary: { key: string; allowLegacyShared: boolean } | undefined): string[] {
     const removed: string[] = [];
-    const boundary = this.currentAuthBoundary();
     while ([...this.sessions.values()].filter(session => this.matchesBoundary(session, boundary)).length > this.maxSessions) {
       const oldest = [...this.sessions.values()].find(session => this.matchesBoundary(session, boundary))?.threadId;
       if (!oldest) return removed;

@@ -52,6 +52,72 @@ describe("SessionRegistry", () => {
     expect(sessions.list().map(item => item.threadId)).toEqual(["account-a"]);
   });
 
+  it("records an original Job result under its admitted owner after the current login changes", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-job-session-owner-"));
+    const store = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    const ownerA = "a".repeat(64), ownerB = "b".repeat(64);
+    let currentOwner = ownerA;
+    const sessions = new SessionRegistry({ stateStore: store,
+      authBoundary: () => ({ key: currentOwner, allowLegacyShared: false }) });
+    try {
+      sessions.record(session("existing-a", root, "read-only", undefined, undefined, 100));
+      currentOwner = ownerB;
+      expect(sessions.get("existing-a")).toBeUndefined();
+      expect(sessions.getForJob("existing-a", ownerA)?.authBoundary).toBe(ownerA);
+      sessions.recordForJob(session("existing-a", root, "read-only", undefined, undefined, 200), ownerA);
+      sessions.recordForJob(session("new-a", root, "read-only", undefined, undefined, 200), ownerA);
+      expect(sessions.list()).toEqual([]);
+      expect(store.listSessions()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ threadId: "existing-a", authBoundary: ownerA, lastUsedAt: 200 }),
+        expect.objectContaining({ threadId: "new-a", authBoundary: ownerA })
+      ]));
+
+      sessions.record(session("existing-b", root, "read-only", undefined, undefined, 300));
+      expect(() => sessions.recordForJob(session("existing-b", root, "read-only", undefined, undefined, 400), ownerA))
+        .toThrow("CODEX_AUTH_THREAD_BOUNDARY");
+      expect(() => sessions.recordForJob(session("unowned", root, "read-only", undefined, undefined, 400), undefined))
+        .toThrow("CODEX_AUTH_THREAD_BOUNDARY");
+      expect(sessions.get("existing-b")?.authBoundary).toBe(ownerB);
+      currentOwner = ownerA;
+      expect(sessions.list().map(item => item.threadId)).toEqual(["new-a", "existing-a"]);
+    } finally { store.close(); }
+  });
+
+  it("applies retention to the Job owner and restores every in-memory session after a failed commit", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-job-session-rollback-"));
+    const store = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    const ownerA = "a".repeat(64), ownerB = "b".repeat(64);
+    let currentOwner = ownerA;
+    const sessions = new SessionRegistry({ stateStore: store, maxSessions: 1,
+      authBoundary: () => ({ key: currentOwner, allowLegacyShared: false }) });
+    try {
+      sessions.record(session("old-a", root, "read-only", undefined, undefined, 100));
+      currentOwner = ownerB;
+      sessions.record(session("current-b", root, "read-only", undefined, undefined, 200));
+      const restore = sessions.captureInMemory();
+      expect(() => store.transaction(() => {
+        sessions.recordForJob(session("new-a", root, "read-only", undefined, undefined, 300), ownerA);
+        throw new Error("synthetic later commit failure");
+      })).toThrow("synthetic later commit failure");
+      restore();
+      expect(store.listSessions()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ threadId: "old-a", authBoundary: ownerA }),
+        expect.objectContaining({ threadId: "current-b", authBoundary: ownerB })
+      ]));
+      expect(sessions.get("current-b")?.authBoundary).toBe(ownerB);
+      currentOwner = ownerA;
+      expect(sessions.get("old-a")?.authBoundary).toBe(ownerA);
+      expect(sessions.get("new-a")).toBeUndefined();
+
+      currentOwner = ownerB;
+      sessions.recordForJob(session("new-a", root, "read-only", undefined, undefined, 300), ownerA);
+      expect(sessions.get("current-b")?.authBoundary).toBe(ownerB);
+      currentOwner = ownerA;
+      expect(sessions.get("old-a")).toBeUndefined();
+      expect(sessions.get("new-a")?.authBoundary).toBe(ownerA);
+    } finally { store.close(); }
+  });
+
   it("persists only structured session metadata and restores it from SQLite", () => {
     const root = realpathSync(mkdtempSync(path.join(tmpdir(), "bridge-root-")));
     const databaseFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "state.sqlite");
