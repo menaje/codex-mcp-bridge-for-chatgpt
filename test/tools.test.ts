@@ -477,6 +477,86 @@ describe("current bridge tool contracts", () => {
     expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(jobId);
   });
 
+  it("cancels an original Job after an external login change only with live proof of its worker", async () => {
+    const home = path.join(root, ".codex");
+    const authFile = path.join(home, "auth.json");
+    await mkdir(home);
+    const login = (userId: string) => JSON.stringify({ auth_mode: "chatgpt", tokens: {
+      account_id: "shared-workspace", id_token: syntheticIdToken(userId, "shared-workspace")
+    } });
+    await writeFile(authFile, login("user-a"));
+    const service = new CodexService({ HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+    config.codexService = service;
+    await service.assertCurrentAdmission();
+
+    await client.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    upstream = new FixtureUpstream();
+    let originalWorkerLive = false;
+    const forceTerminateWorker = vi.fn(async (assignment: UpstreamWorkerAssignment) => ({
+      ...assignment, mode: "turn-interrupt" as const, exited: true, workerExited: false, escalated: false
+    }));
+    Object.assign(upstream, {
+      supportsExecutionRecovery: () => true,
+      ownsActiveExecution: (_jobId: string, assignment: UpstreamWorkerAssignment) =>
+        originalWorkerLive && assignment.workerId === "fixture-worker" &&
+        assignment.workerGeneration === 1 && assignment.threadId === "tool-contract-thread" &&
+        assignment.upstreamRequestId === fixtureTurnId,
+      forceTerminateWorker
+    });
+    server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+    client = new Client({ name: "original-job-cancellation-owner-test", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+    await client.connect(new StreamableHTTPClientTransport(endpoint));
+
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const admitted = await client.callTool({ name: "codex_task", arguments: {
+      scopeId: randomUUID(), requestId: randomUUID(),
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Hold a synthetic original Job for cancellation.",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+      selection
+    }, _meta: metadata });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+    await hold.started;
+    hold.assign("tool-contract-thread");
+    const originalOwner = state.listJobs().find(job => job.jobId === jobId)?.authBoundary;
+    await writeFile(authFile, login("user-b"));
+    await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_CHANGED");
+    const cancel = (requestId: string) => client.callTool({ name: "codex_cancel", _meta: metadata,
+      arguments: { requestId, target: { kind: "job", id: jobId },
+        expectedVersion: state.listJobs().find(job => job.jobId === jobId)?.version,
+        reason: "Stop the original synthetic Job." } });
+    try {
+      const blocked = await cancel(randomUUID());
+      expect(blocked.isError).toBe(true);
+      expect(JSON.stringify(blocked)).toContain("CODEX_AUTH_JOB_BOUNDARY");
+      expect(forceTerminateWorker).not.toHaveBeenCalled();
+      expect(state.listJobs().find(job => job.jobId === jobId)?.status).toBe("running");
+      originalWorkerLive = true;
+      const stopped = await cancel(randomUUID());
+      expect(stopped.isError, JSON.stringify(stopped)).not.toBe(true);
+      expect(state.listJobs().find(job => job.jobId === jobId)).toMatchObject({
+        status: "cancelled", authBoundary: originalOwner
+      });
+      expect(forceTerminateWorker).toHaveBeenCalledTimes(1);
+      expect(forceTerminateWorker.mock.calls[0]?.[0]).toMatchObject({
+        workerId: "fixture-worker", workerGeneration: 1, upstreamRequestId: fixtureTurnId
+      });
+      expect(upstream.calls).toHaveLength(1);
+    } finally {
+      hold.release();
+    }
+  });
+
   it("keeps physical background-read slots across repeated native snapshot timeouts", async () => {
     const scopeId = randomUUID();
     for (let index = 0; index < 80; index++) {

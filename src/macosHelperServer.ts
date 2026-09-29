@@ -897,7 +897,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         const billing = await service.billing.configuration();
         // A newly edited private .env is only a requested context while the
         // managed runtime is still using its previous authentication home.
-        const observedEnvironment = this.isManagedRuntimeRunning() ? service.environment : authEnvironment;
+        const observedEnvironment = this.isManagedRuntimeRunning()
+          ? { ...authEnvironment, ...service.environment, HOME: service.environment.HOME || authEnvironment.HOME }
+          : authEnvironment;
         if (!requestState.problem && observedEnvironment.CODEX_HOME &&
             (!observedEnvironment.CODEX_MCP_BRIDGE_AUTH_SOURCE ||
               observedEnvironment.CODEX_MCP_BRIDGE_AUTH_SOURCE === "shared")) {
