@@ -2503,10 +2503,22 @@ export class CodexJobRegistry {
     if (job && job.requestHashVersion >= 2 && job.requestHash !== requestHash) {
       throw new Error("requestId was already used for a different Codex task in this scope.");
     }
-    if (job && this.authBoundary && job.authBoundary !== this.authBoundary()) {
-      throw new Error("CODEX_AUTH_JOB_BOUNDARY: This request belongs to another or unverified authentication connection.");
-    }
+    if (job) this.assertCurrentJobOwner(job);
     return job;
+  }
+
+  private assertCurrentJobOwner(job: CodexJob): void {
+    if (this.authBoundary && job.authBoundary !== this.authBoundary()) {
+      throw new Error("CODEX_AUTH_JOB_BOUNDARY: This Job belongs to another or unverified authentication connection.");
+    }
+  }
+
+  private assertCancellationTargetOwner(target: { jobId?: string; activityId: string }): void {
+    for (const job of this.jobs.values()) {
+      if (target.jobId === job.jobId || !target.jobId && job.activityId === target.activityId) {
+        this.assertCurrentJobOwner(job);
+      }
+    }
   }
 
   peekRequest(scopeId: string, requestId: string): CodexJob | undefined {
@@ -2956,12 +2968,14 @@ export class CodexJobRegistry {
     operation: CancellationOperationRecord;
     intent: CancellationIntentRecord;
   } {
+    this.assertCancellationTargetOwner(input.target);
     const result = this.activityStore.beginCancellationOperation(input);
     this.notifyScope(result.operation.scopeId);
     return result;
   }
 
   createCancellationIntent(input: CreateCancellationIntentInput): CancellationIntentRecord {
+    this.assertCancellationTargetOwner(input.target);
     const intent = this.activityStore.createCancellationIntent(input);
     this.notifyScope(intent.scopeId);
     return intent;
@@ -3294,6 +3308,8 @@ export class CodexJobRegistry {
   }
 
   activateDeferredExecution(jobId: string): void {
+    const job = this.jobs.get(jobId);
+    if (job) this.assertCurrentJobOwner(job);
     this.deferredExecutions.get(jobId)?.launch();
   }
 
@@ -3511,6 +3527,8 @@ export class CodexJobRegistry {
     intent: CancellationIntentRecord,
     options: ForceTerminateOptions = {}
   ): Promise<CodexJob> {
+    const job = this.jobs.get(jobId);
+    if (job) this.assertCurrentJobOwner(job);
     this.assertCancellationIntentForJob(jobId, intent);
     const existingTermination = this.terminations.get(jobId);
     if (existingTermination) {
@@ -3590,6 +3608,7 @@ export class CodexJobRegistry {
     if (!job || !isActiveActivityJobStatus(job.status)) {
       throw new Error("The selected Codex job is not active.");
     }
+    this.assertCurrentJobOwner(job);
     const interaction = job.pendingInteractions.find((entry) => entry.interactionId === interactionId);
     if (!interaction) throw new Error("Unknown or already resolved Codex interaction id for this job.");
     if (interaction.kind === "user-input" && !response.answers) {
@@ -3628,6 +3647,7 @@ export class CodexJobRegistry {
   async steer(jobId: string, prompt: string): Promise<CodexJob> {
     const job = this.get(jobId);
     if (!job || job.status !== "running") throw new Error("The selected Codex job has no active turn to steer.");
+    this.assertCurrentJobOwner(job);
     if (!backendSupports(job.backendKind, "supportsSteering") || !job.threadId || !this.upstream?.steerThread) {
       throw new Error("Steering is available only for an active Codex App Server turn.");
     }
@@ -3877,6 +3897,7 @@ export class CodexJobRegistry {
     const primaryIntent = this.assertCancellationIntentForJob(jobId, suppliedIntent);
     const target = this.get(jobId);
     if (!target) throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
+    this.assertCurrentJobOwner(target);
     if (primaryIntent.scopeId !== target.scopeId || primaryIntent.targetActivityId !== target.activityId) {
       throw new Error("Cancellation intent scope or Activity no longer matches the target job.");
     }
@@ -4287,7 +4308,11 @@ export class CodexJobRegistry {
         continue;
       }
       if (isActiveActivityJobStatus(job.status) && this.authBoundary && job.authBoundary !== this.authBoundary()) {
-        throw new Error("CODEX_AUTH_JOB_BOUNDARY: An unfinished execution belongs to another or unverified authentication connection.");
+        // Keep the exact durable Job and its original execution receipt. A
+        // different or unverified owner must neither recover nor ACK it.
+        job.trackingState = "liveness-unknown";
+        this.setIndexedJob(job);
+        continue;
       }
       if (isActiveActivityJobStatus(job.status) && this.recoverExecutions && job.executionReceipt) {
         job.trackingState = "liveness-unknown";

@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -29,6 +30,29 @@ it("keeps existing users on shared auth until they explicitly stage a different 
   expect((await f.manager.snapshot(f.environment)).candidate).toBeNull();
   // Cancellation does not delete a profile that could contain newly refreshed credentials.
   expect(await readFile(path.join(f.root, "auth-profiles", candidate.id, "config.toml"), "utf8")).toContain("file");
+});
+
+it("selects one of several saved bridge profiles without replacing its credential", async () => {
+  const f = await fixture();
+  const first = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
+  const firstFile = path.join(f.root, "auth-profiles", first.id, "auth.json");
+  await writeFile(firstFile, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "saved-first" } }));
+  await f.manager.cancelCandidate(first.id, 1);
+  const second = (await f.manager.prepare("bridge-chatgpt", 2, f.environment)).candidate!;
+  await writeFile(path.join(f.root, "auth-profiles", second.id, "auth.json"),
+    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "saved-second" } }));
+  await f.manager.cancelCandidate(second.id, 3);
+  const selected = await f.manager.selectOwnedProfile(first.id, 4);
+  expect(selected.candidate).toMatchObject({ id: first.id, reused: true, status: "prepared" });
+  expect(selected.profiles).toHaveLength(2);
+  await expect(f.manager.startChatGptLogin(first.id, "/no/such/codex", f.environment))
+    .rejects.toThrow("CODEX_AUTH_PROFILE_READ_ONLY");
+  expect(await readFile(firstFile, "utf8")).toContain("saved-first");
+  const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+  const verified = await f.manager.verify(first.id, command, "cli-a", f.environment);
+  expect(verified.candidate).toMatchObject({ status: "verified", reused: true });
+  await f.manager.stage(first.connection, verified.revision, command, "cli-a", f.environment, false);
+  expect((await f.manager.snapshot(f.environment)).pending).toEqual(first.connection);
 });
 
 it("stages a disconnect without changing a running environment and applies it at the next safe launch", async () => {
@@ -333,10 +357,28 @@ it("uses a launch-specific activation and separates a proven no-start from an un
   expect((await f.manager.snapshot(f.environment)).activation?.status).toBe("uncertain");
   expect(() => codexChildEnvironment(undefined, f.environment)).toThrow("CODEX_AUTH_ACTIVATION_UNCERTAIN");
   await expect(f.manager.beginActivation("", "", f.environment)).rejects.toThrow("CODEX_AUTH_ACTIVATION_UNCERTAIN");
+  await expect(f.manager.resolveStoppedActivation(second!, 2)).rejects.toThrow("CODEX_AUTH_REVISION_CHANGED");
   await f.manager.completeActivation(second!, "disconnected", "1");
   expect(await f.manager.snapshot(f.environment)).toMatchObject({
     applied: { kind: "disconnected" }, pending: null, activation: null, generation: 1
   });
+});
+
+it("records a stopped unconfirmed launch without pretending that it never ran", async () => {
+  const f = await fixture();
+  await f.manager.stage({ kind: "disconnected" }, 0, "/fixture/codex", "cli-a", f.environment, false);
+  const activation = await f.manager.beginActivation("", "", f.environment);
+  await f.manager.failActivation(activation!, false);
+  const uncertain = await f.manager.snapshot(f.environment);
+  await expect(f.manager.resolveStoppedActivation(randomUUID(), uncertain.revision))
+    .rejects.toThrow("CODEX_AUTH_ACTIVATION_CHANGED");
+  await f.manager.resolveStoppedActivation(activation!, uncertain.revision);
+  expect(await f.manager.snapshot(f.environment)).toMatchObject({
+    applied: { kind: "shared" }, pending: { kind: "disconnected" },
+    generation: 0, activation: null,
+    lastActivationResolution: { id: activation, outcome: "stopped-unconfirmed" }
+  });
+  expect(codexChildEnvironment(undefined, f.environment).CODEX_MCP_BRIDGE_AUTH_SOURCE).toBe("shared");
 });
 
 it("commits an owned profile only when the ready runtime reports its exact home", async () => {

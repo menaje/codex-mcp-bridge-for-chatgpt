@@ -25,6 +25,7 @@ const candidateSchema = z.strictObject({
     z.strictObject({ kind: z.literal("bridge-chatgpt"), profileId: z.string().uuid() }),
     z.strictObject({ kind: z.literal("bridge-api"), profileId: z.string().uuid() })
   ]),
+  reused: z.boolean().default(false),
   status: z.enum(["prepared", "login-started", "login-completed", "login-failed", "verified"]),
   accountKey: z.string().nullable(),
   accountEmail: z.string().max(320).nullable().default(null),
@@ -40,7 +41,13 @@ const verificationSchema = z.strictObject({
 });
 const activationSchema = z.strictObject({
   id: z.string().uuid(), from: connectionSchema, to: connectionSchema,
-  generation: z.number().int().nonnegative(), status: z.enum(["starting", "uncertain"])
+  generation: z.number().int().nonnegative(), status: z.enum(["starting", "uncertain"]),
+  startedAt: z.string().datetime().optional()
+});
+const activationResolutionSchema = z.strictObject({
+  id: z.string().uuid(), from: connectionSchema, to: connectionSchema,
+  generation: z.number().int().nonnegative(),
+  outcome: z.literal("stopped-unconfirmed"), resolvedAt: z.string().datetime()
 });
 const ownedProfileSchema = z.strictObject({
   id: z.string().uuid(), kind: z.enum(["bridge-chatgpt", "bridge-api"]),
@@ -57,6 +64,7 @@ const stateSchema = z.strictObject({
   candidate: candidateSchema.nullable(),
   pendingVerification: verificationSchema.nullable().default(null),
   activation: activationSchema.nullable().default(null),
+  lastActivationResolution: activationResolutionSchema.nullable().default(null),
   profiles: z.array(ownedProfileSchema).default([])
 });
 type AuthSelectionState = z.infer<typeof stateSchema>;
@@ -70,7 +78,7 @@ export type AuthSelectionSnapshot = Omit<AuthSelectionState, "candidate" | "pend
 const initialState = (): AuthSelectionState => ({ schemaVersion: 1, revision: 0, generation: 0,
   applied: { kind: "shared" }, appliedAccountEmail: null,
   pending: null, pendingAccountEmail: null, candidate: null,
-  pendingVerification: null, activation: null, profiles: [] });
+  pendingVerification: null, activation: null, lastActivationResolution: null, profiles: [] });
 const candidateLoginProcesses = new Map<string, ChildProcess>();
 type LocalAuthPolicy = Pick<CodexLocalAuthPolicy, "forcedMethod" | "workspaceId">;
 
@@ -103,9 +111,29 @@ export class CodexAuthSelectionManager {
       await mkdir(home, { recursive: true, mode: 0o700 });
       await writeFile(path.join(home, "config.toml"), this.profileConfig(policy), { mode: 0o600, flag: "wx" });
       state.candidate = { id, connection: { kind, profileId: id }, status: "prepared",
+        reused: false,
         accountKey: null, accountEmail: null, credentialKey: null, verifiedCli: null,
         verifiedCliFingerprint: null, verifiedAt: null };
       state.profiles.push({ id, kind, status: "available" });
+      state.revision++;
+    });
+    return this.snapshot({});
+  }
+
+  /** Select one of the bridge's previously saved profiles without mutating its credential. */
+  async selectOwnedProfile(profileId: string, expectedRevision: number): Promise<AuthSelectionSnapshot> {
+    await this.update(expectedRevision, state => {
+      this.assertNoActivation(state);
+      if (state.pending || state.candidate) throw new Error("CODEX_AUTH_CANDIDATE_PENDING");
+      const profile = state.profiles.find(item => item.id === profileId && item.status === "available");
+      if (!profile) throw new Error("CODEX_AUTH_PROFILE_UNAVAILABLE");
+      if (candidateLoginProcesses.has(profileId)) throw new Error("CODEX_AUTH_LOGIN_IN_PROGRESS");
+      if ("profileId" in state.applied && state.applied.profileId === profileId) {
+        throw new Error("CODEX_AUTH_PROFILE_IN_USE");
+      }
+      state.candidate = { id: profileId, connection: { kind: profile.kind, profileId }, reused: true,
+        status: "prepared", accountKey: null, accountEmail: null, credentialKey: null,
+        verifiedCli: null, verifiedCliFingerprint: null, verifiedAt: null };
       state.revision++;
     });
     return this.snapshot({});
@@ -118,6 +146,7 @@ export class CodexAuthSelectionManager {
       if (state.candidate?.id !== candidateId || state.candidate.connection.kind !== "bridge-chatgpt") {
         throw new Error("CODEX_AUTH_CANDIDATE_CHANGED");
       }
+      if (state.candidate.reused) throw new Error("CODEX_AUTH_PROFILE_READ_ONLY: Verify the saved profile without replacing its login.");
       if (this.pendingCandidate(state, candidateId)) throw new Error("CODEX_AUTH_CANDIDATE_STAGED: Cancel the pending connection first.");
       if (state.candidate.status !== "prepared" && state.candidate.status !== "login-failed") {
         throw new Error("CODEX_AUTH_LOGIN_ALREADY_ATTEMPTED: Prepare another candidate to change this login.");
@@ -177,6 +206,7 @@ export class CodexAuthSelectionManager {
       if (state.candidate?.id !== candidateId || state.candidate.connection.kind !== "bridge-api") {
         throw new Error("CODEX_AUTH_CANDIDATE_CHANGED");
       }
+      if (state.candidate.reused) throw new Error("CODEX_AUTH_PROFILE_READ_ONLY: Verify the saved profile without replacing its key.");
       if (this.pendingCandidate(state, candidateId)) throw new Error("CODEX_AUTH_CANDIDATE_STAGED: Cancel the pending connection first.");
       if (state.candidate.status !== "prepared" && state.candidate.status !== "login-failed") {
         throw new Error("CODEX_AUTH_LOGIN_ALREADY_ATTEMPTED: Prepare another candidate to change this key.");
@@ -350,7 +380,8 @@ export class CodexAuthSelectionManager {
       // Candidate credentials are retained; no token rollback or logout.
     });
     const login = candidateLoginProcesses.get(candidateId);
-    candidateLoginProcesses.delete(candidateId);
+    // Keep the process visible until its exit handler runs. The saved profile
+    // cannot be selected as a new candidate while a cancelled login may write.
     if (login?.pid && login.exitCode === null) login.kill("SIGTERM");
   }
 
@@ -472,7 +503,7 @@ export class CodexAuthSelectionManager {
         throw new Error("CODEX_AUTH_REVISION_CHANGED");
       }
       state.activation = { id, from: state.applied, to: state.pending,
-        generation: state.generation + 1, status: "starting" };
+        generation: state.generation + 1, status: "starting", startedAt: new Date().toISOString() };
       state.revision++;
     });
     return id;
@@ -507,6 +538,18 @@ export class CodexAuthSelectionManager {
       if (!activation || activation.id !== id) throw new Error("CODEX_AUTH_ACTIVATION_CHANGED");
       if (definitelyNotStarted) state.activation = null;
       else state.activation = { ...activation, status: "uncertain" };
+      state.revision++;
+    });
+  }
+
+  /** Called only after the helper holds the runtime lock and confirms the launched runtime is stopped. */
+  async resolveStoppedActivation(id: string, expectedRevision: number): Promise<void> {
+    await this.update(expectedRevision, state => {
+      const activation = state.activation;
+      if (!activation || activation.id !== id) throw new Error("CODEX_AUTH_ACTIVATION_CHANGED");
+      state.lastActivationResolution = { id, from: activation.from, to: activation.to,
+        generation: activation.generation, outcome: "stopped-unconfirmed", resolvedAt: new Date().toISOString() };
+      state.activation = null;
       state.revision++;
     });
   }

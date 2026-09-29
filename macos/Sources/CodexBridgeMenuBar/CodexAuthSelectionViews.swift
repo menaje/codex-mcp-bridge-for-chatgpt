@@ -9,6 +9,7 @@ struct CodexAuthSelectionControls: View {
     @State private var apiKey = ""
     @State private var billingConfirmed = false
     @State private var profileToRemove: CodexAuthSelection.OwnedProfile?
+    @State private var reviewStoppedActivation = false
 
     var body: some View {
         authSelectionContent
@@ -51,6 +52,10 @@ struct CodexAuthSelectionControls: View {
                     if let activation = auth.activation {
                         Text(activation.status == "uncertain" ? "macos.auth.activationUncertain" : "macos.auth.activationStarting")
                             .font(.caption).foregroundStyle(.orange)
+                        Button("macos.auth.reviewStopped") {
+                            reviewStoppedActivation = true
+                        }
+                        .disabled(model.isBusy)
                     }
                     if let pending = auth.pending {
                         LabeledContent("macos.auth.pending", value: label(pending.kind))
@@ -107,6 +112,13 @@ struct CodexAuthSelectionControls: View {
                                 if profile.status == "logout-unconfirmed" {
                                     Text("macos.auth.logoutUnconfirmed").font(.caption).foregroundStyle(.orange)
                                 } else {
+                                    Button("macos.auth.useSavedProfile") {
+                                        selectedKind = profile.kind
+                                        Task { await model.manageCodex(.init(action: "auth-select-profile",
+                                                                            authProfileId: profile.id,
+                                                                            authRevision: auth.revision)) }
+                                    }
+                                    .disabled(model.isBusy || auth.pending != nil || auth.candidate != nil || auth.activation != nil)
                                     Button(profile.kind == "bridge-api" ? "macos.auth.removeOwnedKey" : "macos.auth.logoutOwned") {
                                         profileToRemove = profile
                                     }
@@ -143,6 +155,20 @@ struct CodexAuthSelectionControls: View {
                 }
                 Button("common.cancel", role: .cancel) { profileToRemove = nil }
             }
+            .confirmationDialog("macos.auth.reviewStoppedWarning", isPresented: $reviewStoppedActivation,
+                                titleVisibility: .visible) {
+                if let activation = auth.activation {
+                    Button("macos.auth.reviewStopped") {
+                        Task {
+                            await model.manageCodex(.init(action: "auth-reconcile-stopped",
+                                                          authActivationId: activation.id,
+                                                          authRevision: auth.revision,
+                                                          authResolutionConfirmed: true))
+                        }
+                    }
+                }
+                Button("common.cancel", role: .cancel) { reviewStoppedActivation = false }
+            }
         } else {
             Text("macos.auth.unavailable").font(.caption).foregroundStyle(.secondary)
         }
@@ -160,11 +186,13 @@ struct CodexAuthSelectionControls: View {
                 Text("macos.auth.identityUnverified").font(.caption).foregroundStyle(.secondary)
             }
             if selectedKind == "bridge-chatgpt" {
-                Button("macos.auth.startLogin") {
-                    Task { await model.manageCodex(.init(action: "auth-login", authCandidateId: candidate.id)) }
+                if candidate.reused != true {
+                    Button("macos.auth.startLogin") {
+                        Task { await model.manageCodex(.init(action: "auth-login", authCandidateId: candidate.id)) }
+                    }
+                    .disabled(model.isBusy || auth.pending != nil || auth.activation != nil || !["prepared", "login-failed"].contains(candidate.status))
                 }
-                .disabled(model.isBusy || auth.pending != nil || auth.activation != nil || !["prepared", "login-failed"].contains(candidate.status))
-            } else if candidate.status != "verified" {
+            } else if candidate.status != "verified" && candidate.reused != true {
                 SecureField("macos.auth.apiKey", text: $apiKey)
                     .textContentType(.password)
                 Button("macos.auth.saveCandidateKey") {

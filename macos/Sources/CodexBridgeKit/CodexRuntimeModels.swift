@@ -104,6 +104,7 @@ public struct CodexAuthConnection: Codable, Sendable, Equatable {
 public struct CodexAuthCandidate: Codable, Sendable, Equatable {
     public let id: String
     public let connection: CodexAuthConnection
+    public let reused: Bool?
     public let status: String
     public let accountKey: String?
     public let accountEmail: String?
@@ -153,15 +154,19 @@ public struct CodexRuntimeRequest: Encodable, Sendable {
     public var authKind: String?
     public var authCandidateId: String?
     public var authProfileId: String?
+    public var authActivationId: String?
     public var authRevision: Int?
     public var authApiKey: String?
     public var authBillingConfirmed: Bool?
     public var authRemovalConfirmed: Bool?
+    public var authResolutionConfirmed: Bool?
 
     public init(action: String, kind: String? = nil, includeAccount: Bool? = nil, version: String? = nil, billing: CodexBillingInput? = nil, selectionId: String? = nil, preferences: CodexRuntimePreferences? = nil,
                 authKind: String? = nil, authCandidateId: String? = nil, authProfileId: String? = nil,
+                authActivationId: String? = nil,
                 authRevision: Int? = nil, authApiKey: String? = nil,
-                authBillingConfirmed: Bool? = nil, authRemovalConfirmed: Bool? = nil) {
+                authBillingConfirmed: Bool? = nil, authRemovalConfirmed: Bool? = nil,
+                authResolutionConfirmed: Bool? = nil) {
         self.includeAccount = includeAccount
         self.billing = billing
         self.version = version
@@ -172,10 +177,12 @@ public struct CodexRuntimeRequest: Encodable, Sendable {
         self.authKind = authKind
         self.authCandidateId = authCandidateId
         self.authProfileId = authProfileId
+        self.authActivationId = authActivationId
         self.authRevision = authRevision
         self.authApiKey = authApiKey
         self.authBillingConfirmed = authBillingConfirmed
         self.authRemovalConfirmed = authRemovalConfirmed
+        self.authResolutionConfirmed = authResolutionConfirmed
     }
 }
 

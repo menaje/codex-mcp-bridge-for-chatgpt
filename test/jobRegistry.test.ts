@@ -36,16 +36,26 @@ describe("CodexJobRegistry persistence", () => {
     } finally { reopened.close(); }
   });
 
-  it("refuses to recover a still active Job with another authentication owner", () => {
+  it("quarantines a still active Job from another authentication owner without changing its stored result", async () => {
     const root = temporaryRoot(), file = path.join(root, "state.sqlite");
     const store = new BridgeStateStore({ file });
     const first = new CodexJobRegistry({ stateStore: store, allowedRoots: [root], authBoundary: () => "a".repeat(64) });
-    first.start(jobInput(root), () => new Promise<ToolResult>(() => undefined));
+    const job = first.start(jobInput(root), () => new Promise<ToolResult>(() => undefined));
     store.close();
     const reopened = new BridgeStateStore({ file });
     try {
-      expect(() => new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
-        authBoundary: () => "b".repeat(64), recoverExecutions: true })).toThrow("CODEX_AUTH_JOB_BOUNDARY");
+      const second = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => "b".repeat(64), recoverExecutions: true });
+      expect(second.get(job.jobId)).toMatchObject({ status: "running", trackingState: "liveness-unknown" });
+      expect(() => second.findRequest(SCOPE_A, REQUEST_A, job.requestHash))
+        .toThrow("CODEX_AUTH_JOB_BOUNDARY");
+      expect(() => second.beginCancellationOperation({
+        scopeId: job.scopeId, requestId: REQUEST_B, actionHash: "b".repeat(64),
+        source: "operator", toolName: "job-registry-test", actionName: "cancel-job",
+        target: { kind: "job", jobId: job.jobId, activityId: job.activityId },
+        expectedVersion: job.version, reasonCode: "test-cancel"
+      })).toThrow("CODEX_AUTH_JOB_BOUNDARY");
+      await expect(second.steer(job.jobId, "new account prompt")).rejects.toThrow("CODEX_AUTH_JOB_BOUNDARY");
       expect(reopened.listJobs()[0]?.status).toBe("running");
     } finally { reopened.close(); }
   });

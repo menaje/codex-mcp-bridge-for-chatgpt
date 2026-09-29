@@ -49,6 +49,7 @@ import {
   type ManagedTunnelStatus
 } from "../scripts/runtime-status.mjs";
 import {
+  acquireRuntimeLock,
   defaultRuntimeLockDirectory,
   readRuntimeLockOwner
 } from "../scripts/runtime-lock.mjs";
@@ -184,7 +185,7 @@ const codexRuntimeParamsSchema = z.strictObject({
   includeAccount: z.boolean().optional(),
   action: z.enum(["status", "configure-billing", "remove-billing", "login", "select", "install", "update", "remove", "reinstall", "rollback", "cleanup", "retry", "check-updates", "apply-pending", "preferences",
     "auth-prepare", "auth-login", "auth-api-key", "auth-verify", "auth-apply", "auth-cancel", "auth-cancel-pending",
-    "auth-remove-api-key", "auth-logout-profile"]),
+    "auth-remove-api-key", "auth-logout-profile", "auth-reconcile-stopped", "auth-select-profile"]),
   selectionId: z.string().regex(/^[a-f0-9]{24}$/).optional(),
   version: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
   billing: z.object({ adminKey: z.string().max(32768), organizationId: z.string().max(164), projectId: z.string().max(165).nullable() }).optional(),
@@ -196,10 +197,12 @@ const codexRuntimeParamsSchema = z.strictObject({
   authKind: z.enum(["shared", "bridge-chatgpt", "bridge-api", "disconnected"]).optional(),
   authCandidateId: z.string().uuid().optional(),
   authProfileId: z.string().uuid().optional(),
+  authActivationId: z.string().uuid().optional(),
   authRevision: z.number().int().nonnegative().optional(),
   authApiKey: z.string().max(32768).optional(),
   authBillingConfirmed: z.boolean().optional(),
-  authRemovalConfirmed: z.boolean().optional()
+  authRemovalConfirmed: z.boolean().optional(),
+  authResolutionConfirmed: z.boolean().optional()
 });
 export type CodexRuntimeAction = z.infer<typeof codexRuntimeParamsSchema>;
 const companionHelloSchema = z.object({
@@ -860,6 +863,11 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   async codexRuntime(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot> {
+    // An uncertain launch makes the requested child environment unreadable by
+    // design. Its local stopped-runtime reconciliation must bypass that path.
+    if (request.action === "auth-reconcile-stopped") {
+      return this.reconcileStoppedAuthActivation(request);
+    }
     const { manager, service } = this.selectedCliContext();
     this.watchManager(manager);
     const requestState = this.requestedEnvironmentState();
@@ -929,6 +937,15 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         if (this.explicitAuthHome()) throw new Error("CODEX_AUTH_OVERRIDE_ACTIVE: The explicit CODEX_HOME controls this runtime.");
         assertRuntimeEnvOutsideProjectRoots(path.join(authManager.root, "auth-selection.json"), await this.registeredProjectRoots());
         await authManager.prepare(request.authKind, request.authRevision, authEnvironment);
+        return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
+      }
+      case "auth-select-profile": {
+        if (!request.authProfileId || request.authRevision === undefined) {
+          throw new Error("CODEX_AUTH_REQUEST_INVALID");
+        }
+        if (this.explicitAuthHome()) throw new Error("CODEX_AUTH_OVERRIDE_ACTIVE: The explicit CODEX_HOME controls this runtime.");
+        assertRuntimeEnvOutsideProjectRoots(path.join(authManager.root, "auth-selection.json"), await this.registeredProjectRoots());
+        await authManager.selectOwnedProfile(request.authProfileId, request.authRevision);
         return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
       }
       case "auth-login": case "auth-api-key": case "auth-verify": {
@@ -1008,6 +1025,49 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       case "apply-pending": await manager.applyPending(); return manager.snapshot();
 
     }
+  }
+
+  private async reconcileStoppedAuthActivation(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot> {
+    const activationId = request.authActivationId;
+    const revision = request.authRevision;
+    if (!activationId || revision === undefined || request.authResolutionConfirmed !== true) {
+      throw new Error("CODEX_AUTH_RECONCILIATION_CONFIRMATION_REQUIRED");
+    }
+    return this.exclusive(async () => {
+      await this.finishPendingProcessCleanup();
+      this.reconcileManagedRuntime();
+      const authManager = this.authSelectionManager();
+      const current = await authManager.snapshot({});
+      if (current.revision !== revision || current.activation?.id !== activationId) {
+        throw new Error("CODEX_AUTH_ACTIVATION_CHANGED");
+      }
+      if (this.isManagedRuntimeRunning() || isChildRunning(this.child)) {
+        throw new Error("CODEX_AUTH_RUNTIME_STILL_RUNNING");
+      }
+      const configuration = inspectRuntimeEnvFile(this.envFile);
+      if (!configuration.valid) {
+        throw new Error("CODEX_AUTH_ENVIRONMENT_INVALID: Repair the runtime environment before reconciling authentication.");
+      }
+      // Holding the launcher lock prevents another managed runtime from starting
+      // between the stopped-process inspection and the state transition.
+      const lock = acquireRuntimeLock(this.runtimeLockDirectory);
+      try {
+        const legacyOwner = this.legacyRuntimeLockDirectory === this.runtimeLockDirectory
+          ? null : readRuntimeLockOwner(this.legacyRuntimeLockDirectory);
+        if (legacyOwner && processIsAlive(legacyOwner.pid) ||
+            await readCompanionHello(this.bridgeSocketPath)) {
+          throw new Error("CODEX_AUTH_RUNTIME_STILL_RUNNING");
+        }
+        const status = readManagedRuntimeStatus(this.runtimeStatusFile);
+        if (status?.launcherPid && processIsAlive(status.launcherPid)) {
+          throw new Error("CODEX_AUTH_RUNTIME_STILL_RUNNING");
+        }
+        await this.assertPersistedAuthChangeSafe(true);
+        await authManager.resolveStoppedActivation(activationId, revision);
+      } finally { lock.release(); }
+      const manager = this.requestedCliManager();
+      return { ...await manager.snapshot(), authSelection: await authManager.snapshot({}) };
+    });
   }
 
   async authStatus(): Promise<CodexLoginStatus> {

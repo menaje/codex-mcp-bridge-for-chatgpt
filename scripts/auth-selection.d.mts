@@ -14,6 +14,7 @@ export function readAuthSelection(environment?: NodeJS.ProcessEnv): {
     to: AuthConnection;
     generation: number;
     status: "starting" | "uncertain";
+    startedAt?: string;
   } | null;
 } | null;
 export function desiredAuthConnection(environment?: NodeJS.ProcessEnv): AuthConnection;

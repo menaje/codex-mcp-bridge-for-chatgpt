@@ -38,6 +38,23 @@ import { writeFakeLauncher } from "./fixtures/macosHelperLauncher.js";
 const servers: BridgeCompanionServer[] = [];
 
 describe("central runtime lifecycle reservations", () => {
+  it("offers an existing bridge-owned profile as a selectable candidate without starting login", async () => {
+    const f = await lifecycleFixture();
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\n`, { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    try {
+      const prepared = await auth.prepare("bridge-chatgpt", 0, {});
+      const profileId = prepared.candidate!.id;
+      await auth.cancelCandidate(profileId, prepared.revision);
+      await f.supervisor.codexRuntime({ action: "auth-select-profile",
+        authProfileId: profileId, authRevision: 2 });
+      expect(await auth.snapshot({})).toMatchObject({
+        candidate: { id: profileId, reused: true, status: "prepared" }, profiles: [{ id: profileId }]
+      });
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
   it("keeps a pending auth change inert on ordinary start and applies it only through a drained restart", async () => {
     const f = await lifecycleFixture();
     writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
@@ -79,8 +96,40 @@ describe("central runtime lifecycle reservations", () => {
       expect(await auth.snapshot({})).toMatchObject({
         applied: { kind: "shared" }, pending: { kind: "disconnected" }, activation: { status: "uncertain" }
       });
+      const uncertain = await auth.snapshot({});
+      await expect(f.supervisor.codexRuntime({ action: "auth-reconcile-stopped",
+        authActivationId: uncertain.activation!.id, authRevision: uncertain.revision }))
+        .rejects.toThrow("CODEX_AUTH_RECONCILIATION_CONFIRMATION_REQUIRED");
+      await f.supervisor.codexRuntime({ action: "auth-reconcile-stopped",
+        authActivationId: uncertain.activation!.id, authRevision: uncertain.revision,
+        authResolutionConfirmed: true });
+      expect(await auth.snapshot({})).toMatchObject({
+        applied: { kind: "shared" }, pending: { kind: "disconnected" }, activation: null,
+        lastActivationResolution: { id: uncertain.activation!.id, outcome: "stopped-unconfirmed" }
+      });
+      const restarted = await f.supervisor.start();
+      expect(restarted.phase).toBe("running");
+      expect((await auth.snapshot({})).pending?.kind).toBe("disconnected");
     } finally { await f.supervisor.close({ runtime: "force-stop" }); }
-  }, 10_000);
+  }, 15_000);
+
+  it("does not resolve an unconfirmed activation while its runtime still runs", async () => {
+    const f = await lifecycleFixture();
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\n`, { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    try {
+      await f.supervisor.start();
+      await auth.stage({ kind: "disconnected" }, 0, "/fixture/codex", "fixture-cli", {}, false);
+      const activationId = await auth.beginActivation("", "", {});
+      await auth.failActivation(activationId!, false);
+      const uncertain = await auth.snapshot({});
+      await expect(f.supervisor.codexRuntime({ action: "auth-reconcile-stopped",
+        authActivationId: activationId!, authRevision: uncertain.revision,
+        authResolutionConfirmed: true })).rejects.toThrow("CODEX_AUTH_RUNTIME_STILL_RUNNING");
+      expect((await auth.snapshot({})).activation?.id).toBe(activationId);
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
 
   it("keeps the original runtime when a persisted job still belongs to the old authentication", async () => {
     const f = await lifecycleFixture();

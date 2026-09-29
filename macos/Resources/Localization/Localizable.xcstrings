@@ -79126,6 +79126,180 @@
         }
       }
     },
+    "macos.auth.reviewStopped": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check stopped runtime"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "중지된 실행 확인"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止した実行環境を確認"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查已停止的运行环境"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檢查已停止的執行環境"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comprobar ejecución detenida"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérifier l’arrêt de l’exécution"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gestoppte Laufzeit prüfen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verificar execução parada"
+          }
+        }
+      }
+    },
+    "macos.auth.reviewStoppedWarning": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The attempted runtime may have processed work. Check that it has stopped and has no protected work, then keep the previous connection and pending change. The attempted result remains unconfirmed."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시도한 실행이 작업을 처리했을 수 있습니다. 실행이 중지됐고 보호할 작업이 없는지 확인한 뒤 이전 연결과 대기 중인 변경을 유지합니다. 시도 결과는 미확정으로 남습니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "試行した実行環境が作業を処理した可能性があります。停止と保護対象の作業がないことを確認し、以前の接続と保留中の変更を維持します。試行結果は未確認のままです。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尝试启动的运行环境可能处理了任务。确认它已停止且没有受保护的任务后，保留原连接和待处理更改。此次尝试的结果仍未确认。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "嘗試啟動的執行環境可能處理了工作。確認它已停止且沒有受保護的工作後，保留原連線及待處理變更。此次嘗試的結果仍未確認。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La ejecución intentada pudo procesar trabajo. Comprueba que se detuvo y que no hay trabajo protegido; se conservarán la conexión anterior y el cambio pendiente. El resultado seguirá sin confirmar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’exécution tentée a pu traiter des tâches. Vérifiez son arrêt et l’absence de tâche protégée ; la connexion précédente et le changement en attente seront conservés. Le résultat reste non confirmé."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die versuchte Laufzeit könnte Arbeit verarbeitet haben. Prüfen Sie, dass sie gestoppt ist und keine geschützte Arbeit vorliegt. Die bisherige Verbindung und die ausstehende Änderung bleiben erhalten; das Ergebnis bleibt unbestätigt."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A execução tentada pode ter processado trabalho. Confirme que parou e não há trabalho protegido; a ligação anterior e a mudança pendente serão mantidas. O resultado continua por confirmar."
+          }
+        }
+      }
+    },
+    "macos.auth.useSavedProfile": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use saved profile"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "저장된 프로필 사용"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存済みプロファイルを使用"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用已保存的配置"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用已儲存的設定檔"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usar perfil guardado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utiliser le profil enregistré"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gespeichertes Profil verwenden"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usar perfil guardado"
+          }
+        }
+      }
+    },
     "macos.auth.logoutUnconfirmed": {
       "localizations": {
         "en": {

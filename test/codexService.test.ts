@@ -381,7 +381,25 @@ createInterface({ input: process.stdin }).on("line", line => {
     const guard = f.service.admissionGuard();
     await guard();
     await writeFile(config, 'forced_login_method = "api"\n');
-    await expect(guard()).rejects.toThrow("CODEX_AUTH_CHANGED");
+    await expect(guard()).rejects.toThrow("CODEX_AUTH_POLICY_MISMATCH");
+    await writeFile(config, 'forced_login_method = "chatgpt" # restored\n');
+    await expect(guard()).resolves.toBeUndefined();
+  });
+
+  it("checks the current workspace restriction before every new admission", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    const workspaceA = "11111111-1111-4111-8111-111111111111";
+    const workspaceB = "22222222-2222-4222-8222-222222222222";
+    await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt",
+      tokens: { account_id: workspaceA } }));
+    const config = path.join(home, "config.toml");
+    await writeFile(config, `forced_chatgpt_workspace_id = "${workspaceA}" # current\n`);
+    const guard = f.service.admissionGuard();
+    await expect(guard()).resolves.toBeUndefined();
+    await writeFile(config, `forced_chatgpt_workspace_id = "${workspaceB}" # changed\n`);
+    await expect(guard()).rejects.toThrow("CODEX_AUTH_POLICY_MISMATCH");
+    await writeFile(config, `forced_chatgpt_workspace_id = "${workspaceA}" # restored\n`);
+    await expect(guard()).resolves.toBeUndefined();
   });
   it("keeps the last confirmed usage through a same-account token refresh and a failed read", async () => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);

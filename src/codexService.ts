@@ -6,7 +6,7 @@ import path from "node:path";
 import { CodexRuntimeManager, type CliSelection } from "./codexRuntime.js";
 import type { CodexBackendKind } from "./config.js";
 import { JsonRpcProcess } from "./jsonRpcProcess.js";
-import { projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
+import { codexChatgptOwnerKey, projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
 import { parseCodexLocalAuthPolicy, type CodexLocalAuthPolicy } from "./codexAuthPolicy.js";
 import { validateInitializeResponse } from "./runtimeCompatibility.js";
 import { decodeUtf8Strict, parseJsonUtf8Strict } from "./textIntegrity.js";
@@ -194,10 +194,12 @@ export class CodexService {
       let current: string;
       let currentOwnerKey: string;
       let currentSource: "file" | "account";
+      let currentMode: "chatgpt" | "api-key";
       if (fileEvidence) {
         current = fileEvidence.identity;
         currentOwnerKey = fileEvidence.ownerKey;
         currentSource = "file";
+        currentMode = fileEvidence.authMode;
       } else {
         // Never pin an unavailable observation as an account. A successful
         // account/read can identify a keyring profile without reading tokens.
@@ -210,10 +212,16 @@ export class CodexService {
             !account.ownershipKey && !(account.authMode === "api-key" && environmentApiKey)) {
           throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: Codex did not provide enough account identity to protect a new execution.");
         }
-        currentOwnerKey = account.authMode === "api-key"
+        currentOwnerKey = account.authMode === "api-key" && environmentApiKey
           ? digest(JSON.stringify(["api-key", environmentApiKey])) : account.ownershipKey!;
         current = digest(JSON.stringify([account.authMode, currentOwnerKey, currentPolicyKey, currentCliFingerprint]));
         currentSource = "account";
+        currentMode = account.authMode;
+      }
+      if (policy.forcedMethod && policy.forcedMethod !== (currentMode === "api-key" ? "api" : "chatgpt") ||
+          policy.workspaceId && (currentMode !== "chatgpt" ||
+            codexChatgptOwnerKey(policy.workspaceId) !== currentOwnerKey)) {
+        throw new Error("CODEX_AUTH_POLICY_MISMATCH: The current login conflicts with local Codex restrictions.");
       }
       if (identity !== undefined && (ownerKey !== currentOwnerKey || policyKey !== currentPolicyKey ||
           cliFingerprint !== currentCliFingerprint)) {
