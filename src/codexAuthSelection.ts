@@ -71,6 +71,7 @@ export class CodexAuthSelectionManager {
     const policy = await this.readLocalPolicy(environment);
     this.assertAllowedByPolicy(kind, policy);
     await this.update(expectedRevision, async state => {
+      if (state.pending) throw new Error("CODEX_AUTH_PENDING_CHANGE: Cancel the pending connection before preparing another candidate.");
       if (state.candidate) throw new Error("CODEX_AUTH_CANDIDATE_PENDING: Cancel the existing candidate before preparing another.");
       const id = randomUUID();
       const home = authProfileHome(this.root, id);
@@ -88,6 +89,10 @@ export class CodexAuthSelectionManager {
     await this.update(undefined, async state => {
       if (state.candidate?.id !== candidateId || state.candidate.connection.kind !== "bridge-chatgpt") {
         throw new Error("CODEX_AUTH_CANDIDATE_CHANGED");
+      }
+      if (this.pendingCandidate(state, candidateId)) throw new Error("CODEX_AUTH_CANDIDATE_STAGED: Cancel the pending connection first.");
+      if (state.candidate.status !== "prepared" && state.candidate.status !== "login-failed") {
+        throw new Error("CODEX_AUTH_LOGIN_ALREADY_ATTEMPTED: Prepare another candidate to change this login.");
       }
       if (candidateLoginProcesses.has(candidateId)) throw new Error("CODEX_AUTH_LOGIN_IN_PROGRESS");
       const child = spawn(command, ["login"], {
@@ -125,6 +130,10 @@ export class CodexAuthSelectionManager {
       if (state.candidate?.id !== candidateId || state.candidate.connection.kind !== "bridge-api") {
         throw new Error("CODEX_AUTH_CANDIDATE_CHANGED");
       }
+      if (this.pendingCandidate(state, candidateId)) throw new Error("CODEX_AUTH_CANDIDATE_STAGED: Cancel the pending connection first.");
+      if (state.candidate.status !== "prepared" && state.candidate.status !== "login-failed") {
+        throw new Error("CODEX_AUTH_LOGIN_ALREADY_ATTEMPTED: Prepare another candidate to change this key.");
+      }
       if (candidateLoginProcesses.has(candidateId)) throw new Error("CODEX_AUTH_LOGIN_IN_PROGRESS");
       const child = spawn(command, ["login", "--with-api-key"], {
         env: this.profileEnvironment(environment, state.candidate.connection.profileId),
@@ -157,6 +166,9 @@ export class CodexAuthSelectionManager {
     const candidate = before.candidate;
     if (!candidate || candidate.id !== candidateId) {
       throw new Error("CODEX_AUTH_CANDIDATE_CHANGED: Refresh the authentication settings.");
+    }
+    if (this.pendingCandidate(before, candidateId)) {
+      throw new Error("CODEX_AUTH_CANDIDATE_STAGED: Cancel the pending connection first.");
     }
     if (candidate.status === "login-started" && candidateLoginProcesses.has(candidateId)) {
       throw new Error("CODEX_AUTH_LOGIN_IN_PROGRESS: Wait for the selected Codex login to finish before verifying.");
@@ -207,6 +219,10 @@ export class CodexAuthSelectionManager {
     if (before.revision !== expectedRevision) {
       throw new Error("CODEX_AUTH_REVISION_CHANGED: Refresh the authentication settings before applying a change.");
     }
+    if (before.pending) {
+      if (JSON.stringify(before.pending) === JSON.stringify(connection)) return this.snapshot(environment);
+      throw new Error("CODEX_AUTH_PENDING_CHANGE: Cancel the pending connection before choosing another.");
+    }
     if (!before.pending && JSON.stringify(before.applied) === JSON.stringify(connection)) return this.snapshot(environment);
     if (connection.kind === "shared") {
       // Verify the selected CLI's existing source before accepting it as the
@@ -247,6 +263,7 @@ export class CodexAuthSelectionManager {
   async cancelCandidate(candidateId: string, expectedRevision: number): Promise<void> {
     await this.update(expectedRevision, state => {
       if (state.candidate?.id !== candidateId) throw new Error("CODEX_AUTH_CANDIDATE_CHANGED");
+      if (this.pendingCandidate(state, candidateId)) throw new Error("CODEX_AUTH_CANDIDATE_STAGED: Cancel the pending connection first.");
       state.candidate = null;
       state.revision++;
       // Candidate credentials are retained; no token rollback or logout.
@@ -296,6 +313,10 @@ export class CodexAuthSelectionManager {
     candidate.verifiedCli = null;
     candidate.verifiedCliFingerprint = null;
     candidate.verifiedAt = null;
+  }
+
+  private pendingCandidate(state: AuthSelectionState, candidateId: string): boolean {
+    return Boolean(state.pending && "profileId" in state.pending && state.pending.profileId === candidateId);
   }
 
   private async assertSharedLocalPolicy(environment: NodeJS.ProcessEnv): Promise<void> {

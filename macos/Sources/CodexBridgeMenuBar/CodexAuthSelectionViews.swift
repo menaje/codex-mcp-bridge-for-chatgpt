@@ -101,7 +101,7 @@ struct CodexAuthSelectionControls: View {
                 Button("macos.auth.startLogin") {
                     Task { await model.manageCodex(.init(action: "auth-login", authCandidateId: candidate.id)) }
                 }
-                .disabled(model.isBusy || !["prepared", "login-failed"].contains(candidate.status))
+                .disabled(model.isBusy || auth.pending != nil || !["prepared", "login-failed"].contains(candidate.status))
             } else if candidate.status != "verified" {
                 SecureField("macos.auth.apiKey", text: $apiKey)
                     .textContentType(.password)
@@ -111,12 +111,13 @@ struct CodexAuthSelectionControls: View {
                     Task { await model.manageCodex(.init(action: "auth-api-key", authCandidateId: candidate.id,
                                                         authApiKey: submitted)) }
                 }
-                .disabled(model.isBusy || apiKey.isEmpty)
+                .disabled(model.isBusy || auth.pending != nil || apiKey.isEmpty ||
+                          !["prepared", "login-failed"].contains(candidate.status))
             }
             Button("macos.auth.verify") {
                 Task { await model.manageCodex(.init(action: "auth-verify", authCandidateId: candidate.id)) }
             }
-            .disabled(model.isBusy || candidate.status == "login-started")
+            .disabled(model.isBusy || auth.pending != nil || candidate.status == "login-started")
             Button("macos.auth.requestChange") {
                 Task {
                     await model.manageCodex(.init(action: "auth-apply", authKind: selectedKind,
@@ -131,7 +132,7 @@ struct CodexAuthSelectionControls: View {
                 Task { await model.manageCodex(.init(action: "auth-cancel", authCandidateId: candidate.id,
                                                      authRevision: auth.revision)) }
             }
-            .disabled(model.isBusy)
+            .disabled(model.isBusy || auth.pending != nil)
         } else if let candidate = auth.candidate {
             Text("macos.auth.candidate")
                 .font(.caption).foregroundStyle(.secondary)
@@ -139,7 +140,7 @@ struct CodexAuthSelectionControls: View {
                 Task { await model.manageCodex(.init(action: "auth-cancel", authCandidateId: candidate.id,
                                                      authRevision: auth.revision)) }
             }
-            .disabled(model.isBusy)
+            .disabled(model.isBusy || auth.pending != nil)
         } else {
             Button("macos.auth.prepare") {
                 Task { await model.manageCodex(.init(action: "auth-prepare", authKind: selectedKind,

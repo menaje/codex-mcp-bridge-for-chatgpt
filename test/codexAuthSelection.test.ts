@@ -139,6 +139,8 @@ process.stdin.on("end", () => {
     .toEqual({ args: ["login", "--with-api-key"], input: "sk-synthetic-fixture\n" });
   expect(await readFile(path.join(f.root, "auth-selection.json"), "utf8")).not.toContain("sk-synthetic-fixture");
   expect((await f.manager.snapshot(f.environment)).candidate?.status).toBe("login-completed");
+  await expect(f.manager.setApiKey(candidate.id, command, f.environment, "sk-second-synthetic-key"))
+    .rejects.toThrow("CODEX_AUTH_LOGIN_ALREADY_ATTEMPTED");
 });
 
 it.each([[0, "login-completed"], [1, "login-failed"]] as const)(
@@ -149,6 +151,10 @@ it.each([[0, "login-completed"], [1, "login-failed"]] as const)(
     await writeFile(command, `#!/usr/bin/env node\nprocess.exit(${exitCode});\n`, { mode: 0o700 });
     await f.manager.startChatGptLogin(candidate.id, command, f.environment);
     await vi.waitFor(async () => expect((await f.manager.snapshot(f.environment)).candidate?.status).toBe(status));
+    if (exitCode === 0) {
+      await expect(f.manager.startChatGptLogin(candidate.id, command, f.environment))
+        .rejects.toThrow("CODEX_AUTH_LOGIN_ALREADY_ATTEMPTED");
+    }
   }
 );
 
@@ -235,4 +241,14 @@ it("rejects a candidate that changed account or CLI after verification, even whe
   const staged = await f.manager.stage(candidate.connection, verified.revision, command,
     "cli-fingerprint-a", environment, false);
   expect(staged.pending).toEqual(candidate.connection);
+  await expect(f.manager.startChatGptLogin(candidate.id, command, environment))
+    .rejects.toThrow("CODEX_AUTH_CANDIDATE_STAGED");
+  await expect(f.manager.verify(candidate.id, command, "cli-fingerprint-a", environment))
+    .rejects.toThrow("CODEX_AUTH_CANDIDATE_STAGED");
+  await expect(f.manager.cancelCandidate(candidate.id, staged.revision))
+    .rejects.toThrow("CODEX_AUTH_CANDIDATE_STAGED");
+  await expect(f.manager.prepare("bridge-api", staged.revision, environment))
+    .rejects.toThrow("CODEX_AUTH_PENDING_CHANGE");
+  await expect(f.manager.stage({ kind: "disconnected" }, staged.revision, command,
+    "cli-fingerprint-a", environment, false)).rejects.toThrow("CODEX_AUTH_PENDING_CHANGE");
 });
