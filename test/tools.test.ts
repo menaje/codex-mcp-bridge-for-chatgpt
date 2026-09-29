@@ -351,6 +351,103 @@ describe("current bridge tool contracts", () => {
     }
   );
 
+  it.each([true, false])("keeps the original Job question and ACK after an external login change with worker proof %s", async (originalWorkerProof) => {
+    const home = path.join(root, ".codex");
+    const authFile = path.join(home, "auth.json");
+    await mkdir(home);
+    const login = (userId: string) => JSON.stringify({ auth_mode: "chatgpt", tokens: {
+      account_id: "shared-workspace", id_token: syntheticIdToken(userId, "shared-workspace")
+    } });
+    await writeFile(authFile, login("user-a"));
+    const service = new CodexService({ HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+    config.codexService = service;
+    await service.assertCurrentAdmission();
+
+    await client.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    upstream = new FixtureUpstream();
+    let originalWorkerLive = false;
+    const acknowledgeExecution = vi.fn();
+    Object.assign(upstream, {
+      supportsExecutionRecovery: () => true,
+      ownsActiveExecution: (_jobId: string, assignment: UpstreamWorkerAssignment) =>
+        originalWorkerLive && assignment.workerId === "fixture-worker" &&
+        assignment.workerGeneration === 1 && assignment.threadId === "tool-contract-thread" &&
+        assignment.upstreamRequestId === fixtureTurnId,
+      ownsRetainedResult: (_jobId: string, assignment: UpstreamWorkerAssignment) =>
+        assignment.workerId === "fixture-worker" && assignment.workerGeneration === 1 &&
+        assignment.threadId === "tool-contract-thread" && assignment.upstreamRequestId === fixtureTurnId,
+      acknowledgeExecution
+    });
+    server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+    client = new Client(
+      { name: "original-job-question-owner-test", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+    await client.connect(new StreamableHTTPClientTransport(endpoint));
+
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const admitted = await client.callTool({ name: "codex_task", arguments: {
+      scopeId: randomUUID(), requestId: randomUUID(),
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Wait for the original worker's synthetic question.",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+      selection
+    }, _meta: metadata });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+    await hold.started;
+    hold.assign("tool-contract-thread");
+    const originalOwner = state.listJobs().find(job => job.jobId === jobId)?.authBoundary;
+    expect(originalOwner).toMatch(/^[a-f0-9]{64}$/);
+    const interactionId = "fixture-worker:1:question-original";
+    hold.progress({ progress: 0.5, event: {
+      eventId: "question-original", type: "input-required", phase: "waiting",
+      createdAt: Date.now(), summary: "Original worker question", details: { interaction: {
+        interactionId, kind: "user-input", origin: "codex-question",
+        threadId: "tool-contract-thread", turnId: fixtureTurnId,
+        itemId: "question-item", summary: "Original worker question",
+        questions: [{ id: "answer", question: "Continue?", isSecret: false }]
+      } }
+    } });
+    const input = await client.callTool({ name: "codex_status", _meta: metadata,
+      arguments: { query: { kind: "input", jobId } } });
+    expect(input.isError, JSON.stringify(input)).not.toBe(true);
+    const questionRef = (input.structuredContent as { questions?: Array<{ questionRef?: string }> })
+      .questions?.[0]?.questionRef;
+    expect(questionRef, JSON.stringify(input.structuredContent)).toBeTruthy();
+
+    await writeFile(authFile, login("user-b"));
+    await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_CHANGED");
+    expect(service.currentExecutionAuthBoundary()).toBeNull();
+    const respond = (requestId: string) => client.callTool({ name: "codex_answer", _meta: metadata,
+      arguments: { requestId, jobId, questionRef, answers: { answer: ["yes"] } } });
+    originalWorkerLive = originalWorkerProof;
+    const answered = await respond(randomUUID());
+    expect(answered.isError, JSON.stringify(answered)).not.toBe(true);
+    expect(answered.structuredContent).toMatchObject(originalWorkerProof
+      ? { delivery: "delivered" }
+      : { delivery: "uncertain", answersPersisted: false });
+    expect(upstream.interactionResponses).toEqual(originalWorkerProof ? [{
+      interactionId, response: { answers: { answer: ["yes"] } }
+    }] : []);
+    hold.release({
+      structuredContent: { threadId: "tool-contract-thread", turnStatus: "completed" },
+      content: [{ type: "text", text: "Original worker result." }]
+    });
+    await eventually(() => state.listJobs().some(job => job.jobId === jobId && job.status === "completed"), 5_000);
+    expect((state.listSessions() as Array<{ threadId: string; authBoundary: string }>))
+      .toContainEqual(expect.objectContaining({ threadId: "tool-contract-thread", authBoundary: originalOwner }));
+    expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(jobId);
+  });
+
   it("keeps physical background-read slots across repeated native snapshot timeouts", async () => {
     const scopeId = randomUUID();
     for (let index = 0; index < 80; index++) {
