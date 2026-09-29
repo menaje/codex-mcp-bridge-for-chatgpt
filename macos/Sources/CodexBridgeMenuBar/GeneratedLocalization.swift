@@ -351,6 +351,7 @@ enum BridgeGeneratedLocalization {
         "macos.auth.workspaceAtSelection": "Workspace fingerprint at last apply",
         "macos.auth.workspaceFingerprint": "Workspace fingerprint",
         "macos.auth.workspaceName": "Workspace name",
+        "macos.auth.workspaceNameAtSelection": "Workspace name at last apply",
         "macos.auth.workspaceObserved": "Last observed workspace fingerprint",
         "macos.authenticationmethod": "Authentication method",
         "macos.automaticallowlist": "Automatic Allowlist",

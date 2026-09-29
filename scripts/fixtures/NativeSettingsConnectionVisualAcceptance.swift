@@ -144,7 +144,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             let paneChecks: [(SettingsNavigationPane, String, [String])] = [
                 (.modelExecution, "settings-model-execution-en-light.png", ["Set default access"]),
                 (.projects, "settings-projects-en-light.png", ["Register and manage"]),
-                (.codex, "settings-codex-en-light.png", ["Workspace name", "Engineering workspace", "Changing Codex locations"]),
+                (.codex, "settings-codex-en-light.png", ["Workspace name at last apply", "Engineering workspace", "Changing Codex locations"]),
                 (.connection, "settings-connection-en-light.png", ["Choose this Mac"]),
                 (.server, "settings-server-en-light.png", ["safety limit"])
             ]

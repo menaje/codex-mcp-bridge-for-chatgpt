@@ -43,7 +43,7 @@ struct CodexAuthSelectionControls: View {
                     LabeledContent("macos.auth.emailAtSelection", value: email)
                 }
                 if let name = auth.appliedWorkspaceName {
-                    LabeledContent("macos.auth.workspaceName", value: name)
+                    LabeledContent("macos.auth.workspaceNameAtSelection", value: name)
                 }
                 if let workspace = auth.appliedWorkspaceKey {
                     LabeledContent("macos.auth.workspaceAtSelection", value: String(workspace.prefix(12)))

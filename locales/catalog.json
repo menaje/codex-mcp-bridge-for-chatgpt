@@ -55572,6 +55572,19 @@
           "pt": { "stringUnit": { "state": "translated", "value": "Nome do espaço de trabalho" } }
         }
       },
+      "macos.auth.workspaceNameAtSelection": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Workspace name at last apply" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "마지막 적용 시 워크스페이스 이름" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "前回適用時のワークスペース名" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "上次应用时的工作区名称" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "上次套用時的工作區名稱" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Nombre del espacio de trabajo al aplicar" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Nom de l’espace de travail lors de l’application" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Name des Arbeitsbereichs bei letzter Anwendung" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Nome do espaço de trabalho na última aplicação" } }
+        }
+      },
       "macos.auth.workspaceObserved": {
         "localizations": {
           "en": { "stringUnit": { "state": "translated", "value": "Last observed workspace fingerprint" } },
