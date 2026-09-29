@@ -57,6 +57,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                 "summary": "ready"
             ])
             model.settings = try Self.settingsSnapshot()
+            model.codexRuntime = try Self.codexRuntimeSnapshot()
 
             let settingsWindow = makeWindow(
                 size: NSSize(width: 980, height: 720),
@@ -143,7 +144,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             let paneChecks: [(SettingsNavigationPane, String, String)] = [
                 (.modelExecution, "settings-model-execution-en-light.png", "Set default access"),
                 (.projects, "settings-projects-en-light.png", "Register and manage"),
-                (.codex, "settings-codex-en-light.png", "Review Codex account"),
+                (.codex, "settings-codex-en-light.png", "Use existing Codex login"),
                 (.connection, "settings-connection-en-light.png", "Choose this Mac"),
                 (.server, "settings-server-en-light.png", "safety limit")
             ]
@@ -490,11 +491,12 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
     }
 
     private func captureSetupStages(in artifacts: URL) async throws {
+        model.previewInterfaceLocale("en")
         let stages: [(ConnectionSetupRole, ConnectionSetupStep, String, [String])] = [
             (.localHost, .discovery, "connection-setup-discovery-en-light.png", ["Find Existing Settings"]),
             (.localHost, .credentials, "connection-setup-credentials-en-light.png", ["Connection Information"]),
             (.remoteClient, .remoteConnection, "connection-setup-remote-en-light.png", ["Connect to a Server"]),
-            (.localHost, .codexLogin, "connection-setup-codex-en-light.png", ["Codex Sign-In"]),
+            (.localHost, .codexLogin, "connection-setup-codex-en-light.png", ["Codex Sign-In", "Use existing Codex login"]),
             (.localHost, .complete, "connection-setup-complete-en-light.png", ["Setup Complete"])
         ]
         for (role, step, file, expectedText) in stages {
@@ -511,6 +513,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                             automaticRefresh: false
                         )
                         .environmentObject(model)
+                        .environment(\.locale, model.interfaceLocale)
                     }
                 )
             )
@@ -716,6 +719,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             "maxConcurrentJobs": 4,
             "historyRetentionDays": 30,
             "showBridgeThreadsInCodexApp": true,
+            "experimentalDirectResultDelivery": false,
         ]
         let object: [String: Any] = [
             "settings": settings,
@@ -750,6 +754,23 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             ]
         ]
         return try decode(SettingsSnapshot.self, object)
+    }
+
+    nonisolated private static func codexRuntimeSnapshot() throws -> CodexRuntimeSnapshot {
+        let selection: [String: Any] = [
+            "id": "visual-codex", "source": "terminal", "command": "/fixture/codex",
+            "physicalPath": "/fixture/codex", "version": "0.153.3", "available": true, "compatible": true
+        ]
+        return try decode(CodexRuntimeSnapshot.self, [
+            "selection": selection, "candidates": [selection], "selectionRequired": false,
+            "installedVersion": "0.153.3", "runningVersions": [], "reclaimableBytes": 0,
+            "preferences": ["notifications": false],
+            "actions": ["install": false, "update": false, "remove": false,
+                        "reinstall": false, "rollback": false, "cleanup": false,
+                        "retry": false, "applyPending": false, "skip": false],
+            "authSelection": ["revision": 0, "applied": ["kind": "shared"],
+                              "effective": ["kind": "shared"], "overrideActive": false]
+        ])
     }
 
     nonisolated private static func decode<T: Decodable>(
