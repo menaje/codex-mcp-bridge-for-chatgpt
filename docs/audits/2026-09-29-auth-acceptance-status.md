@@ -55,8 +55,9 @@ the source-only follow-up.
   use cannot be inferred from CLI executable locations.
 - The Helper now remembers distinct external `CODEX_HOME` locations it has
   actually used, including an explicit location that is later removed from
-  configuration. It stores no credential copy and deduplicates aliases of the
-  same directory. Setup/settings can stage a previously used location without
+  configuration. It records only absolute locations, stores no credential
+  copy, and deduplicates aliases of the same directory. Setup/settings can
+  stage a previously used location without
   a folder picker; the selected CLI probes its account, policy, models, and
   billing route again before activation. A moved or redirected location fails
   closed, and the ready runtime must report that exact home. Using the saved

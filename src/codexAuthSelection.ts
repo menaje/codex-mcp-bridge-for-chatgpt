@@ -114,7 +114,9 @@ export class CodexAuthSelectionManager {
 
   /** Remember only a CODEX_HOME that the Bridge actually used, never CLI-adjacent folders. */
   async rememberExplicitHome(environment: NodeJS.ProcessEnv): Promise<void> {
-    if (!environment.CODEX_HOME) return;
+    // A relative override can resolve differently for the Helper and CLI;
+    // do not turn it into a selectable absolute path by guessing a cwd.
+    if (!environment.CODEX_HOME || !path.isAbsolute(environment.CODEX_HOME)) return;
     const home = path.resolve(environment.CODEX_HOME);
     let canonicalHome: string;
     try {

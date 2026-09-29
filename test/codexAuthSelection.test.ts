@@ -82,7 +82,7 @@ it("offers only distinct previously used external homes and preserves their owne
     tokens: { account_id: "workspace-first", id_token: syntheticIdToken("user-first", "workspace-first") } }));
   await writeFile(path.join(second, "auth.json"), JSON.stringify({ auth_mode: "chatgpt",
     tokens: { account_id: "workspace-second", id_token: syntheticIdToken("user-second", "workspace-second") } }));
-  for (const home of [first, alias, second, path.join(f.root, ".codex"), owned]) {
+  for (const home of [first, alias, second, path.join(f.root, ".codex"), owned, "relative-codex-home"]) {
     await f.manager.rememberExplicitHome({ ...f.environment, CODEX_HOME: home });
   }
   const before = await f.manager.snapshot(f.environment);
