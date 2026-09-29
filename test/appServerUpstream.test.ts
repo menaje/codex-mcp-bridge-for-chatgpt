@@ -67,16 +67,21 @@ describe("CodexAppServerUpstreamPool", () => {
   it("uses a supported CLI's active session identity in the real worker account path", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "codex-app-server-keyring-"));
     const session = { activeSessionId: "session-a", sessions: [{ sessionId: "session-a",
-      userId: "user-a", selectedWorkspaceAccountId: "workspace-w", isActive: true }] };
+      userId: "user-a", selectedWorkspaceAccountId: "workspace-w", isActive: true,
+      workspaces: [{ accountId: "workspace-w", name: "Engineering" },
+        { accountId: "workspace-other", name: "Wrong workspace" }] }] };
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, { environment: {
       ...process.env, HOME: home, CODEX_HOME: path.join(home, ".codex"),
       CODEX_TEST_ACCOUNT_ID: "workspace-w",
       CODEX_TEST_ACCOUNT_SESSIONS_RESPONSE: JSON.stringify(session)
     } });
     try {
-      const account = await pool.readAccountSnapshot();
+      const details = await pool.readAccountDetails();
+      const account = details.snapshot;
       expect(account?.ownershipKey).toBe(codexChatgptPrincipalKey("user-a", "workspace-w"));
       expect(account?.workspaceKey).not.toBe(account?.ownershipKey);
+      expect(details).toMatchObject({ email: "private-fixture@example.com", workspaceName: "Engineering" });
+      expect(JSON.stringify(account)).not.toContain("Engineering");
     } finally {
       await pool.close();
       await rm(home, { recursive: true, force: true });

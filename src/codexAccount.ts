@@ -46,6 +46,27 @@ function verifiedSessionIdentity(observations: { before: unknown; after: unknown
     before.workspaceId === after.workspaceId ? after : null;
 }
 
+/** Human-readable metadata for local authentication settings only. It is never ownership proof. */
+export function localCodexAccountLabels(accountResponse: unknown,
+  sessionObservations?: { before: unknown; after: unknown }): { email: string | null; workspaceName: string | null } {
+  const account = record(record(accountResponse).account);
+  const email = typeof account.email === "string" && account.email.length <= 320 &&
+    account.email.includes("@") ? account.email : null;
+  const session = verifiedSessionIdentity(sessionObservations);
+  const routing = record(record(accountResponse).workspaceRouting);
+  if (!session || session.workspaceId !== identifier(routing.chatgptAccountId)) {
+    return { email, workspaceName: null };
+  }
+  const after = record(sessionObservations?.after);
+  const active = Array.isArray(after.sessions) ? after.sessions.map(record).find(value =>
+    value.isActive === true && value.sessionId === after.activeSessionId) : null;
+  const workspaces = Array.isArray(active?.workspaces) ? active.workspaces.map(record) : [];
+  const selected = workspaces.find(value => value.accountId === session.workspaceId);
+  const name = selected?.name;
+  return { email, workspaceName: typeof name === "string" && name.trim().length > 0 &&
+    name.length <= 160 && !/[\u0000-\u001f\u007f]/.test(name) ? name.trim() : null };
+}
+
 export function codexChatgptOwnerKey(accountId: string): string {
   return createHash("sha256").update(JSON.stringify(["chatgpt", accountId])).digest("hex");
 }

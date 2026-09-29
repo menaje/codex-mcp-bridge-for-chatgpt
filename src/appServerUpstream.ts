@@ -7,7 +7,7 @@ import {
   threadAccessParams, turnAccessParams, verifyExecutionAccess,
   type ExecutionAccessRequest, type VerifiedExecutionAccess
 } from "./executionAccess.js";
-import { projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
+import { localCodexAccountLabels, projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
 import { randomUUID } from "node:crypto";
 import { TOKEN_KEYS, tokenCounts, TurnUsageMeter, type TokenCounts } from "./tokenUsage.js";
 import { execFile } from "node:child_process";
@@ -556,7 +556,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   /** Account email is returned only to local authentication management. */
-  async readAccountDetails(): Promise<{ snapshot: CodexAccountSnapshot; email: string | null }> {
+  async readAccountDetails(): Promise<{ snapshot: CodexAccountSnapshot; email: string | null; workspaceName: string | null }> {
     const worker = this.leastBusyWorker();
     worker.activeCalls += 1;
     try {
@@ -567,11 +567,10 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       const limits = projectCodexAccount(account, null).authMode === "chatgpt"
         ? await connection.readAccountRateLimits().catch(() => null) : null;
       const sessionsAfter = sessionsBefore ? await connection.readAccountSessions().catch(() => null) : null;
-      const rawAccount = (account as { account?: { email?: unknown } } | null)?.account;
-      const email = typeof rawAccount?.email === "string" && rawAccount.email.length <= 320 &&
-        rawAccount.email.includes("@") ? rawAccount.email : null;
+      const observations = sessionsBefore && sessionsAfter ? { before: sessionsBefore, after: sessionsAfter } : undefined;
+      const { email, workspaceName } = localCodexAccountLabels(account, observations);
       return { snapshot: projectCodexAccount(account, limits, Date.now(),
-        sessionsBefore && sessionsAfter ? { before: sessionsBefore, after: sessionsAfter } : undefined), email };
+        observations), email, workspaceName };
     } finally { worker.activeCalls -= 1; }
   }
 

@@ -32,6 +32,7 @@ const candidateSchema = z.strictObject({
   status: z.enum(["prepared", "login-started", "login-completed", "login-failed", "verified"]),
   accountKey: z.string().nullable(),
   accountEmail: z.string().max(320).nullable().default(null),
+  workspaceName: z.string().max(160).nullable().default(null),
   workspaceKey: z.string().nullable().default(null),
   billingTarget: billingTargetSchema.nullable().default(null),
   credentialKey: z.string().nullable(),
@@ -68,10 +69,12 @@ const stateSchema = z.strictObject({
   generation: z.number().int().nonnegative().default(0),
   applied: connectionSchema,
   appliedAccountEmail: z.string().max(320).nullable().default(null),
+  appliedWorkspaceName: z.string().max(160).nullable().default(null),
   appliedWorkspaceKey: z.string().nullable().default(null),
   appliedBillingTarget: billingTargetSchema.nullable().default(null),
   pending: connectionSchema.nullable(),
   pendingAccountEmail: z.string().max(320).nullable().default(null),
+  pendingWorkspaceName: z.string().max(160).nullable().default(null),
   pendingWorkspaceKey: z.string().nullable().default(null),
   pendingBillingTarget: billingTargetSchema.nullable().default(null),
   candidate: candidateSchema.nullable(),
@@ -90,8 +93,10 @@ export type AuthSelectionSnapshot = Omit<AuthSelectionState, "candidate" | "pend
   effective: AuthConnection;
 };
 const initialState = (): AuthSelectionState => ({ schemaVersion: 1, revision: 0, generation: 0,
-  applied: { kind: "shared" }, appliedAccountEmail: null, appliedWorkspaceKey: null, appliedBillingTarget: null,
-  pending: null, pendingAccountEmail: null, pendingWorkspaceKey: null, pendingBillingTarget: null, candidate: null,
+  applied: { kind: "shared" }, appliedAccountEmail: null, appliedWorkspaceName: null,
+  appliedWorkspaceKey: null, appliedBillingTarget: null,
+  pending: null, pendingAccountEmail: null, pendingWorkspaceName: null,
+  pendingWorkspaceKey: null, pendingBillingTarget: null, candidate: null,
   pendingVerification: null, activation: null, lastActivationResolution: null, profiles: [], knownHomes: [] });
 const candidateLoginProcesses = new Map<string, ChildProcess>();
 type LocalAuthPolicy = Pick<CodexLocalAuthPolicy, "forcedMethod" | "workspaceId">;
@@ -162,7 +167,7 @@ export class CodexAuthSelectionManager {
       await writeFile(path.join(home, "config.toml"), this.profileConfig(policy), { mode: 0o600, flag: "wx" });
       state.candidate = { id, connection: { kind, profileId: id }, status: "prepared",
         reused: false,
-        accountKey: null, accountEmail: null, workspaceKey: null, billingTarget: null,
+        accountKey: null, accountEmail: null, workspaceName: null, workspaceKey: null, billingTarget: null,
         credentialKey: null, verifiedCli: null,
         verifiedCliFingerprint: null, verifiedAt: null };
       state.profiles.push({ id, kind, status: "available" });
@@ -183,7 +188,8 @@ export class CodexAuthSelectionManager {
         throw new Error("CODEX_AUTH_PROFILE_IN_USE");
       }
       state.candidate = { id: profileId, connection: { kind: profile.kind, profileId }, reused: true,
-        status: "prepared", accountKey: null, accountEmail: null, workspaceKey: null, billingTarget: null,
+        status: "prepared", accountKey: null, accountEmail: null, workspaceName: null,
+        workspaceKey: null, billingTarget: null,
         credentialKey: null,
         verifiedCli: null, verifiedCliFingerprint: null, verifiedAt: null };
       state.revision++;
@@ -338,6 +344,7 @@ export class CodexAuthSelectionManager {
       state.candidate.status = "verified";
       state.candidate.accountKey = observed.accountKey;
       state.candidate.accountEmail = observed.accountEmail;
+      state.candidate.workspaceName = observed.workspaceName;
       state.candidate.workspaceKey = observed.workspaceKey;
       state.candidate.billingTarget = observed.billingTarget;
       state.candidate.credentialKey = observed.credentialKey;
@@ -351,7 +358,7 @@ export class CodexAuthSelectionManager {
 
   private async probeCandidate(candidate: NonNullable<AuthSelectionState["candidate"]>, command: string,
     environment: NodeJS.ProcessEnv): Promise<{ accountKey: string | null; accountEmail: string | null;
-      workspaceKey: string | null; billingTarget: BillingTarget; credentialKey: string }> {
+      workspaceName: string | null; workspaceKey: string | null; billingTarget: BillingTarget; credentialKey: string }> {
     await this.assertProfilePolicy(candidate.connection, environment);
     const profileEnvironment = this.profileEnvironment(environment, candidate.connection.profileId);
     const pool = new CodexAppServerUpstreamPool(command, 1, {
@@ -359,7 +366,7 @@ export class CodexAuthSelectionManager {
     });
     try {
       const policy = await pool.readAuthenticationPolicy();
-      const { snapshot: account, email: accountEmail } = await pool.readAccountDetails();
+      const { snapshot: account, email: accountEmail, workspaceName } = await pool.readAccountDetails();
       if (account.ownershipConflict) throw new Error("CODEX_AUTH_IDENTITY_CONFLICT: Codex account and usage replies identify different workspaces.");
       const expected = candidate.connection.kind === "bridge-api" ? "api-key" : "chatgpt";
       if (!account?.authenticated || account.authMode !== expected) {
@@ -383,7 +390,7 @@ export class CodexAuthSelectionManager {
       if (!credentialKey) {
         throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: The candidate's file-backed identity could not be confirmed.");
       }
-      return { accountKey: ownerKey || account.ownershipKey, accountEmail,
+      return { accountKey: ownerKey || account.ownershipKey, accountEmail, workspaceName,
         workspaceKey: fileWorkspaceKey || account.workspaceKey, billingTarget: account.billing.kind, credentialKey };
     } finally { await pool.close(); }
   }
@@ -405,7 +412,8 @@ export class CodexAuthSelectionManager {
       throw new Error("CODEX_AUTH_API_BILLING_CONFIRMATION_REQUIRED");
     }
     let observed: { accountKey: string | null; accountEmail: string | null;
-      workspaceKey: string | null; billingTarget: BillingTarget | null; credentialKey: string | null } | null = null;
+      workspaceName: string | null; workspaceKey: string | null;
+      billingTarget: BillingTarget | null; credentialKey: string | null } | null = null;
     if (connection.kind === "shared") observed = await this.probeShared(command, environment, billingConfirmed);
     if (connection.kind === "external") observed = await this.probeShared(command,
       this.externalEnvironment(before, connection.homeId, environment), billingConfirmed);
@@ -428,6 +436,7 @@ export class CodexAuthSelectionManager {
       }
       state.pending = connection;
       state.pendingAccountEmail = observed?.accountEmail || null;
+      state.pendingWorkspaceName = observed?.workspaceName || null;
       state.pendingWorkspaceKey = observed?.workspaceKey || null;
       state.pendingBillingTarget = observed?.billingTarget || null;
       state.pendingVerification = { command, cliFingerprint,
@@ -461,6 +470,7 @@ export class CodexAuthSelectionManager {
       if (!state.pending) return;
       state.pending = null;
       state.pendingAccountEmail = null;
+      state.pendingWorkspaceName = null;
       state.pendingWorkspaceKey = null;
       state.pendingBillingTarget = null;
       state.pendingVerification = null;
@@ -471,12 +481,13 @@ export class CodexAuthSelectionManager {
 
   private async probeShared(command: string, environment: NodeJS.ProcessEnv,
     billingConfirmed: boolean): Promise<{ accountKey: string | null; accountEmail: string | null;
-      workspaceKey: string | null; billingTarget: BillingTarget; credentialKey: string | null }> {
+      workspaceName: string | null; workspaceKey: string | null;
+      billingTarget: BillingTarget; credentialKey: string | null }> {
     await this.assertSharedLocalPolicy(environment);
     const pool = new CodexAppServerUpstreamPool(command, 1, { environment });
     try {
       const effectivePolicy = await pool.readAuthenticationPolicy();
-      const { snapshot: account, email: accountEmail } = await pool.readAccountDetails();
+      const { snapshot: account, email: accountEmail, workspaceName } = await pool.readAccountDetails();
       if (account.ownershipConflict) throw new Error("CODEX_AUTH_IDENTITY_CONFLICT: Codex account and usage replies identify different workspaces.");
       if (!account?.authenticated) throw new Error("CODEX_AUTH_SHARED_UNAVAILABLE: The existing Codex login is not verified.");
       if (account.authMode === "api-key" && !billingConfirmed) throw new Error("CODEX_AUTH_API_BILLING_CONFIRMATION_REQUIRED");
@@ -499,7 +510,7 @@ export class CodexAuthSelectionManager {
       if (!credentialKey && !account.ownershipKey) {
         throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: The selected CLI did not verify the shared login user and workspace; choose a verifiable profile.");
       }
-      return { accountKey: ownerKey || account.ownershipKey, accountEmail,
+      return { accountKey: ownerKey || account.ownershipKey, accountEmail, workspaceName,
         workspaceKey: fileWorkspaceKey || account.workspaceKey, billingTarget: account.billing.kind, credentialKey };
     } finally { await pool.close(); }
   }
@@ -514,8 +525,10 @@ export class CodexAuthSelectionManager {
       throw new Error("CODEX_AUTH_REVALIDATION_REQUIRED: The staged CLI or authentication choice changed.");
     }
     let observed: { accountKey: string | null; accountEmail: string | null;
-      workspaceKey: string | null; billingTarget: BillingTarget | null; credentialKey: string | null } =
-      { accountKey: null, accountEmail: null, workspaceKey: null, billingTarget: null, credentialKey: null };
+      workspaceName: string | null; workspaceKey: string | null;
+      billingTarget: BillingTarget | null; credentialKey: string | null } =
+      { accountKey: null, accountEmail: null, workspaceName: null,
+        workspaceKey: null, billingTarget: null, credentialKey: null };
     if (pending.kind === "shared") observed = await this.probeShared(command, environment, true);
     if (pending.kind === "external") observed = await this.probeShared(command,
       this.externalEnvironment(before, pending.homeId, environment), true);
@@ -574,11 +587,13 @@ export class CodexAuthSelectionManager {
       }
       state.applied = activation.to;
       state.appliedAccountEmail = state.pendingAccountEmail;
+      state.appliedWorkspaceName = state.pendingWorkspaceName;
       state.appliedWorkspaceKey = state.pendingWorkspaceKey;
       state.appliedBillingTarget = state.pendingBillingTarget;
       state.generation = activation.generation;
       state.pending = null;
       state.pendingAccountEmail = null;
+      state.pendingWorkspaceName = null;
       state.pendingWorkspaceKey = null;
       state.pendingBillingTarget = null;
       state.pendingVerification = null;
@@ -729,6 +744,7 @@ export class CodexAuthSelectionManager {
   private clearVerification(candidate: NonNullable<AuthSelectionState["candidate"]>): void {
     candidate.accountKey = null;
     candidate.accountEmail = null;
+    candidate.workspaceName = null;
     candidate.workspaceKey = null;
     candidate.billingTarget = null;
     candidate.credentialKey = null;

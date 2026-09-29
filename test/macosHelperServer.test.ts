@@ -135,6 +135,19 @@ describe("central runtime lifecycle reservations", () => {
       const restarted = await f.supervisor.start();
       expect(restarted.phase).toBe("running");
       expect((await auth.snapshot({})).pending?.kind).toBe("disconnected");
+      writeFakeLauncher(path.join(f.root, "runtime", "launcher.mjs"), path.join(f.root, "recovered-arguments.json"),
+        { admissionFile: path.join(f.root, "admission.json"), writeRuntimeLock: true });
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(["completed", "failed"]).toContain(f.supervisor.lifecycleStatus()?.phase), {
+        timeout: 8_000, interval: 50
+      });
+      if (f.supervisor.lifecycleStatus()?.phase === "failed") {
+        throw new Error(f.supervisor.lifecycleStatus()?.error || "activation retry failed");
+      }
+      expect(await auth.snapshot({})).toMatchObject({
+        applied: { kind: "disconnected" }, pending: null, activation: null, generation: 1,
+        lastActivationResolution: { id: uncertain.activation!.id, outcome: "stopped-unconfirmed" }
+      });
     } finally { await f.supervisor.close({ runtime: "force-stop" }); }
   }, 15_000);
 

@@ -52,19 +52,29 @@ it("selects one of several saved bridge profiles without replacing its credentia
     .rejects.toThrow("CODEX_AUTH_PROFILE_READ_ONLY");
   expect(await readFile(firstFile, "utf8")).toContain("saved-first");
   const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
-  const verified = await f.manager.verify(first.id, command, "cli-a", f.environment);
-  expect(verified.candidate).toMatchObject({ status: "verified", reused: true });
+  const environment = { ...f.environment, CODEX_TEST_ACCOUNT_ID: "saved-first",
+    CODEX_TEST_ACCOUNT_SESSIONS_RESPONSE: JSON.stringify({ activeSessionId: "session-a", sessions: [{
+      sessionId: "session-a", userId: "fixture-user", selectedWorkspaceAccountId: "saved-first",
+      isActive: true, workspaces: [{ accountId: "saved-first", name: "Saved workspace" }]
+    }] }) };
+  const verified = await f.manager.verify(first.id, command, "cli-a", environment);
+  expect(verified.candidate).toMatchObject({ status: "verified", reused: true,
+    workspaceName: "Saved workspace" });
   const workspaceKey = codexChatgptOwnerKey("saved-first");
   expect(verified.candidate?.workspaceKey).toBe(workspaceKey);
   expect(verified.candidate?.billingTarget).toBe("chatgpt-plan");
-  const staged = await f.manager.stage(first.connection, verified.revision, command, "cli-a", f.environment, false);
+  const staged = await f.manager.stage(first.connection, verified.revision, command, "cli-a", environment, false);
   expect(staged.pending).toEqual(first.connection);
+  expect(staged.pendingWorkspaceName).toBe("Saved workspace");
   expect(staged.pendingWorkspaceKey).toBe(workspaceKey);
   expect(staged.pendingBillingTarget).toBe("chatgpt-plan");
-  const activation = await f.manager.beginActivation(command, "cli-a", f.environment);
+  const renamedEnvironment = { ...environment, CODEX_TEST_ACCOUNT_SESSIONS_RESPONSE:
+    environment.CODEX_TEST_ACCOUNT_SESSIONS_RESPONSE.replace("Saved workspace", "Renamed workspace") };
+  const activation = await f.manager.beginActivation(command, "cli-a", renamedEnvironment);
   await f.manager.completeActivation(activation!, "bridge-chatgpt", "1", path.join(f.root, "auth-profiles", first.id));
   expect(await f.manager.snapshot(f.environment)).toMatchObject({
-    appliedWorkspaceKey: workspaceKey, appliedBillingTarget: "chatgpt-plan",
+    appliedWorkspaceName: "Saved workspace", appliedWorkspaceKey: workspaceKey,
+    appliedBillingTarget: "chatgpt-plan",
     pendingWorkspaceKey: null, pendingBillingTarget: null
   });
 });

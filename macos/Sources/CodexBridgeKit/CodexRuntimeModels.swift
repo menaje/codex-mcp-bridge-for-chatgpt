@@ -114,6 +114,7 @@ public struct CodexAuthCandidate: Codable, Sendable, Equatable {
     public let status: String
     public let accountKey: String?
     public let accountEmail: String?
+    public let workspaceName: String?
     public let workspaceKey: String?
     public let billingTarget: String?
     public let verifiedCli: String?
@@ -140,10 +141,12 @@ public struct CodexAuthSelection: Codable, Sendable, Equatable {
     public let revision: Int
     public let applied: CodexAuthConnection
     public let appliedAccountEmail: String?
+    public let appliedWorkspaceName: String?
     public let appliedWorkspaceKey: String?
     public let appliedBillingTarget: String?
     public let pending: CodexAuthConnection?
     public let pendingAccountEmail: String?
+    public let pendingWorkspaceName: String?
     public let pendingWorkspaceKey: String?
     public let pendingBillingTarget: String?
     public let candidate: CodexAuthCandidate?

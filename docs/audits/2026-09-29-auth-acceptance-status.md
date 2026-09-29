@@ -40,6 +40,15 @@ the source-only follow-up.
   so its Keyring ChatGPT combination remains blocked for new work. Managed
   Keyring API owner identity is also unresolved. The optional response is
   defined in [OpenAI's App Server protocol](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/v2/account.rs).
+- When that optional response also names the selected workspace, the local
+  candidate and connection settings show its human-readable name alongside
+  the account email and opaque fingerprint. The name is accepted only from a
+  stable active user/session whose workspace agrees with `account/read`; it
+  never becomes execution ownership proof or enters the GPT-facing account
+  snapshot. The inspected installed CLI cannot supply this name through the
+  optional method, so a human-readable current workspace and exact cost target
+  are still unavailable for that combination. Local synthetic tests cover the
+  verified and conflicting response branches; installed UI acceptance remains.
 - App-bundled, terminal, and Bridge-managed CLI installations are separate
   executable choices. The synthetic product-path matrix installs all three at
   once and checks that login, account, model fallback, and execution use the
@@ -101,6 +110,12 @@ the source-only follow-up.
   persists the session under A, and ACKs that Job once without starting a new
   task. The retained executor is synthetic; process reconnection and an actual
   Keyring or external-login change remain separate acceptance conditions.
+- A Helper lifecycle product-path test now continues after a failed activation:
+  it records an uncertain result, confirms the launched runtime is stopped,
+  keeps the prior applied connection and pending choice, restarts the prior
+  runtime, and then applies the same pending choice once a healthy launcher is
+  available. The prior stopped-unconfirmed event stays in the audit state.
+  This uses a synthetic launcher; installed runtime failure recovery remains.
 - The installed CLI `0.158.0-alpha.2.1` generated its TypeScript App Server
   schema in a temporary home without authentication. It includes
   `account/read.workspaceRouting.chatgptAccountId` and a nullable usage
@@ -109,10 +124,72 @@ the source-only follow-up.
   a real login test. Candidate artifact identity for each committed source is
   recorded in the PR description; the installed `b24bb26` bundle remains older.
 
-Status terms: **synthetic** means implementation exercised with fake accounts
-or local fixtures; **partial** means a stated part is missing; **live** means
-the item needs an independently authorized, isolated real-account or installed
-app acceptance run.
+## Acceptance classification
+
+The categories below apply to the *remaining acceptance work*, not to whether
+an entire issue can be closed. Multiple categories can apply to one condition.
+"Synthetic product path passed" names a verified subset and does not cover
+every scenario in that condition. A source review or isolated predicate test
+alone is not marked as product-path evidence. The detailed rows below retain
+the exact evidence and remaining scenarios.
+
+| Condition | Classification | Specific remaining boundary |
+| --- | --- | --- |
+| LOGIN-1 | Live environment needed | Establish the original sign-out timeline and affected installed build. |
+| LOGIN-2 | Synthetic product path passed; live environment needed | No-copy build/probe paths were exercised; inspect the shipped package and external automation. |
+| LOGIN-3 | Live environment needed | Sign in an independent persistent test home without copying operating credentials. |
+| LOGIN-4 | Synthetic product path passed; live environment needed | Inspect actual selected source and managed-policy provenance. |
+| LOGIN-5 | Synthetic product path passed; live environment needed; support scope decision needed | Verify actual file/Keyring refresh and external account changes; current CLI cannot prove Keyring user identity. |
+| LOGIN-6 | Implementation incomplete; live environment needed | Establish App Server reconnect behavior after external login without interrupting original work. |
+| LOGIN-7 | Implementation incomplete; synthetic product path passed; live environment needed | Original Job question, cancel, result, and restart subsets passed; queue, transport ACK, and existing-thread combinations remain. |
+| LOGIN-8 | Live environment needed | Test the final candidate with the original Codex app login through a later refresh. |
+| LOGIN-9 | Live environment needed | Capture the actual refresh error without changing operating credentials. |
+| LOGIN-10 | Synthetic product path passed; live environment needed | Re-run final-source checks and installed user acceptance; previous timer failure cause remains unknown. |
+| LOGIN-11 | Live environment needed | Compare independent and shared-store multi-process refresh under separate authorization. |
+| LOGIN-12 | Implementation incomplete; live environment needed | Confirm external changes without a file revision or `account/updated` in the installed CLI. |
+| LOGIN-13 | Live environment needed | Verify real partial 401, usage/model failure, and turn behavior. |
+| LOGIN-14 | Synthetic product path passed; live environment needed | Verify installed policy changes and running workers. |
+| LOGIN-15 | Synthetic product path passed; live environment needed | Confirm installed effective-policy provenance and workspace restriction. |
+| LOGIN-16 | Live environment needed | Compare original and selected CLI refresh behavior with documented upstream evidence. |
+| AUTHSEL-1 | Synthetic product path passed; live environment needed | Exercise both same-user and different-user login in the installed app. |
+| AUTHSEL-2 | Synthetic product path passed; live environment needed | Three executable/profile combinations passed synthetically; remote and billed paths remain. |
+| AUTHSEL-3 | Synthetic product path passed; live environment needed; support scope decision needed | Known homes and saved profiles are selectable without a folder picker; real multi-home and unsupported Keyring/API ownership remain. |
+| AUTHSEL-4 | Implementation incomplete; synthetic product path passed; live environment needed | Candidate and activation retry paths exist; cross-Helper late login/cancellation and actual failure recovery remain. |
+| AUTHSEL-5 | Synthetic product path passed; live environment needed | Verify persistent profiles through a real app upgrade and CLI replacement. |
+| AUTHSEL-6 | Synthetic product path passed; live environment needed | Exercise every real auth mode pair, account change, and key rotation. |
+| AUTHSEL-7 | Implementation incomplete; synthetic product path passed; live environment needed | Original-worker HTTP and synthetic restart paths passed; queue, transport ACK, result collection, and real reconnection remain. |
+| AUTHSEL-8 | Implementation incomplete; synthetic product path passed; live environment needed | Synthetic stopped-runtime reconciliation and retry pass; cross-Helper cancellation, late callbacks, and installed recovery remain. |
+| AUTHSEL-9 | Synthetic product path passed; live environment needed | Verify actual credential-store logout and API-key removal. |
+| AUTHSEL-10 | Synthetic product path passed; live environment needed | Real API execution and cost require separate approval. |
+| AUTHSEL-11 | Live environment needed | Inspect final built UI and logs for secret exposure. |
+| AUTHSEL-12 | Implementation incomplete; synthetic product path passed; live environment needed; support scope decision needed | Verified candidate may show workspace name; current CLI, remote sources, models, organization/project, and exact cost target remain unresolved. |
+| AUTHSEL-13 | Synthetic product path passed; live environment needed; support scope decision needed | Confirm installed managed policy and determine verifiable Keyring/API combinations. |
+| AUTHSEL-14 | Implementation incomplete; synthetic product path passed; live environment needed | Fixed-owner sessions and Job result paths passed; app resume, skills, and settings combinations remain. |
+| AUTHSEL-15 | Live environment needed | Verify existing independent/API installations and upgrades. |
+| AUTHSEL-16 | Implementation incomplete; synthetic product path passed; live environment needed | Complete remaining continuity combinations and final-source candidate/live acceptance. |
+
+The `not-delivered` question retry and fixed `CODEX_HOME` warning are accepted
+corrections. They stay in regression coverage and are not open implementation
+items. A Keyring warning only explains a limitation; it does not count as
+Keyring support. No operating credentials, app installation, paid API call,
+merge, or issue closure is authorized by this status record.
+
+### Selected CLI and credential-store support
+
+| Combination | Current result | Next evidence or decision |
+| --- | --- | --- |
+| Several app/terminal/Bridge CLI executables using one known file-backed home | The executable is selected separately from the one credential source; synthetic three-CLI product paths pass. | Installed combination and refresh acceptance. |
+| Several previously used external homes or saved Bridge-owned file profiles | Known homes and profiles are selectable without a folder picker or credential copy; synthetic paths pass. | Real multi-home/profile acceptance. |
+| File-backed ChatGPT login | User and workspace can be checked from the existing credential and selected App Server; synthetic paths pass. | Live login, refresh, and account-change acceptance. |
+| File-backed API key in a known or Bridge-owned profile | Synthetic three-CLI execution and API billing-route separation pass. | Real key storage and any billed call require separate approval. |
+| Keyring ChatGPT with stable `account/sessions/list` user/workspace evidence | The optional Bridge path passes synthetic worker tests. | Confirm a selected CLI actually exposes the method, then perform live Keyring acceptance. |
+| Keyring ChatGPT on inspected CLI `0.158.0-alpha.2.1` or isolated `0.159.0-alpha.9` | Their generated experimental schemas omit `account/sessions/list`; new execution is blocked, with an explanatory local warning. | **Support scope decision needed:** a safe user identity source or an explicit product scope change. The warning is not support. |
+| Managed Keyring API credentials without verifiable owner | New execution is blocked. | **Implementation or support scope decision needed:** establish owner and billing target without guessing from a stale file or ambient key. |
+
+The isolated `0.159.0-alpha.9` schema check did not install or select that
+CLI, read a real credential, or run a paid request. Neither the selected
+CLI's `account/read` email nor a workspace ID alone distinguishes users who
+share a workspace.
 
 | #208 condition | Current evidence and outstanding work |
 | --- | --- |
@@ -125,7 +202,7 @@ app acceptance run.
 | LOGIN-7 | Partial: no automatic login/API fallback; authentication switch blocks protected stored work, interactions, and undelivered results. New Jobs and schema-30 sessions persist a non-secret owner boundary; old completed results remain stored but cannot be replayed as executions. Original Job completion, failure, and interruption now record their session under the Job's admitted owner across an external login change and terminal commit retry. Active mismatched Jobs remain readable but cannot recover, be ACKed, cancelled, answered, or steered under a new owner without exact original-executor proof. A question blocked before upstream send records `not-delivered` and can retry the identical request after original-worker proof returns; a lost upstream reply remains `uncertain` and cannot resend. An HTTP Bridge restart with B leaves A's admitted Job dormant; a later restart with A recovers the same retained result under A and ACKs once, using a synthetic executor. Queue, transport ACK, and existing-thread behavior still need broader product acceptance. |
 | LOGIN-8 | Partial live: after a separately authorized replacement, installed build `b24bb2616935:dfbdb90c8b89` launched with matching Helper/bridge builds, connected tunnel, preserved reported Codex login availability, and opened schema 30. The original Codex app login through a later refresh and this subsequent source revision were not installed or exercised. |
 | LOGIN-9 | Synthetic/source audit: no raw credential copy, logout, deletion, or forced refresh was added to routine diagnostics. Actual refresh error type was not observed. |
-| LOGIN-10 | Partial: after the menu-bar usage correction, API-profile matrix, original-Job question retry fix, previously used external-home selection, original-worker cancellation, and Bridge restart owner-recovery HTTP cases, the full four-worker Node suite passed 1,063/1,063 tests in 109 files, including the process-probe elapsed-time assertion. The prior 7-second failure was not reproduced; its timer diagnostic was not retained, so its cause remains unclassified and the timeout was not relaxed. The focused three-installation matrix passed 10/10, TypeScript build/release/localization passed, and macOS passed 215 Swift tests (2 skipped) plus nine-language checks. Settings visual acceptance includes the explicit `CODEX_HOME` warning and previously used location; the isolated pinned App Server schema check is separate evidence. The installed `b24bb26` bundle predates these source corrections; real-account and user acceptance remain separate. |
+| LOGIN-10 | Partial: after the menu-bar usage correction, API-profile matrix, original-Job question retry fix, previously used external-home selection, original-worker cancellation, Bridge restart owner-recovery HTTP case, and local workspace-name display, the full four-worker Node suite passed 1,064/1,064 tests in 109 files, including the process-probe elapsed-time assertion. The prior 7-second failure was not reproduced; its timer diagnostic was not retained, so its cause remains unclassified and the timeout was not relaxed. The focused three-installation matrix passed 10/10, TypeScript build/release/localization passed, and macOS passed 215 Swift tests (2 skipped) plus nine-language checks. Settings visual acceptance includes the explicit `CODEX_HOME` warning and previously used location; the isolated pinned App Server schema check is separate evidence. The installed `b24bb26` bundle predates these source corrections; real-account and user acceptance remain separate. |
 | LOGIN-11 | Live: independent-copy and no-copy shared-store multi-process refresh must be measured separately with the selected CLI; neither was injected into operating auth. |
 | LOGIN-12 | Partial: account observation is correlated and stale read results are rejected on local revision changes. External changes without file revision and missing `account/updated` need installed-CLI tests. |
 | LOGIN-13 | Partial: account/model/usage paths remain separate; fake candidate model checks are present. Real partial 401/refresh cases and actual turns remain unverified. |
@@ -146,11 +223,11 @@ app acceptance run.
 | AUTHSEL-9 | Partial: bridge disconnect leaves shared login untouched. Explicit inactive bridge-owned ChatGPT logout and API key removal exist with confirmation, effective storage-policy checks, and protected-work preflight; synthetic tests cover lost logout replies and shared-store preservation. Installed credential-store behavior remains unverified. |
 | AUTHSEL-10 | Synthetic: API switch needs billing confirmation and the execution key enters the selected CLI via stdin; no automatic API fallback. No billed real call was authorized. |
 | AUTHSEL-11 | Partial: private local selection state stores choices, account email labels, and opaque correlations, never tokens or API keys; key input avoids CLI arguments/logs, and local management remains outside GPT tools. Full built-artifact and UI/log inspection remains. |
-| AUTHSEL-12 | Partial: local setup/settings now distinguish the email and workspace fingerprint recorded at last apply from the latest observed workspace. Verified candidates and staged choices carry a workspace fingerprint and billing route from their own probe; shared API billing still requires explicit confirmation. A selected CLI without active-session identity support shows the shared Keyring ChatGPT limitation for a selectable or explicitly fixed shared home. Email and workspace hash do not prove ownership alone. Human-readable workspace/organization/project names, supported-model differences, exact cost target for unverified sources, and remote account details remain incomplete. |
+| AUTHSEL-12 | Partial: local setup/settings distinguish the email and workspace fingerprint recorded at last apply from the latest observed workspace. Verified candidates and staged choices carry a workspace fingerprint and billing route from their own probe. If a supported CLI reports a stable active user/session and a matching selected workspace, the local choice also displays that workspace's human-readable name; the name and email never prove ownership. Shared API billing still requires explicit confirmation. A selected CLI without active-session identity support shows the shared Keyring ChatGPT limitation for a selectable or explicitly fixed shared home. The inspected installed CLI cannot provide this optional workspace name. Current human-readable workspace/organization/project names, supported-model differences, exact cost target for unverified sources, and remote account details remain incomplete. |
 | AUTHSEL-13 | Partial: local method/store/workspace values share one parser. Candidate/shared probes and new admission reject conflicting effective method, workspace, and managed credential-store values. A managed Keyring/auto choice no longer treats a stale shared `auth.json` as ownership evidence; an unknown active owner blocks selection. Installed effective-policy provenance and actual workspace identity are not verified end to end. |
 | AUTHSEL-14 | Partial: schema-30 thread and Job metadata persist non-secret auth boundaries; legacy rows and completed results are retained but unowned threads cannot resume and an old request cannot be re-executed under a new connection. New owner boundaries include user and selected workspace; older workspace-only records stay stored but are not automatically attributed to a newly verified user. Original Job session results retain their admitted owner after an external login change, including terminal retry; session retention and in-memory rollback use that same owner. Unknown Keyring identities use a temporary process boundary until confirmed. Normal CLI replacement preserves the stable owner boundary, but an in-place replacement still requires runtime revalidation. The known-home choice now warns that conversations, skills, and settings may differ while history is retained. App resume, skills, and setting combinations need product acceptance. |
 | AUTHSEL-15 | Partial: absent saved choice defaults to existing shared auth, and explicit `CODEX_HOME` remains authoritative. Existing independent/API installations and their upgrade paths need installed acceptance. |
-| AUTHSEL-16 | Partial: full four-worker Node passed 1,063/1,063 tests in 109 files; the historical process-probe timing failure did not recur and remains unclassified. The selected-CLI/auth-source product matrix passed 10/10, covering explicit shared home, saved Bridge-owned ChatGPT/API profiles, and a previously configured external home across app, terminal, and Bridge CLI choices. Separate HTTP MCP product-path cases passed live original-worker question proof, pre-send block followed by proof recovery and one delivery, lost upstream reply without a resend, and original-worker cancellation after external login change. The question cases retain fixed-owner result persistence and exact ACK; cancellation stays blocked without live original-worker proof. An HTTP Bridge restart case confirms B leaves A's Job dormant and a later A restart recovers its retained result once, preserving A's session and ACKing the same Job. TypeScript and Swift UI build, 215 Swift tests (2 skipped), nine-language localization, and settings visual acceptance including a known external home and its continuity warning passed. The pinned App Server schema check passed separately at an earlier checkpoint; the selected installed CLI's isolated schema inspection confirms core compatibility without `account/sessions/list`. Installed `b24bb26` ran with matching Helper/bridge builds, a connected tunnel, and reported login availability, but it predates these source corrections. Candidate bundle identity is tracked in the PR verification; real-account, billed API, and user acceptance evidence remain outstanding. |
+| AUTHSEL-16 | Partial: full four-worker Node passed 1,064/1,064 tests in 109 files; the historical process-probe timing failure did not recur and remains unclassified. The selected-CLI/auth-source product matrix passed 10/10, covering explicit shared home, saved Bridge-owned ChatGPT/API profiles, and a previously configured external home across app, terminal, and Bridge CLI choices. Separate HTTP MCP product-path cases passed live original-worker question proof, pre-send block followed by proof recovery and one delivery, lost upstream reply without a resend, and original-worker cancellation after external login change. The question cases retain fixed-owner result persistence and exact ACK; cancellation stays blocked without live original-worker proof. An HTTP Bridge restart case confirms B leaves A's Job dormant and a later A restart recovers its retained result once, preserving A's session and ACKing the same Job. Helper lifecycle coverage now retries a pending choice successfully after a stopped-unconfirmed activation. TypeScript and Swift UI build, 215 Swift tests (2 skipped), nine-language localization, and settings visual acceptance including a known external home and its continuity warning passed. The pinned App Server schema check passed separately at an earlier checkpoint; the selected installed CLI's isolated schema inspection confirms core compatibility without `account/sessions/list`. Installed `b24bb26` ran with matching Helper/bridge builds, a connected tunnel, and reported login availability, but it predates these source corrections. Candidate bundle identity is tracked in the PR verification; real-account, billed API, and user acceptance evidence remain outstanding. |
 
 The previous checkpoint could not finish App Server schema reproducibility
 because the available CLI was `0.158.0-alpha.2.1` and the check requires its

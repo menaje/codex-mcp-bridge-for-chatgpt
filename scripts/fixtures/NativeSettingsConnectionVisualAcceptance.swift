@@ -141,12 +141,12 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
 
             settingsWindow.appearance = NSAppearance(named: .aqua)
             settingsWindow.setContentSize(NSSize(width: 980, height: 720))
-            let paneChecks: [(SettingsNavigationPane, String, String)] = [
-                (.modelExecution, "settings-model-execution-en-light.png", "Set default access"),
-                (.projects, "settings-projects-en-light.png", "Register and manage"),
-                (.codex, "settings-codex-en-light.png", "Changing Codex locations"),
-                (.connection, "settings-connection-en-light.png", "Choose this Mac"),
-                (.server, "settings-server-en-light.png", "safety limit")
+            let paneChecks: [(SettingsNavigationPane, String, [String])] = [
+                (.modelExecution, "settings-model-execution-en-light.png", ["Set default access"]),
+                (.projects, "settings-projects-en-light.png", ["Register and manage"]),
+                (.codex, "settings-codex-en-light.png", ["Workspace name", "Engineering workspace", "Changing Codex locations"]),
+                (.connection, "settings-connection-en-light.png", ["Choose this Mac"]),
+                (.server, "settings-server-en-light.png", ["safety limit"])
             ]
             for (pane, file, expectedText) in paneChecks {
                 model.requestedSettingsTab = pane.rawValue
@@ -157,7 +157,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                     settingsWindow,
                     named: file,
                     in: artifacts,
-                    expecting: [expectedText]
+                    expecting: expectedText
                 )
             }
             model.codexRuntime = try Self.codexRuntimeSnapshot(overrideActive: true)
@@ -788,6 +788,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                                               "home": "/Users/fixture/.codex-work",
                                               "canonicalHome": "/Users/fixture/.codex-work"]],
                               "appliedAccountEmail": "fixture@example.invalid",
+                              "appliedWorkspaceName": "Engineering workspace",
                               "appliedWorkspaceKey": "abcdef0123456789",
                               "appliedBillingTarget": "chatgpt-plan",
                               "effective": ["kind": "shared"], "overrideActive": overrideActive]

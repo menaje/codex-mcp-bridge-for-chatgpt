@@ -42,6 +42,9 @@ struct CodexAuthSelectionControls: View {
                 if let email = auth.appliedAccountEmail {
                     LabeledContent("macos.auth.emailAtSelection", value: email)
                 }
+                if let name = auth.appliedWorkspaceName {
+                    LabeledContent("macos.auth.workspaceName", value: name)
+                }
                 if let workspace = auth.appliedWorkspaceKey {
                     LabeledContent("macos.auth.workspaceAtSelection", value: String(workspace.prefix(12)))
                 }
@@ -87,6 +90,9 @@ struct CodexAuthSelectionControls: View {
                         }
                         if let email = auth.pendingAccountEmail {
                             LabeledContent("macos.auth.accountEmail", value: email)
+                        }
+                        if let name = auth.pendingWorkspaceName {
+                            LabeledContent("macos.auth.workspaceName", value: name)
                         }
                         if let workspace = auth.pendingWorkspaceKey {
                             LabeledContent("macos.auth.workspaceFingerprint", value: String(workspace.prefix(12)))
@@ -239,6 +245,9 @@ struct CodexAuthSelectionControls: View {
             LabeledContent("macos.auth.candidate", value: candidateStatus(candidate.status))
             if let email = candidate.accountEmail {
                 LabeledContent("macos.auth.accountEmail", value: email)
+            }
+            if let name = candidate.workspaceName {
+                LabeledContent("macos.auth.workspaceName", value: name)
             }
             if let workspace = candidate.workspaceKey {
                 LabeledContent("macos.auth.workspaceFingerprint", value: String(workspace.prefix(12)))

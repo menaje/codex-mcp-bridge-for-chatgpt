@@ -8,7 +8,8 @@ import { APP_SERVER_CAPABILITIES } from "../src/appServerUpstream.js";
 import { LazyCodexUpstream } from "../src/lazyUpstream.js";
 import { ContextualModelCatalog } from "../src/contextualModelCatalog.js";
 import type { CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
-import { codexChatgptOwnerKey, codexChatgptPrincipalKey, projectCodexAccount, estimateCodexCost, type CodexAccountSnapshot } from "../src/codexAccount.js";
+import { codexChatgptOwnerKey, codexChatgptPrincipalKey, localCodexAccountLabels,
+  projectCodexAccount, estimateCodexCost, type CodexAccountSnapshot } from "../src/codexAccount.js";
 import { JsonRpcProcess } from "../src/jsonRpcProcess.js";
 import { syntheticIdToken, syntheticVerifiedAccount } from "./fixtures/syntheticAuth.js";
 
@@ -741,6 +742,23 @@ createInterface({ input: process.stdin }).on("line", line => {
 });
 
 describe("account usage and billing projection", () => {
+  it("shows a local workspace name only for the stable selected session and routing", () => {
+    const account = { account: { type: "chatgpt", email: "person@example.invalid" },
+      workspaceRouting: { chatgptAccountId: "workspace-w" } };
+    const session = (userId: string) => ({ activeSessionId: "session-a", sessions: [{
+      sessionId: "session-a", userId, selectedWorkspaceAccountId: "workspace-w", isActive: true,
+      workspaces: [{ accountId: "workspace-other", name: "Unselected" },
+        { accountId: "workspace-w", name: "Engineering" }]
+    }] });
+    expect(localCodexAccountLabels(account, { before: session("user-a"), after: session("user-a") }))
+      .toEqual({ email: "person@example.invalid", workspaceName: "Engineering" });
+    expect(localCodexAccountLabels(account, { before: session("user-a"), after: session("user-b") }).workspaceName)
+      .toBeNull();
+    expect(localCodexAccountLabels({ ...account, workspaceRouting: { chatgptAccountId: "workspace-other" } },
+      { before: session("user-a"), after: session("user-a") }).workspaceName).toBeNull();
+    expect(projectCodexAccount(account, null, 1,
+      { before: session("user-a"), after: session("user-a") })).not.toHaveProperty("workspaceName");
+  });
   it("separates workspaces with the same email and keeps email-only identity unverified", () => {
     const account = { account: { type: "chatgpt", email: "same@example.invalid" } };
     const first = projectCodexAccount(account, { accountId: "workspace-a" });

@@ -350,6 +350,7 @@ enum BridgeGeneratedLocalization {
         "macos.auth.waiting": "The current connection stays in use until existing work is safe to finish.",
         "macos.auth.workspaceAtSelection": "Workspace fingerprint at last apply",
         "macos.auth.workspaceFingerprint": "Workspace fingerprint",
+        "macos.auth.workspaceName": "Workspace name",
         "macos.auth.workspaceObserved": "Last observed workspace fingerprint",
         "macos.authenticationmethod": "Authentication method",
         "macos.automaticallowlist": "Automatic Allowlist",
