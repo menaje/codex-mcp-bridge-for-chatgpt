@@ -351,6 +351,130 @@ describe("current bridge tool contracts", () => {
     }
   );
 
+  it("recovers an original Job through HTTP only after a restarted bridge confirms its owner", async () => {
+    const home = path.join(root, ".codex");
+    const authFile = path.join(home, "auth.json");
+    const stateFile = path.join(root, "state.sqlite");
+    const environment = { HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") };
+    const login = (userId: string) => JSON.stringify({ auth_mode: "chatgpt", tokens: {
+      account_id: "shared-workspace", id_token: syntheticIdToken(userId, "shared-workspace")
+    } });
+    await mkdir(home);
+    await writeFile(authFile, login("user-a"));
+    config.codexService = new CodexService(environment);
+    await config.codexService.assertCurrentAdmission();
+
+    await client.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    upstream = new FixtureUpstream();
+    Object.assign(upstream, { supportsExecutionRecovery: () => true });
+    server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+    client = new Client({ name: "original-job-before-restart", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+    await client.connect(new StreamableHTTPClientTransport(endpoint));
+
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const admitted = await client.callTool({ name: "codex_task", arguments: {
+      scopeId: randomUUID(), requestId: randomUUID(),
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Keep the original Job running across a bridge restart.",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+      selection
+    }, _meta: metadata });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+    await hold.started;
+    hold.assign("original-restart-thread");
+    const original = state.listJobs().find(job => job.jobId === jobId)!;
+    const assignment: UpstreamWorkerAssignment = {
+      backendKind: "app-server", workerId: "fixture-worker", workerGeneration: 1,
+      upstreamRequestId: fixtureTurnId, threadId: "original-restart-thread"
+    };
+    expect(original.authBoundary).toMatch(/^[a-f0-9]{64}$/);
+    expect(original).toMatchObject({ status: "running", threadId: assignment.threadId,
+      workerId: assignment.workerId, workerGeneration: assignment.workerGeneration });
+
+    const reopen = async (userId: string, nextUpstream: FixtureUpstream) => {
+      await client.close();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      state.close();
+      await writeFile(authFile, login(userId));
+      config.codexService = new CodexService(environment);
+      const startupAdmission = vi.spyOn(config.codexService, "assertCurrentAdmission");
+      state = new BridgeStateStore({ file: stateFile });
+      upstream = nextUpstream;
+      server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+      client = new Client({ name: `original-job-after-restart-${userId}`, version: "1.0.0" },
+        { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+      await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+      endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+      await client.connect(new StreamableHTTPClientTransport(endpoint));
+      return startupAdmission;
+    };
+
+    const wrongOwnerRecovery = vi.fn();
+    const wrongOwner = new FixtureUpstream();
+    Object.assign(wrongOwner, { supportsExecutionRecovery: () => true,
+      recoverExecution: wrongOwnerRecovery });
+    const foreignAdmission = await reopen("user-b", wrongOwner);
+    await eventually(() => foreignAdmission.mock.calls.length === 1);
+    await foreignAdmission.mock.results[0]!.value;
+    await Promise.resolve();
+    expect(config.codexService!.currentExecutionAuthBoundary()).not.toBe(original.authBoundary);
+    expect(wrongOwnerRecovery).not.toHaveBeenCalled();
+    expect(state.listJobs()).toContainEqual(expect.objectContaining({
+      jobId, status: "running", authBoundary: original.authBoundary
+    }));
+    const foreignStatus = await client.callTool({ name: "codex_status", _meta: metadata,
+      arguments: { query: { kind: "job", id: jobId } } });
+    expect(foreignStatus.isError, JSON.stringify(foreignStatus)).not.toBe(true);
+    expect(foreignStatus.structuredContent).toMatchObject({ items: [expect.objectContaining({
+      id: jobId, state: "running"
+    })] });
+
+    const recoverExecution = vi.fn((_jobId: string, _onProgress: (progress: CodexProgress) => void,
+      onAssigned: (value: UpstreamWorkerAssignment) => void) => {
+      onAssigned(assignment);
+      return Promise.resolve({ structuredContent: { threadId: assignment.threadId, turnStatus: "completed" },
+        content: [{ type: "text" as const, text: "Original retained result after restart." }] });
+    });
+    const acknowledgeExecution = vi.fn();
+    const sameOwner = new FixtureUpstream();
+    Object.assign(sameOwner, { supportsExecutionRecovery: () => true, recoverExecution,
+      ownsRetainedResult: (_jobId: string, value: UpstreamWorkerAssignment) =>
+        _jobId === jobId && value.workerId === assignment.workerId &&
+        value.workerGeneration === assignment.workerGeneration &&
+        value.upstreamRequestId === assignment.upstreamRequestId &&
+        value.threadId === assignment.threadId,
+      acknowledgeExecution });
+    await reopen("user-a", sameOwner);
+    await eventually(() => state.listJobs().some(job => job.jobId === jobId && job.status === "completed"), 5_000);
+    expect(recoverExecution).toHaveBeenCalledExactlyOnceWith(jobId, expect.any(Function), expect.any(Function));
+    expect(state.listJobs()).toContainEqual(expect.objectContaining({
+      jobId, status: "completed", authBoundary: original.authBoundary,
+      result: expect.objectContaining({ content: [{ type: "text", text: "Original retained result after restart." }] })
+    }));
+    expect(state.listSessions()).toContainEqual(expect.objectContaining({
+      threadId: assignment.threadId, authBoundary: original.authBoundary
+    }));
+    await eventually(() => acknowledgeExecution.mock.calls.length === 1);
+    expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(jobId);
+    expect(sameOwner.calls).toHaveLength(0);
+    const recoveredStatus = await client.callTool({ name: "codex_status", _meta: metadata,
+      arguments: { query: { kind: "job", id: jobId } } });
+    expect(recoveredStatus.isError, JSON.stringify(recoveredStatus)).not.toBe(true);
+    expect(recoveredStatus.structuredContent).toMatchObject({ items: [expect.objectContaining({
+      id: jobId, state: "completed", answer: expect.stringContaining("Original retained result after restart.")
+    })] });
+  });
+
   it.each([
     { scenario: "live original worker", initialWorkerProof: true, loseReply: false },
     { scenario: "worker proof recovered before send", initialWorkerProof: false, loseReply: false },
