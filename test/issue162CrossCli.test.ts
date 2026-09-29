@@ -28,7 +28,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function fakeCli(file: string, id: string, log: string): void {
+function fakeCli(file: string, id: string, log: string, authMode: "chatgpt" | "apiKey" = "chatgpt"): void {
   const schema = new URL("./fixtures/app-server-schema-fixture.mjs", import.meta.url).href;
   const worker = new URL("./fixtures/fake-codex-app-server.mjs", import.meta.url).href;
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -48,12 +48,17 @@ if (kind === "version") { console.log("codex-cli 0.153.3"); process.exit(0); }
 if (kind === "probe") await import(${JSON.stringify(schema)});
 if (kind === "login") process.exit(0);
 if (kind === "models") { console.log(JSON.stringify({models:[{slug:"gpt-fixture",display_name:"Fixture",default_reasoning_level:"low",supported_reasoning_levels:[{effort:"low"}],visibility:"list"}]})); process.exit(0); }
-if (kind === "task-worker") await import(${JSON.stringify(worker)});
+if (kind === "task-worker") {
+  if (${JSON.stringify(authMode)} === "apiKey") process.argv.push("--api-account");
+  await import(${JSON.stringify(worker)});
+}
 else createInterface({input:process.stdin}).on("line", line => {
   const request = JSON.parse(line);
   if (request.id === undefined) return;
+  if (request.method === "account/rateLimits/read") appendFileSync(${JSON.stringify(log)},
+    JSON.stringify({cli:${JSON.stringify(id)},kind:"usage",codexHome:process.env.CODEX_HOME || null}) + "\\n");
   const result = request.method === "initialize" ? {userAgent:"fixture",platformFamily:"unix",platformOs:"test"} :
-    request.method === "account/read" ? {account:{type:"chatgpt",email:"fixture@example.invalid",planType:"pro"},requiresOpenaiAuth:true} :
+    request.method === "account/read" ? {account:${authMode === "apiKey" ? '{type:"apiKey"}' : '{type:"chatgpt",email:"fixture@example.invalid",planType:"pro"}'},requiresOpenaiAuth:true} :
     request.method === "account/rateLimits/read" ? {rateLimits:null} : {};
   process.stdout.write(JSON.stringify({id:request.id,result}) + "\\n");
 });
@@ -193,7 +198,10 @@ describe("issue 162 selected CLI across product entry points", () => {
     }
   }, 30_000);
 
-  it.each(["app", "terminal", "bridge"] as const)("uses the %s CLI with a saved Bridge-owned login without switching auth sources", async choice => {
+  it.each([
+    ["app", "bridge-chatgpt"], ["terminal", "bridge-chatgpt"], ["bridge", "bridge-chatgpt"],
+    ["app", "bridge-api"], ["terminal", "bridge-api"], ["bridge", "bridge-api"]
+  ] as const)("uses the %s CLI with a saved %s profile without switching auth sources", async (choice, kind) => {
     const root = mkdtempSync(path.join(tmpdir(), `issue210-${choice}-`));
     roots.push(root);
     const log = path.join(root, "invocations.jsonl");
@@ -205,16 +213,19 @@ describe("issue 162 selected CLI across product entry points", () => {
     const envFile = path.join(configDirectory, ".env");
     const appCli = path.join(root, "Codex.app", "Contents", "Resources", "codex");
     const terminalCli = path.join(root, "terminal", "codex");
-    fakeCli(appCli, "app", log);
-    fakeCli(terminalCli, "terminal", log);
+    const authMode = kind === "bridge-api" ? "apiKey" : "chatgpt";
+    fakeCli(appCli, "app", log, authMode);
+    fakeCli(terminalCli, "terminal", log, authMode);
     mkdirSync(bin, { recursive: true });
     symlinkSync(terminalCli, path.join(bin, "codex"));
     mkdirSync(configDirectory, { recursive: true, mode: 0o700 });
     mkdirSync(codexHome, { recursive: true, mode: 0o700 });
     writeFileSync(path.join(codexHome, "config.toml"), 'cli_auth_credentials_store = "file"\n', { mode: 0o600 });
-    writeFileSync(path.join(codexHome, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: {
-      account_id: "owned-workspace", id_token: syntheticIdToken("owned-user", "owned-workspace")
-    } }), { mode: 0o600 });
+    writeFileSync(path.join(codexHome, "auth.json"), JSON.stringify(kind === "bridge-api"
+      ? { auth_mode: "apiKey", OPENAI_API_KEY: "sk-synthetic-owned-profile" }
+      : { auth_mode: "chatgpt", tokens: {
+        account_id: "owned-workspace", id_token: syntheticIdToken("owned-user", "owned-workspace")
+      } }), { mode: 0o600 });
     writeFileSync(envFile, `CODEX_MCP_BRIDGE_RUNTIME_HOME=${runtimeHome}\n`, { mode: 0o600 });
     process.env.HOME = root;
     process.env.PATH = `${bin}${path.delimiter}${originalEnvironment.PATH || "/usr/bin:/bin"}`;
@@ -226,7 +237,7 @@ describe("issue 162 selected CLI across product entry points", () => {
       protocolProbe: async () => inspectClientRequestContract(protocolContract),
       installer: async ({ directory }) => {
         const command = path.join(directory, "codex");
-        fakeCli(command, "bridge", log);
+        fakeCli(command, "bridge", log, authMode);
         return command;
       },
       validateInstall: async () => {}
@@ -234,7 +245,7 @@ describe("issue 162 selected CLI across product entry points", () => {
     await selected.install("install", "0.153.3");
     writeFileSync(path.join(runtimeHome, "auth-selection.json"), JSON.stringify({
       schemaVersion: 1, revision: 1, generation: 1,
-      applied: { kind: "bridge-chatgpt", profileId }, pending: null, candidate: null
+      applied: { kind, profileId }, pending: null, candidate: null
     }), { mode: 0o600 });
     const candidates = await selected.discover();
     expect(new Set(candidates.map(item => item.source))).toEqual(new Set(["app", "terminal", "bridge"]));
@@ -249,14 +260,25 @@ describe("issue 162 selected CLI across product entry points", () => {
       registeredProjectRoots: () => [] });
     const environment = { HOME: root, PATH: process.env.PATH, ...codexChildEnvironment(envFile, process.env) };
     expect(environment).toMatchObject({ CODEX_HOME: codexHome,
-      CODEX_MCP_BRIDGE_AUTH_SOURCE: "bridge-chatgpt", CODEX_MCP_BRIDGE_AUTH_GENERATION: "1" });
+      CODEX_MCP_BRIDGE_AUTH_SOURCE: kind, CODEX_MCP_BRIDGE_AUTH_GENERATION: "1" });
     const config = loadConfig({ ...environment, CODEX_MCP_BRIDGE_NO_AUTH: "1" });
     config.upstreamPoolSize = 1;
     const execution = createExecutionRuntime(config, {}, environment);
     try {
       const status = await supervisor.codexRuntime({ action: "status", includeAccount: true });
       expect(status.selection?.source).toBe(choice);
-      expect(status.authSelection?.effective).toEqual({ kind: "bridge-chatgpt", profileId });
+      expect(status.selection?.protocol?.accountSessionsList).toBe(false);
+      expect(status.authSelection?.effective).toEqual({ kind, profileId });
+      expect(status.account?.authMode).toBe(kind === "bridge-api" ? "api-key" : "chatgpt");
+      expect(status.account?.billing?.kind).toBe(kind === "bridge-api" ? "api" : "chatgpt-plan");
+      const usageCalls = observations(log).filter(item => item.kind === "usage");
+      if (kind === "bridge-chatgpt") {
+        expect(usageCalls.some(item => item.cli === choice && item.codexHome === codexHome)).toBe(true);
+      } else {
+        // API billing is distinct from ChatGPT plan limits; do not infer costs
+        // by reading the selected CLI's plan-usage endpoint.
+        expect(usageCalls).toEqual([]);
+      }
       const catalog = createModelCatalog(config, {
         listModels: async () => { throw new Error("fixture App Server catalog unavailable"); }
       } as unknown as CodexUpstream);

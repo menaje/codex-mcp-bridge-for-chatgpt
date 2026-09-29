@@ -54991,6 +54991,19 @@
           }
         }
       },
+      "macos.auth.keyringSessionUnsupported": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "This CLI cannot verify a Keyring ChatGPT user. File-backed sign-in may still work." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "이 CLI는 Keyring의 ChatGPT 사용자를 확인할 수 없습니다. 파일에 저장된 로그인은 사용 가능 여부를 별도로 확인합니다." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "この CLI では Keyring の ChatGPT ユーザーを確認できません。ファイルに保存されたログインは利用できる場合があります。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "此 CLI 无法验证 Keyring 中的 ChatGPT 用户。文件存储的登录可能仍可使用。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "此 CLI 無法驗證 Keyring 中的 ChatGPT 使用者。儲存於檔案的登入可能仍可使用。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Esta CLI no puede verificar al usuario de ChatGPT en Keyring. El inicio de sesión guardado en un archivo podría funcionar." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Cette CLI ne peut pas vérifier l’utilisateur ChatGPT dans le trousseau. La connexion enregistrée dans un fichier peut fonctionner." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Diese CLI kann den ChatGPT-Benutzer im Schlüsselbund nicht verifizieren. Eine dateibasierte Anmeldung kann weiterhin funktionieren." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Esta CLI não consegue verificar o usuário do ChatGPT no Keyring. Um login salvo em arquivo ainda pode funcionar." } }
+        }
+      },
       "macos.auth.sharedHint": {
         "localizations": {
           "en": {

@@ -319,6 +319,7 @@ enum BridgeGeneratedLocalization {
         "macos.auth.disconnectHint": "Stop using an authentication source for new bridge work. This does not sign out the Codex app.",
         "macos.auth.emailAtSelection": "Account email at last apply",
         "macos.auth.identityUnverified": "Account or workspace ID could not be verified.",
+        "macos.auth.keyringSessionUnsupported": "This CLI cannot verify a Keyring ChatGPT user. File-backed sign-in may still work.",
         "macos.auth.loginFailed": "Sign-in failed; try again",
         "macos.auth.loginInProgress": "Sign-in in progress",
         "macos.auth.loginUnconfirmed": "Sign-in result not confirmed; verify account",

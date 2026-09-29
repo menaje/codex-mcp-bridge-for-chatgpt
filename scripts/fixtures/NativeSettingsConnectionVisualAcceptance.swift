@@ -144,7 +144,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             let paneChecks: [(SettingsNavigationPane, String, String)] = [
                 (.modelExecution, "settings-model-execution-en-light.png", "Set default access"),
                 (.projects, "settings-projects-en-light.png", "Register and manage"),
-                (.codex, "settings-codex-en-light.png", "Use existing Codex login"),
+                (.codex, "settings-codex-en-light.png", "Keyring ChatGPT user"),
                 (.connection, "settings-connection-en-light.png", "Choose this Mac"),
                 (.server, "settings-server-en-light.png", "safety limit")
             ]
@@ -759,7 +759,8 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
     nonisolated private static func codexRuntimeSnapshot() throws -> CodexRuntimeSnapshot {
         let selection: [String: Any] = [
             "id": "visual-codex", "source": "terminal", "command": "/fixture/codex",
-            "physicalPath": "/fixture/codex", "version": "0.153.3", "available": true, "compatible": true
+            "physicalPath": "/fixture/codex", "version": "0.153.3", "available": true, "compatible": true,
+            "protocol": ["accountSessionsList": false]
         ]
         return try decode(CodexRuntimeSnapshot.self, [
             "selection": selection, "candidates": [selection], "selectionRequired": false,
