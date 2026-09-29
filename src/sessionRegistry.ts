@@ -268,8 +268,9 @@ export class SessionRegistry {
   private matchesBoundary(session: TrackedCodexSession,
     boundary: { key: string; allowLegacyShared: boolean } | undefined): boolean {
     if (!boundary) return true;
-    return session.authBoundary === boundary.key ||
-      session.authBoundary === undefined && boundary.allowLegacyShared;
+    // A legacy row has no evidence of its creator's account. Keep it in
+    // storage for history, but never authorize resume under a current login.
+    return session.authBoundary === boundary.key;
   }
 
   private currentAuthBoundary(): { key: string; allowLegacyShared: boolean } | undefined {

@@ -17,6 +17,39 @@ const PROJECT_REF_A = "prj_AAAAAAAAAAAAAAAAAAAAAA";
 const PROJECT_REF_B = "prj_BBBBBBBBBBBBBBBBBBBBBB";
 
 describe("CodexJobRegistry persistence", () => {
+  it("retains an old result for history but rejects execution replay under a new authentication owner", async () => {
+    const root = temporaryRoot();
+    const file = path.join(root, "state.sqlite");
+    const firstOwner = "a".repeat(64), secondOwner = "b".repeat(64);
+    const store = new BridgeStateStore({ file });
+    const first = new CodexJobRegistry({ stateStore: store, allowedRoots: [root], authBoundary: () => firstOwner });
+    const job = first.start(jobInput(root), async () => result("original-owner"));
+    await job.promise;
+    expect(store.listJobs()[0]).toMatchObject({ jobId: job.jobId, authBoundary: firstOwner });
+    store.close();
+
+    const reopened = new BridgeStateStore({ file });
+    try {
+      const second = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root], authBoundary: () => secondOwner });
+      expect(second.get(job.jobId)?.status).toBe("completed");
+      expect(() => second.findRequest(SCOPE_A, REQUEST_A, job.requestHash)).toThrow("CODEX_AUTH_JOB_BOUNDARY");
+    } finally { reopened.close(); }
+  });
+
+  it("refuses to recover a still active Job with another authentication owner", () => {
+    const root = temporaryRoot(), file = path.join(root, "state.sqlite");
+    const store = new BridgeStateStore({ file });
+    const first = new CodexJobRegistry({ stateStore: store, allowedRoots: [root], authBoundary: () => "a".repeat(64) });
+    first.start(jobInput(root), () => new Promise<ToolResult>(() => undefined));
+    store.close();
+    const reopened = new BridgeStateStore({ file });
+    try {
+      expect(() => new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => "b".repeat(64), recoverExecutions: true })).toThrow("CODEX_AUTH_JOB_BOUNDARY");
+      expect(reopened.listJobs()[0]?.status).toBe("running");
+    } finally { reopened.close(); }
+  });
+
   it("bounds shared Job wait listeners and returns their slots on abort and completion", async () => {
     const root = temporaryRoot();
     const registry = persistentRegistry(root, path.join(root, "state.sqlite"));

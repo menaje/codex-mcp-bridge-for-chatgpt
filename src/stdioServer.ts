@@ -63,6 +63,7 @@ export function createStdioBridgeRuntime(
     authBoundary: config.codexService ? () => config.codexService!.sessionAuthBoundary() : undefined
   });
   const jobs = new CodexJobRegistry({
+    authBoundary: config.codexService ? () => config.codexService!.sessionAuthBoundary().key : undefined,
     maxConcurrentJobs: config.maxConcurrentJobs,
     ttlMs: config.jobTtlMs,
     maxJobs: config.maxRetainedJobs,

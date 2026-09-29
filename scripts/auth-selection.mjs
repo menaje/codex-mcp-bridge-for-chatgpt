@@ -30,7 +30,13 @@ export function readAuthSelection(environment = process.env) {
   if (state?.schemaVersion !== 1 ||
       (state.generation !== undefined && (!Number.isSafeInteger(state.generation) || state.generation < 0)) ||
       !valid(state.applied) ||
-      (state.pending !== null && !valid(state.pending))) {
+      (state.pending !== null && !valid(state.pending)) ||
+      (state.activation !== undefined && state.activation !== null &&
+        (typeof state.activation !== "object" ||
+          !/^[a-f0-9-]{36}$/.test(state.activation.id || "") ||
+          !valid(state.activation.from) || !valid(state.activation.to) ||
+          !Number.isSafeInteger(state.activation.generation) || state.activation.generation < 0 ||
+          !["starting", "uncertain"].includes(state.activation.status)))) {
     throw new Error("CODEX_AUTH_SELECTION_INVALID: The saved authentication selection is invalid.");
   }
   return state;
@@ -43,6 +49,15 @@ export function desiredAuthConnection(environment = process.env) {
 
 export function desiredAuthSelection(environment = process.env) {
   const state = readAuthSelection(environment);
+  if (state?.activation) {
+    if (environment.CODEX_MCP_BRIDGE_AUTH_ACTIVATION_ID === state.activation.id &&
+        state.activation.status === "starting") {
+      return { connection: state.activation.to, generation: state.activation.generation };
+    }
+    if (state.activation.status === "uncertain" || environment.CODEX_MCP_BRIDGE_AUTH_ACTIVATION_ID) {
+      throw new Error("CODEX_AUTH_ACTIVATION_UNCERTAIN: The authentication activation result requires reconciliation.");
+    }
+  }
   return { connection: state?.applied || { kind: "shared" },
     generation: state?.generation || 0 };
 }

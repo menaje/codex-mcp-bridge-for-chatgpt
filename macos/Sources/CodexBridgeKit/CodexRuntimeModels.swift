@@ -106,15 +106,31 @@ public struct CodexAuthCandidate: Codable, Sendable, Equatable {
     public let connection: CodexAuthConnection
     public let status: String
     public let accountKey: String?
+    public let accountEmail: String?
     public let verifiedCli: String?
     public let verifiedAt: String?
 }
 
 public struct CodexAuthSelection: Codable, Sendable, Equatable {
+    public struct Activation: Codable, Sendable, Equatable {
+        public let id: String
+        public let to: CodexAuthConnection
+        public let generation: Int
+        public let status: String
+    }
+    public struct OwnedProfile: Codable, Sendable, Equatable, Identifiable {
+        public let id: String
+        public let kind: String
+        public let status: String
+    }
     public let revision: Int
     public let applied: CodexAuthConnection
+    public let appliedAccountEmail: String?
     public let pending: CodexAuthConnection?
+    public let pendingAccountEmail: String?
     public let candidate: CodexAuthCandidate?
+    public let activation: Activation?
+    public let profiles: [OwnedProfile]?
     public let overrideActive: Bool
     public let effective: CodexAuthConnection
 }
@@ -136,13 +152,16 @@ public struct CodexRuntimeRequest: Encodable, Sendable {
     public var preferences: CodexRuntimePreferences?
     public var authKind: String?
     public var authCandidateId: String?
+    public var authProfileId: String?
     public var authRevision: Int?
     public var authApiKey: String?
     public var authBillingConfirmed: Bool?
+    public var authRemovalConfirmed: Bool?
 
     public init(action: String, kind: String? = nil, includeAccount: Bool? = nil, version: String? = nil, billing: CodexBillingInput? = nil, selectionId: String? = nil, preferences: CodexRuntimePreferences? = nil,
-                authKind: String? = nil, authCandidateId: String? = nil, authRevision: Int? = nil,
-                authApiKey: String? = nil, authBillingConfirmed: Bool? = nil) {
+                authKind: String? = nil, authCandidateId: String? = nil, authProfileId: String? = nil,
+                authRevision: Int? = nil, authApiKey: String? = nil,
+                authBillingConfirmed: Bool? = nil, authRemovalConfirmed: Bool? = nil) {
         self.includeAccount = includeAccount
         self.billing = billing
         self.version = version
@@ -152,9 +171,11 @@ public struct CodexRuntimeRequest: Encodable, Sendable {
         self.preferences = preferences
         self.authKind = authKind
         self.authCandidateId = authCandidateId
+        self.authProfileId = authProfileId
         self.authRevision = authRevision
         self.authApiKey = authApiKey
         self.authBillingConfirmed = authBillingConfirmed
+        self.authRemovalConfirmed = authRemovalConfirmed
     }
 }
 
@@ -193,6 +214,7 @@ public struct CodexAccountUsage: Codable, Sendable, Equatable {
     public let authMode: String
     public let authenticated: Bool
     public let accountKey: String?
+    public let ownershipKey: String?
     public let planType: String?
     public var windows: [Window]
     public var credits: Credits?
@@ -219,8 +241,8 @@ public struct CodexAccountUsage: Codable, Sendable, Equatable {
         return balance
     }
     public func sharesKnownAccount(with other: Self) -> Bool {
-        guard let accountKey, !accountKey.isEmpty else { return false }
-        return authMode == other.authMode && accountKey == other.accountKey
+        guard let ownershipKey, !ownershipKey.isEmpty else { return false }
+        return authMode == other.authMode && ownershipKey == other.ownershipKey
     }
 
     public func retainingUnavailableUsage(from previous: Self) -> Self {

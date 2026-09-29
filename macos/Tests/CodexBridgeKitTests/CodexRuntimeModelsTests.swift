@@ -22,6 +22,8 @@ final class CodexRuntimeModelsTests: XCTestCase {
         XCTAssertFalse(first.sharesKnownAccount(with: try account(key: "two")))
         XCTAssertFalse(first.sharesKnownAccount(with: try account(mode: "api-key", key: "one")))
         XCTAssertFalse(try account().sharesKnownAccount(with: account()))
+        let sameEmail = try account(key: "one", displayKey: "same-email")
+        XCTAssertFalse(sameEmail.sharesKnownAccount(with: try account(key: "two", displayKey: "same-email")))
     }
 
     func testSettingsPollsFastOnlyForVisibleInstallationProgress() {
@@ -34,9 +36,9 @@ final class CodexRuntimeModelsTests: XCTestCase {
         ["limitId": id, "windowDurationMins": minutes, "remainingPercent": remaining, "usedPercent": 100 - remaining]
     }
 
-    private func account(mode: String = "chatgpt", key: String? = nil, windows: [[String: Any]] = [], credits: [String: Any]? = nil) throws -> CodexAccountUsage {
+    private func account(mode: String = "chatgpt", key: String? = nil, displayKey: String? = nil, windows: [[String: Any]] = [], credits: [String: Any]? = nil) throws -> CodexAccountUsage {
         var value: [String: Any] = ["authMode": mode, "authenticated": true, "windows": windows, "observedAt": 123]
-        if let key { value["accountKey"] = key }
+        if let key { value["ownershipKey"] = key; value["accountKey"] = displayKey ?? key }
         if let credits { value["credits"] = credits }
         return try JSONDecoder().decode(CodexAccountUsage.self, from: JSONSerialization.data(withJSONObject: value))
     }

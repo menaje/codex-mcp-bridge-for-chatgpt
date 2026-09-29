@@ -55494,6 +55494,136 @@
           "pt": { "stringUnit": { "state": "translated", "value": "Resultado do início de sessão não confirmado; verifique a conta" } }
         }
       },
+      "macos.auth.accountEmail": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Account email" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "계정 이메일" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "アカウントのメール" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "帐户邮箱" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "帳戶電子郵件" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Correo de la cuenta" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Adresse e-mail du compte" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Konto-E-Mail" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "E-mail da conta" } }
+        }
+      },
+      "macos.auth.verifiedIdentity": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Verified account fingerprint" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "확인된 계정 지문" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "確認済みアカウント指紋" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "已验证的帐户指纹" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "已驗證的帳戶指紋" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Huella de cuenta verificada" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Empreinte de compte vérifiée" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Bestätigter Konto-Fingerabdruck" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Impressão digital da conta verificada" } }
+        }
+      },
+      "macos.auth.identityUnverified": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Account or workspace ID could not be verified." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "계정 또는 워크스페이스 ID를 확인할 수 없습니다." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "アカウントまたはワークスペース ID を確認できません。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法验证帐户或工作区 ID。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法驗證帳戶或工作區 ID。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "No se pudo verificar el ID de la cuenta o del espacio de trabajo." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Impossible de vérifier l’identifiant du compte ou de l’espace de travail." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Konto- oder Workspace-ID konnte nicht bestätigt werden." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Não foi possível verificar o ID da conta ou do espaço de trabalho." } }
+        }
+      },
+      "macos.auth.activationStarting": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Applying the selected connection and checking runtime readiness." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "선택한 연결을 적용하고 실행 준비를 확인하는 중입니다." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "選択した接続を適用し、実行準備を確認しています。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在应用所选连接并检查运行状态。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在套用所選連線並檢查執行狀態。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Aplicando la conexión seleccionada y comprobando que esté lista." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Application de la connexion choisie et vérification du démarrage." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Ausgewählte Verbindung wird angewendet und der Start geprüft." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "A aplicar a ligação selecionada e a verificar a prontidão." } }
+        }
+      },
+      "macos.auth.activationUncertain": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "The connection switch result is uncertain. Review runtime status before trying again." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "연결 전환 결과를 확인할 수 없습니다. 다시 시도하기 전에 실행 상태를 확인하세요." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "接続切り替えの結果が不明です。再試行前に実行状態を確認してください。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "连接切换结果尚不确定。重试前请检查运行状态。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "連線切換結果尚未確認。重試前請檢查執行狀態。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "El resultado del cambio de conexión es incierto. Revisa el estado antes de reintentar." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Le résultat du changement de connexion est incertain. Vérifiez l’état avant de réessayer." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Das Ergebnis des Verbindungswechsels ist unklar. Vor einem erneuten Versuch den Laufzeitstatus prüfen." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "O resultado da mudança de ligação é incerto. Verifique o estado antes de tentar novamente." } }
+        }
+      },
+      "macos.auth.logoutUnconfirmed": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Sign-out result unconfirmed; inspect this profile before retrying." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "로그아웃 결과가 확인되지 않았습니다. 재시도 전에 이 프로필을 확인하세요." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ログアウト結果が未確認です。再試行前にこのプロファイルを確認してください。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "退出登录的结果尚未确认。重试前请检查此配置。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "登出結果尚未確認。重試前請檢查此設定檔。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Cierre de sesión sin confirmar. Revisa este perfil antes de reintentar." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Déconnexion non confirmée. Vérifiez ce profil avant de réessayer." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Abmeldung nicht bestätigt. Profil vor erneutem Versuch prüfen." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Terminar sessão não confirmado. Verifique este perfil antes de tentar novamente." } }
+        }
+      },
+      "macos.auth.removeOwnedKey": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Remove saved API key" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "저장된 API 키 제거" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "保存済み API キーを削除" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "移除已保存的 API 密钥" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "移除已儲存的 API 金鑰" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Eliminar clave API guardada" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Supprimer la clé API enregistrée" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Gespeicherten API-Schlüssel entfernen" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Remover chave API guardada" } }
+        }
+      },
+      "macos.auth.logoutOwned": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Sign out of bridge profile" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "브리지 프로필 로그아웃" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ブリッジ用プロファイルからログアウト" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "退出桥接配置登录" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "登出橋接設定檔" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Cerrar sesión del perfil del puente" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Déconnecter le profil du pont" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Vom Bridge-Profil abmelden" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Terminar sessão do perfil da ponte" } }
+        }
+      },
+      "macos.auth.removalWarning": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Sign out of this inactive bridge profile? This may affect other server sessions for the account, and past conversations may no longer resume." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "이 비활성 브리지 프로필에서 로그아웃할까요? 해당 계정의 다른 서버 세션에 영향을 줄 수 있으며 이전 대화를 이어가지 못할 수 있습니다." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "この非アクティブなブリッジ用プロファイルからログアウトしますか？同じアカウントの他のサーバーセッションに影響し、過去の会話を再開できなくなる可能性があります。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "退出此非活动桥接配置的登录？这可能影响该帐户的其他服务器会话，也可能无法继续以往的对话。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "登出這個非使用中的橋接設定檔？這可能影響該帳戶的其他伺服器工作階段，也可能無法繼續先前的對話。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "¿Cerrar sesión en este perfil inactivo? Podría afectar a otras sesiones del servidor de esta cuenta e impedir reanudar conversaciones anteriores." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Se déconnecter de ce profil inactif ? Cela peut affecter d’autres sessions serveur du compte et empêcher la reprise d’anciennes conversations." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Von diesem inaktiven Bridge-Profil abmelden? Dies kann andere Serversitzungen des Kontos beeinflussen und das Fortsetzen früherer Unterhaltungen verhindern." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Terminar sessão neste perfil inativo? Isto pode afetar outras sessões da conta e impedir a continuação de conversas anteriores." } }
+        }
+      },
+      "macos.auth.removeKeyWarning": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Remove the saved API key from this inactive bridge profile? The key is not revoked at OpenAI. Past conversations may no longer resume." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "이 비활성 브리지 프로필의 저장된 API 키를 제거할까요? OpenAI에서 키가 폐기되지는 않습니다. 이전 대화를 이어가지 못할 수 있습니다." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "この非アクティブなブリッジ用プロファイルの保存済み API キーを削除しますか？OpenAI 側でキーは無効化されません。過去の会話を再開できなくなる可能性があります。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "移除此非活动桥接配置中保存的 API 密钥？OpenAI 端不会撤销此密钥。以往对话可能无法继续。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "移除此非使用中橋接設定檔儲存的 API 金鑰？OpenAI 端不會撤銷此金鑰。先前的對話可能無法繼續。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "¿Quitar la clave API guardada de este perfil inactivo? La clave no se revocará en OpenAI. Es posible que no puedas reanudar conversaciones anteriores." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Supprimer la clé API enregistrée de ce profil inactif ? La clé ne sera pas révoquée chez OpenAI. Les anciennes conversations pourraient ne plus être reprises." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Gespeicherten API-Schlüssel aus diesem inaktiven Profil entfernen? Der Schlüssel wird bei OpenAI nicht widerrufen. Frühere Unterhaltungen können möglicherweise nicht fortgesetzt werden." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Remover a chave de API guardada deste perfil inativo? A chave não será revogada na OpenAI. Poderá deixar de ser possível continuar conversas anteriores." } }
+        }
+      },
       "macos.auth.needsVerification": {
         "localizations": {
           "en": {

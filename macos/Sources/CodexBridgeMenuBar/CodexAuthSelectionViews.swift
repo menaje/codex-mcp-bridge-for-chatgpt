@@ -8,6 +8,7 @@ struct CodexAuthSelectionControls: View {
     @State private var selectedKind = "shared"
     @State private var apiKey = ""
     @State private var billingConfirmed = false
+    @State private var profileToRemove: CodexAuthSelection.OwnedProfile?
 
     var body: some View {
         authSelectionContent
@@ -30,22 +31,42 @@ struct CodexAuthSelectionControls: View {
         } else if let auth = model.codexRuntime?.authSelection {
             VStack(alignment: .leading, spacing: 12) {
                 LabeledContent("macos.auth.current", value: label(auth.applied.kind))
+                if let email = auth.appliedAccountEmail {
+                    LabeledContent("macos.auth.accountEmail", value: email)
+                }
+                if let account = model.codexRuntime?.account, account.authenticated {
+                    LabeledContent("macos.authenticationmethod", value: account.authMode == "api-key"
+                                   ? localized("macos.openaiapikey") : "ChatGPT")
+                    if let owner = account.ownershipKey {
+                        LabeledContent("macos.auth.verifiedIdentity", value: String(owner.prefix(12)))
+                    } else {
+                        Text("macos.auth.identityUnverified")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 if auth.overrideActive {
                     Text("macos.auth.override")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
+                    if let activation = auth.activation {
+                        Text(activation.status == "uncertain" ? "macos.auth.activationUncertain" : "macos.auth.activationStarting")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                     if let pending = auth.pending {
                         LabeledContent("macos.auth.pending", value: label(pending.kind))
+                        if let email = auth.pendingAccountEmail {
+                            LabeledContent("macos.auth.accountEmail", value: email)
+                        }
                         Text("macos.auth.waiting")
                             .font(.caption).foregroundStyle(.orange)
                         Button("macos.auth.applyWhenSafe") {
                             Task { _ = await model.restartRuntime(force: false) }
                         }
-                        .disabled(model.isBusy)
+                        .disabled(model.isBusy || auth.activation != nil)
                         Button("common.cancel") {
                             Task { await model.manageCodex(.init(action: "auth-cancel-pending", authRevision: auth.revision)) }
                         }
-                        .disabled(model.isBusy)
+                        .disabled(model.isBusy || auth.activation != nil)
                     }
                     Picker("macos.auth.choice", selection: $selectedKind) {
                         Text("macos.auth.shared").tag("shared")
@@ -74,7 +95,25 @@ struct CodexAuthSelectionControls: View {
                                 await model.refreshAuthStatus()
                             }
                         }
-                        .disabled(model.isBusy || auth.pending != nil)
+                        .disabled(model.isBusy || auth.pending != nil || auth.activation != nil)
+                    }
+                    if let profiles = auth.profiles {
+                        ForEach(profiles.filter { $0.status != "removed" && $0.id != auth.applied.profileId &&
+                            $0.id != auth.pending?.profileId && $0.id != auth.candidate?.id }) { profile in
+                            HStack {
+                                Text(label(profile.kind))
+                                Text(String(profile.id.prefix(8))).foregroundStyle(.secondary)
+                                Spacer()
+                                if profile.status == "logout-unconfirmed" {
+                                    Text("macos.auth.logoutUnconfirmed").font(.caption).foregroundStyle(.orange)
+                                } else {
+                                    Button(profile.kind == "bridge-api" ? "macos.auth.removeOwnedKey" : "macos.auth.logoutOwned") {
+                                        profileToRemove = profile
+                                    }
+                                    .disabled(model.isBusy || auth.activation != nil)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -89,6 +128,21 @@ struct CodexAuthSelectionControls: View {
                     if model.codexRuntime?.authSelection?.candidate?.status != "login-started" { return }
                 }
             }
+            .confirmationDialog(profileToRemove?.kind == "bridge-api" ? "macos.auth.removeKeyWarning" : "macos.auth.removalWarning", isPresented: Binding(
+                get: { profileToRemove != nil }, set: { if !$0 { profileToRemove = nil } }),
+                titleVisibility: .visible) {
+                if let profile = profileToRemove {
+                    Button(profile.kind == "bridge-api" ? "macos.auth.removeOwnedKey" : "macos.auth.logoutOwned",
+                           role: .destructive) {
+                        profileToRemove = nil
+                        Task { await model.manageCodex(.init(action: profile.kind == "bridge-api"
+                                                              ? "auth-remove-api-key" : "auth-logout-profile",
+                                                              authProfileId: profile.id, authRevision: auth.revision,
+                                                              authRemovalConfirmed: true)) }
+                    }
+                }
+                Button("common.cancel", role: .cancel) { profileToRemove = nil }
+            }
         } else {
             Text("macos.auth.unavailable").font(.caption).foregroundStyle(.secondary)
         }
@@ -97,11 +151,19 @@ struct CodexAuthSelectionControls: View {
     @ViewBuilder private func candidateControls(_ auth: CodexAuthSelection) -> some View {
         if let candidate = auth.candidate, candidate.connection.kind == selectedKind {
             LabeledContent("macos.auth.candidate", value: candidateStatus(candidate.status))
+            if let email = candidate.accountEmail {
+                LabeledContent("macos.auth.accountEmail", value: email)
+            }
+            if let key = candidate.accountKey {
+                LabeledContent("macos.auth.verifiedIdentity", value: String(key.prefix(12)))
+            } else if candidate.status == "verified" {
+                Text("macos.auth.identityUnverified").font(.caption).foregroundStyle(.secondary)
+            }
             if selectedKind == "bridge-chatgpt" {
                 Button("macos.auth.startLogin") {
                     Task { await model.manageCodex(.init(action: "auth-login", authCandidateId: candidate.id)) }
                 }
-                .disabled(model.isBusy || auth.pending != nil || !["prepared", "login-failed"].contains(candidate.status))
+                .disabled(model.isBusy || auth.pending != nil || auth.activation != nil || !["prepared", "login-failed"].contains(candidate.status))
             } else if candidate.status != "verified" {
                 SecureField("macos.auth.apiKey", text: $apiKey)
                     .textContentType(.password)
@@ -111,13 +173,13 @@ struct CodexAuthSelectionControls: View {
                     Task { await model.manageCodex(.init(action: "auth-api-key", authCandidateId: candidate.id,
                                                         authApiKey: submitted)) }
                 }
-                .disabled(model.isBusy || auth.pending != nil || apiKey.isEmpty ||
+                .disabled(model.isBusy || auth.pending != nil || auth.activation != nil || apiKey.isEmpty ||
                           !["prepared", "login-failed"].contains(candidate.status))
             }
             Button("macos.auth.verify") {
                 Task { await model.manageCodex(.init(action: "auth-verify", authCandidateId: candidate.id)) }
             }
-            .disabled(model.isBusy || auth.pending != nil || candidate.status == "login-started")
+            .disabled(model.isBusy || auth.pending != nil || auth.activation != nil || candidate.status == "login-started")
             Button("macos.auth.requestChange") {
                 Task {
                     await model.manageCodex(.init(action: "auth-apply", authKind: selectedKind,
@@ -127,12 +189,12 @@ struct CodexAuthSelectionControls: View {
                 }
             }
             .disabled(model.isBusy || candidate.status != "verified" ||
-                      (selectedKind == "bridge-api" && !billingConfirmed) || auth.pending != nil)
+                      (selectedKind == "bridge-api" && !billingConfirmed) || auth.pending != nil || auth.activation != nil)
             Button("common.cancel") {
                 Task { await model.manageCodex(.init(action: "auth-cancel", authCandidateId: candidate.id,
                                                      authRevision: auth.revision)) }
             }
-            .disabled(model.isBusy || auth.pending != nil)
+            .disabled(model.isBusy || auth.pending != nil || auth.activation != nil)
         } else if let candidate = auth.candidate {
             Text("macos.auth.candidate")
                 .font(.caption).foregroundStyle(.secondary)
@@ -140,13 +202,13 @@ struct CodexAuthSelectionControls: View {
                 Task { await model.manageCodex(.init(action: "auth-cancel", authCandidateId: candidate.id,
                                                      authRevision: auth.revision)) }
             }
-            .disabled(model.isBusy || auth.pending != nil)
+            .disabled(model.isBusy || auth.pending != nil || auth.activation != nil)
         } else {
             Button("macos.auth.prepare") {
                 Task { await model.manageCodex(.init(action: "auth-prepare", authKind: selectedKind,
                                                      authRevision: auth.revision)) }
             }
-            .disabled(model.isBusy || auth.pending != nil)
+            .disabled(model.isBusy || auth.pending != nil || auth.activation != nil)
         }
     }
 

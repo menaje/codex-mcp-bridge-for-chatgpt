@@ -4,6 +4,8 @@ export type CodexAccountSnapshot = {
   authMode: "chatgpt" | "api-key" | "unknown";
   authenticated: boolean;
   accountKey: string | null;
+  /** Hash of an explicit account/workspace ID; an email never proves execution ownership. */
+  ownershipKey: string | null;
   planType: string | null;
   windows: { limitId: string; limitName: string | null; usedPercent: number; remainingPercent: number; windowDurationMins: number; resetsAt: number | null }[];
   credits: { hasCredits: boolean; unlimited: boolean; balance: string | null } | null;
@@ -17,6 +19,10 @@ export type CodexAccountSnapshot = {
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+export function codexChatgptOwnerKey(accountId: string): string {
+  return createHash("sha256").update(JSON.stringify(["chatgpt", accountId])).digest("hex");
+}
 
 /** No credentials, email, or raw account payload leave this projection. Unknown is never zero. */
 export function projectCodexAccount(accountResponse: unknown, limitsResponse: unknown, observedAt = Date.now()): CodexAccountSnapshot {
@@ -45,15 +51,19 @@ export function projectCodexAccount(accountResponse: unknown, limitsResponse: un
     }
   }
   const reset = record(limits.rateLimitResetCredits);
-  // Account/read remains available when the separate rate-limit request fails.
-  // Prefer its identity so the display key does not change with limits coverage.
-  const identity = typeof account.email === "string" ? account.email : typeof limits.accountId === "string" ? limits.accountId : null;
+  const accountId = authMode === "chatgpt" && typeof limits.accountId === "string" && limits.accountId.trim()
+    ? limits.accountId : null;
+  const ownershipKey = accountId ? codexChatgptOwnerKey(accountId) : null;
+  // Email is useful for display continuity when limits are unavailable, but
+  // the ownership key alone may authorize a keyring-backed execution.
+  const displayIdentity = ownershipKey || (typeof account.email === "string" && account.email.trim()
+    ? createHash("sha256").update(`display:${authMode}:${account.email}`).digest("hex") : null);
   const usageStatus = authMode !== "chatgpt" ? "none"
     : limitsResponse === null || limitsResponse === undefined ? "unavailable"
     : windows.length ? "available"
     : buckets.length ? "unavailable" : "none";
   return { authMode, authenticated: authMode !== "unknown",
-    accountKey: identity ? createHash("sha256").update(`${authMode}:${identity}`).digest("hex") : null,
+    accountKey: displayIdentity, ownershipKey,
     planType: typeof account.planType === "string" ? account.planType : null, windows, credits,
     resetCredits: authMode === "chatgpt" && finite(reset.availableCount) && reset.availableCount >= 0 ? { availableCount: Math.floor(reset.availableCount) } : null,
     billing: { kind: authMode === "chatgpt" ? "chatgpt-plan" : authMode === "api-key" ? "api" : "unknown", costsAvailable: false,

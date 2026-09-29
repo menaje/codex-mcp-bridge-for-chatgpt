@@ -25,7 +25,7 @@ it("keeps existing users on shared auth until they explicitly stage a different 
     .toBe('cli_auth_credentials_store = "file"\n');
   expect(codexChildEnvironment(undefined, f.environment).CODEX_HOME).toBeUndefined();
   await expect(f.manager.prepare("bridge-api", 0, f.environment)).rejects.toThrow("CODEX_AUTH_REVISION_CHANGED");
-  await f.manager.cancelCandidate(candidate.id, 1);
+  await f.manager.cancelCandidate(candidate.id, (await f.manager.snapshot(f.environment)).revision);
   expect((await f.manager.snapshot(f.environment)).candidate).toBeNull();
   // Cancellation does not delete a profile that could contain newly refreshed credentials.
   expect(await readFile(path.join(f.root, "auth-profiles", candidate.id, "config.toml"), "utf8")).toContain("file");
@@ -41,7 +41,8 @@ it("stages a disconnect without changing a running environment and applies it at
   expect(requested.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED).toBeUndefined();
   expect(requested.CODEX_MCP_BRIDGE_AUTH_SOURCE).toBe("shared");
   expect(requested.CODEX_MCP_BRIDGE_AUTH_GENERATION).toBe("0");
-  await f.manager.applyPending();
+  const activation = await f.manager.beginActivation("", "", f.environment);
+  await f.manager.completeActivation(activation!, "disconnected", "1");
   expect(await f.manager.snapshot(f.environment)).toMatchObject({ applied: { kind: "disconnected" }, pending: null, generation: 1 });
   expect(codexChildEnvironment(undefined, f.environment).CODEX_MCP_BRIDGE_AUTH_DISCONNECTED).toBe("1");
 });
@@ -62,8 +63,10 @@ it("rejects a visible shared login policy mismatch before starting a Codex probe
   await writeFile(path.join(home, "config.toml"), 'forced_login_method = "chatgpt"\n');
   await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "apiKey", OPENAI_API_KEY: "synthetic" }));
   await f.manager.stage({ kind: "disconnected" }, 0, "/fixture/codex", "fixture-cli", f.environment, false);
-  await f.manager.applyPending();
-  await expect(f.manager.stage({ kind: "shared" }, 2, "/no/such/codex", "fixture-cli",
+  const activation = await f.manager.beginActivation("", "", f.environment);
+  await f.manager.completeActivation(activation!, "disconnected", "1");
+  const current = await f.manager.snapshot(f.environment);
+  await expect(f.manager.stage({ kind: "shared" }, current.revision, "/no/such/codex", "fixture-cli",
     { ...f.environment, HOME: f.root }, false)).rejects.toThrow("CODEX_AUTH_POLICY_MISMATCH");
 });
 
@@ -88,6 +91,28 @@ it("carries local login restrictions into a separate profile and rejects policy 
   await f.manager.stage(candidate.connection, verified.revision, command, "fixture-cli", f.environment, false);
   await writeFile(path.join(home, "config.toml"), 'forced_login_method = "api"\n');
   await expect(f.manager.assertPendingLocalPolicy(f.environment)).rejects.toThrow("CODEX_AUTH_POLICY_MISMATCH");
+});
+
+it("checks effective managed login, store, and workspace restrictions for a candidate", async () => {
+  const f = await fixture();
+  const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
+  const home = path.join(f.root, "auth-profiles", candidate.id);
+  const workspace = "11111111-1111-4111-8111-111111111111";
+  await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: workspace } }));
+  const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+  const restricted = (requirements: object) => ({ ...f.environment,
+    CODEX_TEST_AUTH_REQUIREMENTS: JSON.stringify(requirements) });
+  await expect(f.manager.verify(candidate.id, command, "cli", restricted({ allowedLoginMethods: ["api"] })))
+    .rejects.toThrow("CODEX_AUTH_POLICY_MISMATCH");
+  await expect(f.manager.verify(candidate.id, command, "cli", restricted({ cliAuthCredentialsStore: "keyring" })))
+    .rejects.toThrow("CODEX_AUTH_POLICY_MISMATCH");
+  await expect(f.manager.verify(candidate.id, command, "cli", restricted({ allowedChatgptWorkspaces: [
+    "22222222-2222-4222-8222-222222222222"] })))
+    .rejects.toThrow("CODEX_AUTH_POLICY_MISMATCH");
+  const verified = await f.manager.verify(candidate.id, command, "cli",
+    restricted({ allowedChatgptWorkspaces: [workspace], cliAuthCredentialsStore: "file" }));
+  expect(verified.candidate?.status).toBe("verified");
+  expect(verified.candidate?.accountKey).toMatch(/^[a-f0-9]{64}$/);
 });
 
 it("keeps explicit CODEX_HOME authoritative and never forwards ambient API keys to a bridge profile", async () => {
@@ -150,13 +175,32 @@ it.each([[0, "login-completed"], [1, "login-failed"]] as const)(
     const command = path.join(f.root, `fake-login-${exitCode}.mjs`);
     await writeFile(command, `#!/usr/bin/env node\nprocess.exit(${exitCode});\n`, { mode: 0o700 });
     await f.manager.startChatGptLogin(candidate.id, command, f.environment);
-    await vi.waitFor(async () => expect((await f.manager.snapshot(f.environment)).candidate?.status).toBe(status));
+    await vi.waitFor(async () => expect((await f.manager.snapshot(f.environment)).candidate?.status).toBe(status),
+      { timeout: 5_000 });
     if (exitCode === 0) {
       await expect(f.manager.startChatGptLogin(candidate.id, command, f.environment))
         .rejects.toThrow("CODEX_AUTH_LOGIN_ALREADY_ATTEMPTED");
     }
   }
 );
+
+it("records a failed login launch and API key check without changing the applied authentication", async () => {
+  const f = await fixture();
+  const chat = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
+  await expect(f.manager.startChatGptLogin(chat.id, path.join(f.root, "missing-codex"), f.environment))
+    .rejects.toThrow("CODEX_AUTH_LOGIN_START_FAILED");
+  expect((await f.manager.snapshot(f.environment)).candidate?.status).toBe("login-failed");
+  const revision = (await f.manager.snapshot(f.environment)).revision;
+  await f.manager.cancelCandidate(chat.id, revision);
+  const api = (await f.manager.prepare("bridge-api", revision + 1, f.environment)).candidate!;
+  const command = path.join(f.root, "reject-key.mjs");
+  await writeFile(command, "#!/usr/bin/env node\nprocess.stdin.resume(); process.stdin.on('end', () => process.exit(1));\n", { mode: 0o700 });
+  await expect(f.manager.setApiKey(api.id, command, f.environment, "sk-synthetic-rejected"))
+    .rejects.toThrow("CODEX_AUTH_API_LOGIN_FAILED");
+  expect(await f.manager.snapshot(f.environment)).toMatchObject({
+    applied: { kind: "shared" }, candidate: { status: "login-failed" }
+  });
+});
 
 it("reports an interrupted helper's unresolved browser login without claiming completion", async () => {
   const f = await fixture();
@@ -216,7 +260,7 @@ setTimeout(() => {}, 10000);
     { ...f.environment, HOME: f.root, PATH: process.env.PATH }, "sk-synthetic-fixture");
   await vi.waitFor(async () => expect(await readFile(path.join(f.root, "auth-profiles", candidate.id, "started"), "utf8"))
     .toBe("started"));
-  await f.manager.cancelCandidate(candidate.id, 1);
+  await f.manager.cancelCandidate(candidate.id, (await f.manager.snapshot(f.environment)).revision);
   await expect(run).rejects.toThrow("CODEX_AUTH_API_LOGIN_FAILED");
   expect(await f.manager.snapshot(f.environment)).toMatchObject({ applied: { kind: "shared" }, candidate: null });
 });
@@ -232,6 +276,7 @@ it("rejects a candidate that changed account or CLI after verification, even whe
   await writeAccount("synthetic-account-a");
   const verified = await f.manager.verify(candidate.id, command, "cli-fingerprint-a", environment);
   expect(verified.candidate?.status).toBe("verified");
+  expect(verified.candidate?.accountEmail).toBe("private-fixture@example.com");
   await writeAccount("synthetic-account-b");
   await expect(f.manager.stage(candidate.connection, verified.revision, command,
     "cli-fingerprint-a", environment, false)).rejects.toThrow("CODEX_AUTH_CANDIDATE_UNVERIFIED");
@@ -251,4 +296,117 @@ it("rejects a candidate that changed account or CLI after verification, even whe
     .rejects.toThrow("CODEX_AUTH_PENDING_CHANGE");
   await expect(f.manager.stage({ kind: "disconnected" }, staged.revision, command,
     "cli-fingerprint-a", environment, false)).rejects.toThrow("CODEX_AUTH_PENDING_CHANGE");
+});
+
+it("revalidates a staged candidate at activation and preserves the pending choice after drift", async () => {
+  const f = await fixture();
+  const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
+  const home = path.join(f.root, "auth-profiles", candidate.id);
+  const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+  const credential = (id: string) => writeFile(path.join(home, "auth.json"),
+    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: id } }));
+  await credential("account-a");
+  const verified = await f.manager.verify(candidate.id, command, "cli-a", f.environment);
+  await f.manager.stage(candidate.connection, verified.revision, command, "cli-a", f.environment, false);
+  await expect(f.manager.beginActivation(command, "cli-b", f.environment)).rejects.toThrow("CODEX_AUTH_REVALIDATION_REQUIRED");
+  await credential("account-b");
+  await expect(f.manager.beginActivation(command, "cli-a", f.environment)).rejects.toThrow("CODEX_AUTH_CANDIDATE_CHANGED");
+  expect(await f.manager.snapshot(f.environment)).toMatchObject({
+    applied: { kind: "shared" }, pending: candidate.connection, activation: null
+  });
+});
+
+it("uses a launch-specific activation and separates a proven no-start from an uncertain result", async () => {
+  const f = await fixture();
+  await f.manager.stage({ kind: "disconnected" }, 0, "/fixture/codex", "cli-a", f.environment, false);
+  const first = await f.manager.beginActivation("", "", f.environment);
+  expect(first).toBeTruthy();
+  expect(codexChildEnvironment(undefined, f.environment).CODEX_MCP_BRIDGE_AUTH_SOURCE).toBe("shared");
+  expect(codexChildEnvironment(undefined, { ...f.environment, CODEX_MCP_BRIDGE_AUTH_ACTIVATION_ID: first! }))
+    .toMatchObject({ CODEX_MCP_BRIDGE_AUTH_SOURCE: "disconnected", CODEX_MCP_BRIDGE_AUTH_GENERATION: "1" });
+  await f.manager.failActivation(first!, true);
+  expect(await f.manager.snapshot(f.environment)).toMatchObject({
+    applied: { kind: "shared" }, pending: { kind: "disconnected" }, activation: null, generation: 0
+  });
+  const second = await f.manager.beginActivation("", "", f.environment);
+  await f.manager.failActivation(second!, false);
+  expect((await f.manager.snapshot(f.environment)).activation?.status).toBe("uncertain");
+  expect(() => codexChildEnvironment(undefined, f.environment)).toThrow("CODEX_AUTH_ACTIVATION_UNCERTAIN");
+  await expect(f.manager.beginActivation("", "", f.environment)).rejects.toThrow("CODEX_AUTH_ACTIVATION_UNCERTAIN");
+  await f.manager.completeActivation(second!, "disconnected", "1");
+  expect(await f.manager.snapshot(f.environment)).toMatchObject({
+    applied: { kind: "disconnected" }, pending: null, activation: null, generation: 1
+  });
+});
+
+it("commits an owned profile only when the ready runtime reports its exact home", async () => {
+  const f = await fixture();
+  const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
+  const home = path.join(f.root, "auth-profiles", candidate.id);
+  await writeFile(path.join(home, "auth.json"),
+    JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "profile-owner" } }));
+  const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+  const verified = await f.manager.verify(candidate.id, command, "cli-a", f.environment);
+  await f.manager.stage(candidate.connection, verified.revision, command, "cli-a", f.environment, false);
+  const activation = await f.manager.beginActivation(command, "cli-a", f.environment);
+  await expect(f.manager.completeActivation(activation!, "bridge-chatgpt", "1", path.join(f.root, "wrong-home")))
+    .rejects.toThrow("CODEX_AUTH_ACTIVATION_UNCONFIRMED");
+  expect((await f.manager.snapshot(f.environment)).applied.kind).toBe("shared");
+  await f.manager.completeActivation(activation!, "bridge-chatgpt", "1", home);
+  expect((await f.manager.snapshot(f.environment)).applied).toEqual(candidate.connection);
+});
+
+it("removes only an inactive bridge API credential without touching shared authentication", async () => {
+  const f = await fixture();
+  const shared = path.join(f.root, ".codex"); await mkdir(shared);
+  const sharedFile = path.join(shared, "auth.json");
+  await writeFile(sharedFile, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "shared" } }));
+  const candidate = (await f.manager.prepare("bridge-api", 0, f.environment)).candidate!;
+  const file = path.join(f.root, "auth-profiles", candidate.id, "auth.json");
+  await writeFile(file, JSON.stringify({ auth_mode: "apiKey", OPENAI_API_KEY: "sk-synthetic-profile" }));
+  const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+  await expect(f.manager.removeApiKey(candidate.id, 1, command, f.environment))
+    .rejects.toThrow("CODEX_AUTH_PROFILE_IN_USE");
+  await f.manager.cancelCandidate(candidate.id, 1);
+  await expect(f.manager.removeApiKey(candidate.id, 2, command, {
+    ...f.environment, CODEX_TEST_AUTH_REQUIREMENTS: JSON.stringify({ cliAuthCredentialsStore: "keyring" })
+  })).rejects.toThrow("CODEX_AUTH_POLICY_MISMATCH");
+  await f.manager.removeApiKey(candidate.id, 2, command, f.environment);
+  await expect(readFile(file)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(sharedFile, "utf8")).toContain("shared");
+  expect((await f.manager.snapshot(f.environment)).profiles).toContainEqual({
+    id: candidate.id, kind: "bridge-api", status: "removed"
+  });
+});
+
+it("logs out only an inactive bridge ChatGPT profile and records an uncertain reply", async () => {
+  const f = await fixture();
+  const shared = path.join(f.root, ".codex"); await mkdir(shared);
+  const sharedFile = path.join(shared, "auth.json");
+  await writeFile(sharedFile, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "shared" } }));
+  const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
+  const file = path.join(f.root, "auth-profiles", candidate.id, "auth.json");
+  await writeFile(file, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "owned" } }));
+  await f.manager.cancelCandidate(candidate.id, 1);
+  const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+  await expect(f.manager.logoutOwnedChatGpt(candidate.id, 2, command, {
+    ...f.environment, CODEX_TEST_AUTH_REQUIREMENTS: JSON.stringify({ cliAuthCredentialsStore: "keyring" })
+  })).rejects.toThrow("CODEX_AUTH_POLICY_MISMATCH");
+  expect(await readFile(file, "utf8")).toContain("owned");
+  await expect(f.manager.logoutOwnedChatGpt(candidate.id, 2, command, {
+    ...f.environment, CODEX_TEST_AUTH_LOGOUT_LOST_RESPONSE: "1"
+  })).rejects.toThrow("CODEX_AUTH_LOGOUT_UNCONFIRMED");
+  expect((await f.manager.snapshot(f.environment)).profiles).toContainEqual({
+    id: candidate.id, kind: "bridge-chatgpt", status: "logout-unconfirmed"
+  });
+  await expect(f.manager.logoutOwnedChatGpt(candidate.id, 3, command, f.environment))
+    .rejects.toThrow("CODEX_AUTH_PROFILE_UNAVAILABLE");
+  expect(await readFile(sharedFile, "utf8")).toContain("shared");
+  const second = (await f.manager.prepare("bridge-chatgpt", 3, f.environment)).candidate!;
+  const secondFile = path.join(f.root, "auth-profiles", second.id, "auth.json");
+  await writeFile(secondFile, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "owned-two" } }));
+  await f.manager.cancelCandidate(second.id, 4);
+  await f.manager.logoutOwnedChatGpt(second.id, 5, command, f.environment);
+  await expect(readFile(secondFile)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(sharedFile, "utf8")).toContain("shared");
 });

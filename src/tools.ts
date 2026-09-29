@@ -1851,6 +1851,8 @@ type CompletionDeliveryPolicy = "live-card" | "direct-wait";
 
 type CodexJob = {
   executionReceipt?: boolean;
+  /** Non-secret owner boundary captured when this execution was admitted. */
+  authBoundary?: string;
   threadPersistence?: UpstreamWorkerAssignment["threadPersistence"];
   jobId: string;
   activityId: string;
@@ -1927,6 +1929,7 @@ export type ProgressPersistenceStatus = ScopeFairQueueStatus & {
 type CodexJobStartInput = Omit<
   CodexJob,
   | "jobId"
+  | "authBoundary"
   | "activityId"
   | "agentId"
   | "contextMode"
@@ -1967,6 +1970,7 @@ type CodexJobStartInput = Omit<
 };
 
 export type CodexJobRegistryOptions = {
+  authBoundary?: () => string;
   recoverExecutions?: boolean;
   maxConcurrentJobs?: number;
   ttlMs?: number;
@@ -2153,6 +2157,7 @@ type SteeringMutationFallbacks = {
 };
 
 export class CodexJobRegistry {
+  private readonly authBoundary?: () => string;
   private readonly jobs = new Map<string, CodexJob>();
   private readonly jobsByAgent = new Map<string, Set<string>>();
   private readonly indexedJobAgent = new Map<string, string>();
@@ -2305,6 +2310,7 @@ export class CodexJobRegistry {
   private persistenceWarningShown = false;
 
   constructor(options: CodexJobRegistryOptions = {}) {
+    this.authBoundary = options.authBoundary;
     const maxConcurrentJobs = options.maxConcurrentJobs ?? 30;
     if (
       !Number.isInteger(maxConcurrentJobs) ||
@@ -2407,6 +2413,7 @@ export class CodexJobRegistry {
   }
 
   private acknowledgeSettledExecution(job: CodexJob): void {
+    if (this.authBoundary && job.authBoundary !== this.authBoundary()) return;
     if (job.executionReceipt && isTerminalActivityJobStatus(job.status) && job.terminalOrigin) {
       void Promise.resolve(this.upstream?.acknowledgeExecution?.(job.jobId)).catch(() => {});
     }
@@ -2495,6 +2502,9 @@ export class CodexJobRegistry {
     );
     if (job && job.requestHashVersion >= 2 && job.requestHash !== requestHash) {
       throw new Error("requestId was already used for a different Codex task in this scope.");
+    }
+    if (job && this.authBoundary && job.authBoundary !== this.authBoundary()) {
+      throw new Error("CODEX_AUTH_JOB_BOUNDARY: This request belongs to another or unverified authentication connection.");
     }
     return job;
   }
@@ -3212,6 +3222,7 @@ export class CodexJobRegistry {
     const now = Date.now();
     const job: CodexJob = {
       ...input,
+      ...(this.authBoundary ? { authBoundary: this.authBoundary() } : {}),
       activityId: input.activityId || randomUUID(),
       threadId: input.sessionDecision.threadId,
       backendKind: input.backendKind || "app-server",
@@ -4274,6 +4285,9 @@ export class CodexJobRegistry {
       if (this.projectionOnly) {
         this.setIndexedJob(job);
         continue;
+      }
+      if (isActiveActivityJobStatus(job.status) && this.authBoundary && job.authBoundary !== this.authBoundary()) {
+        throw new Error("CODEX_AUTH_JOB_BOUNDARY: An unfinished execution belongs to another or unverified authentication connection.");
       }
       if (isActiveActivityJobStatus(job.status) && this.recoverExecutions && job.executionReceipt) {
         job.trackingState = "liveness-unknown";
@@ -14788,6 +14802,8 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     !isOptionalString(value.upstreamRequestId) ||
     !isOptionalPositiveInteger(value.terminalVersion) ||
     !isOptionalString(value.agentId) ||
+    (value.authBoundary !== undefined &&
+      (typeof value.authBoundary !== "string" || !/^[a-f0-9]{64}$/.test(value.authBoundary))) ||
     !isOptionalString(value.sourceThreadId) ||
     (value.contextMode !== undefined && !AGENT_CONTEXT_MODES.includes(value.contextMode as AgentContextMode)) ||
     (value.result !== undefined && !isRecord(value.result)) ||
@@ -14798,6 +14814,7 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
   }
   return {
     jobId,
+    authBoundary: value.authBoundary as string | undefined,
     executionReceipt: value.executionReceipt === true,
     activityId,
     ...(project || {}),

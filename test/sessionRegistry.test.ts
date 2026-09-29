@@ -18,7 +18,8 @@ describe("SessionRegistry", () => {
     legacy.record(session("legacy-shared", root, "read-only", undefined, undefined, 90));
     const first = new SessionRegistry({ stateStore: store,
       authBoundary: { key: firstKey, allowLegacyShared: true } });
-    expect(first.get("legacy-shared")?.threadId).toBe("legacy-shared");
+    expect(first.get("legacy-shared")).toBeUndefined();
+    expect(first.belongsToAnotherAuthentication("legacy-shared")).toBe(true);
     first.record(session("first-account", root, "read-only", undefined, undefined, 100));
     expect(first.get("first-account")?.authBoundary).toBe(firstKey);
     const second = new SessionRegistry({ stateStore: store,

@@ -552,6 +552,11 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   async readAccountSnapshot(): Promise<CodexAccountSnapshot | null> {
+    return (await this.readAccountDetails()).snapshot;
+  }
+
+  /** Account email is returned only to local authentication management. */
+  async readAccountDetails(): Promise<{ snapshot: CodexAccountSnapshot; email: string | null }> {
     const worker = this.leastBusyWorker();
     worker.activeCalls += 1;
     try {
@@ -559,8 +564,29 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       const account = await connection.readAccount();
       const limits = projectCodexAccount(account, null).authMode === "chatgpt"
         ? await connection.readAccountRateLimits().catch(() => null) : null;
-      return projectCodexAccount(account, limits);
+      const rawAccount = (account as { account?: { email?: unknown } } | null)?.account;
+      const email = typeof rawAccount?.email === "string" && rawAccount.email.length <= 320 &&
+        rawAccount.email.includes("@") ? rawAccount.email : null;
+      return { snapshot: projectCodexAccount(account, limits), email };
     } finally { worker.activeCalls -= 1; }
+  }
+
+  async readAuthenticationPolicy(): Promise<{ config: unknown; requirements: unknown }> {
+    const worker = this.leastBusyWorker();
+    worker.activeCalls += 1;
+    try {
+      const connection = await this.connectionFor(worker);
+      const config = await connection.readConfiguration();
+      const requirements = await connection.readConfigurationRequirements();
+      return { config, requirements };
+    } finally { worker.activeCalls -= 1; }
+  }
+
+  async logoutAccount(): Promise<void> {
+    const worker = this.leastBusyWorker();
+    worker.activeCalls += 1;
+    try { await (await this.connectionFor(worker)).logoutAccount(); }
+    finally { worker.activeCalls -= 1; }
   }
 
   async readAccountRateLimits(): Promise<CodexWeeklyUsage | null> {
@@ -1422,6 +1448,18 @@ class AppServerConnection {
   }
 
   async readAccount() { return this.rpc.request("account/read", { refreshToken: false }, { timeoutMs: this.protocolOptions.requestTimeoutMs }); }
+
+  async readConfiguration() {
+    return this.rpc.request("config/read", { includeLayers: false }, { timeoutMs: this.protocolOptions.requestTimeoutMs });
+  }
+
+  async readConfigurationRequirements() {
+    return this.rpc.request("configRequirements/read", {}, { timeoutMs: this.protocolOptions.requestTimeoutMs });
+  }
+
+  async logoutAccount() {
+    return this.rpc.request("account/logout", {}, { timeoutMs: this.protocolOptions.requestTimeoutMs });
+  }
 
   async readAccountRateLimits(): Promise<Record<string, unknown>> {
     return this.rpc.request<Record<string, unknown>>(

@@ -50,13 +50,37 @@ describe("central runtime lifecycle reservations", () => {
       const first = await f.supervisor.start();
       expect(await auth.snapshot({})).toMatchObject({ applied: { kind: "shared" }, pending: { kind: "disconnected" } });
       await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
-      await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("completed"), {
+      await vi.waitFor(() => expect(["completed", "failed"]).toContain(f.supervisor.lifecycleStatus()?.phase), {
         timeout: 6_000, interval: 50
       });
+      if (f.supervisor.lifecycleStatus()?.phase === "failed") throw new Error(f.supervisor.lifecycleStatus()?.error || "unknown lifecycle error");
       expect((await f.supervisor.health()).pid).not.toBe(first.pid);
       expect(await auth.snapshot({})).toMatchObject({ applied: { kind: "disconnected" }, pending: null, generation: 1 });
     } finally { await f.supervisor.close({ runtime: "force-stop" }); }
   });
+
+  it("keeps the prior choice pending when a launched authentication runtime never becomes ready", async () => {
+    const f = await lifecycleFixture();
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\nCODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${path.join(f.root, "state.sqlite")}\n`,
+      { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    await auth.stage({ kind: "disconnected" }, 0, "/fixture/codex", "fixture-cli", {}, false);
+    f.update({ activeJobs: 0 });
+    try {
+      await f.supervisor.start();
+      writeFakeLauncher(path.join(f.root, "runtime", "launcher.mjs"), path.join(f.root, "failed-arguments.json"),
+        { admissionFile: path.join(f.root, "admission.json"), writeRuntimeLock: true, failAuthenticationActivation: true });
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("failed"), {
+        timeout: 8_000, interval: 50
+      });
+      expect(f.supervisor.lifecycleStatus()?.error).toContain("CODEX_AUTH_ACTIVATION_UNCERTAIN");
+      expect(await auth.snapshot({})).toMatchObject({
+        applied: { kind: "shared" }, pending: { kind: "disconnected" }, activation: { status: "uncertain" }
+      });
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  }, 10_000);
 
   it("keeps the original runtime when a persisted job still belongs to the old authentication", async () => {
     const f = await lifecycleFixture();

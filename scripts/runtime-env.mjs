@@ -94,6 +94,7 @@ export function codexChildEnvironment(filePath, inherited = process.env) {
 /** Keep launcher/tunnel credentials out of selected Codex processes. */
 export function codexProcessEnvironment(environment) {
   const projected = { ...environment };
+  delete projected.CODEX_MCP_BRIDGE_AUTH_ACTIVATION_ID;
   const sealedSource = projected.CODEX_MCP_BRIDGE_AUTH_SOURCE;
   const explicitHome = Boolean(projected.CODEX_HOME) && !sealedSource;
   const needsSaved = !sealedSource && !explicitHome ||

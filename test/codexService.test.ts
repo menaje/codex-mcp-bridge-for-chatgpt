@@ -310,6 +310,35 @@ createInterface({ input: process.stdin }).on("line", line => {
     await expect(guard()).resolves.toBeUndefined();
   });
 
+  it("reconciles a successful account observation with a recovered file for the same account", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    vi.spyOn(f.service, "readCliAccount").mockResolvedValue(projectCodexAccount(
+      { account: { type: "chatgpt", email: "same@example.invalid" } }, { accountId: "account-a" }));
+    const guard = f.service.admissionGuard();
+    await expect(guard()).resolves.toBeUndefined();
+    const beforeRecovery = f.service.sessionAuthBoundary().key;
+    await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "account-a" } }));
+    await expect(guard()).resolves.toBeUndefined();
+    await expect(guard()).resolves.toBeUndefined();
+    expect(f.service.sessionAuthBoundary().key).toBe(beforeRecovery);
+    await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "account-b" } }));
+    await expect(guard()).rejects.toThrow("CODEX_AUTH_CHANGED");
+  });
+
+  it("parses inline TOML comments in credential storage and workspace restrictions", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "account-a" } }));
+    const config = path.join(home, "config.toml");
+    await writeFile(config, 'cli_auth_credentials_store = "keyring" # OS store\n');
+    expect(f.service.authenticationIdentity()).toBeNull();
+    await writeFile(config, 'cli_auth_credentials_store = "auto" # keyring may win\n');
+    expect(f.service.authenticationIdentity()).toBeNull();
+    await writeFile(config, 'forced_chatgpt_workspace_id = "11111111-1111-4111-8111-111111111111" # first\n');
+    const first = f.service.authenticationIdentity();
+    await writeFile(config, 'forced_chatgpt_workspace_id = "22222222-2222-4222-8222-222222222222" # second\n');
+    expect(f.service.authenticationIdentity()).not.toBe(first);
+  });
+
   it("keeps a confirmed account across a temporary unreadable file", async () => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
     const auth = path.join(home, "auth.json");
@@ -326,14 +355,22 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("uses account observations for keyring profiles and rejects a different account", async () => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
     await writeFile(path.join(home, "config.toml"), 'cli_auth_credentials_store = "keyring"\n');
-    const account = (email: string) => projectCodexAccount({ account: { type: "chatgpt", email } }, null);
-    vi.spyOn(f.service, "readCliAccount").mockResolvedValueOnce(account("first@example.invalid"))
-      .mockResolvedValueOnce(account("first@example.invalid"))
-      .mockResolvedValueOnce(account("second@example.invalid"));
+    const account = (id: string) => projectCodexAccount({ account: { type: "chatgpt", email: "same@example.invalid" } }, { accountId: id });
+    vi.spyOn(f.service, "readCliAccount").mockResolvedValueOnce(account("first"))
+      .mockResolvedValueOnce(account("first"))
+      .mockResolvedValueOnce(account("second"));
     const guard = f.service.admissionGuard();
     await expect(guard()).resolves.toBeUndefined();
     await expect(guard()).resolves.toBeUndefined();
     await expect(guard()).rejects.toThrow("CODEX_AUTH_CHANGED");
+  });
+
+  it("does not use an email-only keyring response to authorize execution", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    await writeFile(path.join(home, "config.toml"), 'cli_auth_credentials_store = "keyring" # OS store\n');
+    vi.spyOn(f.service, "readCliAccount").mockResolvedValue(projectCodexAccount(
+      { account: { type: "chatgpt", email: "same@example.invalid" } }, null));
+    await expect(f.service.admissionGuard()()).rejects.toThrow("CODEX_AUTH_IDENTITY_UNAVAILABLE");
   });
 
   it("treats a local login restriction change as an admission boundary", async () => {
@@ -436,6 +473,14 @@ createInterface({ input: process.stdin }).on("line", line => {
 });
 
 describe("account usage and billing projection", () => {
+  it("separates workspaces with the same email and keeps email-only identity unverified", () => {
+    const account = { account: { type: "chatgpt", email: "same@example.invalid" } };
+    const first = projectCodexAccount(account, { accountId: "workspace-a" });
+    const second = projectCodexAccount(account, { accountId: "workspace-b" });
+    expect(first.accountKey).not.toBe(second.accountKey);
+    expect(first.ownershipKey).not.toBe(second.ownershipKey);
+    expect(projectCodexAccount(account, null).ownershipKey).toBeNull();
+  });
   it("preserves upstream model display names", () => {
     const account = projectCodexAccount({ account: { type: "chatgpt" } }, { rateLimitsByLimitId: {
       another: { limitName: "Another model", primary: { usedPercent: 1, windowDurationMins: 10080 } },

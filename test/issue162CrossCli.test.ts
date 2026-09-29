@@ -121,6 +121,8 @@ describe("issue 162 selected CLI across product entry points", () => {
     symlinkSync(terminalCli, path.join(bin, "codex"));
     mkdirSync(configDirectory, { recursive: true, mode: 0o700 });
     mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(codexHome, "auth.json"),
+      JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "synthetic-issue-162-account" } }), { mode: 0o600 });
     writeFileSync(envFile, [
       `CODEX_MCP_BRIDGE_RUNTIME_HOME=${runtimeHome}`,
       `CODEX_HOME=${codexHome}`,
