@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import Database from "better-sqlite3";
 import { loadConfig } from "../src/config.js";
+import { CodexService } from "../src/codexService.js";
 import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import { createHttpServer, type BridgeHttpServer } from "../src/server.js";
 import { BRIDGE_SKILL_LIMITS } from "../src/skillLibrary.js";
@@ -233,6 +234,30 @@ describe("current bridge tool contracts", () => {
     expect(status.description).toContain("terminal wait wakes only for terminal lifecycle state");
     expect(status.description).toContain("do not keep a parallel terminal wait");
     expect(tools.tools.some((tool) => "codex/registrationTier" in (tool._meta || {}))).toBe(false);
+  });
+
+  it("verifies the execution owner before looking up a saved Agent or admitting a Job", async () => {
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    config.codexService = new CodexService({ HOME: root,
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+    const verify = vi.spyOn(config.codexService, "assertCurrentAdmission").mockRejectedValue(
+      new Error("CODEX_AUTH_POLICY_UNAVAILABLE: synthetic managed policy changed"));
+    const requestId = randomUUID();
+    const blocked = await client.callTool({ name: "codex_task", arguments: {
+      scopeId: "aaaa1111-aaaa-4111-8111-aaaaaaaaaaaa",
+      requestId,
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Continue an owned session only after checking the active policy.",
+      agent: { mode: "existing", id: randomUUID(), context: "continue" }
+    }, _meta: metadata });
+    expect(blocked.isError).toBe(true);
+    expect(JSON.stringify(blocked)).toContain("CODEX_AUTH_POLICY_UNAVAILABLE");
+    expect(blocked.structuredContent).toMatchObject({ error: { retryable: true } });
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(state.listJobs().filter(job => job.requestId === requestId)).toEqual([]);
+    expect(upstream.calls).toEqual([]);
   });
 
   it("keeps physical background-read slots across repeated native snapshot timeouts", async () => {

@@ -23,6 +23,7 @@ export class LazyCodexUpstream implements CodexUpstream {
   async callTool(...args: Args<"callTool">) { const instance = await this.get(); await this.guard?.(); return instance.callTool(...args); }
   async listModels(...args: Args<"listModels">) { return (await this.method("listModels"))(...args); }
   async readAccountSnapshot() { return (await this.method("readAccountSnapshot"))(); }
+  async readAuthenticationPolicy() { return (await this.method("readAuthenticationPolicy"))(); }
   async readAccountRateLimits() { return (await this.method("readAccountRateLimits"))(); }
   async startThread(...args: Args<"startThread">) { return (await this.method("startThread"))(...args); }
   async continueThread(...args: Args<"continueThread">) { return (await this.method("continueThread"))(...args); }

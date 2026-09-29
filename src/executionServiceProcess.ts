@@ -68,6 +68,7 @@ const EXECUTION_OPERATIONS = [
   "prepareExecution",
   "listModels",
   "readAccountSnapshot",
+  "readAuthenticationPolicy",
   "readAccountRateLimits",
   "startThread",
   "continueThread",
@@ -451,6 +452,10 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
 
   readAccountSnapshot(): Promise<import("./codexAccount.js").CodexAccountSnapshot | null> {
     return this.request("readAccountSnapshot", []);
+  }
+
+  readAuthenticationPolicy(): Promise<{ config: unknown; requirements: unknown }> {
+    return this.request("readAuthenticationPolicy", []);
   }
 
   readAccountRateLimits(): Promise<CodexWeeklyUsage | null> {
@@ -1353,6 +1358,9 @@ async function executeChildRequest(
       break;
     case "readAccountSnapshot":
       result = await pool.readAccountSnapshot();
+      break;
+    case "readAuthenticationPolicy":
+      result = await pool.readAuthenticationPolicy();
       break;
     case "readAccountRateLimits":
       result = await pool.readAccountRateLimits();

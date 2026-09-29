@@ -130,6 +130,7 @@ lines.on("line", (line) => {
   if (message.method === "account/rateLimits/read") {
     rateLimitsReadCount += 1;
     response(message.id, {
+      ...(process.env.CODEX_TEST_ACCOUNT_ID ? { accountId: process.env.CODEX_TEST_ACCOUNT_ID } : {}),
       rateLimits: {
         limitId: "codex",
         primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: 1_900_000_000 },

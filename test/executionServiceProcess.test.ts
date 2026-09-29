@@ -40,6 +40,9 @@ describe("isolated Codex execution process", () => {
         limitId: "codex",
         windowDurationMins: 10_080
       });
+      await expect(service.readAuthenticationPolicy()).resolves.toMatchObject({
+        config: { config: {} }, requirements: { requirements: null }
+      });
 
       const running = service.callTool(
         "codex",

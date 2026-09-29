@@ -84,9 +84,10 @@ export function createExecutionRuntime(
     service.admissionGuard()
   );
   const router = new CodexBackendRouter("app-server", new Map<CodexBackendKind, CodexUpstream>([["app-server", app]]));
+  service.setAccountReader(() => app.readAccountSnapshot());
+  service.setAuthPolicyReader(() => app.readAuthenticationPolicy());
   if (isolation.isolateCodexExecution) {
     router.supportsExecutionRecovery = () => true;
-    service.setAccountReader(() => app.readAccountSnapshot());
     router.executionHealth = (): CodexExecutionServiceHealth =>
       executionService?.health() || {
         status: executionStarting ? "starting" : "idle",

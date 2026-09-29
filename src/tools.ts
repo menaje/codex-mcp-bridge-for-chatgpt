@@ -7956,7 +7956,6 @@ export function registerBridgeTools(
             "TASK_RESULT_EXPIRED: This requestId already admitted a terminal Codex Job whose result body is no longer retained. Read codex_status query kind='request' for its terminal admission fact. Use a new requestId only for a newly authorized logical turn."
           );
         }
-        resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         if (existingRequest && existingRequest.requestHashVersion !== CURRENT_TASK_REQUEST_HASH_VERSION) {
           throw new Error(
             "TASK_REPLAY_VERSION_UNSUPPORTED: This requestId belongs to a retired task contract. Read the existing Job with codex_status query kind='request' before considering a new logical turn."
@@ -7968,6 +7967,8 @@ export function registerBridgeTools(
           executionPolicyRef: currentTaskAdmissionRef(preferences)
         });
         if (!existingRequest) releaseRuntimeAdmission = acquireRuntimeAdmission();
+        if (!existingRequest) await config.codexService?.assertCurrentAdmission();
+        resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         const requestedActivity = validateActivityTaskRequest(args, jobs, scope.scopeId);
         const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, requestedActivity);
         if (agentResolution.agent?.currentThreadId &&
@@ -15884,7 +15885,8 @@ function errorFromException(error: unknown): z.infer<typeof structuredErrorOutpu
     message: codeMatch ? rawMessage.slice(codeMatch[0].length) : rawMessage,
     ...(
       code === "JOB_RETENTION_CAPACITY" || code === "STATE_STORAGE_UNAVAILABLE" ||
-      code === "EXECUTION_UNAVAILABLE"
+      code === "EXECUTION_UNAVAILABLE" || code === "CODEX_AUTH_UNAVAILABLE" ||
+      code === "CODEX_AUTH_POLICY_UNAVAILABLE"
         ? { retryable: true }
         : {}
     )

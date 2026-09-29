@@ -26,9 +26,11 @@ CLI exit still requires a separate account and model verification.
 When the existing local Codex configuration contains a parseable top-level
 `forced_login_method` or `forced_chatgpt_workspace_id`, bridge-owned profiles
 carry those restrictions. A conflicting selection or a later local-policy
-change blocks candidate verification and application. This local check does
-not establish the effective managed policy or the original cause of a logout;
-those require the separate acceptance checks.
+change blocks candidate verification and application. The bridge also reads
+the selected App Server's effective configuration and requirements before
+admitting new work. If that policy cannot be read, new work waits for a fresh
+check. These checks do not establish the original cause of a logout or prove
+the installed CLI's policy provenance; those need separate acceptance checks.
 
 If the managed server is running, a requested change stays pending. Its running
 process keeps the environment it started with. Ordinary launches and automatic
@@ -51,9 +53,9 @@ home; a thread created there cannot be assumed resumable from a different
 home or account. New bridge thread records retain a non-secret authentication
 boundary. A changed connection hides earlier threads from new execution while
 retaining their records; switching back to the same boundary can restore
-access. Pre-existing untagged shared records remain available in the initial
-shared connection and acquire a boundary when used. The first upgrade cannot
-retroactively prove which account created each legacy record.
+access. Pre-existing untagged records remain stored for history, but cannot
+be resumed because the first upgrade cannot retroactively prove which account
+created them.
 When a file-backed identity and a confirmed keyring account are both
 unavailable, a process uses an unverified temporary thread boundary. It does
 not treat another process's unknown account as the same thread owner. Keyring

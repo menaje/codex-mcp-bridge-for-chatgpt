@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { CodexAppServerUpstreamPool } from "../src/appServerUpstream.js";
 import { CodexAuthSelectionManager } from "../src/codexAuthSelection.js";
+import { codexChatgptOwnerKey } from "../src/codexAccount.js";
 import { codexChildEnvironment, codexProcessEnvironment } from "../scripts/runtime-env.mjs";
 
 const roots: string[] = [];
@@ -137,6 +138,30 @@ it("checks effective managed login, store, and workspace restrictions for a cand
     restricted({ allowedChatgptWorkspaces: [workspace], cliAuthCredentialsStore: "file" }));
   expect(verified.candidate?.status).toBe("verified");
   expect(verified.candidate?.accountKey).toMatch(/^[a-f0-9]{64}$/);
+});
+
+it("ignores a stale shared auth file when effective managed storage selects a different keyring account", async () => {
+  const f = await fixture();
+  const home = path.join(f.root, ".codex"); await mkdir(home);
+  await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt",
+    tokens: { account_id: "stale-file-a" } }));
+  await writeFile(path.join(f.root, "auth-selection.json"), JSON.stringify({
+    schemaVersion: 1, revision: 0, applied: { kind: "disconnected" }, pending: null, candidate: null
+  }));
+  const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+  const environment = { ...f.environment,
+    CODEX_TEST_AUTH_CONFIG: JSON.stringify({ cliAuthCredentialsStore: "keyring" }),
+    CODEX_TEST_ACCOUNT_ID: "live-keyring-b" };
+  const staged = await f.manager.stage({ kind: "shared" }, 0, command, "fixture-cli", environment, false);
+  expect(staged.pending).toEqual({ kind: "shared" });
+  const state = JSON.parse(await readFile(path.join(f.root, "auth-selection.json"), "utf8"));
+  expect(state.pendingVerification).toMatchObject({
+    accountKey: codexChatgptOwnerKey("live-keyring-b"), credentialKey: null
+  });
+  await f.manager.cancelPending(staged.revision);
+  await expect(f.manager.stage({ kind: "shared" }, staged.revision + 1, command, "fixture-cli",
+    { ...environment, CODEX_TEST_ACCOUNT_ID: undefined }, false))
+    .rejects.toThrow("CODEX_AUTH_IDENTITY_UNAVAILABLE");
 });
 
 it("keeps explicit CODEX_HOME authoritative and never forwards ambient API keys to a bridge profile", async () => {

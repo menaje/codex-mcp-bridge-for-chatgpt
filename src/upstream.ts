@@ -213,6 +213,7 @@ export type CodexUpstream = {
   /** Account-wide Codex weekly rate-limit projection exposed by App Server. */
   accountRevision?(): string;
   readAccountSnapshot?(): Promise<import("./codexAccount.js").CodexAccountSnapshot | null>;
+  readAuthenticationPolicy?(): Promise<{ config: unknown; requirements: unknown }>;
   readAccountRateLimits?(): Promise<CodexWeeklyUsage | null>;
   startThread?(
     input: CodexThreadStartRequest,

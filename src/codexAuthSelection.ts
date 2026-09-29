@@ -5,9 +5,9 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import { CodexAppServerUpstreamPool } from "./appServerUpstream.js";
-import { codexChatgptOwnerKey } from "./codexAccount.js";
 import { codexCredentialIdentity, codexCredentialOwnerKey } from "./codexService.js";
-import { parseCodexLocalAuthPolicy, type CodexLocalAuthPolicy } from "./codexAuthPolicy.js";
+import { assertEffectiveCodexAuthPolicy, effectiveCodexCredentialStore,
+  parseCodexLocalAuthPolicy, type CodexLocalAuthPolicy } from "./codexAuthPolicy.js";
 import { atomicRuntimeJson, withRuntimeLock } from "./codexRuntime.js";
 import { parseJsonUtf8Strict } from "./textIntegrity.js";
 import { authProfileHome } from "../scripts/auth-selection.mjs";
@@ -310,7 +310,7 @@ export class CodexAuthSelectionManager {
         throw new Error("CODEX_AUTH_CANDIDATE_UNVERIFIED: The candidate is not signed in with the selected method.");
       }
       const ownerKey = codexCredentialOwnerKey(profileEnvironment.CODEX_HOME!, profileEnvironment);
-      this.assertEffectivePolicy(policy, expected, ownerKey || account.ownershipKey, true);
+      assertEffectiveCodexAuthPolicy(policy, expected, ownerKey || account.ownershipKey, true);
       if (ownerKey && account.ownershipKey && ownerKey !== account.ownershipKey) {
         throw new Error("CODEX_AUTH_CANDIDATE_UNVERIFIED: Codex reported a different account from the profile credential.");
       }
@@ -409,9 +409,11 @@ export class CodexAuthSelectionManager {
       const models = await pool.listModels() as { data?: unknown[] };
       if (!Array.isArray(models.data) || models.data.length === 0) throw new Error("CODEX_AUTH_MODELS_UNAVAILABLE");
       const home = environment.CODEX_HOME || path.join(environment.HOME || homedir(), ".codex");
-      const credentialKey = codexCredentialIdentity(home, environment);
-      const ownerKey = codexCredentialOwnerKey(home, environment);
-      this.assertEffectivePolicy(effectivePolicy, account.authMode, ownerKey || account.ownershipKey, false);
+      const managedStore = effectiveCodexCredentialStore(effectivePolicy);
+      const fileMayBeActive = !["keyring", "auto", "ephemeral"].includes(String(managedStore));
+      const credentialKey = fileMayBeActive ? codexCredentialIdentity(home, environment) : null;
+      const ownerKey = fileMayBeActive ? codexCredentialOwnerKey(home, environment) : null;
+      assertEffectiveCodexAuthPolicy(effectivePolicy, account.authMode, ownerKey || account.ownershipKey, false);
       if (ownerKey && account.ownershipKey && ownerKey !== account.ownershipKey) {
         throw new Error("CODEX_AUTH_SHARED_UNAVAILABLE: Codex reported a different account from the shared credential.");
       }
@@ -420,45 +422,6 @@ export class CodexAuthSelectionManager {
       }
       return { accountKey: ownerKey || account.ownershipKey, accountEmail, credentialKey };
     } finally { await pool.close(); }
-  }
-
-  private assertEffectivePolicy(snapshot: { config: unknown; requirements: unknown },
-    mode: "chatgpt" | "api-key" | "unknown", ownerKey: string | null, bridgeProfile: boolean): void {
-    const record = (value: unknown): Record<string, unknown> =>
-      value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-    const config = record(record(snapshot.config).config);
-    const requirements = record(record(snapshot.requirements).requirements);
-    const value = (object: Record<string, unknown>, camel: string, snake: string) => object[camel] ?? object[snake];
-    const selectedMethod = mode === "api-key" ? "api" : mode;
-    const forcedMethod = value(config, "forcedLoginMethod", "forced_login_method");
-    const allowedMethods = value(requirements, "allowedLoginMethods", "allowed_login_methods");
-    const effectiveStore = value(config, "cliAuthCredentialsStore", "cli_auth_credentials_store");
-    const requiredStore = value(requirements, "cliAuthCredentialsStore", "cli_auth_credentials_store");
-    const forcedWorkspaces = value(config, "forcedChatgptWorkspaceId", "forced_chatgpt_workspace_id");
-    const allowedWorkspaces = value(requirements, "allowedChatgptWorkspaces", "allowed_chatgpt_workspaces");
-    if (forcedMethod !== undefined && forcedMethod !== null && forcedMethod !== selectedMethod ||
-        allowedMethods !== undefined && allowedMethods !== null &&
-          (!Array.isArray(allowedMethods) || !allowedMethods.includes(selectedMethod))) {
-      throw new Error("CODEX_AUTH_POLICY_MISMATCH: The selected login method conflicts with effective Codex policy.");
-    }
-    if (bridgeProfile && [effectiveStore, requiredStore].some(store =>
-        store !== undefined && store !== null && store !== "file")) {
-      throw new Error("CODEX_AUTH_POLICY_MISMATCH: Managed credential storage overrides the isolated file profile.");
-    }
-    const workspaceList = (entry: unknown): string[] | null => {
-      if (entry === undefined || entry === null) return null;
-      if (typeof entry === "string") return [entry];
-      if (Array.isArray(entry) && entry.every(item => typeof item === "string")) return entry;
-      throw new Error("CODEX_AUTH_POLICY_UNVERIFIED: Codex returned an unknown workspace restriction.");
-    };
-    const restrictions = [workspaceList(forcedWorkspaces), workspaceList(allowedWorkspaces)].filter(
-      (entry): entry is string[] => entry !== null);
-    if (restrictions.length > 0) {
-      if (mode !== "chatgpt" || !ownerKey || restrictions.some(list =>
-          !list.some(id => codexChatgptOwnerKey(id) === ownerKey))) {
-        throw new Error("CODEX_AUTH_POLICY_MISMATCH: The selected workspace cannot be verified against effective Codex policy.");
-      }
-    }
   }
 
   async revalidatePending(command: string, cliFingerprint: string,
@@ -582,7 +545,7 @@ export class CodexAuthSelectionManager {
     const pool = new CodexAppServerUpstreamPool(command, 1, {
       environment: this.profileEnvironment(environment, profileId)
     });
-    try { this.assertEffectivePolicy(await pool.readAuthenticationPolicy(), "api-key", null, true); }
+    try { assertEffectiveCodexAuthPolicy(await pool.readAuthenticationPolicy(), "api-key", null, true); }
     finally { try { await pool.close(); } catch { /* No credential mutation is retried. */ } }
     await this.update(expectedRevision, async state => {
       const profile = this.inactiveProfile(state, profileId, "bridge-api");
