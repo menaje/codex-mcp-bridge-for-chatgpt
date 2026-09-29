@@ -108,6 +108,8 @@ public struct CodexAuthCandidate: Codable, Sendable, Equatable {
     public let status: String
     public let accountKey: String?
     public let accountEmail: String?
+    public let workspaceKey: String?
+    public let billingTarget: String?
     public let verifiedCli: String?
     public let verifiedAt: String?
 }
@@ -127,8 +129,12 @@ public struct CodexAuthSelection: Codable, Sendable, Equatable {
     public let revision: Int
     public let applied: CodexAuthConnection
     public let appliedAccountEmail: String?
+    public let appliedWorkspaceKey: String?
+    public let appliedBillingTarget: String?
     public let pending: CodexAuthConnection?
     public let pendingAccountEmail: String?
+    public let pendingWorkspaceKey: String?
+    public let pendingBillingTarget: String?
     public let candidate: CodexAuthCandidate?
     public let activation: Activation?
     public let profiles: [OwnedProfile]?
@@ -216,12 +222,14 @@ public struct CodexAccountUsage: Codable, Sendable, Equatable {
             public let endTime: Double?
         }
         public let actualCosts: Costs?
+        public let kind: String?
     }
     public let billing: Billing?
     public let authMode: String
     public let authenticated: Bool
     public let accountKey: String?
     public let ownershipKey: String?
+    public let workspaceKey: String?
     public let planType: String?
     public var windows: [Window]
     public var credits: Credits?

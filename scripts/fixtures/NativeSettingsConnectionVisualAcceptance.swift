@@ -768,7 +768,14 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             "actions": ["install": false, "update": false, "remove": false,
                         "reinstall": false, "rollback": false, "cleanup": false,
                         "retry": false, "applyPending": false, "skip": false],
+            "account": ["authMode": "chatgpt", "authenticated": true,
+                        "ownershipKey": "0123456789abcdef", "workspaceKey": "abcdef0123456789",
+                        "planType": "plus", "billing": ["kind": "chatgpt-plan"],
+                        "windows": [], "observedAt": Date().timeIntervalSince1970 * 1000],
             "authSelection": ["revision": 0, "applied": ["kind": "shared"],
+                              "appliedAccountEmail": "fixture@example.invalid",
+                              "appliedWorkspaceKey": "abcdef0123456789",
+                              "appliedBillingTarget": "chatgpt-plan",
                               "effective": ["kind": "shared"], "overrideActive": false]
         ])
     }

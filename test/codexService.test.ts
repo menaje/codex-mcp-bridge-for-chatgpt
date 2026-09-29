@@ -8,7 +8,7 @@ import { APP_SERVER_CAPABILITIES } from "../src/appServerUpstream.js";
 import { LazyCodexUpstream } from "../src/lazyUpstream.js";
 import { ContextualModelCatalog } from "../src/contextualModelCatalog.js";
 import type { CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
-import { codexChatgptOwnerKey, projectCodexAccount, estimateCodexCost, type CodexAccountSnapshot } from "../src/codexAccount.js";
+import { codexChatgptOwnerKey, codexChatgptPrincipalKey, projectCodexAccount, estimateCodexCost, type CodexAccountSnapshot } from "../src/codexAccount.js";
 import { JsonRpcProcess } from "../src/jsonRpcProcess.js";
 import { syntheticIdToken, syntheticVerifiedAccount } from "./fixtures/syntheticAuth.js";
 
@@ -30,7 +30,7 @@ describe("Codex execution context", () => {
       selection: { id: "fixture", source: "terminal", command, physicalPath: command, version: "99.0.0" },
       release
     });
-    return { ...f, release };
+    return { ...f, release, command };
   }
 
   it("rejects an incompatible account connection before querying the account and releases its lease", async () => {
@@ -72,6 +72,35 @@ describe("Codex execution context", () => {
     expect(account.usageStatus).toBe("unavailable");
     expect(request.mock.calls.map(call => call[0])).toEqual([
       "initialize", "account/read", "account/rateLimits/read"
+    ]);
+  });
+
+  it("reads a supported CLI's active Keyring session around account/read without requiring usage", async () => {
+    const f = await accountFixture();
+    vi.spyOn(f.service.cli, "acquire").mockResolvedValue({
+      selection: { id: "fixture", source: "terminal", command: f.command,
+        physicalPath: f.command, version: "99.0.0" },
+      fingerprint: "synthetic-cli", release: f.release,
+      protocol: { compatible: true, missingCore: [], unsupported: {},
+        capabilities: APP_SERVER_CAPABILITIES, accountSessionsList: true }
+    });
+    const sessions = { activeSessionId: "session-a", sessions: [{ sessionId: "session-a",
+      userId: "user-a", selectedWorkspaceAccountId: "workspace-w", isActive: true }] };
+    const request = vi.spyOn(JsonRpcProcess.prototype, "request").mockImplementation(async method => {
+      if (method === "initialize") return { userAgent: "fixture", platformFamily: "unix", platformOs: "test" };
+      if (method === "account/sessions/list") return sessions;
+      if (method === "account/read") return { account: { type: "chatgpt", email: "same@example.invalid" },
+        workspaceRouting: { chatgptAccountId: "workspace-w" } };
+      if (method === "account/rateLimits/read") throw new Error("synthetic usage outage");
+      throw new Error(`Unexpected method ${method}`);
+    });
+    vi.spyOn(JsonRpcProcess.prototype, "notify").mockResolvedValue();
+    vi.spyOn(JsonRpcProcess.prototype, "close").mockResolvedValue();
+    const account = await f.service.readCliAccount();
+    expect(account.ownershipKey).toBe(codexChatgptPrincipalKey("user-a", "workspace-w"));
+    expect(account.usageStatus).toBe("unavailable");
+    expect(request.mock.calls.map(call => call[0])).toEqual([
+      "initialize", "account/sessions/list", "account/read", "account/rateLimits/read", "account/sessions/list"
     ]);
   });
 
@@ -685,6 +714,28 @@ describe("account usage and billing projection", () => {
     expect(routed.usageStatus).toBe("unavailable");
     expect(projectCodexAccount(account, { accountId: "workspace-b" }).ownershipKey).toBeNull();
     expect(projectCodexAccount(account, { accountId: "workspace-b" }).ownershipConflict).toBe(true);
+  });
+  it("identifies the active Keyring user only from stable CLI session and workspace evidence", () => {
+    const account = { account: { type: "chatgpt", email: "same@example.invalid" },
+      workspaceRouting: { chatgptAccountId: "workspace-w" } };
+    const session = (userId: string, workspaceId = "workspace-w", sessionId = "session-a") => ({
+      activeSessionId: sessionId,
+      sessions: [{ sessionId, userId, selectedWorkspaceAccountId: workspaceId, isActive: true }]
+    });
+    const owner = (before: unknown, after: unknown = before) => projectCodexAccount(account, null, 1, { before, after }).ownershipKey;
+    expect(owner(session("user-a"))).toBe(codexChatgptPrincipalKey("user-a", "workspace-w"));
+    expect(owner(session("user-b"))).toBe(codexChatgptPrincipalKey("user-b", "workspace-w"));
+    expect(owner(session("user-a"))).not.toBe(owner(session("user-b")));
+    expect(owner(session("user-a"), session("user-b"))).toBeNull();
+    expect(owner(session("user-a"), session("user-a", "workspace-w", "session-b"))).toBeNull();
+    expect(owner(session("user-a", "workspace-other"))).toBeNull();
+    expect(owner(session(""))).toBeNull();
+    expect(owner({ ...session("user-a"), activeSessionId: "other" })).toBeNull();
+    expect(owner({ ...session("user-a"), sessions: [
+      ...session("user-a").sessions, { ...session("user-b").sessions[0], sessionId: "session-b" }
+    ] })).toBeNull();
+    expect(projectCodexAccount(account, { accountId: "workspace-other" }, 1,
+      { before: session("user-a"), after: session("user-a") }).ownershipKey).toBeNull();
   });
   it("preserves upstream model display names", () => {
     const account = projectCodexAccount({ account: { type: "chatgpt" } }, { rateLimitsByLimitId: {

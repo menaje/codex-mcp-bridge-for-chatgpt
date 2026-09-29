@@ -19,6 +19,8 @@ const connectionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("bridge-api"), profileId: z.string().uuid() })
 ]);
 export type AuthConnection = z.infer<typeof connectionSchema>;
+const billingTargetSchema = z.enum(["chatgpt-plan", "api", "unknown"]);
+type BillingTarget = z.infer<typeof billingTargetSchema>;
 const candidateSchema = z.strictObject({
   id: z.string().uuid(),
   connection: z.discriminatedUnion("kind", [
@@ -29,6 +31,8 @@ const candidateSchema = z.strictObject({
   status: z.enum(["prepared", "login-started", "login-completed", "login-failed", "verified"]),
   accountKey: z.string().nullable(),
   accountEmail: z.string().max(320).nullable().default(null),
+  workspaceKey: z.string().nullable().default(null),
+  billingTarget: billingTargetSchema.nullable().default(null),
   credentialKey: z.string().nullable(),
   verifiedCli: z.string().nullable(),
   verifiedCliFingerprint: z.string().nullable(),
@@ -37,6 +41,8 @@ const candidateSchema = z.strictObject({
 const verificationSchema = z.strictObject({
   command: z.string(), cliFingerprint: z.string(),
   accountKey: z.string().nullable(), accountEmail: z.string().max(320).nullable().default(null),
+  workspaceKey: z.string().nullable().default(null),
+  billingTarget: billingTargetSchema.nullable().default(null),
   credentialKey: z.string().nullable()
 });
 const activationSchema = z.strictObject({
@@ -59,8 +65,12 @@ const stateSchema = z.strictObject({
   generation: z.number().int().nonnegative().default(0),
   applied: connectionSchema,
   appliedAccountEmail: z.string().max(320).nullable().default(null),
+  appliedWorkspaceKey: z.string().nullable().default(null),
+  appliedBillingTarget: billingTargetSchema.nullable().default(null),
   pending: connectionSchema.nullable(),
   pendingAccountEmail: z.string().max(320).nullable().default(null),
+  pendingWorkspaceKey: z.string().nullable().default(null),
+  pendingBillingTarget: billingTargetSchema.nullable().default(null),
   candidate: candidateSchema.nullable(),
   pendingVerification: verificationSchema.nullable().default(null),
   activation: activationSchema.nullable().default(null),
@@ -76,8 +86,8 @@ export type AuthSelectionSnapshot = Omit<AuthSelectionState, "candidate" | "pend
   effective: AuthConnection;
 };
 const initialState = (): AuthSelectionState => ({ schemaVersion: 1, revision: 0, generation: 0,
-  applied: { kind: "shared" }, appliedAccountEmail: null,
-  pending: null, pendingAccountEmail: null, candidate: null,
+  applied: { kind: "shared" }, appliedAccountEmail: null, appliedWorkspaceKey: null, appliedBillingTarget: null,
+  pending: null, pendingAccountEmail: null, pendingWorkspaceKey: null, pendingBillingTarget: null, candidate: null,
   pendingVerification: null, activation: null, lastActivationResolution: null, profiles: [] });
 const candidateLoginProcesses = new Map<string, ChildProcess>();
 type LocalAuthPolicy = Pick<CodexLocalAuthPolicy, "forcedMethod" | "workspaceId">;
@@ -112,7 +122,8 @@ export class CodexAuthSelectionManager {
       await writeFile(path.join(home, "config.toml"), this.profileConfig(policy), { mode: 0o600, flag: "wx" });
       state.candidate = { id, connection: { kind, profileId: id }, status: "prepared",
         reused: false,
-        accountKey: null, accountEmail: null, credentialKey: null, verifiedCli: null,
+        accountKey: null, accountEmail: null, workspaceKey: null, billingTarget: null,
+        credentialKey: null, verifiedCli: null,
         verifiedCliFingerprint: null, verifiedAt: null };
       state.profiles.push({ id, kind, status: "available" });
       state.revision++;
@@ -132,7 +143,8 @@ export class CodexAuthSelectionManager {
         throw new Error("CODEX_AUTH_PROFILE_IN_USE");
       }
       state.candidate = { id: profileId, connection: { kind: profile.kind, profileId }, reused: true,
-        status: "prepared", accountKey: null, accountEmail: null, credentialKey: null,
+        status: "prepared", accountKey: null, accountEmail: null, workspaceKey: null, billingTarget: null,
+        credentialKey: null,
         verifiedCli: null, verifiedCliFingerprint: null, verifiedAt: null };
       state.revision++;
     });
@@ -286,6 +298,8 @@ export class CodexAuthSelectionManager {
       state.candidate.status = "verified";
       state.candidate.accountKey = observed.accountKey;
       state.candidate.accountEmail = observed.accountEmail;
+      state.candidate.workspaceKey = observed.workspaceKey;
+      state.candidate.billingTarget = observed.billingTarget;
       state.candidate.credentialKey = observed.credentialKey;
       state.candidate.verifiedCli = command;
       state.candidate.verifiedCliFingerprint = cliFingerprint;
@@ -296,7 +310,8 @@ export class CodexAuthSelectionManager {
   }
 
   private async probeCandidate(candidate: NonNullable<AuthSelectionState["candidate"]>, command: string,
-    environment: NodeJS.ProcessEnv): Promise<{ accountKey: string | null; accountEmail: string | null; credentialKey: string }> {
+    environment: NodeJS.ProcessEnv): Promise<{ accountKey: string | null; accountEmail: string | null;
+      workspaceKey: string | null; billingTarget: BillingTarget; credentialKey: string }> {
     await this.assertProfilePolicy(candidate.connection, environment);
     const profileEnvironment = this.profileEnvironment(environment, candidate.connection.profileId);
     const pool = new CodexAppServerUpstreamPool(command, 1, {
@@ -328,7 +343,8 @@ export class CodexAuthSelectionManager {
       if (!credentialKey) {
         throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: The candidate's file-backed identity could not be confirmed.");
       }
-      return { accountKey: ownerKey || account.ownershipKey, accountEmail, credentialKey };
+      return { accountKey: ownerKey || account.ownershipKey, accountEmail,
+        workspaceKey: fileWorkspaceKey || account.workspaceKey, billingTarget: account.billing.kind, credentialKey };
     } finally { await pool.close(); }
   }
 
@@ -348,7 +364,8 @@ export class CodexAuthSelectionManager {
     if (connection.kind === "bridge-api" && !billingConfirmed) {
       throw new Error("CODEX_AUTH_API_BILLING_CONFIRMATION_REQUIRED");
     }
-    let observed: { accountKey: string | null; accountEmail: string | null; credentialKey: string | null } | null = null;
+    let observed: { accountKey: string | null; accountEmail: string | null;
+      workspaceKey: string | null; billingTarget: BillingTarget | null; credentialKey: string | null } | null = null;
     if (connection.kind === "shared") observed = await this.probeShared(command, environment, billingConfirmed);
     if (connection.kind === "bridge-chatgpt" || connection.kind === "bridge-api") {
       const candidate = await this.requireCandidate(connection.profileId, connection.kind);
@@ -362,14 +379,19 @@ export class CodexAuthSelectionManager {
             candidate.connection.profileId !== connection.profileId || candidate.verifiedCli !== command ||
             candidate.verifiedCliFingerprint !== cliFingerprint ||
             candidate.credentialKey !== observed?.credentialKey || candidate.accountKey !== observed?.accountKey ||
-            candidate.accountEmail !== observed?.accountEmail) {
+            candidate.accountEmail !== observed?.accountEmail || candidate.workspaceKey !== observed?.workspaceKey ||
+            candidate.billingTarget !== observed?.billingTarget) {
           throw new Error("CODEX_AUTH_CANDIDATE_UNVERIFIED: Verify the selected account and model catalog again.");
         }
       }
       state.pending = connection;
       state.pendingAccountEmail = observed?.accountEmail || null;
+      state.pendingWorkspaceKey = observed?.workspaceKey || null;
+      state.pendingBillingTarget = observed?.billingTarget || null;
       state.pendingVerification = { command, cliFingerprint,
         accountKey: observed?.accountKey || null, accountEmail: observed?.accountEmail || null,
+        workspaceKey: observed?.workspaceKey || null,
+        billingTarget: observed?.billingTarget || null,
         credentialKey: observed?.credentialKey || null };
       state.revision++;
     });
@@ -397,6 +419,8 @@ export class CodexAuthSelectionManager {
       if (!state.pending) return;
       state.pending = null;
       state.pendingAccountEmail = null;
+      state.pendingWorkspaceKey = null;
+      state.pendingBillingTarget = null;
       state.pendingVerification = null;
       state.revision++;
       // A prepared candidate may still hold independently refreshed credentials.
@@ -404,7 +428,8 @@ export class CodexAuthSelectionManager {
   }
 
   private async probeShared(command: string, environment: NodeJS.ProcessEnv,
-    billingConfirmed: boolean): Promise<{ accountKey: string | null; accountEmail: string | null; credentialKey: string | null }> {
+    billingConfirmed: boolean): Promise<{ accountKey: string | null; accountEmail: string | null;
+      workspaceKey: string | null; billingTarget: BillingTarget; credentialKey: string | null }> {
     await this.assertSharedLocalPolicy(environment);
     const pool = new CodexAppServerUpstreamPool(command, 1, { environment });
     try {
@@ -432,7 +457,8 @@ export class CodexAuthSelectionManager {
       if (!credentialKey && !account.ownershipKey) {
         throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: The selected CLI did not verify the shared login user and workspace; choose a verifiable profile.");
       }
-      return { accountKey: ownerKey || account.ownershipKey, accountEmail, credentialKey };
+      return { accountKey: ownerKey || account.ownershipKey, accountEmail,
+        workspaceKey: fileWorkspaceKey || account.workspaceKey, billingTarget: account.billing.kind, credentialKey };
     } finally { await pool.close(); }
   }
 
@@ -445,8 +471,9 @@ export class CodexAuthSelectionManager {
         (proof.command !== command || proof.cliFingerprint !== cliFingerprint)) {
       throw new Error("CODEX_AUTH_REVALIDATION_REQUIRED: The staged CLI or authentication choice changed.");
     }
-    let observed: { accountKey: string | null; accountEmail: string | null; credentialKey: string | null } =
-      { accountKey: null, accountEmail: null, credentialKey: null };
+    let observed: { accountKey: string | null; accountEmail: string | null;
+      workspaceKey: string | null; billingTarget: BillingTarget | null; credentialKey: string | null } =
+      { accountKey: null, accountEmail: null, workspaceKey: null, billingTarget: null, credentialKey: null };
     if (pending.kind === "shared") observed = await this.probeShared(command, environment, true);
     if (pending.kind === "bridge-chatgpt" || pending.kind === "bridge-api") {
       const candidate = before.candidate;
@@ -457,6 +484,8 @@ export class CodexAuthSelectionManager {
       observed = await this.probeCandidate(candidate, command, environment);
     }
     if (observed.accountKey !== proof.accountKey || observed.accountEmail !== proof.accountEmail ||
+        observed.workspaceKey !== proof.workspaceKey ||
+        observed.billingTarget !== proof.billingTarget ||
         observed.credentialKey !== proof.credentialKey) {
       throw new Error("CODEX_AUTH_CANDIDATE_CHANGED: The verified authentication identity changed before activation.");
     }
@@ -497,9 +526,13 @@ export class CodexAuthSelectionManager {
       }
       state.applied = activation.to;
       state.appliedAccountEmail = state.pendingAccountEmail;
+      state.appliedWorkspaceKey = state.pendingWorkspaceKey;
+      state.appliedBillingTarget = state.pendingBillingTarget;
       state.generation = activation.generation;
       state.pending = null;
       state.pendingAccountEmail = null;
+      state.pendingWorkspaceKey = null;
+      state.pendingBillingTarget = null;
       state.pendingVerification = null;
       state.candidate = null;
       state.activation = null;
@@ -645,6 +678,8 @@ export class CodexAuthSelectionManager {
   private clearVerification(candidate: NonNullable<AuthSelectionState["candidate"]>): void {
     candidate.accountKey = null;
     candidate.accountEmail = null;
+    candidate.workspaceKey = null;
+    candidate.billingTarget = null;
     candidate.credentialKey = null;
     candidate.verifiedCli = null;
     candidate.verifiedCliFingerprint = null;

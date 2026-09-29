@@ -561,13 +561,17 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     worker.activeCalls += 1;
     try {
       const connection = await this.connectionFor(worker);
+      const supportsSessions = this.protocolSupport?.accountSessionsList === true;
+      const sessionsBefore = supportsSessions ? await connection.readAccountSessions().catch(() => null) : null;
       const account = await connection.readAccount();
       const limits = projectCodexAccount(account, null).authMode === "chatgpt"
         ? await connection.readAccountRateLimits().catch(() => null) : null;
+      const sessionsAfter = sessionsBefore ? await connection.readAccountSessions().catch(() => null) : null;
       const rawAccount = (account as { account?: { email?: unknown } } | null)?.account;
       const email = typeof rawAccount?.email === "string" && rawAccount.email.length <= 320 &&
         rawAccount.email.includes("@") ? rawAccount.email : null;
-      return { snapshot: projectCodexAccount(account, limits), email };
+      return { snapshot: projectCodexAccount(account, limits, Date.now(),
+        sessionsBefore && sessionsAfter ? { before: sessionsBefore, after: sessionsAfter } : undefined), email };
     } finally { worker.activeCalls -= 1; }
   }
 
@@ -1455,6 +1459,11 @@ class AppServerConnection {
   }
 
   async readAccount() { return this.rpc.request("account/read", { refreshToken: false }, { timeoutMs: this.protocolOptions.requestTimeoutMs }); }
+
+  async readAccountSessions() {
+    return this.rpc.request("account/sessions/list", { refreshWorkspaceMetadata: false },
+      { timeoutMs: this.protocolOptions.requestTimeoutMs });
+  }
 
   async readConfiguration() {
     return this.rpc.request("config/read", { includeLayers: false }, { timeoutMs: this.protocolOptions.requestTimeoutMs });

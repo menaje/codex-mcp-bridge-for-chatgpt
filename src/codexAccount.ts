@@ -23,6 +23,28 @@ export type CodexAccountSnapshot = {
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+const identifier = (value: unknown): string | null => typeof value === "string" && value.trim() ? value.trim() : null;
+
+function activeSessionIdentity(response: unknown): { sessionId: string; userId: string; workspaceId: string } | null {
+  const source = record(response);
+  const sessionId = identifier(source.activeSessionId);
+  if (!sessionId || !Array.isArray(source.sessions)) return null;
+  const active = source.sessions.map(record).filter(session => session.isActive === true);
+  if (active.length !== 1 || active[0].sessionId !== sessionId) return null;
+  const userId = identifier(active[0].userId);
+  const workspaceId = identifier(active[0].selectedWorkspaceAccountId);
+  return userId && workspaceId ? { sessionId, userId, workspaceId } : null;
+}
+
+/** Two reads on the same App Server must surround account/read and agree. */
+function verifiedSessionIdentity(observations: { before: unknown; after: unknown } | undefined):
+  { userId: string; workspaceId: string } | null {
+  if (!observations) return null;
+  const before = activeSessionIdentity(observations.before);
+  const after = activeSessionIdentity(observations.after);
+  return before && after && before.sessionId === after.sessionId && before.userId === after.userId &&
+    before.workspaceId === after.workspaceId ? after : null;
+}
 
 export function codexChatgptOwnerKey(accountId: string): string {
   return createHash("sha256").update(JSON.stringify(["chatgpt", accountId])).digest("hex");
@@ -33,7 +55,8 @@ export function codexChatgptPrincipalKey(userId: string, workspaceId: string): s
 }
 
 /** No credentials, email, or raw account payload leave this projection. Unknown is never zero. */
-export function projectCodexAccount(accountResponse: unknown, limitsResponse: unknown, observedAt = Date.now()): CodexAccountSnapshot {
+export function projectCodexAccount(accountResponse: unknown, limitsResponse: unknown, observedAt = Date.now(),
+  sessionObservations?: { before: unknown; after: unknown }): CodexAccountSnapshot {
   const account = record(record(accountResponse).account);
   const authMode = account.type === "chatgpt" ? "chatgpt" : account.type === "apiKey" ? "api-key" : "unknown";
   const limits = record(limitsResponse), byId = record(limits.rateLimitsByLimitId);
@@ -69,9 +92,13 @@ export function projectCodexAccount(accountResponse: unknown, limitsResponse: un
     ? limits.accountId : null;
   const ownershipConflict = Boolean(routedId && usageId && routedId !== usageId);
   const workspaceKey = !ownershipConflict && routedId ? codexChatgptOwnerKey(routedId) : null;
-  // The callable account protocol has no login user ID. A workspace cannot
-  // authorize Keyring execution, even when the usage reply agrees with it.
-  const ownershipKey = null;
+  // Only CLIs with the active-session endpoint can identify a Keyring login
+  // user. The workspace from that endpoint must agree with account/read, and
+  // the active session must remain stable around the account observation.
+  const session = verifiedSessionIdentity(sessionObservations);
+  const ownershipKey = authMode === "chatgpt" && !ownershipConflict && routedId &&
+    session?.workspaceId === routedId
+    ? codexChatgptPrincipalKey(session.userId, routedId) : null;
   // Email and usage are display correlations only.
   const displayIdentity = workspaceKey || (usageId ? codexChatgptOwnerKey(usageId) : null) ||
     (typeof account.email === "string" && account.email.trim()

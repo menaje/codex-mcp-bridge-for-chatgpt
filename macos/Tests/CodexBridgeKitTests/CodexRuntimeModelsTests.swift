@@ -26,6 +26,17 @@ final class CodexRuntimeModelsTests: XCTestCase {
         XCTAssertFalse(sameEmail.sharesKnownAccount(with: try account(key: "two", displayKey: "same-email")))
     }
 
+    func testAuthSelectionDecodesWorkspaceAndBillingEvidenceWithoutBreakingOlderSnapshots() throws {
+        let current = Data(#"{"revision":2,"applied":{"kind":"shared"},"appliedWorkspaceKey":"workspace-a","appliedBillingTarget":"chatgpt-plan","pending":{"kind":"bridge-api","profileId":"profile-a"},"pendingWorkspaceKey":null,"pendingBillingTarget":"api","candidate":{"id":"candidate-a","connection":{"kind":"bridge-api","profileId":"profile-a"},"status":"verified","workspaceKey":null,"billingTarget":"api"},"overrideActive":false,"effective":{"kind":"shared"}}"#.utf8)
+        let decoded = try JSONDecoder().decode(CodexAuthSelection.self, from: current)
+        XCTAssertEqual(decoded.appliedWorkspaceKey, "workspace-a")
+        XCTAssertEqual(decoded.appliedBillingTarget, "chatgpt-plan")
+        XCTAssertEqual(decoded.pendingBillingTarget, "api")
+        XCTAssertEqual(decoded.candidate?.billingTarget, "api")
+        let previous = Data(#"{"revision":0,"applied":{"kind":"shared"},"pending":null,"overrideActive":false,"effective":{"kind":"shared"}}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(CodexAuthSelection.self, from: previous).appliedWorkspaceKey)
+    }
+
     func testSettingsPollsFastOnlyForVisibleInstallationProgress() {
         XCTAssertEqual(CodexSettingsRefreshPolicy.interval(isVisible: true, installationInProgress: false), 30)
         XCTAssertEqual(CodexSettingsRefreshPolicy.interval(isVisible: true, installationInProgress: true), 2)
@@ -50,6 +61,9 @@ final class CodexRuntimeModelsTests: XCTestCase {
         XCTAssertNil(usage.credits)
         XCTAssertNil(usage.billing?.actualCosts?.usd)
         XCTAssertEqual(usage.billing?.actualCosts?.status, "unavailable")
+        XCTAssertNil(usage.billing?.kind)
+        let identified = Data(#"{"authMode":"api-key","authenticated":true,"windows":[],"observedAt":124,"billing":{"kind":"api"}}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(CodexAccountUsage.self, from: identified).billing?.kind, "api")
     }
 
     func testCreditsAndResetCouponsRemainSeparateAndVerifiedZeroCostsRemainZero() throws {

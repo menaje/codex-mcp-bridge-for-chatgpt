@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, statSync, renameSync, writeFileSync } from "no
 import { homedir } from "node:os";
 import path from "node:path";
 import { CodexRuntimeManager, type CliSelection } from "./codexRuntime.js";
+import type { CliProtocolSupport } from "./cliProtocol.js";
 import type { CodexBackendKind } from "./config.js";
 import { JsonRpcProcess } from "./jsonRpcProcess.js";
 import { codexChatgptOwnerKey, codexChatgptPrincipalKey, projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
@@ -29,6 +30,7 @@ export type ResolvedCodexContext = {
   runtimeHome: string;
   managementCwd: string;
   fingerprint: string;
+  protocol?: CliProtocolSupport;
   authenticationIdentity: string | null;
   release: () => Promise<void>;
 };
@@ -153,7 +155,7 @@ export class CodexService {
     this.billing = new CodexBilling(this.cli.root);
   }
   async acquireContext(): Promise<ResolvedCodexContext> {
-    const { selection, fingerprint, release } = await this.cli.acquire();
+    const { selection, fingerprint, protocol, release } = await this.cli.acquire();
     try {
       return {
         selection,
@@ -161,6 +163,7 @@ export class CodexService {
         runtimeHome: this.cli.root,
         managementCwd: stableCodexWorkingDirectory(this.environment),
         fingerprint,
+        protocol,
         authenticationIdentity: this.authenticationIdentity(),
         release
       };
@@ -499,10 +502,17 @@ export class CodexService {
       const initialized = await rpc.request("initialize", { clientInfo: { name: "codex_bridge_account", version: "1" }, capabilities: { experimentalApi: true } }, { timeoutMs: 15_000 });
       validateInitializeResponse(initialized);
       await rpc.notify("initialized", {});
+      const sessionsBefore = context.protocol?.accountSessionsList
+        ? await rpc.request("account/sessions/list", { refreshWorkspaceMetadata: false }, { timeoutMs: 15_000 }).catch(() => null)
+        : null;
       const account = await rpc.request("account/read", { refreshToken: false }, { timeoutMs: 15_000 });
       const mode = projectCodexAccount(account, null).authMode;
       const limits = mode === "chatgpt" ? await rpc.request("account/rateLimits/read", undefined, { timeoutMs: 15_000 }).catch(() => null) : null;
-      const snapshot = projectCodexAccount(account, limits);
+      const sessionsAfter = sessionsBefore
+        ? await rpc.request("account/sessions/list", { refreshWorkspaceMetadata: false }, { timeoutMs: 15_000 }).catch(() => null)
+        : null;
+      const snapshot = projectCodexAccount(account, limits, Date.now(),
+        sessionsBefore && sessionsAfter ? { before: sessionsBefore, after: sessionsAfter } : undefined);
       this.observeAccountOwner(snapshot);
       return snapshot;
     } catch (error) {

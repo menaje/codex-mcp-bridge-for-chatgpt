@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { CodexAppServerUpstreamPool } from "../src/appServerUpstream.js";
 import { CodexAuthSelectionManager } from "../src/codexAuthSelection.js";
+import { codexChatgptOwnerKey } from "../src/codexAccount.js";
 import { codexChildEnvironment, codexProcessEnvironment } from "../scripts/runtime-env.mjs";
 import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
 
@@ -52,8 +53,19 @@ it("selects one of several saved bridge profiles without replacing its credentia
   const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
   const verified = await f.manager.verify(first.id, command, "cli-a", f.environment);
   expect(verified.candidate).toMatchObject({ status: "verified", reused: true });
-  await f.manager.stage(first.connection, verified.revision, command, "cli-a", f.environment, false);
-  expect((await f.manager.snapshot(f.environment)).pending).toEqual(first.connection);
+  const workspaceKey = codexChatgptOwnerKey("saved-first");
+  expect(verified.candidate?.workspaceKey).toBe(workspaceKey);
+  expect(verified.candidate?.billingTarget).toBe("chatgpt-plan");
+  const staged = await f.manager.stage(first.connection, verified.revision, command, "cli-a", f.environment, false);
+  expect(staged.pending).toEqual(first.connection);
+  expect(staged.pendingWorkspaceKey).toBe(workspaceKey);
+  expect(staged.pendingBillingTarget).toBe("chatgpt-plan");
+  const activation = await f.manager.beginActivation(command, "cli-a", f.environment);
+  await f.manager.completeActivation(activation!, "bridge-chatgpt", "1", path.join(f.root, "auth-profiles", first.id));
+  expect(await f.manager.snapshot(f.environment)).toMatchObject({
+    appliedWorkspaceKey: workspaceKey, appliedBillingTarget: "chatgpt-plan",
+    pendingWorkspaceKey: null, pendingBillingTarget: null
+  });
 });
 
 it("stages a disconnect without changing a running environment and applies it at the next safe launch", async () => {

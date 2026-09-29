@@ -41,6 +41,7 @@ const kind = args.includes("--version") ? "version" : args.includes("generate-js
   args[0] === "app-server" && args.includes("-c") ? "task-worker" : "account";
 appendFileSync(${JSON.stringify(log)}, JSON.stringify({cli:${JSON.stringify(id)},kind,
   runtimeHome: process.env.CODEX_MCP_BRIDGE_RUNTIME_HOME?.split("/").at(-1) || null,
+  codexHome: process.env.CODEX_HOME || null,
   proxy: Boolean(process.env.HTTPS_PROXY), certificate: Boolean(process.env.SSL_CERT_FILE),
   apiKey: Boolean(process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY)}) + "\\n");
 if (kind === "version") { console.log("codex-cli 0.153.3"); process.exit(0); }
@@ -60,7 +61,7 @@ else createInterface({input:process.stdin}).on("line", line => {
 }
 
 function observations(log: string): Array<{ cli: string; kind: string; runtimeHome: string | null;
-  proxy: boolean; certificate: boolean; apiKey: boolean }> {
+  codexHome: string | null; proxy: boolean; certificate: boolean; apiKey: boolean }> {
   return readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
 }
 
@@ -105,7 +106,7 @@ describe("issue 162 selected CLI across product entry points", () => {
     }
   }, 30_000);
 
-  it.each(["app", "terminal", "bridge"] as const)("uses the %s choice for login, account, model fallback and work", async choice => {
+  it.each(["app", "terminal", "bridge"] as const)("keeps the shared auth home while using the %s CLI for login, account, model fallback and work", async choice => {
     const root = mkdtempSync(path.join(tmpdir(), `issue162-${choice}-`));
     roots.push(root);
     const log = path.join(root, "invocations.jsonl");
@@ -149,10 +150,11 @@ describe("issue 162 selected CLI across product entry points", () => {
       },
       validateInstall: async () => {}
     });
-    if (choice === "bridge") await selected.install("install", "0.153.3");
-    else {
+    await selected.install("install", "0.153.3");
+    const candidates = await selected.discover();
+    expect(new Set(candidates.map(item => item.source))).toEqual(new Set(["app", "terminal", "bridge"]));
+    if (choice !== "bridge") {
       const command = choice === "app" ? appCli : terminalCli;
-      const candidates = await selected.discover();
       const candidate = candidates.find(item => item.physicalPath === realpathSync(command));
       expect(candidate).toBeDefined();
       await selected.select(candidate!.id);
@@ -184,7 +186,7 @@ describe("issue 162 selected CLI across product entry points", () => {
       const userCalls = observations(log).filter(item => ["login", "account", "models", "task-worker"].includes(item.kind));
       expect(new Set(userCalls.map(item => item.kind))).toEqual(new Set(["login", "account", "models", "task-worker"]));
       expect(userCalls.every(item => item.cli === choice && item.runtimeHome === `${choice}-runtime` &&
-        item.proxy && item.certificate && !item.apiKey)).toBe(true);
+        item.codexHome === codexHome && item.proxy && item.certificate && !item.apiKey)).toBe(true);
     } finally {
       await execution.close();
       await supervisor.close();

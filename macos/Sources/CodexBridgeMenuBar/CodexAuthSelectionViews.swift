@@ -31,13 +31,26 @@ struct CodexAuthSelectionControls: View {
             }
         } else if let auth = model.codexRuntime?.authSelection {
             VStack(alignment: .leading, spacing: 12) {
+                if let selected = model.codexRuntime?.selection {
+                    LabeledContent("macos.selectedcodex", value: selectedCliLabel(selected))
+                }
                 LabeledContent("macos.auth.current", value: label(auth.applied.kind))
                 if let email = auth.appliedAccountEmail {
-                    LabeledContent("macos.auth.accountEmail", value: email)
+                    LabeledContent("macos.auth.emailAtSelection", value: email)
+                }
+                if let workspace = auth.appliedWorkspaceKey {
+                    LabeledContent("macos.auth.workspaceAtSelection", value: String(workspace.prefix(12)))
                 }
                 if let account = model.codexRuntime?.account, account.authenticated {
                     LabeledContent("macos.authenticationmethod", value: account.authMode == "api-key"
                                    ? localized("macos.openaiapikey") : "ChatGPT")
+                    LabeledContent("macos.auth.billingTarget", value: billingTarget(account.billing?.kind ?? account.authMode))
+                    if let plan = account.planType, account.authMode == "chatgpt" {
+                        LabeledContent("macos.auth.plan", value: plan)
+                    }
+                    if let workspace = account.workspaceKey {
+                        LabeledContent("macos.auth.workspaceObserved", value: String(workspace.prefix(12)))
+                    }
                     if let owner = account.ownershipKey {
                         LabeledContent("macos.auth.verifiedIdentity", value: String(owner.prefix(12)))
                     } else {
@@ -61,6 +74,12 @@ struct CodexAuthSelectionControls: View {
                         LabeledContent("macos.auth.pending", value: label(pending.kind))
                         if let email = auth.pendingAccountEmail {
                             LabeledContent("macos.auth.accountEmail", value: email)
+                        }
+                        if let workspace = auth.pendingWorkspaceKey {
+                            LabeledContent("macos.auth.workspaceFingerprint", value: String(workspace.prefix(12)))
+                        }
+                        if pending.kind != "disconnected" {
+                            LabeledContent("macos.auth.billingTarget", value: billingTarget(auth.pendingBillingTarget))
                         }
                         Text("macos.auth.waiting")
                             .font(.caption).foregroundStyle(.orange)
@@ -180,6 +199,12 @@ struct CodexAuthSelectionControls: View {
             if let email = candidate.accountEmail {
                 LabeledContent("macos.auth.accountEmail", value: email)
             }
+            if let workspace = candidate.workspaceKey {
+                LabeledContent("macos.auth.workspaceFingerprint", value: String(workspace.prefix(12)))
+            }
+            if candidate.status == "verified" {
+                LabeledContent("macos.auth.billingTarget", value: billingTarget(candidate.billingTarget))
+            }
             if let key = candidate.accountKey {
                 LabeledContent("macos.auth.verifiedIdentity", value: String(key.prefix(12)))
             } else if candidate.status == "verified" {
@@ -250,6 +275,15 @@ struct CodexAuthSelectionControls: View {
         return localized(key)
     }
 
+    private func selectedCliLabel(_ installation: CodexInstallation) -> String {
+        let sourceKey = switch installation.source {
+        case "app": "macos.codexapp"
+        case "terminal": "macos.terminalcli"
+        default: "macos.bridgecli"
+        }
+        return [localized(sourceKey), installation.version].compactMap { $0 }.joined(separator: " · ")
+    }
+
     private func candidateStatus(_ status: String) -> String {
         let key: String = switch status {
         case "verified": "macos.auth.verified"
@@ -259,6 +293,14 @@ struct CodexAuthSelectionControls: View {
         default: "macos.auth.needsVerification"
         }
         return localized(key)
+    }
+
+    private func billingTarget(_ mode: String?) -> String {
+        return switch mode {
+        case "api", "api-key", "bridge-api": localized("macos.auth.apiBilling")
+        case "chatgpt-plan", "chatgpt", "bridge-chatgpt": localized("macos.auth.chatgptBilling")
+        default: localized("macos.auth.billingUnknown")
+        }
     }
 
     private func explanationKey(_ kind: String) -> LocalizedStringKey {

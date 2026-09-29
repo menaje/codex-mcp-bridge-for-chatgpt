@@ -22,6 +22,16 @@ describe("CLI operation contracts", () => {
     expect(inspectClientRequestContract(future)).toMatchObject({ compatible: true, unsupported: {} });
   });
 
+  it("detects active-session identity as optional support on the selected CLI", () => {
+    expect(inspectClientRequestContract(contract).accountSessionsList).toBe(false);
+    const future = structuredClone(contract) as any;
+    future.oneOf.push({ type: "object", properties: { method: { enum: ["account/sessions/list"] },
+      params: { type: "object", properties: { refreshWorkspaceMetadata: { type: "boolean" } } } } });
+    expect(inspectClientRequestContract(future)).toMatchObject({ compatible: true, accountSessionsList: true });
+    future.oneOf.at(-1).properties.params.properties = {};
+    expect(inspectClientRequestContract(future)).toMatchObject({ compatible: true, accountSessionsList: false });
+  });
+
   it("rejects a CLI that accepts arbitrary config but cannot apply connector approvals", () => {
     const missing = structuredClone(configContract) as any;
     delete missing.properties.config.properties.apps.properties._default.properties.default_tools_approval_mode;

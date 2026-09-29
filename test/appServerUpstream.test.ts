@@ -14,6 +14,7 @@ import {
 import { CODEX_CLI_TEST_VERSION } from "../src/appServerCompatibility.js";
 import { BRIDGE_BUILD_INFO } from "../src/buildInfo.js";
 import { stableCodexWorkingDirectory } from "../src/codexService.js";
+import { codexChatgptPrincipalKey } from "../src/codexAccount.js";
 import type { JsonRpcProcessIdentity } from "../src/jsonRpcProcess.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
 import type {
@@ -57,6 +58,25 @@ describe("CodexAppServerUpstreamPool", () => {
     try {
       await pool.listModels();
       expect(await readFile(observation, "utf8")).toBe(await realpath(home));
+    } finally {
+      await pool.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a supported CLI's active session identity in the real worker account path", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "codex-app-server-keyring-"));
+    const session = { activeSessionId: "session-a", sessions: [{ sessionId: "session-a",
+      userId: "user-a", selectedWorkspaceAccountId: "workspace-w", isActive: true }] };
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, { environment: {
+      ...process.env, HOME: home, CODEX_HOME: path.join(home, ".codex"),
+      CODEX_TEST_ACCOUNT_ID: "workspace-w",
+      CODEX_TEST_ACCOUNT_SESSIONS_RESPONSE: JSON.stringify(session)
+    } });
+    try {
+      const account = await pool.readAccountSnapshot();
+      expect(account?.ownershipKey).toBe(codexChatgptPrincipalKey("user-a", "workspace-w"));
+      expect(account?.workspaceKey).not.toBe(account?.ownershipKey);
     } finally {
       await pool.close();
       await rm(home, { recursive: true, force: true });

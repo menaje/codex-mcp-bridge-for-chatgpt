@@ -3,8 +3,10 @@
 This is a checkpoint for the implementation based on `origin/dev` at
 `031c193`. It is not evidence that either GitHub issue is complete. The issue
 checkboxes require separate product and operational evidence; a green unit
-test or a successful build cannot substitute for it. No operating login,
-running bridge, or installed Codex app was changed for this checkpoint.
+test or a successful build cannot substitute for it. A separately authorized
+replacement installed the older `b24bb26` candidate; later source corrections
+in this draft have not been installed. No operating login was changed during
+the source-only follow-up.
 
 ## Follow-up implementation after PR checkpoint `c6cf380`
 
@@ -27,6 +29,25 @@ running bridge, or installed Codex app was changed for this checkpoint.
   separate usage lookup fails. If usage also supplies an account ID, they must
   agree. An account with neither ID remains unverified, and a managed Keyring
   API key still has no supported owner identity from this protocol.
+- The newer optional `account/sessions/list` protocol can report an active
+  session's user ID and selected workspace. The Bridge now detects that method
+  from the selected CLI's own schema and reads active-session evidence before
+  and after `account/read`. Only a stable active session whose workspace agrees
+  with `account/read` becomes a Keyring execution owner; absent, malformed,
+  conflicting, or unsupported replies remain unverified. Synthetic worker and
+  projection tests cover this path. The selected installed CLI
+  `0.158.0-alpha.2.1` does **not** expose the method in its generated schema,
+  so its Keyring ChatGPT combination remains blocked for new work. Managed
+  Keyring API owner identity is also unresolved. The optional response is
+  defined in [OpenAI's App Server protocol](https://github.com/openai/codex/blob/main/codex-rs/app-server-protocol/src/protocol/v2/account.rs).
+- App-bundled, terminal, and Bridge-managed CLI installations are separate
+  executable choices. The synthetic product-path matrix installs all three at
+  once and checks that login, account, model fallback, and execution use the
+  selected executable while preserving the same explicit existing Codex home.
+  The authentication screen now names the selected executable next to the
+  applied connection. Several executables pointing at one home are one
+  existing credential source, not three different accounts. Other explicitly
+  configured external homes still need source discovery and selection.
 - The installed CLI `0.158.0-alpha.2.1` generated its TypeScript App Server
   schema in a temporary home without authentication. It includes
   `account/read.workspaceRouting.chatgptAccountId` and a nullable usage
@@ -43,16 +64,16 @@ app acceptance run.
 
 | #208 condition | Current evidence and outstanding work |
 | --- | --- |
-| LOGIN-1 | Partial: [source/installation chronology](2026-09-29-auth-connection-evidence.md) separates report, observed guard rejection, and conditional source hazard. The original sign-out timeline and installed build identity remain unknown. |
+| LOGIN-1 | Partial: [source/installation chronology](2026-09-29-auth-connection-evidence.md) separates report, observed guard rejection, and conditional source hazard. The original sign-out timeline and identity of the build involved in that report remain unknown; the later `b24bb26` replacement identity is recorded separately. |
 | LOGIN-2 | Synthetic: five opt-in live probes no longer copy operating `auth.json`; build/package paths remain free of automatic live auth runs. Recheck the shipped package and any external agent automation. |
 | LOGIN-3 | Synthetic: marked persistent independent test home and fixture coverage. No independently signed-in test profile was supplied or used. |
 | LOGIN-4 | Partial: selected source, home, generation, and CLI are projected through launcher/Helper/server. New task admission reads the selected App Server's effective policy before resolving saved Agents. Operating applied settings and installed managed-policy provenance were not inspected. |
-| LOGIN-5 | Synthetic: initial unknown, account-read → recovered file for the same explicit account ID, temporary read failure, stable refresh identity, and same-email/different-account rejection. A documented `account/read` email alone is not used as ownership proof. Real keyring and external-account changes remain live checks. |
+| LOGIN-5 | Synthetic: initial unknown, account-read → recovered file for the same explicit account ID, temporary read failure, stable refresh identity, and same-email/different-account rejection. An optional CLI active-session user ID plus matching workspace can identify Keyring ownership without relying on email or usage; unstable or absent session evidence remains unverified. The selected CLI lacks this endpoint, and real Keyring and external-account changes remain live checks. |
 | LOGIN-6 | Partial: transient admission observations can recover without relogin. Existing App Server re-read/reconnect behavior after an external login is unverified. |
 | LOGIN-7 | Partial: no automatic login/API fallback; authentication switch blocks protected stored work, interactions, and undelivered results. New Jobs and schema-30 sessions persist a non-secret owner boundary; old completed results remain stored but cannot be replayed as executions. Original Job completion, failure, and interruption now record their session under the Job's admitted owner across an external login change and terminal commit retry. Active mismatched Jobs remain readable but cannot recover, be ACKed, cancelled, answered, or steered under a new owner without exact original-executor proof. Queue, transport ACK, and existing-thread behavior still need broader product acceptance. |
 | LOGIN-8 | Partial live: after a separately authorized replacement, installed build `b24bb2616935:dfbdb90c8b89` launched with matching Helper/bridge builds, connected tunnel, preserved reported Codex login availability, and opened schema 30. The original Codex app login through a later refresh and this subsequent source revision were not installed or exercised. |
 | LOGIN-9 | Synthetic/source audit: no raw credential copy, logout, deletion, or forced refresh was added to routine diagnostics. Actual refresh error type was not observed. |
-| LOGIN-10 | Partial: the current source passed a complete Node build/release/localization run with 109 files and 1,042 tests, followed by a focused restarted-Job recovery test and TypeScript compilation after that test was added. The preceding checkpoint passed 212 Swift tests (2 skipped), nine-language native localization checks, synthetic settings/setup visual checks, and the isolated pinned App Server schema check. The installed `b24bb26` bundle predates this source correction; real-account and user acceptance remain separate. |
+| LOGIN-10 | Partial: the active-session identity source passed Node build/release/localization checks and 109 files with 1,047 tests at two workers. A first four-worker run had one 50 ms read-process timing failure; an earlier full two-worker run passed. After the workspace/billing display changes, a two-worker run passed 1,046 of 1,047 tests, with one process-probe elapsed-time assertion failing at 7.0 seconds against a 4-second limit; that 9-test file passed alone. Focused selection/Helper tests (76), the three-installation product-path test (4), TypeScript compilation, Swift UI build, 213 Swift tests (2 skipped), settings visual acceptance, nine-language localization, and the isolated pinned App Server schema check passed. The installed `b24bb26` bundle predates these source corrections; real-account and user acceptance remain separate. |
 | LOGIN-11 | Live: independent-copy and no-copy shared-store multi-process refresh must be measured separately with the selected CLI; neither was injected into operating auth. |
 | LOGIN-12 | Partial: account observation is correlated and stale read results are rejected on local revision changes. External changes without file revision and missing `account/updated` need installed-CLI tests. |
 | LOGIN-13 | Partial: account/model/usage paths remain separate; fake candidate model checks are present. Real partial 401/refresh cases and actual turns remain unverified. |
@@ -63,8 +84,8 @@ app acceptance run.
 | #210 condition | Current evidence and outstanding work |
 | --- | --- |
 | AUTHSEL-1 | Partial: one local manager and shared Swift controls offer the three choices in setup/settings. Same-account and different-account real login are untested. |
-| AUTHSEL-2 | Partial: CLI and auth source are separate, explicit `CODEX_HOME` wins, and remote client shows read-only server source. Product login/model/usage/turn combinations are unverified. |
-| AUTHSEL-3 | Partial: shared/default, unknown account, ChatGPT/API, and no automatic credential copy/login are handled. Multiple previously saved bridge-owned profiles can be selected and reverified without replacing their credentials. `account/read` routing identifies the selected workspace without usage availability, but a Keyring ChatGPT login also needs the active-session user ID. The inspected CLI `0.158.0-alpha.2.1` lacks that method and is blocked for new Keyring ChatGPT work; managed Keyring API without a verifiable owner remains blocked. Discovery and selection of multiple external existing sources remain unimplemented. |
+| AUTHSEL-2 | Partial: CLI and auth source are separate, explicit `CODEX_HOME` wins, and remote client shows read-only server source. A product-path matrix with all three CLI installations verifies the selected executable and one explicitly chosen shared home for login, account, model fallback, and work. The auth screen shows the selected CLI next to the applied connection. Bridge-owned/API pairings, usage, remote and live combinations still need product acceptance. |
+| AUTHSEL-3 | Partial: shared/default, unknown account, ChatGPT/API, and no automatic credential copy/login are handled. Multiple previously saved bridge-owned profiles can be selected and reverified without replacing their credentials. On a CLI that exposes `account/sessions/list`, the Bridge can verify a stable active ChatGPT user and selected workspace even when usage lookup fails. The inspected CLI `0.158.0-alpha.2.1` lacks that method and is still blocked for new Keyring ChatGPT work; managed Keyring API without a verifiable owner remains blocked. Discovery and selection of multiple external existing sources remain unimplemented. |
 | AUTHSEL-4 | Partial: candidate prepare, persisted login intent before browser/API process launch, CLI exit, verify, stage, pending cancel, and launch-specific activation are implemented. A restarted Helper reports an unconfirmed login result rather than success. A local review action can clear a failed activation only while holding the launcher lock, after confirming no managed runtime or protected work remains; it retains the old selection, pending choice, and a stopped-unconfirmed record. Real failure recovery remains untested. |
 | AUTHSEL-5 | Synthetic: bridge-owned file profiles live under persistent runtime home and survive candidate cancellation. Rebuild/reinstall/CLI replacement with real credentials needs acceptance. |
 | AUTHSEL-6 | Synthetic: new profile/credential preparation is separate from the applied store and never restores old auth files. Activation re-probes account/CLI/policy, selects the pending profile only for a launch-specific ID, and commits after readiness and exact owned-profile home confirmation. All mode-pair and A→B/key-rotation product cases remain untested. |
@@ -73,11 +94,11 @@ app acceptance run.
 | AUTHSEL-9 | Partial: bridge disconnect leaves shared login untouched. Explicit inactive bridge-owned ChatGPT logout and API key removal exist with confirmation, effective storage-policy checks, and protected-work preflight; synthetic tests cover lost logout replies and shared-store preservation. Installed credential-store behavior remains unverified. |
 | AUTHSEL-10 | Synthetic: API switch needs billing confirmation and the execution key enters the selected CLI via stdin; no automatic API fallback. No billed real call was authorized. |
 | AUTHSEL-11 | Partial: private local selection state stores choices, account email labels, and opaque correlations, never tokens or API keys; key input avoids CLI arguments/logs, and local management remains outside GPT tools. Full built-artifact and UI/log inspection remains. |
-| AUTHSEL-12 | Partial: candidate and staged account email is shown only in local management alongside an owner fingerprint; email never proves execution ownership. Source/mode and account/usage cache checks remain separate. Shared users before a staged probe, workspace, verified capability, cost target, and remote details are still incomplete. |
+| AUTHSEL-12 | Partial: local setup/settings now distinguish the email and workspace fingerprint recorded at last apply from the latest observed workspace. Verified candidates and staged choices carry a workspace fingerprint and billing route from their own probe; shared API billing still requires explicit confirmation. Email and workspace hash do not prove ownership alone. Human-readable workspace/organization/project names, supported-model differences, exact cost target for unverified sources, and remote account details remain incomplete. |
 | AUTHSEL-13 | Partial: local method/store/workspace values share one parser. Candidate/shared probes and new admission reject conflicting effective method, workspace, and managed credential-store values. A managed Keyring/auto choice no longer treats a stale shared `auth.json` as ownership evidence; an unknown active owner blocks selection. Installed effective-policy provenance and actual workspace identity are not verified end to end. |
 | AUTHSEL-14 | Partial: schema-30 thread and Job metadata persist non-secret auth boundaries; legacy rows and completed results are retained but unowned threads cannot resume and an old request cannot be re-executed under a new connection. New owner boundaries include user and selected workspace; older workspace-only records stay stored but are not automatically attributed to a newly verified user. Original Job session results retain their admitted owner after an external login change, including terminal retry; session retention and in-memory rollback use that same owner. Unknown Keyring identities use a temporary process boundary until confirmed. Normal CLI replacement preserves the stable owner boundary, but an in-place replacement still requires runtime revalidation. App resume, skills, and setting combinations need product acceptance. |
 | AUTHSEL-15 | Partial: absent saved choice defaults to existing shared auth, and explicit `CODEX_HOME` remains authoritative. Existing independent/API installations and their upgrade paths need installed acceptance. |
-| AUTHSEL-16 | Partial: the current source passed a complete Node build/release/localization run with 109 files and 1,042 tests; a focused restarted-Job recovery test and TypeScript compilation passed after that test was added. The preceding candidate assembly passed 212 Swift tests (2 skipped), nine-language native localization validation, and ad-hoc signature verification. The pinned App Server schema check and synthetic native visual checks passed at preceding checkpoints. Installed `b24bb26` ran with matching Helper/bridge builds, a connected tunnel, and reported login availability, but it predates this source correction. A new bundle, real-account, billed API, and user acceptance evidence remain outstanding. |
+| AUTHSEL-16 | Partial: the active-session identity source passed Node build/release/localization checks and all 1,047 tests in 109 files at two workers. After later UI state changes, 1,046 passed in a full 1,047-test run, with one elapsed-time assertion in an unrelated process-probe test; its full 9-test file passed alone. Focused selection/Helper tests (76), three-installation product-path tests (4), TypeScript, Swift UI build, 213 Swift tests (2 skipped), settings visual acceptance, and nine-language localization passed. The prior candidate passed ad-hoc signature verification, and the pinned App Server schema check passed separately. Installed `b24bb26` ran with matching Helper/bridge builds, a connected tunnel, and reported login availability, but it predates these source corrections. A new bundle, real-account, billed API, and user acceptance evidence remain outstanding. |
 
 The previous checkpoint could not finish App Server schema reproducibility
 because the available CLI was `0.158.0-alpha.2.1` and the check requires its
