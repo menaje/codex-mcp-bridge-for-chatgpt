@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
-import { CodexService } from "./codexService.js";
+import { CodexService, type CodexSessionAuthBoundaryEvidence } from "./codexService.js";
 import { ScopeResolver } from "./scopeResolver.js";
 import { createBridgeMcpServer } from "./server.js";
 import { SessionRegistry } from "./sessionRegistry.js";
@@ -25,7 +25,7 @@ import type { CodexUpstream, ToolResult } from "./upstream.js";
 import { UserSettingsStore } from "./userSettings.js";
 
 const CHILD_FLAG = "--bridge-state-read-child";
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 const HEARTBEAT_MS = 250;
 const STALE_MS = 2_000;
 const STARTUP_TIMEOUT_MS = 10_000;
@@ -84,6 +84,7 @@ type RequestMessage = {
   requestId: string;
   method: ReadMethod;
   args: unknown[];
+  authBoundary: CodexSessionAuthBoundaryEvidence | null;
 };
 type CloseMessage = { type: "close" };
 type ParentMessage = RequestMessage | CloseMessage;
@@ -127,19 +128,25 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
   private constructor(
     private readonly file: string,
     private readonly environment: NodeJS.ProcessEnv,
-    private readonly requestDeadlineMs: number
+    private readonly requestDeadlineMs: number,
+    private readonly authBoundary: () => CodexSessionAuthBoundaryEvidence | null
   ) {}
 
   static async start(
     file: string,
     environment: NodeJS.ProcessEnv = process.env,
-    options: { /** Test/diagnostic override. */ requestDeadlineMs?: number } = {}
+    options: {
+      /** Test/diagnostic override. */ requestDeadlineMs?: number;
+      /** Read-only ownership evidence from the operational service, never an execution grant. */
+      authBoundary?: () => CodexSessionAuthBoundaryEvidence | null;
+    } = {}
   ): Promise<ChildProcessStateReadService> {
     const requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS;
     if (!Number.isSafeInteger(requestDeadlineMs) || requestDeadlineMs < 1) {
       throw new Error("STATE_READ_DEADLINE_INVALID: Read deadline must be a positive integer.");
     }
-    const service = new ChildProcessStateReadService(file, environment, requestDeadlineMs);
+    const service = new ChildProcessStateReadService(file, environment, requestDeadlineMs,
+      options.authBoundary || (() => null));
     try {
       await service.spawnAndWait();
       return service;
@@ -223,12 +230,16 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
       return Promise.reject(new Error("STATE_READ_CAPACITY: Read projection capacity is exhausted."));
     }
     const requestId = randomUUID();
+    let authBoundary: CodexSessionAuthBoundaryEvidence | null;
+    try { authBoundary = this.authBoundary(); }
+    catch { return Promise.reject(new Error("STATE_READ_AUTH_BOUNDARY_UNAVAILABLE: Ownership evidence could not be read.")); }
     const message: RequestMessage = {
       type: "request",
       generation: this.generation,
       requestId,
       method,
-      args
+      args,
+      authBoundary
     };
     if (Buffer.byteLength(JSON.stringify(message), "utf8") > MAX_MESSAGE_BYTES) {
       return Promise.reject(new Error("STATE_READ_REQUEST_TOO_LARGE: Read request exceeds its IPC limit."));
@@ -420,6 +431,7 @@ class ProjectionUpstream implements CodexUpstream {
 async function runChild(file: string): Promise<void> {
   const generation = randomUUID();
   const codexService = new CodexService(process.env);
+  const unverifiedReadBoundary = randomUUID();
   let closing = false;
   let inFlight = 0;
   let tail: Promise<void> = Promise.resolve();
@@ -472,7 +484,13 @@ async function runChild(file: string): Promise<void> {
       observe(inFlight > 1 ? "queue-wait" : "read-snapshot");
       const run = tail.then(async () => {
         observe("read-snapshot");
-        const result = await executeProjection(file, value.method, value.args, codexService);
+        const evidence = value.authBoundary;
+        // A last-confirmed Keyring owner can label historical read-only rows.
+        // Admission independently checks the live account before any execution.
+        const boundaryIsCurrent = evidence && evidence.ownerStatus !== "unverified" &&
+          evidence.snapshotAt <= Date.now() && Date.now() - evidence.snapshotAt <= REQUEST_DEADLINE_MS;
+        const result = await executeProjection(file, value.method, value.args, codexService,
+          boundaryIsCurrent ? evidence.key : unverifiedReadBoundary);
         observe("serializing");
         const encoded = JSON.stringify(result === undefined ? null : result);
         if (Buffer.byteLength(encoded, "utf8") > MAX_MESSAGE_BYTES) {
@@ -509,7 +527,8 @@ async function executeProjection(
   file: string,
   method: ReadMethod,
   args: unknown[],
-  codexService: CodexService
+  codexService: CodexService,
+  authBoundaryKey: string
 ): Promise<unknown> {
   const config = loadConfig({
     ...process.env,
@@ -525,7 +544,7 @@ async function executeProjection(
     allowedRoots: config.allowedRoots,
     maxSessions: 1_000_000,
     projectionOnly: true,
-    authBoundary: () => codexService.sessionAuthBoundary()
+    authBoundary: { key: authBoundaryKey, allowLegacyShared: false }
   });
   const jobs = new CodexJobRegistry({
     maxConcurrentJobs: config.maxConcurrentJobs,
@@ -605,7 +624,21 @@ function isParentMessage(value: unknown): value is ParentMessage {
   if (message.type === "close") return true;
   return message.type === "request" && typeof message.generation === "string" &&
     typeof message.requestId === "string" && READ_METHODS.includes(message.method as ReadMethod) &&
-    Array.isArray(message.args) && Buffer.byteLength(JSON.stringify(message), "utf8") <= MAX_MESSAGE_BYTES;
+    Array.isArray(message.args) && isReadBoundaryEvidence(message.authBoundary) &&
+    Buffer.byteLength(JSON.stringify(message), "utf8") <= MAX_MESSAGE_BYTES;
+}
+
+function isReadBoundaryEvidence(value: unknown): value is CodexSessionAuthBoundaryEvidence | null {
+  if (value === null) return true;
+  if (!value || typeof value !== "object") return false;
+  const evidence = value as Record<string, unknown>;
+  return typeof evidence.key === "string" && /^[a-f0-9]{64}$/.test(evidence.key) &&
+    evidence.allowLegacyShared === false &&
+    ["observed", "last-confirmed", "unverified"].includes(String(evidence.ownerStatus)) &&
+    (evidence.ownerConfirmedAt === null || Number.isSafeInteger(evidence.ownerConfirmedAt)) &&
+    Number.isSafeInteger(evidence.snapshotAt) &&
+    (evidence.ownerStatus === "unverified" ? evidence.ownerConfirmedAt === null
+      : typeof evidence.ownerConfirmedAt === "number" && evidence.ownerConfirmedAt <= (evidence.snapshotAt as number));
 }
 
 const childFile = process.argv[process.argv.indexOf(CHILD_FLAG) + 1];

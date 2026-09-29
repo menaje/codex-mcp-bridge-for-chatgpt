@@ -305,6 +305,7 @@ export class CodexAuthSelectionManager {
     try {
       const policy = await pool.readAuthenticationPolicy();
       const { snapshot: account, email: accountEmail } = await pool.readAccountDetails();
+      if (account.ownershipConflict) throw new Error("CODEX_AUTH_IDENTITY_CONFLICT: Codex account and usage replies identify different workspaces.");
       const expected = candidate.connection.kind === "bridge-api" ? "api-key" : "chatgpt";
       if (!account?.authenticated || account.authMode !== expected) {
         throw new Error("CODEX_AUTH_CANDIDATE_UNVERIFIED: The candidate is not signed in with the selected method.");
@@ -404,6 +405,7 @@ export class CodexAuthSelectionManager {
     try {
       const effectivePolicy = await pool.readAuthenticationPolicy();
       const { snapshot: account, email: accountEmail } = await pool.readAccountDetails();
+      if (account.ownershipConflict) throw new Error("CODEX_AUTH_IDENTITY_CONFLICT: Codex account and usage replies identify different workspaces.");
       if (!account?.authenticated) throw new Error("CODEX_AUTH_SHARED_UNAVAILABLE: The existing Codex login is not verified.");
       if (account.authMode === "api-key" && !billingConfirmed) throw new Error("CODEX_AUTH_API_BILLING_CONFIRMATION_REQUIRED");
       const models = await pool.listModels() as { data?: unknown[] };

@@ -53,6 +53,27 @@ describe("Codex execution context", () => {
     expect(f.release).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a selected workspace identity when the separate usage RPC fails", async () => {
+    const f = await accountFixture();
+    const request = vi.spyOn(JsonRpcProcess.prototype, "request").mockImplementation(async method => {
+      if (method === "initialize") return { userAgent: "fixture", platformFamily: "unix", platformOs: "test" };
+      if (method === "account/read") return { account: { type: "chatgpt", email: "same@example.invalid" },
+        workspaceRouting: { chatgptAccountId: "workspace-a", backendOrigin: "https://example.invalid",
+          accountRoutingOverride: "NO_CONSTRAINT" } };
+      if (method === "account/rateLimits/read") throw new Error("synthetic usage outage");
+      throw new Error(`Unexpected method ${method}`);
+    });
+    vi.spyOn(JsonRpcProcess.prototype, "notify").mockResolvedValue();
+    vi.spyOn(JsonRpcProcess.prototype, "close").mockResolvedValue();
+    const account = await f.service.readCliAccount();
+    expect(account.ownershipKey).toBe(projectCodexAccount({ account: { type: "chatgpt" } },
+      { accountId: "workspace-a" }).ownershipKey);
+    expect(account.usageStatus).toBe("unavailable");
+    expect(request.mock.calls.map(call => call[0])).toEqual([
+      "initialize", "account/read", "account/rateLimits/read"
+    ]);
+  });
+
   it("releases account ownership even when the connection cannot close cleanly", async () => {
     const f = await accountFixture();
     vi.spyOn(JsonRpcProcess.prototype, "request")
@@ -278,6 +299,25 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(returned.sessionAuthBoundary().key).not.toBe(initialKey);
   });
 
+  it("keeps thread ownership stable across a CLI replacement while requiring runtime revalidation", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    await writeFile(path.join(home, "auth.json"), JSON.stringify({
+      auth_mode: "chatgpt", tokens: { account_id: "workspace-a" }
+    }));
+    let cliFingerprint = "cli-before";
+    vi.spyOn(f.service.cli, "appliedContextFingerprint").mockImplementation(() => cliFingerprint);
+    const guard = f.service.admissionGuard();
+    await guard();
+    const before = f.service.sessionAuthBoundary();
+    cliFingerprint = "cli-after";
+    expect(f.service.sessionAuthBoundary().key).toBe(before.key);
+    await expect(guard()).rejects.toThrow("CODEX_CLI_CHANGED");
+    const restarted = new CodexService(f.environment);
+    vi.spyOn(restarted.cli, "appliedContextFingerprint").mockReturnValue(cliFingerprint);
+    expect(restarted.sessionAuthBoundary().key).toBe(before.key);
+    await expect(restarted.admissionGuard()()).resolves.toBeUndefined();
+  });
+
   it("does not treat an unidentified keyring account as the same thread owner after restart", async () => {
     const f = await fixture();
     const first = new CodexService({ ...f.environment, CODEX_MCP_BRIDGE_AUTH_SOURCE: "shared" });
@@ -382,6 +422,21 @@ createInterface({ input: process.stdin }).on("line", line => {
     vi.spyOn(f.service, "readCliAccount").mockResolvedValue(projectCodexAccount(
       { account: { type: "chatgpt", email: "same@example.invalid" } }, null));
     await expect(f.service.admissionGuard()()).rejects.toThrow("CODEX_AUTH_IDENTITY_UNAVAILABLE");
+  });
+
+  it("admits a selected Keyring workspace when usage lookup fails", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    await writeFile(path.join(home, "config.toml"), 'cli_auth_credentials_store = "keyring"\n');
+    f.service.setAuthPolicyReader(async () => ({
+      config: { config: { cliAuthCredentialsStore: "keyring" } }, requirements: { requirements: null }
+    }));
+    vi.spyOn(f.service, "readCliAccount").mockResolvedValue(projectCodexAccount({
+      account: { type: "chatgpt", email: "same@example.invalid" },
+      workspaceRouting: { chatgptAccountId: "workspace-a", backendOrigin: "https://example.invalid",
+        accountRoutingOverride: "NO_CONSTRAINT" }
+    }, null));
+    await expect(f.service.admissionGuard()()).resolves.toBeUndefined();
+    expect(f.service.sessionAuthBoundary().ownerStatus).toBe("last-confirmed");
   });
 
   it("treats a local login restriction change as an admission boundary", async () => {
@@ -560,6 +615,15 @@ describe("account usage and billing projection", () => {
     expect(first.accountKey).not.toBe(second.accountKey);
     expect(first.ownershipKey).not.toBe(second.ownershipKey);
     expect(projectCodexAccount(account, null).ownershipKey).toBeNull();
+  });
+  it("uses the selected workspace from account/read without usage and rejects conflicting usage identity", () => {
+    const account = { account: { type: "chatgpt", email: "same@example.invalid" },
+      workspaceRouting: { chatgptAccountId: "workspace-a", backendOrigin: "https://example.invalid",
+        accountRoutingOverride: "NO_CONSTRAINT" } };
+    const routed = projectCodexAccount(account, null);
+    expect(routed.ownershipKey).toBe(projectCodexAccount(account, { accountId: "workspace-a" }).ownershipKey);
+    expect(routed.usageStatus).toBe("unavailable");
+    expect(projectCodexAccount(account, { accountId: "workspace-b" }).ownershipKey).toBeNull();
   });
   it("preserves upstream model display names", () => {
     const account = projectCodexAccount({ account: { type: "chatgpt" } }, { rateLimitsByLimitId: {

@@ -1,9 +1,9 @@
 /**
  * Schema 19 remains the immutable released base DDL used by its recorded
- * migration. Fresh databases apply the v20 through v29 projections below in the
+ * migration. Fresh databases apply the v20 through v30 projections below in the
  * same transaction; older databases follow the append-only migration catalog.
  */
-export const CURRENT_STATE_SCHEMA_VERSION = "29";
+export const CURRENT_STATE_SCHEMA_VERSION = "30";
 
 export const CURRENT_STATE_SCHEMA = `
   CREATE TABLE scopes (
@@ -631,4 +631,10 @@ export const V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA = `
   CREATE INDEX IF NOT EXISTS thread_connections_release_due
     ON thread_connections(persistence, last_finished_at, thread_id)
     WHERE phase != 'released';
+`;
+
+/** Older sessions have no proven owner. Keep them null and never assign the
+ * current login retroactively when adding durable ownership. */
+export const V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA = `
+  ALTER TABLE sessions ADD COLUMN auth_boundary TEXT;
 `;

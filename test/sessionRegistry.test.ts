@@ -22,6 +22,9 @@ describe("SessionRegistry", () => {
     expect(first.belongsToAnotherAuthentication("legacy-shared")).toBe(true);
     first.record(session("first-account", root, "read-only", undefined, undefined, 100));
     expect(first.get("first-account")?.authBoundary).toBe(firstKey);
+    const reopenedSame = new SessionRegistry({ stateStore: store,
+      authBoundary: { key: firstKey, allowLegacyShared: false } });
+    expect(reopenedSame.get("first-account")?.authBoundary).toBe(firstKey);
     const second = new SessionRegistry({ stateStore: store,
       authBoundary: { key: secondKey, allowLegacyShared: false } });
     expect(second.get("first-account")).toBeUndefined();

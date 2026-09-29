@@ -6,6 +6,8 @@ export type CodexAccountSnapshot = {
   accountKey: string | null;
   /** Hash of an explicit account/workspace ID; an email never proves execution ownership. */
   ownershipKey: string | null;
+  /** Two official account replies named different selected workspaces. */
+  ownershipConflict: boolean;
   planType: string | null;
   windows: { limitId: string; limitName: string | null; usedPercent: number; remainingPercent: number; windowDurationMins: number; resetsAt: number | null }[];
   credits: { hasCredits: boolean; unlimited: boolean; balance: string | null } | null;
@@ -51,8 +53,16 @@ export function projectCodexAccount(accountResponse: unknown, limitsResponse: un
     }
   }
   const reset = record(limits.rateLimitResetCredits);
-  const accountId = authMode === "chatgpt" && typeof limits.accountId === "string" && limits.accountId.trim()
+  // The selected workspace is reported by account/read independently of the
+  // optional usage request. Never use an email or a backend default workspace
+  // as execution ownership, and reject contradictory account observations.
+  const routing = record(record(accountResponse).workspaceRouting);
+  const routedId = authMode === "chatgpt" && typeof routing.chatgptAccountId === "string" && routing.chatgptAccountId.trim()
+    ? routing.chatgptAccountId : null;
+  const usageId = authMode === "chatgpt" && typeof limits.accountId === "string" && limits.accountId.trim()
     ? limits.accountId : null;
+  const ownershipConflict = Boolean(routedId && usageId && routedId !== usageId);
+  const accountId = ownershipConflict ? null : routedId || usageId;
   const ownershipKey = accountId ? codexChatgptOwnerKey(accountId) : null;
   // Email is useful for display continuity when limits are unavailable, but
   // the ownership key alone may authorize a keyring-backed execution.
@@ -63,7 +73,7 @@ export function projectCodexAccount(accountResponse: unknown, limitsResponse: un
     : windows.length ? "available"
     : buckets.length ? "unavailable" : "none";
   return { authMode, authenticated: authMode !== "unknown",
-    accountKey: displayIdentity, ownershipKey,
+    accountKey: displayIdentity, ownershipKey, ownershipConflict,
     planType: typeof account.planType === "string" ? account.planType : null, windows, credits,
     resetCredits: authMode === "chatgpt" && finite(reset.availableCount) && reset.availableCount >= 0 ? { availableCount: Math.floor(reset.availableCount) } : null,
     billing: { kind: authMode === "chatgpt" ? "chatgpt-plan" : authMode === "api-key" ? "api" : "unknown", costsAvailable: false,

@@ -15,6 +15,14 @@ import { decodeUtf8Strict, parseJsonUtf8Strict } from "./textIntegrity.js";
 import { codexProcessEnvironment } from "../scripts/runtime-env.mjs";
 
 export type CodexSessionPolicy = { contextId?: string; visibleInCodexApp: boolean; persistent: boolean; persistence: "persistent" | "ephemeral"; constraint?: "hidden-persistent-unsupported" };
+/** Non-secret ownership evidence for read-only projections; never grants execution. */
+export type CodexSessionAuthBoundaryEvidence = {
+  key: string;
+  allowLegacyShared: false;
+  ownerStatus: "observed" | "last-confirmed" | "unverified";
+  ownerConfirmedAt: number | null;
+  snapshotAt: number;
+};
 export type ResolvedCodexContext = {
   selection: CliSelection;
   environment: NodeJS.ProcessEnv;
@@ -106,6 +114,8 @@ export class CodexService {
   private authPolicyReader?: () => Promise<CodexEffectiveAuthPolicy>;
   private executionAdmissionGuard?: () => Promise<void>;
   private confirmedSessionOwnerKey: string | null = null;
+  private confirmedSessionOwnerAt: number | null = null;
+  private confirmedSessionLocalPolicyKey: string | null = null;
   private confirmedEffectiveCredentialStore: string | null = null;
   private effectivePolicyConfirmed = false;
   private readonly unknownSessionIdentity = randomUUID();
@@ -145,6 +155,8 @@ export class CodexService {
     this.effectivePolicyConfirmed = false;
     this.confirmedEffectiveCredentialStore = null;
     this.confirmedSessionOwnerKey = null;
+    this.confirmedSessionOwnerAt = null;
+    this.confirmedSessionLocalPolicyKey = null;
   }
   setAppVisibility(visible: boolean): void {
     const saved = this.readRecord("policy", "visibility");
@@ -166,8 +178,8 @@ export class CodexService {
     const identity = fileMayBeActive ? this.authenticationIdentity(home) : null;
     return identity ? digest(JSON.stringify([home, this.cli.appliedContextFingerprint(), identity])) : null;
   }
-  /** Persisted thread ownership follows a proven owner, regardless of how it was observed. */
-  sessionAuthBoundary(): { key: string; allowLegacyShared: boolean } {
+  /** Persisted work follows its proven owner; CLI compatibility stays in admission. */
+  sessionAuthBoundary(): CodexSessionAuthBoundaryEvidence {
     const home = this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
     const source = this.environment.CODEX_MCP_BRIDGE_AUTH_SOURCE || "shared";
     const generation = this.environment.CODEX_MCP_BRIDGE_AUTH_GENERATION || "0";
@@ -180,13 +192,22 @@ export class CodexService {
         !["keyring", "auto", "ephemeral"].includes(this.confirmedEffectiveCredentialStore || "")
         ? credentialEvidence(home, this.environment, policy)?.ownerKey || null : null;
     } catch { /* An unknown policy cannot authorize a stored conversation. */ }
-    if (observedOwner) this.confirmedSessionOwnerKey = observedOwner;
-    const owner = observedOwner || this.confirmedSessionOwnerKey;
+    const snapshotAt = Date.now();
+    if (observedOwner) {
+      this.confirmedSessionOwnerKey = observedOwner;
+      this.confirmedSessionOwnerAt = snapshotAt;
+      this.confirmedSessionLocalPolicyKey = policyKey;
+    }
+    const retainedOwner = policyKey !== null && policyKey === this.confirmedSessionLocalPolicyKey
+      ? this.confirmedSessionOwnerKey : null;
+    const owner = observedOwner || retainedOwner;
     return {
-      key: digest(JSON.stringify([source, path.resolve(home),
-        this.cli.appliedContextFingerprint(), policyKey,
+      key: digest(JSON.stringify(["auth-owner-v2", source, path.resolve(home),
         owner ? ["owner", owner] : ["unverified", generation, this.unknownSessionIdentity]])),
-      allowLegacyShared: false
+      allowLegacyShared: false,
+      ownerStatus: observedOwner ? "observed" : owner ? "last-confirmed" : "unverified",
+      ownerConfirmedAt: owner ? this.confirmedSessionOwnerAt : null,
+      snapshotAt
     };
   }
   /** Confirm the owner before resolving any saved Agent or persisting a new Job. */
@@ -243,17 +264,20 @@ export class CodexService {
         try { account = await this.readCliAccount(); }
         catch { throw new Error("CODEX_AUTH_UNAVAILABLE: Codex account status cannot currently be verified. Retry after the account check recovers."); }
         if (!account?.authenticated) throw new Error("CODEX_AUTH_REQUIRED: Sign in to Codex before starting new work.");
+        if (account.ownershipConflict) {
+          throw new Error("CODEX_AUTH_IDENTITY_CONFLICT: Codex account and usage replies identify different workspaces.");
+        }
         // An ambient key cannot identify a credential that managed storage
         // selected independently (including auto/keyring fallback).
         const environmentApiKey = ["keyring", "auto", "ephemeral"].includes(String(managedStore))
           ? undefined : this.environment.OPENAI_API_KEY || this.environment.CODEX_API_KEY;
         if (account.authMode === "unknown" ||
             !account.ownershipKey && !(account.authMode === "api-key" && environmentApiKey)) {
-          throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: Codex did not provide enough account identity to protect a new execution.");
+          throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: The selected Codex CLI did not identify the active account or workspace; choose a verifiable profile before starting new work.");
         }
         currentOwnerKey = account.authMode === "api-key" && environmentApiKey
           ? digest(JSON.stringify(["api-key", environmentApiKey])) : account.ownershipKey!;
-        current = digest(JSON.stringify([account.authMode, currentOwnerKey, currentPolicyKey, currentCliFingerprint]));
+        current = digest(JSON.stringify([account.authMode, currentOwnerKey, currentPolicyKey]));
         currentSource = "account";
         currentMode = account.authMode;
       }
@@ -268,8 +292,11 @@ export class CodexService {
       const currentManagedPolicyKey = effectivePolicy
         ? digest(effectiveCodexAuthPolicyIdentity(effectivePolicy)) : "none";
       if (identity !== undefined && (ownerKey !== currentOwnerKey || policyKey !== currentPolicyKey ||
-          managedPolicyKey !== currentManagedPolicyKey || cliFingerprint !== currentCliFingerprint)) {
+          managedPolicyKey !== currentManagedPolicyKey)) {
         throw new Error("CODEX_AUTH_CHANGED: Codex authentication or policy changed. Review the current account before starting another turn.");
+      }
+      if (identity !== undefined && cliFingerprint !== currentCliFingerprint) {
+        throw new Error("CODEX_CLI_CHANGED: The selected Codex CLI changed. Restart the Bridge to verify the new runtime before starting another turn.");
       }
       if (identity !== undefined && source === currentSource && current !== identity) {
         throw new Error("CODEX_AUTH_CHANGED: Codex authentication changed. Review the current account before starting another turn.");
@@ -281,6 +308,8 @@ export class CodexService {
       managedPolicyKey = currentManagedPolicyKey;
       cliFingerprint = currentCliFingerprint;
       this.confirmedSessionOwnerKey = currentOwnerKey;
+      this.confirmedSessionOwnerAt = Date.now();
+      this.confirmedSessionLocalPolicyKey = currentPolicyKey;
       this.confirmedEffectiveCredentialStore = typeof managedStore === "string" ? managedStore : null;
       this.effectivePolicyConfirmed = true;
     };

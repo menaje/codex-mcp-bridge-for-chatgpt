@@ -14,7 +14,8 @@ import {
   V26_MODEL_DESCRIPTION_VERSIONS_MIGRATION_SCHEMA,
   V27_DECISION_CARD_RETIREMENT_MIGRATION_SCHEMA,
   V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA,
-  V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA
+  V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA,
+  V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA
 } from "./stateSchema.js";
 import type { ModelDescriptionHistoryPage, ModelDescriptionOverrides } from "./modelDescriptions.js";
 import {
@@ -165,6 +166,7 @@ const TRANSPORT_OBSERVATION_LIMIT = 1_000;
 
 type SessionRowInput = {
   threadId: string;
+  authBoundary?: string;
   scopeId: string;
   backendKind?: string;
   cwd: string;
@@ -748,6 +750,7 @@ export class BridgeStateStore {
           this.database.exec(V27_DECISION_CARD_RETIREMENT_MIGRATION_SCHEMA);
           this.database.exec(V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA);
           this.database.exec(V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA);
+          this.database.exec(V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
           this.setMeta("schema_v21_created_at", new Date().toISOString());
           this.setMeta("schema_v22_created_at", new Date().toISOString());
@@ -758,6 +761,7 @@ export class BridgeStateStore {
           this.setMeta("schema_v27_created_at", new Date().toISOString());
           this.setMeta("schema_v28_created_at", new Date().toISOString());
           this.setMeta("schema_v29_created_at", new Date().toISOString());
+          this.setMeta("schema_v30_created_at", new Date().toISOString());
           this.setMeta("state_migration_catalog_version", String(STATE_MIGRATION_CATALOG_VERSION));
           this.setMeta("state_database_id", randomUUID());
           this.recordSchemaOrigin("fresh");
@@ -1159,6 +1163,7 @@ export class BridgeStateStore {
         const row = value as Record<string, unknown>;
         return {
           threadId: String(row.thread_id),
+          ...(row.auth_boundary ? { authBoundary: String(row.auth_boundary) } : {}),
           scopeId: String(row.scope_id),
           backendKind: String(row.backend_kind),
           ...(row.session_id ? { sessionId: String(row.session_id) } : {}),
@@ -1221,8 +1226,8 @@ export class BridgeStateStore {
           INSERT INTO sessions(
             thread_id,scope_id,project_id,backend_kind,cwd,sandbox,session_id,
             forked_from_thread_id,persistence,visible_in_codex_app,selection,
-            policy_revision,created_at,updated_at,last_used_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            policy_revision,created_at,updated_at,last_used_at,auth_boundary
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(thread_id) DO UPDATE SET
             scope_id = excluded.scope_id,
             cwd = excluded.cwd,
@@ -1236,7 +1241,8 @@ export class BridgeStateStore {
             selection = excluded.selection,
             policy_revision = excluded.policy_revision,
             updated_at = excluded.updated_at,
-            last_used_at = excluded.last_used_at
+            last_used_at = excluded.last_used_at,
+            auth_boundary = COALESCE(excluded.auth_boundary,sessions.auth_boundary)
         `)
         .run(
           session.threadId,
@@ -1255,7 +1261,8 @@ export class BridgeStateStore {
           Number.isInteger(session.policyRevision) ? session.policyRevision : null,
           session.createdAt ?? session.lastUsedAt,
           session.updatedAt ?? session.lastUsedAt,
-          session.lastUsedAt
+          session.lastUsedAt,
+          session.authBoundary || null
         );
       this.threadConnections.register({ threadId: session.threadId, scopeId: session.scopeId,
         persistence: session.persistence || (session.visibleInCodexApp === true ? "persistent" : session.visibleInCodexApp === false ? "ephemeral" : "unknown") }, session.lastUsedAt);
@@ -4297,6 +4304,7 @@ export class BridgeStateStore {
     this.runMigration("26", "27", originalSourceSchema, () => this.migrateV26ToV27());
     this.runMigration("27", "28", originalSourceSchema, () => this.migrateV27ToV28());
     this.runMigration("28", "29", originalSourceSchema, () => this.migrateV28ToV29());
+    this.runMigration("29", "30", originalSourceSchema, () => this.migrateV29ToV30());
     if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
       throw new Error(`Bridge state migration stopped at unsupported schema version ${this.getMeta("schema_version")}.`);
     }
@@ -5745,6 +5753,15 @@ export class BridgeStateStore {
       this.setMeta("schema_version", "29");
       this.setMeta("schema_v29_background_work_indexes", "recovery-agent-and-worker-v1");
       this.setMeta("schema_v29_migrated_at", new Date().toISOString());
+    });
+  }
+
+  private migrateV29ToV30(): void {
+    this.transaction(() => {
+      this.database.exec(V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "30");
+      this.setMeta("schema_v30_session_auth_boundary", "nullable-owner-v1");
+      this.setMeta("schema_v30_migrated_at", new Date().toISOString());
     });
   }
 

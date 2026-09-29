@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { CodexJobRegistry } from "../src/tools.js";
+import { CodexService } from "../src/codexService.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import type { CodexProgress, CodexUpstream, ToolResult } from "../src/upstream.js";
 
@@ -17,6 +18,38 @@ const PROJECT_REF_A = "prj_AAAAAAAAAAAAAAAAAAAAAA";
 const PROJECT_REF_B = "prj_BBBBBBBBBBBBBBBBBBBBBB";
 
 describe("CodexJobRegistry persistence", () => {
+  it("retains the same Job owner after a normal CLI replacement and Bridge restart", async () => {
+    const root = temporaryRoot(), file = path.join(root, "state.sqlite");
+    const home = path.join(root, ".codex");
+    mkdirSync(home);
+    writeFileSync(path.join(home, "auth.json"), JSON.stringify({
+      auth_mode: "chatgpt", tokens: { account_id: "workspace-a" }
+    }));
+    const environment = { HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") };
+    const service = new CodexService(environment);
+    let cliFingerprint = "cli-before";
+    vi.spyOn(service.cli, "appliedContextFingerprint").mockImplementation(() => cliFingerprint);
+    const store = new BridgeStateStore({ file });
+    const registry = new CodexJobRegistry({ stateStore: store, allowedRoots: [root],
+      authBoundary: () => service.sessionAuthBoundary().key });
+    const job = registry.start(jobInput(root), async () => result("same-workspace"));
+    await job.promise;
+    const ownerBefore = service.sessionAuthBoundary().key;
+    cliFingerprint = "cli-after";
+    expect(service.sessionAuthBoundary().key).toBe(ownerBefore);
+    expect(registry.findRequest(SCOPE_A, REQUEST_A, job.requestHash)?.jobId).toBe(job.jobId);
+    store.close();
+    const restarted = new CodexService(environment);
+    vi.spyOn(restarted.cli, "appliedContextFingerprint").mockReturnValue(cliFingerprint);
+    const reopened = new BridgeStateStore({ file });
+    try {
+      const recovered = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => restarted.sessionAuthBoundary().key });
+      expect(recovered.findRequest(SCOPE_A, REQUEST_A, job.requestHash)?.jobId).toBe(job.jobId);
+    } finally { reopened.close(); }
+  });
+
   it("retains an old result for history but rejects execution replay under a new authentication owner", async () => {
     const root = temporaryRoot();
     const file = path.join(root, "state.sqlite");
