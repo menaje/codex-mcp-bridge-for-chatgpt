@@ -18,10 +18,52 @@ export type ResolvedCodexContext = {
   runtimeHome: string;
   managementCwd: string;
   fingerprint: string;
-  authenticationIdentity: string;
+  authenticationIdentity: string | null;
   release: () => Promise<void>;
 };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
+
+/** A non-secret stable correlation for a file-backed Codex credential and local policy. */
+export function codexCredentialIdentity(directory: string, environment: NodeJS.ProcessEnv = process.env): string | null {
+  let policy: [string | null, string | null] = [null, null];
+  try {
+    // A keyring profile cannot be identified by a possibly stale file. Only
+    // top-level policy values are considered; local files are one source of
+    // effective policy, with managed configuration enforced by Codex itself.
+    const config = readFileSync(path.join(directory, "config.toml"), "utf8");
+    const topLevel = config.split(/^\s*\[/m, 1)[0];
+    const setting = (name: string) => topLevel.match(new RegExp(`^\\s*${name}\\s*=\\s*["']([^"']+)["']\\s*$`, "m"))?.[1] || null;
+    if (["keyring", "ephemeral"].includes(setting("cli_auth_credentials_store") || "")) return null;
+    policy = [setting("forced_login_method"), setting("forced_chatgpt_workspace_id")];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return null;
+  }
+  try {
+    const auth = parseJsonUtf8Strict<Record<string, any>>(
+      readFileSync(path.join(directory, "auth.json")),
+      "Codex authentication state"
+    );
+    let subject = typeof auth.tokens?.account_id === "string" && auth.tokens.account_id || null;
+    if (!subject && typeof auth.tokens?.id_token === "string") {
+      try {
+        const encodedPayload = auth.tokens.id_token.split(".")[1];
+        if (!encodedPayload || !/^[A-Za-z0-9_-]+$/.test(encodedPayload)) throw new Error("invalid token payload");
+        const claims = parseJsonUtf8Strict<Record<string, unknown>>(
+          Buffer.from(encodedPayload, "base64url"),
+          "Codex identity token"
+        );
+        const candidate = claims.sub;
+        subject = typeof candidate === "string" ? candidate : null;
+      } catch { /* Unknown identity; never expose token content. */ }
+    }
+    if (auth.auth_mode === "chatgpt" && subject) return digest(JSON.stringify(["chatgpt", subject, policy]));
+    if (auth.auth_mode === "apiKey") {
+      const key = auth.OPENAI_API_KEY || environment.OPENAI_API_KEY || environment.CODEX_API_KEY;
+      if (typeof key === "string" && key) return digest(JSON.stringify(["apiKey", key, policy]));
+    }
+  } catch { /* Keyring, absent, or unreadable; seek an account observation. */ }
+  return null;
+}
 
 /**
  * Child processes must not inherit the helper's cwd. A packaged helper can
@@ -50,6 +92,9 @@ export class CodexService {
   private displayedAccounts = new Map<CodexBackendKind, { revision: string; context: string | null; value: CodexAccountSnapshot }>();
   private accountFailures = new Map<CodexBackendKind, { revision: string; error: unknown }>();
   private accountReader?: () => Promise<CodexAccountSnapshot | null>;
+  private lastSessionCredentialIdentity: string | null = null;
+  private confirmedKeyringIdentity: string | null = null;
+  private readonly unknownSessionIdentity = randomUUID();
   constructor(readonly environment: NodeJS.ProcessEnv = process.env, cli?: CodexRuntimeManager) {
     this.cli = cli || new CodexRuntimeManager({ environment: codexProcessEnvironment(environment) });
     this.billing = new CodexBilling(this.cli.root);
@@ -89,65 +134,73 @@ export class CodexService {
   modelRevision(contextFingerprint?: string): string {
     return digest(this.cacheRevision(contextFingerprint) + JSON.stringify([...this.accountIdentities]));
   }
-  authenticationIdentity(home?: string): string {
+  authenticationIdentity(home?: string): string | null {
     const directory = home || this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
-    try {
-      const auth = parseJsonUtf8Strict<Record<string, any>>(
-        readFileSync(path.join(directory, "auth.json")),
-        "Codex authentication state"
-      );
-      let subject = auth.tokens?.account_id || null;
-      if (!subject && typeof auth.tokens?.id_token === "string") {
-        try {
-          const encodedPayload = auth.tokens.id_token.split(".")[1];
-          if (!encodedPayload || !/^[A-Za-z0-9_-]+$/.test(encodedPayload)) throw new Error("invalid token payload");
-          const claims = parseJsonUtf8Strict<Record<string, unknown>>(
-            Buffer.from(encodedPayload, "base64url"),
-            "Codex identity token"
-          );
-          const candidate = claims.sub ?? claims.email;
-          subject = typeof candidate === "string" ? candidate : null;
-        } catch { /* Unknown identity; never expose token content. */ }
-      }
-      return digest(JSON.stringify([auth.auth_mode, auth.OPENAI_API_KEY, subject]));
-    } catch { return "keyring-or-unavailable"; }
+    return codexCredentialIdentity(directory, this.environment);
   }
   /** Stable display boundary, independent of token/config refresh inputs. */
   accountDisplayContext(): string | null {
     const home = this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
-    try {
-      const auth = parseJsonUtf8Strict<Record<string, any>>(
-        readFileSync(path.join(home, "auth.json")), "Codex authentication state"
-      );
-      let subject: string | null = null;
-      if (auth.auth_mode === "chatgpt") {
-        subject = typeof auth.tokens?.account_id === "string" && auth.tokens.account_id
-          ? auth.tokens.account_id : null;
-        if (!subject && typeof auth.tokens?.id_token === "string") {
-          try {
-            const payload = auth.tokens.id_token.split(".")[1];
-            if (!payload || !/^[A-Za-z0-9_-]+$/.test(payload)) return null;
-            const claims = parseJsonUtf8Strict<Record<string, unknown>>(
-              Buffer.from(payload, "base64url"), "Codex identity token"
-            );
-            const claim = claims.sub ?? claims.email;
-            subject = typeof claim === "string" && claim ? claim : null;
-          } catch { return null; }
-        }
-      } else if (auth.auth_mode === "apiKey") {
-        const key = auth.OPENAI_API_KEY || this.environment.OPENAI_API_KEY || this.environment.CODEX_API_KEY;
-        subject = typeof key === "string" && key ? key : null;
-      }
-      if (!subject) return null;
-      return digest(JSON.stringify([home, this.cli.appliedContextFingerprint(), auth.auth_mode, subject]));
-    } catch { return null; }
+    const identity = this.authenticationIdentity(home);
+    return identity ? digest(JSON.stringify([home, this.cli.appliedContextFingerprint(), identity])) : null;
   }
-  admissionGuard(home?: string): () => void {
+  /** Persisted thread ownership follows the applied home and auth generation. */
+  sessionAuthBoundary(): { key: string; allowLegacyShared: boolean } {
+    const home = this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
+    const source = this.environment.CODEX_MCP_BRIDGE_AUTH_SOURCE || "shared";
+    const generation = this.environment.CODEX_MCP_BRIDGE_AUTH_GENERATION || "0";
+    const observedIdentity = this.authenticationIdentity(home);
+    if (observedIdentity) this.lastSessionCredentialIdentity = observedIdentity;
+    const credentialIdentity = observedIdentity || this.lastSessionCredentialIdentity || this.confirmedKeyringIdentity;
+    return {
+      key: digest(JSON.stringify([source, path.resolve(home),
+        credentialIdentity ? ["credential", credentialIdentity] : ["unverified", generation, this.unknownSessionIdentity]])),
+      allowLegacyShared: source === "shared" && generation === "0" && credentialIdentity !== null
+    };
+  }
+  admissionGuard(home?: string): () => Promise<void> {
     let identity: string | undefined;
-    return () => {
-      const current = this.authenticationIdentity(home);
-      if (identity !== undefined && current !== identity) throw new Error("CODEX_AUTH_CHANGED: Authentication changed after this worker was started. Finish active work and restart the bridge before starting another turn.");
+    let source: "file" | "account" | undefined;
+    let pending: Promise<void> = Promise.resolve();
+    const check = async () => {
+      if (this.environment.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED === "1") {
+        throw new Error("CODEX_AUTH_DISCONNECTED: Connect a Codex authentication source before starting new work.");
+      }
+      const fileIdentity = this.authenticationIdentity(home);
+      let current: string;
+      let currentSource: "file" | "account";
+      if (fileIdentity) {
+        current = fileIdentity;
+        currentSource = "file";
+      } else {
+        // Never pin an unavailable observation as an account. A successful
+        // account/read can identify a keyring profile without reading tokens.
+        let account: CodexAccountSnapshot | null;
+        try { account = await this.readCliAccount(); }
+        catch { throw new Error("CODEX_AUTH_UNAVAILABLE: Codex account status cannot currently be verified. Retry after the account check recovers."); }
+        if (!account?.authenticated) throw new Error("CODEX_AUTH_REQUIRED: Sign in to Codex before starting new work.");
+        const environmentApiKey = this.environment.OPENAI_API_KEY || this.environment.CODEX_API_KEY;
+        if (account.authMode === "unknown" ||
+            !account.accountKey && !(account.authMode === "api-key" && environmentApiKey)) {
+          throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: Codex did not provide enough account identity to protect a new execution.");
+        }
+        current = digest(JSON.stringify([account.authMode, account.accountKey || environmentApiKey,
+          this.cli.appliedContextFingerprint()]));
+        currentSource = "account";
+      }
+      if (identity !== undefined && source !== currentSource) {
+        throw new Error("CODEX_AUTH_UNAVAILABLE: The authentication store changed; verify the active account before starting new work.");
+      }
+      if (identity !== undefined && current !== identity) {
+        throw new Error("CODEX_AUTH_CHANGED: Codex authentication changed. Review the current account before starting another turn.");
+      }
       identity = current;
+      source = currentSource;
+      if (currentSource === "account") this.confirmedKeyringIdentity = current;
+    };
+    return () => {
+      pending = pending.then(check, check);
+      return pending;
     };
   }
   cacheRevision(contextFingerprint?: string): string {

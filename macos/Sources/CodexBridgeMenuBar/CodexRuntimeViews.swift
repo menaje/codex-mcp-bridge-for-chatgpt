@@ -15,6 +15,9 @@ struct CodexRuntimeSettingsPane: View {
         SettingsSearchScrollContainer(request: searchRequest, pane: .codex) {
             Form {
                 accountSection
+                Section("macos.auth.choice") {
+                    CodexAuthSelectionControls()
+                }
                 if let runtime = model.codexRuntime {
                     Section("macos.cliinstallation") {
                     if let selected = runtime.selection {

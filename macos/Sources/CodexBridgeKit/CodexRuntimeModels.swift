@@ -53,6 +53,7 @@ public struct CodexRuntimeActions: Codable, Sendable, Equatable {
 public struct CodexRuntimeSnapshot: Codable, Sendable, Equatable {
     public let billing: CodexAccountUsage.Billing.Costs?
     public let account: CodexAccountUsage?
+    public let authSelection: CodexAuthSelection?
     public let knownVersions: [String]?
     public struct ManagedVersion: Codable, Sendable, Equatable {
         public let version: String
@@ -95,6 +96,29 @@ public struct CodexRuntimeSnapshot: Codable, Sendable, Equatable {
     }
 }
 
+public struct CodexAuthConnection: Codable, Sendable, Equatable {
+    public let kind: String
+    public let profileId: String?
+}
+
+public struct CodexAuthCandidate: Codable, Sendable, Equatable {
+    public let id: String
+    public let connection: CodexAuthConnection
+    public let status: String
+    public let accountKey: String?
+    public let verifiedCli: String?
+    public let verifiedAt: String?
+}
+
+public struct CodexAuthSelection: Codable, Sendable, Equatable {
+    public let revision: Int
+    public let applied: CodexAuthConnection
+    public let pending: CodexAuthConnection?
+    public let candidate: CodexAuthCandidate?
+    public let overrideActive: Bool
+    public let effective: CodexAuthConnection
+}
+
 public struct CodexRuntimeEnvironment: Codable, Sendable, Equatable {
     public let runtimeHome: String
     public let codexHome: String
@@ -110,8 +134,15 @@ public struct CodexRuntimeRequest: Encodable, Sendable {
     public let action: String
     public var selectionId: String?
     public var preferences: CodexRuntimePreferences?
+    public var authKind: String?
+    public var authCandidateId: String?
+    public var authRevision: Int?
+    public var authApiKey: String?
+    public var authBillingConfirmed: Bool?
 
-    public init(action: String, kind: String? = nil, includeAccount: Bool? = nil, version: String? = nil, billing: CodexBillingInput? = nil, selectionId: String? = nil, preferences: CodexRuntimePreferences? = nil) {
+    public init(action: String, kind: String? = nil, includeAccount: Bool? = nil, version: String? = nil, billing: CodexBillingInput? = nil, selectionId: String? = nil, preferences: CodexRuntimePreferences? = nil,
+                authKind: String? = nil, authCandidateId: String? = nil, authRevision: Int? = nil,
+                authApiKey: String? = nil, authBillingConfirmed: Bool? = nil) {
         self.includeAccount = includeAccount
         self.billing = billing
         self.version = version
@@ -119,6 +150,11 @@ public struct CodexRuntimeRequest: Encodable, Sendable {
         self.kind = kind
         self.selectionId = selectionId
         self.preferences = preferences
+        self.authKind = authKind
+        self.authCandidateId = authCandidateId
+        self.authRevision = authRevision
+        self.authApiKey = authApiKey
+        self.authBillingConfirmed = authBillingConfirmed
     }
 }
 

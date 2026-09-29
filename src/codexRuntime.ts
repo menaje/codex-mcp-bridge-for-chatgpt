@@ -62,6 +62,7 @@ export type CliRuntimeSnapshot = {
     rollback: boolean; cleanup: boolean; retry: boolean; applyPending: boolean; skip: boolean };
   billing?: import("./codexBilling.js").CodexBillingSnapshot;
   account?: import("./codexAccount.js").CodexAccountSnapshot | null;
+  authSelection?: import("./codexAuthSelection.js").AuthSelectionSnapshot;
   managedVersions: { version: string; bytes: number; active: boolean; staged: boolean; recovery: boolean }[];
 };
 export type CliEnvironmentSummary = {

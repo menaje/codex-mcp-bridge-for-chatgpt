@@ -165,3 +165,9 @@ npx tsx scripts/check-live-app-server.ts --run-authenticated /absolute/path/to/c
 
 Issue #58 can be completed independently of these release and broader host
 certifications. None of the remaining gates is treated as passed by this report.
+
+> 2026-09-29 correction: the historical live script copied an active
+> `auth.json` into a disposable test home. A later refresh in that copy could
+> affect the original login session even without changing its file bytes. The
+> current script requires a separately signed-in persistent test home; see
+> [Codex authentication connections](../codex-auth-connections.md#live-test-credentials).

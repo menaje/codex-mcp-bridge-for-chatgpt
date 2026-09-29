@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { parseEnv } from "node:util";
 import { decodeUtf8Strict } from "./text-integrity.mjs";
+import { authProfileHome, authSelectionRoot, desiredAuthSelection } from "./auth-selection.mjs";
 
 const RUNTIME_CONFIG_DIRECTORY = "codex-mcp-bridge";
 const RUNTIME_ENV_FILENAME = ".env";
@@ -29,7 +30,8 @@ export const RUNTIME_ENV_MANAGED_KEYS = [
 // The same Codex child settings are projected for the native helper and the
 // launcher. Tunnel, billing, and API-key credentials are deliberately absent.
 export const CODEX_CHILD_ENV_KEYS = Object.freeze([
-  "CODEX_HOME", "CODEX_MCP_BRIDGE_RUNTIME_HOME",
+  "CODEX_HOME", "CODEX_MCP_BRIDGE_RUNTIME_HOME", "CODEX_MCP_BRIDGE_AUTH_DISCONNECTED", "CODEX_MCP_BRIDGE_AUTH_SOURCE",
+  "CODEX_MCP_BRIDGE_AUTH_GENERATION",
   "CODEX_MCP_BRIDGE_CODEX", "CODEX_GPT_BRIDGE_CODEX",
   "XDG_CONFIG_HOME", "XDG_STATE_HOME",
   "LANG", "LC_ALL", "LC_CTYPE",
@@ -67,12 +69,49 @@ export function codexChildEnvironment(filePath, inherited = process.env) {
   const command = inherited.CODEX_MCP_BRIDGE_CODEX || inherited.CODEX_GPT_BRIDGE_CODEX ||
     fromFile.CODEX_MCP_BRIDGE_CODEX || fromFile.CODEX_GPT_BRIDGE_CODEX;
   if (command) projected.CODEX_MCP_BRIDGE_CODEX = command;
+  delete projected.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED;
+  delete projected.CODEX_MCP_BRIDGE_AUTH_SOURCE;
+  delete projected.CODEX_MCP_BRIDGE_AUTH_GENERATION;
+  if (["shared", "bridge-chatgpt", "bridge-api", "disconnected"].includes(inherited.CODEX_MCP_BRIDGE_AUTH_SOURCE)) {
+    projected.CODEX_MCP_BRIDGE_AUTH_SOURCE = inherited.CODEX_MCP_BRIDGE_AUTH_SOURCE;
+    projected.CODEX_MCP_BRIDGE_AUTH_GENERATION = inherited.CODEX_MCP_BRIDGE_AUTH_GENERATION || "0";
+    if (inherited.CODEX_MCP_BRIDGE_AUTH_SOURCE === "disconnected") projected.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED = "1";
+    return projected;
+  }
+  const explicitHome = inherited.CODEX_HOME !== undefined || fromFile.CODEX_HOME !== undefined;
+  const { connection, generation } = explicitHome
+    ? { connection: { kind: "shared" }, generation: 0 }
+    : desiredAuthSelection({ ...inherited, ...projected });
+  projected.CODEX_MCP_BRIDGE_AUTH_SOURCE = explicitHome ? "shared" : connection.kind;
+  projected.CODEX_MCP_BRIDGE_AUTH_GENERATION = String(explicitHome ? 0 : generation);
+  if (connection.kind !== "shared" && !explicitHome) {
+    if (connection.kind === "disconnected") projected.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED = "1";
+    else projected.CODEX_HOME = authProfileHome(authSelectionRoot({ ...inherited, ...projected }), connection.profileId);
+  }
   return projected;
 }
 
 /** Keep launcher/tunnel credentials out of selected Codex processes. */
 export function codexProcessEnvironment(environment) {
   const projected = { ...environment };
+  const sealedSource = projected.CODEX_MCP_BRIDGE_AUTH_SOURCE;
+  const explicitHome = Boolean(projected.CODEX_HOME) && !sealedSource;
+  const needsSaved = !sealedSource && !explicitHome ||
+    (sealedSource === "bridge-chatgpt" || sealedSource === "bridge-api") && !projected.CODEX_HOME;
+  const desired = needsSaved ? desiredAuthSelection(projected) : null;
+  const connection = sealedSource || (explicitHome ? "shared" : desired.connection.kind);
+  projected.CODEX_MCP_BRIDGE_AUTH_SOURCE = connection;
+  projected.CODEX_MCP_BRIDGE_AUTH_GENERATION ||= String(explicitHome ? 0 : desired?.generation || 0);
+  if (!projected.CODEX_HOME && (connection === "bridge-chatgpt" || connection === "bridge-api")) {
+    const selected = desired.connection;
+    if (selected.kind !== connection) throw new Error("CODEX_AUTH_SELECTION_INVALID: The applied authentication profile is unavailable.");
+    projected.CODEX_HOME = authProfileHome(authSelectionRoot(projected), selected.profileId);
+  }
+  if (connection === "bridge-chatgpt" || connection === "bridge-api") {
+    delete projected.OPENAI_API_KEY;
+    delete projected.CODEX_API_KEY;
+  }
+  if (connection === "disconnected") projected.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED = "1";
   for (const name of Object.keys(projected)) {
     if (name.startsWith("CONTROL_PLANE_") || name.startsWith("CLOUDFLARED_") ||
         name === "TUNNEL_CLIENT" || name.startsWith("TUNNEL_CLIENT_") ||

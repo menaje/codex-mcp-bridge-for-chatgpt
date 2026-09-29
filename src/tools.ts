@@ -4817,7 +4817,15 @@ export function registerBridgeTools(
       (threadId, backendKind) => upstream.canResumeThread?.(threadId, backendKind) === true,
       threadId => jobs.admissionStateStore.threadConnections.hasUnfinishedWork(threadId)
     );
+    const authSource = config.codexService?.environment.CODEX_MCP_BRIDGE_AUTH_SOURCE;
+    const account = config.codexService?.cachedAccount("app-server");
     return {
+      ...(config.codexService ? { authConnection: {
+        source: authSource === "bridge-chatgpt" || authSource === "bridge-api" || authSource === "disconnected"
+          ? authSource : "shared" as const,
+        mode: account?.authMode || "unknown" as const,
+        observedAt: account?.observedAt || null
+      } } : {}),
       acceptingNewJobs: acceptingNewJobs(),
       activeJobs: jobs.runningCount(),
       pendingAdmissions: runtimeAdmission.pendingAdmissions,
@@ -9162,6 +9170,9 @@ async function requireAgentSession(
   if (!resolution.agent) throw new Error("Agent resolution is missing an existing thread owner.");
   const threadId = resolution.agent.currentThreadId as string;
   const session = sessions.get(threadId);
+  if (!session && sessions.belongsToAnotherAuthentication(threadId)) {
+    throw new Error("CODEX_AUTH_THREAD_BOUNDARY: The Agent's thread belongs to another authentication connection.");
+  }
   if (!session || session.scopeId !== scopeId) {
     jobs.setAgentExecutionState(resolution.agent.agentId, "orphaned", {
       orphanedReason: "The Agent's persisted current thread session is unavailable after bridge recovery."
@@ -10850,6 +10861,8 @@ export type BridgeStorageAdmissionError =
   | "read-only";
 
 export type BridgeRuntimeAdmissionSnapshot = {
+  authConnection?: { source: "shared" | "bridge-chatgpt" | "bridge-api" | "disconnected";
+    mode: "chatgpt" | "api-key" | "unknown"; observedAt: number | null };
   acceptingNewJobs: boolean;
   activeJobs: number;
   pendingAdmissions: number;

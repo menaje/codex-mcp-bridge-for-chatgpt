@@ -1559,10 +1559,12 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(client.factoryCallCount, 1)
         XCTAssertEqual(client.closeCallCount, 0)
 
+        let runtimeStatusReads = client.runtimeStatusCallCount
+        XCTAssertGreaterThan(runtimeStatusReads, 0)
         let didQuit = await model.shutdownApplication(force: false)
         XCTAssertTrue(didQuit)
         XCTAssertTrue(model.applicationShutdownCompleted)
-        XCTAssertEqual(client.runtimeStatusCallCount, 0)
+        XCTAssertEqual(client.runtimeStatusCallCount, runtimeStatusReads)
         XCTAssertEqual(client.closeCallCount, 1)
     }
 

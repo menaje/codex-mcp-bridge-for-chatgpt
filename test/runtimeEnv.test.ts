@@ -53,6 +53,8 @@ describe("runtime environment", () => {
     });
     expect(projected).toEqual({
       CODEX_HOME: "/selected/home",
+      CODEX_MCP_BRIDGE_AUTH_SOURCE: "shared",
+      CODEX_MCP_BRIDGE_AUTH_GENERATION: "0",
       HTTPS_PROXY: "http://proxy.fixture.invalid",
       OPENAI_API_KEY: "explicit-codex-auth"
     });

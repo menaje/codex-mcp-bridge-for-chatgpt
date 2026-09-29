@@ -2,6 +2,9 @@ import { randomUUID, createHash } from "node:crypto";
 import { RuntimeLifecycleCoordinator, lifecycleRequestSchema, isLifecycleHandoff, type LifecycleRequest, type LifecycleRecord, type LifecycleSnapshot, type LifecycleReason, type LifecycleReconciliation } from "./runtimeLifecycle.js";
 import { ChangeSignal, changeWaitParamsSchema } from "./changeSignal.js";
 import { CodexService } from "./codexService.js";
+import { CodexAuthSelectionManager, type AuthConnection } from "./codexAuthSelection.js";
+import { isActiveActivityJobStatus } from "./activity.js";
+import { BridgeStateStore } from "./stateStore.js";
 import { DiagnosticLog } from "./diagnosticLog.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -178,7 +181,8 @@ const logsParamsSchema = z.strictObject({
 const codexRuntimeParamsSchema = z.strictObject({
   kind: z.literal("cli").optional(),
   includeAccount: z.boolean().optional(),
-  action: z.enum(["status", "configure-billing", "remove-billing", "login", "select", "install", "update", "remove", "reinstall", "rollback", "cleanup", "retry", "check-updates", "apply-pending", "preferences"]),
+  action: z.enum(["status", "configure-billing", "remove-billing", "login", "select", "install", "update", "remove", "reinstall", "rollback", "cleanup", "retry", "check-updates", "apply-pending", "preferences",
+    "auth-prepare", "auth-login", "auth-api-key", "auth-verify", "auth-apply", "auth-cancel", "auth-cancel-pending"]),
   selectionId: z.string().regex(/^[a-f0-9]{24}$/).optional(),
   version: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
   billing: z.object({ adminKey: z.string().max(32768), organizationId: z.string().max(164), projectId: z.string().max(165).nullable() }).optional(),
@@ -186,7 +190,12 @@ const codexRuntimeParamsSchema = z.strictObject({
     pinnedVersion: z.string().regex(/^\d+\.\d+\.\d+$/).nullable().optional(),
     skippedVersion: z.string().regex(/^\d+\.\d+\.\d+$/).nullable().optional(),
     notifications: z.boolean().optional()
-  }).optional()
+  }).optional(),
+  authKind: z.enum(["shared", "bridge-chatgpt", "bridge-api", "disconnected"]).optional(),
+  authCandidateId: z.string().uuid().optional(),
+  authRevision: z.number().int().nonnegative().optional(),
+  authApiKey: z.string().max(32768).optional(),
+  authBillingConfirmed: z.boolean().optional()
 });
 export type CodexRuntimeAction = z.infer<typeof codexRuntimeParamsSchema>;
 const companionHelloSchema = z.object({
@@ -831,15 +840,36 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     return this.requestedEnvironmentState().pending;
   }
 
+  private authSelectionManager(): CodexAuthSelectionManager {
+    return new CodexAuthSelectionManager(this.requestedCliManager().root);
+  }
+
+  private explicitAuthHome(): string | undefined {
+    return process.env.CODEX_HOME || readRuntimeEnvSubset(this.envFile, ["CODEX_HOME"]).CODEX_HOME;
+  }
+
+  private authSelectionEnvironment(): NodeJS.ProcessEnv {
+    return { ...commandEnvironment(this.envFile), CODEX_HOME: this.explicitAuthHome() };
+  }
+
   async codexRuntime(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot> {
     const { manager, service } = this.selectedCliContext();
     this.watchManager(manager);
     const requestState = this.requestedEnvironmentState();
     const environmentPending = requestState.pending;
+    // An invalid requested .env must remain reportable through status. It
+    // cannot be used to choose or mutate an authentication profile.
+    if (requestState.problem && request.action.startsWith("auth-")) {
+      throw new Error("CODEX_AUTH_ENVIRONMENT_INVALID: Repair the runtime environment before changing authentication.");
+    }
+    const authManager = requestState.problem
+      ? new CodexAuthSelectionManager(manager.root) : this.authSelectionManager();
+    const authEnvironment = requestState.problem
+      ? { ...service.environment, CODEX_HOME: process.env.CODEX_HOME } : this.authSelectionEnvironment();
     if (environmentPending && ["login", "select", "install", "update", "reinstall", "retry", "rollback", "remove", "apply-pending"].includes(request.action)) {
       throw new Error("CODEX_ENVIRONMENT_PENDING: Restart the managed runtime after current work finishes before using the changed Codex environment.");
     }
-    if (!["status", "check-updates"].includes(request.action) &&
+    if (!["status", "check-updates", "auth-verify"].includes(request.action) &&
         ["executing", "reconnecting"].includes(this.lifecycleManager?.active?.phase || "")) {
       throw new Error("LIFECYCLE_BUSY: Runtime activation is in progress.");
     }
@@ -849,7 +879,8 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         const appliedEnvironment = cliEnvironmentSummary(manager, service, base);
         const kind = "app-server" as const;
         const billing = await service.billing.configuration();
-        const account = base.selection?.available
+        const authSelection = await authManager.snapshot(authEnvironment);
+        const account = base.selection?.available && service.environment.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED !== "1"
           ? request.includeAccount === false ? service.cachedAccount(kind) : await service.readAccount(kind, true) || service.cachedAccount(kind) : null;
         let requestedEnvironment: CliEnvironmentSummary | null = null;
         let requestedEnvironmentProblem = requestState.problem;
@@ -863,7 +894,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
             requestedEnvironmentProblem = requestedContextProblem(error);
           }
         }
-        const snapshot = { ...base, environmentPending, appliedEnvironment,
+        const snapshot = { ...base, authSelection, environmentPending, appliedEnvironment,
           runningEnvironment: this.isManagedRuntimeRunning() ? appliedEnvironment : null,
           requestedEnvironment, requestedEnvironmentProblem, billing, account };
         if (snapshot.selection?.source === "bridge" && snapshot.preferences.notifications && !this.cliUpdateCheck &&
@@ -884,6 +915,55 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         return { ...await manager.snapshot(), billing: await service.billing.snapshot() };
       }
       case "login": await this.startLogin(request.kind); return manager.snapshot();
+      case "auth-prepare": {
+        if (request.authKind !== "bridge-chatgpt" && request.authKind !== "bridge-api" || request.authRevision === undefined) {
+          throw new Error("CODEX_AUTH_REQUEST_INVALID");
+        }
+        if (this.explicitAuthHome()) throw new Error("CODEX_AUTH_OVERRIDE_ACTIVE: The explicit CODEX_HOME controls this runtime.");
+        assertRuntimeEnvOutsideProjectRoots(path.join(authManager.root, "auth-selection.json"), await this.registeredProjectRoots());
+        await authManager.prepare(request.authKind, request.authRevision, authEnvironment);
+        return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
+      }
+      case "auth-login": case "auth-api-key": case "auth-verify": {
+        if (!request.authCandidateId) throw new Error("CODEX_AUTH_CANDIDATE_REQUIRED");
+        assertRuntimeEnvOutsideProjectRoots(path.join(authManager.root, "auth-selection.json"), await this.registeredProjectRoots());
+        const selection = await manager.resolve();
+        if (request.action === "auth-login") await authManager.startChatGptLogin(request.authCandidateId, selection.command, authEnvironment);
+        if (request.action === "auth-api-key") {
+          if (!request.authApiKey) throw new Error("CODEX_AUTH_API_KEY_REQUIRED");
+          await authManager.setApiKey(request.authCandidateId, selection.command, authEnvironment, request.authApiKey);
+        }
+        if (request.action === "auth-verify") await authManager.verify(request.authCandidateId,
+          selection.command, manager.appliedContextFingerprint(), authEnvironment);
+        return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
+      }
+      case "auth-apply": {
+        if (!request.authKind || request.authRevision === undefined) throw new Error("CODEX_AUTH_REQUEST_INVALID");
+        const selection = await manager.resolve();
+        let connection: AuthConnection;
+        if (request.authKind === "shared" || request.authKind === "disconnected") connection = { kind: request.authKind };
+        else {
+          const candidate = (await authManager.snapshot(authEnvironment)).candidate;
+          if (!candidate || candidate.id !== request.authCandidateId || candidate.connection.kind !== request.authKind) {
+            throw new Error("CODEX_AUTH_CANDIDATE_CHANGED");
+          }
+          connection = candidate.connection;
+        }
+        await authManager.stage(connection, request.authRevision, selection.command,
+          manager.appliedContextFingerprint(),
+          authEnvironment, request.authBillingConfirmed === true);
+        return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
+      }
+      case "auth-cancel": {
+        if (!request.authCandidateId || request.authRevision === undefined) throw new Error("CODEX_AUTH_REQUEST_INVALID");
+        await authManager.cancelCandidate(request.authCandidateId, request.authRevision);
+        return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
+      }
+      case "auth-cancel-pending": {
+        if (request.authRevision === undefined) throw new Error("CODEX_AUTH_REQUEST_INVALID");
+        await authManager.cancelPending(request.authRevision);
+        return { ...await manager.snapshot(), authSelection: await authManager.snapshot(authEnvironment) };
+      }
       case "select":
         if (!request.selectionId) throw new Error("CODEX_SELECTION_REQUIRED: Choose an installation.");
         return manager.select(request.selectionId);
@@ -914,6 +994,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         return { installed: false, authenticated: false, summary: "Choose or install Codex in the bridge settings." };
       }
       throw error;
+    }
+    if (service.environment.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED === "1") {
+      return { installed: true, authenticated: false, summary: "Bridge authentication is disconnected." };
     }
     const account = await service.readAccount("app-server");
     // A signed-out App Server still projects an account snapshot with
@@ -1257,11 +1340,16 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   private restartImmediate(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
     return this.exclusive(async () => {
       const cli = await this.requestedCliManager().snapshot({ selectInitial: false });
-      const protectMemory = this.cliEnvironmentPending() || !!(cli.operation?.phase === "pending" || cli.pendingSelection);
+      const authPending = (await this.authSelectionManager().snapshot(this.authSelectionEnvironment())).pending !== null;
+      if (authPending) await this.authSelectionManager().assertPendingLocalPolicy(this.authSelectionEnvironment());
+      if (authPending && options.mode === "force") {
+        throw new Error("CODEX_AUTH_APPLY_REQUIRES_DRAIN: Apply the authentication change after current work has drained.");
+      }
+      const protectMemory = authPending || this.cliEnvironmentPending() || !!(cli.operation?.phase === "pending" || cli.pendingSelection);
       if (protectMemory && options.mode === "drain") {
         await this.assertRuntimeChangeSafe();
       }
-      await this.stopUnlocked(options);
+      await this.stopUnlocked({ ...options, protectMemory });
       return this.startUnlocked(true);
     });
   }
@@ -1272,6 +1360,22 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     if (!impact) throw new Error("CODEX_APPLY_PENDING: The running bridge could not be inspected. Its environment was preserved.");
     if (protectedMemoryOnlyThreadCount(impact) > 0) throw new Error("CODEX_MEMORY_THREADS_ACTIVE: Memory-only conversations with unfinished work still require the running environment. Wait for their work to finish or use force after reviewing the Dashboard. The current environment was preserved.");
     if ((impact.pendingInteractions || 0) > 0) throw new Error("CODEX_INTERACTIONS_PENDING: Resolve the pending approvals or questions before applying a runtime change.");
+  }
+
+  private async assertPersistedAuthChangeSafe(): Promise<void> {
+    if (!(await this.authSelectionManager().snapshot(this.authSelectionEnvironment())).pending) return;
+    const file = configuredStateDatabaseFile(this.envFile);
+    if (!existsSync(file)) return;
+    assertRegularStateFile(file);
+    let store: BridgeStateStore | undefined;
+    try {
+      store = new BridgeStateStore({ file, readOnly: true });
+      if (store.listJobs().some(job => store!.retentionProtection(job.jobId).length > 0 ||
+          isActiveActivityJobStatus(job.status) ||
+          Array.isArray(job.pendingInteractions) && job.pendingInteractions.length > 0)) {
+        throw new Error("CODEX_AUTH_WORK_PENDING: Unfinished work, input, or result delivery still belongs to the current authentication connection.");
+      }
+    } finally { store?.close(); }
   }
 
   private repairImmediate(options: { mode: "drain" | "force"; timeoutMs: number }): Promise<MacOSHelperStatus> {
@@ -1387,6 +1491,10 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     }
     if (!existsSync(path.join(this.bridgeRoot, "dist", "cli.js"))) {
       throw new Error("BRIDGE_RUNTIME_MISSING: Built HTTP runtime is not installed.");
+    }
+    if (this.executingLifecycle?.request.kind === "restart") {
+      await this.assertPersistedAuthChangeSafe();
+      await this.authSelectionManager().applyPending();
     }
 
     this.manualStop = false;
@@ -1553,6 +1661,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
             `BACKGROUND_PROCESSES_ACTIVE: ${impact.backgroundProcesses} background process(es) across ${impact.backgroundProcessAgents} agent(s) would be interrupted. Use force only after reviewing the global status card.`
           );
         }
+        if (options.protectMemory) await this.assertPersistedAuthChangeSafe();
       } else if (options.protectMemory) {
         await this.assertRuntimeChangeSafe();
       }

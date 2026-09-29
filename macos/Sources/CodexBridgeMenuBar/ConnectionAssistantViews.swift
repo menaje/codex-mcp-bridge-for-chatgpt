@@ -679,6 +679,8 @@ struct ConnectionSetupFlowView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
+            CodexAuthSelectionControls()
+
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: codexStatusSymbol)
                     .font(.title2)

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +28,10 @@ function fixture() {
     PATH: process.env.PATH || "", HOME: root, CODEX_HOME: path.join(root, ".codex"),
     CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime")
   };
+  mkdirSync(environment.CODEX_HOME, { recursive: true });
+  writeFileSync(path.join(environment.CODEX_HOME, "auth.json"), JSON.stringify({
+    auth_mode: "chatgpt", tokens: { account_id: "synthetic-execution-account" }
+  }));
   const config = loadConfig({ ...environment, CODEX_MCP_BRIDGE_NO_AUTH: "1" });
   config.upstreamPoolSize = 1;
   return { acquire, runtime: createExecutionRuntime(config, {}, environment) };

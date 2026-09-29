@@ -524,7 +524,8 @@ async function executeProjection(
     stateStore,
     allowedRoots: config.allowedRoots,
     maxSessions: 1_000_000,
-    projectionOnly: true
+    projectionOnly: true,
+    authBoundary: () => codexService.sessionAuthBoundary()
   });
   const jobs = new CodexJobRegistry({
     maxConcurrentJobs: config.maxConcurrentJobs,

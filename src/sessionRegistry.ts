@@ -33,6 +33,8 @@ export type ThreadExecutionState = {
 };
 
 export type TrackedCodexSession = ThreadIdentity & ThreadExecutionState & {
+  /** Non-secret correlation to the Codex auth home/account used at creation. */
+  authBoundary?: string;
   persistence?: ThreadPersistence;
   /** Whether this non-ephemeral App Server thread was created for Codex app visibility. */
   visibleInCodexApp?: boolean;
@@ -52,6 +54,7 @@ export type SessionRegistryOptions = {
   maxSessions?: number;
   now?: () => number;
   projectionOnly?: boolean;
+  authBoundary?: { key: string; allowLegacyShared: boolean } | (() => { key: string; allowLegacyShared: boolean });
 };
 
 export class SessionRegistry {
@@ -61,6 +64,7 @@ export class SessionRegistry {
   private readonly maxSessions: number;
   private readonly now: () => number;
   private readonly projectionOnly: boolean;
+  private readonly authBoundary?: SessionRegistryOptions["authBoundary"];
   private projectedProjectRevision: number | undefined;
 
   constructor(options: SessionRegistryOptions = {}) {
@@ -69,6 +73,7 @@ export class SessionRegistry {
     this.maxSessions = options.maxSessions ?? 1000;
     this.now = options.now || Date.now;
     this.projectionOnly = options.projectionOnly === true;
+    this.authBoundary = options.authBoundary;
     this.load();
   }
 
@@ -88,6 +93,11 @@ export class SessionRegistry {
   record(session: TrackedCodexSession): void {
     const snapshot = [...this.sessions.entries()].map(([threadId, value]) => [threadId, { ...value }] as const);
     const existing = this.sessions.get(session.threadId);
+    if (existing && !this.isVisible(existing)) throw new Error("CODEX_AUTH_THREAD_BOUNDARY: The thread belongs to another authentication connection.");
+    const boundary = this.currentAuthBoundary();
+    if (boundary && session.authBoundary && session.authBoundary !== boundary.key) {
+      throw new Error("CODEX_AUTH_THREAD_BOUNDARY: The thread belongs to another authentication connection.");
+    }
     const sessionId = normalizeOptionalLineageId(
       session.sessionId ?? existing?.sessionId,
       "sessionId"
@@ -108,6 +118,7 @@ export class SessionRegistry {
       threadId: session.threadId,
       scopeId: session.scopeId,
       backendKind: session.backendKind,
+      ...(boundary ? { authBoundary: boundary.key } : session.authBoundary ? { authBoundary: session.authBoundary } : {}),
       ...(sessionId ? { sessionId } : {}),
       ...(forkedFromThreadId ? { forkedFromThreadId } : {}),
       ...(visibleInCodexApp !== undefined ? { visibleInCodexApp } : {}),
@@ -139,12 +150,18 @@ export class SessionRegistry {
   get(threadId: string): TrackedCodexSession | undefined {
     this.refreshProjectIdentities();
     const session = this.sessions.get(threadId);
-    return session ? cloneSession(session) : undefined;
+    return session && this.isVisible(session) ? cloneSession(session) : undefined;
+  }
+
+  /** Distinguish an auth-hidden thread from an absent thread without exposing its data. */
+  belongsToAnotherAuthentication(threadId: string): boolean {
+    const session = this.sessions.get(threadId);
+    return Boolean(session && !this.isVisible(session));
   }
 
   touch(threadId: string): void {
     const session = this.sessions.get(threadId);
-    if (!session) return;
+    if (!session || !this.isVisible(session)) return;
     const updated = {
       ...session,
       lastUsedAt: this.now()
@@ -165,7 +182,7 @@ export class SessionRegistry {
     policyRevision: number
   ): TrackedCodexSession | undefined {
     const session = this.sessions.get(threadId);
-    if (!session) return undefined;
+    if (!session || !this.isVisible(session)) return undefined;
     const updated: TrackedCodexSession = {
       ...session,
       selection: validateModelSelection(selection),
@@ -186,7 +203,7 @@ export class SessionRegistry {
 
   adopt(threadId: string, scopeId: string): TrackedCodexSession | undefined {
     const session = this.sessions.get(threadId);
-    if (!session) return undefined;
+    if (!session || !this.isVisible(session)) return undefined;
     const adopted = {
       ...session,
       scopeId,
@@ -219,7 +236,9 @@ export class SessionRegistry {
 
   list(limit = this.maxSessions, offset = 0): TrackedCodexSession[] {
     this.refreshProjectIdentities();
+    const boundary = this.currentAuthBoundary();
     return [...this.sessions.values()]
+      .filter(session => this.matchesBoundary(session, boundary))
       .reverse()
       .sort((a, b) => b.lastUsedAt - a.lastUsedAt)
       .slice(Math.max(0, offset), Math.max(0, offset) + Math.max(0, limit))
@@ -233,11 +252,28 @@ export class SessionRegistry {
   }
 
   size(): number {
-    return this.sessions.size;
+    const boundary = this.currentAuthBoundary();
+    return [...this.sessions.values()].filter(session => this.matchesBoundary(session, boundary)).length;
   }
 
   sizeForScope(scopeId: string): number {
-    return [...this.sessions.values()].filter((session) => session.scopeId === scopeId).length;
+    const boundary = this.currentAuthBoundary();
+    return [...this.sessions.values()].filter((session) => this.matchesBoundary(session, boundary) && session.scopeId === scopeId).length;
+  }
+
+  private isVisible(session: TrackedCodexSession): boolean {
+    return this.matchesBoundary(session, this.currentAuthBoundary());
+  }
+
+  private matchesBoundary(session: TrackedCodexSession,
+    boundary: { key: string; allowLegacyShared: boolean } | undefined): boolean {
+    if (!boundary) return true;
+    return session.authBoundary === boundary.key ||
+      session.authBoundary === undefined && boundary.allowLegacyShared;
+  }
+
+  private currentAuthBoundary(): { key: string; allowLegacyShared: boolean } | undefined {
+    return typeof this.authBoundary === "function" ? this.authBoundary() : this.authBoundary;
   }
 
   private load(): void {
@@ -247,9 +283,11 @@ export class SessionRegistry {
       .map(readPersistedSession)
       .filter((session): session is TrackedCodexSession => Boolean(session))
       .sort((a, b) => a.lastUsedAt - b.lastUsedAt);
-    const sessions = decoded.slice(-this.maxSessions);
+    const boundary = this.currentAuthBoundary();
+    const visible = decoded.filter(session => this.matchesBoundary(session, boundary));
+    const sessions = this.authBoundary ? decoded : visible.slice(-this.maxSessions);
     const retained = new Set(sessions.map((session) => session.threadId));
-    const expired = decoded
+    const expired = this.authBoundary ? [] : visible
       .filter((session) => !retained.has(session.threadId))
       .map((session) => session.threadId);
     if (!this.projectionOnly && expired.length > 0) {
@@ -297,8 +335,9 @@ export class SessionRegistry {
 
   private enforceLimit(): string[] {
     const removed: string[] = [];
-    while (this.sessions.size > this.maxSessions) {
-      const oldest = this.sessions.keys().next().value;
+    const boundary = this.currentAuthBoundary();
+    while ([...this.sessions.values()].filter(session => this.matchesBoundary(session, boundary)).length > this.maxSessions) {
+      const oldest = [...this.sessions.values()].find(session => this.matchesBoundary(session, boundary))?.threadId;
       if (!oldest) return removed;
       this.sessions.delete(oldest);
       removed.push(oldest);
@@ -347,6 +386,7 @@ function readPersistedSession(value: unknown): TrackedCodexSession | undefined {
     ? value.visibleInCodexApp
     : undefined;
   if (
+    (value.authBoundary !== undefined && (typeof value.authBoundary !== "string" || !/^[a-f0-9]{64}$/.test(value.authBoundary))) ||
     (value.sessionId !== undefined && !sessionId) ||
     (value.forkedFromThreadId !== undefined && !forkedFromThreadId) ||
     (value.visibleInCodexApp !== undefined && typeof value.visibleInCodexApp !== "boolean")
@@ -387,6 +427,7 @@ function readPersistedSession(value: unknown): TrackedCodexSession | undefined {
   }
   return {
     threadId: value.threadId,
+    ...(typeof value.authBoundary === "string" ? { authBoundary: value.authBoundary } : {}),
     scopeId: scopeId.toLowerCase(),
     ...(sessionId ? { sessionId } : {}),
     ...(forkedFromThreadId ? { forkedFromThreadId } : {}),

@@ -705,6 +705,12 @@ public enum ProjectOperation: Encodable, Sendable {
 }
 
 public struct RuntimeAdmissionSnapshot: Codable, Sendable {
+    public struct AuthConnection: Codable, Sendable {
+        public let source: String
+        public let mode: String
+        public let observedAt: Int64?
+    }
+    public let authConnection: AuthConnection?
     public let acceptingNewJobs: Bool
     public let activeJobs: Int
     public let pendingAdmissions: Int
@@ -734,7 +740,8 @@ public struct RuntimeAdmissionSnapshot: Codable, Sendable {
         backgroundProcessUnknownAgents: Int,
         stateService: RuntimeStateServiceSnapshot? = nil,
         readService: RuntimeReadServiceSnapshot? = nil,
-        telemetryService: RuntimeTelemetryServiceSnapshot? = nil
+        telemetryService: RuntimeTelemetryServiceSnapshot? = nil,
+        authConnection: AuthConnection? = nil
     ) {
         self.acceptingNewJobs = acceptingNewJobs
         self.activeJobs = activeJobs
@@ -750,6 +757,7 @@ public struct RuntimeAdmissionSnapshot: Codable, Sendable {
         self.stateService = stateService
         self.readService = readService
         self.telemetryService = telemetryService
+        self.authConnection = authConnection
     }
 }
 

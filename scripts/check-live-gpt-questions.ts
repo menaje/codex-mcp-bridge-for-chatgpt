@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { CodexAppServerUpstreamPool } from "../src/appServerUpstream.js";
 import { loadConfig } from "../src/config.js";
@@ -15,6 +15,7 @@ import { UserSettingsStore } from "../src/userSettings.js";
 import { questionReference } from "../src/codexInputs.js";
 import { existsSync } from "node:fs";
 import { connectCurrentMcpServer, type CurrentMcpConnection } from "./current-mcp-test-harness.js";
+import { independentTestCodexHome } from "./independent-test-auth.js";
 
 // Opt-in: real authenticated CLI/model, production MCP tools, synthetic answer.
 // This is not evidence of a parent ChatGPT model or live ChatGPT card wake.
@@ -22,20 +23,17 @@ assert.equal(process.argv[2], "--run-authenticated");
 const nativeInput = process.argv.includes("--native-input");
 const approvalProbe = process.argv.includes("--approval-probe");
 assert.ok(!(nativeInput && approvalProbe), "Choose one probe mode.");
+const isolatedHome = await independentTestCodexHome();
 const reports: Record<string, unknown>[] = [];
 for (const arg of process.argv.slice(3).filter(value => !["--native-input", "--approval-probe"].includes(value))) {
   const split = arg.indexOf("="), source = arg.slice(0, split), command = arg.slice(split + 1);
   assert.ok(/^[a-z-]+$/.test(source) && path.isAbsolute(command), "Use source=/absolute/path/to/codex");
   const root = await mkdtemp(path.join(tmpdir(), "live-gpt-question-")); await chmod(root, 0o700);
-  const isolatedHome = path.join(root, "home"), project = path.join(root, "project");
-  await mkdir(isolatedHome, { mode: 0o700 }); await mkdir(project);
-  await copyFile(path.join(process.env.CODEX_HOME || path.join(homedir(), ".codex"), "auth.json"), path.join(isolatedHome, "auth.json"));
-  await chmod(path.join(isolatedHome, "auth.json"), 0o600);
+  const project = path.join(root, "project");
+  await mkdir(project);
   const ledger = path.join(root, "invocations.txt");
-  await writeFile(path.join(isolatedHome, "config.toml"), 'cli_auth_credentials_store = "file"\nmodel_reasoning_effort = "low"\n' +
-    (nativeInput ? '[features]\ndefault_mode_request_user_input = true\n' : "") +
-    (approvalProbe ? '\n[mcp_servers.question_approval_probe]\ncommand = ' + JSON.stringify(process.execPath) + '\nargs = [' + JSON.stringify(path.resolve("scripts/fixtures/question-approval-mcp.mjs")) + ']\nenv = { QUESTION_PROBE_LEDGER = ' + JSON.stringify(ledger) + ' }\n' : ""));
-  const pool = new CodexAppServerUpstreamPool(command, 1, { environment: { ...process.env, CODEX_HOME: isolatedHome, OPENAI_API_KEY: undefined, CODEX_API_KEY: undefined } });
+  const pool = new CodexAppServerUpstreamPool(command, 1, { environment: { ...process.env, CODEX_HOME: isolatedHome,
+    QUESTION_PROBE_LEDGER: ledger, OPENAI_API_KEY: undefined, CODEX_API_KEY: undefined } });
   const config = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_ROOTS: project });
   const store = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
   const jobs = new CodexJobRegistry({ stateStore: store, allowedRoots: [project] });
@@ -117,7 +115,7 @@ for (const arg of process.argv.slice(3).filter(value => !["--native-input", "--a
     clearTimeout(deadline); await pool.close();
     await Promise.all(jobs.list(100).map(job => job.promise));
     await connection?.close().catch(() => {}); await server?.close(); store.close();
-    await rm(root, { recursive: true, force: true }); report.temporaryHomeRemoved = true; report.elapsedMs = Date.now() - started;
+    await rm(root, { recursive: true, force: true }); report.temporaryProjectRemoved = true; report.elapsedMs = Date.now() - started;
   }
   console.log(JSON.stringify(report));
 }

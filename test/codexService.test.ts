@@ -255,12 +255,96 @@ createInterface({ input: process.stdin }).on("line", line => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
     const auth = path.join(home, "auth.json");
     await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "a", access_token: "secret-one" } }));
-    const guard = f.service.admissionGuard(), before = f.service.cacheRevision(); guard();
+    const guard = f.service.admissionGuard(), before = f.service.cacheRevision(); await guard();
     await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "a", access_token: "secret-two" } }));
-    expect(f.service.cacheRevision()).not.toBe(before); expect(() => guard()).not.toThrow();
+    expect(f.service.cacheRevision()).not.toBe(before); await expect(guard()).resolves.toBeUndefined();
     await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "b" } }));
-    expect(() => guard()).toThrow("CODEX_AUTH_CHANGED");
+    await expect(guard()).rejects.toThrow("CODEX_AUTH_CHANGED");
     expect(await readFile(auth, "utf8")).toContain('"b"');
+  });
+
+  it("restores a file-backed thread boundary for the same account while separating a changed account", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    const auth = path.join(home, "auth.json");
+    await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "account-a" } }));
+    const initial = new CodexService({ ...f.environment,
+      CODEX_MCP_BRIDGE_AUTH_SOURCE: "shared", CODEX_MCP_BRIDGE_AUTH_GENERATION: "0" });
+    const returned = new CodexService({ ...f.environment,
+      CODEX_MCP_BRIDGE_AUTH_SOURCE: "shared", CODEX_MCP_BRIDGE_AUTH_GENERATION: "2" });
+    const initialKey = initial.sessionAuthBoundary().key;
+    expect(returned.sessionAuthBoundary().key).toBe(initialKey);
+    expect(returned.sessionAuthBoundary().allowLegacyShared).toBe(false);
+    await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "account-b" } }));
+    expect(returned.sessionAuthBoundary().key).not.toBe(initialKey);
+  });
+
+  it("does not treat an unidentified keyring account as the same thread owner after restart", async () => {
+    const f = await fixture();
+    const first = new CodexService({ ...f.environment, CODEX_MCP_BRIDGE_AUTH_SOURCE: "shared" });
+    const second = new CodexService({ ...f.environment, CODEX_MCP_BRIDGE_AUTH_SOURCE: "shared" });
+    expect(first.sessionAuthBoundary().key).not.toBe(second.sessionAuthBoundary().key);
+    expect(first.sessionAuthBoundary().allowLegacyShared).toBe(false);
+  });
+
+  it("admits a confirmed API account with an explicit environment key but no file identity", async () => {
+    const f = await fixture();
+    const environment = { ...f.environment, OPENAI_API_KEY: "sk-synthetic-api-one" };
+    const service = new CodexService(environment);
+    vi.spyOn(service, "readCliAccount").mockResolvedValue(
+      projectCodexAccount({ account: { type: "apiKey" } }, null));
+    const guard = service.admissionGuard();
+    await expect(guard()).resolves.toBeUndefined();
+    const boundary = service.sessionAuthBoundary().key;
+    await expect(guard()).resolves.toBeUndefined();
+    expect(service.sessionAuthBoundary().key).toBe(boundary);
+    environment.OPENAI_API_KEY = "sk-synthetic-api-two";
+    await expect(guard()).rejects.toThrow("CODEX_AUTH_CHANGED");
+  });
+
+  it("does not pin an unavailable first observation and recovers without a worker restart", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    const guard = f.service.admissionGuard();
+    vi.spyOn(f.service, "readCliAccount").mockRejectedValue(new Error("fixture keyring unavailable"));
+    await expect(guard()).rejects.toThrow("CODEX_AUTH_UNAVAILABLE");
+    await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "a" } }));
+    await expect(guard()).resolves.toBeUndefined();
+  });
+
+  it("keeps a confirmed account across a temporary unreadable file", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    const auth = path.join(home, "auth.json");
+    await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "a" } }));
+    const guard = f.service.admissionGuard();
+    await guard();
+    await rm(auth);
+    vi.spyOn(f.service, "readCliAccount").mockRejectedValue(new Error("fixture transport failure"));
+    await expect(guard()).rejects.toThrow("CODEX_AUTH_UNAVAILABLE");
+    await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "a" } }));
+    await expect(guard()).resolves.toBeUndefined();
+  });
+
+  it("uses account observations for keyring profiles and rejects a different account", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    await writeFile(path.join(home, "config.toml"), 'cli_auth_credentials_store = "keyring"\n');
+    const account = (email: string) => projectCodexAccount({ account: { type: "chatgpt", email } }, null);
+    vi.spyOn(f.service, "readCliAccount").mockResolvedValueOnce(account("first@example.invalid"))
+      .mockResolvedValueOnce(account("first@example.invalid"))
+      .mockResolvedValueOnce(account("second@example.invalid"));
+    const guard = f.service.admissionGuard();
+    await expect(guard()).resolves.toBeUndefined();
+    await expect(guard()).resolves.toBeUndefined();
+    await expect(guard()).rejects.toThrow("CODEX_AUTH_CHANGED");
+  });
+
+  it("treats a local login restriction change as an admission boundary", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "a" } }));
+    const config = path.join(home, "config.toml");
+    await writeFile(config, 'forced_login_method = "chatgpt"\n');
+    const guard = f.service.admissionGuard();
+    await guard();
+    await writeFile(config, 'forced_login_method = "api"\n');
+    await expect(guard()).rejects.toThrow("CODEX_AUTH_CHANGED");
   });
   it("keeps the last confirmed usage through a same-account token refresh and a failed read", async () => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);

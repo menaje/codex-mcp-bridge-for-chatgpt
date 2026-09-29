@@ -1,28 +1,24 @@
 import assert from "node:assert/strict";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { CodexAppServerUpstreamPool } from "../src/appServerUpstream.js";
 import type { UpstreamWorkerAssignment } from "../src/upstream.js";
+import { independentTestCodexHome } from "./independent-test-auth.js";
 
-// Explicitly opt-in: sends small synthetic turns using an existing ChatGPT
-// login. Never falls back to an API key, logs credentials, or reads a project.
+// Explicitly opt-in: sends synthetic turns using an independently signed-in
+// persistent test profile. Never copies or deletes the operational login.
 if (!process.argv.includes("--run-authenticated")) {
     throw new Error("Pass --run-authenticated and one or more absolute CLI paths to run this live check.");
 }
 const commands = process.argv.slice(2).filter(argument => argument !== "--run-authenticated");
 if (!commands.length || commands.some(command => !path.isAbsolute(command))) throw new Error("Absolute CLI paths are required.");
-const authFile = path.join(process.env.CODEX_HOME || path.join(homedir(), ".codex"), "auth.json");
-const auth = JSON.parse(await readFile(authFile, "utf8"));
-if (auth.auth_mode !== "chatgpt" || typeof auth.tokens?.access_token !== "string") {
-    throw new Error("An existing ChatGPT file login is required; no credentials were changed.");
-}
+const codexHome = await independentTestCodexHome();
 
 for (const command of commands) {
     const directory = await mkdtemp(path.join(tmpdir(), "bridge-live-app-server-"));
-    const codexHome = path.join(directory, "codex");
     const project = path.join(directory, "synthetic-project");
     const environment = { ...process.env, CODEX_HOME: codexHome, OPENAI_API_KEY: undefined, CODEX_API_KEY: undefined };
     let pool = new CodexAppServerUpstreamPool(command, 1, { environment });
@@ -30,10 +26,7 @@ for (const command of commands) {
     const report: Record<string, unknown> = { stages: [] };
     const stages = report.stages as string[];
     try {
-        await mkdir(codexHome, { mode: 0o700 }); await mkdir(project);
-        await copyFile(authFile, path.join(codexHome, "auth.json"));
-        await chmod(path.join(codexHome, "auth.json"), 0o600);
-        await writeFile(path.join(codexHome, "config.toml"), 'cli_auth_credentials_store = "file"\nmodel_reasoning_effort = "low"\n');
+        await mkdir(project);
         report.version = execFileSync(command, ["--version"], { encoding: "utf8", timeout: 5_000, maxBuffer: 4096 }).trim();
         const account = await pool.readAccountSnapshot();
         assert.equal(account?.authMode, "chatgpt"); assert.equal(account.authenticated, true);

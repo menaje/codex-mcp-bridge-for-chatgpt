@@ -23,6 +23,7 @@ import {
 } from "../src/macosHelperServer.js";
 import { startPrivateJsonLineServer, type BridgeCompanionServer } from "../src/companionServer.js";
 import { CodexRuntimeManager } from "../src/codexRuntime.js";
+import { CodexAuthSelectionManager } from "../src/codexAuthSelection.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { writeManagedRuntimeStatus } from "../scripts/runtime-status.mjs";
 import { updateRuntimeEnvFile } from "../scripts/runtime-env.mjs";
@@ -37,6 +38,76 @@ import { writeFakeLauncher } from "./fixtures/macosHelperLauncher.js";
 const servers: BridgeCompanionServer[] = [];
 
 describe("central runtime lifecycle reservations", () => {
+  it("keeps a pending auth change inert on ordinary start and applies it only through a drained restart", async () => {
+    const f = await lifecycleFixture();
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\nCODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${path.join(f.root, "state.sqlite")}\n`,
+      { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    await auth.stage({ kind: "disconnected" }, 0, "/fixture/codex", "fixture-cli", {}, false);
+    f.update({ activeJobs: 0 });
+    try {
+      const first = await f.supervisor.start();
+      expect(await auth.snapshot({})).toMatchObject({ applied: { kind: "shared" }, pending: { kind: "disconnected" } });
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(f.supervisor.lifecycleStatus()?.phase).toBe("completed"), {
+        timeout: 6_000, interval: 50
+      });
+      expect((await f.supervisor.health()).pid).not.toBe(first.pid);
+      expect(await auth.snapshot({})).toMatchObject({ applied: { kind: "disconnected" }, pending: null, generation: 1 });
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
+  it("keeps the original runtime when a persisted job still belongs to the old authentication", async () => {
+    const f = await lifecycleFixture();
+    const stateFile = path.join(f.root, "state.sqlite");
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\nCODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${stateFile}\n`,
+      { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    await auth.stage({ kind: "disconnected" }, 0, "/fixture/codex", "fixture-cli", {}, false);
+    const store = new BridgeStateStore({ file: stateFile });
+    store.upsertJob({ jobId: randomUUID(), scopeId: randomUUID(), requestId: randomUUID(),
+      status: "running", updatedAt: 2 } as any);
+    store.close();
+    f.update({ activeJobs: 0 });
+    try {
+      const first = await f.supervisor.start();
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(["blocked", "failed"]).toContain(f.supervisor.lifecycleStatus()?.phase), {
+        timeout: 6_000, interval: 50
+      });
+      expect((await f.supervisor.health()).pid).toBe(first.pid);
+      expect(await auth.snapshot({})).toMatchObject({ applied: { kind: "shared" }, pending: { kind: "disconnected" } });
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
+  it("waits for an uncollected result before applying another authentication", async () => {
+    const f = await lifecycleFixture();
+    const stateFile = path.join(f.root, "state.sqlite");
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\nCODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${stateFile}\n`,
+      { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    await auth.stage({ kind: "disconnected" }, 0, "/fixture/codex", "fixture-cli", {}, false);
+    const store = new BridgeStateStore({ file: stateFile });
+    const jobId = randomUUID();
+    store.upsertJob({ jobId, scopeId: randomUUID(), requestId: randomUUID(),
+      status: "completed", updatedAt: Date.now() } as any);
+    store.holdResult(jobId, "Awaiting result acknowledgement", Date.now() + 60_000);
+    store.close();
+    f.update({ activeJobs: 0 });
+    try {
+      const first = await f.supervisor.start();
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(["blocked", "failed"]).toContain(f.supervisor.lifecycleStatus()?.phase), {
+        timeout: 6_000, interval: 50
+      });
+      expect((await f.supervisor.health()).pid).toBe(first.pid);
+      expect(await auth.snapshot({})).toMatchObject({ applied: { kind: "shared" }, pending: { kind: "disconnected" } });
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
   it("keeps a running job and its restart reservation for over 60 seconds, then restarts on its event", async () => {
     const f = await lifecycleFixture();
     try {
@@ -205,7 +276,7 @@ async function lifecycleFixture(autoRestart = false) {
   const supervisor = new MacOSBridgeSupervisor({ bridgeRoot, envFile, bridgeSocketPath, launcherPath,
     runtimeLockDirectory: path.join(root, "c", "run", "launcher.lock"), codexRuntimeManager: manager,
     registeredProjectRoots: () => [], autoRestart, lifecycleIntervalMs: 60_000, startTimeoutMs: 5000 });
-  return { supervisor, manager, update };
+  return { supervisor, manager, update, root, envFile };
 }
 
 afterEach(async () => {

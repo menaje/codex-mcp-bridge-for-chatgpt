@@ -9,6 +9,45 @@ const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const SCOPE_B = "22222222-2222-4222-8222-222222222222";
 
 describe("SessionRegistry", () => {
+  it("keeps a previous authentication connection's thread in storage without allowing a new connection to resume it", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-auth-boundary-"));
+    const databaseFile = path.join(root, "state.sqlite");
+    const firstKey = "a".repeat(64), secondKey = "b".repeat(64);
+    const store = new BridgeStateStore({ file: databaseFile });
+    const legacy = new SessionRegistry({ stateStore: store });
+    legacy.record(session("legacy-shared", root, "read-only", undefined, undefined, 90));
+    const first = new SessionRegistry({ stateStore: store,
+      authBoundary: { key: firstKey, allowLegacyShared: true } });
+    expect(first.get("legacy-shared")?.threadId).toBe("legacy-shared");
+    first.record(session("first-account", root, "read-only", undefined, undefined, 100));
+    expect(first.get("first-account")?.authBoundary).toBe(firstKey);
+    const second = new SessionRegistry({ stateStore: store,
+      authBoundary: { key: secondKey, allowLegacyShared: false } });
+    expect(second.get("first-account")).toBeUndefined();
+    expect(second.belongsToAnotherAuthentication("first-account")).toBe(true);
+    expect(second.belongsToAnotherAuthentication("absent-thread")).toBe(false);
+    expect(second.list()).toEqual([]);
+    expect(() => second.record(session("first-account", root, "read-only", undefined, undefined, 200)))
+      .toThrow("CODEX_AUTH_THREAD_BOUNDARY");
+    expect(store.countSessions()).toBe(2);
+    store.close();
+  });
+
+  it("rechecks the active authentication boundary after an account observation changes", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-auth-observation-"));
+    let key = "a".repeat(64);
+    const sessions = new SessionRegistry({ authBoundary: () => ({ key, allowLegacyShared: false }) });
+    sessions.record(session("account-a", root, "read-only", undefined, undefined, 100));
+    key = "b".repeat(64);
+    expect(sessions.get("account-a")).toBeUndefined();
+    expect(() => sessions.record(session("account-a", root, "read-only", undefined, undefined, 200)))
+      .toThrow("CODEX_AUTH_THREAD_BOUNDARY");
+    sessions.record(session("account-b", root, "read-only", undefined, undefined, 200));
+    expect(sessions.list().map(item => item.threadId)).toEqual(["account-b"]);
+    key = "a".repeat(64);
+    expect(sessions.list().map(item => item.threadId)).toEqual(["account-a"]);
+  });
+
   it("persists only structured session metadata and restores it from SQLite", () => {
     const root = realpathSync(mkdtempSync(path.join(tmpdir(), "bridge-root-")));
     const databaseFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "state.sqlite");

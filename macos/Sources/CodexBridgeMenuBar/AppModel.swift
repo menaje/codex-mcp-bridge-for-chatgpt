@@ -354,6 +354,7 @@ final class AppModel: ObservableObject {
     }
     @Published private(set) var connectionPreferences: BridgeConnectionPreferences
     @Published private(set) var remoteHello: RemoteCompanionHello?
+    @Published private(set) var remoteAuthConnection: RuntimeAdmissionSnapshot.AuthConnection?
     @Published private(set) var remoteManagementStatus: RemoteManagementStatus?
     @Published var connectionErrorMessage: String?
     @Published var remoteManagementErrorMessage: String?
@@ -1346,6 +1347,7 @@ final class AppModel: ObservableObject {
             helperStatus = nil
             codexRuntime = nil
             authStatus = nil
+            remoteAuthConnection = nil
             guard activeRemoteProfile != nil else {
                 remoteHello = nil
                 statusErrorMessage = nil
@@ -1363,6 +1365,9 @@ final class AppModel: ObservableObject {
                 connectionErrorMessage = nil
                 updateActiveProfile(from: hello)
                 resumeDeferredDashboardReadIfNeeded()
+                let remoteRuntime = try? await client.runtimeStatus(inspectBackgroundProcesses: false)
+                guard generation == connectionGeneration, requestGeneration == statusRequestGeneration, isRemoteClient else { return }
+                remoteAuthConnection = remoteRuntime?.authConnection
                 if refreshContent {
                     lastDashboardEnrichment = nil
                     enqueueRefresh(["settings"])
@@ -1378,6 +1383,7 @@ final class AppModel: ObservableObject {
             return
         }
         remoteHello = nil
+        remoteAuthConnection = nil
         connectionErrorMessage = nil
         do {
             let client = await helperClient()
