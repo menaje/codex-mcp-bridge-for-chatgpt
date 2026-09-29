@@ -144,7 +144,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             let paneChecks: [(SettingsNavigationPane, String, String)] = [
                 (.modelExecution, "settings-model-execution-en-light.png", "Set default access"),
                 (.projects, "settings-projects-en-light.png", "Register and manage"),
-                (.codex, "settings-codex-en-light.png", "Keyring ChatGPT user"),
+                (.codex, "settings-codex-en-light.png", "Changing Codex locations"),
                 (.connection, "settings-connection-en-light.png", "Choose this Mac"),
                 (.server, "settings-server-en-light.png", "safety limit")
             ]
@@ -784,6 +784,9 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                         "planType": "plus", "billing": ["kind": "chatgpt-plan"],
                         "windows": [], "observedAt": Date().timeIntervalSince1970 * 1000],
             "authSelection": ["revision": 0, "applied": ["kind": "shared"],
+                              "knownHomes": [["id": "11111111-1111-4111-8111-111111111111",
+                                              "home": "/Users/fixture/.codex-work",
+                                              "canonicalHome": "/Users/fixture/.codex-work"]],
                               "appliedAccountEmail": "fixture@example.invalid",
                               "appliedWorkspaceKey": "abcdef0123456789",
                               "appliedBillingTarget": "chatgpt-plan",

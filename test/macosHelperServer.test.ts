@@ -38,6 +38,31 @@ import { writeFakeLauncher } from "./fixtures/macosHelperLauncher.js";
 const servers: BridgeCompanionServer[] = [];
 
 describe("central runtime lifecycle reservations", () => {
+  it("remembers distinct explicit Codex homes already used by the Helper without a folder picker", async () => {
+    const f = await lifecycleFixture();
+    const first = path.join(f.root, "existing-a");
+    const second = path.join(f.root, "existing-b");
+    mkdirSync(first); mkdirSync(second);
+    const base = readFileSync(f.envFile, "utf8") + `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\n`;
+    try {
+      writeFileSync(f.envFile, base + `CODEX_HOME=${first}\n`, { mode: 0o600 });
+      const firstStatus = await f.supervisor.codexRuntime({ action: "status", includeAccount: false });
+      expect(firstStatus.authSelection?.knownHomes?.map(item => item.home)).toEqual([first]);
+      await f.supervisor.start();
+      writeFileSync(f.envFile, base + `CODEX_HOME=${second}\n`, { mode: 0o600 });
+      const pendingStatus = await f.supervisor.codexRuntime({ action: "status", includeAccount: false });
+      expect(pendingStatus.environmentPending).toBe(true);
+      expect(pendingStatus.authSelection?.knownHomes?.map(item => item.home)).toEqual([first]);
+      await f.supervisor.stop({ mode: "force", timeoutMs: 5_000 });
+      const secondStatus = await f.supervisor.codexRuntime({ action: "status", includeAccount: false });
+      expect(secondStatus.authSelection?.knownHomes?.map(item => item.home)).toEqual([first, second]);
+      writeFileSync(f.envFile, base, { mode: 0o600 });
+      const selectable = await f.supervisor.codexRuntime({ action: "status", includeAccount: false });
+      expect(selectable.authSelection).toMatchObject({ overrideActive: false,
+        knownHomes: [{ home: first }, { home: second }] });
+    } finally { await f.supervisor.close({ runtime: "force-stop" }); }
+  });
+
   it("offers an existing bridge-owned profile as a selectable candidate without starting login", async () => {
     const f = await lifecycleFixture();
     writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +

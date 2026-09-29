@@ -37,6 +37,18 @@ final class CodexRuntimeModelsTests: XCTestCase {
         XCTAssertNil(try JSONDecoder().decode(CodexAuthSelection.self, from: previous).appliedWorkspaceKey)
     }
 
+    func testPreviouslyUsedCodexHomeCanBeSelectedWithoutSubmittingAPath() throws {
+        let homeId = "11111111-1111-4111-8111-111111111111"
+        let snapshot = Data(#"{"revision":3,"applied":{"kind":"external","homeId":"11111111-1111-4111-8111-111111111111"},"pending":null,"knownHomes":[{"id":"11111111-1111-4111-8111-111111111111","home":"/fixture/existing","canonicalHome":"/fixture/existing"}],"overrideActive":false,"effective":{"kind":"external","homeId":"11111111-1111-4111-8111-111111111111"}}"#.utf8)
+        let decoded = try JSONDecoder().decode(CodexAuthSelection.self, from: snapshot)
+        XCTAssertEqual(decoded.applied.homeId, homeId)
+        XCTAssertEqual(decoded.knownHomes?.first?.home, "/fixture/existing")
+        let request = CodexRuntimeRequest(action: "auth-apply", authKind: "external", authHomeId: homeId, authRevision: 3)
+        let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        XCTAssertEqual(encoded["authHomeId"] as? String, homeId)
+        XCTAssertNil(encoded["home"])
+    }
+
     func testSelectedCliExposesOptionalKeyringSessionIdentitySupport() throws {
         let supported = try installation(protocolSupport: true)
         XCTAssertEqual(supported.protocol?.accountSessionsList, true)

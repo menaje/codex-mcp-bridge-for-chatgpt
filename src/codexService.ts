@@ -230,7 +230,10 @@ export class CodexService {
   /** Persisted work follows its proven owner; CLI compatibility stays in admission. */
   sessionAuthBoundary(): CodexSessionAuthBoundaryEvidence {
     const home = this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
-    const source = this.environment.CODEX_MCP_BRIDGE_AUTH_SOURCE || "shared";
+    // An explicitly reused external home has the same owner boundary as that
+    // home under a CODEX_HOME override; the selection mechanism is not an owner.
+    const configuredSource = this.environment.CODEX_MCP_BRIDGE_AUTH_SOURCE || "shared";
+    const source = configuredSource === "external" ? "shared" : configuredSource;
     const generation = this.environment.CODEX_MCP_BRIDGE_AUTH_GENERATION || "0";
     let policyKey: string | null = null;
     let observedOwner: string | null = null;

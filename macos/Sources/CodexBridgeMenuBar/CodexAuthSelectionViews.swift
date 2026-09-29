@@ -35,6 +35,10 @@ struct CodexAuthSelectionControls: View {
                     LabeledContent("macos.selectedcodex", value: selectedCliLabel(selected))
                 }
                 LabeledContent("macos.auth.current", value: label(auth.applied.kind))
+                if auth.applied.kind == "external",
+                   let home = auth.knownHomes?.first(where: { $0.id == auth.applied.homeId }) {
+                    LabeledContent("macos.auth.shared", value: home.home)
+                }
                 if let email = auth.appliedAccountEmail {
                     LabeledContent("macos.auth.emailAtSelection", value: email)
                 }
@@ -77,6 +81,10 @@ struct CodexAuthSelectionControls: View {
                     }
                     if let pending = auth.pending {
                         LabeledContent("macos.auth.pending", value: label(pending.kind))
+                        if pending.kind == "external",
+                           let home = auth.knownHomes?.first(where: { $0.id == pending.homeId }) {
+                            LabeledContent("macos.auth.shared", value: home.home)
+                        }
                         if let email = auth.pendingAccountEmail {
                             LabeledContent("macos.auth.accountEmail", value: email)
                         }
@@ -126,6 +134,31 @@ struct CodexAuthSelectionControls: View {
                         }
                         .disabled(model.isBusy || auth.pending != nil || auth.activation != nil)
                     }
+                    if selectedKind == "shared", let homes = auth.knownHomes {
+                        if homes.contains(where: { $0.id != auth.applied.homeId && $0.id != auth.pending?.homeId }) {
+                            Text("macos.auth.externalHomeImpact")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        ForEach(homes.filter { $0.id != auth.applied.homeId && $0.id != auth.pending?.homeId }) { home in
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text("macos.auth.shared")
+                                    Text(home.home).font(.caption).foregroundStyle(.secondary)
+                                        .lineLimit(1).help(home.home)
+                                }
+                                Spacer()
+                                Button("macos.auth.requestChange") {
+                                    Task {
+                                        await model.manageCodex(.init(action: "auth-apply", authKind: "external",
+                                                                      authHomeId: home.id, authRevision: auth.revision,
+                                                                      authBillingConfirmed: billingConfirmed))
+                                        await model.refreshAuthStatus()
+                                    }
+                                }
+                                .disabled(model.isBusy || auth.pending != nil || auth.activation != nil)
+                            }
+                        }
+                    }
                     if let profiles = auth.profiles {
                         ForEach(profiles.filter { $0.status != "removed" && $0.id != auth.applied.profileId &&
                             $0.id != auth.pending?.profileId && $0.id != auth.candidate?.id }) { profile in
@@ -153,7 +186,10 @@ struct CodexAuthSelectionControls: View {
                     }
                 }
             }
-            .onAppear { selectedKind = auth.pending?.kind ?? auth.applied.kind }
+            .onAppear {
+                let kind = auth.pending?.kind ?? auth.applied.kind
+                selectedKind = kind == "external" ? "shared" : kind
+            }
             .task(id: auth.candidate?.status) {
                 guard auth.candidate?.status == "login-started" else { return }
                 while !Task.isCancelled {

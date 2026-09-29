@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { CodexAppServerUpstreamPool } from "../src/appServerUpstream.js";
 import { CodexAuthSelectionManager } from "../src/codexAuthSelection.js";
+import { CodexService } from "../src/codexService.js";
 import { codexChatgptOwnerKey } from "../src/codexAccount.js";
 import { codexChildEnvironment, codexProcessEnvironment } from "../scripts/runtime-env.mjs";
 import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
@@ -66,6 +67,74 @@ it("selects one of several saved bridge profiles without replacing its credentia
     appliedWorkspaceKey: workspaceKey, appliedBillingTarget: "chatgpt-plan",
     pendingWorkspaceKey: null, pendingBillingTarget: null
   });
+});
+
+it("offers only distinct previously used external homes and preserves their owner across explicit and saved selection", async () => {
+  const f = await fixture();
+  const first = path.join(f.root, "external-first");
+  const second = path.join(f.root, "external-second");
+  const alias = path.join(f.root, "first-alias");
+  const owned = path.join(f.root, "auth-profiles", randomUUID());
+  await mkdir(first); await mkdir(second); await mkdir(path.join(f.root, ".codex"));
+  await mkdir(owned, { recursive: true });
+  await symlink(first, alias);
+  await writeFile(path.join(first, "auth.json"), JSON.stringify({ auth_mode: "chatgpt",
+    tokens: { account_id: "workspace-first", id_token: syntheticIdToken("user-first", "workspace-first") } }));
+  await writeFile(path.join(second, "auth.json"), JSON.stringify({ auth_mode: "chatgpt",
+    tokens: { account_id: "workspace-second", id_token: syntheticIdToken("user-second", "workspace-second") } }));
+  for (const home of [first, alias, second, path.join(f.root, ".codex"), owned]) {
+    await f.manager.rememberExplicitHome({ ...f.environment, CODEX_HOME: home });
+  }
+  const before = await f.manager.snapshot(f.environment);
+  const canonicalFirst = await realpath(first);
+  expect(before.knownHomes.map(item => item.home)).toEqual([first, second]);
+  expect(before.knownHomes.map(item => item.canonicalHome)).toEqual([canonicalFirst, await realpath(second)]);
+  const unobserved = path.join(f.root, "unobserved");
+  await mkdir(unobserved);
+  await expect(f.manager.stage({ kind: "external", homeId: randomUUID() }, before.revision,
+    "/no/such/codex", "cli", f.environment, false)).rejects.toThrow("CODEX_AUTH_HOME_UNAVAILABLE");
+  const original = new CodexService({ ...f.environment, CODEX_HOME: first,
+    CODEX_MCP_BRIDGE_AUTH_SOURCE: "shared" }).sessionAuthBoundary().key;
+  const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+  const connection = { kind: "external" as const, homeId: before.knownHomes[0].id };
+  const staged = await f.manager.stage(connection, before.revision, command, "cli",
+    { ...f.environment, CODEX_TEST_ACCOUNT_ID: "workspace-first" }, false);
+  expect(staged.pending).toEqual(connection);
+  expect(staged.pendingAccountEmail).toBe("private-fixture@example.com");
+  const activation = await f.manager.beginActivation(command, "cli",
+    { ...f.environment, CODEX_TEST_ACCOUNT_ID: "workspace-first" });
+  const launching = codexChildEnvironment(undefined, { ...f.environment, CODEX_MCP_BRIDGE_AUTH_ACTIVATION_ID: activation! });
+  expect(launching).toMatchObject({ CODEX_HOME: first, CODEX_MCP_BRIDGE_AUTH_SOURCE: "external" });
+  await expect(f.manager.completeActivation(activation!, "external", "1", second))
+    .rejects.toThrow("CODEX_AUTH_ACTIVATION_UNCONFIRMED");
+  await f.manager.completeActivation(activation!, "external", "1", first);
+  const applied = codexChildEnvironment(undefined, f.environment);
+  expect(applied).toMatchObject({ CODEX_HOME: first, CODEX_MCP_BRIDGE_AUTH_SOURCE: "external" });
+  expect(new CodexService({ ...f.environment, ...applied }).sessionAuthBoundary().key).toBe(original);
+  expect(codexProcessEnvironment({ ...f.environment, ...applied,
+    OPENAI_API_KEY: "unrelated-secret" })).not.toHaveProperty("OPENAI_API_KEY");
+});
+
+it("refuses a previously used home after its path changes without falling back to another login", async () => {
+  const f = await fixture();
+  const home = path.join(f.root, "external");
+  const replacement = path.join(f.root, "replacement");
+  await mkdir(home); await mkdir(replacement);
+  await f.manager.rememberExplicitHome({ ...f.environment, CODEX_HOME: home });
+  const known = (await f.manager.snapshot(f.environment)).knownHomes[0];
+  await rm(home, { recursive: true });
+  await symlink(replacement, home);
+  await writeFile(path.join(f.root, "auth-selection.json"), JSON.stringify({
+    schemaVersion: 1, revision: 1, applied: { kind: "external", homeId: known.id },
+    knownHomes: [known], pending: null, candidate: null
+  }));
+  expect(() => codexChildEnvironment(undefined, f.environment)).toThrow("CODEX_AUTH_HOME_UNAVAILABLE");
+  await writeFile(path.join(f.root, "auth-selection.json"), JSON.stringify({
+    schemaVersion: 1, revision: 1, applied: { kind: "shared" },
+    knownHomes: [known], pending: null, candidate: null
+  }));
+  await expect(f.manager.stage({ kind: "external", homeId: known.id }, 1,
+    "/no/such/codex", "cli", f.environment, false)).rejects.toThrow("CODEX_AUTH_HOME_UNAVAILABLE");
 });
 
 it("stages a disconnect without changing a running environment and applies it at the next safe launch", async () => {

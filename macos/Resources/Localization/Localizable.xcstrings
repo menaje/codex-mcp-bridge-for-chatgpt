@@ -78256,6 +78256,64 @@
         }
       }
     },
+    "macos.auth.externalHomeImpact": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Changing Codex locations can affect available conversations, skills, and settings. Existing history is kept."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex 위치를 바꾸면 사용할 수 있는 대화·스킬·설정이 달라질 수 있습니다. 기존 기록은 보존됩니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex の保存場所を変更すると、利用できる会話、スキル、設定が変わる場合があります。既存の履歴は保持されます。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更改 Codex 存储位置可能影响可用的对话、技能和设置。现有历史记录会保留。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "變更 Codex 儲存位置可能影響可用的對話、技能與設定。現有歷史紀錄會保留。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cambiar la ubicación de Codex puede afectar las conversaciones, habilidades y opciones disponibles. Se conserva el historial existente."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Changer l’emplacement de Codex peut modifier les conversations, les compétences et les réglages disponibles. L’historique existant est conservé."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ein anderer Codex-Speicherort kann verfügbare Unterhaltungen, Skills und Einstellungen ändern. Der bisherige Verlauf bleibt erhalten."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mudar o local do Codex pode afetar as conversas, habilidades e configurações disponíveis. O histórico existente é preservado."
+          }
+        }
+      }
+    },
     "macos.auth.sharedHint": {
       "localizations": {
         "en": {

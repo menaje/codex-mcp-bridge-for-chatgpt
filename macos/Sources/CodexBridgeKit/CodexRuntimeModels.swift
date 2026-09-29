@@ -104,6 +104,7 @@ public struct CodexRuntimeSnapshot: Codable, Sendable, Equatable {
 public struct CodexAuthConnection: Codable, Sendable, Equatable {
     public let kind: String
     public let profileId: String?
+    public let homeId: String?
 }
 
 public struct CodexAuthCandidate: Codable, Sendable, Equatable {
@@ -131,6 +132,11 @@ public struct CodexAuthSelection: Codable, Sendable, Equatable {
         public let kind: String
         public let status: String
     }
+    public struct KnownHome: Codable, Sendable, Equatable, Identifiable {
+        public let id: String
+        public let home: String
+        public let canonicalHome: String
+    }
     public let revision: Int
     public let applied: CodexAuthConnection
     public let appliedAccountEmail: String?
@@ -143,6 +149,7 @@ public struct CodexAuthSelection: Codable, Sendable, Equatable {
     public let candidate: CodexAuthCandidate?
     public let activation: Activation?
     public let profiles: [OwnedProfile]?
+    public let knownHomes: [KnownHome]?
     public let overrideActive: Bool
     public let effective: CodexAuthConnection
 }
@@ -165,6 +172,7 @@ public struct CodexRuntimeRequest: Encodable, Sendable {
     public var authKind: String?
     public var authCandidateId: String?
     public var authProfileId: String?
+    public var authHomeId: String?
     public var authActivationId: String?
     public var authRevision: Int?
     public var authApiKey: String?
@@ -174,6 +182,7 @@ public struct CodexRuntimeRequest: Encodable, Sendable {
 
     public init(action: String, kind: String? = nil, includeAccount: Bool? = nil, version: String? = nil, billing: CodexBillingInput? = nil, selectionId: String? = nil, preferences: CodexRuntimePreferences? = nil,
                 authKind: String? = nil, authCandidateId: String? = nil, authProfileId: String? = nil,
+                authHomeId: String? = nil,
                 authActivationId: String? = nil,
                 authRevision: Int? = nil, authApiKey: String? = nil,
                 authBillingConfirmed: Bool? = nil, authRemovalConfirmed: Bool? = nil,
@@ -188,6 +197,7 @@ public struct CodexRuntimeRequest: Encodable, Sendable {
         self.authKind = authKind
         self.authCandidateId = authCandidateId
         self.authProfileId = authProfileId
+        self.authHomeId = authHomeId
         self.authActivationId = authActivationId
         self.authRevision = authRevision
         self.authApiKey = authApiKey

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { z } from "zod";
@@ -10,11 +10,12 @@ import { assertEffectiveCodexAuthPolicy, effectiveCodexCredentialStore,
   parseCodexLocalAuthPolicy, type CodexLocalAuthPolicy } from "./codexAuthPolicy.js";
 import { atomicRuntimeJson, withRuntimeLock } from "./codexRuntime.js";
 import { parseJsonUtf8Strict } from "./textIntegrity.js";
-import { authProfileHome } from "../scripts/auth-selection.mjs";
+import { authProfileHome, knownExternalHome } from "../scripts/auth-selection.mjs";
 
 const connectionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("shared") }),
   z.strictObject({ kind: z.literal("disconnected") }),
+  z.strictObject({ kind: z.literal("external"), homeId: z.string().uuid() }),
   z.strictObject({ kind: z.literal("bridge-chatgpt"), profileId: z.string().uuid() }),
   z.strictObject({ kind: z.literal("bridge-api"), profileId: z.string().uuid() })
 ]);
@@ -59,6 +60,8 @@ const ownedProfileSchema = z.strictObject({
   id: z.string().uuid(), kind: z.enum(["bridge-chatgpt", "bridge-api"]),
   status: z.enum(["available", "removed", "logout-unconfirmed"])
 });
+const knownHomeSchema = z.strictObject({ id: z.string().uuid(), home: z.string().refine(path.isAbsolute),
+  canonicalHome: z.string().refine(path.isAbsolute) });
 const stateSchema = z.strictObject({
   schemaVersion: z.literal(1),
   revision: z.number().int().nonnegative(),
@@ -75,7 +78,8 @@ const stateSchema = z.strictObject({
   pendingVerification: verificationSchema.nullable().default(null),
   activation: activationSchema.nullable().default(null),
   lastActivationResolution: activationResolutionSchema.nullable().default(null),
-  profiles: z.array(ownedProfileSchema).default([])
+  profiles: z.array(ownedProfileSchema).default([]),
+  knownHomes: z.array(knownHomeSchema).default([])
 });
 type AuthSelectionState = z.infer<typeof stateSchema>;
 export type AuthSelectionSnapshot = Omit<AuthSelectionState, "candidate" | "pendingVerification"> & {
@@ -88,7 +92,7 @@ export type AuthSelectionSnapshot = Omit<AuthSelectionState, "candidate" | "pend
 const initialState = (): AuthSelectionState => ({ schemaVersion: 1, revision: 0, generation: 0,
   applied: { kind: "shared" }, appliedAccountEmail: null, appliedWorkspaceKey: null, appliedBillingTarget: null,
   pending: null, pendingAccountEmail: null, pendingWorkspaceKey: null, pendingBillingTarget: null, candidate: null,
-  pendingVerification: null, activation: null, lastActivationResolution: null, profiles: [] });
+  pendingVerification: null, activation: null, lastActivationResolution: null, profiles: [], knownHomes: [] });
 const candidateLoginProcesses = new Map<string, ChildProcess>();
 type LocalAuthPolicy = Pick<CodexLocalAuthPolicy, "forcedMethod" | "workspaceId">;
 
@@ -106,6 +110,40 @@ export class CodexAuthSelectionManager {
     const { pendingVerification: _privateVerification, ...publicState } = state;
     return { ...publicState, candidate, overrideActive,
       effective: overrideActive ? { kind: "shared" } : state.applied };
+  }
+
+  /** Remember only a CODEX_HOME that the Bridge actually used, never CLI-adjacent folders. */
+  async rememberExplicitHome(environment: NodeJS.ProcessEnv): Promise<void> {
+    if (!environment.CODEX_HOME) return;
+    const home = path.resolve(environment.CODEX_HOME);
+    let canonicalHome: string;
+    try {
+      canonicalHome = await realpath(home);
+      if (!(await stat(canonicalHome)).isDirectory()) return;
+    } catch { return; }
+    const defaultHome = path.join(environment.HOME || homedir(), ".codex");
+    let canonicalDefault = path.resolve(defaultHome);
+    try { canonicalDefault = await realpath(defaultHome); } catch { /* The default home may not exist. */ }
+    let canonicalRoot = path.resolve(this.root);
+    try { canonicalRoot = await realpath(this.root); } catch { /* No saved auth state yet. */ }
+    const profileRoot = path.join(canonicalRoot, "auth-profiles");
+    const underProfiles = path.relative(profileRoot, canonicalHome);
+    if (canonicalHome === canonicalDefault || underProfiles === "" ||
+        underProfiles !== ".." && !underProfiles.startsWith(`..${path.sep}`) && !path.isAbsolute(underProfiles)) return;
+    const before = await this.readState();
+    if (before.knownHomes.some(item => item.canonicalHome === canonicalHome)) return;
+    await this.update(undefined, state => {
+      if (state.knownHomes.some(item => item.canonicalHome === canonicalHome)) return;
+      state.knownHomes.push({ id: randomUUID(), home, canonicalHome });
+      state.revision++;
+    });
+  }
+
+  private externalEnvironment(state: AuthSelectionState, homeId: string,
+    environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    return { ...environment, CODEX_HOME: knownExternalHome(state, homeId),
+      OPENAI_API_KEY: undefined, CODEX_API_KEY: undefined,
+      CODEX_MCP_BRIDGE_AUTH_DISCONNECTED: undefined };
   }
 
   async prepare(kind: "bridge-chatgpt" | "bridge-api", expectedRevision: number,
@@ -367,6 +405,8 @@ export class CodexAuthSelectionManager {
     let observed: { accountKey: string | null; accountEmail: string | null;
       workspaceKey: string | null; billingTarget: BillingTarget | null; credentialKey: string | null } | null = null;
     if (connection.kind === "shared") observed = await this.probeShared(command, environment, billingConfirmed);
+    if (connection.kind === "external") observed = await this.probeShared(command,
+      this.externalEnvironment(before, connection.homeId, environment), billingConfirmed);
     if (connection.kind === "bridge-chatgpt" || connection.kind === "bridge-api") {
       const candidate = await this.requireCandidate(connection.profileId, connection.kind);
       observed = await this.probeCandidate(candidate, command, environment);
@@ -475,6 +515,8 @@ export class CodexAuthSelectionManager {
       workspaceKey: string | null; billingTarget: BillingTarget | null; credentialKey: string | null } =
       { accountKey: null, accountEmail: null, workspaceKey: null, billingTarget: null, credentialKey: null };
     if (pending.kind === "shared") observed = await this.probeShared(command, environment, true);
+    if (pending.kind === "external") observed = await this.probeShared(command,
+      this.externalEnvironment(before, pending.homeId, environment), true);
     if (pending.kind === "bridge-chatgpt" || pending.kind === "bridge-api") {
       const candidate = before.candidate;
       if (!candidate || candidate.status !== "verified" || candidate.id !== pending.profileId ||
@@ -519,6 +561,10 @@ export class CodexAuthSelectionManager {
       if (!activation || activation.id !== id || source !== activation.to.kind ||
           generation !== String(activation.generation)) {
         throw new Error("CODEX_AUTH_ACTIVATION_UNCONFIRMED: The ready runtime did not prove the staged connection.");
+      }
+      if (activation.to.kind === "external" && (!observedHome ||
+          path.resolve(observedHome) !== knownExternalHome(state, activation.to.homeId))) {
+        throw new Error("CODEX_AUTH_ACTIVATION_UNCONFIRMED: The ready runtime used another Codex location.");
       }
       if ("profileId" in activation.to && (!observedHome ||
           path.resolve(observedHome) !== authProfileHome(this.root, activation.to.profileId))) {
@@ -662,11 +708,14 @@ export class CodexAuthSelectionManager {
   }
 
   async assertPendingLocalPolicy(environment: NodeJS.ProcessEnv): Promise<void> {
-    const pending = (await this.readState()).pending;
+    const state = await this.readState();
+    const pending = state.pending;
     if (pending?.kind === "bridge-chatgpt" || pending?.kind === "bridge-api") {
       await this.assertProfilePolicy(pending, environment);
     } else if (pending?.kind === "shared") {
       await this.assertSharedLocalPolicy(environment);
+    } else if (pending?.kind === "external") {
+      await this.assertSharedLocalPolicy(this.externalEnvironment(state, pending.homeId, environment));
     }
   }
 
@@ -758,6 +807,11 @@ export class CodexAuthSelectionManager {
   private async readState(): Promise<AuthSelectionState> {
     try {
       const state = stateSchema.parse(parseJsonUtf8Strict(await readFile(this.file), "Codex authentication selection"));
+      for (const connection of [state.applied, state.pending, state.activation?.from, state.activation?.to]) {
+        if (connection?.kind === "external" && !state.knownHomes.some(item => item.id === connection.homeId)) {
+          throw new Error("CODEX_AUTH_HOME_UNAVAILABLE");
+        }
+      }
       for (const connection of [state.applied, state.pending, state.candidate?.connection]) {
         if (!connection || !("profileId" in connection) || state.profiles.some(item => item.id === connection.profileId)) continue;
         state.profiles.push({ id: connection.profileId, kind: connection.kind, status: "available" });

@@ -194,9 +194,10 @@ const codexRuntimeParamsSchema = z.strictObject({
     skippedVersion: z.string().regex(/^\d+\.\d+\.\d+$/).nullable().optional(),
     notifications: z.boolean().optional()
   }).optional(),
-  authKind: z.enum(["shared", "bridge-chatgpt", "bridge-api", "disconnected"]).optional(),
+  authKind: z.enum(["shared", "external", "bridge-chatgpt", "bridge-api", "disconnected"]).optional(),
   authCandidateId: z.string().uuid().optional(),
   authProfileId: z.string().uuid().optional(),
+  authHomeId: z.string().uuid().optional(),
   authActivationId: z.string().uuid().optional(),
   authRevision: z.number().int().nonnegative().optional(),
   authApiKey: z.string().max(32768).optional(),
@@ -894,6 +895,15 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         const appliedEnvironment = cliEnvironmentSummary(manager, service, base);
         const kind = "app-server" as const;
         const billing = await service.billing.configuration();
+        // A newly edited private .env is only a requested context while the
+        // managed runtime is still using its previous authentication home.
+        const observedEnvironment = this.isManagedRuntimeRunning() ? service.environment : authEnvironment;
+        if (!requestState.problem && observedEnvironment.CODEX_HOME &&
+            (!observedEnvironment.CODEX_MCP_BRIDGE_AUTH_SOURCE ||
+              observedEnvironment.CODEX_MCP_BRIDGE_AUTH_SOURCE === "shared")) {
+          assertRuntimeEnvOutsideProjectRoots(path.join(authManager.root, "auth-selection.json"), await this.registeredProjectRoots());
+          await authManager.rememberExplicitHome(observedEnvironment);
+        }
         const authSelection = await authManager.snapshot(authEnvironment);
         const account = base.selection?.available && service.environment.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED !== "1"
           ? request.includeAccount === false ? service.cachedAccount(kind) : await service.readAccount(kind, true) || service.cachedAccount(kind) : null;
@@ -966,6 +976,10 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         const selection = await manager.resolve();
         let connection: AuthConnection;
         if (request.authKind === "shared" || request.authKind === "disconnected") connection = { kind: request.authKind };
+        else if (request.authKind === "external") {
+          if (!request.authHomeId) throw new Error("CODEX_AUTH_HOME_UNAVAILABLE");
+          connection = { kind: "external", homeId: request.authHomeId };
+        }
         else {
           const candidate = (await authManager.snapshot(authEnvironment)).candidate;
           if (!candidate || candidate.id !== request.authCandidateId || candidate.connection.kind !== request.authKind) {

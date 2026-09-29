@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { parseEnv } from "node:util";
 import { decodeUtf8Strict } from "./text-integrity.mjs";
-import { authProfileHome, authSelectionRoot, desiredAuthSelection } from "./auth-selection.mjs";
+import { authProfileHome, authSelectionRoot, desiredAuthSelection, knownExternalHome, readAuthSelection } from "./auth-selection.mjs";
 
 const RUNTIME_CONFIG_DIRECTORY = "codex-mcp-bridge";
 const RUNTIME_ENV_FILENAME = ".env";
@@ -72,7 +72,7 @@ export function codexChildEnvironment(filePath, inherited = process.env) {
   delete projected.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED;
   delete projected.CODEX_MCP_BRIDGE_AUTH_SOURCE;
   delete projected.CODEX_MCP_BRIDGE_AUTH_GENERATION;
-  if (["shared", "bridge-chatgpt", "bridge-api", "disconnected"].includes(inherited.CODEX_MCP_BRIDGE_AUTH_SOURCE)) {
+  if (["shared", "external", "bridge-chatgpt", "bridge-api", "disconnected"].includes(inherited.CODEX_MCP_BRIDGE_AUTH_SOURCE)) {
     projected.CODEX_MCP_BRIDGE_AUTH_SOURCE = inherited.CODEX_MCP_BRIDGE_AUTH_SOURCE;
     projected.CODEX_MCP_BRIDGE_AUTH_GENERATION = inherited.CODEX_MCP_BRIDGE_AUTH_GENERATION || "0";
     if (inherited.CODEX_MCP_BRIDGE_AUTH_SOURCE === "disconnected") projected.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED = "1";
@@ -86,7 +86,10 @@ export function codexChildEnvironment(filePath, inherited = process.env) {
   projected.CODEX_MCP_BRIDGE_AUTH_GENERATION = String(explicitHome ? 0 : generation);
   if (connection.kind !== "shared" && !explicitHome) {
     if (connection.kind === "disconnected") projected.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED = "1";
-    else projected.CODEX_HOME = authProfileHome(authSelectionRoot({ ...inherited, ...projected }), connection.profileId);
+    else if (connection.kind === "external") {
+      const root = authSelectionRoot({ ...inherited, ...projected });
+      projected.CODEX_HOME = knownExternalHome(readAuthSelection({ CODEX_MCP_BRIDGE_RUNTIME_HOME: root }), connection.homeId);
+    } else projected.CODEX_HOME = authProfileHome(authSelectionRoot({ ...inherited, ...projected }), connection.profileId);
   }
   return projected;
 }
@@ -98,17 +101,22 @@ export function codexProcessEnvironment(environment) {
   const sealedSource = projected.CODEX_MCP_BRIDGE_AUTH_SOURCE;
   const explicitHome = Boolean(projected.CODEX_HOME) && !sealedSource;
   const needsSaved = !sealedSource && !explicitHome ||
-    (sealedSource === "bridge-chatgpt" || sealedSource === "bridge-api") && !projected.CODEX_HOME;
+    (["external", "bridge-chatgpt", "bridge-api"].includes(sealedSource)) && !projected.CODEX_HOME;
   const desired = needsSaved ? desiredAuthSelection(projected) : null;
   const connection = sealedSource || (explicitHome ? "shared" : desired.connection.kind);
   projected.CODEX_MCP_BRIDGE_AUTH_SOURCE = connection;
   projected.CODEX_MCP_BRIDGE_AUTH_GENERATION ||= String(explicitHome ? 0 : desired?.generation || 0);
+  if (!projected.CODEX_HOME && connection === "external") {
+    const selected = desired.connection;
+    if (selected.kind !== "external") throw new Error("CODEX_AUTH_SELECTION_INVALID: The applied Codex location is unavailable.");
+    projected.CODEX_HOME = knownExternalHome(readAuthSelection(projected), selected.homeId);
+  }
   if (!projected.CODEX_HOME && (connection === "bridge-chatgpt" || connection === "bridge-api")) {
     const selected = desired.connection;
     if (selected.kind !== connection) throw new Error("CODEX_AUTH_SELECTION_INVALID: The applied authentication profile is unavailable.");
     projected.CODEX_HOME = authProfileHome(authSelectionRoot(projected), selected.profileId);
   }
-  if (connection === "bridge-chatgpt" || connection === "bridge-api") {
+  if (connection === "external" || connection === "bridge-chatgpt" || connection === "bridge-api") {
     delete projected.OPENAI_API_KEY;
     delete projected.CODEX_API_KEY;
   }

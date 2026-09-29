@@ -59,6 +59,7 @@ else createInterface({input:process.stdin}).on("line", line => {
     JSON.stringify({cli:${JSON.stringify(id)},kind:"usage",codexHome:process.env.CODEX_HOME || null}) + "\\n");
   const result = request.method === "initialize" ? {userAgent:"fixture",platformFamily:"unix",platformOs:"test"} :
     request.method === "account/read" ? {account:${authMode === "apiKey" ? '{type:"apiKey"}' : '{type:"chatgpt",email:"fixture@example.invalid",planType:"pro"}'},requiresOpenaiAuth:true} :
+    request.method === "model/list" ? {data:[{id:"gpt-fixture"}],nextCursor:null} :
     request.method === "account/rateLimits/read" ? {rateLimits:null} : {};
   process.stdout.write(JSON.stringify({id:request.id,result}) + "\\n");
 });
@@ -192,6 +193,26 @@ describe("issue 162 selected CLI across product entry points", () => {
       expect(new Set(userCalls.map(item => item.kind))).toEqual(new Set(["login", "account", "models", "task-worker"]));
       expect(userCalls.every(item => item.cli === choice && item.runtimeHome === `${choice}-runtime` &&
         item.codexHome === codexHome && item.proxy && item.certificate && !item.apiKey)).toBe(true);
+
+      // Once the explicit override is removed, the previously used home is a
+      // selectable credential source for any of the three installed CLIs.
+      writeFileSync(envFile, [
+        `CODEX_MCP_BRIDGE_RUNTIME_HOME=${runtimeHome}`,
+        "HTTPS_PROXY=http://proxy.fixture.invalid",
+        `SSL_CERT_FILE=${path.join(root, "fixture-ca.pem")}`,
+        ""
+      ].join("\n"), { mode: 0o600 });
+      const selectable = (await supervisor.codexRuntime({ action: "status", includeAccount: false })).authSelection!;
+      const homeId = selectable.knownHomes.find(item => item.home === codexHome)?.id;
+      expect(homeId).toBeDefined();
+      const callsBefore = observations(log).length;
+      const staged = await supervisor.codexRuntime({ action: "auth-apply", authKind: "external",
+        authHomeId: homeId, authRevision: selectable.revision });
+      expect(staged.authSelection?.pending).toEqual({ kind: "external", homeId });
+      const probeCalls = observations(log).slice(callsBefore);
+      expect(probeCalls.some(item => ["account", "task-worker"].includes(item.kind) && item.cli === choice &&
+        item.codexHome === codexHome && !item.apiKey)).toBe(true);
+      expect(probeCalls.some(item => item.kind === "login")).toBe(false);
     } finally {
       await execution.close();
       await supervisor.close();

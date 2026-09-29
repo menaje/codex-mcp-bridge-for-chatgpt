@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -14,6 +14,21 @@ export function authProfileHome(root, profileId) {
   return path.join(root, "auth-profiles", profileId);
 }
 
+export function knownExternalHome(state, homeId) {
+  const entry = state?.knownHomes?.find(item => item.id === homeId);
+  if (!entry || !path.isAbsolute(entry.home) || !path.isAbsolute(entry.canonicalHome)) {
+    throw new Error("CODEX_AUTH_HOME_UNAVAILABLE: The previously used Codex location is unavailable.");
+  }
+  try {
+    if (realpathSync(entry.home) !== entry.canonicalHome || !statSync(entry.home).isDirectory()) {
+      throw new Error("CODEX_AUTH_HOME_CHANGED");
+    }
+  } catch {
+    throw new Error("CODEX_AUTH_HOME_UNAVAILABLE: The previously used Codex location changed or is unavailable.");
+  }
+  return entry.home;
+}
+
 export function readAuthSelection(environment = process.env) {
   const root = authSelectionRoot(environment);
   let state;
@@ -24,10 +39,16 @@ export function readAuthSelection(environment = process.env) {
   }
   const valid = value => value && typeof value === "object" && (
     value.kind === "shared" || value.kind === "disconnected" ||
+    (value.kind === "external" && typeof value.homeId === "string" &&
+      state.knownHomes?.some(item => item.id === value.homeId)) ||
     (["bridge-chatgpt", "bridge-api"].includes(value.kind) && typeof value.profileId === "string" &&
       /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value.profileId))
   );
   if (state?.schemaVersion !== 1 ||
+      (state.knownHomes !== undefined && (!Array.isArray(state.knownHomes) ||
+        !state.knownHomes.every(item => item && typeof item.id === "string" &&
+          /^[a-f0-9-]{36}$/.test(item.id) && typeof item.home === "string" && path.isAbsolute(item.home) &&
+          typeof item.canonicalHome === "string" && path.isAbsolute(item.canonicalHome)))) ||
       (state.generation !== undefined && (!Number.isSafeInteger(state.generation) || state.generation < 0)) ||
       !valid(state.applied) ||
       (state.pending !== null && !valid(state.pending)) ||
