@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 /** Repeatable #198 validation. All fault tests use their own synthetic fixtures. */
 import { spawn, execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { closeSync, existsSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { computeSourceHash, hasTrackedSourceChanges } from "./build-fingerprint.mjs";
+import {
+  reserveValidationOutput, scenarioPassed, scenarioRuntimeEvidence, validationChildEnvironment
+} from "./issue-198-validation-support.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const [stage, ...options] = process.argv.slice(2);
@@ -20,10 +23,7 @@ function option(name) {
   if (!options[index + 1]) throw new Error(`${name} requires a value.`);
   return options[index + 1];
 }
-const output = path.resolve(option("--output-dir") || path.join(
-  root, "output", "issue-198", `${stage}-${new Date().toISOString().replaceAll(":", "-")}`
-));
-mkdirSync(output, { recursive: true });
+const output = reserveValidationOutput(root, stage, option("--output-dir"));
 const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 const sourceSha = git("rev-parse", "HEAD");
 const dirty = hasTrackedSourceChanges(root);
@@ -69,7 +69,8 @@ const vitest = (id, files) => ({
 const fastFiles = [
   "test/automaticRecovery.test.ts", "test/threadConnections.test.ts",
   "test/runtimeProcess.test.ts", "test/tools.test.ts",
-  "test/stateReadProcess.test.ts", "test/telemetryService.test.ts"
+  "test/stateReadProcess.test.ts", "test/telemetryService.test.ts",
+  "test/issue198ValidationRunner.test.ts"
 ];
 const scenarios = stage === "quick" ? [
   npm("contract-and-release", "validate:fast", { usePinnedCodexCli: true }),
@@ -97,25 +98,41 @@ async function run(spec) {
   const started = performance.now();
   const logName = `${String(result.scenarios.length + 1).padStart(2, "0")}-${spec.id}.log`;
   const logFile = path.join(output, logName);
-  const log = createWriteStream(logFile, { flags: "wx", mode: 0o600 });
+  let logDescriptor;
+  try {
+    logDescriptor = openSync(logFile, "wx", 0o600);
+  } catch (error) {
+    throw new Error(`VALIDATION_LOG_OPEN_FAILED: ${logName}: ${String(error)}`);
+  }
   const command = [spec.command, ...spec.args];
   process.stdout.write(`[#198 ${stage}] ${spec.id}: ${command.join(" ")}\n`);
   let standardOutput = "";
   let exitCode = null;
   let signal = null;
   let spawnError = null;
+  let logError = null;
   let timedOut = false;
   const timeoutMs = spec.timeoutMs || 15 * 60_000;
-  // The pinned CLI is a schema-generation input only. Product tests construct
-  // their own selected-CLI fixtures and must not inherit this override.
-  const childEnvironment = { ...process.env, ...spec.env };
-  if (!spec.usePinnedCodexCli) delete childEnvironment.CODEX_MCP_BRIDGE_CODEX;
-  const child = spawn(spec.command, spec.args, {
-    cwd: root,
-    env: childEnvironment,
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: process.platform !== "win32"
-  });
+  let child;
+  try {
+    // The pinned CLI belongs to schema checks only; the bundle selector belongs
+    // to regressions against the already verified installed candidate only.
+    const childEnvironment = validationChildEnvironment({
+      stage, parent: process.env, extra: spec.env,
+      usePinnedCodexCli: spec.usePinnedCodexCli,
+      bundleDist: spec.bundleDist,
+      verifiedBundleDist: result.bundle?.valid ? result.bundle.runtimeDist : undefined
+    });
+    child = spawn(spec.command, spec.args, {
+      cwd: root,
+      env: childEnvironment,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32"
+    });
+  } catch (error) {
+    closeSync(logDescriptor);
+    throw error;
+  }
   let forceTimer;
   const terminate = terminationSignal => {
     try {
@@ -128,35 +145,60 @@ async function run(spec) {
     terminate("SIGTERM");
     forceTimer = setTimeout(() => terminate("SIGKILL"), 5_000);
   }, timeoutMs);
+  const appendLog = chunk => {
+    if (logError) return;
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    try {
+      for (let offset = 0; offset < bytes.length;) {
+        const written = writeSync(logDescriptor, bytes, offset, bytes.length - offset);
+        if (written < 1) throw new Error("Log write made no progress.");
+        offset += written;
+      }
+    } catch (error) {
+      logError = `VALIDATION_LOG_WRITE_FAILED: ${logName}: ${String(error)}`;
+      terminate("SIGTERM");
+      if (!forceTimer) forceTimer = setTimeout(() => terminate("SIGKILL"), 5_000);
+    }
+  };
   child.stdout.on("data", chunk => {
-    log.write(chunk);
+    appendLog(chunk);
     standardOutput = (standardOutput + chunk.toString("utf8")).slice(-1024 * 1024);
   });
-  child.stderr.on("data", chunk => log.write(chunk));
+  child.stderr.on("data", appendLog);
   try {
-    [exitCode, signal] = await new Promise((resolve, reject) => {
-      child.once("error", reject);
+    [exitCode, signal] = await new Promise(resolve => {
+      child.once("error", error => { spawnError = String(error); });
       // `exit` can precede the final stdout/stderr chunks. `close` means both
       // pipes have drained, so the report and its log hash cover all output.
       child.once("close", (code, terminationSignal) => resolve([code, terminationSignal]));
     });
-  } catch (error) {
-    spawnError = String(error);
   } finally {
     clearTimeout(timer);
     clearTimeout(forceTimer);
-    await new Promise(resolve => log.end(resolve));
+    try { closeSync(logDescriptor); }
+    catch (error) { logError ||= `VALIDATION_LOG_CLOSE_FAILED: ${logName}: ${String(error)}`; }
   }
+  let logSha256 = null;
+  try { logSha256 = digest(logFile); }
+  catch (error) { logError ||= `VALIDATION_LOG_READ_FAILED: ${logName}: ${String(error)}`; }
+  const observed = parseSummary(standardOutput);
+  const executionTarget = scenarioRuntimeEvidence(
+    stage, spec.id, observed, result.bundle?.valid ? result.bundle.runtimeDist : undefined
+  );
   const entry = {
     id: spec.id, command, startedAt, durationMs: Math.round(performance.now() - started),
     timeoutMs, timedOut, exitCode, signal,
-    status: exitCode === 0 && !timedOut ? "passed" : "failed",
+    status: scenarioPassed({ exitCode, timedOut, spawnError, logError, executionTarget })
+      ? "passed" : "failed",
     ...(spawnError ? { spawnError } : {}),
-    log: logName, logSha256: digest(logFile),
-    ...(parseSummary(standardOutput) ? { observed: parseSummary(standardOutput) } : {})
+    ...(logError ? { logError } : {}),
+    ...(executionTarget ? { executionTarget } : {}),
+    log: logName, logSha256,
+    ...(observed ? { observed } : {})
   };
   result.scenarios.push(entry);
   save();
+  if (logError) throw new Error(logError);
   return entry;
 }
 
@@ -203,22 +245,35 @@ function inspectBundle(bundlePath) {
 }
 
 function save() {
-  writeFileSync(path.join(output, "results.json"), `${JSON.stringify(result, null, 2)}\n`);
+  writeAtomically("results.json", `${JSON.stringify(result, null, 2)}\n`);
   const rows = result.scenarios.map(entry =>
-    `| ${entry.id} | ${entry.status} | ${entry.durationMs} | ${entry.log} |`
+    `| ${entry.id} | ${entry.status} | ${entry.executionTarget
+      ? entry.executionTarget.matches ? "matched" : "MISMATCH" : "n/a"} | ${entry.durationMs} | ${entry.log} |`
   ).join("\n");
-  writeFileSync(path.join(output, "report.md"), [
+  writeAtomically("report.md", [
     `# #198 ${stage} validation`, "",
     `- Verdict: **${result.verdict}**`,
     `- Source: \`${sourceSha}\`, hash \`${sourceHash}\`, dirty: ${dirty}`,
     `- Fixture: ${result.fixture}`,
     result.bundle ? `- Candidate bundle identity: **${result.bundle.valid ? "matched" : "mismatch"}**; build \`${result.bundle.build.id}\`` : "- Candidate bundle: not tested in this stage",
-    "", "| Scenario | Status | Duration (ms) | Local log |", "| --- | --- | ---: | --- |",
-    rows || "| none | not run | 0 | |", "",
+    "", "| Scenario | Status | Execution target | Duration (ms) | Local log |", "| --- | --- | --- | ---: | --- |",
+    rows || "| none | not run | n/a | 0 | |", "",
     "## Unrun boundaries", "",
     ...result.unrun.map(entry => `- ${entry.id}: ${entry.reason}`), "",
     "A passing script proves its declared fixture and assertions only. Failed and skipped items remain visible in results.json."
   ].join("\n"));
+}
+
+function writeAtomically(name, contents) {
+  const target = path.join(output, name);
+  const temporary = path.join(output, `.${name}.${randomUUID()}.tmp`);
+  try {
+    writeFileSync(temporary, contents, { flag: "wx", mode: 0o600 });
+    renameSync(temporary, target);
+  } catch (error) {
+    try { unlinkSync(temporary); } catch { /* the previous report remains intact */ }
+    throw error;
+  }
 }
 
 // Preserve source identity even if the first scenario fails before finishing.
@@ -242,13 +297,21 @@ try {
       ["bundled-observation-faults", "scripts/issue-186-observation-regression.ts"],
       ["bundled-retention-and-ack", "scripts/issue-189-retention-regression.ts"]
     ]) {
-      await run(tsx(id, script, { env: { CODEX_TEST_BUNDLE_DIST: identity.runtimeDist } }));
+      await run(tsx(id, script, { bundleDist: identity.runtimeDist }));
     }
   } else {
     for (const scenario of scenarios) await run(scenario);
   }
 } catch (error) {
-  result.unrun.push({ id: "runner-interrupted", reason: String(error) });
+  const failure = { stage, at: new Date().toISOString(), reason: String(error) };
+  result.unrun.push({ id: "runner-interrupted", reason: failure.reason });
+  try {
+    writeFileSync(path.join(output, "runner-error.json"), `${JSON.stringify(failure, null, 2)}\n`, {
+      flag: "wx", mode: 0o600
+    });
+  } catch (recordError) {
+    process.stderr.write(`Could not record runner-error.json: ${String(recordError)}\n`);
+  }
 } finally {
   result.finishedAt = new Date().toISOString();
   result.verdict = result.scenarios.length > 0 &&
@@ -256,7 +319,11 @@ try {
     !result.unrun.some(entry => entry.id === "runner-interrupted") &&
     (stage !== "installed" || result.bundle?.valid === true)
     ? "passed-with-declared-limits" : "failed-or-incomplete";
-  save();
+  try { save(); }
+  catch (error) {
+    process.stderr.write(`VALIDATION_REPORT_WRITE_FAILED: ${String(error)}\n`);
+    process.exitCode = 1;
+  }
   process.stdout.write(`[#198 ${stage}] ${result.verdict}; report: ${path.join(output, "report.md")}\n`);
   if (result.verdict !== "passed-with-declared-limits") process.exitCode = 1;
 }
