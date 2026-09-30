@@ -59,7 +59,7 @@ const activationResolutionSchema = z.strictObject({
 });
 const ownedProfileSchema = z.strictObject({
   id: z.string().uuid(), kind: z.enum(["bridge-chatgpt", "bridge-api"]),
-  status: z.enum(["available", "removed", "logout-unconfirmed"])
+  status: z.enum(["available", "removed", "login-unconfirmed", "logout-unconfirmed"])
 });
 const knownHomeSchema = z.strictObject({ id: z.string().uuid(), home: z.string().refine(path.isAbsolute),
   canonicalHome: z.string().refine(path.isAbsolute) });
@@ -335,8 +335,10 @@ export class CodexAuthSelectionManager {
     if (this.pendingCandidate(before, candidateId)) {
       throw new Error("CODEX_AUTH_CANDIDATE_STAGED: Cancel the pending connection first.");
     }
-    if (candidate.status === "login-started" && candidateLoginProcesses.has(candidateId)) {
-      throw new Error("CODEX_AUTH_LOGIN_IN_PROGRESS: Wait for the selected Codex login to finish before verifying.");
+    if (candidate.status === "login-started") {
+      throw new Error(candidateLoginProcesses.has(candidateId)
+        ? "CODEX_AUTH_LOGIN_IN_PROGRESS: Wait for the selected Codex login to finish before verifying."
+        : "CODEX_AUTH_LOGIN_UNCONFIRMED: The previous login process may still be changing this profile; cancel it and prepare another profile.");
     }
     const observed = await this.probeCandidate(candidate, command, environment);
     await this.update(before.revision, state => {
@@ -454,9 +456,14 @@ export class CodexAuthSelectionManager {
       this.assertNoActivation(state);
       if (state.candidate?.id !== candidateId) throw new Error("CODEX_AUTH_CANDIDATE_CHANGED");
       if (this.pendingCandidate(state, candidateId)) throw new Error("CODEX_AUTH_CANDIDATE_STAGED: Cancel the pending connection first.");
+      if (state.candidate.status === "login-started") {
+        const profile = state.profiles.find(item => item.id === candidateId);
+        if (profile?.status === "available") profile.status = "login-unconfirmed";
+      }
       state.candidate = null;
       state.revision++;
-      // Candidate credentials are retained; no token rollback or logout.
+      // Candidate credentials are retained. An old Helper may still have a
+      // login process writing to this profile, so it cannot be reused.
     });
     const login = candidateLoginProcesses.get(candidateId);
     // Keep the process visible until its exit handler runs. The saved profile

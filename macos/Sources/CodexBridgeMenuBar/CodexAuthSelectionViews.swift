@@ -172,8 +172,10 @@ struct CodexAuthSelectionControls: View {
                                 Text(label(profile.kind))
                                 Text(String(profile.id.prefix(8))).foregroundStyle(.secondary)
                                 Spacer()
-                                if profile.status == "logout-unconfirmed" {
-                                    Text("macos.auth.logoutUnconfirmed").font(.caption).foregroundStyle(.orange)
+                                if profile.status == "logout-unconfirmed" || profile.status == "login-unconfirmed" {
+                                    Text(profile.status == "login-unconfirmed"
+                                         ? "macos.auth.profileLoginUnconfirmed" : "macos.auth.logoutUnconfirmed")
+                                        .font(.caption).foregroundStyle(.orange)
                                 } else {
                                     Button("macos.auth.useSavedProfile") {
                                         selectedKind = profile.kind
@@ -282,7 +284,8 @@ struct CodexAuthSelectionControls: View {
             Button("macos.auth.verify") {
                 Task { await model.manageCodex(.init(action: "auth-verify", authCandidateId: candidate.id)) }
             }
-            .disabled(model.isBusy || auth.pending != nil || auth.activation != nil || candidate.status == "login-started")
+            .disabled(model.isBusy || auth.pending != nil || auth.activation != nil ||
+                      ["login-started", "login-unconfirmed"].contains(candidate.status))
             Button("macos.auth.requestChange") {
                 Task {
                     await model.manageCodex(.init(action: "auth-apply", authKind: selectedKind,

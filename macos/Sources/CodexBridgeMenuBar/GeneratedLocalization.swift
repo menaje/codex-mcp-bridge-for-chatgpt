@@ -331,6 +331,7 @@ enum BridgeGeneratedLocalization {
         "macos.auth.pending": "Requested connection",
         "macos.auth.plan": "ChatGPT plan",
         "macos.auth.prepare": "Prepare separate profile",
+        "macos.auth.profileLoginUnconfirmed": "Previous sign-in may still be active. Start with a new profile.",
         "macos.auth.remoteManaged": "Authentication is managed by the connected server. Open its local Codex settings to change the account.",
         "macos.auth.removalWarning": "Sign out of this inactive bridge profile? This may affect other server sessions for the account, and past conversations may no longer resume.",
         "macos.auth.removeKeyWarning": "Remove the saved API key from this inactive bridge profile? The key is not revoked at OpenAI. Past conversations may no longer resume.",

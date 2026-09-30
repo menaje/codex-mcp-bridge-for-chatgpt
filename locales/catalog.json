@@ -55610,6 +55610,19 @@
           "pt": { "stringUnit": { "state": "translated", "value": "Resultado do início de sessão não confirmado; verifique a conta" } }
         }
       },
+      "macos.auth.profileLoginUnconfirmed": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Previous sign-in may still be active. Start with a new profile." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "이전 로그인이 아직 진행 중일 수 있습니다. 새 프로필로 시작하세요." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "以前のログインがまだ進行中の可能性があります。新しいプロファイルで開始してください。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "之前的登录可能仍在进行。请使用新配置文件。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "先前的登入可能仍在進行。請使用新的設定檔。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "El inicio de sesión anterior puede seguir activo. Usa un perfil nuevo." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "La connexion précédente est peut-être encore active. Utilisez un nouveau profil." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Die vorherige Anmeldung ist möglicherweise noch aktiv. Verwenden Sie ein neues Profil." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "O login anterior pode ainda estar ativo. Use um novo perfil." } }
+        }
+      },
       "macos.auth.accountEmail": {
         "localizations": {
           "en": { "stringUnit": { "state": "translated", "value": "Account email" } },

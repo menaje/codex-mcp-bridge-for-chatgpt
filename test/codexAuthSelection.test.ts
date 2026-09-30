@@ -359,6 +359,68 @@ it("reports an interrupted helper's unresolved browser login without claiming co
   expect((await f.manager.snapshot(f.environment)).candidate?.id).toBe(candidate.id);
 });
 
+it("keeps an old Helper's late login isolated after a replacement cancels it and prepares another profile", async () => {
+  const f = await fixture();
+  const old = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
+  const started = path.join(f.root, "old-login-started");
+  const release = path.join(f.root, "release-old-login");
+  const command = path.join(f.root, "old-login.mjs");
+  await writeFile(command, `#!/usr/bin/env node
+import { existsSync, writeFileSync } from "node:fs";
+import path from "node:path";
+writeFileSync(${JSON.stringify(started)}, String(process.pid));
+const timer = setInterval(() => {
+  if (!existsSync(${JSON.stringify(release)})) return;
+  writeFileSync(path.join(process.env.CODEX_HOME, "auth.json"), JSON.stringify({
+    auth_mode: "chatgpt", tokens: { account_id: "late-old-login" }
+  }));
+  clearInterval(timer);
+  process.exit(0);
+}, 10);
+`, { mode: 0o700 });
+  let oldPid = 0;
+  let callbackObserved = false;
+  const oldUpdate = vi.spyOn(f.manager as unknown as { update: (...args: unknown[]) => Promise<void> }, "update");
+  try {
+    await f.manager.startChatGptLogin(old.id, command, f.environment);
+    await vi.waitFor(async () => {
+      oldPid = Number(await readFile(started, "utf8"));
+      expect(oldPid).toBeGreaterThan(0);
+    });
+    vi.resetModules();
+    const { CodexAuthSelectionManager: ReplacementManager } = await import("../src/codexAuthSelection.js");
+    const replacement = new ReplacementManager(f.root);
+    const unconfirmed = await replacement.snapshot(f.environment);
+    expect(unconfirmed.candidate).toMatchObject({ id: old.id, status: "login-unconfirmed" });
+    await expect(replacement.verify(old.id, "/no/such/codex", "cli", f.environment))
+      .rejects.toThrow("CODEX_AUTH_LOGIN_UNCONFIRMED");
+    await replacement.cancelCandidate(old.id, unconfirmed.revision);
+    const cancelled = await replacement.snapshot(f.environment);
+    expect(cancelled).toMatchObject({ candidate: null,
+      profiles: [{ id: old.id, status: "login-unconfirmed" }] });
+    await expect(replacement.selectOwnedProfile(old.id, cancelled.revision))
+      .rejects.toThrow("CODEX_AUTH_PROFILE_UNAVAILABLE");
+    const next = (await replacement.prepare("bridge-chatgpt", cancelled.revision, f.environment)).candidate!;
+    await writeFile(release, "continue");
+    await vi.waitFor(() => expect(oldUpdate).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    await oldUpdate.mock.results[0].value;
+    callbackObserved = true;
+    expect(await replacement.snapshot(f.environment)).toMatchObject({
+      applied: { kind: "shared" }, pending: null,
+      candidate: { id: next.id, status: "prepared" },
+      profiles: [{ id: old.id, status: "login-unconfirmed" }, { id: next.id, status: "available" }]
+    });
+  } finally {
+    await writeFile(release, "continue");
+    if (oldPid && !callbackObserved) {
+      try { process.kill(oldPid, "SIGTERM"); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    }
+    oldUpdate.mockRestore();
+  }
+});
+
 it("rejects a verification result that arrives after the same candidate starts another login", async () => {
   const f = await fixture();
   const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
@@ -408,7 +470,10 @@ setTimeout(() => {}, 10000);
     .toBe("started"));
   await f.manager.cancelCandidate(candidate.id, (await f.manager.snapshot(f.environment)).revision);
   await expect(run).rejects.toThrow("CODEX_AUTH_API_LOGIN_FAILED");
-  expect(await f.manager.snapshot(f.environment)).toMatchObject({ applied: { kind: "shared" }, candidate: null });
+  expect(await f.manager.snapshot(f.environment)).toMatchObject({
+    applied: { kind: "shared" }, candidate: null,
+    profiles: [{ id: candidate.id, status: "login-unconfirmed" }]
+  });
 });
 
 it("rejects a candidate that changed account or CLI after verification, even when display email is unchanged", async () => {
