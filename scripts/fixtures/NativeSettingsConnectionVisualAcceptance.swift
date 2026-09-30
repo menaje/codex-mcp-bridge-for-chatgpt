@@ -57,6 +57,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                 "summary": "ready"
             ])
             model.settings = try Self.settingsSnapshot()
+            model.codexRuntime = try Self.codexRuntimeSnapshot()
 
             let settingsWindow = makeWindow(
                 size: NSSize(width: 980, height: 720),
@@ -140,12 +141,12 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
 
             settingsWindow.appearance = NSAppearance(named: .aqua)
             settingsWindow.setContentSize(NSSize(width: 980, height: 720))
-            let paneChecks: [(SettingsNavigationPane, String, String)] = [
-                (.modelExecution, "settings-model-execution-en-light.png", "Set default access"),
-                (.projects, "settings-projects-en-light.png", "Register and manage"),
-                (.codex, "settings-codex-en-light.png", "Review Codex account"),
-                (.connection, "settings-connection-en-light.png", "Choose this Mac"),
-                (.server, "settings-server-en-light.png", "safety limit")
+            let paneChecks: [(SettingsNavigationPane, String, [String])] = [
+                (.modelExecution, "settings-model-execution-en-light.png", ["Set default access"]),
+                (.projects, "settings-projects-en-light.png", ["Register and manage"]),
+                (.codex, "settings-codex-en-light.png", ["Account email at last apply", "fixture@example.invalid", "Changing Codex locations"]),
+                (.connection, "settings-connection-en-light.png", ["Choose this Mac"]),
+                (.server, "settings-server-en-light.png", ["safety limit"])
             ]
             for (pane, file, expectedText) in paneChecks {
                 model.requestedSettingsTab = pane.rawValue
@@ -156,9 +157,19 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                     settingsWindow,
                     named: file,
                     in: artifacts,
-                    expecting: [expectedText]
+                    expecting: expectedText
                 )
             }
+            model.codexRuntime = try Self.codexRuntimeSnapshot(overrideActive: true)
+            model.requestedSettingsTab = SettingsNavigationPane.codex.rawValue
+            try await settle(settingsWindow, iterations: 16)
+            try await capture(
+                settingsWindow,
+                named: "settings-codex-override-en-light.png",
+                in: artifacts,
+                expecting: ["explicit CODEX_HOME", "Authentication method", "ChatGPT"]
+            )
+            model.codexRuntime = try Self.codexRuntimeSnapshot()
             model.requestedSettingsTab = SettingsNavigationPane.general.rawValue
             try await verifySettingsTitlebarIsClear(settingsWindow)
             try await settle(settingsWindow, iterations: 16)
@@ -268,6 +279,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             model.previewInterfaceLocale("en")
             try await captureSetupStages(in: artifacts)
             try await captureRecoveryStates(in: artifacts)
+            try await captureAccountUsageStates(in: artifacts)
 
             let report: [String: Any] = [
                 "settings": [
@@ -289,7 +301,8 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                     "settingsSearchCovered": true,
                     "settingsSidebarAlwaysVisible": true,
                     "settingsTitlebarRemainsClearDuringNavigation": true,
-                    "setupAndRecoveryStatesCovered": true
+                    "setupAndRecoveryStatesCovered": true,
+                    "providedAndMissingAccountValuesRendered": true
                 ],
                 "captures": try captures.map { capture in
                     let data = try JSONEncoder().encode(capture)
@@ -490,11 +503,12 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
     }
 
     private func captureSetupStages(in artifacts: URL) async throws {
+        model.previewInterfaceLocale("en")
         let stages: [(ConnectionSetupRole, ConnectionSetupStep, String, [String])] = [
             (.localHost, .discovery, "connection-setup-discovery-en-light.png", ["Find Existing Settings"]),
             (.localHost, .credentials, "connection-setup-credentials-en-light.png", ["Connection Information"]),
             (.remoteClient, .remoteConnection, "connection-setup-remote-en-light.png", ["Connect to a Server"]),
-            (.localHost, .codexLogin, "connection-setup-codex-en-light.png", ["Codex Sign-In"]),
+            (.localHost, .codexLogin, "connection-setup-codex-en-light.png", ["Codex Sign-In", "Use existing Codex login"]),
             (.localHost, .complete, "connection-setup-complete-en-light.png", ["Setup Complete"])
         ]
         for (role, step, file, expectedText) in stages {
@@ -511,6 +525,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                             automaticRefresh: false
                         )
                         .environmentObject(model)
+                        .environment(\.locale, model.interfaceLocale)
                     }
                 )
             )
@@ -584,6 +599,46 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             expecting: ["Connection Ready", "Done"]
         )
         window.close()
+    }
+
+    private func captureAccountUsageStates(in artifacts: URL) async throws {
+        let observedAt = Date().timeIntervalSince1970 * 1000
+        let chatgpt: [String: Any] = [
+            "authMode": "chatgpt", "authenticated": true, "windows": [],
+            "usageStatus": "unavailable", "observedAt": observedAt,
+            "billing": ["kind": "chatgpt-plan"]
+        ]
+        let api: [String: Any] = [
+            "authMode": "api-key", "authenticated": true, "windows": [],
+            "observedAt": observedAt, "billing": ["kind": "api"]
+        ]
+        var usage = chatgpt
+        usage["usageStatus"] = "available"
+        usage["usageObservedAt"] = observedAt
+        usage["windows"] = [["limitId": "codex", "limitName": "Codex",
+                              "usedPercent": 35, "remainingPercent": 65, "windowDurationMins": 10080]]
+        usage["credits"] = ["hasCredits": true, "unlimited": false, "balance": "12.50"]
+        var cost = api
+        cost["billing"] = ["kind": "api", "actualCosts": ["configured": true,
+                            "status": "available", "usd": 12.34,
+                            "organizationId": "fixture-organization", "projectId": "fixture-project"]]
+        let cases: [(String, [String: Any], [String])] = [
+            ("account-chatgpt-missing-values-en-light.png", chatgpt, ["Authentication method", "ChatGPT"]),
+            ("account-api-missing-costs-en-light.png", api, ["Authentication method", "OpenAI API key"]),
+            ("account-chatgpt-provided-usage-en-light.png", usage, ["65%", "12.50", "Last checked"]),
+            ("account-api-provided-costs-en-light.png", cost, ["fixture-organization", "fixture-project"])
+        ]
+        for (file, object, expectedText) in cases {
+            let account = try Self.decode(CodexAccountUsage.self, object)
+            let window = makeWindow(size: NSSize(width: 600, height: 380), title: "Account usage",
+                                    rootView: AnyView(VStack(alignment: .leading) {
+                CodexAccountUsageView(account: account).environmentObject(model)
+                Spacer()
+            }.padding(24).environment(\.locale, Locale(identifier: "en"))))
+            try await settle(window, iterations: 8)
+            try await capture(window, named: file, in: artifacts, expecting: expectedText)
+            window.close()
+        }
     }
 
     private func capture(
@@ -716,6 +771,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             "maxConcurrentJobs": 4,
             "historyRetentionDays": 30,
             "showBridgeThreadsInCodexApp": true,
+            "experimentalDirectResultDelivery": false,
         ]
         let object: [String: Any] = [
             "settings": settings,
@@ -750,6 +806,34 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             ]
         ]
         return try decode(SettingsSnapshot.self, object)
+    }
+
+    nonisolated private static func codexRuntimeSnapshot(overrideActive: Bool = false) throws -> CodexRuntimeSnapshot {
+        let selection: [String: Any] = [
+            "id": "visual-codex", "source": "terminal", "command": "/fixture/codex",
+            "physicalPath": "/fixture/codex", "version": "0.153.3", "available": true, "compatible": true
+        ]
+        return try decode(CodexRuntimeSnapshot.self, [
+            "selection": selection, "candidates": [selection], "selectionRequired": false,
+            "installedVersion": "0.153.3", "runningVersions": [], "reclaimableBytes": 0,
+            "preferences": ["notifications": false],
+            "actions": ["install": false, "update": false, "remove": false,
+                        "reinstall": false, "rollback": false, "cleanup": false,
+                        "retry": false, "applyPending": false, "skip": false],
+            "account": ["authMode": "chatgpt", "authenticated": true,
+                        "workspaceKey": "abcdef0123456789",
+                        "planType": "plus", "billing": ["kind": "chatgpt-plan"],
+                        "windows": [], "observedAt": Date().timeIntervalSince1970 * 1000],
+            "authSelection": ["revision": 0, "applied": ["kind": "shared"],
+                              "knownHomes": [["id": "11111111-1111-4111-8111-111111111111",
+                                              "home": "/Users/fixture/.codex-work",
+                                              "canonicalHome": "/Users/fixture/.codex-work"]],
+                              "appliedAccountEmail": "fixture@example.invalid",
+                              "appliedWorkspaceName": "Engineering workspace",
+                              "appliedWorkspaceKey": "abcdef0123456789",
+                              "appliedBillingTarget": "chatgpt-plan",
+                              "effective": ["kind": "shared"], "overrideActive": overrideActive]
+        ])
     }
 
     nonisolated private static func decode<T: Decodable>(

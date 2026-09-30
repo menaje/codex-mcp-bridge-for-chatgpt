@@ -17,6 +17,7 @@ import {
   statusAction
 } from "./nextActions.js";
 import { DisplayReadPool, waitForDisplay } from "./displayReadPool.js";
+import type { CodexAccountSnapshot } from "./codexAccount.js";
 import { uiControlProofs, type UiControlClaims } from "./uiControlProofs.js";
 import {
   nativeCompletionNotification,
@@ -38,6 +39,7 @@ import type { BridgeTelemetryService } from "./telemetryService.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
 import { ScopeFairQueue, type ScopeFairQueueStatus } from "./scopeFairQueue.js";
 import { registerCodexInputTools, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS } from "./questionTools.js";
+import { InteractionNotDispatchedError } from "./interactionDispatch.js";
 import path from "node:path";
 import * as z from "zod/v4";
 import { type McpServer, type Progress, type ToolCallback } from "@modelcontextprotocol/server";
@@ -46,6 +48,7 @@ import {
   ACTIVITY_HANDOFF_POLICIES,
   ACTIVITY_JOB_STATUSES,
   ACTIVITY_KINDS,
+  ACTIVITY_LIFECYCLES,
   isActiveActivityJobStatus,
   isTerminalActivityJobStatus,
   type ActivityCompletionTrigger,
@@ -267,7 +270,7 @@ type ForceTerminateOptions = {
   requestedTargetIntents?: CancellationIntentRecord[];
 };
 
-type JobCompletionCallback = (result: ToolResult) => void | (() => void);
+type JobCompletionCallback = (result: ToolResult, job: CodexJob) => void | (() => void);
 
 class JobTerminalCommitError extends Error {
   constructor(cause: unknown) {
@@ -365,6 +368,7 @@ export class TaskProjectAvailabilityProjection {
 }
 
 export const MAX_CODEX_STATUS_WAIT_MS = 60_000;
+const MAX_ACTIVE_JOB_OBSERVATION_WAITS = 128;
 /** Keep model-visible reads comfortably below common 60-second host lifetimes. */
 export const DEFAULT_CODEX_STATUS_WAIT_MS = 20_000;
 const JOB_PROGRESS_PERSIST_INTERVAL_MS = 30_000;
@@ -786,6 +790,7 @@ const dashboardViewOutputSchema = z.strictObject({
   codexAccount: z.record(z.string(), z.unknown()).nullable().optional(),
   usageContext: z.string().nullable().optional(),
   weeklyUsage: codexWeeklyUsageOutputSchema.nullable().optional(),
+  usageDisplayStatus: z.enum(["checking", "switching", "available", "timed-out", "unavailable", "no-limit", "signed-out", "not-applicable"]).optional(),
   counts: dashboardCountsOutputSchema,
   activeRows: z.array(dashboardRowOutputSchema),
   terminalRows: z.array(dashboardRowOutputSchema),
@@ -1015,6 +1020,7 @@ const jobSemanticOutputSchema = z.strictObject({
   health: z.enum([
     "running",
     "no-progress-observed",
+    "liveness-unknown",
     "terminating",
     "termination-failed",
     "terminal",
@@ -1069,6 +1075,22 @@ const statusItemOutputSchema = z.strictObject({
   terminal: z.boolean().optional(),
   delivery: z.enum(["status", "primary-content", "omitted", "none"]).optional(),
   completionDeliveryPolicy: z.enum(["live-card", "direct-wait"]).optional(),
+  completionEvidence: z.strictObject({
+    jobRecord: z.enum(["active-last-known", "terminal-committed"]),
+    ownerObservation: z.enum(["connected", "liveness-unknown", "worker-lost", "orphaned"]).nullable(),
+    ownerTerminalResult: z.strictObject({
+      origin: z.enum(JOB_TERMINAL_ORIGINS),
+      // Date.now() is emitted as a fixed-width UTC ISO string. Keep the
+      // model-visible schema small while validating that wire shape.
+      observedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+    }).nullable(),
+    terminalOrigin: z.enum(JOB_TERMINAL_ORIGINS).nullable(),
+    deliveryRecord: z.enum([
+      "pending", "leased", "host-rejected", "host-accepted", "acceptance-unknown", "result-read"
+    ]).nullable(),
+    resultOffer: z.enum(["none", "direct-query", "completion-receipt", "both"]),
+    activityLifecycle: z.enum(ACTIVITY_LIFECYCLES).nullable()
+  }).optional(),
   replay: z.boolean().optional(),
   versions: z.strictObject({
     job: z.number().int().min(1),
@@ -1832,6 +1854,8 @@ type CompletionDeliveryPolicy = "live-card" | "direct-wait";
 
 type CodexJob = {
   executionReceipt?: boolean;
+  /** Non-secret owner boundary captured when this execution was admitted. */
+  authBoundary?: string;
   threadPersistence?: UpstreamWorkerAssignment["threadPersistence"];
   jobId: string;
   activityId: string;
@@ -1908,6 +1932,7 @@ export type ProgressPersistenceStatus = ScopeFairQueueStatus & {
 type CodexJobStartInput = Omit<
   CodexJob,
   | "jobId"
+  | "authBoundary"
   | "activityId"
   | "agentId"
   | "contextMode"
@@ -1948,6 +1973,9 @@ type CodexJobStartInput = Omit<
 };
 
 export type CodexJobRegistryOptions = {
+  authBoundary?: () => string | null;
+  /** Verify the current owner before attaching persisted execution receipts. */
+  recoveryAdmission?: () => Promise<void>;
   recoverExecutions?: boolean;
   maxConcurrentJobs?: number;
   ttlMs?: number;
@@ -2134,9 +2162,13 @@ type SteeringMutationFallbacks = {
 };
 
 export class CodexJobRegistry {
+  private readonly authBoundary?: () => string | null;
   private readonly jobs = new Map<string, CodexJob>();
+  private readonly jobsByAgent = new Map<string, Set<string>>();
+  private readonly indexedJobAgent = new Map<string, string>();
   private readonly waiters = new Map<string, Set<(reason: CodexJobWakeReason) => void>>();
   private readonly terminalWaiters = new Map<string, Set<() => void>>();
+  private activeJobObservationWaits = 0;
   private readonly lastWake = new Map<string, { version: number; reason: CodexJobWakeReason }>();
   private readonly scopeWaiters = new Map<string, Set<() => void>>();
   private readonly waitDiagnosticsTracker = new JobWaitDiagnostics();
@@ -2158,6 +2190,8 @@ export class CodexJobRegistry {
   } = { acceptingNewJobs: true, pendingAdmissions: 0 };
   private upstream?: CodexUpstream;
   private readonly recoverExecutions: boolean;
+  private readonly recoveryAdmission?: () => Promise<void>;
+  private recoverySessions?: SessionRegistry;
   private readonly recoveryJobs = new Set<string>();
   private recoveryStarted = false;
   private readonly terminations = new Map<
@@ -2181,11 +2215,20 @@ export class CodexJobRegistry {
     { responseHash: string; promise: Promise<CodexJob> }
   >();
   private readonly deferredSettlements = new Map<string, DeferredJobSettlement>();
+  // Exact owner outcomes waiting for the existing Job terminal transaction.
+  // This is observation only: it never advances the durable Job or releases
+  // the owner's retained result before the transaction commits.
+  private readonly pendingTerminalCommits = new WeakMap<
+    CodexJob,
+    { origin: JobTerminalOrigin; observedAt: number }
+  >();
   private readonly deferredExecutions = new Map<
     string,
     { launch(): void; discard(): void }
   >();
-  private readonly changeListeners = new Set<() => void>();
+  private readonly changeListeners = new Set<(
+    reason?: CodexJobWakeReason, agentId?: string
+  ) => void>();
   private threadController?: ThreadConnectionController;
   private maintenanceScheduler?: StateMaintenanceScheduler;
   private recoveryController?: AutomaticRecoveryController;
@@ -2208,7 +2251,12 @@ export class CodexJobRegistry {
     if (this.projectionOnly) return;
     if (this.recoveryController) return;
     this.recoveryController = new AutomaticRecoveryController(this.activityStore.automaticRecovery, options);
-    this.unsubscribeRecovery = this.subscribeChanges(() => this.recoveryController?.schedule());
+    this.unsubscribeRecovery = this.subscribeChanges((reason, agentId) => {
+      // Scope-only Dashboard notifications have no recovery identity. The
+      // periodic keyset pass covers them without triggering a global survey.
+      if (reason === "progress") return;
+      if (agentId || reason) this.recoveryController?.schedule(agentId);
+    });
     this.recoveryController.start();
   }
 
@@ -2231,6 +2279,7 @@ export class CodexJobRegistry {
       intervalMs,
       changed: () => { for (const listener of this.changeListeners) listener(); },
       shouldDefer: () => this.runtimeAdmission.pendingAdmissions > 0 || this.observedRunningCount() > 0,
+      maxDeferMs: 30_000,
       command: slice => this.stateMaintenanceCommand(slice),
       completed: (command, result) => this.applyStateMaintenanceResult(command, result)
     });
@@ -2260,7 +2309,7 @@ export class CodexJobRegistry {
     return current;
   }
 
-  subscribeChanges(listener: () => void): () => void {
+  subscribeChanges(listener: (reason?: CodexJobWakeReason, agentId?: string) => void): () => void {
     this.changeListeners.add(listener);
     return () => { this.changeListeners.delete(listener); };
   }
@@ -2268,6 +2317,7 @@ export class CodexJobRegistry {
   private persistenceWarningShown = false;
 
   constructor(options: CodexJobRegistryOptions = {}) {
+    this.authBoundary = options.authBoundary;
     const maxConcurrentJobs = options.maxConcurrentJobs ?? 30;
     if (
       !Number.isInteger(maxConcurrentJobs) ||
@@ -2291,6 +2341,7 @@ export class CodexJobRegistry {
     this.telemetry = options.telemetry;
     this.projectionOnly = options.projectionOnly === true;
     this.recoverExecutions = options.recoverExecutions === true;
+    this.recoveryAdmission = options.recoveryAdmission;
     this.activityStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
     this.allowedRoots = options.allowedRoots || [];
     this.progressPersistenceQueue = new ScopeFairQueue<ProgressPersistenceSnapshot>({
@@ -2341,10 +2392,25 @@ export class CodexJobRegistry {
     this.upstream = upstream;
     if (this.recoveryStarted || !this.recoverExecutions || !sessions || this.projectionOnly) return;
     this.recoveryStarted = true;
+    this.recoverySessions = sessions;
+    if (this.recoveryAdmission && (this.recoveryJobs.size > 0 ||
+        [...this.jobs.values()].some(job => job.executionReceipt && isTerminalActivityJobStatus(job.status)))) {
+      void this.recoveryAdmission().then(() => this.resumeAuthorizedRecoveries()).catch(() => {});
+    } else {
+      this.resumeAuthorizedRecoveries();
+    }
+  }
+
+  /** A failed startup check leaves receipts dormant until a later successful admission. */
+  resumeAuthorizedRecoveries(): void {
+    const upstream = this.upstream;
+    const sessions = this.recoverySessions;
+    if (!upstream || !sessions || !this.recoveryStarted || this.projectionOnly) return;
     const record = (job: CodexJob, threadId: string | undefined, lineage: { sessionId?: string; forkedFromThreadId?: string }) => {
       const agent = job.agentId ? this.getAgent(job.agentId) : undefined;
       if (!threadId || !agent || !job.executionDecision || !isCodexBackendKind(job.backendKind)) return;
       return recordAdmittedThread({ sessions, jobs: this, sessionDecision: job.sessionDecision,
+        authBoundary: job.authBoundary,
         agent, threadId, scopeId: job.scopeId, cwd: job.cwd, sandbox: job.sandbox,
         ...(job.projectId && job.projectName ? { projectAdmission: { projectId: job.projectId, projectName: job.projectName } } : {}),
         selection: job.executionDecision.effectiveSelection, policyRevision: job.executionDecision.policyRevision,
@@ -2356,6 +2422,8 @@ export class CodexJobRegistry {
         this.acknowledgeSettledExecution(job); continue;
       }
       if (!this.recoveryJobs.has(job.jobId) || !upstream.recoverExecution) continue;
+      if (this.authBoundary && job.authBoundary !== this.authBoundary()) continue;
+      this.recoveryJobs.delete(job.jobId);
       // A cancellation dispatch whose controller vanished is unconfirmed,
       // not proof of a stopped turn. Exact terminal replay settles the race.
       if (job.status === "terminating") job.status = "termination-failed";
@@ -2370,6 +2438,9 @@ export class CodexJobRegistry {
   }
 
   private acknowledgeSettledExecution(job: CodexJob): void {
+    const assignment = this.jobAssignment(job);
+    if (this.authBoundary && job.authBoundary !== this.authBoundary() &&
+        (!assignment || this.upstream?.ownsRetainedResult?.(job.jobId, assignment) !== true)) return;
     if (job.executionReceipt && isTerminalActivityJobStatus(job.status) && job.terminalOrigin) {
       void Promise.resolve(this.upstream?.acknowledgeExecution?.(job.jobId)).catch(() => {});
     }
@@ -2392,15 +2463,31 @@ export class CodexJobRegistry {
       try {
         if (settlement.kind === "resolved") this.settleResolvedJob(job, settlement.result, settlement.onComplete);
         else this.settleRejectedJob(job, settlement.error);
+        this.pendingTerminalCommits.delete(job);
         return;
       }
       catch (error) {
         if (!job.executionReceipt || !(error instanceof JobTerminalCommitError)) throw error;
+        if (settlement.kind === "resolved" && !this.pendingTerminalCommits.has(job)) {
+          const turnStatus = extractResultTurnStatus(settlement.result);
+          this.pendingTerminalCommits.set(job, {
+            origin: turnStatus === "interrupted"
+              ? "app-server-interrupted"
+              : settlement.result.isError ? "upstream-failure" : "normal-completion",
+            observedAt: Date.now()
+          });
+        }
         // Keep the exact outcome reserved at the owner until the DB commit
         // succeeds. A busy DB must not replace a completed turn's outcome.
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
+    this.pendingTerminalCommits.delete(job);
+  }
+
+  pendingTerminalCommit(job: CodexJob): { origin: JobTerminalOrigin; observedAt: number } | null {
+    if (this.jobs.get(job.jobId) !== job || !job.executionReceipt || isTerminalActivityJobStatus(job.status)) return null;
+    return this.pendingTerminalCommits.get(job) || null;
   }
 
   get(jobId: string): CodexJob | undefined {
@@ -2443,7 +2530,39 @@ export class CodexJobRegistry {
     if (job && job.requestHashVersion >= 2 && job.requestHash !== requestHash) {
       throw new Error("requestId was already used for a different Codex task in this scope.");
     }
+    if (job) this.assertCurrentJobOwner(job);
     return job;
+  }
+
+  private assertCurrentJobOwner(job: CodexJob): void {
+    if (this.authBoundary && job.authBoundary !== this.authBoundary()) {
+      throw new Error("CODEX_AUTH_JOB_BOUNDARY: This Job belongs to another or unverified authentication connection.");
+    }
+  }
+
+  private jobAssignment(job: CodexJob): UpstreamWorkerAssignment | null {
+    if (!isCodexBackendKind(job.backendKind) || !job.workerId ||
+        job.workerGeneration === undefined || !job.upstreamRequestId || !job.threadId) return null;
+    return { backendKind: job.backendKind, workerId: job.workerId,
+      workerGeneration: job.workerGeneration, upstreamRequestId: job.upstreamRequestId,
+      threadId: job.threadId };
+  }
+
+  /** Existing controls must still target the original live request after login changes. */
+  private assertOriginalJobControl(job: CodexJob): void {
+    if (!this.authBoundary || job.authBoundary === this.authBoundary()) return;
+    const assignment = this.jobAssignment(job);
+    if (isActiveActivityJobStatus(job.status) && job.trackingState === "connected" && assignment &&
+        this.upstream?.ownsActiveExecution?.(job.jobId, assignment) === true) return;
+    throw new Error("CODEX_AUTH_JOB_BOUNDARY: This Job belongs to another or unverified authentication connection.");
+  }
+
+  private assertCancellationTargetOwner(target: { jobId?: string; activityId: string }): void {
+    for (const job of this.jobs.values()) {
+      if (target.jobId === job.jobId || !target.jobId && job.activityId === target.activityId) {
+        this.assertOriginalJobControl(job);
+      }
+    }
   }
 
   peekRequest(scopeId: string, requestId: string): CodexJob | undefined {
@@ -2475,8 +2594,9 @@ export class CodexJobRegistry {
 
   listForAgent(agentId: string): CodexJob[] {
     this.refreshProjectIdentities();
-    return [...this.jobs.values()]
-      .filter((job) => job.agentId === agentId)
+    return [...(this.jobsByAgent.get(agentId) || [])]
+      .map(id => this.jobs.get(id))
+      .filter((job): job is CodexJob => job !== undefined)
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
@@ -2485,10 +2605,39 @@ export class CodexJobRegistry {
    * once; safety-sensitive lookups keep using get/listForAgent. */
   observedLatestJobForAgent(agentId: string): CodexJob | undefined {
     let latest: CodexJob | undefined;
-    for (const job of this.jobs.values()) {
-      if (job.agentId === agentId && (!latest || job.createdAt >= latest.createdAt)) latest = job;
+    for (const id of this.jobsByAgent.get(agentId) || []) {
+      const job = this.jobs.get(id);
+      if (job && (!latest || job.createdAt >= latest.createdAt)) latest = job;
     }
     return latest;
+  }
+
+  private setIndexedJob(job: CodexJob): void {
+    this.jobs.set(job.jobId, job);
+    const previousAgent = this.indexedJobAgent.get(job.jobId);
+    if (previousAgent && previousAgent !== job.agentId) {
+      const ids = this.jobsByAgent.get(previousAgent);
+      ids?.delete(job.jobId);
+      if (ids?.size === 0) this.jobsByAgent.delete(previousAgent);
+      this.indexedJobAgent.delete(job.jobId);
+    }
+    if (job.agentId) {
+      const ids = this.jobsByAgent.get(job.agentId) || new Set<string>();
+      ids.add(job.jobId);
+      this.jobsByAgent.set(job.agentId, ids);
+      this.indexedJobAgent.set(job.jobId, job.agentId);
+    }
+  }
+
+  private deleteIndexedJob(jobId: string): void {
+    this.jobs.delete(jobId);
+    const agentId = this.indexedJobAgent.get(jobId);
+    if (agentId) {
+      const ids = this.jobsByAgent.get(agentId);
+      ids?.delete(jobId);
+      if (ids?.size === 0) this.jobsByAgent.delete(agentId);
+      this.indexedJobAgent.delete(jobId);
+    }
   }
 
   activityTransaction<T>(operation: () => T): T {
@@ -2523,7 +2672,7 @@ export class CodexJobRegistry {
 
   createAgent(input: { scopeId: string; agentName: string }): BridgeAgent {
     const agent = this.activityStore.createAgent(input);
-    this.notifyScope(agent.scopeId);
+    this.notifyScope(agent.scopeId, agent.agentId);
     return agent;
   }
 
@@ -2555,6 +2704,10 @@ export class CodexJobRegistry {
     return this.activityStore.listCurrentAgentThreads();
   }
 
+  currentAgentThread(agentId: string): BridgeAgentThread | undefined {
+    return this.activityStore.currentAgentThread(agentId);
+  }
+
   listAgentThreads(agentId: string): BridgeAgentThread[] {
     return this.activityStore.listAgentThreads(agentId);
   }
@@ -2575,14 +2728,14 @@ export class CodexJobRegistry {
   }): ActivityAgentAssignment {
     const assignment = this.activityStore.assignAgent(input);
     const agent = this.activityStore.getAgent(input.agentId);
-    if (agent) this.notifyScope(agent.scopeId);
+    if (agent) this.notifyScope(agent.scopeId, agent.agentId);
     return assignment;
   }
 
   releaseAgentAssignment(activityId: string, agentId: string): ActivityAgentAssignment | undefined {
     const assignment = this.activityStore.releaseAgentAssignment(activityId, agentId);
     const agent = this.activityStore.getAgent(agentId);
-    if (agent) this.notifyScope(agent.scopeId);
+    if (agent) this.notifyScope(agent.scopeId, agent.agentId);
     return assignment;
   }
 
@@ -2592,7 +2745,7 @@ export class CodexJobRegistry {
     expectedAgentVersion: number;
   }) {
     const detached = this.activityStore.detachIdleAgentAssignment(input);
-    this.notifyScope(detached.agent.scopeId);
+    this.notifyScope(detached.agent.scopeId, detached.agent.agentId);
     return detached;
   }
 
@@ -2609,7 +2762,7 @@ export class CodexJobRegistry {
     forkedFromThreadId?: string;
   }): BridgeAgentThread {
     const thread = this.activityStore.linkAgentThread(input);
-    this.notifyScope(thread.scopeId);
+    this.notifyScope(thread.scopeId, input.agentId);
     return thread;
   }
 
@@ -2619,13 +2772,13 @@ export class CodexJobRegistry {
     options: { currentJobId?: string; orphanedReason?: string } = {}
   ): BridgeAgent {
     const agent = this.activityStore.setAgentExecutionState(agentId, lifecycle, options);
-    this.notifyScope(agent.scopeId);
+    this.notifyScope(agent.scopeId, agent.agentId);
     return agent;
   }
 
   renameAgent(agentId: string, name: string): BridgeAgent {
     const agent = this.activityStore.renameAgent(agentId, name);
-    this.notifyScope(agent.scopeId);
+    this.notifyScope(agent.scopeId, agent.agentId);
     return agent;
   }
 
@@ -2647,7 +2800,7 @@ export class CodexJobRegistry {
 
   resolveHistoryRuntimeProblem(agent: BridgeAgent, revision: string): void {
     this.activityStore.transaction(() => this.activityStore.workHistory.resolveRuntimeProblem(agent.agentId, revision));
-    this.notifyScope(agent.scopeId);
+    this.notifyScope(agent.scopeId, agent.agentId);
   }
 
   recordAgentMutation(scopeId: string, requestId: string, actionHash: string, result: unknown): void {
@@ -2859,12 +3012,14 @@ export class CodexJobRegistry {
     operation: CancellationOperationRecord;
     intent: CancellationIntentRecord;
   } {
+    this.assertCancellationTargetOwner(input.target);
     const result = this.activityStore.beginCancellationOperation(input);
     this.notifyScope(result.operation.scopeId);
     return result;
   }
 
   createCancellationIntent(input: CreateCancellationIntentInput): CancellationIntentRecord {
+    this.assertCancellationTargetOwner(input.target);
     const intent = this.activityStore.createCancellationIntent(input);
     this.notifyScope(intent.scopeId);
     return intent;
@@ -3085,7 +3240,7 @@ export class CodexJobRegistry {
     onComplete?: JobCompletionCallback,
     activeLimit = this.maxConcurrentJobs,
     rejectIfSelectionActive = false,
-    onAssigned?: (assignment: UpstreamWorkerAssignment) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment, job: CodexJob) => void,
     deferExecution = false
   ): CodexJob {
     const replay = this.findRequest(input.scopeId, input.requestId, input.requestHash);
@@ -3123,8 +3278,13 @@ export class CodexJobRegistry {
       );
     }
     const now = Date.now();
+    const currentAuthBoundary = this.authBoundary?.();
+    if (this.authBoundary && !currentAuthBoundary) {
+      throw new Error("CODEX_AUTH_JOB_BOUNDARY: Confirm the current authentication owner before starting a Job.");
+    }
     const job: CodexJob = {
       ...input,
+      ...(currentAuthBoundary ? { authBoundary: currentAuthBoundary } : {}),
       activityId: input.activityId || randomUUID(),
       threadId: input.sessionDecision.threadId,
       backendKind: input.backendKind || "app-server",
@@ -3143,11 +3303,11 @@ export class CodexJobRegistry {
       pendingInteractions: [],
       promise: Promise.resolve()
     };
-    this.jobs.set(job.jobId, job);
+    this.setIndexedJob(job);
     try {
       this.persistJob(job);
     } catch (error) {
-      this.jobs.delete(job.jobId);
+      this.deleteIndexedJob(job.jobId);
       throw error;
     }
     const execute = () => Promise.resolve()
@@ -3156,7 +3316,7 @@ export class CodexJobRegistry {
           (progress) => this.recordProgress(job, progress),
           (assignment) => {
             this.recordWorkerAssignment(job, assignment);
-            onAssigned?.(assignment);
+            onAssigned?.(assignment, job);
           }
         ))
       )
@@ -3196,6 +3356,8 @@ export class CodexJobRegistry {
   }
 
   activateDeferredExecution(jobId: string): void {
+    const job = this.jobs.get(jobId);
+    if (job) this.assertCurrentJobOwner(job);
     this.deferredExecutions.get(jobId)?.launch();
   }
 
@@ -3205,7 +3367,7 @@ export class CodexJobRegistry {
     deferred.discard();
     this.deferredSettlements.delete(jobId);
     this.steeringPromptRedactions.delete(jobId);
-    this.jobs.delete(jobId);
+    this.deleteIndexedJob(jobId);
     this.progressPersistenceQueue.remove(snapshot => snapshot.jobId === jobId);
     this.progressPersisted.delete(jobId);
     this.lastWake.delete(jobId);
@@ -3235,7 +3397,7 @@ export class CodexJobRegistry {
     let undo: (() => void) | undefined;
     try {
       const next = this.activityStore.transaction(() => {
-        undo = onComplete?.(result) || undefined;
+        undo = onComplete?.(result, job) || undefined;
         const candidate: CodexJob = {
           ...job,
           threadId: job.sessionDecision.threadId,
@@ -3285,7 +3447,7 @@ export class CodexJobRegistry {
       const next = this.activityStore.transaction(() => {
         // A failed turn can still have created or resumed a durable thread.
         // Keep the same callback in the atomic terminal transaction.
-        undo = onComplete?.(result) || undefined;
+        undo = onComplete?.(result, job) || undefined;
         const candidate: CodexJob = {
           ...job,
           threadId: job.sessionDecision.threadId,
@@ -3413,6 +3575,8 @@ export class CodexJobRegistry {
     intent: CancellationIntentRecord,
     options: ForceTerminateOptions = {}
   ): Promise<CodexJob> {
+    const job = this.jobs.get(jobId);
+    if (job) this.assertOriginalJobControl(job);
     this.assertCancellationIntentForJob(jobId, intent);
     const existingTermination = this.terminations.get(jobId);
     if (existingTermination) {
@@ -3488,30 +3652,46 @@ export class CodexJobRegistry {
     interactionId: string,
     response: CodexInteractionResponse
   ): Promise<CodexJob> {
-    const job = this.get(jobId);
-    if (!job || !isActiveActivityJobStatus(job.status)) {
-      throw new Error("The selected Codex job is not active.");
+    let job: CodexJob;
+    let interaction: CodexPendingInteraction;
+    let sendResponse: NonNullable<CodexUpstream["respondToInteraction"]>;
+    try {
+      const current = this.get(jobId);
+      if (!current || !isActiveActivityJobStatus(current.status)) {
+        throw new Error("The selected Codex job is not active.");
+      }
+      this.assertOriginalJobControl(current);
+      if (this.authBoundary && current.authBoundary !== this.authBoundary() &&
+          current.workerId && current.workerGeneration !== undefined &&
+          !interactionId.startsWith(`${current.workerId}:${current.workerGeneration}:`)) {
+        throw new Error("CODEX_AUTH_JOB_BOUNDARY: The interaction does not belong to the original worker generation.");
+      }
+      const pending = current.pendingInteractions.find((entry) => entry.interactionId === interactionId);
+      if (!pending) throw new Error("Unknown or already resolved Codex interaction id for this job.");
+      if (pending.kind === "user-input" && !response.answers) {
+        throw new Error("This Codex interaction requires answers.");
+      }
+      if (pending.kind === "mcp-elicitation" && !response.elicitation) {
+        throw new Error("This MCP elicitation requires an elicitation response.");
+      }
+      if (!isInputInteraction(pending) && !response.decision) {
+        throw new Error("This Codex approval interaction requires a decision.");
+      }
+      if (response.decision && pending.availableDecisions &&
+          !pending.availableDecisions.includes(response.decision)) {
+        throw new Error("The selected decision is not available for this Codex approval request.");
+      }
+      const checkedUpstream = this.upstream;
+      if (!checkedUpstream?.respondToInteraction) throw new Error("The active Codex backend cannot accept interactions.");
+      job = current;
+      interaction = pending;
+      sendResponse = checkedUpstream.respondToInteraction.bind(checkedUpstream);
+    } catch (error) {
+      throw new InteractionNotDispatchedError(error);
     }
-    const interaction = job.pendingInteractions.find((entry) => entry.interactionId === interactionId);
-    if (!interaction) throw new Error("Unknown or already resolved Codex interaction id for this job.");
-    if (interaction.kind === "user-input" && !response.answers) {
-      throw new Error("This Codex interaction requires answers.");
-    }
-    if (interaction.kind === "mcp-elicitation" && !response.elicitation) {
-      throw new Error("This MCP elicitation requires an elicitation response.");
-    }
-    if (!isInputInteraction(interaction) && !response.decision) {
-      throw new Error("This Codex approval interaction requires a decision.");
-    }
-    if (
-      response.decision &&
-      interaction.availableDecisions &&
-      !interaction.availableDecisions.includes(response.decision)
-    ) {
-      throw new Error("The selected decision is not available for this Codex approval request.");
-    }
-    if (!this.upstream?.respondToInteraction) throw new Error("The active Codex backend cannot accept interactions.");
-    await this.upstream.respondToInteraction(interactionId, response);
+    // Keep the checked upstream instance and interaction together. An error
+    // from this call can mean the answer was sent; it must remain uncertain.
+    await sendResponse(interactionId, response);
     job.pendingInteractions = job.pendingInteractions.filter((entry) => entry.interactionId !== interactionId);
     this.recordProgress(job, {
       progress: (job.lastProgress?.progress || 0) + 1,
@@ -3530,6 +3710,7 @@ export class CodexJobRegistry {
   async steer(jobId: string, prompt: string): Promise<CodexJob> {
     const job = this.get(jobId);
     if (!job || job.status !== "running") throw new Error("The selected Codex job has no active turn to steer.");
+    this.assertCurrentJobOwner(job);
     if (!backendSupports(job.backendKind, "supportsSteering") || !job.threadId || !this.upstream?.steerThread) {
       throw new Error("Steering is available only for an active Codex App Server turn.");
     }
@@ -3779,6 +3960,7 @@ export class CodexJobRegistry {
     const primaryIntent = this.assertCancellationIntentForJob(jobId, suppliedIntent);
     const target = this.get(jobId);
     if (!target) throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
+    this.assertOriginalJobControl(target);
     if (primaryIntent.scopeId !== target.scopeId || primaryIntent.targetActivityId !== target.activityId) {
       throw new Error("Cancellation intent scope or Activity no longer matches the target job.");
     }
@@ -3994,6 +4176,10 @@ export class CodexJobRegistry {
     waitMs: number,
     signal?: AbortSignal
   ): Promise<CodexJobWakeReason | undefined> {
+    if (this.activeJobObservationWaits >= MAX_ACTIVE_JOB_OBSERVATION_WAITS) {
+      return Promise.reject(new Error("JOB_WAIT_CAPACITY: Active Job observation waits are at capacity."));
+    }
+    this.activeJobObservationWaits += 1;
     return new Promise((resolve, reject) => {
       let settled = false;
       const listeners = this.waiters.get(jobId) || new Set<(reason: CodexJobWakeReason) => void>();
@@ -4001,6 +4187,7 @@ export class CodexJobRegistry {
       const finish = (reason?: CodexJobWakeReason, error?: Error) => {
         if (settled) return;
         settled = true;
+        this.activeJobObservationWaits -= 1;
         clearTimeout(timer);
         listeners.delete(onChange);
         if (listeners.size === 0) this.waiters.delete(jobId);
@@ -4029,6 +4216,10 @@ export class CodexJobRegistry {
     waitMs: number,
     signal?: AbortSignal
   ): Promise<CodexJobWakeReason | undefined> {
+    if (this.activeJobObservationWaits >= MAX_ACTIVE_JOB_OBSERVATION_WAITS) {
+      return Promise.reject(new Error("JOB_WAIT_CAPACITY: Active Job observation waits are at capacity."));
+    }
+    this.activeJobObservationWaits += 1;
     return new Promise((resolve, reject) => {
       let settled = false;
       const listeners = this.terminalWaiters.get(jobId) || new Set<() => void>();
@@ -4036,6 +4227,7 @@ export class CodexJobRegistry {
       const finish = (reason?: CodexJobWakeReason, error?: Error) => {
         if (settled) return;
         settled = true;
+        this.activeJobObservationWaits -= 1;
         clearTimeout(timer);
         listeners.delete(onTerminal);
         if (listeners.size === 0) this.terminalWaiters.delete(jobId);
@@ -4060,7 +4252,7 @@ export class CodexJobRegistry {
       ? "terminal"
       : reason;
     if (current) this.lastWake.set(jobId, { version: current.version, reason: effectiveReason });
-    for (const listener of this.changeListeners) listener();
+    for (const listener of this.changeListeners) listener(effectiveReason, current?.agentId);
     for (const listener of [...(this.waiters.get(jobId) || [])]) listener(effectiveReason);
     if (effectiveReason === "terminal") {
       for (const listener of [...(this.terminalWaiters.get(jobId) || [])]) listener();
@@ -4070,8 +4262,8 @@ export class CodexJobRegistry {
     }
   }
 
-  private notifyScope(scopeId: string): void {
-    for (const listener of this.changeListeners) listener();
+  private notifyScope(scopeId: string, agentId?: string): void {
+    for (const listener of this.changeListeners) listener(undefined, agentId);
     for (const listener of [...(this.scopeWaiters.get(scopeId) || [])]) listener();
   }
 
@@ -4086,7 +4278,10 @@ export class CodexJobRegistry {
       if (
         isActiveActivityJobStatus(job.status) ||
         isTerminalActivityJobStatus(job.status) && !this.retentionProtectedJobs.has(jobId)
-      ) reservations++;
+      ) {
+        reservations++;
+        if (reservations > this.maxJobs) break;
+      }
     }
     return reservations;
   }
@@ -4124,40 +4319,19 @@ export class CodexJobRegistry {
     this.retainedJobMaintenanceTimer.unref();
   }
 
-  /** One-time startup normalization. Runtime maintenance uses the bounded
-   * resumable slice below. */
-  private pruneLoadedJobsAtStartup(): string[] {
-    const removed: string[] = [];
+  /** Protect a small first slice before admission; the maintenance scheduler
+   * continues classification and pruning after startup. This prevents restart
+   * from synchronously checking every historical Job's protection authorities. */
+  private classifyLoadedJobsAtStartup(): void {
+    let inspected = 0;
     const now = Date.now();
-    const cutoff = now - this.ttlMs;
-    const unprotected = [...this.jobs.values()]
-      .filter(job => isTerminalActivityJobStatus(job.status))
-      .sort((left, right) => left.updatedAt - right.updatedAt || left.jobId.localeCompare(right.jobId))
-      .filter(job => {
-        const protectedJob = this.activityStore.retentionProtection(
-          job.jobId,
-          now,
-          this.ttlMs
-        ).length > 0;
-        if (protectedJob) this.retentionProtectedJobs.add(job.jobId);
-        else this.retentionProtectedJobs.delete(job.jobId);
-        return !protectedJob;
-      });
-    const expired = new Set(
-      unprotected.filter(job => job.updatedAt < cutoff).map(job => job.jobId)
-    );
-    const retained = unprotected.filter(job => !expired.has(job.jobId));
-    const overLimit = new Set(
-      retained.slice(0, Math.max(0, retained.length - this.maxJobs)).map(job => job.jobId)
-    );
-    for (const job of unprotected) {
-      if (!expired.has(job.jobId) && !overLimit.has(job.jobId)) continue;
-      this.jobs.delete(job.jobId);
-      this.lastWake.delete(job.jobId);
-      this.retentionProtectedJobs.delete(job.jobId);
-      removed.push(job.jobId);
+    for (const job of this.jobs.values()) {
+      if (!isTerminalActivityJobStatus(job.status)) continue;
+      if (++inspected > 32) break;
+      if (this.activityStore.retentionProtection(job.jobId, now, this.ttlMs).length > 0) {
+        this.retentionProtectedJobs.add(job.jobId);
+      }
     }
-    return removed;
   }
 
   private load(): void {
@@ -4191,20 +4365,17 @@ export class CodexJobRegistry {
     const loaded = [...byRequest.values()].sort((a, b) => a.updatedAt - b.updatedAt);
     if (loaded.length !== valid.length) changed = true;
     for (const persisted of loaded) {
-      const requestConflict = [...this.jobs.values()].find(
-        (job) =>
-          job.jobId !== persisted.jobId &&
-          job.scopeId === persisted.scopeId &&
-          job.requestId === persisted.requestId
-      );
-      if (requestConflict) {
-        changed = true;
-        if (requestConflict.updatedAt >= persisted.updatedAt) continue;
-        this.jobs.delete(requestConflict.jobId);
-      }
       const job: CodexJob = { ...persisted, promise: Promise.resolve() };
       if (this.projectionOnly) {
-        this.jobs.set(job.jobId, job);
+        this.setIndexedJob(job);
+        continue;
+      }
+      if (isActiveActivityJobStatus(job.status) && this.authBoundary && job.authBoundary !== this.authBoundary()) {
+        // Keep the exact durable Job and its original execution receipt. A
+        // different or unverified owner must neither recover nor ACK it.
+        job.trackingState = "liveness-unknown";
+        if (this.recoverExecutions && job.executionReceipt) this.recoveryJobs.add(job.jobId);
+        this.setIndexedJob(job);
         continue;
       }
       if (isActiveActivityJobStatus(job.status) && this.recoverExecutions && job.executionReceipt) {
@@ -4230,10 +4401,11 @@ export class CodexJobRegistry {
         job.version += 1;
         changed = true;
       }
-      this.jobs.set(job.jobId, job);
+      this.setIndexedJob(job);
     }
     if (this.projectionOnly) return changed || loaded.length !== values.length;
-    changed = this.pruneLoadedJobsAtStartup().length > 0 || changed || loaded.length !== values.length;
+    this.classifyLoadedJobsAtStartup();
+    changed = changed || loaded.length !== values.length;
     return changed;
   }
 
@@ -4261,6 +4433,7 @@ export class CodexJobRegistry {
       this.activityStore.upsertJob(persisted);
       for (const jobId of removed) this.activityStore.deleteJob(jobId);
     });
+    this.setIndexedJob(this.jobs.get(job.jobId) || job);
     const removedIds = new Set([job.jobId, ...removed]);
     this.progressPersistenceQueue.remove(snapshot => removedIds.has(snapshot.jobId));
     this.progressPersisted.set(job.jobId, {
@@ -4569,7 +4742,7 @@ export class CodexJobRegistry {
         this.retentionProtectedJobs.delete(classification.jobId);
       }
       if (classification.disposition !== "removed") continue;
-      this.jobs.delete(classification.jobId);
+      this.deleteIndexedJob(classification.jobId);
       this.progressPersistenceQueue.remove(
         snapshot => snapshot.jobId === classification.jobId
       );
@@ -4747,7 +4920,15 @@ export function registerBridgeTools(
       (threadId, backendKind) => upstream.canResumeThread?.(threadId, backendKind) === true,
       threadId => jobs.admissionStateStore.threadConnections.hasUnfinishedWork(threadId)
     );
+    const authSource = config.codexService?.environment.CODEX_MCP_BRIDGE_AUTH_SOURCE;
+    const account = config.codexService?.cachedAccount("app-server");
     return {
+      ...(config.codexService ? { authConnection: {
+        source: authSource === "bridge-chatgpt" || authSource === "bridge-api" || authSource === "disconnected"
+          ? authSource : "shared" as const,
+        mode: account?.authMode || "unknown" as const,
+        observedAt: account?.observedAt || null
+      } } : {}),
       acceptingNewJobs: acceptingNewJobs(),
       activeJobs: jobs.runningCount(),
       pendingAdmissions: runtimeAdmission.pendingAdmissions,
@@ -4790,18 +4971,43 @@ export function registerBridgeTools(
     value: Awaited<ReturnType<NonNullable<BridgeConfig["codexService"]>["readAccount"]>>;
     failed: boolean;
   };
+  const weeklyUsageFromAccount = (account: CodexAccountSnapshot | null): CodexWeeklyUsageView | null => {
+    if (account?.authMode !== "chatgpt" || account.ownershipConflict ||
+        account.usageObservedAt === null) return null;
+    const window = account.windows.find(candidate =>
+      candidate.limitId === "codex" && candidate.windowDurationMins === 10_080);
+    if (!window || !Number.isFinite(account.usageObservedAt)) return null;
+    const observedAt = new Date(account.usageObservedAt);
+    if (!Number.isFinite(observedAt.getTime())) return null;
+    const reset = window.resetsAt === null ? null : new Date(window.resetsAt * 1_000);
+    return codexWeeklyUsageOutputSchema.parse({
+      source: "codex-account-rate-limits",
+      limitId: window.limitId,
+      usedPercent: window.usedPercent,
+      remainingPercent: window.remainingPercent,
+      windowDurationMins: window.windowDurationMins,
+      resetsAt: reset && Number.isFinite(reset.getTime()) ? reset.toISOString() : null,
+      observedAt: observedAt.toISOString()
+    });
+  };
   const accountDisplayReads = new DisplayReadPool<AccountObservation>(1, () => notifyCardObservation(upstream));
   let accountCompletion: { revision: string; failed: boolean } | undefined;
+  let lastVerifiedAccount: { revision: string; context: string | null } | undefined;
   const readAccountForDisplay = async () => {
     const service = config.codexService;
     if (!service) return { pending: false as const, value: { value: null, failed: false } };
     const revision = service.cacheRevision();
+    const startingContext = service.accountDisplayContext();
     accountDisplayReads.invalidate(key => key !== revision);
     const read = accountDisplayReads.start(revision, async () => {
       try {
-        const value = await service.readAccount(config.defaultBackend, true);
-        return { value, failed: value === null || value.usageStatus === "unavailable" ||
-          value.billing.actualCosts?.status === "unavailable" };
+        const value = await service.readAccount(config.defaultBackend, true,
+          startingContext === null);
+        if (startingContext !== null && startingContext !== service.accountDisplayContext()) {
+          return { value: null, failed: false };
+        }
+        return { value, failed: value === null ||
+          value.authMode === "chatgpt" && value.usageStatus === "unavailable" };
       } catch { return { value: null, failed: true }; }
     }, (value, deferred) => {
       if (revision !== service.cacheRevision()) return;
@@ -4819,38 +5025,66 @@ export function registerBridgeTools(
     account?: AccountDisplayRead
   ): void => {
     const service = config.codexService;
-    if (!service) return;
+    if (!service) {
+      view.usageDisplayStatus = view.enrichment.usageTimedOut ? "timed-out"
+        : view.enrichment.usageUnavailable ? "unavailable"
+        : view.weeklyUsage ? "available"
+        : view.enrichment.state === "enriched" ? "unavailable" : "checking";
+      return;
+    }
+    const revision = service.cacheRevision();
     const displayContext = service.accountDisplayContext();
-    const unknownRevision = displayContext === null ? service.cacheRevision() : null;
-    view.codexAccount = service.cachedAccount(config.defaultBackend);
+    let displayed = service.cachedAccount(config.defaultBackend);
+    let currentRead = false;
     if (account) {
       if (account.pending) {
         view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + 1;
+        view.enrichment.usageTimedOut = true;
       } else {
-        view.codexAccount = account.value.value ||
-          service.cachedAccount(config.defaultBackend);
+        if (account.value.value) {
+          displayed = account.value.value;
+          currentRead = true;
+        }
         if (account.value.failed) view.enrichment.usageUnavailable = true;
       }
     } else {
-      const revision = service.cacheRevision();
       view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) +
         accountDisplayReads.observePending(key => key === revision);
       if (accountCompletion?.revision === revision && accountCompletion.failed) {
         view.enrichment.usageUnavailable = true;
       }
     }
-    if (view.codexAccount && (view.codexAccount.authMode !== "chatgpt" || view.codexAccount.usageStatus === "none")) {
-      view.weeklyUsage = null;
-    }
     const currentContext = service.accountDisplayContext();
     view.usageContext = currentContext;
-    if (currentContext === null) view.weeklyUsage = null;
     if (currentContext !== displayContext ||
-        currentContext === null && unknownRevision !== service.cacheRevision()) {
-      view.codexAccount = null;
-      view.weeklyUsage = null;
+        revision !== service.cacheRevision()) {
+      displayed = null;
+      currentRead = false;
       view.usageContext = null;
     }
+    // A stable file identity may reuse a previous observation during refresh.
+    // Keyring/auto has no such identity: only this completed account read may
+    // put a number on the card, even if an upstream usage cache exists.
+    if (view.usageContext === null && !currentRead) displayed = null;
+    view.codexAccount = displayed;
+    view.weeklyUsage = weeklyUsageFromAccount(displayed);
+    if (currentRead && displayed) {
+      lastVerifiedAccount = { revision, context: view.usageContext ?? null };
+    }
+    const identityChanged = Boolean(lastVerifiedAccount &&
+      (lastVerifiedAccount.context !== null
+        ? lastVerifiedAccount.context !== view.usageContext
+        : lastVerifiedAccount.revision !== revision));
+    view.usageDisplayStatus = account?.pending ? "timed-out"
+      : account && !account.pending && account.value.failed && !currentRead ? "unavailable"
+      : displayed?.authMode === "unknown" || displayed?.authenticated === false ? "signed-out"
+      : displayed?.authMode === "api-key" ? "not-applicable"
+      : displayed?.ownershipConflict ? "unavailable"
+      : displayed?.authMode === "chatgpt" && displayed.usageStatus === "unavailable" ? "unavailable"
+      : view.weeklyUsage ? currentRead ? "available" : "checking"
+      : displayed?.authMode === "chatgpt" && currentRead ? "no-limit"
+      : view.enrichment.usageUnavailable ? "unavailable"
+      : identityChanged ? "switching" : "checking";
     const accountObservedAt = view.codexAccount?.usageObservedAt;
     if (typeof accountObservedAt === "number") {
       view.enrichment.oldestObservationAt = [
@@ -5269,7 +5503,8 @@ export function registerBridgeTools(
           }))
         : undefined;
       const plan = await readProjection.dashboardRuntimePlan(options);
-      const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan);
+      const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan, undefined,
+        !config.codexService);
       const view = await readProjection.dashboardSnapshotWithEnrichment(
         options,
         projectedEnrichment
@@ -6065,6 +6300,7 @@ export function registerBridgeTools(
         const structured = {
           kind: "job" as const,
           ...formatJobStatus(job, jobs.staleThresholdMs, undefined, userSettings.current, jobs),
+          completionEvidence: exactJobCompletionEvidence(job, jobs),
           inputs: {
             cursor: codexInputCursor(job),
             ordinaryQuestions: job.pendingInteractions.filter(ordinaryCodexQuestion).length,
@@ -6155,6 +6391,7 @@ export function registerBridgeTools(
         const structured = {
           kind: "job" as const,
           ...formatJobStatus(job, jobs.staleThresholdMs, wait, userSettings.current, jobs),
+          completionEvidence: exactJobCompletionEvidence(job, jobs),
           inputs: { cursor: codexInputCursor(job), ordinaryQuestions: job.pendingInteractions.filter(ordinaryCodexQuestion).length, approvalRequests: job.pendingInteractions.filter(q => !ordinaryCodexQuestion(q)).length, readTool: "codex_status", queryKind: "input" }
         };
         const projection = compactStatusProjection(structured);
@@ -7837,7 +8074,6 @@ export function registerBridgeTools(
             "TASK_RESULT_EXPIRED: This requestId already admitted a terminal Codex Job whose result body is no longer retained. Read codex_status query kind='request' for its terminal admission fact. Use a new requestId only for a newly authorized logical turn."
           );
         }
-        resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         if (existingRequest && existingRequest.requestHashVersion !== CURRENT_TASK_REQUEST_HASH_VERSION) {
           throw new Error(
             "TASK_REPLAY_VERSION_UNSUPPORTED: This requestId belongs to a retired task contract. Read the existing Job with codex_status query kind='request' before considering a new logical turn."
@@ -7849,8 +8085,17 @@ export function registerBridgeTools(
           executionPolicyRef: currentTaskAdmissionRef(preferences)
         });
         if (!existingRequest) releaseRuntimeAdmission = acquireRuntimeAdmission();
+        if (!existingRequest) {
+          await config.codexService?.assertCurrentAdmission();
+          jobs.resumeAuthorizedRecoveries();
+        }
+        resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         const requestedActivity = validateActivityTaskRequest(args, jobs, scope.scopeId);
         const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, requestedActivity);
+        if (agentResolution.agent?.currentThreadId &&
+            sessions.belongsToAnotherAuthentication(agentResolution.agent.currentThreadId)) {
+          throw new Error("CODEX_AUTH_AGENT_BOUNDARY: This Agent belongs to another authentication connection. Create a new Agent after switching accounts.");
+        }
         validateTaskSelectionInput(args, preferences, requestedActivity, agentResolution);
         if (
           args.project === undefined &&
@@ -8355,61 +8600,70 @@ function recheckRecoveryIdentity(jobs: CodexJobRegistry, agent: BridgeAgent,
     scopeId:agent.scopeId,agentId:agent.agentId,jobId:agent.currentJobId || latest?.jobId,kind:"recheck"};
 }
 
-function configureAutomaticRecovery(
+export function configureAutomaticRecovery(
   jobs: CodexJobRegistry,
   upstream: CodexUpstream,
   service: BridgeApplicationService,
   acceptingNewJobs: () => boolean
 ): void {
   const store = jobs.admissionStateStore;
-  const candidates = (): AutomaticRecoveryCandidate[] => {
+  const candidates = async (agentId?: string): Promise<AutomaticRecoveryCandidate[]> => {
     if (!acceptingNewJobs() || jobs.runtimeAdmission.pendingAdmissions > 0) return [];
-    const latestByAgent = new Map<string, CodexJob>();
-    for (const job of jobs.list(jobs.size)) {
-      if (!job.agentId) continue;
-      const previous = latestByAgent.get(job.agentId);
-      if (!previous || job.createdAt > previous.createdAt) latestByAgent.set(job.agentId, job);
-    }
+    // Production reconciliation passes exactly one Agent. No changed-Agent
+    // event may materialize the global Job, incident, or connection catalog.
+    if (!agentId) return [];
+    const agent = jobs.getAgent(agentId);
+    if (!agent) return [];
+    const latest = jobs.observedLatestJobForAgent(agentId);
+    const current = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
+    const thread = jobs.currentAgentThread(agentId);
+    if (!thread || thread.backendKind !== "app-server") return [];
+    const connection = store.threadConnections.get(thread.threadId);
+    const releasableConnection = connection?.persistence === "persistent" &&
+      connection.lastJobId && !["released", "releasing"].includes(connection.phase)
+      ? connection : undefined;
+    const recheckIdentity = recheckRecoveryIdentity(jobs, agent, latest);
+    const couldRelease = releasableConnection &&
+      !store.automaticRecovery.isBlocked(automaticRecoveryKey("release",
+        [releasableConnection.threadId,releasableConnection.lastJobId]));
+    if (store.automaticRecovery.isBlockedRecheckIdentity(recheckIdentity.key) && !couldRelease &&
+        current?.status !== "termination-failed") return [];
     const result: AutomaticRecoveryCandidate[] = [];
-    for (const agent of listAllDashboardAgents(jobs)) {
-      const thread = jobs.listAgentThreads(agent.agentId).find(thread => thread.isCurrent);
-      if (!thread || thread.backendKind !== "app-server") continue;
-      const current = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
-      const latest = latestByAgent.get(agent.agentId);
-      if (current?.status === "termination-failed" && current.cancellationIntentId) {
-        const intent = jobs.getCancellationIntent(current.cancellationIntentId);
-        if (intent?.status === "failed" && intent.targetJobId === current.jobId && intent.scopeId === agent.scopeId &&
+    if (current?.status === "termination-failed" && current.cancellationIntentId) {
+      const intent = jobs.getCancellationIntent(current.cancellationIntentId);
+      if (intent?.status === "failed" && intent.targetJobId === current.jobId && intent.scopeId === agent.scopeId &&
           intent.source !== "assignment-containment" && current.upstreamRequestId && current.workerId && current.workerGeneration !== undefined &&
           intent.targetTurnId === current.upstreamRequestId && intent.targetThreadId === current.threadId) {
-          result.push({key:automaticRecoveryKey("retry-stop",[current.jobId,current.workerId,current.workerGeneration,current.upstreamRequestId,current.cancelRequestedAt]),
-            scopeId:agent.scopeId,agentId:agent.agentId,jobId:current.jobId,kind:"retry-stop"});
-        }
-        continue;
+        const key = automaticRecoveryKey("retry-stop",
+          [current.jobId,current.workerId,current.workerGeneration,current.upstreamRequestId,current.cancelRequestedAt]);
+        if (!store.automaticRecovery.isBlocked(key)) result.push({key,
+          scopeId:agent.scopeId,agentId:agent.agentId,jobId:current.jobId,kind:"retry-stop"});
       }
-      const observation = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
-      const unknown = observation?.stamp === dashboardRuntimeStamp(agent,latest) &&
-        (observation.unavailable || observation.observation.state === "unknown" || observation.observation.backgroundProcessState === "unknown");
-      const identity = dashboardRuntimeProblemIdentity(jobs,agent);
-      const unresolvedOrphan = agent.lifecycle === "orphaned" && !store.workHistory.runtimeResolution(agent.agentId,identity.revision);
-      // A new incident opens only on a fresh failed inspection. Cached unknown
-      // state cannot reopen a verified incident or reset its attempt budget.
-      const recheck = store.automaticRecovery.recheckCandidate(recheckRecoveryIdentity(jobs,agent,latest),Boolean(unknown || unresolvedOrphan));
-      if (recheck) result.push(recheck);
-      const connection = store.threadConnections.get(thread.threadId);
-      const retained = store.workHistory.latestJob(agent.agentId);
-      if (!current && connection?.persistence === "persistent" && connection.lastJobId && !["released","releasing"].includes(connection.phase) &&
-        retained?.jobId === connection.lastJobId && ["failed","interrupted","cancelled"].includes(retained.status) &&
+      return result;
+    }
+    const observation = dashboardRuntimeCaches.get(upstream)?.get(dashboardRuntimeCacheKey(thread));
+    const unknown = observation?.stamp === dashboardRuntimeStamp(agent,latest) &&
+      (observation.unavailable || observation.observation.state === "unknown" || observation.observation.backgroundProcessState === "unknown");
+    const identity = dashboardRuntimeProblemIdentity(jobs,agent);
+    const unresolvedOrphan = agent.lifecycle === "orphaned" && !store.workHistory.runtimeResolution(agent.agentId,identity.revision);
+    const recheck = store.automaticRecovery.recheckCandidate(recheckIdentity,Boolean(unknown || unresolvedOrphan));
+    if (recheck && !store.automaticRecovery.isBlocked(recheck.key)) result.push(recheck);
+    const retained = releasableConnection && !current ? store.workHistory.latestJob(agent.agentId) : undefined;
+    if (!current && releasableConnection?.lastJobId &&
+        retained?.jobId === releasableConnection.lastJobId && ["failed","interrupted","cancelled"].includes(retained.status) &&
         !store.threadConnections.hasUnfinishedWork(thread.threadId)) {
-        result.push({key:automaticRecoveryKey("release",[thread.threadId,connection.lastJobId]),
-          scopeId:agent.scopeId,agentId:agent.agentId,jobId:connection.lastJobId,kind:"release"});
-      }
+      const key = automaticRecoveryKey("release",[thread.threadId,releasableConnection.lastJobId]);
+      if (!store.automaticRecovery.isBlocked(key)) result.push({key,
+        scopeId:agent.scopeId,agentId:agent.agentId,jobId:releasableConnection.lastJobId,kind:"release"});
     }
     return result;
   };
   const attempt = async (candidate: AutomaticRecoveryCandidate): Promise<AutomaticRecoveryResult> => {
-    if (!candidates().some(current => current.key === candidate.key)) return {resolved:false,reason:"work-changed",retryable:false};
+    if (!(await candidates(candidate.agentId)).some(current => current.key === candidate.key)) {
+      return {resolved:false,reason:"work-changed",retryable:false};
+    }
     const agent = jobs.getAgent(candidate.agentId)!;
-    const thread = jobs.listAgentThreads(agent.agentId).find(thread => thread.isCurrent)!;
+    const thread = jobs.currentAgentThread(agent.agentId)!;
     if (candidate.kind === "retry-stop") {
       const job = candidate.jobId ? jobs.get(candidate.jobId) : undefined;
       const previous = job?.cancellationIntentId ? jobs.getCancellationIntent(job.cancellationIntentId) : undefined;
@@ -8446,11 +8700,37 @@ function configureAutomaticRecovery(
     if (!connection || connection.scopeId !== agent.scopeId || connection.persistence !== "persistent" || !upstream.releaseThreadConnection) {
       return {resolved:false,reason:"release-unavailable",retryable:false};
     }
-    const eligible = new Map(candidates().filter(item => item.kind === "release").flatMap(item => {
-      const owner = jobs.getAgent(item.agentId), currentThread = jobs.listAgentThreads(item.agentId).find(thread => thread.isCurrent);
-      const connection = currentThread ? store.threadConnections.get(currentThread.threadId) : undefined;
-      return owner && connection ? [[connection.threadId,{candidate:item,agent:owner,connection}] as const] : [];
-    }));
+    if (connection.lastJobId !== candidate.jobId ||
+        automaticRecoveryKey("release",[thread.threadId,connection.lastJobId]) !== candidate.key ||
+        ["released","releasing"].includes(connection.phase)) {
+      return {resolved:false,reason:"work-changed",retryable:false};
+    }
+    // The exact incident target is authoritative even when its thread ID is
+    // beyond the bounded worker peer page. Only the additional peers are paged.
+    const peers = connection.workerPid
+      ? store.threadConnections.listForWorker(connection.workerPid,31,connection.threadId)
+      : [];
+    const eligible = new Map<string, {candidate:AutomaticRecoveryCandidate;agent:BridgeAgent;connection:ThreadConnectionRecord}>([
+      [thread.threadId,{candidate,agent,connection}]
+    ]);
+    let visitedPeers = 0;
+    for (const peerConnection of peers) {
+      if (++visitedPeers % 8 === 0) await new Promise<void>(resolve => setImmediate(resolve));
+      // A peer without a terminal Job can never yield a release incident.
+      if (!peerConnection.agentId || !peerConnection.lastJobId) continue;
+      const key = automaticRecoveryKey("release",[peerConnection.threadId,peerConnection.lastJobId]);
+      if (store.automaticRecovery.isBlocked(key)) continue;
+      const owner = jobs.getAgent(peerConnection.agentId);
+      if (!owner || owner.scopeId !== peerConnection.scopeId || owner.currentJobId) continue;
+      const currentThread = jobs.currentAgentThread(owner.agentId);
+      if (currentThread?.threadId !== peerConnection.threadId || currentThread.backendKind !== "app-server") continue;
+      const retained = store.workHistory.latestJob(owner.agentId);
+      if (retained?.jobId !== peerConnection.lastJobId ||
+          !["failed","interrupted","cancelled"].includes(retained.status) ||
+          store.threadConnections.hasUnfinishedWork(peerConnection.threadId)) continue;
+      eligible.set(peerConnection.threadId,{candidate:{key,scopeId:owner.scopeId,agentId:owner.agentId,
+        jobId:retained.jobId,kind:"release"},agent:owner,connection:peerConnection});
+    }
     const releasing = store.threadConnections.update(thread.threadId,{phase:"releasing"},Date.now(),connection.revision);
     if (!releasing) return {resolved:false,reason:"work-changed",retryable:false};
     const canRelease = (id: string) => {
@@ -8479,7 +8759,10 @@ function configureAutomaticRecovery(
       return {resolved:false,reason:"release-unconfirmed"};
     }
   };
-  jobs.configureAutomaticRecovery({candidates,attempt,enabled:() => acceptingNewJobs() && jobs.runtimeAdmission.pendingAdmissions === 0,
+  jobs.configureAutomaticRecovery({candidates,
+    pageAgents: (after, limit) => store.recoveryAgentIds(after, limit),
+    agentForJob: jobId => jobs.get(jobId)?.agentId,
+    attempt,enabled:() => acceptingNewJobs() && jobs.runtimeAdmission.pendingAdmissions === 0,
     changed:() => notifyCardObservation(upstream)});
 }
 
@@ -9052,6 +9335,9 @@ async function requireAgentSession(
   if (!resolution.agent) throw new Error("Agent resolution is missing an existing thread owner.");
   const threadId = resolution.agent.currentThreadId as string;
   const session = sessions.get(threadId);
+  if (!session && sessions.belongsToAnotherAuthentication(threadId)) {
+    throw new Error("CODEX_AUTH_THREAD_BOUNDARY: The Agent's thread belongs to another authentication connection.");
+  }
   if (!session || session.scopeId !== scopeId) {
     jobs.setAgentExecutionState(resolution.agent.agentId, "orphaned", {
       orphanedReason: "The Agent's persisted current thread session is unavailable after bridge recovery."
@@ -9181,6 +9467,7 @@ function resolveActivityForTask(
 function recordAdmittedThread(input: {
   sessions: SessionRegistry;
   jobs: CodexJobRegistry;
+  authBoundary?: string;
   sessionDecision: SessionDecision;
   agent: BridgeAgent;
   threadId: string;
@@ -9196,18 +9483,20 @@ function recordAdmittedThread(input: {
   sessionId?: string;
   forkedFromThreadId?: string;
 }): () => void {
-  const previousSession = input.sessions.get(input.threadId);
+  const previousSession = input.sessions.getForJob(input.threadId, input.authBoundary);
   const previousDecisionThreadId = input.sessionDecision.threadId;
+  const restoreSessions = input.sessions.captureInMemory();
+  let recorded = false;
   const restore = () => {
     if (previousDecisionThreadId) input.sessionDecision.threadId = previousDecisionThreadId;
     else delete input.sessionDecision.threadId;
-    input.sessions.restoreInMemory(input.threadId, previousSession);
+    if (recorded) restoreSessions();
   };
   try {
     input.jobs.activityTransaction(() => {
       input.sessionDecision.threadId = input.threadId;
       const now = Date.now();
-      input.sessions.record({
+      input.sessions.recordForJob({
         threadId: input.threadId,
         scopeId: input.scopeId,
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
@@ -9228,7 +9517,8 @@ function recordAdmittedThread(input: {
         updatedAt: now,
         createdAt: now,
         lastUsedAt: now
-      });
+      }, input.authBoundary);
+      recorded = true;
       input.jobs.linkAgentThread({
         agentId: input.agent.agentId,
         threadId: input.threadId,
@@ -9345,7 +9635,7 @@ async function startNewSession(input: {
           onAssigned
         )
       : input.upstream.callTool("codex", payload, onProgress, onAssigned),
-    onAssigned: (assignment, agent) => {
+    onAssigned: (assignment, agent, job) => {
       if (!assignment.threadId) return;
       // A cross-backend handoff becomes current only after turn/start accepts
       // the summary-bearing turn. If the worker exits after thread/start but
@@ -9355,6 +9645,7 @@ async function startNewSession(input: {
       recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent,
         threadId: assignment.threadId,
@@ -9373,13 +9664,14 @@ async function startNewSession(input: {
       });
     },
     onAdmitted: input.onAdmitted,
-    onComplete: (result, agent) => {
+    onComplete: (result, agent, job) => {
       const threadId = extractThreadId(result);
       if (!threadId) return;
       const lineage = extractResultThreadLineage(result);
       return recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent,
         threadId,
@@ -9530,42 +9822,52 @@ async function continueTrackedSession(input: {
       }
       return input.upstream.callTool("codex-reply", payload, onProgress, recordAssignment);
     },
-    onComplete: (result) => {
-      const previous = input.sessions.get(input.session.threadId);
+    onComplete: (result, _agent, job) => {
+      const restoreSessions = input.sessions.captureInMemory();
       const lineage = extractResultThreadLineage(result);
       const existingThread = input.jobs
         .listAgentThreads(input.agent.agentId)
         .find((thread) => thread.threadId === input.session.threadId);
-      input.sessions.record({
-        ...input.session,
-        ...lineage,
-        ...(input.projectAdmission
-          ? {
-              projectId: input.projectAdmission.projectId,
-              projectName: input.projectAdmission.projectName
-            }
-          : {}),
-        scopeId: input.adoptOnComplete ? input.routing.scopeId : input.session.scopeId,
-        selection: input.executionDecision.effectiveSelection,
-        policyRevision: input.executionDecision.policyRevision,
-        updatedAt: Date.now(),
-        lastUsedAt: Date.now()
-      });
-      input.jobs.linkAgentThread({
-        agentId: input.agent.agentId,
-        threadId: input.session.threadId,
-        sessionId: lineage.sessionId || existingThread?.sessionId || input.session.sessionId,
-        projectId: input.projectAdmission?.projectId,
-        projectName: input.projectAdmission?.projectName,
-        backendKind: input.session.backendKind,
-        cwd: input.session.cwd,
-        sandbox: input.session.sandbox,
-        // A continuation enriches legacy admission metadata; it does not
-        // rewrite how the existing thread originally entered the Agent.
-        contextMode: existingThread?.contextMode || "continue",
-        forkedFromThreadId: existingThread?.forkedFromThreadId
-      });
-      return () => input.sessions.restoreInMemory(input.session.threadId, previous);
+      let recorded = false;
+      const restore = () => {
+        if (recorded) restoreSessions();
+      };
+      try {
+        input.sessions.recordForJob({
+          ...input.session,
+          ...lineage,
+          ...(input.projectAdmission
+            ? {
+                projectId: input.projectAdmission.projectId,
+                projectName: input.projectAdmission.projectName
+              }
+            : {}),
+          scopeId: input.adoptOnComplete ? input.routing.scopeId : input.session.scopeId,
+          selection: input.executionDecision.effectiveSelection,
+          policyRevision: input.executionDecision.policyRevision,
+          updatedAt: Date.now(),
+          lastUsedAt: Date.now()
+        }, job.authBoundary);
+        recorded = true;
+        input.jobs.linkAgentThread({
+          agentId: input.agent.agentId,
+          threadId: input.session.threadId,
+          sessionId: lineage.sessionId || existingThread?.sessionId || input.session.sessionId,
+          projectId: input.projectAdmission?.projectId,
+          projectName: input.projectAdmission?.projectName,
+          backendKind: input.session.backendKind,
+          cwd: input.session.cwd,
+          sandbox: input.session.sandbox,
+          // A continuation enriches legacy admission metadata; it does not
+          // rewrite how the existing thread originally entered the Agent.
+          contextMode: existingThread?.contextMode || "continue",
+          forkedFromThreadId: existingThread?.forkedFromThreadId
+        });
+      } catch (error) {
+        restore();
+        throw error;
+      }
+      return restore;
     }
   });
 }
@@ -9647,11 +9949,12 @@ async function forkTrackedSession(input: {
       onProgress,
       onAssigned
     ) as Promise<ToolResult>,
-    onAssigned: (assignment) => {
+    onAssigned: (assignment, _agent, job) => {
       if (!assignment.threadId) return;
       recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent: input.agent,
         threadId: assignment.threadId,
@@ -9670,13 +9973,14 @@ async function forkTrackedSession(input: {
         forkedFromThreadId: assignment.forkedFromThreadId || input.session.threadId
       });
     },
-    onComplete: (result) => {
+    onComplete: (result, _agent, job) => {
       const threadId = extractThreadId(result);
       if (!threadId) return;
       const lineage = extractResultThreadLineage(result, input.session.threadId);
       return recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent: input.agent,
         threadId,
@@ -9728,8 +10032,8 @@ async function runCodex(input: {
     onProgress: (progress: Progress) => void,
     onAssigned: (assignment: UpstreamWorkerAssignment) => void
   ) => Promise<ToolResult>;
-  onAssigned?: (assignment: UpstreamWorkerAssignment, agent: BridgeAgent) => void;
-  onComplete?: (result: ToolResult, agent: BridgeAgent) => void | (() => void);
+  onAssigned?: (assignment: UpstreamWorkerAssignment, agent: BridgeAgent, job: CodexJob) => void;
+  onComplete?: (result: ToolResult, agent: BridgeAgent, job: CodexJob) => void | (() => void);
 }): Promise<ToolResult> {
   if (!input.agent && !input.newAgentName) {
     throw new Error("Codex task admission requires an existing Agent or a new Agent name.");
@@ -9839,12 +10143,12 @@ async function runCodex(input: {
         return input.run(onProgress, onAssigned);
       },
       input.onComplete
-        ? (result) => input.onComplete?.(result, agent)
+        ? (result, currentJob) => input.onComplete?.(result, agent, currentJob)
         : undefined,
       input.preferences.maxConcurrentJobs,
       input.rejectIfSelectionActive,
       input.onAssigned
-        ? (assignment) => input.onAssigned?.(assignment, agent)
+        ? (assignment, currentJob) => input.onAssigned?.(assignment, agent, currentJob)
         : undefined,
       true
     );
@@ -10209,6 +10513,7 @@ function formatJobStatus(
   replay = false
 ): Record<string, unknown> {
   const activity = formatJobActivity(job, staleAfterMs);
+  const pendingTerminalCommit = registry?.pendingTerminalCommit(job);
   const dashboard = dashboardPresentationHint(job, preferences, registry);
   const active = isActiveActivityJobStatus(job.status);
   const terminal = isTerminalActivityJobStatus(job.status);
@@ -10256,6 +10561,9 @@ function formatJobStatus(
       : []),
     ...(activity.health === "no-progress-observed"
       ? ["No progress event has been observed within the configured window; process liveness is unknown."]
+      : []),
+    ...(activity.health === "liveness-unknown"
+      ? ["The Bridge's last active Job record does not confirm that its original execution owner is currently reachable."]
       : []),
     ...(job.status === "cancelled"
       ? ["Cancellation does not roll back partial filesystem changes."]
@@ -10370,10 +10678,14 @@ function formatJobStatus(
     nextActions,
     message:
       active
-        ? job.status === "terminating"
+        ? pendingTerminalCommit
+          ? "The original execution owner reported a terminal result, but durable Job storage is still pending. Keep this exact Job and wait for its original result; do not start a replacement turn."
+          : job.status === "terminating"
           ? "Codex is terminating; refresh authoritative status until it reaches a terminal state."
           : job.status === "termination-failed"
             ? "Codex termination is unconfirmed; refresh status and retry the explicit cancellation if needed."
+            : job.trackingState === "liveness-unknown"
+              ? "This Job's last committed state is active, but current execution-owner liveness is unconfirmed. Recover the same Job and original result; do not start a replacement turn from this observation."
             : job.completionDeliveryPolicy === "direct-wait"
               ? "Codex is running independently in experimental direct-result mode. Keep the current orchestration active with bounded terminal waits on this exact Job; a timeout or aborted read does not cancel it."
               : "Codex is running independently. Query this exact Job when needed, handle any pending input, and retrieve its terminal result before reporting completion."
@@ -10382,6 +10694,35 @@ function formatJobStatus(
             ? "Codex completed, but the primary result exceeded the configured retention limit and was omitted."
             : "Codex completed; retrieve the exact Job result for its bounded model-authoritative answer."
           : error?.message || "Codex reached a terminal state."
+  };
+}
+
+/** Exact status separates a committed Bridge record from owner and host evidence.
+ * The result-offer fields describe earlier completed responses; the current
+ * response is recorded only after its projection succeeds. */
+function exactJobCompletionEvidence(job: CodexJob, registry: CodexJobRegistry) {
+  const delivery = registry.admissionStateStore.getJobCompletionDelivery(job.jobId, job.scopeId);
+  const terminal = isTerminalActivityJobStatus(job.status);
+  const pendingTerminalCommit = registry.pendingTerminalCommit(job);
+  const direct = delivery?.directResultOfferedAt !== undefined;
+  const completion = delivery?.completionResultOfferedAt !== undefined;
+  return {
+    jobRecord: terminal
+      ? "terminal-committed" as const
+      : "active-last-known" as const,
+    // A terminal receipt is durable even after its owner exits. The saved
+    // trackingState is not a fresh liveness measurement of that old owner.
+    ownerObservation: terminal || pendingTerminalCommit ? null : job.trackingState,
+    ownerTerminalResult: pendingTerminalCommit ? {
+      origin: pendingTerminalCommit.origin,
+      observedAt: new Date(pendingTerminalCommit.observedAt).toISOString()
+    } : null,
+    terminalOrigin: job.terminalOrigin || null,
+    deliveryRecord: delivery?.state || null,
+    resultOffer: direct && completion ? "both" as const
+      : direct ? "direct-query" as const
+        : completion ? "completion-receipt" as const : "none" as const,
+    activityLifecycle: registry.getActivity(job.activityId)?.lifecycle || null
   };
 }
 
@@ -10703,6 +11044,8 @@ export type BridgeStorageAdmissionError =
   | "read-only";
 
 export type BridgeRuntimeAdmissionSnapshot = {
+  authConnection?: { source: "shared" | "bridge-chatgpt" | "bridge-api" | "disconnected";
+    mode: "chatgpt" | "api-key" | "unknown"; observedAt: number | null };
   acceptingNewJobs: boolean;
   activeJobs: number;
   pendingAdmissions: number;
@@ -12136,7 +12479,8 @@ async function buildDashboardRuntimePlan(
 async function enrichDashboardRuntimePlan(
   upstream: CodexUpstream,
   plan: BridgeDashboardRuntimePlan,
-  jobs?: CodexJobRegistry
+  jobs?: CodexJobRegistry,
+  readUpstreamUsage = true
 ): Promise<BridgeDashboardEnrichment> {
   const rankedCandidates = plan.candidates;
   const cache = dashboardRuntimeCaches.get(upstream);
@@ -12172,7 +12516,8 @@ async function enrichDashboardRuntimePlan(
   const startedAt = Date.now();
   const [runtimeInspection, usage] = await Promise.all([
     inspectDashboardRuntimes(upstream, candidates, jobs),
-    readCodexWeeklyUsageBounded(upstream)
+    readUpstreamUsage ? readCodexWeeklyUsageBounded(upstream)
+      : Promise.resolve({ value: null, timedOut: false, failed: false })
   ]);
   const observations = cachedDashboardRuntimes(upstream, rankedCandidates);
   for (const [agentId, observation] of runtimeInspection.observations) {
@@ -12256,7 +12601,8 @@ async function buildDashboardView(
       problemQuery,
       includeHistory
     );
-    const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan, jobs);
+    const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan, jobs,
+      !config.codexService);
     return buildDashboardView(
       jobs,
       upstream,
@@ -13290,7 +13636,7 @@ function formatJobActivity(
   job: CodexJob,
   staleAfterMs: number
 ): {
-  health: "running" | "no-progress-observed" | "terminating" | "termination-failed" | "terminal" | "worker-lost" | "orphaned";
+  health: "running" | "no-progress-observed" | "liveness-unknown" | "terminating" | "termination-failed" | "terminal" | "worker-lost" | "orphaned";
   processLiveness: CodexJob["trackingState"] | "terminating" | "termination-unconfirmed";
   lastProgressAt: string;
   idleMs: number;
@@ -13308,8 +13654,10 @@ function formatJobActivity(
       ? "terminal"
       : job.status === "terminating"
         ? "terminating"
-        : job.status === "termination-failed"
+      : job.status === "termination-failed"
           ? "termination-failed"
+          : job.trackingState === "liveness-unknown"
+            ? "liveness-unknown"
           : idleMs >= staleAfterMs
             ? "no-progress-observed"
             : "running",
@@ -14622,6 +14970,8 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     !isOptionalString(value.upstreamRequestId) ||
     !isOptionalPositiveInteger(value.terminalVersion) ||
     !isOptionalString(value.agentId) ||
+    (value.authBoundary !== undefined &&
+      (typeof value.authBoundary !== "string" || !/^[a-f0-9]{64}$/.test(value.authBoundary))) ||
     !isOptionalString(value.sourceThreadId) ||
     (value.contextMode !== undefined && !AGENT_CONTEXT_MODES.includes(value.contextMode as AgentContextMode)) ||
     (value.result !== undefined && !isRecord(value.result)) ||
@@ -14632,6 +14982,7 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
   }
   return {
     jobId,
+    authBoundary: value.authBoundary as string | undefined,
     executionReceipt: value.executionReceipt === true,
     activityId,
     ...(project || {}),
@@ -15445,6 +15796,9 @@ function statusItemProjection(
     ...(input.completionDeliveryPolicy === "live-card" || input.completionDeliveryPolicy === "direct-wait"
       ? { completionDeliveryPolicy: input.completionDeliveryPolicy }
       : {}),
+    ...(isRecord(input.completionEvidence)
+      ? { completionEvidence: input.completionEvidence }
+      : {}),
     ...(typeof input.replay === "boolean" ? { replay: input.replay } : {}),
     ...(versions ? { versions } : {}),
     ...(execution ? { execution } : {}),
@@ -15673,7 +16027,8 @@ function errorFromException(error: unknown): z.infer<typeof structuredErrorOutpu
     message: codeMatch ? rawMessage.slice(codeMatch[0].length) : rawMessage,
     ...(
       code === "JOB_RETENTION_CAPACITY" || code === "STATE_STORAGE_UNAVAILABLE" ||
-      code === "EXECUTION_UNAVAILABLE"
+      code === "EXECUTION_UNAVAILABLE" || code === "CODEX_AUTH_UNAVAILABLE" ||
+      code === "CODEX_AUTH_POLICY_UNAVAILABLE"
         ? { retryable: true }
         : {}
     )

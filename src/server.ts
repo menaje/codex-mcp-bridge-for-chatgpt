@@ -145,9 +145,12 @@ export function createBridgeMcpServer(
       : undefined);
   const sessionRegistry = sessions || new SessionRegistry({
     stateStore: fallbackStateStore,
-    allowedRoots: config.allowedRoots
+    allowedRoots: config.allowedRoots,
+    authBoundary: config.codexService ? () => config.codexService!.sessionAuthBoundary() : undefined
   });
   const jobRegistry = jobs || new CodexJobRegistry({
+    authBoundary: config.codexService ? () => config.codexService!.currentExecutionAuthBoundary() : undefined,
+    recoveryAdmission: config.codexService ? () => config.codexService!.assertCurrentAdmission() : undefined,
     maxConcurrentJobs: config.maxConcurrentJobs,
     ttlMs: config.jobTtlMs,
     maxJobs: config.maxRetainedJobs,
@@ -257,9 +260,12 @@ export function createHttpServer(
   const ownsStateStore = runtimeOptions.stateStore === undefined;
   const sessions = new SessionRegistry({
     stateStore,
-    allowedRoots: config.allowedRoots
+    allowedRoots: config.allowedRoots,
+    authBoundary: config.codexService ? () => config.codexService!.sessionAuthBoundary() : undefined
   });
   const jobs = new CodexJobRegistry({
+    authBoundary: config.codexService ? () => config.codexService!.currentExecutionAuthBoundary() : undefined,
+    recoveryAdmission: config.codexService ? () => config.codexService!.assertCurrentAdmission() : undefined,
     maxConcurrentJobs: config.maxConcurrentJobs,
     ttlMs: config.jobTtlMs,
     maxJobs: config.maxRetainedJobs,

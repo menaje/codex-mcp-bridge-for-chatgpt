@@ -81,16 +81,21 @@ it("reattaches a replacement controller to an exact question and preserves its a
   service.detachExecution();
   const replacement = await Service.start(options); services.push(replacement);
   let recovered: CodexPendingInteraction | undefined;
+  let recoveredAssignment: UpstreamWorkerAssignment | undefined;
   const result = replacement.recoverExecution(id, progress => {
     recovered = progress.event?.details?.interaction as CodexPendingInteraction || recovered;
-  }, value => expect(value).toEqual(assignment));
+  }, value => { expect(value).toEqual(assignment); recoveredAssignment = value; });
   await until(() => Boolean(recovered));
   expect(recovered!.interactionId).toBe(input!.interactionId);
+  expect(replacement.ownsActiveExecution(id, recoveredAssignment!)).toBe(true);
+  expect(replacement.ownsActiveExecution(randomUUID(), recoveredAssignment!)).toBe(false);
   expect(replacement.interactionInput(input!.interactionId)).toHaveProperty("requestedSchema");
   await replacement.respondToInteraction(input!.interactionId, { elicitation: {
     action: "accept", content: { color: "blue", count: 2, enabled: false, tags: ["b"] }
   } });
   await expect(result).resolves.toMatchObject({ content: [{ text: "ELICITATION COMPLETE" }] });
+  expect(replacement.ownsActiveExecution(id, recoveredAssignment!)).toBe(false);
+  expect(replacement.ownsRetainedResult(id, recoveredAssignment!)).toBe(true);
   expect(replacement.health().generation).toBe(generation);
   await expect(replacement.respondToInteraction(input!.interactionId, { elicitation: { action: "cancel" } }))
     .rejects.toThrow(/already resolved|Unknown/);

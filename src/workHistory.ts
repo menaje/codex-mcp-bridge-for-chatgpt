@@ -163,7 +163,7 @@ export class WorkHistoryStore {
     options: { maxDurationMs?: number; limit?: number } = {}
   ): number {
     if (days === 0) return 0;
-    const limit = Math.max(1, Math.min(500, Math.floor(options.limit ?? 500)));
+    const limit = Math.max(1, Math.min(64, Math.floor(options.limit ?? 64)));
     const deadline = performance.now() + Math.max(1, options.maxDurationMs ?? 25);
     const cursor = this.db.prepare(`SELECT cursor_updated_at AS at,cursor_job_id AS id
       FROM work_history_control WHERE singleton=1`).get() as {at:number;id:string};

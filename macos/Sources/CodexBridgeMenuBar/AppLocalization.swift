@@ -1,4 +1,5 @@
 import CodexBridgeKit
+import Darwin
 import Foundation
 
 enum BridgeAppLocalization {
@@ -379,12 +380,18 @@ enum BridgeAppLocalization {
                 locale: locale
             )
         case .connectionFailed(let message):
+            if let reason = localSocketFailureDescription(message, locale: locale) {
+                return reason
+            }
             return format(
                 "macos.couldnotconnecttothelocalservice",
                 locale: locale,
                 localizedErrorDetail(message, locale: locale)
             )
         case .writeFailed(let message):
+            if let reason = localSocketFailureDescription(message, locale: locale) {
+                return reason
+            }
             return format(
                 "macos.couldnotsendarequesttothelocal",
                 locale: locale,
@@ -411,7 +418,22 @@ enum BridgeAppLocalization {
         }
     }
 
+    private static func localSocketFailureDescription(_ message: String, locale: Locale) -> String? {
+        let categories: [(codes: [Int32], key: String)] = [
+            ([EAGAIN, EWOULDBLOCK, ETIMEDOUT], "macos.localService.responseTimedOut"),
+            ([ENOENT, ECONNREFUSED, ECONNRESET, ENOTCONN, EPIPE], "macos.localService.unavailable"),
+            ([EACCES, EPERM], "macos.localService.permissionDenied")
+        ]
+        guard let category = categories.first(where: { category in
+            category.codes.contains(where: { message == String(cString: strerror($0)) })
+        }) else { return nil }
+        return string(category.key, locale: locale)
+    }
+
     private static func localizedErrorDetail(_ message: String, locale: Locale) -> String {
+        if message.contains("CODEX_AUTH_IDENTITY_UNAVAILABLE") {
+            return string("macos.auth.connectionUnsupported", locale: locale)
+        }
         if let skillError = skillErrorDescription(message, locale: locale) {
             return skillError
         }
@@ -439,8 +461,11 @@ enum BridgeAppLocalization {
             ].joined(separator: " ")
         }
 
-        let direct = string(message, locale: locale)
-        if direct != message { return direct }
+        // A diagnostic is not a localization key. Looking up an unknown
+        // diagnostic returns the missing-copy fallback and hides its cause.
+        if BridgeGeneratedLocalization.defaultStrings[message] != nil {
+            return string(message, locale: locale)
+        }
 
         let dynamicKeys = [
             "macos.theexistinglaunchagentplistisnotaregular",
@@ -453,7 +478,9 @@ enum BridgeAppLocalization {
             "macos.couldnotreadthelocalserviceresponse"
         ]
         for key in dynamicKeys {
-            let prefix = String(key.dropLast(2))
+            guard let template = BridgeGeneratedLocalization.defaultStrings[key],
+                  let placeholder = template.range(of: "%@") else { continue }
+            let prefix = String(template[..<placeholder.lowerBound])
             guard message.hasPrefix(prefix) else { continue }
             return format(
                 key,

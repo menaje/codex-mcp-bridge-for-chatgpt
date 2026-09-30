@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Keep state reads responsive during recovery scans, preserve MCP error details, and release abandoned observation capacity safely.",
+  "breaking": false,
+  "migration": "Upgrade state schema 27 to 28 to add the Agent Job history index; retain the verified pre-upgrade backup under the state recovery policy."
+}

@@ -1,6 +1,6 @@
 # State data access and maintenance ownership
 
-This document is the schema-27 operational ownership contract. Authoritative
+This document is the schema-30 operational ownership contract. Authoritative
 state remains one durable `state.sqlite` database; best-effort diagnostics use
 the separate `telemetry.sqlite` described by issue #142. A shared operational
 file does not imply shared write authority.
@@ -26,7 +26,7 @@ Activity-event and result-hold cleanup is scheduled by the event-retention
 slice but executed through `EventRetentionMaintenanceRepository` commands
 implemented by the State Unit of Work.
 
-## Schema 27 ownership matrix
+## Schema 28 ownership matrix
 
 “State UoW” below means `BridgeStateStore`. Read models never appear in the
 writer column.

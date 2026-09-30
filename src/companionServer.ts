@@ -39,7 +39,9 @@ export const COMPANION_PROTOCOL_VERSION = 12;
 export const COMPANION_MAX_REQUEST_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
 // Source-preserved 3 MiB Markdown content can JSON-escape sixfold.
 export const COMPANION_MAX_RESPONSE_BYTES = BRIDGE_SKILL_LIMITS.mutationWireMaxBytes;
-const COMPANION_MAX_CLIENTS = 8;
+const COMPANION_MAX_CLIENTS = 16;
+const COMPANION_ORDINARY_REQUESTS = 8;
+const COMPANION_PRIORITY_CLASSIFY_BYTES = 256 * 1024;
 const MAX_UNIX_SOCKET_PATH_BYTES = 100;
 
 const requestIdSchema = z.union([
@@ -322,6 +324,7 @@ export type PrivateJsonLineServerOptions = {
   maxResponseBytes: number;
   maxClients?: number;
   dispatch(line: string, signal?: AbortSignal): Promise<Record<string, unknown>>;
+  reserveDispatch?(line: string): () => void;
   requestTooLarge(): Record<string, unknown>;
   internalError(error: unknown): Record<string, unknown>;
 };
@@ -336,11 +339,25 @@ export async function startBridgeCompanionServer(
 ): Promise<BridgeCompanionServer> {
   const changes = new ChangeSignal(["dashboard", "settings", "enrichment"]);
   const unsubscribe = options.applicationService.subscribeChanges?.(topic => changes.notify(topic));
+  let ordinaryRequests = 0;
   const server = await startPrivateJsonLineServer({
     socketPath: options.socketPath,
     maxRequestBytes: COMPANION_MAX_REQUEST_BYTES,
     maxResponseBytes: COMPANION_MAX_RESPONSE_BYTES,
     maxClients: COMPANION_MAX_CLIENTS,
+    reserveDispatch: line => {
+      if (isPriorityCompanionRequest(line)) return () => {};
+      if (ordinaryRequests >= COMPANION_ORDINARY_REQUESTS) {
+        throw new Error("COMPANION_CAPACITY: Ordinary native requests are at capacity.");
+      }
+      ordinaryRequests += 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        ordinaryRequests -= 1;
+      };
+    },
     dispatch: (line, signal) => dispatchLine(
       line,
       options.applicationService,
@@ -416,9 +433,14 @@ function serveClient(socket: Socket, options: PrivateJsonLineServerOptions): voi
       }
       if (!line.trim()) continue;
       requestQueue = requestQueue
-        .then(() => {
+        .then(async () => {
           if (cancellation.signal.aborted) throw new Error("CONNECTION_CLOSED");
-          return options.dispatch(line, cancellation.signal);
+          const release = options.reserveDispatch?.(line);
+          try {
+            return await options.dispatch(line, cancellation.signal);
+          } finally {
+            release?.();
+          }
         })
         .then((response) => writeResponse(socket, response, options.maxResponseBytes))
         .catch((error) => {
@@ -427,6 +449,24 @@ function serveClient(socket: Socket, options: PrivateJsonLineServerOptions): voi
     }
   });
   socket.on("error", () => undefined);
+}
+
+function isPriorityCompanionRequest(line: string): boolean {
+  if (Buffer.byteLength(line, "utf8") > COMPANION_PRIORITY_CLASSIFY_BYTES) return false;
+  try {
+    const parsed: unknown = JSON.parse(line);
+    const request = requestSchema.safeParse(parsed);
+    if (!request.success) return false;
+    const { method, params } = request.data;
+    if (["completion.claim", "completion.delivered", "completion.release",
+      "runtime.health", "runtime.beginDrain", "runtime.cancelDrain"].includes(method)) return true;
+    if (method === "dashboard.problem" && params && typeof params === "object" &&
+        !Array.isArray(params) && (params as Record<string, unknown>).action === "retry-stop") return true;
+    return Boolean(method === "thread.handoff" && params && typeof params === "object" &&
+      !Array.isArray(params) && (params as Record<string, unknown>).action === "cancel");
+  } catch {
+    return false;
+  }
 }
 
 async function dispatchLine(

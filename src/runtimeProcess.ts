@@ -32,6 +32,7 @@ import type {
   BridgeApplicationService,
   BridgeRuntimeAdmissionSnapshot
 } from "./tools.js";
+import { decodeUtf8Strict } from "./textIntegrity.js";
 
 type RuntimeStateServiceStatus = NonNullable<
   BridgeRuntimeAdmissionSnapshot["stateService"]
@@ -43,6 +44,9 @@ const STATE_OWNER_PROTOCOL = "bridge-operational-state-owner" as const;
 const STATE_OWNER_PROTOCOL_VERSION = 2 as const;
 const HEARTBEAT_INTERVAL_MS = 250;
 const HEARTBEAT_STALE_MS = 2_000;
+// These are observation budgets. They never limit the lifetime of a Codex Job.
+const RPC_OBSERVATION_TIMEOUT_MS = 120_000;
+const PROXY_IDLE_TIMEOUT_MS = 120_000;
 const STARTUP_TIMEOUT_MS = 20_000;
 const FORCE_CLOSE_MS = 5_000;
 const MAX_PENDING_REQUESTS = 128;
@@ -50,8 +54,19 @@ const MAX_PENDING_REQUESTS = 128;
 // completion delivery, cancellation, and authoritative recovery reads.
 const CRITICAL_RPC_RESERVE = 16;
 const MAX_PROXY_REQUESTS = MAX_PENDING_REQUESTS - CRITICAL_RPC_RESERVE;
+const NATIVE_CONTROL_RESERVE = 8;
 const MAX_RPC_BYTES = 8 * 1024 * 1024;
 const MAX_PROXY_BYTES_IN_FLIGHT = 32 * 1024 * 1024;
+const PRIORITY_PROXY_BYTES_RESERVE = 8 * 1024 * 1024;
+const MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT =
+  MAX_PROXY_BYTES_IN_FLIGHT - PRIORITY_PROXY_BYTES_RESERVE;
+// A saturated ingress inspects only small, complete tool calls before using
+// the slots otherwise reserved for native recovery and control.
+const MAX_PRIORITY_MCP_REQUEST_BYTES = 256 * 1024;
+// Only request bodies admitted by the existing RPC byte limit can supply an
+// error ID. Bound retained bodies across both proxied and rejected requests.
+const MAX_MCP_ID_CAPTURE_BYTES_IN_FLIGHT = MAX_PROXY_BYTES_IN_FLIGHT + MAX_RPC_BYTES;
+const MCP_REJECTION_BODY_WAIT_MS = 1_000;
 const RESTART_BASE_DELAY_MS = 250;
 const RESTART_MAX_DELAY_MS = 10_000;
 const RESTART_STABLE_MS = 60_000;
@@ -372,7 +387,6 @@ class IsolatedRuntimeController {
   private startupResolve?: () => void;
   private startupReject?: (error: Error) => void;
   private startupTimer?: NodeJS.Timeout;
-  private staleRpcWatchdog?: NodeJS.Timeout;
   private stderr = "";
 
   private constructor(
@@ -412,17 +426,6 @@ class IsolatedRuntimeController {
       await runtime.close().catch(() => undefined);
       throw error;
     }
-    runtime.staleRpcWatchdog = setInterval(() => {
-      if (runtime.isFresh() || runtime.pending.size === 0) return;
-      for (const [requestId, pending] of runtime.pending) {
-        runtime.pending.delete(requestId);
-        runtime.abandoned.add(requestId);
-        pending.reject(new Error(
-          "RUNTIME_RESPONSE_UNCONFIRMED: The isolated Bridge runtime stopped responding; the operation outcome is unknown."
-        ));
-      }
-    }, HEARTBEAT_INTERVAL_MS);
-    runtime.staleRpcWatchdog.unref();
     return runtime;
   }
 
@@ -501,7 +504,7 @@ class IsolatedRuntimeController {
           ? "admission-draining"
           : this.outstanding >= MAX_PENDING_REQUESTS ||
               this.activeProxyRequests >= MAX_PROXY_REQUESTS ||
-              this.activeProxyBytes >= MAX_PROXY_BYTES_IN_FLIGHT
+              this.activeProxyBytes >= MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT
             ? "state-capacity"
             : "ready";
     return {
@@ -584,21 +587,25 @@ class IsolatedRuntimeController {
 
   proxy(
     incoming: import("node:http").IncomingMessage,
-    outgoing: import("node:http").ServerResponse
-  ): void {
-    if (!this.isFresh() || this.port === undefined || !this.child?.connected) {
-      writeUnavailable(outgoing, this.readiness(), "not-observed");
-      return;
+    outgoing: import("node:http").ServerResponse,
+    bufferedRequest?: {
+      body: Buffer;
+      capture: McpRequestIdCapture;
+      priority: boolean;
+      ordinarySlotReserved: boolean;
     }
-    if (
-      this.outstanding >= MAX_PENDING_REQUESTS ||
-      this.activeProxyRequests >= MAX_PROXY_REQUESTS
-    ) {
-      writeUnavailable(outgoing, this.readiness(), "not-observed");
+  ): void {
+    if (this.port === undefined || !this.child?.connected) {
+      if (bufferedRequest) {
+        this.activeProxyRequests -= 1;
+        writeUnavailable(outgoing, this.readiness(), "not-observed", {}, bufferedRequest.capture.id());
+      } else writeMcpUnavailable(incoming, outgoing, this.readiness(), "not-observed");
       return;
     }
     const declaredLength = requestContentLength(incoming.headers);
     if (declaredLength !== undefined && declaredLength > MAX_RPC_BYTES) {
+      bufferedRequest?.capture.dispose();
+      if (bufferedRequest) this.activeProxyRequests -= 1;
       writeJson(outgoing, 413, {
         ok: false,
         code: "RUNTIME_REQUEST_TOO_LARGE",
@@ -606,30 +613,68 @@ class IsolatedRuntimeController {
       });
       return;
     }
-    if (
-      declaredLength !== undefined &&
-      this.activeProxyBytes + declaredLength > MAX_PROXY_BYTES_IN_FLIGHT
-    ) {
-      writeUnavailable(outgoing, this.readiness(), "not-observed", {
-        reason: "state-capacity",
-        limitations: ["state-capacity"]
+    if (!bufferedRequest && declaredLength !== undefined &&
+        this.activeProxyBytes + declaredLength > MAX_PROXY_BYTES_IN_FLIGHT) {
+      writeMcpUnavailable(incoming, outgoing, this.readiness(), "not-observed", {
+        reason: "state-capacity", limitations: ["state-capacity"]
       });
       return;
     }
+    // Another request can consume ordinary bytes after these headers arrive.
+    // Classify every unknown-length MCP body before its single dispatch so
+    // priority eligibility cannot depend on that arrival order.
+    const unknownLengthMcpPost = declaredLength === undefined &&
+      incoming.method === "POST" &&
+      new URL(incoming.url || "/", "http://bridge.invalid").pathname === "/mcp";
+    const ordinarySlotReserved = this.activeProxyRequests < MAX_PROXY_REQUESTS &&
+      this.activeProxyBytes < MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT;
+    const needsPriorityReservation = this.outstanding >= MAX_PENDING_REQUESTS ||
+      this.activeProxyRequests >= MAX_PROXY_REQUESTS ||
+      this.activeProxyBytes + (declaredLength ?? 0) > MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT ||
+      unknownLengthMcpPost &&
+        this.activeProxyBytes > MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT - MAX_PRIORITY_MCP_REQUEST_BYTES;
+    if (!bufferedRequest && (
+      needsPriorityReservation || unknownLengthMcpPost
+    )) {
+      if (incoming.method === "POST" && this.outstanding < MAX_PENDING_REQUESTS &&
+          this.activeProxyRequests < MAX_PENDING_REQUESTS) {
+        this.classifyReservedMcpRequest(incoming, outgoing, {
+          ordinarySlotReserved: unknownLengthMcpPost && ordinarySlotReserved,
+          normalAdmission: unknownLengthMcpPost && !needsPriorityReservation
+        });
+      } else {
+        writeMcpUnavailable(incoming, outgoing, this.readiness(), "not-observed");
+      }
+      return;
+    }
+    const bufferedOrdinaryOverCapacity = bufferedRequest && !bufferedRequest.priority && (
+      (!bufferedRequest.ordinarySlotReserved && this.activeProxyRequests > MAX_PROXY_REQUESTS) ||
+      this.activeProxyBytes + bufferedRequest.body.length > MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT
+    );
+    if (bufferedOrdinaryOverCapacity ||
+        (declaredLength !== undefined || bufferedRequest) &&
+        this.activeProxyBytes + (bufferedRequest?.body.length ?? declaredLength ?? 0) > MAX_PROXY_BYTES_IN_FLIGHT) {
+      const failure = { reason: "state-capacity" as const, limitations: ["state-capacity"] };
+      if (bufferedRequest) {
+        this.activeProxyRequests -= 1;
+        writeUnavailable(outgoing, this.readiness(), "not-observed", failure, bufferedRequest.capture.id());
+      } else writeMcpUnavailable(incoming, outgoing, this.readiness(), "not-observed", failure);
+      return;
+    }
     const port = this.port;
-    this.activeProxyRequests += 1;
-    let requestBytes = declaredLength ?? 0;
+    if (!bufferedRequest) this.activeProxyRequests += 1;
+    let requestBytes = bufferedRequest?.body.length ?? declaredLength ?? 0;
     this.activeProxyBytes += requestBytes;
     let responseStarted = false;
     let settled = false;
     let requestOutcome: ProxyRequestOutcome = "not-observed";
-    let staleWatchdog: NodeJS.Timeout | undefined;
+    const requestIdCapture = bufferedRequest?.capture || new McpRequestIdCapture();
     const finish = () => {
       if (settled) return;
       settled = true;
+      requestIdCapture.dispose();
       this.activeProxyRequests = Math.max(0, this.activeProxyRequests - 1);
       this.activeProxyBytes = Math.max(0, this.activeProxyBytes - requestBytes);
-      if (staleWatchdog) clearInterval(staleWatchdog);
     };
     const rejectBody = (reason: "request-bytes" | "state-capacity") => {
       proxied.destroy(new Error(
@@ -646,7 +691,7 @@ class IsolatedRuntimeController {
           writeUnavailable(outgoing, this.readiness(), "not-observed", {
             reason: "state-capacity",
             limitations: ["state-capacity"]
-          });
+          }, requestIdCapture.id());
         }
       } else if (!outgoing.destroyed) {
         outgoing.destroy();
@@ -661,6 +706,11 @@ class IsolatedRuntimeController {
       headers: requestHeaders(incoming.headers)
     }, response => {
       responseStarted = true;
+      if (outgoing.destroyed) {
+        response.destroy();
+        finish();
+        return;
+      }
       outgoing.writeHead(response.statusCode || 502, responseHeaders(response.headers));
       response.pipe(outgoing);
       response.once("end", finish);
@@ -674,17 +724,15 @@ class IsolatedRuntimeController {
       // acted even if its response or next heartbeat is never observed.
       requestOutcome = "unknown";
     });
-    staleWatchdog = setInterval(() => {
-      if (this.isFresh()) return;
+    proxied.setTimeout(PROXY_IDLE_TIMEOUT_MS, () => {
       proxied.destroy(new Error("RUNTIME_RESPONSE_UNCONFIRMED"));
       if (!responseStarted && !outgoing.headersSent) {
-        writeUnavailable(outgoing, this.readiness(), requestOutcome);
+        writeUnavailable(outgoing, this.readiness(), requestOutcome, {}, requestIdCapture.id());
       } else if (!outgoing.destroyed) {
         outgoing.destroy();
       }
       finish();
-    }, HEARTBEAT_INTERVAL_MS);
-    staleWatchdog.unref();
+    });
     proxied.once("error", error => {
       if (!outgoing.headersSent) {
         writeUnavailable(
@@ -694,7 +742,8 @@ class IsolatedRuntimeController {
           {
             reason: "state-recovering",
             limitations: ["state-response-unconfirmed"]
-          }
+          },
+          requestIdCapture.id()
         );
       } else if (!outgoing.destroyed) {
         outgoing.destroy(error);
@@ -705,19 +754,108 @@ class IsolatedRuntimeController {
       proxied.destroy();
       finish();
     });
-    if (declaredLength === undefined) {
+    outgoing.once("close", () => {
+      if (outgoing.writableEnded) return;
+      // A completed request body does not emit IncomingMessage.aborted when
+      // its caller disconnects while waiting for the response.
+      proxied.destroy();
+      finish();
+    });
+    if (!bufferedRequest) incoming.on("data", chunk => {
+      requestIdCapture.append(chunk);
+    });
+    if (!bufferedRequest) incoming.once("end", () => requestIdCapture.complete());
+    if (declaredLength === undefined && !bufferedRequest) {
       incoming.on("data", chunk => {
         if (settled) return;
         const bytes = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk));
         requestBytes += bytes;
         this.activeProxyBytes += bytes;
         if (requestBytes > MAX_RPC_BYTES) rejectBody("request-bytes");
-        else if (this.activeProxyBytes > MAX_PROXY_BYTES_IN_FLIGHT) {
+        else if (this.activeProxyBytes > MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT) {
           rejectBody("state-capacity");
         }
       });
     }
-    incoming.pipe(proxied);
+    if (bufferedRequest) proxied.end(bufferedRequest.body);
+    else incoming.pipe(proxied);
+  }
+
+  private classifyReservedMcpRequest(
+    incoming: import("node:http").IncomingMessage,
+    outgoing: import("node:http").ServerResponse,
+    reservation: { ordinarySlotReserved: boolean; normalAdmission: boolean }
+  ): void {
+    // Reserve before reading so concurrent candidates cannot overfill the
+    // physical HTTP limit. Failed classification releases this same slot.
+    this.activeProxyRequests += 1;
+    const capture = new McpRequestIdCapture();
+    let settled = false;
+    let reservedBytes = 0;
+    const releaseBytes = () => {
+      this.activeProxyBytes = Math.max(0, this.activeProxyBytes - reservedBytes);
+      reservedBytes = 0;
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      incoming.off("data", onData);
+      incoming.off("end", onEnd);
+      incoming.off("close", onClose);
+      outgoing.off("close", onClose);
+    };
+    const reject = (reason: "state-capacity" | "request-bytes" = "state-capacity") => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      releaseBytes();
+      this.activeProxyRequests -= 1;
+      const id = capture.id();
+      capture.dispose();
+      if (reason === "request-bytes") {
+        writeJson(outgoing, 413, { ok: false, code: "RUNTIME_REQUEST_TOO_LARGE", reason });
+      } else {
+        writeUnavailable(outgoing, this.readiness(), "not-observed", {
+          reason: "state-capacity", limitations: ["state-capacity"]
+        }, id);
+      }
+    };
+    const onData = (chunk: Buffer | string) => {
+      if (settled) return;
+      if (reservation.normalAdmission) timer.refresh();
+      const bytes = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
+      if (reservedBytes + bytes > MAX_RPC_BYTES) { reject("request-bytes"); return; }
+      if (this.activeProxyBytes + bytes > MAX_PROXY_BYTES_IN_FLIGHT ||
+          !capture.append(chunk)) { reject(); return; }
+      reservedBytes += bytes;
+      this.activeProxyBytes += bytes;
+    };
+    const onEnd = () => {
+      if (settled) return;
+      capture.complete();
+      const body = capture.body();
+      const priority = body ? isPriorityMcpRequest(body) : false;
+      const ordinaryFits = !priority && body &&
+        (reservation.ordinarySlotReserved || this.activeProxyRequests <= MAX_PROXY_REQUESTS) &&
+        this.activeProxyBytes <= MAX_ORDINARY_PROXY_BYTES_IN_FLIGHT;
+      if (!body || new URL(incoming.url || "/", "http://bridge.invalid").pathname !== "/mcp" ||
+          !priority && !ordinaryFits) {
+        reject(); return;
+      }
+      settled = true;
+      cleanup();
+      releaseBytes();
+      this.proxy(incoming, outgoing, { body, capture, priority,
+        ordinarySlotReserved: reservation.ordinarySlotReserved });
+    };
+    const onClose = () => reject();
+    const timer = setTimeout(reject,
+      reservation.normalAdmission ? PROXY_IDLE_TIMEOUT_MS : MCP_REJECTION_BODY_WAIT_MS);
+    timer.unref();
+    incoming.on("data", onData);
+    incoming.once("end", onEnd);
+    incoming.once("close", onClose);
+    outgoing.once("close", onClose);
+    incoming.resume();
   }
 
   async close(): Promise<void> {
@@ -726,7 +864,6 @@ class IsolatedRuntimeController {
     if (this.restartTimer) clearTimeout(this.restartTimer);
     if (this.stableTimer) clearTimeout(this.stableTimer);
     if (this.startupTimer) clearTimeout(this.startupTimer);
-    if (this.staleRpcWatchdog) clearInterval(this.staleRpcWatchdog);
     this.rejectPending(new Error("RUNTIME_CLOSED: Isolated Bridge runtime closed."));
     const child = this.child;
     this.child = undefined;
@@ -748,7 +885,15 @@ class IsolatedRuntimeController {
   }
 
   private get outstanding(): number {
-    return this.pending.size + this.activeProxyRequests;
+    return this.pending.size + this.abandoned.size + this.activeProxyRequests;
+  }
+
+  private rpcObservationTimeoutMs(): number {
+    const configured = Number(this.childEnvironment.CODEX_MCP_BRIDGE_TEST_RPC_OBSERVATION_TIMEOUT_MS);
+    return this.childEnvironment.NODE_ENV === "test" &&
+      Number.isSafeInteger(configured) && configured >= 50 &&
+      configured <= RPC_OBSERVATION_TIMEOUT_MS
+      ? configured : RPC_OBSERVATION_TIMEOUT_MS;
   }
 
   private isFresh(now = Date.now()): boolean {
@@ -761,12 +906,17 @@ class IsolatedRuntimeController {
   }
 
   private rpc(method: ApplicationRpcMethod, args: unknown[]): Promise<unknown> {
-    if (!this.isFresh() || !this.child?.connected || !this.generation) {
+    if (!this.child?.connected || !this.generation) {
       return Promise.reject(new Error(
         "RUNTIME_RESPONSE_UNCONFIRMED: The isolated Bridge runtime is not currently responsive."
       ));
     }
-    if (this.outstanding >= MAX_PENDING_REQUESTS) {
+    const control = APPLICATION_CONTROL_METHODS.has(method) ||
+      method === "problemAction" &&
+        Boolean(args[0] && typeof args[0] === "object" &&
+          (args[0] as Record<string, unknown>).action === "retry-stop");
+    if (this.outstanding >= MAX_PENDING_REQUESTS ||
+        !control && this.outstanding >= MAX_PENDING_REQUESTS - NATIVE_CONTROL_RESERVE) {
       return Promise.reject(new Error("RUNTIME_CAPACITY: Isolated Bridge runtime capacity is exhausted."));
     }
     const requestId = randomUUID();
@@ -784,7 +934,20 @@ class IsolatedRuntimeController {
       return Promise.reject(new Error("RUNTIME_REQUEST_TOO_LARGE: Runtime request exceeds its IPC limit."));
     }
     return new Promise((resolve, reject) => {
-      this.pending.set(requestId, { resolve, reject });
+      const timer = setTimeout(() => {
+        const pending = this.pending.get(requestId);
+        if (!pending) return;
+        this.pending.delete(requestId);
+        this.abandoned.add(requestId);
+        pending.reject(new Error(
+          "RUNTIME_RESPONSE_UNCONFIRMED: The isolated Bridge runtime did not answer within the observation budget; the operation outcome is unknown."
+        ));
+      }, this.rpcObservationTimeoutMs());
+      timer.unref();
+      this.pending.set(requestId, {
+        resolve: value => { clearTimeout(timer); resolve(value); },
+        reject: error => { clearTimeout(timer); reject(error); }
+      });
       this.child?.send(message, error => {
         if (!error) return;
         const pending = this.pending.get(requestId);
@@ -1063,6 +1226,10 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
     if (activeOperation?.access === "write") return;
     const statement = sql.trimStart().toUpperCase();
     if (!/^(SELECT|WITH|PRAGMA|EXPLAIN)\b/u.test(statement)) return;
+    // A synchronous projection can execute many reads before the event loop
+    // yields. Keep its first read observation instead of sending one IPC
+    // message per statement; the queued microtask closes the whole span.
+    if (activeOperation?.access === "read") return;
     const token = ++observationToken;
     const startedAt = Date.now();
     activeOperation = {
@@ -1146,7 +1313,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
     }
     readProjection = await ChildProcessStateReadService.start(
       config.stateDatabaseFile,
-      process.env
+      process.env,
+      { authBoundary: () => config.codexService?.sessionAuthBoundary() || null }
     );
     const appServerLateResponses = new AppServerLateResponseJournal(store);
     upstream = createExecutionRuntime(
@@ -1569,17 +1737,166 @@ const HOP_BY_HOP_HEADERS = [
   "upgrade"
 ] as const;
 
+let mcpIdCaptureBytesInFlight = 0;
+
+/** Keeps a bounded raw request body until its complete JSON can be parsed. */
+class McpRequestIdCapture {
+  private buffer?: Buffer;
+  private bytes = 0;
+  private ended = false;
+  private available = true;
+
+  append(chunk: Buffer | string): boolean {
+    if (!this.available || this.ended) return false;
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8");
+    const nextBytes = this.bytes + bytes.length;
+    if (nextBytes > MAX_RPC_BYTES) {
+      this.dispose();
+      return false;
+    }
+    if (nextBytes > (this.buffer?.length || 0)) {
+      const capacity = Math.min(MAX_RPC_BYTES,
+        Math.max(nextBytes, (this.buffer?.length || 1_024) * 2));
+      const previousCapacity = this.buffer?.length || 0;
+      const additionalCapacity = capacity - previousCapacity;
+      if (mcpIdCaptureBytesInFlight + additionalCapacity > MAX_MCP_ID_CAPTURE_BYTES_IN_FLIGHT) {
+        this.dispose();
+        return false;
+      }
+      // One allocation per growth step keeps thousands of tiny HTTP chunks
+      // from retaining thousands of backing buffers outside the byte budget.
+      const replacement = Buffer.allocUnsafeSlow(capacity);
+      this.buffer?.copy(replacement, 0, 0, this.bytes);
+      this.buffer = replacement;
+      mcpIdCaptureBytesInFlight += additionalCapacity;
+    }
+    bytes.copy(this.buffer!, this.bytes);
+    this.bytes = nextBytes;
+    return true;
+  }
+
+  complete(): void { this.ended = true; }
+
+  body(): Buffer | undefined {
+    return this.available && this.ended
+      ? this.buffer?.subarray(0, this.bytes) || Buffer.alloc(0)
+      : undefined;
+  }
+
+  id(): string | number | undefined {
+    if (!this.available || !this.ended) return;
+    try {
+      return mcpRequestId(this.buffer?.subarray(0, this.bytes) || Buffer.alloc(0));
+    } finally {
+      this.dispose();
+    }
+  }
+
+  dispose(): void {
+    mcpIdCaptureBytesInFlight -= this.buffer?.length || 0;
+    this.bytes = 0;
+    this.buffer = undefined;
+    this.available = false;
+  }
+}
+
+function mcpRequestId(body: Buffer): string | number | undefined {
+  try {
+    const value: unknown = JSON.parse(decodeUtf8Strict(body, "MCP request body"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const id = (value as Record<string, unknown>).id;
+    return typeof id === "string" || typeof id === "number" && Number.isFinite(id) ? id : undefined;
+  } catch {
+    // Malformed, incomplete, or oversized bodies cannot justify an ID guess.
+    return;
+  }
+}
+
+function isPriorityMcpRequest(body: Buffer): boolean {
+  if (body.length > MAX_PRIORITY_MCP_REQUEST_BYTES) return false;
+  try {
+    const value: unknown = JSON.parse(decodeUtf8Strict(body, "MCP request body"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const request = value as Record<string, unknown>;
+    if (request.jsonrpc !== "2.0" || request.method !== "tools/call" ||
+        !(typeof request.id === "string" ||
+          typeof request.id === "number" && Number.isFinite(request.id)) ||
+        !request.params || typeof request.params !== "object" ||
+        Array.isArray(request.params)) return false;
+    const params = request.params as Record<string, unknown>;
+    const name = params.name;
+    if (name === "codex_answer" || name === "codex_cancel" ||
+        name === "codex_steer" || name === "codex_interaction_respond") return true;
+    if (name === "codex_ui_completion") {
+      const args = params.arguments;
+      if (!args || typeof args !== "object" || Array.isArray(args)) return false;
+      return ["accepted", "rejected", "uncertain", "release"].includes(
+        String((args as Record<string, unknown>).operation)
+      );
+    }
+    if (name !== "codex_status" || !params.arguments ||
+        typeof params.arguments !== "object" || Array.isArray(params.arguments)) return false;
+    const query = (params.arguments as Record<string, unknown>).query;
+    if (!query || typeof query !== "object" || Array.isArray(query)) return false;
+    const exact = query as Record<string, unknown>;
+    if (exact.kind === "completion") return true;
+    if (exact.kind === "input") return exact.waitMs === undefined || exact.waitMs === 0;
+    return (exact.kind === "job" || exact.kind === "request") &&
+      exact.waitFor === undefined && exact.waitMs === undefined;
+  } catch {
+    return false;
+  }
+}
+
+function writeMcpUnavailable(
+  incoming: import("node:http").IncomingMessage,
+  outgoing: import("node:http").ServerResponse,
+  readiness: BridgeReadinessSnapshot,
+  outcome: ProxyRequestOutcome,
+  failure: ProxyFailureContext = {}
+): void {
+  if (incoming.method !== "POST") {
+    writeUnavailable(outgoing, readiness, outcome, failure);
+    return;
+  }
+  const capture = new McpRequestIdCapture();
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    incoming.off("data", onData);
+    incoming.off("end", onEnd);
+    incoming.off("close", onClose);
+    const id = capture.id();
+    capture.dispose();
+    writeUnavailable(outgoing, readiness, outcome, failure, id);
+  };
+  const onData = (chunk: Buffer | string) => {
+    if (!capture.append(chunk)) finish();
+  };
+  const onEnd = () => { capture.complete(); finish(); };
+  const onClose = () => finish();
+  const timer = setTimeout(finish, MCP_REJECTION_BODY_WAIT_MS);
+  timer.unref();
+  incoming.on("data", onData);
+  incoming.once("end", onEnd);
+  incoming.once("close", onClose);
+  incoming.resume();
+}
+
 function writeUnavailable(
   response: import("node:http").ServerResponse,
   readiness: BridgeReadinessSnapshot,
   outcome: ProxyRequestOutcome,
-  failure: ProxyFailureContext = {}
+  failure: ProxyFailureContext = {},
+  requestId?: string | number
 ): void {
   if (response.headersSent || response.destroyed) return;
   const reason = failure.reason || readiness.reason;
   const limitations = failure.limitations || readiness.limitations;
   response.setHeader("retry-after", "1");
-  writeJson(response, 503, {
+  const details = {
     ok: false,
     code: "RUNTIME_RESPONSE_UNCONFIRMED",
     reason,
@@ -1592,6 +1909,15 @@ function writeUnavailable(
       limitations: readiness.limitations
     },
     ...(readiness.stateService ? { stateService: readiness.stateService } : {})
+  };
+  writeJson(response, 503, requestId === undefined ? details : {
+    jsonrpc: "2.0",
+    id: requestId,
+    error: {
+      code: -32000,
+      message: "Bridge runtime temporarily unavailable",
+      data: details
+    }
   });
 }
 

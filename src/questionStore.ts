@@ -15,6 +15,8 @@ export type UserQuestionRecord = {
   notificationAttempt?: string; notificationStartedAt?: number; consumedAt?: number;
 };
 
+export type CodexQuestionDeliveryStatus = "dispatching" | "not-delivered" | "delivered" | "uncertain";
+
 /** Upgrade-only schema introduced at v13. Current databases use stateSchema.ts. */
 export const V13_QUESTION_STORE_MIGRATION_SCHEMA = `
   CREATE TABLE IF NOT EXISTS user_questions (
@@ -58,12 +60,12 @@ export class QuestionStore {
   }
 
   /** Explicit bounded maintenance. Query methods never call this path. */
-  maintain(now = Date.now(), limit = 500): {
+  maintain(now = Date.now(), limit = 64): {
     expiredQuestionsRemoved: number;
     deliveredJournalsRemoved: number;
     notificationsMarkedUncertain: number;
   } {
-    const boundedLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+    const boundedLimit = Math.max(1, Math.min(64, Math.floor(limit)));
     const cleanup = this.prune(now, boundedLimit);
     const stale = this.db.prepare(`
       SELECT question_id,scope_id,payload
@@ -86,7 +88,7 @@ export class QuestionStore {
     return { ...cleanup, notificationsMarkedUncertain };
   }
 
-  private prune(now: number, limit = 500): {
+  private prune(now: number, limit = 64): {
     expiredQuestionsRemoved: number;
     deliveredJournalsRemoved: number;
   } {
@@ -205,22 +207,38 @@ export class QuestionStore {
     this.save(record);
   }
 
-  delivery(scopeId: string, requestId: string, hash: string): string | undefined {
+  delivery(scopeId: string, requestId: string, hash: string): CodexQuestionDeliveryStatus | undefined {
     const row = this.db.prepare("SELECT action_hash,status FROM codex_question_deliveries WHERE scope_id=? AND request_id=?")
       .get(scopeId, requestId) as { action_hash: string; status: string } | undefined;
     if (row && row.action_hash !== hash) throw new Error("ANSWER_REQUEST_CONFLICT: Reuse requestId only for the identical answer.");
-    return row?.status;
+    if (!row) return undefined;
+    return row.status === "dispatching" || row.status === "not-delivered" ||
+      row.status === "delivered" || row.status === "uncertain" ? row.status : "uncertain";
   }
 
   beginDelivery(scopeId: string, requestId: string, questionRef: string, hash: string): void {
-    const existing = this.db.prepare("SELECT status FROM codex_question_deliveries WHERE scope_id=? AND question_ref=?").get(scopeId, questionRef);
-    if (existing) throw new Error("QUESTION_ALREADY_DISPATCHED: Inspect the previous delivery; do not resend under a new request ID.");
+    const existing = this.db.prepare("SELECT request_id,action_hash,status FROM codex_question_deliveries WHERE scope_id=? AND question_ref=?")
+      .get(scopeId, questionRef) as { request_id: string; action_hash: string; status: string } | undefined;
+    if (existing) {
+      if (existing.request_id !== requestId || existing.status !== "not-delivered") {
+        throw new Error("QUESTION_ALREADY_DISPATCHED: Inspect the previous delivery; do not resend under a new request ID.");
+      }
+      if (existing.action_hash !== hash) {
+        throw new Error("ANSWER_REQUEST_CONFLICT: Reuse requestId only for the identical answer.");
+      }
+      const resumed = this.db.prepare("UPDATE codex_question_deliveries SET status='dispatching',created_at=? WHERE scope_id=? AND request_id=? AND question_ref=? AND action_hash=? AND status='not-delivered'")
+        .run(Date.now(), scopeId, requestId, questionRef, hash);
+      if (resumed.changes !== 1) throw new Error("QUESTION_ALREADY_DISPATCHED: Another answer attempt is in progress.");
+      return;
+    }
     this.db.prepare("INSERT INTO codex_question_deliveries VALUES(?,?,?,?,?,?)")
       .run(scopeId, requestId, questionRef, hash, "dispatching", Date.now());
   }
 
-  finishDelivery(scopeId: string, requestId: string, status: "delivered" | "uncertain"): void {
-    this.db.prepare("UPDATE codex_question_deliveries SET status=? WHERE scope_id=? AND request_id=?").run(status, scopeId, requestId);
+  finishDelivery(scopeId: string, requestId: string, status: "not-delivered" | "delivered" | "uncertain"): void {
+    const finished = this.db.prepare("UPDATE codex_question_deliveries SET status=? WHERE scope_id=? AND request_id=? AND status='dispatching'")
+      .run(status, scopeId, requestId);
+    if (finished.changes !== 1) throw new Error("QUESTION_DELIVERY_STALE: The delivery attempt is no longer current.");
   }
 
   private save(record: UserQuestionRecord): void {

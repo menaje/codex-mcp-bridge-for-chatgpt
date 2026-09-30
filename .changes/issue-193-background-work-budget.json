@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Bound automatic recovery and connection reconciliation by indexed work slices so background maintenance cannot starve exact Job controls.",
+  "breaking": false,
+  "migration": "Upgrade state schema 28 to 29 to add indexed recovery, connection, and history maintenance paths; retain the verified pre-upgrade backup."
+}

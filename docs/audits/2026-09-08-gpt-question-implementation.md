@@ -97,3 +97,7 @@ npx tsx scripts/check-live-gpt-questions.ts --run-authenticated source=/absolute
 
 공식 소스의 `main` 내용은 검사 시점의 근거다. 세 CLI에서 특정 내부 도구가
 호출됐다는 실측 증거와 동일하게 취급하지 않는다.
+
+> 2026-09-29 정정: 당시 실 인증 검사기는 운영 인증을 임시 홈에 복사했다.
+> 현재 스크립트는 별도로 로그인한 지속 시험 프로필을 요구한다.
+> [시험 인증 정책](../codex-auth-connections.md#live-test-credentials)을 참고한다.

@@ -4,6 +4,7 @@ import type { CodexJobRegistry } from "./tools.js";
 import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
 import { ordinaryCodexQuestion, questionReference } from "./codexInputs.js";
 import { questionHash } from "./questionStore.js";
+import { InteractionNotDispatchedError } from "./interactionDispatch.js";
 import { defineToolResultContract, projectToolResult } from "./toolResultContracts.js";
 import { guidance, modelNextActionOutputSchema } from "./nextActions.js";
 
@@ -35,7 +36,7 @@ export const CODEX_INPUT_MODEL_OUTPUT_SCHEMAS = {
   }),
   codex_answer: z.strictObject({
     kind: z.literal("codex-answer"), jobId: identifier, questionRef: z.string(),
-    delivery: z.enum(["delivered", "uncertain"]), answersPersisted: z.literal(false),
+    delivery: z.enum(["delivered", "not-delivered", "uncertain"]), answersPersisted: z.literal(false),
     nextActions: z.array(modelNextActionOutputSchema)
   })
 };
@@ -73,7 +74,7 @@ export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistr
     title: "Answer a Codex Question",
     description: "Answer a current ordinary Codex question in this conversation. Refresh codex_status kind=input after any intervening user deliberation and use only the exact questionRef that remains current. This cannot grant approvals, supply authentication secrets, or start another turn.",
     inputSchema: z.strictObject({
-      requestId: z.string().uuid().describe("Idempotency UUID for this exact answer. Uncertain delivery must never be automatically resent."),
+      requestId: z.string().uuid().describe("Idempotency UUID for this exact answer. Retry the same ID only after a not-delivered response; uncertain delivery must never be resent."),
       jobId: identifier,
       questionRef: z.string().regex(/^[a-f0-9]{64}$/).describe("Exact current ordinary question reference. Unrelated Job progress does not invalidate it."),
       answers: answersSchema.describe("Answers keyed by the exact question IDs; preserve allowed option labels.")
@@ -93,7 +94,9 @@ export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistr
       return resultOf(await pending.promise);
     }
     const previous = store.delivery(scopeId, args.requestId, hash);
-    if (previous) return resultOf(answerResult(args.jobId, args.questionRef, previous === "delivered" ? "delivered" : "uncertain"));
+    if (previous && previous !== "not-delivered") {
+      return resultOf(answerResult(args.jobId, args.questionRef, previous === "delivered" ? "delivered" : "uncertain"));
+    }
     const operation = (async () => {
       const job = ownedJob(scopeId, args.jobId);
       if (job.status !== "running" || job.trackingState !== "connected" || !job.workerId || job.workerGeneration === undefined) {
@@ -109,7 +112,13 @@ export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistr
         await jobs.respondToInteraction(job.jobId, input.interactionId, { answers: args.answers });
         store.finishDelivery(scopeId, args.requestId, "delivered");
         return answerResult(job.jobId, args.questionRef, "delivered");
-      } catch {
+      } catch (error) {
+        if (error instanceof InteractionNotDispatchedError) {
+          try {
+            store.finishDelivery(scopeId, args.requestId, "not-delivered");
+            return answerResult(job.jobId, args.questionRef, "not-delivered");
+          } catch { /* Without durable proof of no send, do not permit a retry. */ }
+        }
         try { store.finishDelivery(scopeId, args.requestId, "uncertain"); } catch { /* Durable dispatch intent prevents resend. */ }
         return answerResult(job.jobId, args.questionRef, "uncertain");
       }
@@ -153,7 +162,7 @@ function resultOf(value: Record<string, unknown>) {
   });
 }
 
-function answerResult(jobId: string, questionRef: string, delivery: "delivered" | "uncertain") {
+function answerResult(jobId: string, questionRef: string, delivery: "delivered" | "not-delivered" | "uncertain") {
   return {
     kind: "codex-answer" as const,
     jobId,
@@ -162,6 +171,8 @@ function answerResult(jobId: string, questionRef: string, delivery: "delivered" 
     answersPersisted: false as const,
     nextActions: delivery === "delivered"
       ? [guidance("Read Codex input or its terminal result.")]
-      : [guidance("Delivery is uncertain. Inspect the exact Job; do not resend automatically or under a new request ID.")]
+      : delivery === "not-delivered"
+        ? [guidance("No answer was sent. Refresh this Job's input; if the exact question is still current and its original worker is verified, retry the identical answer with the same request ID.")]
+        : [guidance("Delivery is uncertain. Inspect the exact Job; do not resend automatically or under a new request ID.")]
   };
 }

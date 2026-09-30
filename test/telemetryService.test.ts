@@ -25,7 +25,10 @@ describe("isolated telemetry persistence", () => {
     const file = path.join(root, "telemetry.sqlite");
     const sourceStateDatabaseId = randomUUID();
     const service = await ChildProcessTelemetryService.start(file, {
-      sourceStateDatabaseId
+      sourceStateDatabaseId,
+      // Exercise the same overflow and recovery path without serializing
+      // thousands of child-process acknowledgements under parallel test load.
+      queueCapacity: 64
     });
     const locker = new Database(file);
     expect(service.recordRuntimeMeasurement({
@@ -45,7 +48,7 @@ describe("isolated telemetry persistence", () => {
     const jobId = randomUUID();
     const startedAt = Date.now();
     try {
-      for (let index = 0; index < 4_300; index += 1) {
+      for (let index = 0; index < 1_300; index += 1) {
         service.recordTransportObservation({
           kind: "status-wait-aborted",
           scopeId,
@@ -60,7 +63,7 @@ describe("isolated telemetry persistence", () => {
         connected: true,
         retained: 1_000
       });
-      expect(service.status().queued + service.status().inFlight).toBeLessThanOrEqual(4_097);
+      expect(service.status().queued + service.status().inFlight).toBeLessThanOrEqual(65);
       expect(service.status().dropped).toBeGreaterThan(0);
     } finally {
       locker.exec("ROLLBACK");

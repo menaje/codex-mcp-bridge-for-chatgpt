@@ -12,17 +12,24 @@ export class LazyCodexUpstream implements CodexUpstream {
   private closing?: Promise<void>;
   private readonly pendingResumeProtections = new Set<string>();
   constructor(private readonly kind: CodexBackendKind, private readonly features: BackendCapabilities,
-    private readonly factory: () => Promise<CodexUpstream>, private readonly dispose?: () => Promise<void>, private readonly guard?: () => void) {}
+    private readonly factory: () => Promise<CodexUpstream>, private readonly dispose?: () => Promise<void>, private readonly guard?: () => void | Promise<void>) {}
 
   async recoverExecution(...args: Args<"recoverExecution">) { return (await this.method("recoverExecution"))(...args); }
   async acknowledgeExecution(...args: Args<"acknowledgeExecution">) { return (await this.method("acknowledgeExecution"))(...args); }
+  ownsActiveExecution(...args: Args<"ownsActiveExecution">): boolean {
+    return this.instance?.ownsActiveExecution?.(...args) === true;
+  }
+  ownsRetainedResult(...args: Args<"ownsRetainedResult">): boolean {
+    return this.instance?.ownsRetainedResult?.(...args) === true;
+  }
   async detachExecution() { await this.starting?.catch(() => {}); await this.instance?.detachExecution?.(); }
   capabilities(): BackendCapabilities { return this.instance?.capabilities?.(this.kind) || this.features; }
   async prepareExecution(...args: Args<"prepareExecution">) { return (await this.method("prepareExecution"))(...args); }
   listTools() { return this.instance?.listTools() || Promise.resolve({ backendKind: this.kind, initialized: false, capabilities: this.features }); }
-  async callTool(...args: Args<"callTool">) { const instance = await this.get(); this.guard?.(); return instance.callTool(...args); }
+  async callTool(...args: Args<"callTool">) { const instance = await this.get(); await this.guard?.(); return instance.callTool(...args); }
   async listModels(...args: Args<"listModels">) { return (await this.method("listModels"))(...args); }
   async readAccountSnapshot() { return (await this.method("readAccountSnapshot"))(); }
+  async readAuthenticationPolicy() { return (await this.method("readAuthenticationPolicy"))(); }
   async readAccountRateLimits() { return (await this.method("readAccountRateLimits"))(); }
   async startThread(...args: Args<"startThread">) { return (await this.method("startThread"))(...args); }
   async continueThread(...args: Args<"continueThread">) { return (await this.method("continueThread"))(...args); }
@@ -68,7 +75,7 @@ export class LazyCodexUpstream implements CodexUpstream {
   }
   private async method<K extends keyof CodexUpstream>(name: K): Promise<NonNullable<CodexUpstream[K]>> {
     const instance = await this.get();
-    if (["prepareExecution", "listModels", "startThread", "continueThread", "forkThread"].includes(name)) this.guard?.();
+    if (["prepareExecution", "startThread", "continueThread", "forkThread"].includes(name)) await this.guard?.();
     const method = instance[name];
     if (typeof method !== "function") throw new Error(`Codex backend ${this.kind} does not support ${name}.`);
     return method.bind(instance) as NonNullable<CodexUpstream[K]>;

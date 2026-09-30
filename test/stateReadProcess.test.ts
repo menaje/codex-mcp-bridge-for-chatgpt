@@ -1,13 +1,17 @@
 import Database from "better-sqlite3";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
+import { CodexService, type CodexSessionAuthBoundaryEvidence } from "../src/codexService.js";
+import { projectCodexAccount } from "../src/codexAccount.js";
 import { ScopeResolver } from "../src/scopeResolver.js";
+import { SessionRegistry } from "../src/sessionRegistry.js";
 import { ChildProcessStateReadService } from "../src/stateReadProcess.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { UserSettingsStore } from "../src/userSettings.js";
+import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
 
 const roots: string[] = [];
 
@@ -30,6 +34,85 @@ async function waitFor(
 }
 
 describe("isolated state read projection", () => {
+  it("shows a last-confirmed file session through IPC and hides it when ownership is unavailable or changes", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "bridge-state-read-owner-"));
+    roots.push(root);
+    const home = path.join(root, "codex-home");
+    await mkdir(home);
+    await writeFile(path.join(home, "config.toml"), 'cli_auth_credentials_store = "file"\n');
+    const file = path.join(root, "state.sqlite");
+    const environment = {
+      ...process.env,
+      HOME: root,
+      CODEX_HOME: home,
+      CODEX_MCP_BRIDGE_NO_AUTH: "1",
+      CODEX_MCP_BRIDGE_CODEX: "/usr/bin/false",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime"),
+      CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: file,
+      CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE: path.join(root, "telemetry.sqlite"),
+      CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: path.join(root, "models.json"),
+      CODEX_MCP_BRIDGE_SKILLS_DIRECTORY: path.join(root, "skills")
+    };
+    const config = loadConfig(environment);
+    const store = new BridgeStateStore({ file });
+    new UserSettingsStore(config, { stateStore: store });
+    new ScopeResolver({ stateStore: store });
+    const owner = async (accountId: string) => {
+      const ownerHome = path.join(root, accountId);
+      await mkdir(ownerHome);
+      await writeFile(path.join(ownerHome, "config.toml"), 'cli_auth_credentials_store = "file"\n');
+      const authFile = path.join(ownerHome, "auth.json");
+      await writeFile(authFile, JSON.stringify({ auth_mode: "chatgpt", tokens: {
+        account_id: accountId, id_token: syntheticIdToken("fixture-user", accountId) }
+      }));
+      const codex = new CodexService({ ...environment, CODEX_HOME: ownerHome });
+      codex.setAuthPolicyReader(async () => ({
+        config: { config: { cliAuthCredentialsStore: "file" } }, requirements: { requirements: null }
+      }));
+      codex.setAccountReader(async () => projectCodexAccount({
+        account: { type: "chatgpt", email: "same@example.invalid" },
+        workspaceRouting: { chatgptAccountId: accountId, backendOrigin: "https://example.invalid",
+          accountRoutingOverride: "NO_CONSTRAINT" }
+      }, null));
+      await codex.assertCurrentAdmission();
+      await rm(authFile);
+      return codex;
+    };
+    const firstOwner = await owner("workspace-a");
+    const secondOwner = await owner("workspace-b");
+    const sessions = new SessionRegistry({ stateStore: store, allowedRoots: [root],
+      authBoundary: () => firstOwner.sessionAuthBoundary() });
+    const now = Date.now();
+    sessions.record({ threadId: "file-thread", scopeId: "11111111-1111-4111-8111-111111111111",
+      backendKind: "app-server", cwd: root, sandbox: "read-only", updatedAt: now,
+      createdAt: now, lastUsedAt: now });
+    expect(sessions.list()).toHaveLength(1);
+    let evidence: CodexSessionAuthBoundaryEvidence | null = firstOwner.sessionAuthBoundary();
+    expect(evidence.ownerStatus).toBe("last-confirmed");
+    const readOnlyStore = new BridgeStateStore({ file, readOnly: true });
+    expect(new SessionRegistry({ stateStore: readOnlyStore, allowedRoots: config.allowedRoots,
+      projectionOnly: true, authBoundary: { key: evidence.key, allowLegacyShared: false } }).list()).toHaveLength(1);
+    readOnlyStore.close();
+    const service = await ChildProcessStateReadService.start(file, environment,
+      { authBoundary: () => evidence });
+    try {
+      expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(1);
+      const previousProcess = service.processId;
+      process.kill(previousProcess!, "SIGKILL");
+      await waitFor(() => service.health().ready && service.processId !== previousProcess);
+      expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(1);
+      evidence = null;
+      expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(0);
+      evidence = secondOwner.sessionAuthBoundary();
+      expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(0);
+      evidence = firstOwner.sessionAuthBoundary();
+      expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(1);
+    } finally {
+      await service.close();
+      store.close();
+    }
+  }, 15_000);
+
   it("reads current WAL state without registering a writer and recovers its own process", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "bridge-state-read-"));
     roots.push(root);
@@ -132,9 +215,23 @@ describe("isolated state read projection", () => {
       process.kill(processId!, "SIGCONT");
       stopped = false;
       await waitFor(() => service.health().inFlight === 0);
-      await expect(service.settingsSnapshot()).resolves.toMatchObject({
+      // A 50 ms test-only deadline can still expire after SIGCONT when other
+      // workers are scheduled. Verify eventual reuse without changing that
+      // per-request deadline or accepting a leaked abandoned request.
+      let snapshot: Awaited<ReturnType<typeof service.settingsSnapshot>> | undefined;
+      const recoveryDeadline = Date.now() + 5_000;
+      while (Date.now() < recoveryDeadline && !snapshot) {
+        await waitFor(() => service.health().inFlight === 0);
+        try {
+          snapshot = await service.settingsSnapshot();
+        } catch (error) {
+          if (!(error instanceof Error) || !error.message.includes("STATE_READ_STALE")) throw error;
+        }
+      }
+      expect(snapshot).toMatchObject({
         settings: { settingsRevision: 1, uiLocalePreference: "ko" }
       });
+      await waitFor(() => service.health().inFlight === 0);
     } finally {
       if (stopped) {
         try { process.kill(processId!, "SIGCONT"); } catch { /* already exited */ }

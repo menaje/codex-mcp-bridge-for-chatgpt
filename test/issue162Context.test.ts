@@ -230,7 +230,7 @@ if (process.argv.includes("app-server")) {
       }
       await expect(supervisor.codexRuntime({ action: "remove-billing" })).resolves.toMatchObject({ billing: { configured: false } });
       await expect(supervisor.codexRuntime({ action: "select", selectionId: "different" })).rejects.toThrow("CODEX_ENVIRONMENT_PENDING");
-      await expect(supervisor.startLogin()).rejects.toThrow("CODEX_ENVIRONMENT_PENDING");
+      await expect(supervisor.startLogin()).rejects.toThrow("CODEX_SHARED_LOGIN_DISABLED");
     } finally {
       await releaseLease?.();
       await supervisor.close({ runtime: "force-stop" });

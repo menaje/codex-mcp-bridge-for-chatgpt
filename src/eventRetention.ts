@@ -1,8 +1,9 @@
 import type Database from "better-sqlite3";
+import { performance } from "node:perf_hooks";
 import { tokenCounts } from "./tokenUsage.js";
 import { parseJsonTextStrict } from "./textIntegrity.js";
 
-export const EVENT_RETENTION_LIMITS = { perJob: 256, rows: 50_000, bytes: 64 * 1024 * 1024, payloadBytes: 8192, metadataMs: 7 * 86400_000, batch: 500 };
+export const EVENT_RETENTION_LIMITS = { perJob: 256, rows: 50_000, bytes: 64 * 1024 * 1024, payloadBytes: 8192, metadataMs: 7 * 86400_000, batch: 64 };
 /** Upgrade-only schema introduced at v14. Current databases use stateSchema.ts. */
 export const V14_EVENT_RETENTION_MIGRATION_SCHEMA = `
   CREATE TABLE IF NOT EXISTS job_summaries(job_id TEXT PRIMARY KEY, payload TEXT NOT NULL) STRICT;
@@ -124,12 +125,12 @@ export class EventRetention {
   private enforceBudget(): number {
     let removed = 0;
     // Fixed chunks amortize budget checks and avoid retaining a single oversized legacy row.
-    for (let batch = 0; batch < 10; batch++) {
+    for (let batch = 0; batch < 1; batch++) {
       const budget = this.db.prepare("SELECT rows,bytes FROM event_budget WHERE id=1").get() as { rows: number; bytes: number };
       if (budget.rows <= EVENT_RETENTION_LIMITS.rows && budget.bytes <= EVENT_RETENTION_LIMITS.bytes) break;
-      const oldest = this.db.prepare("SELECT event_id,job_id,event_type,payload FROM job_events ORDER BY event_id LIMIT 500").all() as Array<{event_id:number;job_id:string;event_type:string;payload:string}>;
+      const oldest = this.db.prepare("SELECT event_id,job_id,event_type,payload FROM job_events ORDER BY event_id LIMIT ?").all(EVENT_RETENTION_LIMITS.batch) as Array<{event_id:number;job_id:string;event_type:string;payload:string}>;
       for (const row of oldest) if (row.event_type.startsWith("app-usage")) this.prepare({ jobId: row.job_id, eventType: row.event_type, payload: parseStoredJson(row.payload, "job event") }, true, false);
-      removed += this.db.prepare("DELETE FROM job_events WHERE event_id IN (SELECT event_id FROM job_events ORDER BY event_id LIMIT 500)").run().changes;
+      removed += this.db.prepare("DELETE FROM job_events WHERE event_id IN (SELECT event_id FROM job_events ORDER BY event_id LIMIT ?)").run(EVENT_RETENTION_LIMITS.batch).changes;
     }
     return removed;
   }
@@ -146,44 +147,54 @@ export class EventRetention {
     perJobEventsRemoved: number;
     budgetEventsRemoved: number;
   } {
+    const deadline = performance.now() + 25;
     const saved = this.db.prepare("SELECT cursor_event_id FROM event_retention_state WHERE singleton=1")
       .get() as {cursor_event_id:number};
     const cursor = saved.cursor_event_id;
     const rows = this.db.prepare(`SELECT e.event_id,e.job_id,e.event_type,e.payload,j.archived_at FROM job_events e
       JOIN jobs j ON j.job_id=e.job_id WHERE e.event_id>? ORDER BY e.event_id LIMIT ?`).all(cursor, EVENT_RETENTION_LIMITS.batch) as Array<{event_id:number;job_id:string;event_type:string;payload:string;archived_at:number|null}>;
+    const processedRows: typeof rows = [];
+    const checkedJobs = new Set<string>();
+    let perJobEventsRemoved = 0;
     for (const row of rows) {
+      if (processedRows.length && performance.now() >= deadline) break;
       const payload = this.prepare({ jobId: row.job_id, eventType: row.event_type, payload: parseStoredJson(row.payload, "job event") }, row.archived_at !== null, false);
       if (payload !== row.payload) {
         this.db.prepare("UPDATE job_events SET payload=? WHERE event_id=?").run(payload, row.event_id);
       }
+      if (!checkedJobs.has(row.job_id)) {
+        perJobEventsRemoved += this.enforcePerJob(row.job_id);
+        checkedJobs.add(row.job_id);
+      }
+      processedRows.push(row);
     }
     this.db.prepare("UPDATE event_retention_state SET cursor_event_id=? WHERE singleton=1")
-      .run(rows.at(-1)?.event_id || cursor);
-    const expired = this.db.prepare("SELECT event_id,job_id,event_type,payload FROM job_events WHERE created_at<? ORDER BY event_id LIMIT 500").all(now - EVENT_RETENTION_LIMITS.metadataMs) as Array<{event_id:number;job_id:string;event_type:string;payload:string}>;
+      .run(processedRows.at(-1)?.event_id || cursor);
+    const expired = performance.now() < deadline
+      ? this.db.prepare("SELECT event_id,job_id,event_type,payload FROM job_events WHERE created_at<? ORDER BY event_id LIMIT ?").all(now - EVENT_RETENTION_LIMITS.metadataMs,EVENT_RETENTION_LIMITS.batch) as Array<{event_id:number;job_id:string;event_type:string;payload:string}>
+      : [];
     let expiredJobEventsRemoved = 0;
+    let expiredVisited = 0;
     for (const row of expired) {
+      if (expiredVisited++ && performance.now() >= deadline) break;
       if (row.event_type.startsWith("app-usage")) this.prepare({jobId:row.job_id,eventType:row.event_type,payload:parseStoredJson(row.payload, "job event")}, true, false);
       expiredJobEventsRemoved += this.db.prepare("DELETE FROM job_events WHERE event_id=?")
         .run(row.event_id).changes;
     }
     // Activity events contain control metadata, never model output. They are also bounded.
-    const expiredActivityEventsRemoved = this.maintenance.deleteActivityEvents(
+    const expiredActivityEventsRemoved = performance.now() < deadline ? this.maintenance.deleteActivityEvents(
       now - EVENT_RETENTION_LIMITS.metadataMs,
       EVENT_RETENTION_LIMITS.batch,
       EVENT_RETENTION_LIMITS.rows
-    );
-    const expiredResultHoldsRemoved = this.maintenance.deleteExpiredResultHolds(
+    ) : 0;
+    const expiredResultHoldsRemoved = performance.now() < deadline ? this.maintenance.deleteExpiredResultHolds(
       now,
       EVENT_RETENTION_LIMITS.batch
-    );
-    let perJobEventsRemoved = 0;
-    for (const jobId of new Set(rows.map(row => row.job_id))) {
-      perJobEventsRemoved += this.enforcePerJob(jobId);
-    }
-    const budgetEventsRemoved = this.enforceBudget();
+    ) : 0;
+    const budgetEventsRemoved = performance.now() < deadline ? this.enforceBudget() : 0;
     const budget = this.db.prepare("SELECT rows,bytes FROM event_budget WHERE id=1").get() as {rows:number;bytes:number};
     return {
-      processed: rows.length,
+      processed: processedRows.length,
       ...budget,
       freePages: Number(this.db.pragma("freelist_count", { simple: true })),
       expiredJobEventsRemoved,

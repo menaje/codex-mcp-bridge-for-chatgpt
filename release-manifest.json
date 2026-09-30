@@ -16,6 +16,8 @@
       "LICENSE",
       "UPSTREAM.md",
       "docs",
+      "scripts/auth-selection.mjs",
+      "scripts/auth-selection.d.mts",
       "scripts/build-fingerprint.mjs",
       "scripts/child-shutdown.mjs",
       "scripts/launcher-options.mjs",
@@ -97,7 +99,7 @@
     "releaseCatalogSha256": "56a20b4eb7c2777c7b2b257042b60707fa58f58e90fcbd0b84ce2f8db4210c3e"
   },
   "stateCompatibility": {
-    "currentSchema": 27,
+    "currentSchema": 30,
     "supportedSourceSchemas": [
       3,
       4,
@@ -122,7 +124,10 @@
       23,
       24,
       25,
-      26
+      26,
+      27,
+      28,
+      29
     ],
     "unsupportedSourceSchemas": [
       1,
@@ -134,7 +139,7 @@
       "job-state-json"
     ],
     "migrationCatalog": "state-migrations.json",
-    "migrationCatalogSha256": "f675c1a66eeac35b7100cfd5e880b98b370e9176a65b23a37147ef2987369e28",
+    "migrationCatalogSha256": "2f9152687820b43925ac79533a152aa45c7cdc405adc8d6ec4f1c13b8b9df82f",
     "stateProfilePolicy": "release-stage-isolated-v1",
     "rollbackPolicy": "verified-original-before-service-open-v1",
     "persistentContracts": {

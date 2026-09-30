@@ -67,7 +67,7 @@ const RELEASE_ASSET_NAMES = [
   "macos-x64-app",
   "release-checksums"
 ];
-const STATE_SOURCE_SCHEMAS = Array.from({ length: 24 }, (_, index) => index + 3);
+const STATE_SOURCE_SCHEMAS = Array.from({ length: 27 }, (_, index) => index + 3);
 const STATE_MIGRATION_DEFINITIONS = [
   [3, 4, "migrateV3ToV4", "a49f5314925897e254c6f34dd9c956cbf31eb1d8", [
     ["src/stateStore.ts", "stableUuid"], ["src/stateStore.ts", "normalizeOptionalString"],
@@ -144,6 +144,15 @@ const STATE_MIGRATION_DEFINITIONS = [
   ]],
   [26, 27, "migrateV26ToV27", "9c97bde23da6533cf51c56e40a38b37650577a2f", [
     ["src/stateSchema.ts", "V27_DECISION_CARD_RETIREMENT_MIGRATION_SCHEMA"]
+  ]],
+  [27, 28, "migrateV27ToV28", "4c82f267886df895c06b425b7f349c6ff5534fd9", [
+    ["src/stateSchema.ts", "V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA"]
+  ]],
+  [28, 29, "migrateV28ToV29", "830eec5cc696c607f550b8df189130ffb30655d2", [
+    ["src/stateSchema.ts", "V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA"]
+  ]],
+  [29, 30, "migrateV29ToV30", "2a177a258ace53624a6c6b839f803bf24e028ad5", [
+    ["src/stateSchema.ts", "V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA"]
   ]]
 ];
 const STATE_FIXTURE_DEFINITIONS = [
@@ -347,7 +356,7 @@ export function validateReleaseManifest(value) {
     ],
     "stateCompatibility"
   );
-  if (stateCompatibility.currentSchema !== 27) fail("stateCompatibility.currentSchema must be 27");
+  if (stateCompatibility.currentSchema !== 30) fail("stateCompatibility.currentSchema must be 30");
   if (
     !Array.isArray(stateCompatibility.supportedSourceSchemas) ||
     stateCompatibility.supportedSourceSchemas.length !== STATE_SOURCE_SCHEMAS.length ||
@@ -686,7 +695,7 @@ export function expectedStateMigrationCatalog(repoRoot = DEFAULT_REPO_ROOT) {
   return {
     catalogVersion: 1,
     immutabilityPolicy: "append-only-after-release-v1",
-    currentSchema: 27,
+    currentSchema: 30,
     supportedSourceSchemas: [...STATE_SOURCE_SCHEMAS],
     unsupportedSourceSchemas: [1, 2],
     retiredLegacyImports: [

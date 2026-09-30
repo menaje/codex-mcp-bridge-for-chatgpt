@@ -39,6 +39,17 @@ model-authoritative answer or a completed delivery without its answer.
 `replay` distinguishes a stored logical-request result from a new admission.
 `resultAvailability` and `resultOmitted` state whether an exact result must be
 read separately or was deliberately not included.
+An available answer in a generated tool result is a server **offer**, not proof
+that ChatGPT received or used it. Host acceptance/rejection/uncertainty and
+Activity completion are separate [evidence stages](execution-authority-and-evidence.md).
+An exact `codex_status` Job item includes `completionEvidence` for the last
+committed Job record, owner observation, terminal origin, prior result offer,
+host delivery record and Activity lifecycle. This evidence does not claim that
+the current tool response reached GPT.
+`ownerTerminalResult` alongside `jobRecord='active-last-known'` distinguishes
+a result received from the original execution owner from its still-active
+durable Job row. This transient observation is never an early
+terminal commit, result offer, or owner ACK.
 
 After result retention expires, an exact `codex_status` Job/request query can
 return a scoped terminal admission receipt with `replay: true`, the original

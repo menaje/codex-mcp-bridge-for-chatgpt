@@ -59,9 +59,11 @@ export function createStdioBridgeRuntime(
   const ownsStateStore = options.stateStore === undefined;
   const sessions = new SessionRegistry({
     stateStore,
-    allowedRoots: config.allowedRoots
+    allowedRoots: config.allowedRoots,
+    authBoundary: config.codexService ? () => config.codexService!.sessionAuthBoundary() : undefined
   });
   const jobs = new CodexJobRegistry({
+    authBoundary: config.codexService ? () => config.codexService!.currentExecutionAuthBoundary() : undefined,
     maxConcurrentJobs: config.maxConcurrentJobs,
     ttlMs: config.jobTtlMs,
     maxJobs: config.maxRetainedJobs,

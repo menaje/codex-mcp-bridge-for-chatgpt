@@ -105,7 +105,14 @@ export class SupervisedProcessTreeRegistry {
     tree.rootExited ||= snapshot.rootExited === true;
     for (const entry of snapshot.processes) {
       if (!validProcessIdentity(entry)) continue;
-      tree.captured.set(entry.pid, { ...entry });
+      if (!tree.captured.has(entry.pid) &&
+          tree.captured.size >= MAX_SUPERVISED_PROCESSES_PER_TREE) continue;
+      const previous = tree.captured.get(entry.pid);
+      tree.captured.set(entry.pid, {
+        ...entry,
+        startedAt: entry.startedAt ?? (previous?.processGroupId === entry.processGroupId
+          ? previous.startedAt : undefined)
+      });
     }
   }
 
@@ -234,17 +241,32 @@ async function terminateTree(
   observeTree(tree, rows);
   let running = runningTreeProcesses(tree, rows);
   if (running.length === 0) {
-    // An unobserved root/group is not verified cleanup and retains its slot.
-    return !rows.some(row => !isZombie(row) && row.processGroupId === tree.root.processGroupId);
+    // A live retained orphan with a missing birth stamp is not verified exit.
+    return !hasPotentialLiveOwner(tree, rows);
   }
   signalTreeProcesses(running, rows, "SIGTERM");
-  running = await waitForTreeExit(tree, graceMs, readTable);
-  if (running.length === 0) return true;
+  let observed = await waitForTreeExit(tree, graceMs, readTable);
+  running = observed.running;
+  if (running.length === 0) return !hasPotentialLiveOwner(tree, observed.rows);
   rows = await readTable();
   observeTree(tree, rows);
   running = runningTreeProcesses(tree, rows);
   signalTreeProcesses(running, rows, "SIGKILL");
-  return (await waitForTreeExit(tree, graceMs, readTable)).length === 0;
+  observed = await waitForTreeExit(tree, graceMs, readTable);
+  return observed.running.length === 0 && !hasPotentialLiveOwner(tree, observed.rows);
+}
+
+function hasPotentialLiveOwner(
+  tree: SupervisedProcessTree,
+  rows: readonly ProcessTableEntry[]
+): boolean {
+  return rows.some(row => {
+    if (isZombie(row)) return false;
+    if (row.processGroupId === tree.root.processGroupId) return true;
+    const captured = tree.captured.get(row.pid);
+    return captured?.processGroupId === row.processGroupId &&
+      (captured.startedAt === undefined || row.startedAt === undefined);
+  });
 }
 
 function observeTree(
@@ -252,6 +274,18 @@ function observeTree(
   rows: readonly ProcessTableEntry[]
 ): void {
   const current = new Map(rows.map((entry) => [entry.pid, entry] as const));
+  // A successful process-table read is a complete snapshot. Reclaim exited
+  // or reused PIDs before applying the live-tree bound. Keep every verified
+  // orphan that still appears in this snapshot, even if its root has exited.
+  for (const [pid, captured] of tree.captured) {
+    const observed = current.get(pid);
+    if (!observed || isZombie(observed) ||
+        observed.processGroupId !== captured.processGroupId ||
+        (captured.startedAt !== undefined && observed.startedAt !== undefined &&
+         observed.startedAt !== captured.startedAt)) {
+      tree.captured.delete(pid);
+    }
+  }
   const children = new Map<number, ProcessTableEntry[]>();
   for (const row of rows) {
     if (isZombie(row)) continue;
@@ -292,11 +326,14 @@ function observeTree(
         psExitCode: null, osCode: null
       });
     }
+    const previous = tree.captured.get(row.pid);
     tree.captured.set(row.pid, {
       pid: row.pid,
       parentPid: row.parentPid,
       processGroupId: row.processGroupId,
-      startedAt: row.startedAt
+      // A missing birth stamp cannot replace an earlier verified identity.
+      startedAt: row.startedAt ?? (previous?.processGroupId === row.processGroupId
+        ? previous.startedAt : undefined)
     });
     if (!ownedGroups.has(row.processGroupId)) {
       ownedGroups.add(row.processGroupId);
@@ -327,14 +364,13 @@ async function waitForTreeExit(
   tree: SupervisedProcessTree,
   timeoutMs: number,
   readTable: () => Promise<ProcessTableEntry[]>
-): Promise<ProcessTableEntry[]> {
+): Promise<{ running: ProcessTableEntry[]; rows: ProcessTableEntry[] }> {
   const deadline = Date.now() + timeoutMs;
   let running: ProcessTableEntry[] = [];
   do {
     const rows = await readTable();
     running = runningTreeProcesses(tree, rows);
-    if (running.length === 0) return running;
-    if (Date.now() >= deadline) return running;
+    if (running.length === 0 || Date.now() >= deadline) return { running, rows };
     await delay(PROCESS_EXIT_POLL_MS);
   } while (true);
 }
@@ -475,7 +511,8 @@ export function readProcessTable(
             Number.isSafeInteger(entry.pid) && entry.pid > 0 &&
             Number.isSafeInteger(entry.parentPid) && entry.parentPid >= 0 &&
             Number.isSafeInteger(entry.processGroupId) && entry.processGroupId > 0 &&
-            typeof entry.state === "string" && entry.state.length > 0
+            typeof entry.state === "string" && entry.state.length > 0 &&
+            typeof entry.startedAt === "string" && entry.startedAt.length > 0
           )) throw new Error("Invalid process table rows.");
         resolve(entries);
       } catch {

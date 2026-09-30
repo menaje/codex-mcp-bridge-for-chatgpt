@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Allow idle authentication restarts while preserving completed results and their delivery receipts.",
+  "breaking": false,
+  "migration": null
+}

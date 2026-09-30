@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import "./app-server-schema-fixture.mjs";
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import readline from "node:readline";
 import { threadPolicyResponse, assertTurnPolicy } from "./app-server-policy-fixture.mjs";
 
@@ -96,11 +97,35 @@ lines.on("line", (line) => {
     return;
   }
 
+  if (message.method === "config/read") {
+    response(message.id, { config: process.env.CODEX_TEST_AUTH_CONFIG
+      ? JSON.parse(process.env.CODEX_TEST_AUTH_CONFIG) : {}, origins: {} });
+    return;
+  }
+  if (message.method === "configRequirements/read") {
+    response(message.id, { requirements: process.env.CODEX_TEST_AUTH_REQUIREMENTS
+      ? JSON.parse(process.env.CODEX_TEST_AUTH_REQUIREMENTS) : null });
+    return;
+  }
+  if (message.method === "account/logout") {
+    if (process.env.CODEX_TEST_AUTH_LOGOUT_LOST_RESPONSE === "1") {
+      send({ id: message.id, error: { code: -32000, message: "synthetic uncertain logout" } });
+      return;
+    }
+    const file = path.join(process.env.CODEX_HOME || "", "auth.json");
+    if (process.env.CODEX_HOME && existsSync(file)) unlinkSync(file);
+    response(message.id, {});
+    return;
+  }
+
   if (message.method === "account/read") {
     response(message.id, {
       account: process.argv.includes("--api-account") ? { type: "apiKey" }
         : { type: "chatgpt", email: "private-fixture@example.com", planType: "pro" },
-      requiresOpenaiAuth: true
+      requiresOpenaiAuth: true,
+      workspaceRouting: process.env.CODEX_TEST_ACCOUNT_ID
+        ? { chatgptAccountId: process.env.CODEX_TEST_ACCOUNT_ID,
+          backendOrigin: "https://example.invalid", accountRoutingOverride: "NO_CONSTRAINT" } : null
     });
     return;
   }
@@ -108,6 +133,7 @@ lines.on("line", (line) => {
   if (message.method === "account/rateLimits/read") {
     rateLimitsReadCount += 1;
     response(message.id, {
+      ...(process.env.CODEX_TEST_ACCOUNT_ID ? { accountId: process.env.CODEX_TEST_ACCOUNT_ID } : {}),
       rateLimits: {
         limitId: "codex",
         primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: 1_900_000_000 },
