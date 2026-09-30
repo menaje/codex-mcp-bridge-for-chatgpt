@@ -26,7 +26,13 @@ the connection can be requested. A failed candidate remains separate from the
 currently applied connection. Canceling a candidate does not replay an old
 OAuth file or log out another client.
 The UI distinguishes a running login, a CLI process that exited successfully,
-a failed process, and an unconfirmed result after Helper restart. Successful
+a failed process, and an unconfirmed result. An API-login deadline, input-channel
+failure, or post-spawn process error requests termination but does not prove
+the credential writer has exited. The candidate remains `login-unconfirmed`
+and cannot be retried or verified until exit is observed. A Helper replacement
+also preserves this block when the old writer cannot be observed. Canceling
+an unresolved candidate retains and quarantines its profile; a new candidate
+gets a different home. A late exit cannot update that new candidate. Successful
 CLI exit still requires a separate account and model verification.
 
 When the existing local Codex configuration contains a parseable top-level

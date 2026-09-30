@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,10 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import Database from "better-sqlite3";
 import { loadConfig } from "../src/config.js";
 import { CodexService } from "../src/codexService.js";
+import { CodexRuntimeManager } from "../src/codexRuntime.js";
+import { createExecutionRuntime } from "../src/executionRuntime.js";
+import { ChildProcessCodexExecutionService } from "../src/executionServiceProcess.js";
+import type { ExecutionPeer } from "../src/executionTransport.js";
 import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import { createHttpServer, type BridgeHttpServer } from "../src/server.js";
 import { BRIDGE_SKILL_LIMITS } from "../src/skillLibrary.js";
@@ -349,6 +353,140 @@ describe("current bridge tool contracts", () => {
           authBoundary: service.sessionAuthBoundary().key }));
       expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(jobId);
     }
+  );
+
+  it.each(["queued request", "completed response"] as const)(
+    "preserves the original Job through a lost %s, external auth change and transport ACK retries", async phase => {
+      await client.close();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+      vi.spyOn(CodexRuntimeManager.prototype, "acquire").mockResolvedValue({
+        selection: { id: "fixture", source: "terminal", command, physicalPath: command, version: "0.153.3" },
+        release: async () => {}
+      });
+      const home = path.join(root, "transport-home");
+      const turns = path.join(root, "transport-turns.jsonl");
+      await mkdir(home);
+      const login = (user: string) => JSON.stringify({ auth_mode: "chatgpt", tokens: {
+        account_id: "transport-workspace", id_token: syntheticIdToken(user, "transport-workspace")
+      } });
+      const authFile = path.join(home, "auth.json");
+      await writeFile(authFile, login("user-a"));
+      const environment = { PATH: process.env.PATH || "", HOME: root, CODEX_HOME: home,
+        CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime"),
+        CODEX_TEST_ACCOUNT_ID: "transport-workspace", CODEX_TEST_PROCESS_SCOPED_THREAD_IDS: "1",
+        CODEX_TEST_TURN_OBSERVATION: turns };
+      config.upstreamPoolSize = 1;
+      const runtime = createExecutionRuntime(config, {}, environment, { isolateCodexExecution: true });
+      await runtime.prepareExecution({ backendKind: "app-server", contextMode: "fresh" });
+      const execution = (runtime as unknown as {
+        backends: Map<string, { instance: ChildProcessCodexExecutionService }>
+      }).backends.get("app-server")!.instance;
+      const peer = (execution as unknown as { child: ExecutionPeer }).child;
+      const generation = execution.health().generation;
+      const executorPid = execution.processId;
+      const requests: Array<{ requestId: string; generation: string; args: unknown[] }> = [];
+      const acks: Array<{ requestId: string; generation: string }> = [];
+      const acknowledgedOwners: Array<{ status: string; authBoundary?: string }> = [];
+      let queued = false, dropQueued = phase === "queued request", jobId = "";
+      let droppedResult = false, droppedAck = false, droppedReply = false, reconnectedAck = false;
+      const send = peer.send.bind(peer);
+      peer.send = (message: any, callback) => {
+        if (message.type === "request" && message.retained) {
+          requests.push(structuredClone(message));
+          if (dropQueued) { queued = true; callback?.(); return true; }
+        }
+        if (message.type === "acknowledge" && message.requestId === jobId) {
+          acks.push(structuredClone(message));
+          const persisted = state.listJobs().find(job => job.jobId === jobId)!;
+          acknowledgedOwners.push({ status: persisted.status, authBoundary: persisted.authBoundary });
+          if (!droppedAck) { droppedAck = true; callback?.(); return true; }
+        }
+        return send(message, callback);
+      };
+      const receiver = execution as unknown as { onMessage(message: any): void };
+      const receive = receiver.onMessage.bind(execution);
+      receiver.onMessage = message => {
+        if (message.type === "response" && message.requestId === jobId && !droppedResult) {
+          droppedResult = true; peer.disconnect(); return;
+        }
+        if (message.type === "acknowledged" && message.requestId === jobId) {
+          if (!droppedReply) { droppedReply = true; return; }
+          if (!reconnectedAck) { reconnectedAck = true; peer.disconnect(); return; }
+        }
+        receive(message);
+      };
+      server = createHttpServer(config, runtime, new FixtureCatalog(), { stateStore: state });
+      client = new Client({ name: "auth-transport-owner-test", version: "1.0.0" },
+        { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+      await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+      endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+      await client.connect(new StreamableHTTPClientTransport(endpoint));
+      try {
+        const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+        const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+        const project = settings.current.projects[0]!;
+        const arguments_ = { scopeId: randomUUID(), requestId: randomUUID(),
+          taskContractVersion: properties.taskContractVersion?.const,
+          executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+          prompt: phase === "queued request" ? "original queued transport work" : "hold original transport work",
+          project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+          selection };
+        const admitted = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
+        expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+        jobId = (admitted.structuredContent as { jobId: string }).jobId;
+        await eventually(() => phase === "queued request" ? queued : Boolean(
+          state.listJobs().find(job => job.jobId === jobId)?.upstreamRequestId));
+        const original = state.listJobs().find(job => job.jobId === jobId)!;
+        expect(original.authBoundary).toMatch(/^[a-f0-9]{64}$/);
+        await writeFile(authFile, login("user-b"));
+        const foreign = await client.callTool({ name: "codex_task", _meta: metadata,
+          arguments: { ...arguments_, requestId: randomUUID(), prompt: "new owner must not execute" } });
+        expect(foreign.isError).toBe(true);
+        expect(JSON.stringify(foreign)).toContain("CODEX_AUTH_CHANGED");
+        expect(config.codexService!.currentExecutionAuthBoundary()).toBeNull();
+        expect(state.listJobs()).toHaveLength(1);
+        if (phase === "queued request") { dropQueued = false; peer.disconnect(); }
+        else await runtime.steerThread(original.threadId!, "finish the original transport Job");
+        await eventually(() => state.listJobs().some(job => job.jobId === jobId && job.status === "completed"), 10_000);
+        await eventually(() => droppedAck && droppedReply && reconnectedAck &&
+          execution.health().pendingAcknowledgements === 0, 10_000);
+        const completed = state.listJobs().find(job => job.jobId === jobId)!;
+        expect(completed.authBoundary).toBe(original.authBoundary);
+        if (phase === "completed response") expect(completed).toMatchObject({
+          workerId: original.workerId, workerGeneration: original.workerGeneration,
+          upstreamRequestId: original.upstreamRequestId, threadId: original.threadId
+        });
+        expect(completed.result).toBeDefined();
+        expect(state.listSessions()).toContainEqual(expect.objectContaining({
+          threadId: completed.threadId, authBoundary: original.authBoundary
+        }));
+        expect(droppedResult).toBe(true);
+        expect(requests.length).toBeGreaterThan(1);
+        expect(requests.every(request => request.requestId === jobId && request.generation === generation &&
+          JSON.stringify(request.args) === JSON.stringify(requests[0]!.args))).toBe(true);
+        expect(acks.length).toBeGreaterThanOrEqual(4);
+        expect(acks.every(ack => ack.requestId === jobId && ack.generation === generation)).toBe(true);
+        expect(acknowledgedOwners.every(owner => owner.status === "completed" &&
+          owner.authBoundary === original.authBoundary)).toBe(true);
+        expect(execution.processId).toBe(executorPid);
+        expect(execution.health().generation).toBe(generation);
+        const observed = (await readFile(turns, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+        expect(observed).toHaveLength(1);
+        expect(observed[0]).toMatchObject({ threadId: completed.threadId, turnId: completed.upstreamRequestId });
+        const status = await client.callTool({ name: "codex_status", _meta: metadata,
+          arguments: { query: { kind: "job", id: jobId } } });
+        expect(status.isError, JSON.stringify(status)).not.toBe(true);
+        expect(status.structuredContent).toMatchObject({ items: [expect.objectContaining({ id: jobId, state: "completed" })] });
+        expect((await readFile(turns, "utf8")).trim().split("\n")).toHaveLength(1);
+      } finally {
+        dropQueued = false;
+        peer.send = send;
+        receiver.onMessage = receive;
+        await runtime.close();
+        vi.restoreAllMocks();
+      }
+    }, 25_000
   );
 
   it.each(["host-accepted", "acceptance-unknown"] as const)(

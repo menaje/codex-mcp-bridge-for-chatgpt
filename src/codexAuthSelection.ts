@@ -29,7 +29,7 @@ const candidateSchema = z.strictObject({
     z.strictObject({ kind: z.literal("bridge-api"), profileId: z.string().uuid() })
   ]),
   reused: z.boolean().default(false),
-  status: z.enum(["prepared", "login-started", "login-completed", "login-failed", "verified"]),
+  status: z.enum(["prepared", "login-started", "login-unconfirmed", "login-completed", "login-failed", "verified"]),
   accountKey: z.string().nullable(),
   accountEmail: z.string().max(320).nullable().default(null),
   workspaceName: z.string().max(160).nullable().default(null),
@@ -99,6 +99,7 @@ const initialState = (): AuthSelectionState => ({ schemaVersion: 1, revision: 0,
   pendingWorkspaceKey: null, pendingBillingTarget: null, candidate: null,
   pendingVerification: null, activation: null, lastActivationResolution: null, profiles: [], knownHomes: [] });
 const candidateLoginProcesses = new Map<string, ChildProcess>();
+type ApiLoginOutcome = "completed" | "failed" | "unconfirmed";
 type LocalAuthPolicy = Pick<CodexLocalAuthPolicy, "forcedMethod" | "workspaceId">;
 
 /** Stores choices, a local account label, and opaque owner correlations; Codex owns credentials. */
@@ -257,7 +258,7 @@ export class CodexAuthSelectionManager {
     if (!apiKey.trim() || apiKey.length > 32768 || apiKey.includes("\n")) {
       throw new Error("CODEX_AUTH_API_KEY_INVALID: Enter a valid API key.");
     }
-    let completion: Promise<boolean> | undefined;
+    let completion: Promise<ApiLoginOutcome> | undefined;
     await withRuntimeLock(this.root, "auth-selection", async () => {
       const state = await this.readState();
       this.assertNoActivation(state);
@@ -287,41 +288,84 @@ export class CodexAuthSelectionManager {
         await atomicRuntimeJson(this.file, state);
         throw new Error("CODEX_AUTH_API_LOGIN_FAILED: Codex could not start the key login.");
       }
-      const stdin = child.stdin;
-      if (!stdin) {
-        child.kill();
-        state.candidate.status = "login-failed";
-        state.revision++;
-        await atomicRuntimeJson(this.file, state);
-        throw new Error("CODEX_AUTH_API_LOGIN_FAILED: Codex did not open a key input channel.");
-      }
       candidateLoginProcesses.set(candidateId, child);
-      completion = new Promise<boolean>(resolve => {
-        const timeout = setTimeout(() => { child.kill(); resolve(false); }, 30_000);
-        child.once("error", () => { clearTimeout(timeout); resolve(false); });
-        child.once("exit", code => { clearTimeout(timeout); resolve(code === 0); });
-        stdin.on("error", () => { /* A failed child has its own sanitized result. */ });
-      }).finally(() => {
-        if (candidateLoginProcesses.get(candidateId) === child) candidateLoginProcesses.delete(candidateId);
-      });
-      stdin.end(`${apiKey}\n`);
+      const monitored = this.monitorApiKeyLogin(candidateId, child);
+      completion = monitored.completion;
+      if (!child.stdin) monitored.stop();
+      else {
+        try { child.stdin.end(`${apiKey}\n`); }
+        catch { monitored.stop(); }
+      }
     });
-    const succeeded = await completion!;
-    if (!succeeded) {
-      await this.update(undefined, state => {
-        if (state.candidate?.id !== candidateId) return;
-        state.candidate.status = "login-failed";
-        this.clearVerification(state.candidate);
-        state.revision++;
-      });
+    const outcome = await completion!;
+    if (outcome === "unconfirmed") {
+      throw new Error("CODEX_AUTH_LOGIN_UNCONFIRMED: Codex key login has not confirmed its exit; wait, or cancel this candidate and prepare another profile.");
+    }
+    if (outcome === "failed") {
       throw new Error("CODEX_AUTH_API_LOGIN_FAILED: Codex did not accept the API key in the candidate profile.");
     }
-    await this.update(undefined, state => {
-      if (state.candidate?.id !== candidateId) throw new Error("CODEX_AUTH_CANDIDATE_CHANGED");
-      state.candidate.status = "login-completed";
-      this.clearVerification(state.candidate);
-      state.revision++;
+    if ((await this.readState()).candidate?.id !== candidateId) throw new Error("CODEX_AUTH_CANDIDATE_CHANGED");
+  }
+
+  private monitorApiKeyLogin(candidateId: string, child: ChildProcess): {
+    completion: Promise<ApiLoginOutcome>; stop: () => void
+  } {
+    let resolveCompletion!: (outcome: ApiLoginOutcome) => void;
+    const completion = new Promise<ApiLoginOutcome>(resolve => { resolveCompletion = resolve; });
+    let timer: NodeJS.Timeout | undefined;
+    let replySettled = false;
+    let terminalObserved = false;
+    let stopRequested = false;
+    const settle = (outcome: ApiLoginOutcome) => {
+      if (timer) clearTimeout(timer);
+      if (replySettled) return;
+      replySettled = true;
+      resolveCompletion(outcome);
+    };
+    const recordTerminal = async (succeeded: boolean) => {
+      if (terminalObserved) return;
+      terminalObserved = true;
+      if (timer) clearTimeout(timer);
+      const status = succeeded && !stopRequested ? "login-completed" : "login-failed";
+      try {
+        await this.update(undefined, state => {
+          if (candidateLoginProcesses.get(candidateId) !== child || state.candidate?.id !== candidateId ||
+              !["login-started", "login-unconfirmed"].includes(state.candidate.status)) return;
+          state.candidate.status = status;
+          this.clearVerification(state.candidate);
+          state.revision++;
+        });
+        settle(status === "login-completed" ? "completed" : "failed");
+      } catch { settle("unconfirmed"); }
+      finally {
+        // Completion of the RPC or successful signal delivery is not exit
+        // proof. Retain this writer until exit (or a proven spawn failure).
+        if (candidateLoginProcesses.get(candidateId) === child) candidateLoginProcesses.delete(candidateId);
+      }
+    };
+    const stop = () => {
+      if (terminalObserved || stopRequested) return;
+      stopRequested = true;
+      if (child.pid === undefined) { void recordTerminal(false); return; }
+      try { child.kill("SIGTERM"); } catch { /* Only exit observation can release this writer. */ }
+      void this.update(undefined, state => {
+        if (candidateLoginProcesses.get(candidateId) !== child || state.candidate?.id !== candidateId ||
+            state.candidate.status !== "login-started") return;
+        state.candidate.status = "login-unconfirmed";
+        this.clearVerification(state.candidate);
+        state.revision++;
+      }).catch(() => { /* Persisted login-started also blocks verification and reuse. */ }).finally(() => {
+        if (!terminalObserved) settle("unconfirmed");
+      });
+    };
+    child.once("exit", code => { void recordTerminal(code === 0); });
+    child.on("error", () => {
+      if (child.pid === undefined) { stopRequested = true; void recordTerminal(false); }
+      else stop();
     });
+    child.stdin?.on("error", stop);
+    timer = setTimeout(stop, 30_000);
+    return { completion, stop };
   }
 
   async verify(candidateId: string, command: string, cliFingerprint: string,
@@ -335,10 +379,10 @@ export class CodexAuthSelectionManager {
     if (this.pendingCandidate(before, candidateId)) {
       throw new Error("CODEX_AUTH_CANDIDATE_STAGED: Cancel the pending connection first.");
     }
-    if (candidate.status === "login-started") {
-      throw new Error(candidateLoginProcesses.has(candidateId)
-        ? "CODEX_AUTH_LOGIN_IN_PROGRESS: Wait for the selected Codex login to finish before verifying."
-        : "CODEX_AUTH_LOGIN_UNCONFIRMED: The previous login process may still be changing this profile; cancel it and prepare another profile.");
+    if (candidate.status === "login-started" || candidate.status === "login-unconfirmed") {
+      throw new Error(candidate.status === "login-unconfirmed" || !candidateLoginProcesses.has(candidateId)
+        ? "CODEX_AUTH_LOGIN_UNCONFIRMED: The previous login process may still be changing this profile; cancel it and prepare another profile."
+        : "CODEX_AUTH_LOGIN_IN_PROGRESS: Wait for the selected Codex login to finish before verifying.");
     }
     const observed = await this.probeCandidate(candidate, command, environment);
     await this.update(before.revision, state => {
@@ -456,7 +500,7 @@ export class CodexAuthSelectionManager {
       this.assertNoActivation(state);
       if (state.candidate?.id !== candidateId) throw new Error("CODEX_AUTH_CANDIDATE_CHANGED");
       if (this.pendingCandidate(state, candidateId)) throw new Error("CODEX_AUTH_CANDIDATE_STAGED: Cancel the pending connection first.");
-      if (state.candidate.status === "login-started") {
+      if (state.candidate.status === "login-started" || state.candidate.status === "login-unconfirmed") {
         const profile = state.profiles.find(item => item.id === candidateId);
         if (profile?.status === "available") profile.status = "login-unconfirmed";
       }

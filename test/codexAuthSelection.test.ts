@@ -1,7 +1,9 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { afterEach, expect, it, vi } from "vitest";
 import { CodexAppServerUpstreamPool } from "../src/appServerUpstream.js";
 import { CodexAuthSelectionManager } from "../src/codexAuthSelection.js";
@@ -313,6 +315,158 @@ process.stdin.on("end", () => {
   await expect(f.manager.setApiKey(candidate.id, command, f.environment, "sk-second-synthetic-key"))
     .rejects.toThrow("CODEX_AUTH_LOGIN_ALREADY_ATTEMPTED");
 });
+
+async function startStubbornApiLogin() {
+  const f = await fixture();
+  const candidate = (await f.manager.prepare("bridge-api", 0, f.environment)).candidate!;
+  const home = path.join(f.root, "auth-profiles", candidate.id);
+  const started = path.join(f.root, "api-login-started");
+  const release = path.join(f.root, "release-api-login");
+  const command = path.join(f.root, "stubborn-api-login.mjs");
+  await mkdir(path.join(f.root, ".codex"));
+  const sharedFile = path.join(f.root, ".codex", "auth.json");
+  const sharedAuth = JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "shared-fixture" } });
+  await writeFile(sharedFile, sharedAuth);
+  await writeFile(command, `#!/usr/bin/env node
+import { existsSync, writeFileSync } from "node:fs";
+import path from "node:path";
+process.on("SIGTERM", () => {});
+process.stdin.resume();
+writeFileSync(${JSON.stringify(started)}, String(process.pid));
+setInterval(() => {
+  if (!existsSync(${JSON.stringify(release)})) return;
+  writeFileSync(path.join(process.env.CODEX_HOME, "auth.json"), JSON.stringify({
+    auth_mode: "apikey", OPENAI_API_KEY: "sk-late-synthetic-key"
+  }));
+  process.exit(0);
+}, 10);
+`, { mode: 0o700 });
+  let expire: (() => void) | undefined;
+  const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const timerSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation((callback, delay, ...args) => {
+    if (delay === 30_000) expire = () => callback(...args);
+    return realSetTimeout(callback, delay, ...args);
+  });
+  const update = vi.spyOn(f.manager as unknown as { update: (...args: unknown[]) => Promise<void> }, "update");
+  const outcome = f.manager.setApiKey(candidate.id, command, f.environment, "sk-timeout-synthetic-key")
+    .then(() => null, error => error as Error);
+  let pid = 0;
+  try {
+    await vi.waitFor(async () => {
+      pid = Number(await readFile(started, "utf8"));
+      expect(pid).toBeGreaterThan(0);
+      expect(expire).toBeTypeOf("function");
+    }, { timeout: 5_000 });
+  } finally { timerSpy.mockRestore(); }
+  const cleanup = async () => {
+    await writeFile(release, "finish");
+    await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), { timeout: 5_000 });
+    await outcome;
+    await Promise.all(update.mock.results.filter(result => result.type === "return").map(result => result.value));
+    update.mockRestore();
+  };
+  return { ...f, candidate, home, release, pid, outcome, update, sharedFile, sharedAuth,
+    expire: () => expire!(), cleanup };
+}
+
+it("keeps a timed-out API login blocked until its credential writer actually exits", async () => {
+  const f = await startStubbornApiLogin();
+  try {
+    f.expire();
+    const outcome = await f.outcome;
+    expect(() => process.kill(f.pid, 0)).not.toThrow();
+    expect((await f.manager.snapshot(f.environment)).candidate?.status).toBe("login-unconfirmed");
+    expect(outcome?.message).toContain("CODEX_AUTH_LOGIN_UNCONFIRMED");
+    await expect(f.manager.setApiKey(f.candidate.id, "/no/such/codex", f.environment, "sk-retry-synthetic"))
+      .rejects.toThrow("CODEX_AUTH_LOGIN_ALREADY_ATTEMPTED");
+    await expect(f.manager.verify(f.candidate.id, "/no/such/codex", "cli", f.environment))
+      .rejects.toThrow("CODEX_AUTH_LOGIN_UNCONFIRMED");
+
+    vi.resetModules();
+    const { CodexAuthSelectionManager: ReplacementManager } = await import("../src/codexAuthSelection.js");
+    const replacement = new ReplacementManager(f.root);
+    const unresolved = await replacement.snapshot(f.environment);
+    expect(unresolved.candidate?.status).toBe("login-unconfirmed");
+    await expect(replacement.verify(f.candidate.id, "/no/such/codex", "cli", f.environment))
+      .rejects.toThrow("CODEX_AUTH_LOGIN_UNCONFIRMED");
+    await replacement.cancelCandidate(f.candidate.id, unresolved.revision);
+    const cancelled = await replacement.snapshot(f.environment);
+    await expect(replacement.selectOwnedProfile(f.candidate.id, cancelled.revision))
+      .rejects.toThrow("CODEX_AUTH_PROFILE_UNAVAILABLE");
+    const next = (await replacement.prepare("bridge-api", cancelled.revision, f.environment)).candidate!;
+    const nextFile = path.join(f.root, "auth-profiles", next.id, "auth.json");
+    const nextAuth = JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "sk-next-synthetic-key" });
+    await writeFile(nextFile, nextAuth);
+    const updates = f.update.mock.calls.length;
+    await writeFile(f.release, "finish");
+    await vi.waitFor(() => expect(f.update).toHaveBeenCalledTimes(updates + 1), { timeout: 5_000 });
+    await f.update.mock.results.at(-1)!.value;
+    expect(await replacement.snapshot(f.environment)).toMatchObject({
+      applied: { kind: "shared" }, pending: null,
+      candidate: { id: next.id, status: "prepared" },
+      profiles: [{ id: f.candidate.id, status: "login-unconfirmed" }, { id: next.id, status: "available" }]
+    });
+    expect(await readFile(nextFile, "utf8")).toBe(nextAuth);
+    expect(await readFile(f.sharedFile, "utf8")).toBe(f.sharedAuth);
+  } finally { await f.cleanup(); }
+}, 10_000);
+
+it("records a timed-out API login as failed only after exit, even if its late exit succeeds", async () => {
+  const f = await startStubbornApiLogin();
+  try {
+    f.expire();
+    const outcome = await f.outcome;
+    expect(() => process.kill(f.pid, 0)).not.toThrow();
+    expect((await f.manager.snapshot(f.environment)).candidate?.status).toBe("login-unconfirmed");
+    expect(outcome?.message).toContain("CODEX_AUTH_LOGIN_UNCONFIRMED");
+    await writeFile(f.release, "finish");
+    await vi.waitFor(async () => expect((await f.manager.snapshot(f.environment)).candidate?.status)
+      .toBe("login-failed"), { timeout: 5_000 });
+    const command = path.join(f.root, "retry-api-login.mjs");
+    await writeFile(command, "#!/usr/bin/env node\nprocess.stdin.resume();\n", { mode: 0o700 });
+    await f.manager.setApiKey(f.candidate.id, command, f.environment, "sk-retry-synthetic-key");
+    expect((await f.manager.snapshot(f.environment)).candidate?.status).toBe("login-completed");
+    expect(await readFile(f.sharedFile, "utf8")).toBe(f.sharedAuth);
+  } finally { await f.cleanup(); }
+}, 10_000);
+
+it.each(["missing stdin", "stdin error", "child error"] as const)(
+  "keeps a spawned API writer blocked after %s until exit is confirmed", async failure => {
+    const f = await fixture();
+    const stdin = failure === "missing stdin" ? null : new PassThrough();
+    const child = Object.assign(new EventEmitter(), { pid: 12345, stdin, kill: vi.fn(() => true) });
+    vi.doMock("node:child_process", async () => ({
+      ...await vi.importActual<typeof import("node:child_process")>("node:child_process"),
+      spawn: () => child
+    }));
+    vi.resetModules();
+    try {
+      const { CodexAuthSelectionManager: Manager } = await import("../src/codexAuthSelection.js");
+      const manager = new Manager(f.root);
+      const candidate = (await manager.prepare("bridge-api", 0, f.environment)).candidate!;
+      const outcome = manager.setApiKey(candidate.id, "fixture", f.environment, "sk-error-synthetic-key")
+        .then(() => null, error => error as Error);
+      await vi.waitFor(() => expect(child.listenerCount("exit")).toBe(1));
+      if (failure === "stdin error") stdin!.emit("error", new Error("private key channel failure"));
+      if (failure === "child error") child.emit("error", new Error("private signal failure"));
+      expect((await outcome)?.message).toContain("CODEX_AUTH_LOGIN_UNCONFIRMED");
+      expect(child.kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+      expect((await manager.snapshot(f.environment)).candidate?.status).toBe("login-unconfirmed");
+      await expect(manager.setApiKey(candidate.id, "fixture", f.environment, "sk-retry-synthetic-key"))
+        .rejects.toThrow("CODEX_AUTH_LOGIN_ALREADY_ATTEMPTED");
+      await expect(manager.verify(candidate.id, "fixture", "cli", f.environment))
+        .rejects.toThrow("CODEX_AUTH_LOGIN_UNCONFIRMED");
+      child.emit("exit", 1, null);
+      await vi.waitFor(async () => expect((await manager.snapshot(f.environment)).candidate?.status)
+        .toBe("login-failed"));
+    } finally {
+      child.emit("exit", 1, null);
+      stdin?.destroy();
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+    }
+  }
+);
 
 it.each([[0, "login-completed"], [1, "login-failed"]] as const)(
   "records a browser-login process exit %i as %s until candidate verification", async (exitCode, status) => {
