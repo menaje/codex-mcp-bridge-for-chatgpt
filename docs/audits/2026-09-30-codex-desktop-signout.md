@@ -65,8 +65,9 @@ changing the shared auth file's modification time. The previous `cd9d39b`
 candidate must not be used as the logout fix because it still contains the
 legacy action.
 
-Remaining acceptance includes resolving old protected result deliveries before
-the staged profile can activate without force and confirming the operating app
-retains its login through a later refresh. Issues #208/#210 have additional
+Remaining acceptance includes installing the idle-restart guard correction,
+activating the staged profile, and confirming the operating app retains its
+login through a later refresh. Existing terminal results and delivery receipts
+remain stored and scoped through the corrected transition. Issues #208/#210 have additional
 execution continuity, Keyring scope, and real-environment requirements in
 [the acceptance status](2026-09-29-auth-acceptance-status.md).

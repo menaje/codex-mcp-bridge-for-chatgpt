@@ -277,7 +277,8 @@ describe("central runtime lifecycle reservations", () => {
     } finally { await f.supervisor.close({ runtime: "force-stop" }); }
   });
 
-  it("waits for an uncollected result before applying another authentication", async () => {
+  it.each(["user-hold", "host-accepted", "acceptance-unknown"] as const)(
+    "applies authentication while retaining a completed result protected by %s", async protection => {
     const f = await lifecycleFixture();
     const stateFile = path.join(f.root, "state.sqlite");
     writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
@@ -287,19 +288,44 @@ describe("central runtime lifecycle reservations", () => {
     await auth.stage({ kind: "disconnected" }, 0, "/fixture/codex", "fixture-cli", {}, false);
     const store = new BridgeStateStore({ file: stateFile });
     const jobId = randomUUID();
-    store.upsertJob({ jobId, scopeId: randomUUID(), requestId: randomUUID(),
-      status: "completed", updatedAt: Date.now() } as any);
-    store.holdResult(jobId, "Awaiting result acknowledgement", Date.now() + 60_000);
+    const scopeId = randomUUID();
+    const owner = "a".repeat(64);
+    const result = { content: [{ type: "text", text: "Retained original result." }] };
+    store.upsertJob({ jobId, scopeId, requestId: randomUUID(), authBoundary: owner,
+      result, status: "completed", updatedAt: Date.now() } as any);
+    if (protection === "user-hold") {
+      store.holdResult(jobId, "Keep the original result", Date.now() + 60_000);
+    } else {
+      const leaseOwner = randomUUID();
+      const leased = store.claimJobCompletionDelivery(jobId, scopeId, leaseOwner)!;
+      const input = { jobId, scopeId, leaseOwner, receipt: leased.receipt };
+      if (protection === "host-accepted") store.markJobCompletionHostAccepted(input);
+      else store.markJobCompletionAcceptanceUnknown(input);
+    }
+    const delivery = store.getJobCompletionDelivery(jobId, scopeId);
+    const reason = protection === "user-hold" ? "user-hold" : "undelivered-chatgpt-result";
+    expect(store.retentionProtection(jobId)).toContain(reason);
     store.close();
     f.update({ activeJobs: 0 });
     try {
       const first = await f.supervisor.start();
       await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
-      await vi.waitFor(() => expect(["blocked", "failed"]).toContain(f.supervisor.lifecycleStatus()?.phase), {
+      await vi.waitFor(() => expect(["completed", "failed"]).toContain(f.supervisor.lifecycleStatus()?.phase), {
         timeout: 6_000, interval: 50
       });
-      expect((await f.supervisor.health()).pid).toBe(first.pid);
-      expect(await auth.snapshot({})).toMatchObject({ applied: { kind: "shared" }, pending: { kind: "disconnected" } });
+      if (f.supervisor.lifecycleStatus()?.phase === "failed") {
+        throw new Error(f.supervisor.lifecycleStatus()?.error || "result retention blocked activation");
+      }
+      expect((await f.supervisor.health()).pid).not.toBe(first.pid);
+      expect(await auth.snapshot({})).toMatchObject({ applied: { kind: "disconnected" }, pending: null });
+      const retained = new BridgeStateStore({ file: stateFile, readOnly: true });
+      try {
+        expect(retained.listJobs()).toContainEqual(expect.objectContaining({
+          jobId, scopeId, authBoundary: owner, status: "completed", result
+        }));
+        expect(retained.getJobCompletionDelivery(jobId, scopeId)).toEqual(delivery);
+        expect(retained.retentionProtection(jobId)).toContain(reason);
+      } finally { retained.close(); }
     } finally { await f.supervisor.close({ runtime: "force-stop" }); }
   });
 
@@ -1601,6 +1627,11 @@ describe("macOS runtime helper RPC", () => {
       apiKey: "sk-supervisor-1234567890123456",
       tunnelId: "tunnel_oooooooooooooooooooooooooooooooo"
     });
+    // Adoption must inspect this fixture's authentication and state, including
+    // when the user's running Helper has a different connection staged.
+    writeFileSync(configFile, readFileSync(configFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${path.join(root, "cli")}\nCODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${path.join(root, "state.sqlite")}\n`,
+      { mode: 0o600 });
     const first = new MacOSBridgeSupervisor({
       bridgeRoot,
       envFile: configFile,

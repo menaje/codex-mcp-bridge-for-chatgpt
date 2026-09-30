@@ -1442,10 +1442,12 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
     let store: BridgeStateStore | undefined;
     try {
       store = new BridgeStateStore({ file, readOnly: true });
-      if (store.listJobs().some(job => store!.retentionProtection(job.jobId).length > 0 ||
-          isActiveActivityJobStatus(job.status) ||
+      // Result-retention holds protect stored answers and delivery receipts.
+      // They do not keep an executor alive or need the old credentials; exact
+      // result reads remain bound to their original conversation after restart.
+      if (store.listJobs().some(job => isActiveActivityJobStatus(job.status) ||
           Array.isArray(job.pendingInteractions) && job.pendingInteractions.length > 0)) {
-        throw new Error("CODEX_AUTH_WORK_PENDING: Unfinished work, input, or result delivery still belongs to the current authentication connection.");
+        throw new Error("CODEX_AUTH_WORK_PENDING: Unfinished work or pending input still belongs to the current authentication connection.");
       }
     } finally { store?.close(); }
   }

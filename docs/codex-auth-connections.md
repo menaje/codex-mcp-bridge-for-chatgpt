@@ -45,6 +45,10 @@ canceled. An explicit graceful restart checks unfinished persisted work before
 applying the new connection. A graceful apply waits for
 active jobs, pending admissions and interactions, protected memory-only
 threads, and background processes through the existing lifecycle checks.
+Retained terminal answers and unconfirmed completion-delivery receipts do not
+block an idle restart or authentication change. They remain stored under their
+original Job owner and readable only in the originating conversation; changing
+authentication does not mark them read or authorize a new execution.
 Restarting or forcing the server to apply authentication is not automatic.
 An explicit `CODEX_HOME` setting keeps precedence and prevents a saved
 connection from changing that server's effective home.
