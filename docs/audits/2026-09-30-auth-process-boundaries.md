@@ -133,6 +133,51 @@ the existing heartbeat was reactivated. Its prompt requires event evidence
 followed by authenticated Bridge and original-app requests, and explicitly
 forbids periodic forced refresh and operational login/restart/installation.
 
+## Accepted Sep 30 review
+
+The reviewer accepted the API-login deadline correction in product source
+`21c31e8b4e2ff232d782cff76e038c4a85f47870` and found no newly confirmed
+defect in that reviewed correction. The separate OS Helper cases and the
+compound request/result/ACK cases are also accepted as passing within the
+synthetic Codex scope described above. They are not outstanding implementation
+defects or missing product-path tests. ACK messages may be retransmitted;
+the execution count and original result identity remain the tested invariants.
+
+The reviewer supplied a separate eight-case exit-monitor exercise and reported
+**8/8 passed**. It extracted the monitor into a temporary JSON persistence
+harness, used Linux Node child processes and synthetic events, and invoked the
+deadline callback under test control. Its cases include normal exit, a live
+signal-ignoring writer, late completion after candidate replacement, missing
+stdin, stdin/process errors, uncertainty persistence failure and spawn failure.
+This is reviewer-reported evidence; the attached external files were not run
+or imported into this Mac workspace. It does not rerun the full repository,
+separate Helper tests, Swift suite, app signing or CI. The review reported
+zero GitHub Check Runs for the product source; the full-suite and bundle
+results above remain local validation records.
+
+Source acceptance does not establish deployment. The `21c31e8` bundle is still
+uninstalled, and the healthy operating `f6b98c4` app is preserved. Candidate
+installation requires a separately approved procedure; this review does not
+authorize an operating replacement, restart or new login.
+
+## Selected operating CLI capability
+
+During the Sep 30 review, the installed Helper reported the selected app CLI as
+`0.159.0` at
+`/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`.
+The applied profile and generation remained unchanged. That executable then
+generated its experimental JSON App Server schema using a temporary `HOME`
+and `CODEX_HOME` with a minimal environment and no operating credentials.
+
+The output contains **440 JSON files**, including `account/read`, but no
+`account/sessions/list` method. This updates the earlier alpha-version probe
+with the currently selected executable. It does not establish real Keyring
+behavior or provide a stable Keyring ChatGPT user identity. Email and workspace
+identity alone cannot distinguish users sharing a workspace. New execution
+with unverifiable Keyring ownership stays blocked; the product support scope
+still needs an explicit decision. No CLI replacement, live login, credential
+read or billed request was performed for this capability probe.
+
 ## Remaining acceptance
 
 The installed app and monitor are preserved while these source checks run.
