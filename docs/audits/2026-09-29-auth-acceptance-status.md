@@ -26,9 +26,18 @@ desktop logs for Sep 30 contained no `desktop_fetch_auth_401` through this
 checkpoint. No billed API execution was requested.
 
 The verified profile is staged for activation. A non-forced restart reservation
-is waiting for current Bridge Jobs and protected memory-only threads to clear;
-the running Bridge still uses the original shared connection. The later
-refresh, actual activation, and original-app continuity are not yet verified.
+initially waited for active Bridge Jobs and protected memory-only threads.
+After active Jobs reached zero, the persisted-work guard failed the restart
+with `CODEX_AUTH_WORK_PENDING`. A read-only state inspection found 13 terminal
+Jobs protected by `undelivered-chatgpt-result`: eight delivery records marked
+`acceptance-unknown` and five marked `host-accepted`, all without an exact
+completion-result offer. Their Job updates date from Sep 20–26. The Bridge
+remains on the original shared connection; the verified separate profile and
+pending choice remain intact. No result was marked read or discarded. The
+later refresh, actual activation, and original-app continuity after activation
+are not yet verified. At this check the original desktop usage read succeeded,
+the shared auth file still had its Sep 29 modification time, and the Sep 30
+desktop log still had zero `desktop_fetch_auth_401` events.
 
 ## Follow-up implementation after PR checkpoint `c6cf380`
 
@@ -183,7 +192,7 @@ the exact evidence and remaining scenarios.
 | LOGIN-5 | Synthetic product path passed; live environment needed; support scope decision needed | Verify actual file/Keyring refresh and external account changes; current CLI cannot prove Keyring user identity. |
 | LOGIN-6 | Implementation incomplete; live environment needed | Establish App Server reconnect behavior after external login without interrupting original work. |
 | LOGIN-7 | Implementation incomplete; synthetic product path passed; live environment needed | Original Job question, cancel, result, and restart subsets passed; queue, transport ACK, and existing-thread combinations remain. |
-| LOGIN-8 | Partial live | The final candidate is installed and the shared auth file remained unchanged during separate login; observe original Codex app login through a later refresh. |
+| LOGIN-8 | Partial live | The final candidate is installed and the shared auth file remained unchanged during separate login; activation is blocked by 13 unresolved old Job result deliveries, and the later refresh remains unobserved. |
 | LOGIN-9 | Read-only operating-log error found; live acceptance needed | Desktop logged the signed-out-or-different-account refresh error. Verify the final candidate through a later refresh. |
 | LOGIN-10 | Synthetic product path passed; live environment needed | Re-run final-source checks and installed user acceptance; previous timer failure cause remains unknown. |
 | LOGIN-11 | Live environment needed | Compare independent and shared-store multi-process refresh under separate authorization. |
@@ -241,7 +250,7 @@ share a workspace.
 | LOGIN-5 | Synthetic: initial unknown, account-read → recovered file for the same explicit account ID, temporary read failure, stable refresh identity, and same-email/different-account rejection. An optional CLI active-session user ID plus matching workspace can identify Keyring ownership without relying on email or usage; unstable or absent session evidence remains unverified. The selected CLI lacks this endpoint, and real Keyring and external-account changes remain live checks. |
 | LOGIN-6 | Partial: transient admission observations can recover without relogin. Existing App Server re-read/reconnect behavior after an external login is unverified. |
 | LOGIN-7 | Partial: no automatic login/API fallback; authentication switch blocks protected stored work, interactions, and undelivered results. New Jobs and schema-30 sessions persist a non-secret owner boundary; old completed results remain stored but cannot be replayed as executions. Original Job completion, failure, and interruption now record their session under the Job's admitted owner across an external login change and terminal commit retry. Active mismatched Jobs remain readable but cannot recover, be ACKed, cancelled, answered, or steered under a new owner without exact original-executor proof. A question blocked before upstream send records `not-delivered` and can retry the identical request after original-worker proof returns; a lost upstream reply remains `uncertain` and cannot resend. An HTTP Bridge restart with B leaves A's admitted Job dormant; a later restart with A recovers the same retained result under A and ACKs once, using a synthetic executor. Queue, transport ACK, and existing-thread behavior still need broader product acceptance. |
-| LOGIN-8 | Partial live: installed build `7116217e9916:1fa30981c720` launched with matching Helper/bridge builds and connected tunnel. Separate profile login and verification left the shared auth file unchanged. A non-forced activation restart awaits protected work; original Codex app login through a later refresh remains unverified. |
+| LOGIN-8 | Partial live: installed build `7116217e9916:1fa30981c720` launched with matching Helper/bridge builds and connected tunnel. Separate profile login and verification left the shared auth file unchanged. A non-forced activation restart stopped at `CODEX_AUTH_WORK_PENDING` after finding 13 protected terminal results; the original Codex app login through a later refresh remains unverified. |
 | LOGIN-9 | Read-only operating desktop logs include the signed-out-or-different-account refresh error on Sep 25 and Sep 29. No token was collected or refresh forced. This supports cleared or changed auth state, but does not identify the direct CLI login caller. |
 | LOGIN-10 | Partial: after the menu-bar usage correction, API-profile matrix, original-Job question retry fix, previously used external-home selection, original-worker cancellation, Bridge restart owner-recovery HTTP case, and local workspace-name display, the full four-worker Node suite passed 1,064/1,064 tests in 109 files, including the process-probe elapsed-time assertion. The prior 7-second failure was not reproduced; its timer diagnostic was not retained, so its cause remains unclassified and the timeout was not relaxed. The focused three-installation matrix passed 10/10, TypeScript build/release/localization passed, and macOS passed 215 Swift tests (2 skipped) plus nine-language checks. Settings visual acceptance includes the explicit `CODEX_HOME` warning and previously used location; the isolated pinned App Server schema check is separate evidence. The newer `7116217` bundle is installed; separate-profile sign-in and verification passed, while later refresh and broader user acceptance remain separate. |
 | LOGIN-11 | Live: independent-copy and no-copy shared-store multi-process refresh must be measured separately with the selected CLI; neither was injected into operating auth. |
