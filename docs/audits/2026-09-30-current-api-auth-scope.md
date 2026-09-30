@@ -8,6 +8,13 @@ implement Keyring itself. The subsequent go-ahead covers source, UI, tests,
 documentation and a new separately built candidate. It does not authorize an
 operating installation, a paid API turn, PR integration or issue closure.
 
+At Sep 30 **18:34 KST**, after the source and audit reviews, the operator
+separately approved the `238dcc2` installation acceptance step, including app
+replacement and service restart while preserving the current profile and all
+13 retained results. The authorized installation checkpoint below supersedes
+the earlier uninstalled state. Paid execution, PR merge and issue closure were
+not part of this approval.
+
 Supported sources are verified file-backed existing homes, separate
 Bridge-owned ChatGPT profiles, and file-backed API profiles. Explicit API keys
 may also identify execution when the selected App Server confirms API mode
@@ -59,7 +66,7 @@ and the renders regenerated. Harness text metadata describes scenarios; it
 is not OCR evidence. Latest renders are under
 `/tmp/bridge-current-api-scope-visual-reviewed-20260930/artifacts/`.
 
-## Clean uninstalled candidate checkpoint
+## Clean candidate checkpoint before installation
 
 Source `238dcc2f7609efb793125bc63b0fbc38aa73cee8` was committed and pushed
 before the separate app bundle was built. Its bundle gates passed **216 strict
@@ -76,9 +83,9 @@ arm64 candidate.
 | Embedded dirty flag | `false` |
 | Embedded build timestamp | `2026-09-30T08:41:41.951Z` |
 | Retained app | `macos/build/candidates/238dcc2/Codex MCP Bridge for ChatGPT.app` |
-| Operating installation | Not installed or launched |
+| Operating installation | Uninstalled at this build checkpoint; subsequently installed under the separate authorization below. |
 
-The new candidate supersedes `21c31e8` as the proposed installation target.
+The new candidate supersedes `21c31e8` as the installation target.
 Audit-only commits after this checkpoint do not change its embedded source
 commit or either operating bundle identity. The prior candidate remains
 preserved.
@@ -148,11 +155,72 @@ and visual checks.
 Healthy requests and unchanged metadata do not establish an actual later
 token refresh. That event remains unobserved, and its acceptance stays pending.
 
+## Authorized installation acceptance
+
+The approved replacement used the existing production lifecycle coordinator
+with **`force:false`**. It rechecked the exact `f6b98c4` baseline, applied
+profile/generation and zero active work, pending input, protected memory-only
+threads and background processes. The shutdown receipt matched the request
+and reported `completed`; both local sockets and all related app/runtime
+processes were absent before replacing the bundle. No force stop or result
+receipt change was used.
+
+The retained `238dcc2` app was copied to a separate staging location and its
+embedded source/build identity and deep strict signature checked before the
+shutdown. The prior installed app was moved to
+`/Users/seongsik/.codex-mcp-bridge/install-backups/installed-f6b98c46724d-20260930-153nf2ni.app`.
+The staged replacement was moved to
+`/Applications/Codex MCP Bridge for ChatGPT.app`, its deep strict signature
+was checked again, and only the installed app was opened. The retained
+candidate and previous installed bundle remain preserved. The empty staging
+directory was removed after the successful move.
+
+The installed app's embedded identity is unchanged from the clean candidate:
+source `238dcc2f7609efb793125bc63b0fbc38aa73cee8`, build
+`238dcc2f7609:aac9a831bcdb`, source hash
+`aac9a831bcdb896bc5ca77ae6cd4e9ab405b8caf480a14ca7de0b82d3da3771f`,
+`dirty:false`. The app process runs from that installed path. The first
+18:40 KST probe found Bridge connected while Tunnel was reconnecting; by
+**18:42 KST** both were connected and lifecycle completed. The final
+**18:47 KST** checkpoint confirms:
+
+| Installed check | Result |
+| --- | --- |
+| App / Helper / Bridge | Exact build `238dcc2f7609:aac9a831bcdb`; running, lifecycle completed, Bridge/Tunnel connected. |
+| Applied and effective authentication | Same Bridge-owned ChatGPT profile and running home; generation **1**; no pending or uncertain activation. |
+| Work | Zero active Jobs, admissions, pending input and background processes. |
+| Protected retained results | All **13** original payload and delivery-record hashes unchanged; five `host-accepted`, eight `acceptance-unknown`. |
+| Bridge account / usage | Authenticated ChatGPT, available usage with **one window** through the same profile; `account/read` used `refreshToken:false`. |
+| Original Codex desktop | Authenticated usage read succeeded; Sep 30 desktop authentication 401 count **zero**. |
+| Credential-store metadata | Shared/profile auth-file mtimes unchanged at `2026-09-28T23:12:34.167Z` / `2026-09-30T03:23:13.881Z`. |
+| Natural-refresh event | Not established; initial profile login-log mtime `2026-09-30T03:23:13.472Z` and zero refresh-marker lines. |
+
+No login/logout, authentication-source switch, credential transfer, forced
+token refresh or billed execution was performed. These observations establish
+the approved app replacement, exact running identities, retained-profile/result
+preservation and non-billed authenticated reads. They do not establish a paid
+model turn, supported-mode switching or continuity after an actual later
+natural refresh.
+
+Direct installed native UI inspection remains unverified: two computer-use
+lookups of the exact installed app path timed out, and the bundle-ID lookup
+was ambiguous because preserved older app copies share it. The existing
+isolated 27-scenario AppKit and dashboard browser evidence is retained; it is
+not substituted for inspection of the installed app's screen. No new product
+defect is established by this tool limitation.
+
+The existing **15-minute ACTIVE heartbeat** now watches installed build
+`238dcc2f7609:aac9a831bcdb`, with the same profile, result and credential-mtime
+baselines. Its name, interval, destination and quiet notification behavior
+are preserved. Healthy status, elapsed time and file mtimes remain insufficient
+proof of refresh.
+
 ## Operating acceptance still open
 
-The operating app remains `f6b98c46724d:f344f196e4a6` with the independently
-signed-in Bridge ChatGPT profile. Its existing 15-minute natural-refresh
-monitor remains active. A later actual refresh has not yet been established.
-Natural-refresh evidence, separately authorized installation, broader real
-supported-mode/UI acceptance and `dev` integration remain pending. Branch,
-worktree, original credential stores and retained result records are preserved.
+The operating app is now `238dcc2f7609:aac9a831bcdb`, preserving the
+independently signed-in Bridge ChatGPT profile. Its existing 15-minute
+natural-refresh monitor remains active. A later actual refresh has not yet
+been established. Natural-refresh evidence, broader real supported-mode,
+policy/reconnect and installed UI acceptance, and `dev` integration remain
+pending. Branch, worktree, original credential stores, previous app bundles
+and retained result records are preserved; safe Git cleanup follows integration.

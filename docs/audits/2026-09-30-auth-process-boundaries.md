@@ -2,11 +2,20 @@
 
 This follow-up addresses the API-login deadline defect and the remaining
 separate-process Helper and execution-transport checks in draft PR #211.
-The operating app remains source `f6b98c4`, build
+At this follow-up's original checkpoint, the operating app remained source `f6b98c4`, build
 `f6b98c46724d:f344f196e4a6`, with its already applied Bridge-owned ChatGPT
-profile. The changes described here have not been installed. See the
+profile and the changes described here had not been installed. See the
 [installed app checkpoint](2026-09-30-local-rpc-errors.md) for that separate
 artifact's evidence. PR #211 remains draft and unmerged into `dev`.
+
+The subsequent, separately approved Sep 30 replacement installed source
+`238dcc2`, including these accepted process/transport corrections and the
+current-API scope cleanup. The operating app/Helper/Bridge now report
+`238dcc2f7609:aac9a831bcdb`, with the same profile and all 13 retained results
+preserved. The [current installation record](2026-09-30-current-api-auth-scope.md#authorized-installation-acceptance)
+contains the 18:47 KST authenticated-read and identity evidence. Earlier
+uninstalled `21c31e8` candidate checkpoints below are historical; natural
+refresh, broader supported-mode/UI acceptance and `dev` integration remain open.
 
 ## API login needs exit evidence
 
