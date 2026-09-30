@@ -83,6 +83,45 @@ Audit-only commits after this checkpoint do not change its embedded source
 commit or either operating bundle identity. The prior candidate remains
 preserved.
 
+## Accepted source-scope review
+
+The Sep 30 review inspected product source
+`238dcc2f7609efb793125bc63b0fbc38aa73cee8`, its changed tests, the PR and the
+audit follow-up at remote HEAD
+`34b4cffaa6c3df6b357af834f8f0d6fbc3485ca6`. It accepts the implementation
+within the approved current-API scope and found **no newly confirmed
+implementation defect in the reviewed changes**. Keyring and API-unprovided
+metadata are excluded scope, not incomplete requirements or reasons to repeat
+the same implementation.
+
+The review confirms that file user/workspace proof, effective storage and
+administrator policy, account-change admission checks, and the rejection of
+stale files or unrelated ambient keys remain enforced. Omitted display fields
+do not remove API billing consent, candidate validation, activation/error
+states, cancelled-writer quarantine or explicit disconnect/cancel controls.
+Confirmed zero values remain valid data. The removed hypothetical success
+tests and the retained negative/ownership/usage tests give no identified basis
+to treat the change from 1,087 to 1,085 cases as weaker validation.
+
+| Evidence | Review level |
+| --- | --- |
+| Product source and changed tests | Inspected; current support-scope correction accepted. |
+| Node and Swift totals | Author-local full-run records reviewed; suites not rerun by this reviewer. |
+| Manager, separate Helper and compound transport cases | Existing accepted scope and records compared against the changes. |
+| Browser and 27 AppKit scenarios | Generation/regression/inspection records reviewed; no new installed UI check. |
+| Candidate commit, build ID and signature | Saved identity and signature evidence reviewed; app file not independently rechecked. |
+| GitHub Check Runs | Reviewer reported zero for the product source; local passing totals are not independent CI results. |
+| Operating state and 15-minute monitor | Repository records reviewed; neither was queried live by this reviewer. |
+
+Source `238dcc2` can proceed to the **separately authorized installation
+acceptance step**. This review does not execute or approve installation and
+does not authorize `dev` integration before the remaining real-environment
+acceptance. The installation target stays `238dcc2f7609:aac9a831bcdb`, the
+operating build stays `f6b98c46724d:f344f196e4a6`, and the reviewed remote
+HEAD is an audit-only commit. Preserve the current profile and all 13 retained
+results, then compare exact app/Helper/Bridge identities after any authorized
+installation. New login or forced refresh is not needed for that comparison.
+
 ## Read-only operating isolation checkpoint
 
 At Sep 30 **17:49 KST**, the operating Helper and Bridge still reported

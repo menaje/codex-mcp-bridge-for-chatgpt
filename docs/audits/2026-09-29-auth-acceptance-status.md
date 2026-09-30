@@ -59,6 +59,19 @@ checkpoint: installed `f6b98c4`, the same profile and all 13 original result
 records stayed unchanged, both authenticated usage reads succeeded, and an
 actual later refresh remains unestablished.
 
+The subsequent source-scope review inspected product source `238dcc2`, its
+changed tests, PR and audit HEAD `34b4cff`. It accepts this correction within
+the approved scope, with no newly confirmed defect in the reviewed changes.
+Authentication/policy protections, API billing consent and actual error
+controls remain required; Keyring and API-unprovided metadata are excluded,
+not unfinished requirements. The reviewer checked the author's local suite,
+visual and signature records without rerunning the full suites, rechecking
+the app file or querying the operating state/monitor; zero product-source
+Check Runs were reported. This is source acceptance for the next separately
+authorized installation step, not installation or merge approval. The
+[review record](2026-09-30-current-api-auth-scope.md#accepted-source-scope-review)
+preserves those evidence limits and the exact candidate identities.
+
 ## Sep 30 installed, non-billed acceptance checkpoint
 
 The first signed app and Helper reported build `7116217e9916:1fa30981c720`. Both
@@ -304,7 +317,7 @@ the exact evidence and remaining scenarios.
 | LOGIN-7 | Synthetic product path passed; live environment needed | Original Job question, cancel, result and restart subsets, plus queued-request/result loss and repeated ACK recovery through a real execution-owner process and sockets, passed. Broader installed-CLI and existing-thread combinations remain. |
 | LOGIN-8 | Partial live | Installed `f6b98c4` preserves the profile applied by `a8dc7ec`; non-forced activation, 13 retained terminal results and shared-auth preservation passed. A later actual refresh remains pending. |
 | LOGIN-9 | Read-only operating-log error found; live acceptance needed | Desktop logged the signed-out-or-different-account refresh error. Verify the final candidate through a later refresh. |
-| LOGIN-10 | Synthetic product path passed; live environment needed | Current source `238dcc2` passed 1,085 Node tests and isolated UI renders; its clean candidate passed 216 strict Swift tests and signature verification. Approved installation and broader acceptance remain; the historical timer failure cause stays unclassified. |
+| LOGIN-10 | Synthetic product path passed; source-scope review accepted; live environment needed | Current source `238dcc2` passed 1,085 Node tests and isolated UI renders; its clean candidate passed 216 strict Swift tests and signature verification. The review accepts the changed scope using author-local records. Approved installation and broader acceptance remain; the historical timer failure cause stays unclassified. |
 | LOGIN-11 | Live environment needed | Compare independent and shared-store multi-process refresh under separate authorization. |
 | LOGIN-12 | Live environment needed | Confirm external changes without a file revision or `account/updated` in the installed CLI. |
 | LOGIN-13 | Live environment needed | Verify real partial 401, usage/model failure, and turn behavior. |
@@ -326,7 +339,7 @@ the exact evidence and remaining scenarios.
 | AUTHSEL-13 | Synthetic product path passed; live environment needed; Keyring out of scope | Confirm installed managed policy for supported file/API sources; do not bypass required unsupported stores. |
 | AUTHSEL-14 | Synthetic product path passed; live environment needed | Fixed-owner sessions and Job result paths passed; installed app resume, skills and settings combinations remain. |
 | AUTHSEL-15 | Live environment needed | Verify existing independent/API installations and upgrades. |
-| AUTHSEL-16 | Synthetic product path passed; partial live; live environment needed | Current source `238dcc2` and its clean uninstalled candidate pass local source/UI/bundle gates; API exit, separate Helper and request/result/ACK paths remain accepted. Installed `f6b98c4` still preserves the same profile and 13 results. Approved candidate installation, natural refresh and broader supported-mode acceptance remain. |
+| AUTHSEL-16 | Synthetic product path passed; source-scope review accepted; partial live; live environment needed | Current source `238dcc2` and its clean uninstalled candidate pass local source/UI/bundle gates; the current scope and prior API exit, separate Helper and request/result/ACK paths are accepted. Installed `f6b98c4` still preserves the same profile and 13 results. Approved candidate installation, natural refresh and broader supported-mode acceptance remain. |
 
 The `not-delivered` question retry and fixed `CODEX_HOME` warning are accepted
 corrections. They stay in regression coverage and are not open implementation
