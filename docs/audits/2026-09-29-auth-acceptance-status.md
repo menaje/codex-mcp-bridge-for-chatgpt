@@ -106,7 +106,12 @@ times stayed at their initial values, and no Sep 30 desktop auth 401 was found
 at that checkpoint. Actual refresh still had not been observed.
 
 The process-boundary follow-up leaves this installation and monitor intact.
-The manager suite passes 33 cases, including two real-PID deadline regressions
+Source `21c31e8` passes the full four-worker Node suite, 1,087/1,087 tests in
+111 files, with build, TypeScript, release/localization and isolated pinned-CLI
+schema checks. Its clean uninstalled arm64 bundle passed 217 strict Swift tests
+(two skipped, zero failures), 1,403 strings across nine languages and deep strict
+signature verification, with build ID `21c31e8b4e2f:e37052f0d3b5`. The manager
+suite passes 33 cases, including two real-PID deadline regressions
 and three non-terminal input/process-error cases. Two actual Helper-process
 cases cover late browser-login completion and a real 30-second API deadline
 with a surviving writer across Helper crash/replacement. Two HTTP MCP cases

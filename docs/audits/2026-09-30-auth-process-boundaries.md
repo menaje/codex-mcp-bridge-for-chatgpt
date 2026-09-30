@@ -97,14 +97,41 @@ conversation-delivery boundary.
 
 ## Source validation
 
-The follow-up source tree passed `npm run check`: build, TypeScript,
+Source commit `21c31e8b4e2ff232d782cff76e038c4a85f47870` passed `npm run check`: build, TypeScript,
 release/localization checks and **1,087/1,087 Node tests in 111 files** with
 four workers (200.66 seconds). This includes the 33-case manager suite, both
 separate Helper-process cases, and both compound HTTP/transport cases.
 The App Server schema check also passed against the existing isolated CI pin
 `0.153.3` (416 JSON and 827 TypeScript files); the operating CLI was unchanged.
-The subsequent clean macOS candidate and signature checks are recorded after
-building the committed source. That candidate will remain uninstalled.
+The committed clean source produced a separate arm64 macOS candidate:
+
+| Artifact field | Evidence |
+| --- | --- |
+| Build ID | `21c31e8b4e2f:e37052f0d3b5` |
+| Embedded commit | `21c31e8b4e2ff232d782cff76e038c4a85f47870` |
+| Embedded dirty flag | `false` |
+| Source hash | `e37052f0d3b5ea83bf5519c2295f79e122610b306c2124c7f4705ea741711321` |
+| Swift validation | 217 strict tests, two skipped, zero failures |
+| Localization | 1,403 macOS strings across nine languages |
+| Signature | Ad-hoc signing; deep strict verification passed after moving the bundle |
+| Retained path | `macos/build/candidates/21c31e8/Codex MCP Bridge for ChatGPT.app` |
+| Installation | **Not installed**; the operating app remains `f6b98c4` |
+
+At Sep 30 15:31 KST, a read-only operating check confirmed matching
+`f6b98c46724d:f344f196e4a6` Helper/Bridge identities, connected Bridge/Tunnel,
+and the same applied/effective ChatGPT profile and running home at generation
+1. There was no pending activation or active/admission/input/background work.
+All 13 original result/delivery hashes remained unchanged. Original desktop
+usage remained readable; no Sep 30 desktop auth 401 was found. Shared and
+profile auth-file modification times remained at their initial values, and
+the profile login log exposed no corroborating refresh event. This establishes
+current preservation, not success after token refresh.
+
+The existing 15-minute heartbeat was found paused during this follow-up. The
+operator explicitly authorized resuming the required natural-refresh check;
+the existing heartbeat was reactivated. Its prompt requires event evidence
+followed by authenticated Bridge and original-app requests, and explicitly
+forbids periodic forced refresh and operational login/restart/installation.
 
 ## Remaining acceptance
 
