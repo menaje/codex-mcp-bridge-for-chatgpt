@@ -17,6 +17,7 @@ import {
   statusAction
 } from "./nextActions.js";
 import { DisplayReadPool, waitForDisplay } from "./displayReadPool.js";
+import type { CodexAccountSnapshot } from "./codexAccount.js";
 import { uiControlProofs, type UiControlClaims } from "./uiControlProofs.js";
 import {
   nativeCompletionNotification,
@@ -789,6 +790,7 @@ const dashboardViewOutputSchema = z.strictObject({
   codexAccount: z.record(z.string(), z.unknown()).nullable().optional(),
   usageContext: z.string().nullable().optional(),
   weeklyUsage: codexWeeklyUsageOutputSchema.nullable().optional(),
+  usageDisplayStatus: z.enum(["checking", "switching", "available", "timed-out", "unavailable", "no-limit", "signed-out", "not-applicable"]).optional(),
   counts: dashboardCountsOutputSchema,
   activeRows: z.array(dashboardRowOutputSchema),
   terminalRows: z.array(dashboardRowOutputSchema),
@@ -4969,18 +4971,43 @@ export function registerBridgeTools(
     value: Awaited<ReturnType<NonNullable<BridgeConfig["codexService"]>["readAccount"]>>;
     failed: boolean;
   };
+  const weeklyUsageFromAccount = (account: CodexAccountSnapshot | null): CodexWeeklyUsageView | null => {
+    if (account?.authMode !== "chatgpt" || account.ownershipConflict ||
+        account.usageObservedAt === null) return null;
+    const window = account.windows.find(candidate =>
+      candidate.limitId === "codex" && candidate.windowDurationMins === 10_080);
+    if (!window || !Number.isFinite(account.usageObservedAt)) return null;
+    const observedAt = new Date(account.usageObservedAt);
+    if (!Number.isFinite(observedAt.getTime())) return null;
+    const reset = window.resetsAt === null ? null : new Date(window.resetsAt * 1_000);
+    return codexWeeklyUsageOutputSchema.parse({
+      source: "codex-account-rate-limits",
+      limitId: window.limitId,
+      usedPercent: window.usedPercent,
+      remainingPercent: window.remainingPercent,
+      windowDurationMins: window.windowDurationMins,
+      resetsAt: reset && Number.isFinite(reset.getTime()) ? reset.toISOString() : null,
+      observedAt: observedAt.toISOString()
+    });
+  };
   const accountDisplayReads = new DisplayReadPool<AccountObservation>(1, () => notifyCardObservation(upstream));
   let accountCompletion: { revision: string; failed: boolean } | undefined;
+  let lastVerifiedAccount: { revision: string; context: string | null } | undefined;
   const readAccountForDisplay = async () => {
     const service = config.codexService;
     if (!service) return { pending: false as const, value: { value: null, failed: false } };
     const revision = service.cacheRevision();
+    const startingContext = service.accountDisplayContext();
     accountDisplayReads.invalidate(key => key !== revision);
     const read = accountDisplayReads.start(revision, async () => {
       try {
-        const value = await service.readAccount(config.defaultBackend, true);
-        return { value, failed: value === null || value.usageStatus === "unavailable" ||
-          value.billing.actualCosts?.status === "unavailable" };
+        const value = await service.readAccount(config.defaultBackend, true,
+          startingContext === null);
+        if (startingContext !== null && startingContext !== service.accountDisplayContext()) {
+          return { value: null, failed: false };
+        }
+        return { value, failed: value === null ||
+          value.authMode === "chatgpt" && value.usageStatus === "unavailable" };
       } catch { return { value: null, failed: true }; }
     }, (value, deferred) => {
       if (revision !== service.cacheRevision()) return;
@@ -4998,38 +5025,66 @@ export function registerBridgeTools(
     account?: AccountDisplayRead
   ): void => {
     const service = config.codexService;
-    if (!service) return;
+    if (!service) {
+      view.usageDisplayStatus = view.enrichment.usageTimedOut ? "timed-out"
+        : view.enrichment.usageUnavailable ? "unavailable"
+        : view.weeklyUsage ? "available"
+        : view.enrichment.state === "enriched" ? "unavailable" : "checking";
+      return;
+    }
+    const revision = service.cacheRevision();
     const displayContext = service.accountDisplayContext();
-    const unknownRevision = displayContext === null ? service.cacheRevision() : null;
-    view.codexAccount = service.cachedAccount(config.defaultBackend);
+    let displayed = service.cachedAccount(config.defaultBackend);
+    let currentRead = false;
     if (account) {
       if (account.pending) {
         view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + 1;
+        view.enrichment.usageTimedOut = true;
       } else {
-        view.codexAccount = account.value.value ||
-          service.cachedAccount(config.defaultBackend);
+        if (account.value.value) {
+          displayed = account.value.value;
+          currentRead = true;
+        }
         if (account.value.failed) view.enrichment.usageUnavailable = true;
       }
     } else {
-      const revision = service.cacheRevision();
       view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) +
         accountDisplayReads.observePending(key => key === revision);
       if (accountCompletion?.revision === revision && accountCompletion.failed) {
         view.enrichment.usageUnavailable = true;
       }
     }
-    if (view.codexAccount && (view.codexAccount.authMode !== "chatgpt" || view.codexAccount.usageStatus === "none")) {
-      view.weeklyUsage = null;
-    }
     const currentContext = service.accountDisplayContext();
     view.usageContext = currentContext;
-    if (currentContext === null) view.weeklyUsage = null;
     if (currentContext !== displayContext ||
-        currentContext === null && unknownRevision !== service.cacheRevision()) {
-      view.codexAccount = null;
-      view.weeklyUsage = null;
+        revision !== service.cacheRevision()) {
+      displayed = null;
+      currentRead = false;
       view.usageContext = null;
     }
+    // A stable file identity may reuse a previous observation during refresh.
+    // Keyring/auto has no such identity: only this completed account read may
+    // put a number on the card, even if an upstream usage cache exists.
+    if (view.usageContext === null && !currentRead) displayed = null;
+    view.codexAccount = displayed;
+    view.weeklyUsage = weeklyUsageFromAccount(displayed);
+    if (currentRead && displayed) {
+      lastVerifiedAccount = { revision, context: view.usageContext ?? null };
+    }
+    const identityChanged = Boolean(lastVerifiedAccount &&
+      (lastVerifiedAccount.context !== null
+        ? lastVerifiedAccount.context !== view.usageContext
+        : lastVerifiedAccount.revision !== revision));
+    view.usageDisplayStatus = account?.pending ? "timed-out"
+      : account && !account.pending && account.value.failed && !currentRead ? "unavailable"
+      : displayed?.authMode === "unknown" || displayed?.authenticated === false ? "signed-out"
+      : displayed?.authMode === "api-key" ? "not-applicable"
+      : displayed?.ownershipConflict ? "unavailable"
+      : displayed?.authMode === "chatgpt" && displayed.usageStatus === "unavailable" ? "unavailable"
+      : view.weeklyUsage ? currentRead ? "available" : "checking"
+      : displayed?.authMode === "chatgpt" && currentRead ? "no-limit"
+      : view.enrichment.usageUnavailable ? "unavailable"
+      : identityChanged ? "switching" : "checking";
     const accountObservedAt = view.codexAccount?.usageObservedAt;
     if (typeof accountObservedAt === "number") {
       view.enrichment.oldestObservationAt = [
@@ -5448,7 +5503,8 @@ export function registerBridgeTools(
           }))
         : undefined;
       const plan = await readProjection.dashboardRuntimePlan(options);
-      const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan);
+      const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan, undefined,
+        !config.codexService);
       const view = await readProjection.dashboardSnapshotWithEnrichment(
         options,
         projectedEnrichment
@@ -12423,7 +12479,8 @@ async function buildDashboardRuntimePlan(
 async function enrichDashboardRuntimePlan(
   upstream: CodexUpstream,
   plan: BridgeDashboardRuntimePlan,
-  jobs?: CodexJobRegistry
+  jobs?: CodexJobRegistry,
+  readUpstreamUsage = true
 ): Promise<BridgeDashboardEnrichment> {
   const rankedCandidates = plan.candidates;
   const cache = dashboardRuntimeCaches.get(upstream);
@@ -12459,7 +12516,8 @@ async function enrichDashboardRuntimePlan(
   const startedAt = Date.now();
   const [runtimeInspection, usage] = await Promise.all([
     inspectDashboardRuntimes(upstream, candidates, jobs),
-    readCodexWeeklyUsageBounded(upstream)
+    readUpstreamUsage ? readCodexWeeklyUsageBounded(upstream)
+      : Promise.resolve({ value: null, timedOut: false, failed: false })
   ]);
   const observations = cachedDashboardRuntimes(upstream, rankedCandidates);
   for (const [agentId, observation] of runtimeInspection.observations) {
@@ -12543,7 +12601,8 @@ async function buildDashboardView(
       problemQuery,
       includeHistory
     );
-    const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan, jobs);
+    const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan, jobs,
+      !config.codexService);
     return buildDashboardView(
       jobs,
       upstream,

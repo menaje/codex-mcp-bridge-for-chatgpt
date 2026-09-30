@@ -133,7 +133,7 @@ export class CodexService {
   readonly cli: CodexRuntimeManager;
   private visibility?: () => boolean;
   private accountIdentities = new Map<CodexBackendKind, string>();
-  private accounts = new Map<CodexBackendKind, { revision: string; expires: number; request: Promise<CodexAccountSnapshot | null> }>();
+  private accounts = new Map<CodexBackendKind, { revision: string; expires: number; pending: boolean; request: Promise<CodexAccountSnapshot | null> }>();
   private displayedAccounts = new Map<CodexBackendKind, { revision: string; context: string | null; value: CodexAccountSnapshot }>();
   private accountFailures = new Map<CodexBackendKind, { revision: string; error: unknown }>();
   private accountReader?: () => Promise<CodexAccountSnapshot | null>;
@@ -421,7 +421,7 @@ export class CodexService {
     return { visibleInCodexApp: visible, persistent: persistence === "persistent", persistence,
       ...(!visible ? { constraint: "hidden-persistent-unsupported" as const } : {}) };
   }
-  async readAccount(kind: CodexBackendKind, includeBilling = false): Promise<CodexAccountSnapshot | null> {
+  async readAccount(kind: CodexBackendKind, includeBilling = false, requireFresh = false): Promise<CodexAccountSnapshot | null> {
     // Observe and permanently evict a confirmed display-boundary change before
     // a failed request could later resurrect the old account.
     this.cachedAccount(kind);
@@ -432,7 +432,11 @@ export class CodexService {
     // execution admission check and cannot mark an owner as authorized.
     const displayPolicyRequest = policyReader && this.authenticationIdentity()
       ? Promise.resolve().then(policyReader).catch(() => null) : null;
-    const request = cached?.revision === revision && cached.expires > Date.now() ? cached.request : (async () => {
+    // A display with no stable file identity (Keyring/auto) must confirm the
+    // account on each refresh. Share an in-flight request, but never treat its
+    // completed 15-second cache entry as a new account observation.
+    const request = cached?.revision === revision &&
+      (cached.pending || !requireFresh && cached.expires > Date.now()) ? cached.request : (async () => {
       if (kind !== "app-server") return null;
       return this.readCliAccount();
     })().catch(error => {
@@ -449,7 +453,11 @@ export class CodexService {
       }
       return value;
     });
-    if (request !== cached?.request) this.accounts.set(kind, { revision, expires: Date.now() + 15_000, request });
+    if (request !== cached?.request) {
+      const entry = { revision, expires: Date.now() + 15_000, pending: true, request };
+      this.accounts.set(kind, entry);
+      void request.then(() => { entry.pending = false; });
+    }
     const value = includeBilling ? await this.withBilling(await request) : await request;
     if (revision !== this.cacheRevision()) return null;
     if (!value) return null;
