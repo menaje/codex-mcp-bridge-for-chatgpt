@@ -6,7 +6,7 @@ export type CodexAccountSnapshot = {
   accountKey: string | null;
   /** Hash of the selected workspace, used for policy checks, never for execution ownership. */
   workspaceKey: string | null;
-  /** Hash of the active login user and selected workspace. */
+  /** Retained for response compatibility; the public account API supplies no login-user proof. */
   ownershipKey: string | null;
   /** Official account and usage replies disagreed about the selected workspace. */
   ownershipConflict: boolean;
@@ -23,48 +23,13 @@ export type CodexAccountSnapshot = {
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
-const identifier = (value: unknown): string | null => typeof value === "string" && value.trim() ? value.trim() : null;
-
-function activeSessionIdentity(response: unknown): { sessionId: string; userId: string; workspaceId: string } | null {
-  const source = record(response);
-  const sessionId = identifier(source.activeSessionId);
-  if (!sessionId || !Array.isArray(source.sessions)) return null;
-  const active = source.sessions.map(record).filter(session => session.isActive === true);
-  if (active.length !== 1 || active[0].sessionId !== sessionId) return null;
-  const userId = identifier(active[0].userId);
-  const workspaceId = identifier(active[0].selectedWorkspaceAccountId);
-  return userId && workspaceId ? { sessionId, userId, workspaceId } : null;
-}
-
-/** Two reads on the same App Server must surround account/read and agree. */
-function verifiedSessionIdentity(observations: { before: unknown; after: unknown } | undefined):
-  { userId: string; workspaceId: string } | null {
-  if (!observations) return null;
-  const before = activeSessionIdentity(observations.before);
-  const after = activeSessionIdentity(observations.after);
-  return before && after && before.sessionId === after.sessionId && before.userId === after.userId &&
-    before.workspaceId === after.workspaceId ? after : null;
-}
 
 /** Human-readable metadata for local authentication settings only. It is never ownership proof. */
-export function localCodexAccountLabels(accountResponse: unknown,
-  sessionObservations?: { before: unknown; after: unknown }): { email: string | null; workspaceName: string | null } {
+export function localCodexAccountLabels(accountResponse: unknown): { email: string | null; workspaceName: null } {
   const account = record(record(accountResponse).account);
   const email = typeof account.email === "string" && account.email.length <= 320 &&
     account.email.includes("@") ? account.email : null;
-  const session = verifiedSessionIdentity(sessionObservations);
-  const routing = record(record(accountResponse).workspaceRouting);
-  if (!session || session.workspaceId !== identifier(routing.chatgptAccountId)) {
-    return { email, workspaceName: null };
-  }
-  const after = record(sessionObservations?.after);
-  const active = Array.isArray(after.sessions) ? after.sessions.map(record).find(value =>
-    value.isActive === true && value.sessionId === after.activeSessionId) : null;
-  const workspaces = Array.isArray(active?.workspaces) ? active.workspaces.map(record) : [];
-  const selected = workspaces.find(value => value.accountId === session.workspaceId);
-  const name = selected?.name;
-  return { email, workspaceName: typeof name === "string" && name.trim().length > 0 &&
-    name.length <= 160 && !/[\u0000-\u001f\u007f]/.test(name) ? name.trim() : null };
+  return { email, workspaceName: null };
 }
 
 export function codexChatgptOwnerKey(accountId: string): string {
@@ -76,8 +41,7 @@ export function codexChatgptPrincipalKey(userId: string, workspaceId: string): s
 }
 
 /** No credentials, email, or raw account payload leave this projection. Unknown is never zero. */
-export function projectCodexAccount(accountResponse: unknown, limitsResponse: unknown, observedAt = Date.now(),
-  sessionObservations?: { before: unknown; after: unknown }): CodexAccountSnapshot {
+export function projectCodexAccount(accountResponse: unknown, limitsResponse: unknown, observedAt = Date.now()): CodexAccountSnapshot {
   const account = record(record(accountResponse).account);
   const authMode = account.type === "chatgpt" ? "chatgpt" : account.type === "apiKey" ? "api-key" : "unknown";
   const limits = record(limitsResponse), byId = record(limits.rateLimitsByLimitId);
@@ -113,13 +77,6 @@ export function projectCodexAccount(accountResponse: unknown, limitsResponse: un
     ? limits.accountId : null;
   const ownershipConflict = Boolean(routedId && usageId && routedId !== usageId);
   const workspaceKey = !ownershipConflict && routedId ? codexChatgptOwnerKey(routedId) : null;
-  // Only CLIs with the active-session endpoint can identify a Keyring login
-  // user. The workspace from that endpoint must agree with account/read, and
-  // the active session must remain stable around the account observation.
-  const session = verifiedSessionIdentity(sessionObservations);
-  const ownershipKey = authMode === "chatgpt" && !ownershipConflict && routedId &&
-    session?.workspaceId === routedId
-    ? codexChatgptPrincipalKey(session.userId, routedId) : null;
   // Email and usage are display correlations only.
   const displayIdentity = workspaceKey || (usageId ? codexChatgptOwnerKey(usageId) : null) ||
     (typeof account.email === "string" && account.email.trim()
@@ -129,7 +86,7 @@ export function projectCodexAccount(accountResponse: unknown, limitsResponse: un
     : windows.length ? "available"
     : buckets.length ? "unavailable" : "none";
   return { authMode, authenticated: authMode !== "unknown",
-    accountKey: displayIdentity, workspaceKey, ownershipKey, ownershipConflict,
+    accountKey: displayIdentity, workspaceKey, ownershipKey: null, ownershipConflict,
     planType: typeof account.planType === "string" ? account.planType : null, windows, credits,
     resetCredits: authMode === "chatgpt" && finite(reset.availableCount) && reset.availableCount >= 0 ? { availableCount: Math.floor(reset.availableCount) } : null,
     billing: { kind: authMode === "chatgpt" ? "chatgpt-plan" : authMode === "api-key" ? "api" : "unknown", costsAvailable: false,

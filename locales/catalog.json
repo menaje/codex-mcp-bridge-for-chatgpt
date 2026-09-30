@@ -21975,64 +21975,6 @@
           }
         }
       },
-      "macos.accountinformationisunavailable": {
-        "localizations": {
-          "de": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Kontoinformationen sind nicht verfügbar."
-            }
-          },
-          "en": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Account information is unavailable."
-            }
-          },
-          "es": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "La información de la cuenta no está disponible."
-            }
-          },
-          "fr": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Les informations du compte sont indisponibles."
-            }
-          },
-          "ja": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "アカウント情報を確認できません。"
-            }
-          },
-          "ko": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "계정 정보를 확인할 수 없습니다."
-            }
-          },
-          "pt": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "As informações da conta estão indisponíveis."
-            }
-          },
-          "zh-Hans": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "无法获取账户信息。"
-            }
-          },
-          "zh-Hant": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "無法取得帳戶資訊。"
-            }
-          }
-        }
-      },
       "macos.advancedconnectionsettings": {
         "localizations": {
           "de": {
@@ -29742,64 +29684,6 @@
           }
         }
       },
-      "macos.costinformationisunavailable": {
-        "localizations": {
-          "de": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Kosteninformationen sind nicht verfügbar."
-            }
-          },
-          "en": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Cost information is unavailable."
-            }
-          },
-          "es": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "No hay información de costes disponible."
-            }
-          },
-          "fr": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Les informations de coût sont indisponibles."
-            }
-          },
-          "ja": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "費用情報を確認できません。"
-            }
-          },
-          "ko": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "비용 정보를 확인할 수 없습니다."
-            }
-          },
-          "pt": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "As informações de custos estão indisponíveis."
-            }
-          },
-          "zh-Hans": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "无法获取费用信息。"
-            }
-          },
-          "zh-Hant": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "無法取得費用資訊。"
-            }
-          }
-        }
-      },
       "macos.connectcostreporting": {
         "localizations": {
           "de": {
@@ -30148,77 +30032,6 @@
               "value": "已選 Codex"
             }
           }
-        }
-      },
-      "macos.usageinformationisunavailable": {
-        "localizations": {
-          "de": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Nutzungsinformationen sind nicht verfügbar."
-            }
-          },
-          "en": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Usage information is unavailable."
-            }
-          },
-          "es": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "No hay información de uso disponible."
-            }
-          },
-          "fr": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Les informations d’utilisation sont indisponibles."
-            }
-          },
-          "ja": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "使用量情報を確認できません。"
-            }
-          },
-          "ko": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "사용량 정보를 확인할 수 없습니다."
-            }
-          },
-          "pt": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "As informações de uso estão indisponíveis."
-            }
-          },
-          "zh-Hans": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "无法获取用量信息。"
-            }
-          },
-          "zh-Hant": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "無法取得用量資訊。"
-            }
-          }
-        }
-      },
-      "macos.usageunconfirmed": {
-        "localizations": {
-          "de": { "stringUnit": { "state": "translated", "value": "Nutzung noch nicht bestätigt." } },
-          "en": { "stringUnit": { "state": "translated", "value": "Usage has not been confirmed yet." } },
-          "es": { "stringUnit": { "state": "translated", "value": "Aún no se ha confirmado el uso." } },
-          "fr": { "stringUnit": { "state": "translated", "value": "L’utilisation n’a pas encore été confirmée." } },
-          "ja": { "stringUnit": { "state": "translated", "value": "使用量をまだ確認できていません。" } },
-          "ko": { "stringUnit": { "state": "translated", "value": "사용량을 아직 확인하지 못했습니다." } },
-          "pt": { "stringUnit": { "state": "translated", "value": "O uso ainda não foi confirmado." } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "尚未确认用量。" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "尚未確認用量。" } }
         }
       },
       "macos.usageresetcoupons": {
@@ -49426,64 +49239,6 @@
           }
         }
       },
-      "macos.theexecutionkeycannotretrieveinvoicedcosts": {
-        "localizations": {
-          "de": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Der Ausführungsschlüssel kann keine abgerechneten Kosten abrufen."
-            }
-          },
-          "en": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "The execution key cannot retrieve invoiced costs."
-            }
-          },
-          "es": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "La clave de ejecución no permite consultar los costes facturados."
-            }
-          },
-          "fr": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "La clé d’exécution ne permet pas de consulter les frais facturés."
-            }
-          },
-          "ja": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "実行用キーでは請求金額を取得できません。"
-            }
-          },
-          "ko": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "청구 금액은 실행 키로 조회할 수 없습니다."
-            }
-          },
-          "pt": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "A chave de execução não permite consultar os custos faturados."
-            }
-          },
-          "zh-Hans": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "执行密钥无法查询账单金额。"
-            }
-          },
-          "zh-Hant": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "執行金鑰無法查詢帳單金額。"
-            }
-          }
-        }
-      },
       "macos.resets": {
         "localizations": {
           "de": {
@@ -55081,19 +54836,6 @@
           }
         }
       },
-      "macos.auth.keyringSessionUnsupported": {
-        "localizations": {
-          "en": { "stringUnit": { "state": "translated", "value": "This CLI cannot verify a Keyring ChatGPT user. File-backed sign-in may still work." } },
-          "ko": { "stringUnit": { "state": "translated", "value": "이 CLI는 Keyring의 ChatGPT 사용자를 확인할 수 없습니다. 파일에 저장된 로그인은 사용 가능 여부를 별도로 확인합니다." } },
-          "ja": { "stringUnit": { "state": "translated", "value": "この CLI では Keyring の ChatGPT ユーザーを確認できません。ファイルに保存されたログインは利用できる場合があります。" } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "此 CLI 无法验证 Keyring 中的 ChatGPT 用户。文件存储的登录可能仍可使用。" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "此 CLI 無法驗證 Keyring 中的 ChatGPT 使用者。儲存於檔案的登入可能仍可使用。" } },
-          "es": { "stringUnit": { "state": "translated", "value": "Esta CLI no puede verificar al usuario de ChatGPT en Keyring. El inicio de sesión guardado en un archivo podría funcionar." } },
-          "fr": { "stringUnit": { "state": "translated", "value": "Cette CLI ne peut pas vérifier l’utilisateur ChatGPT dans le trousseau. La connexion enregistrée dans un fichier peut fonctionner." } },
-          "de": { "stringUnit": { "state": "translated", "value": "Diese CLI kann den ChatGPT-Benutzer im Schlüsselbund nicht verifizieren. Eine dateibasierte Anmeldung kann weiterhin funktionieren." } },
-          "pt": { "stringUnit": { "state": "translated", "value": "Esta CLI não consegue verificar o usuário do ChatGPT no Keyring. Um login salvo em arquivo ainda pode funcionar." } }
-        }
-      },
       "macos.auth.externalHomeImpact": {
         "localizations": {
           "en": { "stringUnit": { "state": "translated", "value": "Changing Codex locations can affect available conversations, skills, and settings. Existing history is kept." } },
@@ -55649,71 +55391,6 @@
           "pt": { "stringUnit": { "state": "translated", "value": "E-mail da conta na última aplicação" } }
         }
       },
-      "macos.auth.workspaceAtSelection": {
-        "localizations": {
-          "en": { "stringUnit": { "state": "translated", "value": "Workspace fingerprint at last apply" } },
-          "ko": { "stringUnit": { "state": "translated", "value": "마지막 적용 시 워크스페이스 지문" } },
-          "ja": { "stringUnit": { "state": "translated", "value": "前回適用時のワークスペース指紋" } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "上次应用时的工作区指纹" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "上次套用時的工作區指紋" } },
-          "es": { "stringUnit": { "state": "translated", "value": "Huella del espacio de trabajo al aplicar" } },
-          "fr": { "stringUnit": { "state": "translated", "value": "Empreinte de l’espace de travail lors de l’application" } },
-          "de": { "stringUnit": { "state": "translated", "value": "Workspace-Fingerabdruck bei letzter Anwendung" } },
-          "pt": { "stringUnit": { "state": "translated", "value": "Impressão digital do espaço de trabalho na última aplicação" } }
-        }
-      },
-      "macos.auth.workspaceName": {
-        "localizations": {
-          "en": { "stringUnit": { "state": "translated", "value": "Workspace name" } },
-          "ko": { "stringUnit": { "state": "translated", "value": "워크스페이스 이름" } },
-          "ja": { "stringUnit": { "state": "translated", "value": "ワークスペース名" } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "工作区名称" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "工作區名稱" } },
-          "es": { "stringUnit": { "state": "translated", "value": "Nombre del espacio de trabajo" } },
-          "fr": { "stringUnit": { "state": "translated", "value": "Nom de l’espace de travail" } },
-          "de": { "stringUnit": { "state": "translated", "value": "Name des Arbeitsbereichs" } },
-          "pt": { "stringUnit": { "state": "translated", "value": "Nome do espaço de trabalho" } }
-        }
-      },
-      "macos.auth.workspaceNameAtSelection": {
-        "localizations": {
-          "en": { "stringUnit": { "state": "translated", "value": "Workspace name at last apply" } },
-          "ko": { "stringUnit": { "state": "translated", "value": "마지막 적용 시 워크스페이스 이름" } },
-          "ja": { "stringUnit": { "state": "translated", "value": "前回適用時のワークスペース名" } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "上次应用时的工作区名称" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "上次套用時的工作區名稱" } },
-          "es": { "stringUnit": { "state": "translated", "value": "Nombre del espacio de trabajo al aplicar" } },
-          "fr": { "stringUnit": { "state": "translated", "value": "Nom de l’espace de travail lors de l’application" } },
-          "de": { "stringUnit": { "state": "translated", "value": "Name des Arbeitsbereichs bei letzter Anwendung" } },
-          "pt": { "stringUnit": { "state": "translated", "value": "Nome do espaço de trabalho na última aplicação" } }
-        }
-      },
-      "macos.auth.workspaceObserved": {
-        "localizations": {
-          "en": { "stringUnit": { "state": "translated", "value": "Last observed workspace fingerprint" } },
-          "ko": { "stringUnit": { "state": "translated", "value": "마지막으로 확인한 워크스페이스 지문" } },
-          "ja": { "stringUnit": { "state": "translated", "value": "最後に確認したワークスペース指紋" } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "最近观测到的工作区指纹" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "最近觀測到的工作區指紋" } },
-          "es": { "stringUnit": { "state": "translated", "value": "Última huella observada del espacio de trabajo" } },
-          "fr": { "stringUnit": { "state": "translated", "value": "Dernière empreinte observée de l’espace de travail" } },
-          "de": { "stringUnit": { "state": "translated", "value": "Zuletzt beobachteter Workspace-Fingerabdruck" } },
-          "pt": { "stringUnit": { "state": "translated", "value": "Última impressão digital observada do espaço de trabalho" } }
-        }
-      },
-      "macos.auth.workspaceFingerprint": {
-        "localizations": {
-          "en": { "stringUnit": { "state": "translated", "value": "Workspace fingerprint" } },
-          "ko": { "stringUnit": { "state": "translated", "value": "워크스페이스 지문" } },
-          "ja": { "stringUnit": { "state": "translated", "value": "ワークスペース指紋" } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "工作区指纹" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "工作區指紋" } },
-          "es": { "stringUnit": { "state": "translated", "value": "Huella del espacio de trabajo" } },
-          "fr": { "stringUnit": { "state": "translated", "value": "Empreinte de l’espace de travail" } },
-          "de": { "stringUnit": { "state": "translated", "value": "Workspace-Fingerabdruck" } },
-          "pt": { "stringUnit": { "state": "translated", "value": "Impressão digital do espaço de trabalho" } }
-        }
-      },
       "macos.auth.billingTarget": {
         "localizations": {
           "en": { "stringUnit": { "state": "translated", "value": "Billing target" } },
@@ -55753,19 +55430,6 @@
           "pt": { "stringUnit": { "state": "translated", "value": "Utilização da API OpenAI" } }
         }
       },
-      "macos.auth.billingUnknown": {
-        "localizations": {
-          "en": { "stringUnit": { "state": "translated", "value": "Not verified" } },
-          "ko": { "stringUnit": { "state": "translated", "value": "확인되지 않음" } },
-          "ja": { "stringUnit": { "state": "translated", "value": "未確認" } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "未验证" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "未驗證" } },
-          "es": { "stringUnit": { "state": "translated", "value": "Sin verificar" } },
-          "fr": { "stringUnit": { "state": "translated", "value": "Non vérifié" } },
-          "de": { "stringUnit": { "state": "translated", "value": "Nicht bestätigt" } },
-          "pt": { "stringUnit": { "state": "translated", "value": "Não verificado" } }
-        }
-      },
       "macos.auth.plan": {
         "localizations": {
           "en": { "stringUnit": { "state": "translated", "value": "ChatGPT plan" } },
@@ -55779,30 +55443,17 @@
           "pt": { "stringUnit": { "state": "translated", "value": "Plano ChatGPT" } }
         }
       },
-      "macos.auth.verifiedIdentity": {
+      "macos.auth.connectionUnsupported": {
         "localizations": {
-          "en": { "stringUnit": { "state": "translated", "value": "Verified account fingerprint" } },
-          "ko": { "stringUnit": { "state": "translated", "value": "확인된 계정 지문" } },
-          "ja": { "stringUnit": { "state": "translated", "value": "確認済みアカウント指紋" } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "已验证的帐户指纹" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "已驗證的帳戶指紋" } },
-          "es": { "stringUnit": { "state": "translated", "value": "Huella de cuenta verificada" } },
-          "fr": { "stringUnit": { "state": "translated", "value": "Empreinte de compte vérifiée" } },
-          "de": { "stringUnit": { "state": "translated", "value": "Bestätigter Konto-Fingerabdruck" } },
-          "pt": { "stringUnit": { "state": "translated", "value": "Impressão digital da conta verificada" } }
-        }
-      },
-      "macos.auth.identityUnverified": {
-        "localizations": {
-          "en": { "stringUnit": { "state": "translated", "value": "Account or workspace ID could not be verified." } },
-          "ko": { "stringUnit": { "state": "translated", "value": "계정 또는 워크스페이스 ID를 확인할 수 없습니다." } },
-          "ja": { "stringUnit": { "state": "translated", "value": "アカウントまたはワークスペース ID を確認できません。" } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法验证帐户或工作区 ID。" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法驗證帳戶或工作區 ID。" } },
-          "es": { "stringUnit": { "state": "translated", "value": "No se pudo verificar el ID de la cuenta o del espacio de trabajo." } },
-          "fr": { "stringUnit": { "state": "translated", "value": "Impossible de vérifier l’identifiant du compte ou de l’espace de travail." } },
-          "de": { "stringUnit": { "state": "translated", "value": "Konto- oder Workspace-ID konnte nicht bestätigt werden." } },
-          "pt": { "stringUnit": { "state": "translated", "value": "Não foi possível verificar o ID da conta ou do espaço de trabalho." } }
+          "en": { "stringUnit": { "state": "translated", "value": "This connection cannot be used by the Bridge. Choose a separate Bridge login or a verified file-backed connection." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "이 연결은 Bridge에서 사용할 수 없습니다. Bridge 전용 로그인이나 확인된 파일 인증 연결을 선택하세요." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "この接続は Bridge では使用できません。Bridge 専用のログイン、または確認済みのファイル認証接続を選択してください。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "Bridge 无法使用此连接。请选择 Bridge 专用登录或已验证的文件认证连接。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "Bridge 無法使用此連線。請選擇 Bridge 專用登入或已驗證的檔案認證連線。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "El Bridge no puede usar esta conexión. Elige un inicio de sesión propio del Bridge o una conexión verificada con credenciales en archivo." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Le Bridge ne peut pas utiliser cette connexion. Choisissez une connexion dédiée au Bridge ou une connexion vérifiée avec des identifiants dans un fichier." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Der Bridge kann diese Verbindung nicht verwenden. Wählen Sie eine eigene Bridge-Anmeldung oder eine geprüfte Verbindung mit Anmeldedaten in einer Datei." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "O Bridge não pode usar esta conexão. Escolha um login próprio do Bridge ou uma conexão verificada com credenciais em arquivo." } }
         }
       },
       "macos.auth.activationStarting": {

@@ -15,7 +15,7 @@ The native first setup and Codex settings show three connection choices:
 
 | Choice | Storage and billing |
 | --- | --- |
-| Existing Codex login | Uses the selected CLI's existing home and authentication store. It can be a ChatGPT or API login; the observed method determines billing. No credential is copied. |
+| Existing Codex login | Uses a verified file credential in the selected CLI's existing home. It can be a ChatGPT or API login; the observed method determines billing. Unsupported stores are rejected with an action to choose a separate Bridge login. No credential is copied. |
 | Separate ChatGPT login | Creates a persistent bridge profile outside the app bundle. The selected Codex CLI performs a new login in that profile. The existing Codex app login remains in its original store. |
 | API key for the bridge | Creates a different persistent bridge profile. The key is sent to the selected CLI through standard input for `codex login --with-api-key`; it is never put in a process argument or the bridge state file. API usage can incur separate charges. |
 
@@ -72,23 +72,43 @@ retaining their records; switching back to the same boundary can restore
 access. Pre-existing untagged records remain stored for history, but cannot
 be resumed because the first upgrade cannot retroactively prove which account
 created them.
-When a file-backed identity and a confirmed keyring account are both
-unavailable, a process uses an unverified temporary thread boundary. It does
-not treat another process's unknown account as the same thread owner. Keyring
-thread resume after restart therefore needs a fresh account confirmation;
-until then those sessions stay hidden from execution.
+When credential ownership cannot be verified, a process uses a temporary
+unverified thread boundary. It cannot authorize new work or resume another
+process's unknown sessions. Retained results keep their original owner.
+
+## Supported authentication and displayed information
 
 For ChatGPT execution ownership, a selected workspace ID alone is insufficient:
 different users can belong to that workspace. A file profile uses the login
-user claim in its selected ID token together with the selected workspace. A
-Keyring profile needs an official active-login user ID and selected workspace
-that agree with `account/read` routing. The bridge preserves an unverified
-account for display but blocks new work when the selected CLI does not expose
-both identifiers. The currently inspected CLI `0.158.0-alpha.2.1` exposes no
-callable active-session identity method; its Keyring ChatGPT combination
-therefore remains unsupported for new bridge work.
+user claim in its selected ID token together with the selected workspace.
 Neither email nor the optional usage response proves the login user. Token
 refreshes that retain the same user and workspace keep the owner boundary.
+An explicit environment API key can also identify API execution when the
+selected App Server confirms API authentication and effective storage policy
+permits that source; an unrelated ambient key never identifies a managed
+Keyring, `auto`, or ephemeral credential.
+
+Keyring authentication is outside this Bridge release's supported scope.
+Codex can use its own OS credential store, but the current public App Server
+API does not supply the login-user proof the Bridge needs. The Bridge does
+not read the OS keychain or implement a hypothetical session endpoint. It
+rejects an unverifiable existing connection and offers a separate Bridge
+login or a verified file connection. Effective administrator policy remains
+authoritative: a required unsupported store cannot be bypassed by choosing
+another profile. Bridge-owned profiles request file storage in their private
+persistent homes; credentials are managed by Codex and stored with restricted
+file permissions. No credential migration or copy is performed.
+
+Connection settings show the selected executable, connection source,
+API-provided email, known authentication method, known billing route and
+provided ChatGPT plan. Workspace/organization names that the API does not
+supply, internal owner/workspace fingerprints and unknown fields are omitted
+entirely. Missing quota or cost values have no placeholder card, dash, invented
+zero or permanent “unavailable” row. Actual usage windows and balances remain
+visible when provided. Optional organization/project cost reporting remains
+available through its separate admin API connection and shows only confirmed
+cost data. A temporary refresh failure may label a retained confirmed value;
+real sign-in, policy or connection failures keep their actionable error.
 
 After a confirmed login change, logout, or failed current owner check, the
 last confirmed owner remains read-only history. It no longer authorizes new

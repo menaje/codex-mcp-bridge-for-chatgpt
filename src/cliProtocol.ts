@@ -11,8 +11,6 @@ export type CliProtocolSupport = {
   missingCore: string[];
   capabilities: BackendCapabilities;
   unsupported: Record<string, string[]>;
-  /** Optional active-session identity; older CLIs still pass the core contract. */
-  accountSessionsList: boolean;
 };
 
 export const UNVERIFIED_APP_SERVER_CAPABILITIES: BackendCapabilities = Object.freeze({
@@ -134,8 +132,7 @@ export function inspectClientRequestContract(schema: Schema, configSchema?: Sche
     ])
   };
   const missingCore = [...checks.values()].flat().concat(configSchema ? inspectConnectorApprovalConfig(configSchema) : []);
-  return { compatible: missingCore.length === 0, missingCore, capabilities, unsupported,
-    accountSessionsList: check("account/sessions/list", [{ refreshWorkspaceMetadata: false }]).length === 0 };
+  return { compatible: missingCore.length === 0, missingCore, capabilities, unsupported };
 }
 
 /** `config` accepts arbitrary keys on the wire. Its presence alone does not

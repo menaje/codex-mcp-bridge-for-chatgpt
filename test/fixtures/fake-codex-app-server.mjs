@@ -130,11 +130,6 @@ lines.on("line", (line) => {
     return;
   }
 
-  if (message.method === "account/sessions/list" && process.env.CODEX_TEST_ACCOUNT_SESSIONS_RESPONSE) {
-    response(message.id, JSON.parse(process.env.CODEX_TEST_ACCOUNT_SESSIONS_RESPONSE));
-    return;
-  }
-
   if (message.method === "account/rateLimits/read") {
     rateLimitsReadCount += 1;
     response(message.id, {

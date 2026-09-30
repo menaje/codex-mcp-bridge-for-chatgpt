@@ -5,12 +5,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { CodexService, type CodexSessionAuthBoundaryEvidence } from "../src/codexService.js";
+import { projectCodexAccount } from "../src/codexAccount.js";
 import { ScopeResolver } from "../src/scopeResolver.js";
 import { SessionRegistry } from "../src/sessionRegistry.js";
 import { ChildProcessStateReadService } from "../src/stateReadProcess.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { UserSettingsStore } from "../src/userSettings.js";
-import { syntheticVerifiedAccount } from "./fixtures/syntheticAuth.js";
+import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
 
 const roots: string[] = [];
 
@@ -33,12 +34,12 @@ async function waitFor(
 }
 
 describe("isolated state read projection", () => {
-  it("shows a confirmed Keyring session through IPC and hides it when ownership is unavailable or changes", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "bridge-state-read-keyring-"));
+  it("shows a last-confirmed file session through IPC and hides it when ownership is unavailable or changes", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "bridge-state-read-owner-"));
     roots.push(root);
     const home = path.join(root, "codex-home");
     await mkdir(home);
-    await writeFile(path.join(home, "config.toml"), 'cli_auth_credentials_store = "keyring"\n');
+    await writeFile(path.join(home, "config.toml"), 'cli_auth_credentials_store = "file"\n');
     const file = path.join(root, "state.sqlite");
     const environment = {
       ...process.env,
@@ -57,16 +58,24 @@ describe("isolated state read projection", () => {
     new UserSettingsStore(config, { stateStore: store });
     new ScopeResolver({ stateStore: store });
     const owner = async (accountId: string) => {
-      const codex = new CodexService(environment);
-      codex.setAuthPolicyReader(async () => ({
-        config: { config: { cliAuthCredentialsStore: "keyring" } }, requirements: { requirements: null }
+      const ownerHome = path.join(root, accountId);
+      await mkdir(ownerHome);
+      await writeFile(path.join(ownerHome, "config.toml"), 'cli_auth_credentials_store = "file"\n');
+      const authFile = path.join(ownerHome, "auth.json");
+      await writeFile(authFile, JSON.stringify({ auth_mode: "chatgpt", tokens: {
+        account_id: accountId, id_token: syntheticIdToken("fixture-user", accountId) }
       }));
-      codex.setAccountReader(async () => syntheticVerifiedAccount({
+      const codex = new CodexService({ ...environment, CODEX_HOME: ownerHome });
+      codex.setAuthPolicyReader(async () => ({
+        config: { config: { cliAuthCredentialsStore: "file" } }, requirements: { requirements: null }
+      }));
+      codex.setAccountReader(async () => projectCodexAccount({
         account: { type: "chatgpt", email: "same@example.invalid" },
         workspaceRouting: { chatgptAccountId: accountId, backendOrigin: "https://example.invalid",
           accountRoutingOverride: "NO_CONSTRAINT" }
-      }, null, "fixture-user", accountId));
+      }, null));
       await codex.assertCurrentAdmission();
+      await rm(authFile);
       return codex;
     };
     const firstOwner = await owner("workspace-a");
@@ -74,7 +83,7 @@ describe("isolated state read projection", () => {
     const sessions = new SessionRegistry({ stateStore: store, allowedRoots: [root],
       authBoundary: () => firstOwner.sessionAuthBoundary() });
     const now = Date.now();
-    sessions.record({ threadId: "keyring-thread", scopeId: "11111111-1111-4111-8111-111111111111",
+    sessions.record({ threadId: "file-thread", scopeId: "11111111-1111-4111-8111-111111111111",
       backendKind: "app-server", cwd: root, sandbox: "read-only", updatedAt: now,
       createdAt: now, lastUsedAt: now });
     expect(sessions.list()).toHaveLength(1);

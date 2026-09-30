@@ -49,23 +49,6 @@ final class CodexRuntimeModelsTests: XCTestCase {
         XCTAssertNil(encoded["home"])
     }
 
-    func testSelectedCliExposesOptionalKeyringSessionIdentitySupport() throws {
-        let supported = try installation(protocolSupport: true)
-        XCTAssertEqual(supported.protocol?.accountSessionsList, true)
-        let unsupported = try installation(protocolSupport: false)
-        XCTAssertEqual(unsupported.protocol?.accountSessionsList, false)
-        XCTAssertNil(try installation(protocolSupport: nil).protocol)
-        let older = Data(#"{"id":"fixture","source":"app","command":"/fixture/codex","physicalPath":"/fixture/codex","protocol":{"compatible":true}}"#.utf8)
-        XCTAssertNil(try JSONDecoder().decode(CodexInstallation.self, from: older).protocol?.accountSessionsList)
-    }
-
-    private func installation(protocolSupport: Bool?) throws -> CodexInstallation {
-        var value: [String: Any] = ["id": "fixture", "source": "app", "command": "/fixture/codex",
-            "physicalPath": "/fixture/codex"]
-        if let protocolSupport { value["protocol"] = ["compatible": true, "accountSessionsList": protocolSupport] }
-        return try JSONDecoder().decode(CodexInstallation.self, from: JSONSerialization.data(withJSONObject: value))
-    }
-
     func testSettingsPollsFastOnlyForVisibleInstallationProgress() {
         XCTAssertEqual(CodexSettingsRefreshPolicy.interval(isVisible: true, installationInProgress: false), 30)
         XCTAssertEqual(CodexSettingsRefreshPolicy.interval(isVisible: true, installationInProgress: true), 2)

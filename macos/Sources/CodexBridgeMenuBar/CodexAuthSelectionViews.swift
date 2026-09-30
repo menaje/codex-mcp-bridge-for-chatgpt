@@ -23,8 +23,9 @@ struct CodexAuthSelectionControls: View {
             VStack(alignment: .leading, spacing: 6) {
                 if let connection = model.remoteAuthConnection {
                     LabeledContent("macos.auth.current", value: label(connection.source))
-                    LabeledContent("macos.authenticationmethod", value: connection.mode == "api-key"
-                                   ? localized("macos.openaiapikey") : connection.mode == "chatgpt" ? "ChatGPT" : "—")
+                    if let method = authenticationMethod(connection.mode) {
+                        LabeledContent("macos.authenticationmethod", value: method)
+                    }
                 }
                 Text("macos.auth.remoteManaged")
                     .font(.caption).foregroundStyle(.secondary)
@@ -42,33 +43,16 @@ struct CodexAuthSelectionControls: View {
                 if let email = auth.appliedAccountEmail {
                     LabeledContent("macos.auth.emailAtSelection", value: email)
                 }
-                if let name = auth.appliedWorkspaceName {
-                    LabeledContent("macos.auth.workspaceNameAtSelection", value: name)
-                }
-                if let workspace = auth.appliedWorkspaceKey {
-                    LabeledContent("macos.auth.workspaceAtSelection", value: String(workspace.prefix(12)))
-                }
                 if let account = model.codexRuntime?.account, account.authenticated {
-                    LabeledContent("macos.authenticationmethod", value: account.authMode == "api-key"
-                                   ? localized("macos.openaiapikey") : "ChatGPT")
-                    LabeledContent("macos.auth.billingTarget", value: billingTarget(account.billing?.kind ?? account.authMode))
-                    if let plan = account.planType, account.authMode == "chatgpt" {
+                    if let method = authenticationMethod(account.authMode) {
+                        LabeledContent("macos.authenticationmethod", value: method)
+                    }
+                    if let billing = billingTarget(account.billing?.kind ?? account.authMode) {
+                        LabeledContent("macos.auth.billingTarget", value: billing)
+                    }
+                    if let plan = account.planType, !plan.isEmpty, plan != "unknown", account.authMode == "chatgpt" {
                         LabeledContent("macos.auth.plan", value: plan)
                     }
-                    if let workspace = account.workspaceKey {
-                        LabeledContent("macos.auth.workspaceObserved", value: String(workspace.prefix(12)))
-                    }
-                    if let owner = account.ownershipKey {
-                        LabeledContent("macos.auth.verifiedIdentity", value: String(owner.prefix(12)))
-                    } else {
-                        Text("macos.auth.identityUnverified")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                if (auth.overrideActive ? auth.effective.kind == "shared" : selectedKind == "shared"),
-                   model.codexRuntime?.selection?.protocol?.accountSessionsList == false {
-                    Text("macos.auth.keyringSessionUnsupported")
-                        .font(.caption).foregroundStyle(.orange)
                 }
                 if auth.overrideActive {
                     Text("macos.auth.override")
@@ -91,14 +75,8 @@ struct CodexAuthSelectionControls: View {
                         if let email = auth.pendingAccountEmail {
                             LabeledContent("macos.auth.accountEmail", value: email)
                         }
-                        if let name = auth.pendingWorkspaceName {
-                            LabeledContent("macos.auth.workspaceName", value: name)
-                        }
-                        if let workspace = auth.pendingWorkspaceKey {
-                            LabeledContent("macos.auth.workspaceFingerprint", value: String(workspace.prefix(12)))
-                        }
-                        if pending.kind != "disconnected" {
-                            LabeledContent("macos.auth.billingTarget", value: billingTarget(auth.pendingBillingTarget))
+                        if pending.kind != "disconnected", let billing = billingTarget(auth.pendingBillingTarget) {
+                            LabeledContent("macos.auth.billingTarget", value: billing)
                         }
                         Text("macos.auth.waiting")
                             .font(.caption).foregroundStyle(.orange)
@@ -248,19 +226,8 @@ struct CodexAuthSelectionControls: View {
             if let email = candidate.accountEmail {
                 LabeledContent("macos.auth.accountEmail", value: email)
             }
-            if let name = candidate.workspaceName {
-                LabeledContent("macos.auth.workspaceName", value: name)
-            }
-            if let workspace = candidate.workspaceKey {
-                LabeledContent("macos.auth.workspaceFingerprint", value: String(workspace.prefix(12)))
-            }
-            if candidate.status == "verified" {
-                LabeledContent("macos.auth.billingTarget", value: billingTarget(candidate.billingTarget))
-            }
-            if let key = candidate.accountKey {
-                LabeledContent("macos.auth.verifiedIdentity", value: String(key.prefix(12)))
-            } else if candidate.status == "verified" {
-                Text("macos.auth.identityUnverified").font(.caption).foregroundStyle(.secondary)
+            if candidate.status == "verified", let billing = billingTarget(candidate.billingTarget) {
+                LabeledContent("macos.auth.billingTarget", value: billing)
             }
             if selectedKind == "bridge-chatgpt" {
                 if candidate.reused != true {
@@ -348,11 +315,19 @@ struct CodexAuthSelectionControls: View {
         return localized(key)
     }
 
-    private func billingTarget(_ mode: String?) -> String {
+    private func authenticationMethod(_ mode: String?) -> String? {
+        switch mode {
+        case "api-key": localized("macos.openaiapikey")
+        case "chatgpt": "ChatGPT"
+        default: nil
+        }
+    }
+
+    private func billingTarget(_ mode: String?) -> String? {
         return switch mode {
         case "api", "api-key", "bridge-api": localized("macos.auth.apiBilling")
         case "chatgpt-plan", "chatgpt", "bridge-chatgpt": localized("macos.auth.chatgptBilling")
-        default: localized("macos.auth.billingUnknown")
+        default: nil
         }
     }
 

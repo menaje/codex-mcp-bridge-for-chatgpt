@@ -198,15 +198,15 @@ struct CodexRuntimeSettingsPane: View {
     private var installing: Bool { model.codexRuntime?.isInstalling == true }
 
     @ViewBuilder private var accountSection: some View {
-        Section("macos.accountusage") {
-            if let account = model.selectedCodexAccount {
+        if let account = model.selectedCodexAccount,
+           account.authMode == "api-key" || account.authMode == "chatgpt" &&
+            (!account.windows.isEmpty || account.credits?.unlimited == true ||
+             account.credits?.balance != nil || (account.resetCredits?.availableCount ?? 0) > 0) {
+            Section("macos.accountusage") {
                 CodexAccountUsageView(account: account, runtimeKind: "cli")
-            } else {
-                Text("macos.accountinformationisunavailable").font(.caption).foregroundStyle(.secondary)
             }
-
+            .id(SettingsSearchTarget.codexAccount.anchorID)
         }
-        .id(SettingsSearchTarget.codexAccount.anchorID)
         if let billing = model.codexRuntime?.billing, billing.configured,
            model.selectedCodexAccount?.authMode != "api-key" {
             Section("macos.apicostconnection") {

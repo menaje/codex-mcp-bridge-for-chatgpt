@@ -90,7 +90,7 @@ function credentialEvidence(directory: string, environment: NodeJS.ProcessEnv,
         ownerKey: digest(JSON.stringify(["api-key", key])), workspaceKey: null, authMode: "api-key"
       };
     }
-  } catch { /* Keyring, absent, or unreadable; seek an account observation. */ }
+  } catch { /* An absent or unreadable file does not prove credential ownership. */ }
   return null;
 }
 
@@ -145,7 +145,7 @@ export class CodexService {
   private confirmedSessionOwnerKey: string | null = null;
   private confirmedSessionOwnerAt: number | null = null;
   private confirmedSessionLocalPolicyKey: string | null = null;
-  private confirmedSessionSource: "file" | "account" | null = null;
+  private confirmedSessionSource: "file" | "environment" | null = null;
   private confirmedEffectiveCredentialStore: string | null = null;
   private effectivePolicyConfirmed = false;
   private currentOwnerConfirmed = false;
@@ -286,7 +286,7 @@ export class CodexService {
   admissionGuard(home?: string): () => Promise<void> {
     if (!home && this.executionAdmissionGuard) return this.executionAdmissionGuard;
     let identity: string | undefined;
-    let source: "file" | "account" | undefined;
+    let source: "file" | "environment" | undefined;
     let ownerKey: string | undefined;
     let policyKey: string | undefined;
     let managedPolicyKey: string | undefined;
@@ -321,7 +321,7 @@ export class CodexService {
       let current: string;
       let currentOwnerKey: string;
       let currentWorkspaceKey: string | null;
-      let currentSource: "file" | "account";
+      let currentSource: "file" | "environment";
       let currentMode: "chatgpt" | "api-key";
       if (fileEvidence) {
         current = fileEvidence.identity;
@@ -330,8 +330,8 @@ export class CodexService {
         currentSource = "file";
         currentMode = fileEvidence.authMode;
       } else {
-        // Never pin an unavailable observation as an account. A successful
-        // account/read can identify a keyring profile without reading tokens.
+        // The public account API cannot prove a ChatGPT login user. Only an
+        // explicitly supplied API key can establish an owner without a file.
         let account: CodexAccountSnapshot | null;
         try { account = await this.readCliAccount(); }
         catch { throw new Error("CODEX_AUTH_UNAVAILABLE: Codex account status cannot currently be verified. Retry after the account check recovers."); }
@@ -341,17 +341,15 @@ export class CodexService {
         }
         // An ambient key cannot identify a credential that managed storage
         // selected independently (including auto/keyring fallback).
-        const environmentApiKey = ["keyring", "auto", "ephemeral"].includes(String(managedStore))
+        const environmentApiKey = ["keyring", "auto", "ephemeral"].includes(String(managedStore ?? policy.credentialStore))
           ? undefined : this.environment.OPENAI_API_KEY || this.environment.CODEX_API_KEY;
-        if (account.authMode === "unknown" ||
-            !account.ownershipKey && !(account.authMode === "api-key" && environmentApiKey)) {
-          throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: The selected Codex CLI did not identify both the active login user and workspace. This credential store cannot authorize new work until both are verifiable.");
+        if (account.authMode !== "api-key" || !environmentApiKey) {
+          throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: This connection cannot be used by the Bridge. Choose a separate Bridge login or a verified file-backed connection.");
         }
-        currentOwnerKey = account.authMode === "api-key" && environmentApiKey
-          ? digest(JSON.stringify(["api-key", environmentApiKey])) : account.ownershipKey!;
+        currentOwnerKey = digest(JSON.stringify(["api-key", environmentApiKey]));
         currentWorkspaceKey = account.workspaceKey;
         current = digest(JSON.stringify([account.authMode, currentOwnerKey, currentPolicyKey]));
-        currentSource = "account";
+        currentSource = "environment";
         currentMode = account.authMode;
       }
       if (policy.forcedMethod && policy.forcedMethod !== (currentMode === "api-key" ? "api" : "chatgpt") ||
@@ -494,7 +492,7 @@ export class CodexService {
     const sharesDisplayContext = previous && (context !== null && previous.context === context ||
       context === null && previous.context === null && previous.revision === revision);
     const sameAccount = sharesDisplayContext &&
-      (context !== null || value.ownershipKey !== null && value.ownershipKey === previous.value.ownershipKey) &&
+      context !== null &&
       value.authMode === previous.value.authMode && value.planType === previous.value.planType;
     let displayed = value;
     if (sameAccount && value.authMode === "chatgpt" && value.usageStatus === "unavailable" &&
@@ -527,8 +525,8 @@ export class CodexService {
     if (context !== null && context === cached.context) {
       return cached.value;
     }
-    // Keep an unknown-context value only as a private merge candidate for a
-    // fresh, same-account result. Never project it onto a structural response.
+    // An unknown-context value needs a fresh read before presentation. It
+    // cannot establish same-user continuity or a structural cached response.
     if (context === null && cached.context === null && cached.revision === this.cacheRevision()) return null;
     this.displayedAccounts.delete(kind);
     return null;
@@ -546,7 +544,7 @@ export class CodexService {
         this.observeAccountOwner(account);
         return account;
       } catch (error) {
-        if (this.confirmedSessionSource === "account") this.currentOwnerConfirmed = false;
+        if (this.confirmedSessionSource === "environment") this.currentOwnerConfirmed = false;
         throw error;
       }
     }
@@ -558,28 +556,20 @@ export class CodexService {
       const initialized = await rpc.request("initialize", { clientInfo: { name: "codex_bridge_account", version: "1" }, capabilities: { experimentalApi: true } }, { timeoutMs: 15_000 });
       validateInitializeResponse(initialized);
       await rpc.notify("initialized", {});
-      const sessionsBefore = context.protocol?.accountSessionsList
-        ? await rpc.request("account/sessions/list", { refreshWorkspaceMetadata: false }, { timeoutMs: 15_000 }).catch(() => null)
-        : null;
       const account = await rpc.request("account/read", { refreshToken: false }, { timeoutMs: 15_000 });
       const mode = projectCodexAccount(account, null).authMode;
       const limits = mode === "chatgpt" ? await rpc.request("account/rateLimits/read", undefined, { timeoutMs: 15_000 }).catch(() => null) : null;
-      const sessionsAfter = sessionsBefore
-        ? await rpc.request("account/sessions/list", { refreshWorkspaceMetadata: false }, { timeoutMs: 15_000 }).catch(() => null)
-        : null;
-      const snapshot = projectCodexAccount(account, limits, Date.now(),
-        sessionsBefore && sessionsAfter ? { before: sessionsBefore, after: sessionsAfter } : undefined);
+      const snapshot = projectCodexAccount(account, limits);
       this.observeAccountOwner(snapshot);
       return snapshot;
     } catch (error) {
-      if (this.confirmedSessionSource === "account") this.currentOwnerConfirmed = false;
+      if (this.confirmedSessionSource === "environment") this.currentOwnerConfirmed = false;
       throw error;
     } finally { try { await rpc.close(); } finally { await context.release(); } }
   }
   private observeAccountOwner(account: CodexAccountSnapshot): void {
-    if (this.confirmedSessionSource === "account" && this.confirmedSessionOwnerKey &&
-        (!account.authenticated || !account.ownershipKey ||
-          account.ownershipKey !== this.confirmedSessionOwnerKey || account.ownershipConflict)) {
+    if (this.confirmedSessionSource === "environment" && this.confirmedSessionOwnerKey &&
+        (!account.authenticated || account.authMode !== "api-key" || account.ownershipConflict)) {
       this.currentOwnerConfirmed = false;
     }
   }

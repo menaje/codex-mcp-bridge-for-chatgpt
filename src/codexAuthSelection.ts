@@ -425,18 +425,15 @@ export class CodexAuthSelectionManager {
       if (fileWorkspaceKey && account.workspaceKey && fileWorkspaceKey !== account.workspaceKey) {
         throw new Error("CODEX_AUTH_CANDIDATE_UNVERIFIED: Codex reported a different workspace from the profile credential.");
       }
-      if (ownerKey && account.ownershipKey && ownerKey !== account.ownershipKey) {
-        throw new Error("CODEX_AUTH_CANDIDATE_UNVERIFIED: Codex reported a different account from the profile credential.");
-      }
       const models = await pool.listModels() as { data?: unknown[] };
       if (!Array.isArray(models.data) || models.data.length === 0) {
         throw new Error("CODEX_AUTH_MODELS_UNAVAILABLE: The candidate model catalog could not be verified.");
       }
       const credentialKey = codexCredentialIdentity(profileEnvironment.CODEX_HOME!, profileEnvironment);
-      if (!credentialKey) {
+      if (!credentialKey || !ownerKey) {
         throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: The candidate's file-backed identity could not be confirmed.");
       }
-      return { accountKey: ownerKey || account.ownershipKey, accountEmail, workspaceName,
+      return { accountKey: ownerKey, accountEmail, workspaceName,
         workspaceKey: fileWorkspaceKey || account.workspaceKey, billingTarget: account.billing.kind, credentialKey };
     } finally { await pool.close(); }
   }
@@ -555,13 +552,10 @@ export class CodexAuthSelectionManager {
       if (fileWorkspaceKey && account.workspaceKey && fileWorkspaceKey !== account.workspaceKey) {
         throw new Error("CODEX_AUTH_SHARED_UNAVAILABLE: Codex reported a different workspace from the shared credential.");
       }
-      if (ownerKey && account.ownershipKey && ownerKey !== account.ownershipKey) {
-        throw new Error("CODEX_AUTH_SHARED_UNAVAILABLE: Codex reported a different account from the shared credential.");
+      if (!credentialKey || !ownerKey) {
+        throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: This connection cannot be used by the Bridge. Choose a separate Bridge login or a verified file-backed connection.");
       }
-      if (!credentialKey && !account.ownershipKey) {
-        throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: The selected CLI did not verify the shared login user and workspace; choose a verifiable profile.");
-      }
-      return { accountKey: ownerKey || account.ownershipKey, accountEmail, workspaceName,
+      return { accountKey: ownerKey, accountEmail, workspaceName,
         workspaceKey: fileWorkspaceKey || account.workspaceKey, billingTarget: account.billing.kind, credentialKey };
     } finally { await pool.close(); }
   }

@@ -431,6 +431,9 @@ enum BridgeAppLocalization {
     }
 
     private static func localizedErrorDetail(_ message: String, locale: Locale) -> String {
+        if message.contains("CODEX_AUTH_IDENTITY_UNAVAILABLE") {
+            return string("macos.auth.connectionUnsupported", locale: locale)
+        }
         if let skillError = skillErrorDescription(message, locale: locale) {
             return skillError
         }

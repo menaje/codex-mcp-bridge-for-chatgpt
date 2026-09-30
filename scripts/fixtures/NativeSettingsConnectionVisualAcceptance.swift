@@ -144,7 +144,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             let paneChecks: [(SettingsNavigationPane, String, [String])] = [
                 (.modelExecution, "settings-model-execution-en-light.png", ["Set default access"]),
                 (.projects, "settings-projects-en-light.png", ["Register and manage"]),
-                (.codex, "settings-codex-en-light.png", ["Workspace name at last apply", "Engineering workspace", "Changing Codex locations"]),
+                (.codex, "settings-codex-en-light.png", ["Account email at last apply", "fixture@example.invalid", "Changing Codex locations"]),
                 (.connection, "settings-connection-en-light.png", ["Choose this Mac"]),
                 (.server, "settings-server-en-light.png", ["safety limit"])
             ]
@@ -167,7 +167,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                 settingsWindow,
                 named: "settings-codex-override-en-light.png",
                 in: artifacts,
-                expecting: ["explicit CODEX_HOME", "Keyring ChatGPT user"]
+                expecting: ["explicit CODEX_HOME", "Authentication method", "ChatGPT"]
             )
             model.codexRuntime = try Self.codexRuntimeSnapshot()
             model.requestedSettingsTab = SettingsNavigationPane.general.rawValue
@@ -279,6 +279,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             model.previewInterfaceLocale("en")
             try await captureSetupStages(in: artifacts)
             try await captureRecoveryStates(in: artifacts)
+            try await captureAccountUsageStates(in: artifacts)
 
             let report: [String: Any] = [
                 "settings": [
@@ -300,7 +301,8 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                     "settingsSearchCovered": true,
                     "settingsSidebarAlwaysVisible": true,
                     "settingsTitlebarRemainsClearDuringNavigation": true,
-                    "setupAndRecoveryStatesCovered": true
+                    "setupAndRecoveryStatesCovered": true,
+                    "providedAndMissingAccountValuesRendered": true
                 ],
                 "captures": try captures.map { capture in
                     let data = try JSONEncoder().encode(capture)
@@ -599,6 +601,46 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
         window.close()
     }
 
+    private func captureAccountUsageStates(in artifacts: URL) async throws {
+        let observedAt = Date().timeIntervalSince1970 * 1000
+        let chatgpt: [String: Any] = [
+            "authMode": "chatgpt", "authenticated": true, "windows": [],
+            "usageStatus": "unavailable", "observedAt": observedAt,
+            "billing": ["kind": "chatgpt-plan"]
+        ]
+        let api: [String: Any] = [
+            "authMode": "api-key", "authenticated": true, "windows": [],
+            "observedAt": observedAt, "billing": ["kind": "api"]
+        ]
+        var usage = chatgpt
+        usage["usageStatus"] = "available"
+        usage["usageObservedAt"] = observedAt
+        usage["windows"] = [["limitId": "codex", "limitName": "Codex",
+                              "usedPercent": 35, "remainingPercent": 65, "windowDurationMins": 10080]]
+        usage["credits"] = ["hasCredits": true, "unlimited": false, "balance": "12.50"]
+        var cost = api
+        cost["billing"] = ["kind": "api", "actualCosts": ["configured": true,
+                            "status": "available", "usd": 12.34,
+                            "organizationId": "fixture-organization", "projectId": "fixture-project"]]
+        let cases: [(String, [String: Any], [String])] = [
+            ("account-chatgpt-missing-values-en-light.png", chatgpt, ["Authentication method", "ChatGPT"]),
+            ("account-api-missing-costs-en-light.png", api, ["Authentication method", "OpenAI API key"]),
+            ("account-chatgpt-provided-usage-en-light.png", usage, ["65%", "12.50", "Last checked"]),
+            ("account-api-provided-costs-en-light.png", cost, ["fixture-organization", "fixture-project"])
+        ]
+        for (file, object, expectedText) in cases {
+            let account = try Self.decode(CodexAccountUsage.self, object)
+            let window = makeWindow(size: NSSize(width: 600, height: 380), title: "Account usage",
+                                    rootView: AnyView(VStack(alignment: .leading) {
+                CodexAccountUsageView(account: account).environmentObject(model)
+                Spacer()
+            }.padding(24).environment(\.locale, Locale(identifier: "en"))))
+            try await settle(window, iterations: 8)
+            try await capture(window, named: file, in: artifacts, expecting: expectedText)
+            window.close()
+        }
+    }
+
     private func capture(
         _ window: NSWindow,
         named file: String,
@@ -769,8 +811,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
     nonisolated private static func codexRuntimeSnapshot(overrideActive: Bool = false) throws -> CodexRuntimeSnapshot {
         let selection: [String: Any] = [
             "id": "visual-codex", "source": "terminal", "command": "/fixture/codex",
-            "physicalPath": "/fixture/codex", "version": "0.153.3", "available": true, "compatible": true,
-            "protocol": ["accountSessionsList": false]
+            "physicalPath": "/fixture/codex", "version": "0.153.3", "available": true, "compatible": true
         ]
         return try decode(CodexRuntimeSnapshot.self, [
             "selection": selection, "candidates": [selection], "selectionRequired": false,
@@ -780,7 +821,7 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                         "reinstall": false, "rollback": false, "cleanup": false,
                         "retry": false, "applyPending": false, "skip": false],
             "account": ["authMode": "chatgpt", "authenticated": true,
-                        "ownershipKey": "0123456789abcdef", "workspaceKey": "abcdef0123456789",
+                        "workspaceKey": "abcdef0123456789",
                         "planType": "plus", "billing": ["kind": "chatgpt-plan"],
                         "windows": [], "observedAt": Date().timeIntervalSince1970 * 1000],
             "authSelection": ["revision": 0, "applied": ["kind": "shared"],

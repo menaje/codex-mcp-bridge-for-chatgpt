@@ -157,14 +157,14 @@
     function renderWeeklyUsage(view){
       const usage=view.weeklyUsage,valid=usage&&typeof usage.remainingPercent==="number"&&Number.isFinite(usage.remainingPercent);
       const state=view.usageDisplayStatus||(valid?"available":view.enrichment?.usageTimedOut?"timed-out":view.enrichment?.usageUnavailable?"unavailable":"checking");
-      elements.weeklyUsage.hidden=false;elements.weeklyUsage.dataset.state=state;
+      elements.weeklyUsage.hidden=!valid;elements.weeklyUsage.dataset.state=state;
       elements.weeklyUsageTrack.hidden=!valid;elements.weeklyUsageReset.hidden=true;elements.weeklyUsageObserved.hidden=true;
       const statusKey=state==="available"?"":state==="checking"?(valid?"usage.status.refreshing":"usage.status.checking"):
         state==="timed-out"?(valid?"usage.status.timedOutRetained":"usage.status.timedOut"):
         state==="unavailable"?(valid?"usage.status.unavailableRetained":"usage.status.unavailable"):"usage.status."+state;
       elements.weeklyUsageStatus.textContent=statusKey?t[statusKey]||t["usage.status.unavailable"]:"";
       elements.weeklyUsageStatus.hidden=!statusKey;
-      if(!valid){elements.weeklyUsageValue.textContent="—";elements.weeklyUsageFill.style.width="0%";elements.weeklyUsageTrack.removeAttribute("aria-valuenow");elements.weeklyUsageTrack.removeAttribute("aria-valuetext");return}
+      if(!valid){elements.weeklyUsageValue.textContent="";elements.weeklyUsageStatus.textContent="";elements.weeklyUsageStatus.hidden=true;elements.weeklyUsageFill.style.removeProperty("width");elements.weeklyUsageTrack.removeAttribute("aria-valuenow");elements.weeklyUsageTrack.removeAttribute("aria-valuetext");return}
       const observedAt=new Date(usage.observedAt);
       elements.weeklyUsageObserved.hidden=!Number.isFinite(observedAt.getTime());
       elements.weeklyUsageObserved.textContent=Number.isFinite(observedAt.getTime())?t["usage.observedAt"].replace("{time}",new Intl.DateTimeFormat(localeTag,{dateStyle:"short",timeStyle:"medium"}).format(observedAt)):"";

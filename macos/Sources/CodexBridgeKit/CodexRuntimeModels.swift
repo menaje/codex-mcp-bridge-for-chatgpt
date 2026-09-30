@@ -1,9 +1,5 @@
 import Foundation
 
-public struct CodexProtocolSupport: Codable, Sendable, Equatable {
-    public let accountSessionsList: Bool?
-}
-
 public struct CodexInstallation: Codable, Sendable, Equatable, Identifiable {
     public let id: String
     public let source: String
@@ -12,7 +8,6 @@ public struct CodexInstallation: Codable, Sendable, Equatable, Identifiable {
     public let version: String?
     public let available: Bool?
     public let compatible: Bool?
-    public let `protocol`: CodexProtocolSupport?
 }
 
 public struct CodexRuntimePreferences: Codable, Sendable, Equatable {

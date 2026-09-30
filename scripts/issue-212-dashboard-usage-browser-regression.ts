@@ -76,10 +76,10 @@ try {
       await page.evaluate(state=>window.__setUsage(state,null),state);
       await page.locator('#refresh').click();
       await page.waitForFunction(state=>document.querySelector('#weekly-usage')?.dataset.state===state,state);
-      if(!await page.locator('#weekly-usage').isVisible())throw new Error(state+' hid the usage area');
-      if(await page.locator('#weekly-usage-value').innerText()!=='—')throw new Error(state+' invented a percentage');
+      if(await page.locator('#weekly-usage').isVisible())throw new Error(state+' displayed an empty usage card');
+      if(await page.locator('#weekly-usage-value').textContent())throw new Error(state+' invented a percentage or placeholder');
       if(await page.locator('#weekly-usage-track').isVisible())throw new Error(state+' left the percentage bar visible');
-      if(!await page.locator('#weekly-usage-status').innerText())throw new Error(state+' has no explanation');
+      if(await page.locator('#weekly-usage-status').textContent())throw new Error(state+' left a missing-data explanation');
     }
     await page.setViewportSize({width:360,height:700});
     if(await page.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth))throw new Error('Mobile usage layout overflows');
@@ -87,8 +87,8 @@ try {
     if((await page.evaluate(()=>window.__errors)).length)throw new Error('Browser error');
   }`);
   writeFileSync(path.join(artifacts, "states.snapshot.txt"), await cli("snapshot"));
-  assert.match(await cli("snapshot"), /계정 전체 Codex 주간 잔여량/);
-  process.stdout.write("Dashboard usage states, retained value, timestamp, and empty-state rendering passed.\n");
+  assert.doesNotMatch(await cli("snapshot"), /계정 전체 Codex 주간 잔여량/);
+  process.stdout.write("Dashboard confirmed usage, retained value, timestamp, and omission of missing-data cards passed.\n");
 } finally {
   await cli("close").catch(() => undefined);
   server.close();

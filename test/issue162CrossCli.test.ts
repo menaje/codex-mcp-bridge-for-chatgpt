@@ -288,7 +288,6 @@ describe("issue 162 selected CLI across product entry points", () => {
     try {
       const status = await supervisor.codexRuntime({ action: "status", includeAccount: true });
       expect(status.selection?.source).toBe(choice);
-      expect(status.selection?.protocol?.accountSessionsList).toBe(false);
       expect(status.authSelection?.effective).toEqual({ kind, profileId });
       expect(status.account?.authMode).toBe(kind === "bridge-api" ? "api-key" : "chatgpt");
       expect(status.account?.billing?.kind).toBe(kind === "bridge-api" ? "api" : "chatgpt-plan");

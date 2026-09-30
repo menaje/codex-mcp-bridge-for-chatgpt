@@ -17,19 +17,13 @@ afterEach(async () => {
 });
 
 function account(id: string, usedPercent: number | null, observedAt: number): CodexAccountSnapshot {
-  const session = {
-    activeSessionId: `session-${id}`,
-    sessions: [{ sessionId: `session-${id}`, isActive: true,
-      userId: `user-${id}`, selectedWorkspaceAccountId: id }]
-  };
   return projectCodexAccount(
     { account: { type: "chatgpt", planType: "plus" }, workspaceRouting: { chatgptAccountId: id } },
     usedPercent === null ? null : {
       accountId: id,
       rateLimitsByLimitId: { codex: { primary: { usedPercent, windowDurationMins: 10_080 } } }
     },
-    observedAt,
-    { before: session, after: session }
+    observedAt
   );
 }
 
@@ -168,19 +162,36 @@ describe("issue 212: dashboard account-wide weekly usage", () => {
     });
   }
 
-  it("retains a proven same-owner Keyring value after a limits failure without changing its timestamp", async () => {
-    const f = await fixture("keyring");
+  it("retains a proven file-owner value after a limits failure without changing its timestamp", async () => {
+    const f = await fixture("file");
     try {
       const observedAt = Date.now() - 3_600_000;
-      vi.spyOn(f.service, "readCliAccount")
+      const readAccount = vi.spyOn(f.service, "readCliAccount")
         .mockResolvedValueOnce(account("account-a", 35, observedAt))
         .mockResolvedValueOnce(account("account-a", null, Date.now()));
       await f.read();
+      const afterCacheExpiry = Date.now() + 16_000;
+      vi.spyOn(Date, "now").mockReturnValue(afterCacheExpiry);
       const failed = await f.read();
       expect(failed.weeklyUsage?.remainingPercent).toBe(65);
       expect(failed.weeklyUsage?.observedAt).toBe(new Date(observedAt).toISOString());
       expect(failed.usageDisplayStatus).toBe("unavailable");
       expect(failed.enrichment.usageUnavailable).toBe(true);
+      expect(readAccount).toHaveBeenCalledTimes(2);
+    } finally { await f.server.close(); }
+  });
+
+  it("does not retain a Keyring-only value from the same workspace after a limits failure", async () => {
+    const f = await fixture("keyring");
+    try {
+      vi.spyOn(f.service, "readCliAccount")
+        .mockResolvedValueOnce(account("account-a", 35, Date.now() - 3_600_000))
+        .mockResolvedValueOnce(account("account-a", null, Date.now()));
+      expect((await f.read()).weeklyUsage?.remainingPercent).toBe(65);
+      const failed = await f.read();
+      expect(failed.weeklyUsage).toBeNull();
+      expect(failed.usageDisplayStatus).toBe("unavailable");
+      expect(f.service.currentExecutionAuthBoundary()).toBeNull();
     } finally { await f.server.close(); }
   });
 

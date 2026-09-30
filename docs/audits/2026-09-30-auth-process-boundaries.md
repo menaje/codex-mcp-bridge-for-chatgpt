@@ -174,8 +174,10 @@ The output contains **440 JSON files**, including `account/read`, but no
 with the currently selected executable. It does not establish real Keyring
 behavior or provide a stable Keyring ChatGPT user identity. Email and workspace
 identity alone cannot distinguish users sharing a workspace. New execution
-with unverifiable Keyring ownership stays blocked; the product support scope
-still needs an explicit decision. No CLI replacement, live login, credential
+with unverifiable Keyring ownership stays blocked. The later approved
+[current API scope correction](2026-09-30-current-api-auth-scope.md) excludes
+Keyring and removes the hypothetical adapter and metadata display. That
+decision resolves the earlier support-scope question. No CLI replacement, live login, credential
 read or billed request was performed for this capability probe.
 
 ## Remaining acceptance
@@ -186,7 +188,8 @@ authenticated requests afterward through the Bridge and original Codex app,
 and no new sign-in requirement or authentication error. A 15-minute observation
 interval or an auth-file modification time alone is insufficient.
 
-Current CLI Keyring support scope, real account/mode combinations, broader
+The later current-API scope decision excludes Keyring and unprovided metadata.
+Real supported account/mode combinations, broader
 installed failure recovery and UI acceptance, and any separately authorized
 billed API turn remain outstanding. No shared login, credential deletion or
 restore, periodic forced refresh, operational restart, or new installation

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
@@ -11,7 +11,7 @@ import { projectCodexAccount } from "../src/codexAccount.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { SessionRegistry } from "../src/sessionRegistry.js";
 import type { CodexProgress, CodexUpstream, ToolResult, UpstreamWorkerAssignment } from "../src/upstream.js";
-import { syntheticIdToken, syntheticVerifiedAccount } from "./fixtures/syntheticAuth.js";
+import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const REQUEST_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -21,20 +21,25 @@ const PROJECT_REF_A = "prj_AAAAAAAAAAAAAAAAAAAAAA";
 const PROJECT_REF_B = "prj_BBBBBBBBBBBBBBBBBBBBBB";
 
 describe("CodexJobRegistry persistence", () => {
-  it("keeps original live Job controls and its exact ACK after a confirmed Keyring login change", async () => {
+  it("keeps original live Job controls and its exact ACK after a file-backed login change", async () => {
     const root = temporaryRoot(), home = path.join(root, ".codex");
     mkdirSync(home);
-    writeFileSync(path.join(home, "config.toml"), 'cli_auth_credentials_store = "keyring"\n');
+    writeFileSync(path.join(home, "config.toml"), 'cli_auth_credentials_store = "file"\n');
+    const authFile = path.join(home, "auth.json");
+    const writeAuth = (userId: string) => writeFileSync(authFile, JSON.stringify({
+      auth_mode: "chatgpt", tokens: { account_id: "shared-workspace",
+        id_token: syntheticIdToken(userId, "shared-workspace") }
+    }));
+    writeAuth("user-a");
     const service = new CodexService({ HOME: root, CODEX_HOME: home, PATH: "",
       CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
     service.setAuthPolicyReader(async () => ({
-      config: { config: { cliAuthCredentialsStore: "keyring" } }, requirements: { requirements: null }
+      config: { config: { cliAuthCredentialsStore: "file" } }, requirements: { requirements: null }
     }));
-    const account = (userId: string) => syntheticVerifiedAccount({
+    let observed = projectCodexAccount({
       account: { type: "chatgpt", email: "same@example.invalid" },
       workspaceRouting: { chatgptAccountId: "shared-workspace" }
-    }, null, userId, "shared-workspace");
-    let observed = account("user-a");
+    }, null);
     service.setAccountReader(async () => observed);
     await service.assertCurrentAdmission();
     const ownerA = service.currentExecutionAuthBoundary();
@@ -74,13 +79,14 @@ describe("CodexJobRegistry persistence", () => {
           itemId: "question-item", summary: "A question", questions: [{ id: "answer", question: "Continue?", isSecret: false }]
         } } } });
       expect(registry.get(job.jobId)?.pendingInteractions).toHaveLength(1);
-      observed = account("user-b");
+      writeAuth("user-b");
       await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_CHANGED");
-      expect(service.sessionAuthBoundary().key).toBe(ownerA);
+      expect(service.sessionAuthBoundary().key).not.toBe(ownerA);
       expect(service.currentExecutionAuthBoundary()).toBeNull();
       expect(() => registry.findRequest(SCOPE_A, REQUEST_A, job.requestHash)).toThrow("CODEX_AUTH_JOB_BOUNDARY");
       await registry.respondToInteraction(job.jobId, interactionId, { answers: { answer: ["yes"] } });
       expect(respondToInteraction).toHaveBeenCalledExactlyOnceWith(interactionId, { answers: { answer: ["yes"] } });
+      rmSync(authFile);
       observed = projectCodexAccount({ account: null }, null);
       await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_REQUIRED");
       expect(service.currentExecutionAuthBoundary()).toBeNull();
