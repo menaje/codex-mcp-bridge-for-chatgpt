@@ -330,7 +330,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var dashboardProblemQuery = ProblemQuery(view: .actionable)
     @Published private(set) var changingProblems = false
     @Published var problemActionNotice: String?
-    @Published var loginInProgress = false { didSet { scheduleOperationalObservation() } }
     @Published var lastDashboardRefresh: Date?
     @Published var runtimeImpact: RuntimeAdmissionSnapshot?
     @Published var runtimeImpactErrorMessage: String?
@@ -381,7 +380,6 @@ final class AppModel: ObservableObject {
     private var connectionRecoveryExpiryTask: Task<Void, Never>?
     private var connectionRecoveryExpiryDeadline: Date?
     private var bridgeReadinessTaskGeneration = 0
-    private var loginPollingTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var authRefreshTask: Task<Void, Never>?
     private var authRefreshPending = false
@@ -468,7 +466,7 @@ final class AppModel: ObservableObject {
     }
 
     var operationalObservation: OperationalObservation {
-        guard !isBusy, !loginInProgress, !applicationShutdownInProgress, !systemObservationPending else { return .unknown }
+        guard !isBusy, !applicationShutdownInProgress, !systemObservationPending else { return .unknown }
         if !isRemoteClient, lifecycleOperation?.isExecuting == true { return .unknown }
         if !isRemoteClient, localConnectionRecovery.isChecking { return .unknown }
         if isRemoteClient {
@@ -2376,11 +2374,6 @@ final class AppModel: ObservableObject {
             authStatus = next
             authErrorMessage = nil
             if !next.authenticated { dashboard = dashboard?.clearingUsage() }
-            if authStatus?.authenticated == true {
-                loginInProgress = false
-                loginPollingTask?.cancel()
-                loginPollingTask = nil
-            }
         } catch {
             guard generation == connectionGeneration, !isRemoteClient else { return }
             authStatus = nil
@@ -2497,35 +2490,6 @@ final class AppModel: ObservableObject {
                 self.beginPolling()
                 self.enqueueRefresh(["status"])
             }
-        }
-    }
-
-    func launchCodexLogin() async -> Bool {
-        guard !isRemoteClient else { return false }
-        isBusy = true
-        defer { isBusy = false }
-        authErrorMessage = nil
-        let generation = connectionGeneration
-        do {
-            let client = await helperClient()
-            let current = try await client.authStatus()
-            guard generation == connectionGeneration, !isRemoteClient else { return false }
-            authStatus = current
-            if current.authenticated {
-                loginInProgress = false
-                loginPollingTask?.cancel()
-                loginPollingTask = nil
-                return true
-            }
-            guard current.installed else { return false }
-            _ = try await client.startLogin()
-            guard generation == connectionGeneration, !isRemoteClient else { return false }
-            loginInProgress = true
-            beginLoginPolling()
-            return true
-        } catch {
-            authErrorMessage = localizedErrorDescription(error)
-            return false
         }
     }
 
@@ -3270,8 +3234,6 @@ final class AppModel: ObservableObject {
         pollingTask?.cancel()
         pollingTask = nil
         cancelBridgeReadinessPolling()
-        loginPollingTask?.cancel()
-        loginPollingTask = nil
         authRefreshTask?.cancel()
         authRefreshTask = nil
         authRefreshPending = false
@@ -3362,21 +3324,6 @@ final class AppModel: ObservableObject {
         } catch {
             dashboardErrorMessage = localizedErrorDescription(error)
             return false
-        }
-    }
-
-    private func beginLoginPolling() {
-        loginPollingTask?.cancel()
-        loginPollingTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            for _ in 0..<60 {
-                if Task.isCancelled { return }
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                if Task.isCancelled { return }
-                await self.refreshAuthStatus()
-                if self.authStatus?.authenticated == true { return }
-            }
-            self.loginInProgress = false
         }
     }
 

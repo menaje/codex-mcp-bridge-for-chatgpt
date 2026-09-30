@@ -5702,55 +5702,55 @@
             "de": {
               "stringUnit": {
                 "state": "translated",
-                "value": "Melden Sie sich im Browser bei Codex an, damit Bridge für dieses Konto arbeiten kann."
+                "value": "Verwenden Sie die bestehende Codex-Anmeldung oder richten Sie ein separates ChatGPT-Profil für die Bridge ein. Eine neue Anmeldung im gemeinsamen Profil kann die Codex-App abmelden."
               }
             },
             "en": {
               "stringUnit": {
                 "state": "translated",
-                "value": "Sign in to Codex in your browser so the Bridge can start work for this account."
+                "value": "Use your existing Codex login or prepare a separate ChatGPT profile for the Bridge. A new login in the shared home can sign out the Codex app."
               }
             },
             "es": {
               "stringUnit": {
                 "state": "translated",
-                "value": "Inicia sesión en Codex en el navegador para que el Bridge pueda trabajar con esta cuenta."
+                "value": "Usa tu sesión actual de Codex o prepara un perfil de ChatGPT separado para Bridge. Un nuevo inicio de sesión en el perfil compartido puede cerrar la sesión de la app Codex."
               }
             },
             "fr": {
               "stringUnit": {
                 "state": "translated",
-                "value": "Connectez-vous à Codex dans votre navigateur pour que Bridge puisse travailler avec ce compte."
+                "value": "Utilisez la connexion Codex existante ou préparez un profil ChatGPT distinct pour Bridge. Une nouvelle connexion dans le profil partagé peut déconnecter l’application Codex."
               }
             },
             "ja": {
               "stringUnit": {
                 "state": "translated",
-                "value": "このアカウントでブリッジが作業を開始できるよう、ブラウザでCodexにサインインします。"
+                "value": "既存のCodexログインを使うか、ブリッジ用に別のChatGPTプロファイルを準備してください。共有プロファイルで新たにログインすると、Codexアプリがログアウトする場合があります。"
               }
             },
             "ko": {
               "stringUnit": {
                 "state": "translated",
-                "value": "브리지에서 이 계정의 작업을 시작할 수 있도록 브라우저에서 Codex에 로그인하세요."
+                "value": "기존 Codex 로그인을 사용하거나 브리지용 별도 ChatGPT 프로필을 준비하세요. 공유 프로필에서 새로 로그인하면 Codex 앱이 로그아웃될 수 있습니다."
               }
             },
             "pt": {
               "stringUnit": {
                 "state": "translated",
-                "value": "Entre no Codex pelo navegador para que a Bridge possa trabalhar com esta conta."
+                "value": "Use a sessão atual do Codex ou prepare um perfil ChatGPT separado para a Bridge. Um novo login no perfil compartilhado pode desconectar o app Codex."
               }
             },
             "zh-Hans": {
               "stringUnit": {
                 "state": "translated",
-                "value": "在浏览器中登录 Codex，以便 Bridge 可以为此账户开始工作。"
+                "value": "使用现有的 Codex 登录，或为 Bridge 准备单独的 ChatGPT 配置。若在共享配置中重新登录，Codex 应用可能会退出登录。"
               }
             },
             "zh-Hant": {
               "stringUnit": {
                 "state": "translated",
-                "value": "在瀏覽器中登入 Codex，讓 Bridge 可以為此帳戶開始工作。"
+                "value": "使用現有的 Codex 登入，或為 Bridge 準備獨立的 ChatGPT 設定檔。若在共用設定檔中重新登入，Codex App 可能會登出。"
               }
             }
           }

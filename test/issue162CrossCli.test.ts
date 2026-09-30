@@ -112,7 +112,7 @@ describe("issue 162 selected CLI across product entry points", () => {
     }
   }, 30_000);
 
-  it.each(["app", "terminal", "bridge"] as const)("keeps the selected auth source while using the %s CLI for login, account, model fallback and work", async choice => {
+  it.each(["app", "terminal", "bridge"] as const)("keeps the selected auth source for %s account, model fallback, and work while blocking shared login", async choice => {
     const root = mkdtempSync(path.join(tmpdir(), `issue162-${choice}-`));
     roots.push(root);
     const log = path.join(root, "invocations.jsonl");
@@ -180,8 +180,8 @@ describe("issue 162 selected CLI across product entry points", () => {
     const execution = createExecutionRuntime(config, {}, environment);
     try {
       expect((await supervisor.codexRuntime({ action: "status", includeAccount: true })).selection?.source).toBe(choice);
-      await supervisor.startLogin();
-      await vi.waitFor(() => expect(observations(log).some(item => item.kind === "login" && item.cli === choice)).toBe(true));
+      await expect(supervisor.startLogin()).rejects.toThrow("CODEX_SHARED_LOGIN_DISABLED");
+      await expect(supervisor.codexRuntime({ action: "login" })).rejects.toThrow("CODEX_SHARED_LOGIN_DISABLED");
       const catalog = createModelCatalog(config, {
         listModels: async () => { throw new Error("fixture App Server catalog unavailable"); }
       } as unknown as CodexUpstream);
@@ -190,7 +190,7 @@ describe("issue 162 selected CLI across product entry points", () => {
         approvalPolicy: "never", ephemeral: false, prompt: "fixture",
         selection: { model: "gpt-5.6-sol", reasoningEffort: "low" } });
       const userCalls = observations(log).filter(item => ["login", "account", "models", "task-worker"].includes(item.kind));
-      expect(new Set(userCalls.map(item => item.kind))).toEqual(new Set(["login", "account", "models", "task-worker"]));
+      expect(new Set(userCalls.map(item => item.kind))).toEqual(new Set(["account", "models", "task-worker"]));
       expect(userCalls.every(item => item.cli === choice && item.runtimeHome === `${choice}-runtime` &&
         item.codexHome === codexHome && item.proxy && item.certificate && !item.apiKey)).toBe(true);
 

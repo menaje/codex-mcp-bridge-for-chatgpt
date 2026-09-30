@@ -8,6 +8,12 @@ replacement installed the older `b24bb26` candidate; later source corrections
 in this draft have not been installed. No operating login was changed during
 the source-only follow-up.
 
+A [Sep 30 read-only sign-out investigation](2026-09-30-codex-desktop-signout.md)
+found four direct CLI browser-login starts followed within 9–28 seconds by
+desktop authentication 401s. The old Bridge's shared-home login action is now
+disabled in source and first setup routes to separate profile settings. The
+exact historical caller remains unknown; the new correction is not installed.
+
 ## Follow-up implementation after PR checkpoint `c6cf380`
 
 - Stable session and Job ownership now uses the selected auth source, Codex
@@ -154,7 +160,7 @@ the exact evidence and remaining scenarios.
 
 | Condition | Classification | Specific remaining boundary |
 | --- | --- | --- |
-| LOGIN-1 | Live environment needed | Establish the original sign-out timeline and affected installed build. |
+| LOGIN-1 | Read-only operating-log timeline found; attribution still needed | Four direct CLI login starts preceded desktop 401s. Identify the caller and affected build. |
 | LOGIN-2 | Synthetic product path passed; live environment needed | No-copy build/probe paths were exercised; inspect the shipped package and external automation. |
 | LOGIN-3 | Live environment needed | Sign in an independent persistent test home without copying operating credentials. |
 | LOGIN-4 | Synthetic product path passed; live environment needed | Inspect actual selected source and managed-policy provenance. |
@@ -162,7 +168,7 @@ the exact evidence and remaining scenarios.
 | LOGIN-6 | Implementation incomplete; live environment needed | Establish App Server reconnect behavior after external login without interrupting original work. |
 | LOGIN-7 | Implementation incomplete; synthetic product path passed; live environment needed | Original Job question, cancel, result, and restart subsets passed; queue, transport ACK, and existing-thread combinations remain. |
 | LOGIN-8 | Live environment needed | Test the final candidate with the original Codex app login through a later refresh. |
-| LOGIN-9 | Live environment needed | Capture the actual refresh error without changing operating credentials. |
+| LOGIN-9 | Read-only operating-log error found; live acceptance needed | Desktop logged the signed-out-or-different-account refresh error. Verify the final candidate through a later refresh. |
 | LOGIN-10 | Synthetic product path passed; live environment needed | Re-run final-source checks and installed user acceptance; previous timer failure cause remains unknown. |
 | LOGIN-11 | Live environment needed | Compare independent and shared-store multi-process refresh under separate authorization. |
 | LOGIN-12 | Implementation incomplete; live environment needed | Confirm external changes without a file revision or `account/updated` in the installed CLI. |
@@ -212,7 +218,7 @@ share a workspace.
 
 | #208 condition | Current evidence and outstanding work |
 | --- | --- |
-| LOGIN-1 | Partial: [source/installation chronology](2026-09-29-auth-connection-evidence.md) separates report, observed guard rejection, and conditional source hazard. The original sign-out timeline and identity of the build involved in that report remain unknown; the later `b24bb26` replacement identity is recorded separately. |
+| LOGIN-1 | Partial: [read-only desktop sign-out reconstruction](2026-09-30-codex-desktop-signout.md) shows four direct CLI browser-login starts followed 9–28 seconds later by desktop auth 401s. Upstream CLI clears the current auth before browser login and the old Bridge could launch this against the shared home. The actual invoker and affected build for each event remain unproven. |
 | LOGIN-2 | Synthetic: five opt-in live probes no longer copy operating `auth.json`; build/package paths remain free of automatic live auth runs. Recheck the shipped package and any external agent automation. |
 | LOGIN-3 | Synthetic: marked persistent independent test home and fixture coverage. No independently signed-in test profile was supplied or used. |
 | LOGIN-4 | Partial: selected source, home, generation, and CLI are projected through launcher/Helper/server. New task admission reads the selected App Server's effective policy before resolving saved Agents. Operating applied settings and installed managed-policy provenance were not inspected. |
@@ -220,7 +226,7 @@ share a workspace.
 | LOGIN-6 | Partial: transient admission observations can recover without relogin. Existing App Server re-read/reconnect behavior after an external login is unverified. |
 | LOGIN-7 | Partial: no automatic login/API fallback; authentication switch blocks protected stored work, interactions, and undelivered results. New Jobs and schema-30 sessions persist a non-secret owner boundary; old completed results remain stored but cannot be replayed as executions. Original Job completion, failure, and interruption now record their session under the Job's admitted owner across an external login change and terminal commit retry. Active mismatched Jobs remain readable but cannot recover, be ACKed, cancelled, answered, or steered under a new owner without exact original-executor proof. A question blocked before upstream send records `not-delivered` and can retry the identical request after original-worker proof returns; a lost upstream reply remains `uncertain` and cannot resend. An HTTP Bridge restart with B leaves A's admitted Job dormant; a later restart with A recovers the same retained result under A and ACKs once, using a synthetic executor. Queue, transport ACK, and existing-thread behavior still need broader product acceptance. |
 | LOGIN-8 | Partial live: after a separately authorized replacement, installed build `b24bb2616935:dfbdb90c8b89` launched with matching Helper/bridge builds, connected tunnel, preserved reported Codex login availability, and opened schema 30. The original Codex app login through a later refresh and this subsequent source revision were not installed or exercised. |
-| LOGIN-9 | Synthetic/source audit: no raw credential copy, logout, deletion, or forced refresh was added to routine diagnostics. Actual refresh error type was not observed. |
+| LOGIN-9 | Read-only operating desktop logs include the signed-out-or-different-account refresh error on Sep 25 and Sep 29. No token was collected or refresh forced. This supports cleared or changed auth state, but does not identify the direct CLI login caller. |
 | LOGIN-10 | Partial: after the menu-bar usage correction, API-profile matrix, original-Job question retry fix, previously used external-home selection, original-worker cancellation, Bridge restart owner-recovery HTTP case, and local workspace-name display, the full four-worker Node suite passed 1,064/1,064 tests in 109 files, including the process-probe elapsed-time assertion. The prior 7-second failure was not reproduced; its timer diagnostic was not retained, so its cause remains unclassified and the timeout was not relaxed. The focused three-installation matrix passed 10/10, TypeScript build/release/localization passed, and macOS passed 215 Swift tests (2 skipped) plus nine-language checks. Settings visual acceptance includes the explicit `CODEX_HOME` warning and previously used location; the isolated pinned App Server schema check is separate evidence. The installed `b24bb26` bundle predates these source corrections; real-account and user acceptance remain separate. |
 | LOGIN-11 | Live: independent-copy and no-copy shared-store multi-process refresh must be measured separately with the selected CLI; neither was injected into operating auth. |
 | LOGIN-12 | Partial: account observation is correlated and stale read results are rejected on local revision changes. External changes without file revision and missing `account/updated` need installed-CLI tests. |

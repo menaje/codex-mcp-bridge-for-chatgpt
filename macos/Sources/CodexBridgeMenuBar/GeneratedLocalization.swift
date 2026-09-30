@@ -435,7 +435,7 @@ enum BridgeGeneratedLocalization {
         "macos.connectionAssistant.allReadyTitle": "Connection Ready",
         "macos.connectionAssistant.chooseRoleDescription": "Choose whether this Mac runs the server or connects to a server running elsewhere.",
         "macos.connectionAssistant.chooseRoleTitle": "Choose This Mac’s Role",
-        "macos.connectionAssistant.codexSignInDescription": "Sign in to Codex in your browser so the Bridge can start work for this account.",
+        "macos.connectionAssistant.codexSignInDescription": "Use your existing Codex login or prepare a separate ChatGPT profile for the Bridge. A new login in the shared home can sign out the Codex app.",
         "macos.connectionAssistant.codexSignInTitle": "Codex Sign-In",
         "macos.connectionAssistant.completeLocalDescription": "This Mac is ready to run the Bridge. Finish the ChatGPT Tunnel connection and register a project.",
         "macos.connectionAssistant.completeRemoteDescription": "This Mac is ready to manage the selected server.",

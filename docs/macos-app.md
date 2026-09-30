@@ -199,8 +199,9 @@ explicit **Quit App** action is different: it stops the managed runtime, verifie
 and removes captured descendant process groups, boots the helper LaunchAgent out
 of the current login session, and only then terminates the menu bar app. Its plist
 is preserved so reopening the app or starting the next user login can bootstrap
-the helper again. A browser-login process started by the helper is tracked and its
-process tree is also stopped during helper shutdown. Pending native Settings edits
+the helper again. A separate-profile browser login that survives Helper shutdown
+remains unconfirmed; its profile cannot be reused or applied without a new
+verified login. Pending native Settings edits
 must finish saving before quit; a save failure leaves the app open and reports the
 problem instead of discarding the edit. Graceful quit/stop/restart first blocks new Job admission, waits
 for active Jobs and pending admissions, and then verifies every current retained
@@ -342,7 +343,7 @@ new setup follows these focused stages:
 1. choose whether this Mac runs the server or connects to an existing server;
 2. check supported existing settings before showing manual credentials;
 3. enter a Runtime API key and Tunnel ID only when discovery cannot complete the connection;
-4. check or start Codex browser login; and
+4. check Codex authentication and, when needed, prepare a separate Bridge login in Codex settings; and
 5. continue to ChatGPT Tunnel connection and first-project registration.
 
 <p align="center">
@@ -418,9 +419,12 @@ match. Otherwise it is rebuilt before use. A separate
 It does not change SQLite, projects, Settings, Codex authentication, or the
 dotenv.
 
-The app checks `codex login status` and starts `codex login` only after the user
-selects the browser-login action. It does not inspect, copy, replace, delete, or
-log out the shared Codex credential cache. In particular, missing ChatGPT login
+The app checks the selected Codex account through App Server. The legacy
+shared-home browser-login actions are disabled: starting `codex login` against
+the home used by the Codex desktop app can revoke and remove that app's current
+authentication before the new browser login completes. For a new Bridge login,
+the user prepares a separate persistent ChatGPT profile in Codex settings;
+the selected CLI logs in with that profile's own `CODEX_HOME`. A missing ChatGPT login
 never causes an API-key fallback. Explicit execution API-key selection remains
 deferred to issue #29. In app-managed mode, `OPENAI_API_KEY` and `CODEX_API_KEY`
 from an older dotenv or ambient process are not inherited by Codex children;

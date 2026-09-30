@@ -5,6 +5,12 @@ Changing the selected executable does not copy or change a login. Existing
 installations continue using their current shared Codex login until someone
 explicitly selects another connection.
 
+The Bridge does not start `codex login` in the existing shared home. The legacy
+Helper login endpoints reject that request, including calls from older clients.
+Codex CLI clears its current login before a new browser flow completes; using
+the shared home could sign out the Codex desktop app. New Bridge sign-in uses
+the separate persistent ChatGPT profile below.
+
 The native first setup and Codex settings show three connection choices:
 
 | Choice | Storage and billing |

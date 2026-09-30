@@ -1821,7 +1821,7 @@ createInterface({input:process.stdin}).on("line", line => {
   });
 
   it.runIf(process.platform !== "win32")(
-    "stops the tracked Codex login process tree during verified helper shutdown preparation",
+    "rejects legacy shared-home login from both Helper actions without starting the CLI",
     async () => {
       const root = temporaryDirectory();
       const bridgeRoot = path.join(root, "runtime");
@@ -1867,18 +1867,13 @@ setInterval(() => {}, 1_000);
       let descendantPid = 0;
 
       try {
-        await supervisor.startLogin();
-        await eventually(() => existsAndHasContent(processFile));
-        ({ loginPid, descendantPid } = JSON.parse(readFileSync(processFile, "utf8")));
-        expect(processAlive(loginPid)).toBe(true);
-        expect(processAlive(descendantPid)).toBe(true);
-
-        const stopped = await supervisor.prepareShutdown({ mode: "force", timeoutMs: 5_000 });
-
-        expect(stopped).toMatchObject({ phase: "stopped", pid: null });
-        await eventually(() => !processAlive(loginPid));
-        await eventually(() => !processAlive(descendantPid));
+        await expect(supervisor.startLogin()).rejects.toThrow("CODEX_SHARED_LOGIN_DISABLED");
+        await expect(supervisor.codexRuntime({ action: "login" })).rejects.toThrow("CODEX_SHARED_LOGIN_DISABLED");
+        expect(existsAndHasContent(processFile)).toBe(false);
       } finally {
+        if (existsAndHasContent(processFile)) {
+          ({ loginPid, descendantPid } = JSON.parse(readFileSync(processFile, "utf8")));
+        }
         for (const pid of [loginPid, descendantPid]) {
           if (pid > 1 && processAlive(pid)) {
             try { process.kill(-pid, "SIGKILL"); } catch {}

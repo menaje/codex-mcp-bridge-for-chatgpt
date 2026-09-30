@@ -864,6 +864,9 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
   }
 
   async codexRuntime(request: CodexRuntimeAction): Promise<CliRuntimeSnapshot> {
+    if (request.action === "login") {
+      throw new Error("CODEX_SHARED_LOGIN_DISABLED: Choose a separate ChatGPT profile in Codex settings.");
+    }
     // An uncertain launch makes the requested child environment unreadable by
     // design. Its local stopped-runtime reconciliation must bypass that path.
     if (request.action === "auth-reconcile-stopped") {
@@ -882,7 +885,7 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       ? new CodexAuthSelectionManager(manager.root) : this.authSelectionManager();
     const authEnvironment = requestState.problem
       ? { ...service.environment, CODEX_HOME: process.env.CODEX_HOME } : this.authSelectionEnvironment();
-    if (environmentPending && ["login", "select", "install", "update", "reinstall", "retry", "rollback", "remove", "apply-pending"].includes(request.action)) {
+    if (environmentPending && ["select", "install", "update", "reinstall", "retry", "rollback", "remove", "apply-pending"].includes(request.action)) {
       throw new Error("CODEX_ENVIRONMENT_PENDING: Restart the managed runtime after current work finishes before using the changed Codex environment.");
     }
     if (!["status", "check-updates", "auth-verify"].includes(request.action) &&
@@ -941,7 +944,6 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
         await service.billing.remove();
         return { ...await manager.snapshot(), billing: await service.billing.snapshot() };
       }
-      case "login": await this.startLogin(request.kind); return manager.snapshot();
       case "auth-prepare": {
         if (request.authKind !== "bridge-chatgpt" && request.authKind !== "bridge-api" || request.authRevision === undefined) {
           throw new Error("CODEX_AUTH_REQUEST_INVALID");
@@ -1121,46 +1123,11 @@ export class MacOSBridgeSupervisor implements MacOSHelperController {
       summary: account.authenticated ? "Codex login is available." : "Codex login is required." };
   }
 
-  startLogin(_kind?: "cli"): Promise<{ started: true }> {
-    return this.exclusive(async () => {
-      if (this.cliEnvironmentPending()) throw new Error("CODEX_ENVIRONMENT_PENDING: Restart the managed runtime before starting Codex login.");
-      if (isChildRunning(this.loginProcess)) {
-        this.appendLog("helper", "The existing Codex browser login is still in progress.");
-        return { started: true };
-      }
-
-      const context = await this.selectedCliContext().service.acquireContext();
-      const command = context.selection.command;
-      const child = spawn(command, ["login"], {
-        cwd: context.managementCwd,
-        detached: true,
-        env: context.environment,
-        stdio: "ignore"
-      });
-      this.loginProcess = child;
-      child.once("exit", () => {
-        void context.release();
-        if (this.loginProcess === child) this.loginProcess = undefined;
-        this.changed("auth");
-      });
-      try {
-        await new Promise<void>((resolve, reject) => {
-          child.once("spawn", () => {
-            child.unref();
-            resolve();
-          });
-          child.once("error", reject);
-        });
-      } catch (error) {
-        await context.release();
-        if (this.loginProcess === child) this.loginProcess = undefined;
-        this.lastError = safeErrorMessage(error);
-        this.appendLog("helper", `Codex login could not start: ${this.lastError}`);
-        throw error;
-      }
-      this.appendLog("helper", "Codex browser login was requested.");
-      return { started: true };
-    });
+  async startLogin(_kind?: "cli"): Promise<{ started: true }> {
+    // Keep the legacy RPC for older clients, but never invoke `codex login`
+    // against the active home: the CLI clears its existing login before the
+    // browser flow completes, which can sign out the Codex desktop app.
+    throw new Error("CODEX_SHARED_LOGIN_DISABLED: Choose a separate ChatGPT profile in Codex settings.");
   }
 
   private lifecycle(): RuntimeLifecycleCoordinator {
