@@ -2171,8 +2171,7 @@ async function dispatchHelperLine(
             "helper.prepare-shutdown",
             "setup.discovery.import",
             "setup.dotenv.atomic-apply",
-            "setup.dotenv.repair-permissions",
-            "auth.codex-browser-login"
+            "setup.dotenv.repair-permissions"
           ],
           status: await controller.snapshot()
         };

@@ -712,6 +712,7 @@ describe("macOS runtime helper RPC", () => {
         status: { kind: "helper-status", phase: "running" }
       }
     });
+    expect(response.result.capabilities).not.toContain("auth.codex-browser-login");
   });
 
   it("routes setup and explicit drain or force semantics", async () => {
