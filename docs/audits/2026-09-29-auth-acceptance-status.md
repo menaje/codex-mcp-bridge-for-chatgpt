@@ -113,9 +113,14 @@ results, with successful Bridge/desktop authenticated reads, zero desktop
 auth 401s and unchanged credential/login-log metadata. An actual later natural
 refresh remains unestablished; the observation stop does not mark it passed.
 The [observation-stop record](2026-09-30-current-api-auth-scope.md#operator-ended-periodic-observation)
-preserves this distinction. Supported real-mode/policy/reconnect and
-interaction acceptance and `dev` integration are still pending, with branch
-and worktree preserved.
+preserves this distinction. The operator subsequently accepted `dev`
+integration using the existing review, local tests, exact-source installation
+and installed-data display evidence. Remaining real-mode/policy/reconnect,
+interaction and natural-refresh conditions are transferred to
+[post-merge validation #218](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/218).
+Their unverified status is preserved; they are no longer blanket prerequisites
+for this PR's integration. Keyring and API-unprovided information remain out
+of scope, and the heartbeat remains paused.
 
 ## Sep 30 installed, non-billed acceptance checkpoint
 

@@ -303,13 +303,24 @@ authentication choice, credentials and retained results were not changed by
 this stop. Accepted source and display evidence remains valid; broader live
 acceptance and Git integration retain their existing status.
 
-## Operating acceptance still open
+## Accepted integration and post-merge operating validation
 
 The operating app is now `238dcc2f7609:aac9a831bcdb`, preserving the
 independently signed-in Bridge ChatGPT profile. Its 15-minute natural-refresh
 monitor is **PAUSED** at the operator's request. A later actual refresh has
-not been established. The approved installed-data display check is complete;
-natural-refresh evidence, broader real supported-mode, policy/reconnect
-and interaction acceptance, and `dev` integration remain pending.
-Branch, worktree, original credential stores, previous app bundles
-and retained result records are preserved; safe Git cleanup follows integration.
+not been established. The approved installed-data display check is complete.
+
+The operator subsequently accepted `dev` integration using the existing
+review, local test/build/signature records, exact-source installation and
+installed-data display evidence. Product source stays `238dcc2`; changes
+after it are audit documents only. The remaining natural-refresh, supported
+mode, policy/reconnect, failure-recovery, interaction and separately approved
+billed-execution conditions move to
+[post-merge validation #218](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/218),
+with their unverified status preserved. They are no longer blanket integration
+prerequisites. This later operator decision supersedes the earlier merge hold;
+it does not change the historical review's evidence limits or mark every issue
+checkbox passed. Keyring and API-unprovided information remain excluded.
+Safe branch/worktree cleanup follows verified integration and separate
+preservation of needed evidence and rollback artifacts. Original credential
+stores, the operating app, retained results and paused monitor remain preserved.

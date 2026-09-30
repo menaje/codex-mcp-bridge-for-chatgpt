@@ -6,7 +6,7 @@ At this follow-up's original checkpoint, the operating app remained source `f6b9
 `f6b98c46724d:f344f196e4a6`, with its already applied Bridge-owned ChatGPT
 profile and the changes described here had not been installed. See the
 [installed app checkpoint](2026-09-30-local-rpc-errors.md) for that separate
-artifact's evidence. PR #211 remains draft and unmerged into `dev`.
+artifact's evidence. PR #211 was draft and unmerged at that checkpoint.
 
 The subsequent, separately approved Sep 30 replacement installed source
 `238dcc2`, including these accepted process/transport corrections and the
@@ -15,7 +15,9 @@ current-API scope cleanup. The operating app/Helper/Bridge now report
 preserved. The [current installation record](2026-09-30-current-api-auth-scope.md#authorized-installation-acceptance)
 contains the 18:47 KST authenticated-read and identity evidence. Earlier
 uninstalled `21c31e8` candidate checkpoints below are historical; natural
-refresh, broader supported-mode/UI acceptance and `dev` integration remain open.
+refresh and broader supported-mode/UI conditions remain unverified. The later
+operator decision accepts `dev` integration and transfers those operating
+conditions to [post-merge validation #218](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/218).
 
 ## API login needs exit evidence
 
@@ -191,7 +193,8 @@ read or billed request was performed for this capability probe.
 
 ## Remaining acceptance
 
-The installed app and monitor are preserved while these source checks run.
+The installed app was preserved while these source checks ran. The monitor
+was later paused at the operator's request and remains paused.
 Actual token refresh must be evidenced by a refresh event, successful
 authenticated requests afterward through the Bridge and original Codex app,
 and no new sign-in requirement or authentication error. A 15-minute observation
@@ -200,6 +203,8 @@ interval or an auth-file modification time alone is insufficient.
 The later current-API scope decision excludes Keyring and unprovided metadata.
 Real supported account/mode combinations, broader
 installed failure recovery and UI acceptance, and any separately authorized
-billed API turn remain outstanding. No shared login, credential deletion or
+billed API turn remain outstanding under post-merge validation #218, with no
+blanket hold on `dev` integration. The approved installed-data ChatGPT display
+check remains complete. No shared login, credential deletion or
 restore, periodic forced refresh, operational restart, or new installation
 was used to finish these tests.
