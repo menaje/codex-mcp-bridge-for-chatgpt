@@ -381,11 +381,7 @@ struct DashboardPopoverView: View {
                             CodexMenuAccountView(account: account, fallbackWeekly: dashboard.weeklyUsage)
                         } else if let usage = dashboard.weeklyUsage {
                             WeeklyUsageView(usage: usage)
-                        } else {
-                            UsageUnconfirmedView(loginRequired: false)
                         }
-                    } else {
-                        UsageUnconfirmedView(loginRequired: true)
                     }
                 }
                 .background {
@@ -927,23 +923,6 @@ struct DashboardPopoverView: View {
     }
 }
 
-private struct UsageUnconfirmedView: View {
-    let loginRequired: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("macos.weeklyusage").font(.subheadline.weight(.semibold))
-            Text(loginRequired ? "macos.loginrequired" : "macos.usageunconfirmed")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-        .accessibilityElement(children: .combine)
-    }
-}
-
 private struct WeeklyUsageView: View {
     @Environment(\.locale) private var locale
     let usage: WeeklyUsage
@@ -998,20 +977,18 @@ private struct CodexMenuAccountView: View {
         if account.authMode == "chatgpt",
            let weekly = account.weeklyUsage ?? (account.usageStatus == "none" ? nil : fallbackWeekly) {
             WeeklyUsageView(usage: weekly, account: account)
-        } else {
+        } else if account.authMode == "api-key" || account.menuCreditBalance != nil {
             VStack(alignment: .leading, spacing: 6) {
                 if account.authMode == "api-key" {
                     Text("macos.usingapi").font(.subheadline.weight(.semibold))
-                    if let costs = account.billing?.actualCosts, costs.configured {
-                        if costs.status == "available", let usd = costs.usd {
-                            LabeledContent(costs.projectId == nil ? "macos.organizationcostthismonthutc" : "macos.projectcostthismonthutc",
-                                value: usd.formatted(.currency(code: "USD")))
-                        } else { Text("macos.costinformationisunavailable") }
+                    if let costs = account.billing?.actualCosts, costs.configured,
+                       costs.status == "available", let usd = costs.usd {
+                        LabeledContent(costs.projectId == nil ? "macos.organizationcostthismonthutc" : "macos.projectcostthismonthutc",
+                            value: usd.formatted(.currency(code: "USD")))
                     }
                 } else if account.authMode == "chatgpt" {
-                    Text("macos.usageinformationisunavailable")
                     CodexMenuPlanDetails(account: account)
-                } else { Text("macos.loginrequired") }
+                }
             }
             .font(.caption)
             .padding(10)

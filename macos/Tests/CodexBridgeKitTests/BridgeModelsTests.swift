@@ -438,6 +438,7 @@ final class BridgeModelsTests: XCTestCase {
                      key: String = "account-a", plan: String = "plus") throws -> CodexAccountUsage {
             var value: [String: Any] = [
                 "authMode": "chatgpt", "authenticated": true, "accountKey": key,
+                "ownershipKey": key,
                 "planType": plan, "usageStatus": status, "observedAt": observedAt,
                 "windows": remaining.map { [[
                     "limitId": "codex", "usedPercent": 100 - $0, "remainingPercent": $0,

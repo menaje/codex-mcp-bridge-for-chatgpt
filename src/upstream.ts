@@ -204,6 +204,10 @@ export type CodexUpstream = {
   recoverExecution?(jobId: string, onProgress?: (progress: CodexProgress) => void,
     onAssigned?: (assignment: UpstreamWorkerAssignment) => void): Promise<ToolResult>;
   acknowledgeExecution?(jobId: string): void | Promise<void>;
+  /** Exact live request/worker binding, used only for controls on its existing Job. */
+  ownsActiveExecution?(jobId: string, assignment: UpstreamWorkerAssignment): boolean;
+  /** The current executor delivered this exact retained terminal receipt. */
+  ownsRetainedResult?(jobId: string, assignment: UpstreamWorkerAssignment): boolean;
   detachExecution?(): void | Promise<void>;
   listTools(): Promise<unknown>;
   /** Read-only contract check, before durable task admission. */
@@ -213,6 +217,7 @@ export type CodexUpstream = {
   /** Account-wide Codex weekly rate-limit projection exposed by App Server. */
   accountRevision?(): string;
   readAccountSnapshot?(): Promise<import("./codexAccount.js").CodexAccountSnapshot | null>;
+  readAuthenticationPolicy?(): Promise<{ config: unknown; requirements: unknown }>;
   readAccountRateLimits?(): Promise<CodexWeeklyUsage | null>;
   startThread?(
     input: CodexThreadStartRequest,

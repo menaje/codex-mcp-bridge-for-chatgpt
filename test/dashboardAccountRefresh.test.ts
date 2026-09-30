@@ -11,6 +11,7 @@ import type {
   DashboardView
 } from "../src/tools.js";
 import type { CodexUpstream } from "../src/upstream.js";
+import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
 
 const roots: string[] = [];
 
@@ -35,12 +36,17 @@ describe("Dashboard account refresh presentation", () => {
     };
     const config = loadConfig(environment);
     const service = new CodexService(environment);
+    const readPolicy = vi.fn(async () => ({
+      config: { config: { cliAuthCredentialsStore: "file" } },
+      requirements: { requirements: null }
+    }));
+    service.setAuthPolicyReader(readPolicy);
     config.codexService = service;
     const codexHome = path.join(root, ".codex");
     await mkdir(codexHome);
     const authFile = path.join(codexHome, "auth.json");
     await writeFile(authFile, JSON.stringify({
-      auth_mode: "chatgpt", tokens: { account_id: "fixture-account", access_token: "one" }
+      auth_mode: "chatgpt", tokens: { account_id: "fixture-account", id_token: syntheticIdToken("fixture-user", "fixture-account"), access_token: "one" }
     }));
     const structuralSnapshot = vi.fn(async () => structuralDashboard());
     const readProjection = {
@@ -90,13 +96,15 @@ describe("Dashboard account refresh presentation", () => {
       expect(structuralSnapshot).toHaveBeenCalledOnce();
       expect(readProjection.dashboardRuntimePlan).not.toHaveBeenCalled();
       expect(retained.codexAccount).toEqual(account);
+      expect(retained.usageContext).toBeTruthy();
       expect(retained.usageContext).toBe(service.accountDisplayContext());
+      expect(readPolicy).toHaveBeenCalled();
       expect(retained.enrichment.oldestObservationAt).toBe(
         new Date(account.usageObservedAt!).toISOString()
       );
 
       await writeFile(authFile, JSON.stringify({
-        auth_mode: "chatgpt", tokens: { account_id: "fixture-account", access_token: "two" }
+        auth_mode: "chatgpt", tokens: { account_id: "fixture-account", id_token: syntheticIdToken("fixture-user", "fixture-account"), access_token: "two" }
       }));
       const refreshed = await server.applicationService.dashboardSnapshot({ inspectRuntime: true });
       expect(refreshed.usageContext).toBe(retained.usageContext);
@@ -108,7 +116,7 @@ describe("Dashboard account refresh presentation", () => {
       expect(refreshed.enrichment.oldestObservationAt).toBe(new Date(observedAt).toISOString());
 
       await writeFile(authFile, JSON.stringify({
-        auth_mode: "chatgpt", tokens: { account_id: "replacement-account" }
+        auth_mode: "chatgpt", tokens: { account_id: "replacement-account", id_token: syntheticIdToken("fixture-user", "replacement-account") }
       }));
       const changedContext = await server.applicationService.dashboardSnapshot({
         inspectRuntime: false

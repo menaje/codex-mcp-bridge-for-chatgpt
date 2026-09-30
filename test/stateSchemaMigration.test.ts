@@ -12,6 +12,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
+import { SessionRegistry } from "../src/sessionRegistry.js";
 import { createMigrationBackupMetadata } from "../src/stateBackup.js";
 import {
   CURRENT_STATE_SCHEMA,
@@ -35,6 +36,38 @@ import {
 } from "./helpers/stateSchemaFixtures.js";
 
 describe("current state schema after asynchronous-execution normalization", { timeout: 15_000 }, () => {
+  it("keeps schema-29 sessions without owner evidence quarantined after the upgrade", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-schema-v29-session-owner-"));
+    const file = path.join(root, "state.sqlite");
+    let store = new BridgeStateStore({ file });
+    const scopeId = "11111111-1111-4111-8111-111111111111";
+    const now = Date.now();
+    store.upsertSession({ threadId: "legacy-thread", scopeId, backendKind: "app-server",
+      cwd: root, sandbox: "read-only", createdAt: now, updatedAt: now, lastUsedAt: now });
+    store.close();
+    const prior = new Database(file);
+    prior.exec("ALTER TABLE sessions DROP COLUMN auth_boundary");
+    prior.prepare("UPDATE bridge_meta SET value='29' WHERE key='schema_version'").run();
+    prior.prepare("DELETE FROM bridge_meta WHERE key='schema_v30_created_at'").run();
+    prior.close();
+    store = new BridgeStateStore({ file });
+    const boundary = { key: "a".repeat(64), allowLegacyShared: false };
+    expect(store.listSessions()).toMatchObject([{ threadId: "legacy-thread" }]);
+    const registry = new SessionRegistry({ stateStore: store, authBoundary: boundary });
+    expect(registry.get("legacy-thread")).toBeUndefined();
+    expect(registry.belongsToAnotherAuthentication("legacy-thread")).toBe(true);
+    registry.record({ threadId: "owned-thread", scopeId, backendKind: "app-server", cwd: root,
+      sandbox: "read-only", createdAt: now, updatedAt: now, lastUsedAt: now });
+    store.close();
+    const reopened = new BridgeStateStore({ file });
+    try {
+      const restored = new SessionRegistry({ stateStore: reopened, authBoundary: boundary });
+      expect(restored.get("legacy-thread")).toBeUndefined();
+      expect(restored.get("owned-thread")?.authBoundary).toBe(boundary.key);
+      expect(reopened.countSessions()).toBe(2);
+    } finally { reopened.close(); }
+  });
+
   it("upgrades a schema-28 state while retaining exact Job and blocked recovery authority", () => {
     const root = mkdtempSync(path.join(tmpdir(),"bridge-schema-v28-background-"));
     const file = path.join(root,"state.sqlite");
@@ -50,21 +83,22 @@ describe("current state schema after asynchronous-execution normalization", { ti
     store.automaticRecovery.finish(candidate.key,1,
       {resolved:false,reason:"inspection-unconfirmed",retryable:false},1_001);
     store.close();
-    // Construct the immediately previous projection from the current fixture:
-    // v29 only adds indexes and provenance, never changes domain rows.
+    // Construct a schema-28 fixture from the current database while retaining
+    // the same domain rows.
     const prior = new Database(file);
     for (const name of ["automatic_recovery_agent_state","automatic_recovery_interrupted",
       "automatic_recovery_due","automatic_recovery_retention","automatic_recovery_incident_retention",
       "jobs_history_retention","thread_connections_worker","thread_connections_handoff",
       "thread_connections_release_due"]) prior.exec(`DROP INDEX ${name}`);
+    prior.exec("ALTER TABLE sessions DROP COLUMN auth_boundary");
     prior.prepare("UPDATE bridge_meta SET value='28' WHERE key='schema_version'").run();
     prior.prepare("DELETE FROM bridge_meta WHERE key='schema_v29_created_at'").run();
     prior.close();
     store = new BridgeStateStore({file});
-    expect(store.schemaVersion).toBe(29);
+    expect(store.schemaVersion).toBe(30);
     expect(store.statusReadModel.job(jobId)).toMatchObject({jobId,status:"failed"});
     expect(store.automaticRecovery.get(candidate.key)).toMatchObject({state:"blocked",attempts:1});
-    expect(existsSync(`${file}.pre-v28-to-v29.sqlite`)).toBe(true);
+    expect(existsSync(`${file}.pre-v28-to-v30.sqlite`)).toBe(true);
     store.close();
   });
 
@@ -154,7 +188,7 @@ describe("current state schema after asynchronous-execution normalization", { ti
     database.close();
 
     const store = new BridgeStateStore({ file });
-    expect(store.schemaVersion).toBe(29);
+    expect(store.schemaVersion).toBe(30);
     const [restored] = store.listJobs() as Array<Record<string, unknown>>;
     expect(restored).toMatchObject({
       jobId,
@@ -179,7 +213,7 @@ describe("current state schema after asynchronous-execution normalization", { ti
     expect(current.prepare("PRAGMA table_info(jobs)").all())
       .not.toContainEqual(expect.objectContaining({ name: "execution_mode" }));
     current.close();
-    expect(existsSync(`${file}.pre-v19-to-v29.sqlite`)).toBe(true);
+    expect(existsSync(`${file}.pre-v19-to-v30.sqlite`)).toBe(true);
   });
 
   it("backfills schema 21 receipt consumption without replaying a terminal Job", () => {
@@ -239,7 +273,7 @@ describe("current state schema after asynchronous-execution normalization", { ti
     database.close();
 
     const store = new BridgeStateStore({ file });
-    expect(store.schemaVersion).toBe(29);
+    expect(store.schemaVersion).toBe(30);
     expect(store.getJobCompletionDelivery(jobId, scopeId)).toMatchObject({
       state: "result-read",
       resultReadSource: "completion-receipt",
@@ -249,7 +283,7 @@ describe("current state schema after asynchronous-execution normalization", { ti
     });
     expect(store.getJobCompletionDelivery(jobId, scopeId)?.createdAt).toBe(2);
     store.close();
-    expect(existsSync(`${file}.pre-v21-to-v29.sqlite`)).toBe(true);
+    expect(existsSync(`${file}.pre-v21-to-v30.sqlite`)).toBe(true);
   });
 
   it("creates the current schema directly and matches an authentic schema 18 upgrade", () => {
@@ -263,23 +297,23 @@ describe("current state schema after asynchronous-execution normalization", { ti
 
     const freshFile = path.join(root, "fresh.sqlite");
     const fresh = new BridgeStateStore({ file: freshFile });
-    expect(fresh.schemaVersion).toBe(29);
+    expect(fresh.schemaVersion).toBe(30);
     fresh.close();
 
     const upgradedFile = path.join(root, "upgraded.sqlite");
     createSchema18Fixture(upgradedFile, { projectCwd: originalCwd, legacyCwd });
     let upgraded = new BridgeStateStore({ file: upgradedFile });
-    expect(upgraded.schemaVersion).toBe(29);
+    expect(upgraded.schemaVersion).toBe(30);
     expect(upgraded.getMeta("schema_v19_source_version")).toBe("18");
     expect(upgraded.getMeta("schema_v19_upgrade_source")).toBeUndefined();
     expect(schemaInventory(upgradedFile)).toEqual(schemaInventory(freshFile));
     expect(upgraded.getScopeVersion(V18_SCOPE_ID)).toBe(12);
 
-    const backup = `${upgradedFile}.pre-v18-to-v29.sqlite`;
+    const backup = `${upgradedFile}.pre-v18-to-v30.sqlite`;
     expect(existsSync(backup)).toBe(true);
     expect(statSync(backup).mode & 0o777).toBe(0o600);
     expect(readSchemaVersion(backup)).toBe(18);
-    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v29"))).toHaveLength(1);
+    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v30"))).toHaveLength(1);
 
     expect(upgraded.listSessions()).toEqual([
       expect.objectContaining({
@@ -425,9 +459,9 @@ describe("current state schema after asynchronous-execution normalization", { ti
 
     upgraded.close();
     upgraded = new BridgeStateStore({ file: upgradedFile });
-    expect(upgraded.schemaVersion).toBe(29);
+    expect(upgraded.schemaVersion).toBe(30);
     upgraded.close();
-    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v29"))).toHaveLength(1);
+    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v30"))).toHaveLength(1);
   });
 
   it("upgrades the published schema 3 fixture through every supported checkpoint", () => {
@@ -436,7 +470,7 @@ describe("current state schema after asynchronous-execution normalization", { ti
     createSeededSchema3Fixture(file);
 
     let store = new BridgeStateStore({ file });
-    expect(store.schemaVersion).toBe(29);
+    expect(store.schemaVersion).toBe(30);
     expect(store.getMeta("schema_v19_source_version")).toBe("3");
     expect(store.getMeta("schema_v19_upgrade_source")).toBeUndefined();
     expect(store.listSessions()).toEqual([
@@ -461,16 +495,16 @@ describe("current state schema after asynchronous-execution normalization", { ti
         error: "V3_FAILURE: retained failure"
       })
     ]);
-    expect(existsSync(`${file}.pre-v3-to-v29.sqlite`)).toBe(true);
-    expect(readSchemaVersion(`${file}.pre-v3-to-v29.sqlite`)).toBe(3);
+    expect(existsSync(`${file}.pre-v3-to-v30.sqlite`)).toBe(true);
+    expect(readSchemaVersion(`${file}.pre-v3-to-v30.sqlite`)).toBe(3);
     const firstInventory = schemaInventory(file);
     store.close();
 
     store = new BridgeStateStore({ file });
-    expect(store.schemaVersion).toBe(29);
+    expect(store.schemaVersion).toBe(30);
     store.close();
     expect(schemaInventory(file)).toEqual(firstInventory);
-    expect(readdirSync(root).filter((name) => name.includes("pre-v3-to-v29"))).toHaveLength(1);
+    expect(readdirSync(root).filter((name) => name.includes("pre-v3-to-v30"))).toHaveLength(1);
   });
 
   it.each([
@@ -551,27 +585,27 @@ describe("current state schema after asynchronous-execution normalization", { ti
     expect(() => new BridgeStateStore({ file })).toThrow(/malformed JSON|Invalid job payload/);
     expect(readSchemaVersion(file)).toBe(18);
     expect(readMeta(file, "schema_v19_upgrade_source")).toBe("18");
-    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v29"))).toHaveLength(1);
+    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v30"))).toHaveLength(1);
     const failed = new Database(file);
     expect(failed.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'legacy_v18_%'").all()).toEqual([]);
     failed.prepare("UPDATE jobs SET payload='{}' WHERE job_id=?").run(V18_RUNNING_JOB_ID);
     failed.close();
 
     let store = new BridgeStateStore({ file });
-    expect(store.schemaVersion).toBe(29);
+    expect(store.schemaVersion).toBe(30);
     expect(store.getMeta("schema_v19_source_version")).toBe("18");
     expect(store.getMeta("schema_v19_upgrade_source")).toBeUndefined();
     store.close();
     store = new BridgeStateStore({ file });
     store.close();
-    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v29"))).toHaveLength(1);
+    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v30"))).toHaveLength(1);
   });
 
   it("replaces a stale same-version backup before beginning a new upgrade", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-schema-stale-backup-"));
     const file = path.join(root, "state.sqlite");
     const stale = path.join(root, "stale.sqlite");
-    const backup = `${file}.pre-v18-to-v29.sqlite`;
+    const backup = `${file}.pre-v18-to-v30.sqlite`;
     createSchema18Fixture(file);
     createSchema18Fixture(stale);
     const current = new Database(file);
@@ -587,14 +621,14 @@ describe("current state schema after asynchronous-execution normalization", { ti
 
     expect(readMeta(backup, "backup_probe")).toBe("current");
     expect(readSchemaVersion(backup)).toBe(18);
-    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v29"))).toHaveLength(1);
+    expect(readdirSync(root).filter((name) => name.includes("pre-v18-to-v30"))).toHaveLength(1);
   });
 
   it("keeps the original recovery point when a multi-checkpoint upgrade resumes", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-schema-multistep-retry-"));
     const file = path.join(root, "state.sqlite");
     const original = path.join(root, "original-v3.sqlite");
-    const originalBackup = `${file}.pre-v3-to-v29.sqlite`;
+    const originalBackup = `${file}.pre-v3-to-v30.sqlite`;
     createSeededSchema3Fixture(original);
     const databaseId = "77777777-7777-4777-8777-777777777777";
     const originalDatabase = new Database(original);
@@ -615,20 +649,20 @@ describe("current state schema after asynchronous-execution normalization", { ti
       backupFile: originalBackup,
       databaseId,
       sourceSchema: 3,
-      targetSchema: 29
+      targetSchema: 30
     });
 
     expect(() => new BridgeStateStore({ file })).toThrow(/malformed JSON|Invalid job payload/);
     expect(readSchemaVersion(file)).toBe(18);
     expect(readMeta(file, "schema_v19_upgrade_source")).toBe("3");
     expect(readSchemaVersion(originalBackup)).toBe(3);
-    expect(existsSync(`${file}.pre-v18-to-v29.sqlite`)).toBe(false);
+    expect(existsSync(`${file}.pre-v18-to-v30.sqlite`)).toBe(false);
 
     const repaired = new Database(file);
     repaired.prepare("UPDATE jobs SET payload='{}' WHERE job_id=?").run(V18_RUNNING_JOB_ID);
     repaired.close();
     const store = new BridgeStateStore({ file });
-    expect(store.schemaVersion).toBe(29);
+    expect(store.schemaVersion).toBe(30);
     expect(store.getMeta("schema_v19_source_version")).toBe("3");
     expect(store.getMeta("schema_v19_upgrade_source")).toBeUndefined();
     store.close();

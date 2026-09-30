@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { CodexJobRegistry } from "../src/tools.js";
+import { CodexService } from "../src/codexService.js";
+import { projectCodexAccount } from "../src/codexAccount.js";
 import { BridgeStateStore } from "../src/stateStore.js";
-import type { CodexProgress, CodexUpstream, ToolResult } from "../src/upstream.js";
+import { SessionRegistry } from "../src/sessionRegistry.js";
+import type { CodexProgress, CodexUpstream, ToolResult, UpstreamWorkerAssignment } from "../src/upstream.js";
+import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
 
 const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const REQUEST_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -17,6 +21,311 @@ const PROJECT_REF_A = "prj_AAAAAAAAAAAAAAAAAAAAAA";
 const PROJECT_REF_B = "prj_BBBBBBBBBBBBBBBBBBBBBB";
 
 describe("CodexJobRegistry persistence", () => {
+  it("keeps original live Job controls and its exact ACK after a file-backed login change", async () => {
+    const root = temporaryRoot(), home = path.join(root, ".codex");
+    mkdirSync(home);
+    writeFileSync(path.join(home, "config.toml"), 'cli_auth_credentials_store = "file"\n');
+    const authFile = path.join(home, "auth.json");
+    const writeAuth = (userId: string) => writeFileSync(authFile, JSON.stringify({
+      auth_mode: "chatgpt", tokens: { account_id: "shared-workspace",
+        id_token: syntheticIdToken(userId, "shared-workspace") }
+    }));
+    writeAuth("user-a");
+    const service = new CodexService({ HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+    service.setAuthPolicyReader(async () => ({
+      config: { config: { cliAuthCredentialsStore: "file" } }, requirements: { requirements: null }
+    }));
+    let observed = projectCodexAccount({
+      account: { type: "chatgpt", email: "same@example.invalid" },
+      workspaceRouting: { chatgptAccountId: "shared-workspace" }
+    }, null);
+    service.setAccountReader(async () => observed);
+    await service.assertCurrentAdmission();
+    const ownerA = service.currentExecutionAuthBoundary();
+    const store = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    const registry = new CodexJobRegistry({ stateStore: store, allowedRoots: [root],
+      authBoundary: () => service.currentExecutionAuthBoundary() });
+    const assignment = { backendKind: "app-server" as const, workerId: "app-0", workerGeneration: 1,
+      upstreamRequestId: "turn-a", threadId: "thread-a" };
+    let retained = false;
+    const acknowledgeExecution = vi.fn();
+    const respondToInteraction = vi.fn(async () => undefined);
+    const ownsActiveExecution = vi.fn((jobId: string, candidate: typeof assignment) =>
+      jobId === job.jobId && candidate.workerId === assignment.workerId &&
+      candidate.workerGeneration === assignment.workerGeneration &&
+      candidate.upstreamRequestId === assignment.upstreamRequestId && candidate.threadId === assignment.threadId);
+    registry.attachUpstream({
+      async listTools() { return { tools: [] }; }, async callTool() { return result("unused"); }, async close() {},
+      supportsExecutionRecovery: () => true, ownsActiveExecution,
+      ownsRetainedResult: (jobId, candidate) => retained && jobId === job.jobId &&
+        candidate.upstreamRequestId === assignment.upstreamRequestId,
+      acknowledgeExecution, respondToInteraction
+    });
+    let finish!: (value: ToolResult) => void;
+    let progress!: (value: CodexProgress) => void;
+    const job = registry.start({ ...jobInput(root), backendKind: "app-server" }, async (onProgress, onAssigned) => {
+      onAssigned(assignment);
+      progress = onProgress;
+      return new Promise<ToolResult>(resolve => { finish = resolve; });
+    });
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      const interactionId = "app-0:1:question-a";
+      progress({ progress: 0.5, event: { eventId: "question-a", type: "input-required", phase: "waiting",
+        createdAt: Date.now(), summary: "A question", details: { interaction: {
+          interactionId, kind: "user-input", threadId: "thread-a", turnId: "turn-a",
+          itemId: "question-item", summary: "A question", questions: [{ id: "answer", question: "Continue?", isSecret: false }]
+        } } } });
+      expect(registry.get(job.jobId)?.pendingInteractions).toHaveLength(1);
+      writeAuth("user-b");
+      await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_CHANGED");
+      expect(service.sessionAuthBoundary().key).not.toBe(ownerA);
+      expect(service.currentExecutionAuthBoundary()).toBeNull();
+      expect(() => registry.findRequest(SCOPE_A, REQUEST_A, job.requestHash)).toThrow("CODEX_AUTH_JOB_BOUNDARY");
+      await registry.respondToInteraction(job.jobId, interactionId, { answers: { answer: ["yes"] } });
+      expect(respondToInteraction).toHaveBeenCalledExactlyOnceWith(interactionId, { answers: { answer: ["yes"] } });
+      rmSync(authFile);
+      observed = projectCodexAccount({ account: null }, null);
+      await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_REQUIRED");
+      expect(service.currentExecutionAuthBoundary()).toBeNull();
+      retained = true;
+      finish(result("thread-a"));
+      await job.promise;
+      expect(registry.get(job.jobId)).toMatchObject({ status: "completed" });
+      expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(job.jobId);
+    } finally { store.close(); }
+  });
+
+  it("cancels only the original live worker request after the current owner changes", async () => {
+    const root = temporaryRoot(), store = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    let currentOwner = "a".repeat(64), originalWorkerLive = false;
+    const registry = new CodexJobRegistry({ stateStore: store, allowedRoots: [root],
+      authBoundary: () => currentOwner });
+    const forceTerminateWorker = vi.fn(async (assignment) => ({ ...assignment,
+      mode: "turn-interrupt" as const, exited: true, workerExited: false, escalated: false }));
+    registry.attachUpstream({
+      async listTools() { return { tools: [] }; }, async callTool() { return result("unused"); }, async close() {},
+      ownsActiveExecution: (_jobId, assignment) => originalWorkerLive &&
+        assignment.workerId === "app-0" && assignment.workerGeneration === 3 &&
+        assignment.upstreamRequestId === "turn-original" && assignment.threadId === "thread-original",
+      forceTerminateWorker
+    });
+    let finish!: (value: ToolResult) => void;
+    const job = registry.start({ ...jobInput(root), backendKind: "app-server" }, async (_progress, assigned) => {
+      assigned({ backendKind: "app-server", workerId: "app-0", workerGeneration: 3,
+        upstreamRequestId: "turn-original", threadId: "thread-original" });
+      return new Promise<ToolResult>(resolve => { finish = resolve; });
+    });
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      currentOwner = "b".repeat(64);
+      expect(() => durableCancelIntent(registry, job.jobId, REQUEST_B)).toThrow("CODEX_AUTH_JOB_BOUNDARY");
+      originalWorkerLive = true;
+      const intent = durableCancelIntent(registry, job.jobId, REQUEST_B);
+      await registry.cancel(job.jobId, intent, { interruptOnly: true });
+      expect(forceTerminateWorker).toHaveBeenCalledTimes(1);
+      expect(forceTerminateWorker.mock.calls[0]?.[0]).toMatchObject({
+        workerId: "app-0", workerGeneration: 3, upstreamRequestId: "turn-original"
+      });
+    } finally {
+      finish(result("thread-original"));
+      await job.promise;
+      store.close();
+    }
+  });
+
+  it("retains the same Job owner after a normal CLI replacement and Bridge restart", async () => {
+    const root = temporaryRoot(), file = path.join(root, "state.sqlite");
+    const home = path.join(root, ".codex");
+    mkdirSync(home);
+    writeFileSync(path.join(home, "auth.json"), JSON.stringify({
+      auth_mode: "chatgpt", tokens: { account_id: "workspace-a", id_token: syntheticIdToken("fixture-user", "workspace-a") }
+    }));
+    const environment = { HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") };
+    const service = new CodexService(environment);
+    let cliFingerprint = "cli-before";
+    vi.spyOn(service.cli, "appliedContextFingerprint").mockImplementation(() => cliFingerprint);
+    const store = new BridgeStateStore({ file });
+    const registry = new CodexJobRegistry({ stateStore: store, allowedRoots: [root],
+      authBoundary: () => service.sessionAuthBoundary().key });
+    const job = registry.start(jobInput(root), async () => result("same-workspace"));
+    await job.promise;
+    const ownerBefore = service.sessionAuthBoundary().key;
+    cliFingerprint = "cli-after";
+    expect(service.sessionAuthBoundary().key).toBe(ownerBefore);
+    expect(registry.findRequest(SCOPE_A, REQUEST_A, job.requestHash)?.jobId).toBe(job.jobId);
+    store.close();
+    const restarted = new CodexService(environment);
+    vi.spyOn(restarted.cli, "appliedContextFingerprint").mockReturnValue(cliFingerprint);
+    const reopened = new BridgeStateStore({ file });
+    try {
+      const recovered = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => restarted.sessionAuthBoundary().key });
+      expect(recovered.findRequest(SCOPE_A, REQUEST_A, job.requestHash)?.jobId).toBe(job.jobId);
+    } finally { reopened.close(); }
+  });
+
+  it("retains an old result for history but rejects execution replay under a new authentication owner", async () => {
+    const root = temporaryRoot();
+    const file = path.join(root, "state.sqlite");
+    const firstOwner = "a".repeat(64), secondOwner = "b".repeat(64);
+    const store = new BridgeStateStore({ file });
+    const first = new CodexJobRegistry({ stateStore: store, allowedRoots: [root], authBoundary: () => firstOwner });
+    const job = first.start(jobInput(root), async () => result("original-owner"));
+    await job.promise;
+    expect(store.listJobs()[0]).toMatchObject({ jobId: job.jobId, authBoundary: firstOwner });
+    store.close();
+
+    const reopened = new BridgeStateStore({ file });
+    try {
+      const second = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root], authBoundary: () => secondOwner });
+      expect(second.get(job.jobId)?.status).toBe("completed");
+      expect(() => second.findRequest(SCOPE_A, REQUEST_A, job.requestHash)).toThrow("CODEX_AUTH_JOB_BOUNDARY");
+    } finally { reopened.close(); }
+  });
+
+  it("quarantines a still active Job from another authentication owner without changing its stored result", async () => {
+    const root = temporaryRoot(), file = path.join(root, "state.sqlite");
+    const store = new BridgeStateStore({ file });
+    const first = new CodexJobRegistry({ stateStore: store, allowedRoots: [root], authBoundary: () => "a".repeat(64) });
+    const job = first.start(jobInput(root), () => new Promise<ToolResult>(() => undefined));
+    store.close();
+    const reopened = new BridgeStateStore({ file });
+    try {
+      const second = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => "b".repeat(64), recoverExecutions: true });
+      expect(second.get(job.jobId)).toMatchObject({ status: "running", trackingState: "liveness-unknown" });
+      expect(() => second.findRequest(SCOPE_A, REQUEST_A, job.requestHash))
+        .toThrow("CODEX_AUTH_JOB_BOUNDARY");
+      expect(() => second.beginCancellationOperation({
+        scopeId: job.scopeId, requestId: REQUEST_B, actionHash: "b".repeat(64),
+        source: "operator", toolName: "job-registry-test", actionName: "cancel-job",
+        target: { kind: "job", jobId: job.jobId, activityId: job.activityId },
+        expectedVersion: job.version, reasonCode: "test-cancel"
+      })).toThrow("CODEX_AUTH_JOB_BOUNDARY");
+      await expect(second.steer(job.jobId, "new account prompt")).rejects.toThrow("CODEX_AUTH_JOB_BOUNDARY");
+      expect(reopened.listJobs()[0]?.status).toBe("running");
+    } finally { reopened.close(); }
+  });
+
+  it("resumes a persisted execution only after the restarted bridge confirms the same owner", async () => {
+    const root = temporaryRoot(), home = path.join(root, ".codex"), file = path.join(root, "state.sqlite");
+    mkdirSync(home);
+    writeFileSync(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt",
+      tokens: { account_id: "workspace-a", id_token: syntheticIdToken("user-a", "workspace-a") } }));
+    const environment = { HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") };
+    const firstService = new CodexService(environment);
+    await firstService.assertCurrentAdmission();
+    const firstStore = new BridgeStateStore({ file });
+    const first = new CodexJobRegistry({ stateStore: firstStore, allowedRoots: [root],
+      authBoundary: () => firstService.currentExecutionAuthBoundary(), recoverExecutions: true });
+    first.attachUpstream({ async listTools() { return { tools: [] }; },
+      async callTool() { return result("unused"); }, async close() {},
+      supportsExecutionRecovery: () => true });
+    const job = first.start(jobInput(root), () => new Promise<ToolResult>(() => undefined));
+    expect(firstStore.listJobs()[0]).toMatchObject({ jobId: job.jobId, executionReceipt: true });
+    firstStore.close();
+
+    const restartedService = new CodexService(environment);
+    const reopened = new BridgeStateStore({ file });
+    try {
+      let loginCheckAvailable = false;
+      const recovered = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => restartedService.currentExecutionAuthBoundary(), recoverExecutions: true,
+        recoveryAdmission: async () => {
+          if (!loginCheckAvailable) throw new Error("synthetic account lookup unavailable");
+          await restartedService.assertCurrentAdmission();
+        } });
+      const recoverExecution = vi.fn(() => new Promise<ToolResult>(() => undefined));
+      recovered.attachUpstream({ async listTools() { return { tools: [] }; },
+        async callTool() { return result("unused"); }, async close() {},
+        supportsExecutionRecovery: () => true, recoverExecution },
+      new SessionRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => restartedService.sessionAuthBoundary() }));
+      await Promise.resolve();
+      expect(recoverExecution).not.toHaveBeenCalled();
+      expect(recovered.get(job.jobId)).toMatchObject({ status: "running", trackingState: "liveness-unknown" });
+      loginCheckAvailable = true;
+      await restartedService.assertCurrentAdmission();
+      recovered.resumeAuthorizedRecoveries();
+      expect(recoverExecution).toHaveBeenCalledTimes(1);
+      expect(recoverExecution).toHaveBeenCalledWith(job.jobId, expect.any(Function), expect.any(Function));
+      recovered.resumeAuthorizedRecoveries();
+      expect(recoverExecution).toHaveBeenCalledTimes(1);
+    } finally { reopened.close(); }
+  });
+
+  it("settles a recovered original Job under its owner after a later external login change", async () => {
+    const root = temporaryRoot(), file = path.join(root, "state.sqlite");
+    const ownerA = "a".repeat(64), ownerB = "b".repeat(64);
+    let currentOwner = ownerA;
+    const firstStore = new BridgeStateStore({ file });
+    const first = new CodexJobRegistry({ stateStore: firstStore, allowedRoots: [root],
+      authBoundary: () => currentOwner, recoverExecutions: true });
+    const agent = first.createAgent({ scopeId: SCOPE_A, agentName: "Original owner" });
+    first.attachUpstream({ async listTools() { return { tools: [] }; },
+      async callTool() { return result("unused"); }, async close() {},
+      supportsExecutionRecovery: () => true });
+    const job = first.start({ ...jobInput(root), backendKind: "app-server", agentId: agent.agentId,
+      contextMode: "fresh" }, () => new Promise<ToolResult>(() => undefined));
+    await Promise.resolve();
+    expect(firstStore.listJobs()[0]).toMatchObject({ jobId: job.jobId, authBoundary: ownerA,
+      executionReceipt: true });
+    firstStore.close();
+
+    const reopened = new BridgeStateStore({ file });
+    try {
+      let admissionAvailable = false;
+      const recovered = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => currentOwner, recoverExecutions: true,
+        recoveryAdmission: async () => {
+          if (!admissionAvailable) throw new Error("synthetic temporary account outage");
+        } });
+      const assignment: UpstreamWorkerAssignment = { backendKind: "app-server",
+        workerId: "original-worker", workerGeneration: 7, upstreamRequestId: "original-turn",
+        threadId: "original-thread" };
+      let finish!: (value: ToolResult) => void;
+      const recoverExecution = vi.fn((_jobId: string, _progress: (progress: CodexProgress) => void,
+        onAssigned: (value: UpstreamWorkerAssignment) => void) => {
+        onAssigned(assignment);
+        return new Promise<ToolResult>(resolve => { finish = resolve; });
+      });
+      const acknowledgeExecution = vi.fn();
+      recovered.attachUpstream({ async listTools() { return { tools: [] }; },
+        async callTool() { return result("unused"); }, async close() {},
+        supportsExecutionRecovery: () => true, recoverExecution,
+        ownsRetainedResult: (jobId, value) => jobId === job.jobId &&
+          value.workerId === assignment.workerId && value.workerGeneration === assignment.workerGeneration &&
+          value.upstreamRequestId === assignment.upstreamRequestId && value.threadId === assignment.threadId,
+        acknowledgeExecution },
+      new SessionRegistry({ stateStore: reopened, allowedRoots: [root],
+        authBoundary: () => ({ key: currentOwner, allowLegacyShared: false }) }));
+      await Promise.resolve();
+      expect(recoverExecution).not.toHaveBeenCalled();
+      admissionAvailable = true;
+      recovered.resumeAuthorizedRecoveries();
+      expect(recoverExecution).toHaveBeenCalledTimes(1);
+      expect(reopened.listSessions()).toContainEqual(expect.objectContaining({
+        threadId: "original-thread", authBoundary: ownerA
+      }));
+
+      currentOwner = ownerB;
+      finish(result("original-thread"));
+      await recovered.get(job.jobId)!.promise;
+      expect(recovered.get(job.jobId)).toMatchObject({ status: "completed", authBoundary: ownerA });
+      expect(reopened.listSessions()).toContainEqual(expect.objectContaining({
+        threadId: "original-thread", authBoundary: ownerA
+      }));
+      expect(recoverExecution).toHaveBeenCalledTimes(1);
+      expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(job.jobId);
+    } finally { reopened.close(); }
+  });
+
   it("bounds shared Job wait listeners and returns their slots on abort and completion", async () => {
     const root = temporaryRoot();
     const registry = persistentRegistry(root, path.join(root, "state.sqlite"));

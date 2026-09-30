@@ -1313,7 +1313,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
     }
     readProjection = await ChildProcessStateReadService.start(
       config.stateDatabaseFile,
-      process.env
+      process.env,
+      { authBoundary: () => config.codexService?.sessionAuthBoundary() || null }
     );
     const appServerLateResponses = new AppServerLateResponseJournal(store);
     upstream = createExecutionRuntime(

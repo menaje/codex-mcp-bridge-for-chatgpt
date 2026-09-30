@@ -17,6 +17,7 @@ import {
   statusAction
 } from "./nextActions.js";
 import { DisplayReadPool, waitForDisplay } from "./displayReadPool.js";
+import type { CodexAccountSnapshot } from "./codexAccount.js";
 import { uiControlProofs, type UiControlClaims } from "./uiControlProofs.js";
 import {
   nativeCompletionNotification,
@@ -38,6 +39,7 @@ import type { BridgeTelemetryService } from "./telemetryService.js";
 import { codexInputCursor, codexInputSnapshot, isCodexInputEvent, ordinaryCodexQuestion } from "./codexInputs.js";
 import { ScopeFairQueue, type ScopeFairQueueStatus } from "./scopeFairQueue.js";
 import { registerCodexInputTools, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS } from "./questionTools.js";
+import { InteractionNotDispatchedError } from "./interactionDispatch.js";
 import path from "node:path";
 import * as z from "zod/v4";
 import { type McpServer, type Progress, type ToolCallback } from "@modelcontextprotocol/server";
@@ -268,7 +270,7 @@ type ForceTerminateOptions = {
   requestedTargetIntents?: CancellationIntentRecord[];
 };
 
-type JobCompletionCallback = (result: ToolResult) => void | (() => void);
+type JobCompletionCallback = (result: ToolResult, job: CodexJob) => void | (() => void);
 
 class JobTerminalCommitError extends Error {
   constructor(cause: unknown) {
@@ -788,6 +790,7 @@ const dashboardViewOutputSchema = z.strictObject({
   codexAccount: z.record(z.string(), z.unknown()).nullable().optional(),
   usageContext: z.string().nullable().optional(),
   weeklyUsage: codexWeeklyUsageOutputSchema.nullable().optional(),
+  usageDisplayStatus: z.enum(["checking", "switching", "available", "timed-out", "unavailable", "no-limit", "signed-out", "not-applicable"]).optional(),
   counts: dashboardCountsOutputSchema,
   activeRows: z.array(dashboardRowOutputSchema),
   terminalRows: z.array(dashboardRowOutputSchema),
@@ -1851,6 +1854,8 @@ type CompletionDeliveryPolicy = "live-card" | "direct-wait";
 
 type CodexJob = {
   executionReceipt?: boolean;
+  /** Non-secret owner boundary captured when this execution was admitted. */
+  authBoundary?: string;
   threadPersistence?: UpstreamWorkerAssignment["threadPersistence"];
   jobId: string;
   activityId: string;
@@ -1927,6 +1932,7 @@ export type ProgressPersistenceStatus = ScopeFairQueueStatus & {
 type CodexJobStartInput = Omit<
   CodexJob,
   | "jobId"
+  | "authBoundary"
   | "activityId"
   | "agentId"
   | "contextMode"
@@ -1967,6 +1973,9 @@ type CodexJobStartInput = Omit<
 };
 
 export type CodexJobRegistryOptions = {
+  authBoundary?: () => string | null;
+  /** Verify the current owner before attaching persisted execution receipts. */
+  recoveryAdmission?: () => Promise<void>;
   recoverExecutions?: boolean;
   maxConcurrentJobs?: number;
   ttlMs?: number;
@@ -2153,6 +2162,7 @@ type SteeringMutationFallbacks = {
 };
 
 export class CodexJobRegistry {
+  private readonly authBoundary?: () => string | null;
   private readonly jobs = new Map<string, CodexJob>();
   private readonly jobsByAgent = new Map<string, Set<string>>();
   private readonly indexedJobAgent = new Map<string, string>();
@@ -2180,6 +2190,8 @@ export class CodexJobRegistry {
   } = { acceptingNewJobs: true, pendingAdmissions: 0 };
   private upstream?: CodexUpstream;
   private readonly recoverExecutions: boolean;
+  private readonly recoveryAdmission?: () => Promise<void>;
+  private recoverySessions?: SessionRegistry;
   private readonly recoveryJobs = new Set<string>();
   private recoveryStarted = false;
   private readonly terminations = new Map<
@@ -2305,6 +2317,7 @@ export class CodexJobRegistry {
   private persistenceWarningShown = false;
 
   constructor(options: CodexJobRegistryOptions = {}) {
+    this.authBoundary = options.authBoundary;
     const maxConcurrentJobs = options.maxConcurrentJobs ?? 30;
     if (
       !Number.isInteger(maxConcurrentJobs) ||
@@ -2328,6 +2341,7 @@ export class CodexJobRegistry {
     this.telemetry = options.telemetry;
     this.projectionOnly = options.projectionOnly === true;
     this.recoverExecutions = options.recoverExecutions === true;
+    this.recoveryAdmission = options.recoveryAdmission;
     this.activityStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
     this.allowedRoots = options.allowedRoots || [];
     this.progressPersistenceQueue = new ScopeFairQueue<ProgressPersistenceSnapshot>({
@@ -2378,10 +2392,25 @@ export class CodexJobRegistry {
     this.upstream = upstream;
     if (this.recoveryStarted || !this.recoverExecutions || !sessions || this.projectionOnly) return;
     this.recoveryStarted = true;
+    this.recoverySessions = sessions;
+    if (this.recoveryAdmission && (this.recoveryJobs.size > 0 ||
+        [...this.jobs.values()].some(job => job.executionReceipt && isTerminalActivityJobStatus(job.status)))) {
+      void this.recoveryAdmission().then(() => this.resumeAuthorizedRecoveries()).catch(() => {});
+    } else {
+      this.resumeAuthorizedRecoveries();
+    }
+  }
+
+  /** A failed startup check leaves receipts dormant until a later successful admission. */
+  resumeAuthorizedRecoveries(): void {
+    const upstream = this.upstream;
+    const sessions = this.recoverySessions;
+    if (!upstream || !sessions || !this.recoveryStarted || this.projectionOnly) return;
     const record = (job: CodexJob, threadId: string | undefined, lineage: { sessionId?: string; forkedFromThreadId?: string }) => {
       const agent = job.agentId ? this.getAgent(job.agentId) : undefined;
       if (!threadId || !agent || !job.executionDecision || !isCodexBackendKind(job.backendKind)) return;
       return recordAdmittedThread({ sessions, jobs: this, sessionDecision: job.sessionDecision,
+        authBoundary: job.authBoundary,
         agent, threadId, scopeId: job.scopeId, cwd: job.cwd, sandbox: job.sandbox,
         ...(job.projectId && job.projectName ? { projectAdmission: { projectId: job.projectId, projectName: job.projectName } } : {}),
         selection: job.executionDecision.effectiveSelection, policyRevision: job.executionDecision.policyRevision,
@@ -2393,6 +2422,8 @@ export class CodexJobRegistry {
         this.acknowledgeSettledExecution(job); continue;
       }
       if (!this.recoveryJobs.has(job.jobId) || !upstream.recoverExecution) continue;
+      if (this.authBoundary && job.authBoundary !== this.authBoundary()) continue;
+      this.recoveryJobs.delete(job.jobId);
       // A cancellation dispatch whose controller vanished is unconfirmed,
       // not proof of a stopped turn. Exact terminal replay settles the race.
       if (job.status === "terminating") job.status = "termination-failed";
@@ -2407,6 +2438,9 @@ export class CodexJobRegistry {
   }
 
   private acknowledgeSettledExecution(job: CodexJob): void {
+    const assignment = this.jobAssignment(job);
+    if (this.authBoundary && job.authBoundary !== this.authBoundary() &&
+        (!assignment || this.upstream?.ownsRetainedResult?.(job.jobId, assignment) !== true)) return;
     if (job.executionReceipt && isTerminalActivityJobStatus(job.status) && job.terminalOrigin) {
       void Promise.resolve(this.upstream?.acknowledgeExecution?.(job.jobId)).catch(() => {});
     }
@@ -2496,7 +2530,39 @@ export class CodexJobRegistry {
     if (job && job.requestHashVersion >= 2 && job.requestHash !== requestHash) {
       throw new Error("requestId was already used for a different Codex task in this scope.");
     }
+    if (job) this.assertCurrentJobOwner(job);
     return job;
+  }
+
+  private assertCurrentJobOwner(job: CodexJob): void {
+    if (this.authBoundary && job.authBoundary !== this.authBoundary()) {
+      throw new Error("CODEX_AUTH_JOB_BOUNDARY: This Job belongs to another or unverified authentication connection.");
+    }
+  }
+
+  private jobAssignment(job: CodexJob): UpstreamWorkerAssignment | null {
+    if (!isCodexBackendKind(job.backendKind) || !job.workerId ||
+        job.workerGeneration === undefined || !job.upstreamRequestId || !job.threadId) return null;
+    return { backendKind: job.backendKind, workerId: job.workerId,
+      workerGeneration: job.workerGeneration, upstreamRequestId: job.upstreamRequestId,
+      threadId: job.threadId };
+  }
+
+  /** Existing controls must still target the original live request after login changes. */
+  private assertOriginalJobControl(job: CodexJob): void {
+    if (!this.authBoundary || job.authBoundary === this.authBoundary()) return;
+    const assignment = this.jobAssignment(job);
+    if (isActiveActivityJobStatus(job.status) && job.trackingState === "connected" && assignment &&
+        this.upstream?.ownsActiveExecution?.(job.jobId, assignment) === true) return;
+    throw new Error("CODEX_AUTH_JOB_BOUNDARY: This Job belongs to another or unverified authentication connection.");
+  }
+
+  private assertCancellationTargetOwner(target: { jobId?: string; activityId: string }): void {
+    for (const job of this.jobs.values()) {
+      if (target.jobId === job.jobId || !target.jobId && job.activityId === target.activityId) {
+        this.assertOriginalJobControl(job);
+      }
+    }
   }
 
   peekRequest(scopeId: string, requestId: string): CodexJob | undefined {
@@ -2946,12 +3012,14 @@ export class CodexJobRegistry {
     operation: CancellationOperationRecord;
     intent: CancellationIntentRecord;
   } {
+    this.assertCancellationTargetOwner(input.target);
     const result = this.activityStore.beginCancellationOperation(input);
     this.notifyScope(result.operation.scopeId);
     return result;
   }
 
   createCancellationIntent(input: CreateCancellationIntentInput): CancellationIntentRecord {
+    this.assertCancellationTargetOwner(input.target);
     const intent = this.activityStore.createCancellationIntent(input);
     this.notifyScope(intent.scopeId);
     return intent;
@@ -3172,7 +3240,7 @@ export class CodexJobRegistry {
     onComplete?: JobCompletionCallback,
     activeLimit = this.maxConcurrentJobs,
     rejectIfSelectionActive = false,
-    onAssigned?: (assignment: UpstreamWorkerAssignment) => void,
+    onAssigned?: (assignment: UpstreamWorkerAssignment, job: CodexJob) => void,
     deferExecution = false
   ): CodexJob {
     const replay = this.findRequest(input.scopeId, input.requestId, input.requestHash);
@@ -3210,8 +3278,13 @@ export class CodexJobRegistry {
       );
     }
     const now = Date.now();
+    const currentAuthBoundary = this.authBoundary?.();
+    if (this.authBoundary && !currentAuthBoundary) {
+      throw new Error("CODEX_AUTH_JOB_BOUNDARY: Confirm the current authentication owner before starting a Job.");
+    }
     const job: CodexJob = {
       ...input,
+      ...(currentAuthBoundary ? { authBoundary: currentAuthBoundary } : {}),
       activityId: input.activityId || randomUUID(),
       threadId: input.sessionDecision.threadId,
       backendKind: input.backendKind || "app-server",
@@ -3243,7 +3316,7 @@ export class CodexJobRegistry {
           (progress) => this.recordProgress(job, progress),
           (assignment) => {
             this.recordWorkerAssignment(job, assignment);
-            onAssigned?.(assignment);
+            onAssigned?.(assignment, job);
           }
         ))
       )
@@ -3283,6 +3356,8 @@ export class CodexJobRegistry {
   }
 
   activateDeferredExecution(jobId: string): void {
+    const job = this.jobs.get(jobId);
+    if (job) this.assertCurrentJobOwner(job);
     this.deferredExecutions.get(jobId)?.launch();
   }
 
@@ -3322,7 +3397,7 @@ export class CodexJobRegistry {
     let undo: (() => void) | undefined;
     try {
       const next = this.activityStore.transaction(() => {
-        undo = onComplete?.(result) || undefined;
+        undo = onComplete?.(result, job) || undefined;
         const candidate: CodexJob = {
           ...job,
           threadId: job.sessionDecision.threadId,
@@ -3372,7 +3447,7 @@ export class CodexJobRegistry {
       const next = this.activityStore.transaction(() => {
         // A failed turn can still have created or resumed a durable thread.
         // Keep the same callback in the atomic terminal transaction.
-        undo = onComplete?.(result) || undefined;
+        undo = onComplete?.(result, job) || undefined;
         const candidate: CodexJob = {
           ...job,
           threadId: job.sessionDecision.threadId,
@@ -3500,6 +3575,8 @@ export class CodexJobRegistry {
     intent: CancellationIntentRecord,
     options: ForceTerminateOptions = {}
   ): Promise<CodexJob> {
+    const job = this.jobs.get(jobId);
+    if (job) this.assertOriginalJobControl(job);
     this.assertCancellationIntentForJob(jobId, intent);
     const existingTermination = this.terminations.get(jobId);
     if (existingTermination) {
@@ -3575,30 +3652,46 @@ export class CodexJobRegistry {
     interactionId: string,
     response: CodexInteractionResponse
   ): Promise<CodexJob> {
-    const job = this.get(jobId);
-    if (!job || !isActiveActivityJobStatus(job.status)) {
-      throw new Error("The selected Codex job is not active.");
+    let job: CodexJob;
+    let interaction: CodexPendingInteraction;
+    let sendResponse: NonNullable<CodexUpstream["respondToInteraction"]>;
+    try {
+      const current = this.get(jobId);
+      if (!current || !isActiveActivityJobStatus(current.status)) {
+        throw new Error("The selected Codex job is not active.");
+      }
+      this.assertOriginalJobControl(current);
+      if (this.authBoundary && current.authBoundary !== this.authBoundary() &&
+          current.workerId && current.workerGeneration !== undefined &&
+          !interactionId.startsWith(`${current.workerId}:${current.workerGeneration}:`)) {
+        throw new Error("CODEX_AUTH_JOB_BOUNDARY: The interaction does not belong to the original worker generation.");
+      }
+      const pending = current.pendingInteractions.find((entry) => entry.interactionId === interactionId);
+      if (!pending) throw new Error("Unknown or already resolved Codex interaction id for this job.");
+      if (pending.kind === "user-input" && !response.answers) {
+        throw new Error("This Codex interaction requires answers.");
+      }
+      if (pending.kind === "mcp-elicitation" && !response.elicitation) {
+        throw new Error("This MCP elicitation requires an elicitation response.");
+      }
+      if (!isInputInteraction(pending) && !response.decision) {
+        throw new Error("This Codex approval interaction requires a decision.");
+      }
+      if (response.decision && pending.availableDecisions &&
+          !pending.availableDecisions.includes(response.decision)) {
+        throw new Error("The selected decision is not available for this Codex approval request.");
+      }
+      const checkedUpstream = this.upstream;
+      if (!checkedUpstream?.respondToInteraction) throw new Error("The active Codex backend cannot accept interactions.");
+      job = current;
+      interaction = pending;
+      sendResponse = checkedUpstream.respondToInteraction.bind(checkedUpstream);
+    } catch (error) {
+      throw new InteractionNotDispatchedError(error);
     }
-    const interaction = job.pendingInteractions.find((entry) => entry.interactionId === interactionId);
-    if (!interaction) throw new Error("Unknown or already resolved Codex interaction id for this job.");
-    if (interaction.kind === "user-input" && !response.answers) {
-      throw new Error("This Codex interaction requires answers.");
-    }
-    if (interaction.kind === "mcp-elicitation" && !response.elicitation) {
-      throw new Error("This MCP elicitation requires an elicitation response.");
-    }
-    if (!isInputInteraction(interaction) && !response.decision) {
-      throw new Error("This Codex approval interaction requires a decision.");
-    }
-    if (
-      response.decision &&
-      interaction.availableDecisions &&
-      !interaction.availableDecisions.includes(response.decision)
-    ) {
-      throw new Error("The selected decision is not available for this Codex approval request.");
-    }
-    if (!this.upstream?.respondToInteraction) throw new Error("The active Codex backend cannot accept interactions.");
-    await this.upstream.respondToInteraction(interactionId, response);
+    // Keep the checked upstream instance and interaction together. An error
+    // from this call can mean the answer was sent; it must remain uncertain.
+    await sendResponse(interactionId, response);
     job.pendingInteractions = job.pendingInteractions.filter((entry) => entry.interactionId !== interactionId);
     this.recordProgress(job, {
       progress: (job.lastProgress?.progress || 0) + 1,
@@ -3617,6 +3710,7 @@ export class CodexJobRegistry {
   async steer(jobId: string, prompt: string): Promise<CodexJob> {
     const job = this.get(jobId);
     if (!job || job.status !== "running") throw new Error("The selected Codex job has no active turn to steer.");
+    this.assertCurrentJobOwner(job);
     if (!backendSupports(job.backendKind, "supportsSteering") || !job.threadId || !this.upstream?.steerThread) {
       throw new Error("Steering is available only for an active Codex App Server turn.");
     }
@@ -3866,6 +3960,7 @@ export class CodexJobRegistry {
     const primaryIntent = this.assertCancellationIntentForJob(jobId, suppliedIntent);
     const target = this.get(jobId);
     if (!target) throw new Error("Unknown Codex job id. Read codex_status({}) for the current conversation and use an exact retained Job id.");
+    this.assertOriginalJobControl(target);
     if (primaryIntent.scopeId !== target.scopeId || primaryIntent.targetActivityId !== target.activityId) {
       throw new Error("Cancellation intent scope or Activity no longer matches the target job.");
     }
@@ -4272,6 +4367,14 @@ export class CodexJobRegistry {
     for (const persisted of loaded) {
       const job: CodexJob = { ...persisted, promise: Promise.resolve() };
       if (this.projectionOnly) {
+        this.setIndexedJob(job);
+        continue;
+      }
+      if (isActiveActivityJobStatus(job.status) && this.authBoundary && job.authBoundary !== this.authBoundary()) {
+        // Keep the exact durable Job and its original execution receipt. A
+        // different or unverified owner must neither recover nor ACK it.
+        job.trackingState = "liveness-unknown";
+        if (this.recoverExecutions && job.executionReceipt) this.recoveryJobs.add(job.jobId);
         this.setIndexedJob(job);
         continue;
       }
@@ -4817,7 +4920,15 @@ export function registerBridgeTools(
       (threadId, backendKind) => upstream.canResumeThread?.(threadId, backendKind) === true,
       threadId => jobs.admissionStateStore.threadConnections.hasUnfinishedWork(threadId)
     );
+    const authSource = config.codexService?.environment.CODEX_MCP_BRIDGE_AUTH_SOURCE;
+    const account = config.codexService?.cachedAccount("app-server");
     return {
+      ...(config.codexService ? { authConnection: {
+        source: authSource === "bridge-chatgpt" || authSource === "bridge-api" || authSource === "disconnected"
+          ? authSource : "shared" as const,
+        mode: account?.authMode || "unknown" as const,
+        observedAt: account?.observedAt || null
+      } } : {}),
       acceptingNewJobs: acceptingNewJobs(),
       activeJobs: jobs.runningCount(),
       pendingAdmissions: runtimeAdmission.pendingAdmissions,
@@ -4860,18 +4971,43 @@ export function registerBridgeTools(
     value: Awaited<ReturnType<NonNullable<BridgeConfig["codexService"]>["readAccount"]>>;
     failed: boolean;
   };
+  const weeklyUsageFromAccount = (account: CodexAccountSnapshot | null): CodexWeeklyUsageView | null => {
+    if (account?.authMode !== "chatgpt" || account.ownershipConflict ||
+        account.usageObservedAt === null) return null;
+    const window = account.windows.find(candidate =>
+      candidate.limitId === "codex" && candidate.windowDurationMins === 10_080);
+    if (!window || !Number.isFinite(account.usageObservedAt)) return null;
+    const observedAt = new Date(account.usageObservedAt);
+    if (!Number.isFinite(observedAt.getTime())) return null;
+    const reset = window.resetsAt === null ? null : new Date(window.resetsAt * 1_000);
+    return codexWeeklyUsageOutputSchema.parse({
+      source: "codex-account-rate-limits",
+      limitId: window.limitId,
+      usedPercent: window.usedPercent,
+      remainingPercent: window.remainingPercent,
+      windowDurationMins: window.windowDurationMins,
+      resetsAt: reset && Number.isFinite(reset.getTime()) ? reset.toISOString() : null,
+      observedAt: observedAt.toISOString()
+    });
+  };
   const accountDisplayReads = new DisplayReadPool<AccountObservation>(1, () => notifyCardObservation(upstream));
   let accountCompletion: { revision: string; failed: boolean } | undefined;
+  let lastVerifiedAccount: { revision: string; context: string | null } | undefined;
   const readAccountForDisplay = async () => {
     const service = config.codexService;
     if (!service) return { pending: false as const, value: { value: null, failed: false } };
     const revision = service.cacheRevision();
+    const startingContext = service.accountDisplayContext();
     accountDisplayReads.invalidate(key => key !== revision);
     const read = accountDisplayReads.start(revision, async () => {
       try {
-        const value = await service.readAccount(config.defaultBackend, true);
-        return { value, failed: value === null || value.usageStatus === "unavailable" ||
-          value.billing.actualCosts?.status === "unavailable" };
+        const value = await service.readAccount(config.defaultBackend, true,
+          startingContext === null);
+        if (startingContext !== null && startingContext !== service.accountDisplayContext()) {
+          return { value: null, failed: false };
+        }
+        return { value, failed: value === null ||
+          value.authMode === "chatgpt" && value.usageStatus === "unavailable" };
       } catch { return { value: null, failed: true }; }
     }, (value, deferred) => {
       if (revision !== service.cacheRevision()) return;
@@ -4889,38 +5025,66 @@ export function registerBridgeTools(
     account?: AccountDisplayRead
   ): void => {
     const service = config.codexService;
-    if (!service) return;
+    if (!service) {
+      view.usageDisplayStatus = view.enrichment.usageTimedOut ? "timed-out"
+        : view.enrichment.usageUnavailable ? "unavailable"
+        : view.weeklyUsage ? "available"
+        : view.enrichment.state === "enriched" ? "unavailable" : "checking";
+      return;
+    }
+    const revision = service.cacheRevision();
     const displayContext = service.accountDisplayContext();
-    const unknownRevision = displayContext === null ? service.cacheRevision() : null;
-    view.codexAccount = service.cachedAccount(config.defaultBackend);
+    let displayed = service.cachedAccount(config.defaultBackend);
+    let currentRead = false;
     if (account) {
       if (account.pending) {
         view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) + 1;
+        view.enrichment.usageTimedOut = true;
       } else {
-        view.codexAccount = account.value.value ||
-          service.cachedAccount(config.defaultBackend);
+        if (account.value.value) {
+          displayed = account.value.value;
+          currentRead = true;
+        }
         if (account.value.failed) view.enrichment.usageUnavailable = true;
       }
     } else {
-      const revision = service.cacheRevision();
       view.enrichment.pendingReads = (view.enrichment.pendingReads || 0) +
         accountDisplayReads.observePending(key => key === revision);
       if (accountCompletion?.revision === revision && accountCompletion.failed) {
         view.enrichment.usageUnavailable = true;
       }
     }
-    if (view.codexAccount && (view.codexAccount.authMode !== "chatgpt" || view.codexAccount.usageStatus === "none")) {
-      view.weeklyUsage = null;
-    }
     const currentContext = service.accountDisplayContext();
     view.usageContext = currentContext;
-    if (currentContext === null) view.weeklyUsage = null;
     if (currentContext !== displayContext ||
-        currentContext === null && unknownRevision !== service.cacheRevision()) {
-      view.codexAccount = null;
-      view.weeklyUsage = null;
+        revision !== service.cacheRevision()) {
+      displayed = null;
+      currentRead = false;
       view.usageContext = null;
     }
+    // A stable file identity may reuse a previous observation during refresh.
+    // Keyring/auto has no such identity: only this completed account read may
+    // put a number on the card, even if an upstream usage cache exists.
+    if (view.usageContext === null && !currentRead) displayed = null;
+    view.codexAccount = displayed;
+    view.weeklyUsage = weeklyUsageFromAccount(displayed);
+    if (currentRead && displayed) {
+      lastVerifiedAccount = { revision, context: view.usageContext ?? null };
+    }
+    const identityChanged = Boolean(lastVerifiedAccount &&
+      (lastVerifiedAccount.context !== null
+        ? lastVerifiedAccount.context !== view.usageContext
+        : lastVerifiedAccount.revision !== revision));
+    view.usageDisplayStatus = account?.pending ? "timed-out"
+      : account && !account.pending && account.value.failed && !currentRead ? "unavailable"
+      : displayed?.authMode === "unknown" || displayed?.authenticated === false ? "signed-out"
+      : displayed?.authMode === "api-key" ? "not-applicable"
+      : displayed?.ownershipConflict ? "unavailable"
+      : displayed?.authMode === "chatgpt" && displayed.usageStatus === "unavailable" ? "unavailable"
+      : view.weeklyUsage ? currentRead ? "available" : "checking"
+      : displayed?.authMode === "chatgpt" && currentRead ? "no-limit"
+      : view.enrichment.usageUnavailable ? "unavailable"
+      : identityChanged ? "switching" : "checking";
     const accountObservedAt = view.codexAccount?.usageObservedAt;
     if (typeof accountObservedAt === "number") {
       view.enrichment.oldestObservationAt = [
@@ -5339,7 +5503,8 @@ export function registerBridgeTools(
           }))
         : undefined;
       const plan = await readProjection.dashboardRuntimePlan(options);
-      const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan);
+      const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan, undefined,
+        !config.codexService);
       const view = await readProjection.dashboardSnapshotWithEnrichment(
         options,
         projectedEnrichment
@@ -7909,7 +8074,6 @@ export function registerBridgeTools(
             "TASK_RESULT_EXPIRED: This requestId already admitted a terminal Codex Job whose result body is no longer retained. Read codex_status query kind='request' for its terminal admission fact. Use a new requestId only for a newly authorized logical turn."
           );
         }
-        resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         if (existingRequest && existingRequest.requestHashVersion !== CURRENT_TASK_REQUEST_HASH_VERSION) {
           throw new Error(
             "TASK_REPLAY_VERSION_UNSUPPORTED: This requestId belongs to a retired task contract. Read the existing Job with codex_status query kind='request' before considering a new logical turn."
@@ -7921,8 +8085,17 @@ export function registerBridgeTools(
           executionPolicyRef: currentTaskAdmissionRef(preferences)
         });
         if (!existingRequest) releaseRuntimeAdmission = acquireRuntimeAdmission();
+        if (!existingRequest) {
+          await config.codexService?.assertCurrentAdmission();
+          jobs.resumeAuthorizedRecoveries();
+        }
+        resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         const requestedActivity = validateActivityTaskRequest(args, jobs, scope.scopeId);
         const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, requestedActivity);
+        if (agentResolution.agent?.currentThreadId &&
+            sessions.belongsToAnotherAuthentication(agentResolution.agent.currentThreadId)) {
+          throw new Error("CODEX_AUTH_AGENT_BOUNDARY: This Agent belongs to another authentication connection. Create a new Agent after switching accounts.");
+        }
         validateTaskSelectionInput(args, preferences, requestedActivity, agentResolution);
         if (
           args.project === undefined &&
@@ -9162,6 +9335,9 @@ async function requireAgentSession(
   if (!resolution.agent) throw new Error("Agent resolution is missing an existing thread owner.");
   const threadId = resolution.agent.currentThreadId as string;
   const session = sessions.get(threadId);
+  if (!session && sessions.belongsToAnotherAuthentication(threadId)) {
+    throw new Error("CODEX_AUTH_THREAD_BOUNDARY: The Agent's thread belongs to another authentication connection.");
+  }
   if (!session || session.scopeId !== scopeId) {
     jobs.setAgentExecutionState(resolution.agent.agentId, "orphaned", {
       orphanedReason: "The Agent's persisted current thread session is unavailable after bridge recovery."
@@ -9291,6 +9467,7 @@ function resolveActivityForTask(
 function recordAdmittedThread(input: {
   sessions: SessionRegistry;
   jobs: CodexJobRegistry;
+  authBoundary?: string;
   sessionDecision: SessionDecision;
   agent: BridgeAgent;
   threadId: string;
@@ -9306,18 +9483,20 @@ function recordAdmittedThread(input: {
   sessionId?: string;
   forkedFromThreadId?: string;
 }): () => void {
-  const previousSession = input.sessions.get(input.threadId);
+  const previousSession = input.sessions.getForJob(input.threadId, input.authBoundary);
   const previousDecisionThreadId = input.sessionDecision.threadId;
+  const restoreSessions = input.sessions.captureInMemory();
+  let recorded = false;
   const restore = () => {
     if (previousDecisionThreadId) input.sessionDecision.threadId = previousDecisionThreadId;
     else delete input.sessionDecision.threadId;
-    input.sessions.restoreInMemory(input.threadId, previousSession);
+    if (recorded) restoreSessions();
   };
   try {
     input.jobs.activityTransaction(() => {
       input.sessionDecision.threadId = input.threadId;
       const now = Date.now();
-      input.sessions.record({
+      input.sessions.recordForJob({
         threadId: input.threadId,
         scopeId: input.scopeId,
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
@@ -9338,7 +9517,8 @@ function recordAdmittedThread(input: {
         updatedAt: now,
         createdAt: now,
         lastUsedAt: now
-      });
+      }, input.authBoundary);
+      recorded = true;
       input.jobs.linkAgentThread({
         agentId: input.agent.agentId,
         threadId: input.threadId,
@@ -9455,7 +9635,7 @@ async function startNewSession(input: {
           onAssigned
         )
       : input.upstream.callTool("codex", payload, onProgress, onAssigned),
-    onAssigned: (assignment, agent) => {
+    onAssigned: (assignment, agent, job) => {
       if (!assignment.threadId) return;
       // A cross-backend handoff becomes current only after turn/start accepts
       // the summary-bearing turn. If the worker exits after thread/start but
@@ -9465,6 +9645,7 @@ async function startNewSession(input: {
       recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent,
         threadId: assignment.threadId,
@@ -9483,13 +9664,14 @@ async function startNewSession(input: {
       });
     },
     onAdmitted: input.onAdmitted,
-    onComplete: (result, agent) => {
+    onComplete: (result, agent, job) => {
       const threadId = extractThreadId(result);
       if (!threadId) return;
       const lineage = extractResultThreadLineage(result);
       return recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent,
         threadId,
@@ -9640,42 +9822,52 @@ async function continueTrackedSession(input: {
       }
       return input.upstream.callTool("codex-reply", payload, onProgress, recordAssignment);
     },
-    onComplete: (result) => {
-      const previous = input.sessions.get(input.session.threadId);
+    onComplete: (result, _agent, job) => {
+      const restoreSessions = input.sessions.captureInMemory();
       const lineage = extractResultThreadLineage(result);
       const existingThread = input.jobs
         .listAgentThreads(input.agent.agentId)
         .find((thread) => thread.threadId === input.session.threadId);
-      input.sessions.record({
-        ...input.session,
-        ...lineage,
-        ...(input.projectAdmission
-          ? {
-              projectId: input.projectAdmission.projectId,
-              projectName: input.projectAdmission.projectName
-            }
-          : {}),
-        scopeId: input.adoptOnComplete ? input.routing.scopeId : input.session.scopeId,
-        selection: input.executionDecision.effectiveSelection,
-        policyRevision: input.executionDecision.policyRevision,
-        updatedAt: Date.now(),
-        lastUsedAt: Date.now()
-      });
-      input.jobs.linkAgentThread({
-        agentId: input.agent.agentId,
-        threadId: input.session.threadId,
-        sessionId: lineage.sessionId || existingThread?.sessionId || input.session.sessionId,
-        projectId: input.projectAdmission?.projectId,
-        projectName: input.projectAdmission?.projectName,
-        backendKind: input.session.backendKind,
-        cwd: input.session.cwd,
-        sandbox: input.session.sandbox,
-        // A continuation enriches legacy admission metadata; it does not
-        // rewrite how the existing thread originally entered the Agent.
-        contextMode: existingThread?.contextMode || "continue",
-        forkedFromThreadId: existingThread?.forkedFromThreadId
-      });
-      return () => input.sessions.restoreInMemory(input.session.threadId, previous);
+      let recorded = false;
+      const restore = () => {
+        if (recorded) restoreSessions();
+      };
+      try {
+        input.sessions.recordForJob({
+          ...input.session,
+          ...lineage,
+          ...(input.projectAdmission
+            ? {
+                projectId: input.projectAdmission.projectId,
+                projectName: input.projectAdmission.projectName
+              }
+            : {}),
+          scopeId: input.adoptOnComplete ? input.routing.scopeId : input.session.scopeId,
+          selection: input.executionDecision.effectiveSelection,
+          policyRevision: input.executionDecision.policyRevision,
+          updatedAt: Date.now(),
+          lastUsedAt: Date.now()
+        }, job.authBoundary);
+        recorded = true;
+        input.jobs.linkAgentThread({
+          agentId: input.agent.agentId,
+          threadId: input.session.threadId,
+          sessionId: lineage.sessionId || existingThread?.sessionId || input.session.sessionId,
+          projectId: input.projectAdmission?.projectId,
+          projectName: input.projectAdmission?.projectName,
+          backendKind: input.session.backendKind,
+          cwd: input.session.cwd,
+          sandbox: input.session.sandbox,
+          // A continuation enriches legacy admission metadata; it does not
+          // rewrite how the existing thread originally entered the Agent.
+          contextMode: existingThread?.contextMode || "continue",
+          forkedFromThreadId: existingThread?.forkedFromThreadId
+        });
+      } catch (error) {
+        restore();
+        throw error;
+      }
+      return restore;
     }
   });
 }
@@ -9757,11 +9949,12 @@ async function forkTrackedSession(input: {
       onProgress,
       onAssigned
     ) as Promise<ToolResult>,
-    onAssigned: (assignment) => {
+    onAssigned: (assignment, _agent, job) => {
       if (!assignment.threadId) return;
       recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent: input.agent,
         threadId: assignment.threadId,
@@ -9780,13 +9973,14 @@ async function forkTrackedSession(input: {
         forkedFromThreadId: assignment.forkedFromThreadId || input.session.threadId
       });
     },
-    onComplete: (result) => {
+    onComplete: (result, _agent, job) => {
       const threadId = extractThreadId(result);
       if (!threadId) return;
       const lineage = extractResultThreadLineage(result, input.session.threadId);
       return recordAdmittedThread({
         sessions: input.sessions,
         jobs: input.jobs,
+        authBoundary: job.authBoundary,
         sessionDecision,
         agent: input.agent,
         threadId,
@@ -9838,8 +10032,8 @@ async function runCodex(input: {
     onProgress: (progress: Progress) => void,
     onAssigned: (assignment: UpstreamWorkerAssignment) => void
   ) => Promise<ToolResult>;
-  onAssigned?: (assignment: UpstreamWorkerAssignment, agent: BridgeAgent) => void;
-  onComplete?: (result: ToolResult, agent: BridgeAgent) => void | (() => void);
+  onAssigned?: (assignment: UpstreamWorkerAssignment, agent: BridgeAgent, job: CodexJob) => void;
+  onComplete?: (result: ToolResult, agent: BridgeAgent, job: CodexJob) => void | (() => void);
 }): Promise<ToolResult> {
   if (!input.agent && !input.newAgentName) {
     throw new Error("Codex task admission requires an existing Agent or a new Agent name.");
@@ -9949,12 +10143,12 @@ async function runCodex(input: {
         return input.run(onProgress, onAssigned);
       },
       input.onComplete
-        ? (result) => input.onComplete?.(result, agent)
+        ? (result, currentJob) => input.onComplete?.(result, agent, currentJob)
         : undefined,
       input.preferences.maxConcurrentJobs,
       input.rejectIfSelectionActive,
       input.onAssigned
-        ? (assignment) => input.onAssigned?.(assignment, agent)
+        ? (assignment, currentJob) => input.onAssigned?.(assignment, agent, currentJob)
         : undefined,
       true
     );
@@ -10850,6 +11044,8 @@ export type BridgeStorageAdmissionError =
   | "read-only";
 
 export type BridgeRuntimeAdmissionSnapshot = {
+  authConnection?: { source: "shared" | "bridge-chatgpt" | "bridge-api" | "disconnected";
+    mode: "chatgpt" | "api-key" | "unknown"; observedAt: number | null };
   acceptingNewJobs: boolean;
   activeJobs: number;
   pendingAdmissions: number;
@@ -12283,7 +12479,8 @@ async function buildDashboardRuntimePlan(
 async function enrichDashboardRuntimePlan(
   upstream: CodexUpstream,
   plan: BridgeDashboardRuntimePlan,
-  jobs?: CodexJobRegistry
+  jobs?: CodexJobRegistry,
+  readUpstreamUsage = true
 ): Promise<BridgeDashboardEnrichment> {
   const rankedCandidates = plan.candidates;
   const cache = dashboardRuntimeCaches.get(upstream);
@@ -12319,7 +12516,8 @@ async function enrichDashboardRuntimePlan(
   const startedAt = Date.now();
   const [runtimeInspection, usage] = await Promise.all([
     inspectDashboardRuntimes(upstream, candidates, jobs),
-    readCodexWeeklyUsageBounded(upstream)
+    readUpstreamUsage ? readCodexWeeklyUsageBounded(upstream)
+      : Promise.resolve({ value: null, timedOut: false, failed: false })
   ]);
   const observations = cachedDashboardRuntimes(upstream, rankedCandidates);
   for (const [agentId, observation] of runtimeInspection.observations) {
@@ -12403,7 +12601,8 @@ async function buildDashboardView(
       problemQuery,
       includeHistory
     );
-    const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan, jobs);
+    const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan, jobs,
+      !config.codexService);
     return buildDashboardView(
       jobs,
       upstream,
@@ -14771,6 +14970,8 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     !isOptionalString(value.upstreamRequestId) ||
     !isOptionalPositiveInteger(value.terminalVersion) ||
     !isOptionalString(value.agentId) ||
+    (value.authBoundary !== undefined &&
+      (typeof value.authBoundary !== "string" || !/^[a-f0-9]{64}$/.test(value.authBoundary))) ||
     !isOptionalString(value.sourceThreadId) ||
     (value.contextMode !== undefined && !AGENT_CONTEXT_MODES.includes(value.contextMode as AgentContextMode)) ||
     (value.result !== undefined && !isRecord(value.result)) ||
@@ -14781,6 +14982,7 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
   }
   return {
     jobId,
+    authBoundary: value.authBoundary as string | undefined,
     executionReceipt: value.executionReceipt === true,
     activityId,
     ...(project || {}),
@@ -15825,7 +16027,8 @@ function errorFromException(error: unknown): z.infer<typeof structuredErrorOutpu
     message: codeMatch ? rawMessage.slice(codeMatch[0].length) : rawMessage,
     ...(
       code === "JOB_RETENTION_CAPACITY" || code === "STATE_STORAGE_UNAVAILABLE" ||
-      code === "EXECUTION_UNAVAILABLE"
+      code === "EXECUTION_UNAVAILABLE" || code === "CODEX_AUTH_UNAVAILABLE" ||
+      code === "CODEX_AUTH_POLICY_UNAVAILABLE"
         ? { retryable: true }
         : {}
     )

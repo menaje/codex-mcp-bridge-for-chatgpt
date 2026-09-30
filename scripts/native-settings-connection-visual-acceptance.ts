@@ -164,6 +164,7 @@ const expectedCaptures = [
   "settings-model-execution-en-light.png",
   "settings-projects-en-light.png",
   "settings-codex-en-light.png",
+  "settings-codex-override-en-light.png",
   "settings-connection-en-light.png",
   "settings-server-en-light.png",
   "settings-titlebar-clean-en-light.png",
@@ -178,7 +179,11 @@ const expectedCaptures = [
   "connection-setup-codex-en-light.png",
   "connection-setup-complete-en-light.png",
   "connection-recovery-failures-en-light.png",
-  "connection-recovery-ready-en-light.png"
+  "connection-recovery-ready-en-light.png",
+  "account-chatgpt-missing-values-en-light.png",
+  "account-api-missing-costs-en-light.png",
+  "account-chatgpt-provided-usage-en-light.png",
+  "account-api-provided-costs-en-light.png"
 ];
 for (const capture of expectedCaptures) {
   await access(path.join(root, "artifacts", capture), constants.R_OK);

@@ -1,6 +1,6 @@
 # State schema ownership catalog
 
-This catalog is the schema-29 operational inventory and telemetry schema
+This catalog is the schema-30 operational inventory and telemetry schema
 inventory required by issues #142 and #143. In production the operational
 state-owner process is the only `state.sqlite` writer, the read process opens it
 read-only, and the telemetry process is the only `telemetry.sqlite` writer.
@@ -151,7 +151,7 @@ diagnostic events.
 
 ## Coverage rule
 
-`test/stateSchemaOwnership.test.ts` opens a fresh schema-29 fixture and requires
+`test/stateSchemaOwnership.test.ts` opens a fresh schema-30 fixture and requires
 every non-SQLite-internal table, explicit index and trigger in `sqlite_master` to
 appear in this catalog. Adding or renaming a schema object without updating its
 owner and destination therefore fails the test.

@@ -100,7 +100,6 @@ final class SettingsConnectionPresentationTests: XCTestCase {
             ConnectionSetupJourney.codexAction(
                 installed: nil,
                 authenticated: nil,
-                loginInProgress: false,
                 statusCheckFailed: false
             ),
             .waitForStatus
@@ -109,16 +108,14 @@ final class SettingsConnectionPresentationTests: XCTestCase {
             ConnectionSetupJourney.codexAction(
                 installed: true,
                 authenticated: false,
-                loginInProgress: false,
                 statusCheckFailed: false
             ),
-            .startBrowserLogin
+            .openInstallationSettings
         )
         XCTAssertEqual(
             ConnectionSetupJourney.codexAction(
                 installed: false,
                 authenticated: false,
-                loginInProgress: false,
                 statusCheckFailed: false
             ),
             .openInstallationSettings
@@ -127,7 +124,6 @@ final class SettingsConnectionPresentationTests: XCTestCase {
             ConnectionSetupJourney.codexAction(
                 installed: true,
                 authenticated: true,
-                loginInProgress: false,
                 statusCheckFailed: false
             ),
             .finish
@@ -136,10 +132,9 @@ final class SettingsConnectionPresentationTests: XCTestCase {
             ConnectionSetupJourney.codexAction(
                 installed: nil,
                 authenticated: nil,
-                loginInProgress: false,
                 statusCheckFailed: true
             ),
-            .startBrowserLogin
+            .openInstallationSettings
         )
     }
 
@@ -227,7 +222,7 @@ final class SettingsConnectionPresentationTests: XCTestCase {
                 codexInstalled: true,
                 permissionsRepairAvailable: false
             ),
-            [.startCodexLogin]
+            [.openCodexSettings]
         )
         XCTAssertTrue(ConnectionRecoveryPlan.recommendedActions(
             for: .bridge,

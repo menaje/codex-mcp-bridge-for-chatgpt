@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import Database from "better-sqlite3";
 import { loadConfig } from "../src/config.js";
+import { CodexService } from "../src/codexService.js";
+import { CodexRuntimeManager } from "../src/codexRuntime.js";
+import { createExecutionRuntime } from "../src/executionRuntime.js";
+import { ChildProcessCodexExecutionService } from "../src/executionServiceProcess.js";
+import type { ExecutionPeer } from "../src/executionTransport.js";
 import type { CodexModelCatalogProvider, CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
 import { createHttpServer, type BridgeHttpServer } from "../src/server.js";
 import { BRIDGE_SKILL_LIMITS } from "../src/skillLibrary.js";
@@ -20,6 +25,7 @@ import type {
   UpstreamWorkerAssignment
 } from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
+import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
 
 const selection = { model: "gpt-5.6-sol", reasoningEffort: "medium" };
 const metadata = { "openai/session": "current-tool-contract-test" };
@@ -75,7 +81,7 @@ class FixtureUpstream implements CodexUpstream {
     started: Promise<void>;
     assign(threadId: string, upstreamRequestId?: string): void;
     progress(progress: CodexProgress): void;
-    release(): void;
+    release(result?: ToolResult): void;
   } {
     let started!: () => void;
     let release!: (result: ToolResult) => void;
@@ -103,7 +109,7 @@ class FixtureUpstream implements CodexUpstream {
         }
         heldCall.onProgress(progress);
       },
-      release: () => release({
+      release: (result) => release(result || {
         structuredContent: { threadId: "tool-contract-thread", content: "Completed delayed fixture work." },
         content: [{ type: "text", text: "Completed delayed fixture work." }]
       })
@@ -233,6 +239,694 @@ describe("current bridge tool contracts", () => {
     expect(status.description).toContain("terminal wait wakes only for terminal lifecycle state");
     expect(status.description).toContain("do not keep a parallel terminal wait");
     expect(tools.tools.some((tool) => "codex/registrationTier" in (tool._meta || {}))).toBe(false);
+  });
+
+  it("verifies the execution owner before looking up a saved Agent or admitting a Job", async () => {
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    config.codexService = new CodexService({ HOME: root,
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+    const verify = vi.spyOn(config.codexService, "assertCurrentAdmission").mockRejectedValue(
+      new Error("CODEX_AUTH_POLICY_UNAVAILABLE: synthetic managed policy changed"));
+    const requestId = randomUUID();
+    const blocked = await client.callTool({ name: "codex_task", arguments: {
+      scopeId: "aaaa1111-aaaa-4111-8111-aaaaaaaaaaaa",
+      requestId,
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Continue an owned session only after checking the active policy.",
+      agent: { mode: "existing", id: randomUUID(), context: "continue" }
+    }, _meta: metadata });
+    expect(blocked.isError).toBe(true);
+    expect(JSON.stringify(blocked)).toContain("CODEX_AUTH_POLICY_UNAVAILABLE");
+    expect(blocked.structuredContent).toMatchObject({ error: { retryable: true } });
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(state.listJobs().filter(job => job.requestId === requestId)).toEqual([]);
+    expect(upstream.calls).toEqual([]);
+  });
+
+  it.each(["completed", "failed", "interrupted"] as const)(
+    "keeps an original Job's %s result and session with its owner through an external login change and commit retry",
+    async (terminalStatus) => {
+      const home = path.join(root, ".codex");
+      const authFile = path.join(home, "auth.json");
+      await mkdir(home);
+      const login = (userId: string) => JSON.stringify({ auth_mode: "chatgpt", tokens: {
+        account_id: "shared-workspace", id_token: syntheticIdToken(userId, "shared-workspace")
+      } });
+      await writeFile(authFile, login("user-a"));
+      const service = new CodexService({ HOME: root, CODEX_HOME: home, PATH: "",
+        CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+      config.codexService = service;
+      await service.assertCurrentAdmission();
+
+      await client.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      upstream = new FixtureUpstream();
+      const acknowledgeExecution = vi.fn();
+      Object.assign(upstream, {
+        supportsExecutionRecovery: () => true,
+        ownsRetainedResult: (_jobId: string, assignment: UpstreamWorkerAssignment) =>
+          assignment.threadId === "tool-contract-thread" && assignment.upstreamRequestId === fixtureTurnId,
+        acknowledgeExecution
+      });
+      server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+      client = new Client(
+        { name: "original-job-completion-owner-test", version: "1.0.0" },
+        { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+      );
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+      await client.connect(new StreamableHTTPClientTransport(endpoint));
+
+      const descriptor = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
+      const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+      const project = settings.current.projects[0]!;
+      const hold = upstream.holdNextCall();
+      const admitted = await client.callTool({ name: "codex_task", arguments: {
+        scopeId: randomUUID(), requestId: randomUUID(),
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Return a synthetic result from the original Job.",
+        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+        selection
+      }, _meta: metadata });
+      expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+      const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+      await hold.started;
+      hold.assign("tool-contract-thread");
+      const originalOwner = state.listJobs().find((job) => job.jobId === jobId)?.authBoundary;
+      expect(originalOwner).toMatch(/^[a-f0-9]{64}$/);
+      expect((state.listSessions() as Array<{ threadId: string; authBoundary: string }>))
+        .toContainEqual(expect.objectContaining({ threadId: "tool-contract-thread", authBoundary: originalOwner }));
+
+      await writeFile(authFile, login("user-b"));
+      expect(service.sessionAuthBoundary().key).not.toBe(originalOwner);
+      await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_CHANGED");
+      expect(service.currentExecutionAuthBoundary()).toBeNull();
+
+      const persistJob = state.upsertJob.bind(state);
+      let failedOnce = false;
+      vi.spyOn(state, "upsertJob").mockImplementation((job) => {
+        if (!failedOnce && job.status === terminalStatus) {
+          failedOnce = true;
+          throw new Error("synthetic terminal commit outage");
+        }
+        persistJob(job);
+      });
+      hold.release({
+        structuredContent: { threadId: "tool-contract-thread",
+          turnStatus: terminalStatus === "interrupted" ? "interrupted" : "completed" },
+        content: [{ type: "text", text: "Synthetic original Job result." }],
+        ...(terminalStatus === "failed" ? { isError: true } : {})
+      });
+      await eventually(() => state.listJobs().some((job) =>
+        job.jobId === jobId && job.status === terminalStatus
+      ), 5_000);
+      expect(failedOnce).toBe(true);
+      expect(upstream.calls).toHaveLength(1);
+      expect(state.listJobs().find((job) => job.jobId === jobId)?.authBoundary).toBe(originalOwner);
+      expect((state.listSessions() as Array<{ threadId: string; authBoundary: string }>))
+        .toContainEqual(expect.objectContaining({ threadId: "tool-contract-thread", authBoundary: originalOwner }));
+      expect((state.listSessions() as Array<{ threadId: string; authBoundary: string }>))
+        .not.toContainEqual(expect.objectContaining({ threadId: "tool-contract-thread",
+          authBoundary: service.sessionAuthBoundary().key }));
+      expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(jobId);
+    }
+  );
+
+  it.each(["queued request", "completed response"] as const)(
+    "preserves the original Job through a lost %s, external auth change and transport ACK retries", async phase => {
+      await client.close();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+      vi.spyOn(CodexRuntimeManager.prototype, "acquire").mockResolvedValue({
+        selection: { id: "fixture", source: "terminal", command, physicalPath: command, version: "0.153.3" },
+        release: async () => {}
+      });
+      const home = path.join(root, "transport-home");
+      const turns = path.join(root, "transport-turns.jsonl");
+      await mkdir(home);
+      const login = (user: string) => JSON.stringify({ auth_mode: "chatgpt", tokens: {
+        account_id: "transport-workspace", id_token: syntheticIdToken(user, "transport-workspace")
+      } });
+      const authFile = path.join(home, "auth.json");
+      await writeFile(authFile, login("user-a"));
+      const environment = { PATH: process.env.PATH || "", HOME: root, CODEX_HOME: home,
+        CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime"),
+        CODEX_TEST_ACCOUNT_ID: "transport-workspace", CODEX_TEST_PROCESS_SCOPED_THREAD_IDS: "1",
+        CODEX_TEST_TURN_OBSERVATION: turns };
+      config.upstreamPoolSize = 1;
+      const runtime = createExecutionRuntime(config, {}, environment, { isolateCodexExecution: true });
+      await runtime.prepareExecution({ backendKind: "app-server", contextMode: "fresh" });
+      const execution = (runtime as unknown as {
+        backends: Map<string, { instance: ChildProcessCodexExecutionService }>
+      }).backends.get("app-server")!.instance;
+      const peer = (execution as unknown as { child: ExecutionPeer }).child;
+      const generation = execution.health().generation;
+      const executorPid = execution.processId;
+      const requests: Array<{ requestId: string; generation: string; args: unknown[] }> = [];
+      const acks: Array<{ requestId: string; generation: string }> = [];
+      const acknowledgedOwners: Array<{ status: string; authBoundary?: string }> = [];
+      let queued = false, dropQueued = phase === "queued request", jobId = "";
+      let droppedResult = false, droppedAck = false, droppedReply = false, reconnectedAck = false;
+      const send = peer.send.bind(peer);
+      peer.send = (message: any, callback) => {
+        if (message.type === "request" && message.retained) {
+          requests.push(structuredClone(message));
+          if (dropQueued) { queued = true; callback?.(); return true; }
+        }
+        if (message.type === "acknowledge" && message.requestId === jobId) {
+          acks.push(structuredClone(message));
+          const persisted = state.listJobs().find(job => job.jobId === jobId)!;
+          acknowledgedOwners.push({ status: persisted.status, authBoundary: persisted.authBoundary });
+          if (!droppedAck) { droppedAck = true; callback?.(); return true; }
+        }
+        return send(message, callback);
+      };
+      const receiver = execution as unknown as { onMessage(message: any): void };
+      const receive = receiver.onMessage.bind(execution);
+      receiver.onMessage = message => {
+        if (message.type === "response" && message.requestId === jobId && !droppedResult) {
+          droppedResult = true; peer.disconnect(); return;
+        }
+        if (message.type === "acknowledged" && message.requestId === jobId) {
+          if (!droppedReply) { droppedReply = true; return; }
+          if (!reconnectedAck) { reconnectedAck = true; peer.disconnect(); return; }
+        }
+        receive(message);
+      };
+      server = createHttpServer(config, runtime, new FixtureCatalog(), { stateStore: state });
+      client = new Client({ name: "auth-transport-owner-test", version: "1.0.0" },
+        { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+      await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+      endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+      await client.connect(new StreamableHTTPClientTransport(endpoint));
+      try {
+        const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+        const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+        const project = settings.current.projects[0]!;
+        const arguments_ = { scopeId: randomUUID(), requestId: randomUUID(),
+          taskContractVersion: properties.taskContractVersion?.const,
+          executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+          prompt: phase === "queued request" ? "original queued transport work" : "hold original transport work",
+          project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+          selection };
+        const admitted = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
+        expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+        jobId = (admitted.structuredContent as { jobId: string }).jobId;
+        await eventually(() => phase === "queued request" ? queued : Boolean(
+          state.listJobs().find(job => job.jobId === jobId)?.upstreamRequestId));
+        const original = state.listJobs().find(job => job.jobId === jobId)!;
+        expect(original.authBoundary).toMatch(/^[a-f0-9]{64}$/);
+        await writeFile(authFile, login("user-b"));
+        const foreign = await client.callTool({ name: "codex_task", _meta: metadata,
+          arguments: { ...arguments_, requestId: randomUUID(), prompt: "new owner must not execute" } });
+        expect(foreign.isError).toBe(true);
+        expect(JSON.stringify(foreign)).toContain("CODEX_AUTH_CHANGED");
+        expect(config.codexService!.currentExecutionAuthBoundary()).toBeNull();
+        expect(state.listJobs()).toHaveLength(1);
+        if (phase === "queued request") { dropQueued = false; peer.disconnect(); }
+        else await runtime.steerThread(original.threadId!, "finish the original transport Job");
+        await eventually(() => state.listJobs().some(job => job.jobId === jobId && job.status === "completed"), 10_000);
+        await eventually(() => droppedAck && droppedReply && reconnectedAck &&
+          execution.health().pendingAcknowledgements === 0, 10_000);
+        const completed = state.listJobs().find(job => job.jobId === jobId)!;
+        expect(completed.authBoundary).toBe(original.authBoundary);
+        if (phase === "completed response") expect(completed).toMatchObject({
+          workerId: original.workerId, workerGeneration: original.workerGeneration,
+          upstreamRequestId: original.upstreamRequestId, threadId: original.threadId
+        });
+        expect(completed.result).toBeDefined();
+        expect(state.listSessions()).toContainEqual(expect.objectContaining({
+          threadId: completed.threadId, authBoundary: original.authBoundary
+        }));
+        expect(droppedResult).toBe(true);
+        expect(requests.length).toBeGreaterThan(1);
+        expect(requests.every(request => request.requestId === jobId && request.generation === generation &&
+          JSON.stringify(request.args) === JSON.stringify(requests[0]!.args))).toBe(true);
+        expect(acks.length).toBeGreaterThanOrEqual(4);
+        expect(acks.every(ack => ack.requestId === jobId && ack.generation === generation)).toBe(true);
+        expect(acknowledgedOwners.every(owner => owner.status === "completed" &&
+          owner.authBoundary === original.authBoundary)).toBe(true);
+        expect(execution.processId).toBe(executorPid);
+        expect(execution.health().generation).toBe(generation);
+        const observed = (await readFile(turns, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+        expect(observed).toHaveLength(1);
+        expect(observed[0]).toMatchObject({ threadId: completed.threadId, turnId: completed.upstreamRequestId });
+        const status = await client.callTool({ name: "codex_status", _meta: metadata,
+          arguments: { query: { kind: "job", id: jobId } } });
+        expect(status.isError, JSON.stringify(status)).not.toBe(true);
+        expect(status.structuredContent).toMatchObject({ items: [expect.objectContaining({ id: jobId, state: "completed" })] });
+        expect((await readFile(turns, "utf8")).trim().split("\n")).toHaveLength(1);
+      } finally {
+        dropQueued = false;
+        peer.send = send;
+        receiver.onMessage = receive;
+        await runtime.close();
+        vi.restoreAllMocks();
+      }
+    }, 25_000
+  );
+
+  it.each(["host-accepted", "acceptance-unknown"] as const)(
+    "retains an original %s completion receipt through a new login and lost result response", async deliveryState => {
+      const stateFile = path.join(root, "state.sqlite");
+      const homeA = path.join(root, "profile-a");
+      const homeB = path.join(root, "profile-b");
+      const project = settings.current.projects[0]!;
+      for (const [home, user] of [[homeA, "user-a"], [homeB, "user-b"]]) {
+        await mkdir(home!);
+        await writeFile(path.join(home!, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: {
+          account_id: "shared-workspace", id_token: syntheticIdToken(user!, "shared-workspace")
+        } }));
+      }
+      const reopen = async (home: string, nextUpstream: FixtureUpstream) => {
+        await client.close();
+        await new Promise<void>(resolve => server.close(() => resolve()));
+        state.close();
+        config.codexService = new CodexService({ HOME: root, CODEX_HOME: home, PATH: "",
+          CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+        await config.codexService.assertCurrentAdmission();
+        state = new BridgeStateStore({ file: stateFile });
+        upstream = nextUpstream;
+        server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+        client = new Client({ name: "retained-completion-owner-test", version: "1.0.0" },
+          { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+        await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+        endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+        await client.connect(new StreamableHTTPClientTransport(endpoint));
+      };
+      await reopen(homeA, new FixtureUpstream());
+      const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+      const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+      const arguments_ = {
+        scopeId: randomUUID(), requestId: randomUUID(),
+        taskContractVersion: properties.taskContractVersion?.const,
+        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+        prompt: "Retain this original result across a separate login.",
+        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+        selection
+      };
+      const admitted = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
+      expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+      const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+      await eventually(() => state.listJobs().some(job => job.jobId === jobId && job.status === "completed"));
+      const original = state.listJobs().find(job => job.jobId === jobId)!;
+      const scopeId = original.scopeId!;
+      expect(original.authBoundary).toMatch(/^[a-f0-9]{64}$/);
+      const leaseOwner = randomUUID();
+      const leased = state.claimJobCompletionDelivery(jobId, scopeId, leaseOwner)!;
+      const lease = { jobId, scopeId, leaseOwner, receipt: leased.receipt };
+      if (deliveryState === "host-accepted") state.markJobCompletionHostAccepted(lease);
+      else state.markJobCompletionAcceptanceUnknown(lease);
+      const originalDelivery = state.getJobCompletionDelivery(jobId, scopeId)!;
+      expect(state.retentionProtection(jobId)).toContain("undelivered-chatgpt-result");
+
+      const recoverExecution = vi.fn();
+      const acknowledgeExecution = vi.fn();
+      const nextUpstream = new FixtureUpstream();
+      Object.assign(nextUpstream, { supportsExecutionRecovery: () => true, recoverExecution, acknowledgeExecution });
+      await reopen(homeB, nextUpstream);
+      expect(config.codexService!.currentExecutionAuthBoundary()).not.toBe(original.authBoundary);
+      expect(state.getJobCompletionDelivery(jobId, scopeId)).toEqual(originalDelivery);
+      expect(state.listJobs()).toContainEqual(expect.objectContaining({
+        jobId, status: "completed", authBoundary: original.authBoundary, result: original.result
+      }));
+
+      let loseResultResponse = true;
+      const lossyFetch: typeof globalThis.fetch = async (input, init) => {
+        const response = await globalThis.fetch(input, init);
+        if (loseResultResponse && typeof init?.body === "string" && init.body.includes(leased.receipt)) {
+          loseResultResponse = false;
+          await response.body?.cancel();
+          throw new TypeError("synthetic lost completion response");
+        }
+        return response;
+      };
+      const lossyClient = new Client({ name: "retained-completion-response-loss", version: "1.0.0" },
+        { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+      await lossyClient.connect(new StreamableHTTPClientTransport(endpoint, { fetch: lossyFetch }));
+      try {
+        await expect(lossyClient.callTool({ name: "codex_status", _meta: metadata,
+          arguments: { scopeId, query: { kind: "completion", receipt: leased.receipt } } }))
+          .rejects.toThrow("synthetic lost completion response");
+      } finally { await lossyClient.close(); }
+      const offered = state.getJobCompletionDelivery(jobId, scopeId)!;
+      expect(offered).toMatchObject({ state: deliveryState, receipt: leased.receipt,
+        attemptCount: 1, completionResultOfferedAt: expect.any(Number) });
+      expect(offered.resultReadAt).toBeUndefined();
+
+      const recovered = await client.callTool({ name: "codex_status", _meta: metadata,
+        arguments: { scopeId, query: { kind: "completion", receipt: leased.receipt } } });
+      expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
+      expect(recovered.structuredContent).toMatchObject({ kind: "job", items: [expect.objectContaining({
+        id: jobId, state: "completed", answer: expect.stringContaining("Completed fixture work.")
+      })] });
+      expect(state.getJobCompletionDelivery(jobId, scopeId)?.completionResultOfferedAt)
+        .toBe(offered.completionResultOfferedAt);
+      const foreign = await client.callTool({ name: "codex_status",
+        _meta: { "openai/session": "foreign-retained-result" },
+        arguments: { query: { kind: "completion", receipt: leased.receipt } } });
+      expect(foreign.isError).toBe(true);
+      const replay = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
+      expect(replay.isError).toBe(true);
+      expect(JSON.stringify(replay)).toContain("CODEX_AUTH_JOB_BOUNDARY");
+      expect(state.listJobs()).toHaveLength(1);
+      expect(nextUpstream.calls).toHaveLength(0);
+      expect(recoverExecution).not.toHaveBeenCalled();
+      expect(acknowledgeExecution).not.toHaveBeenCalled();
+    }
+  );
+
+  it("recovers an original Job through HTTP only after a restarted bridge confirms its owner", async () => {
+    const home = path.join(root, ".codex");
+    const authFile = path.join(home, "auth.json");
+    const stateFile = path.join(root, "state.sqlite");
+    const environment = { HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") };
+    const login = (userId: string) => JSON.stringify({ auth_mode: "chatgpt", tokens: {
+      account_id: "shared-workspace", id_token: syntheticIdToken(userId, "shared-workspace")
+    } });
+    await mkdir(home);
+    await writeFile(authFile, login("user-a"));
+    config.codexService = new CodexService(environment);
+    await config.codexService.assertCurrentAdmission();
+
+    await client.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    upstream = new FixtureUpstream();
+    Object.assign(upstream, { supportsExecutionRecovery: () => true });
+    server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+    client = new Client({ name: "original-job-before-restart", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+    await client.connect(new StreamableHTTPClientTransport(endpoint));
+
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const admitted = await client.callTool({ name: "codex_task", arguments: {
+      scopeId: randomUUID(), requestId: randomUUID(),
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Keep the original Job running across a bridge restart.",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+      selection
+    }, _meta: metadata });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+    await hold.started;
+    hold.assign("original-restart-thread");
+    const original = state.listJobs().find(job => job.jobId === jobId)!;
+    const assignment: UpstreamWorkerAssignment = {
+      backendKind: "app-server", workerId: "fixture-worker", workerGeneration: 1,
+      upstreamRequestId: fixtureTurnId, threadId: "original-restart-thread"
+    };
+    expect(original.authBoundary).toMatch(/^[a-f0-9]{64}$/);
+    expect(original).toMatchObject({ status: "running", threadId: assignment.threadId,
+      workerId: assignment.workerId, workerGeneration: assignment.workerGeneration });
+
+    const reopen = async (userId: string, nextUpstream: FixtureUpstream) => {
+      await client.close();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      state.close();
+      await writeFile(authFile, login(userId));
+      config.codexService = new CodexService(environment);
+      const startupAdmission = vi.spyOn(config.codexService, "assertCurrentAdmission");
+      state = new BridgeStateStore({ file: stateFile });
+      upstream = nextUpstream;
+      server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+      client = new Client({ name: `original-job-after-restart-${userId}`, version: "1.0.0" },
+        { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+      await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+      endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+      await client.connect(new StreamableHTTPClientTransport(endpoint));
+      return startupAdmission;
+    };
+
+    const wrongOwnerRecovery = vi.fn();
+    const wrongOwner = new FixtureUpstream();
+    Object.assign(wrongOwner, { supportsExecutionRecovery: () => true,
+      recoverExecution: wrongOwnerRecovery });
+    const foreignAdmission = await reopen("user-b", wrongOwner);
+    await eventually(() => foreignAdmission.mock.calls.length === 1);
+    await foreignAdmission.mock.results[0]!.value;
+    await Promise.resolve();
+    expect(config.codexService!.currentExecutionAuthBoundary()).not.toBe(original.authBoundary);
+    expect(wrongOwnerRecovery).not.toHaveBeenCalled();
+    expect(state.listJobs()).toContainEqual(expect.objectContaining({
+      jobId, status: "running", authBoundary: original.authBoundary
+    }));
+    const foreignStatus = await client.callTool({ name: "codex_status", _meta: metadata,
+      arguments: { query: { kind: "job", id: jobId } } });
+    expect(foreignStatus.isError, JSON.stringify(foreignStatus)).not.toBe(true);
+    expect(foreignStatus.structuredContent).toMatchObject({ items: [expect.objectContaining({
+      id: jobId, state: "running"
+    })] });
+
+    const recoverExecution = vi.fn((_jobId: string, _onProgress: (progress: CodexProgress) => void,
+      onAssigned: (value: UpstreamWorkerAssignment) => void) => {
+      onAssigned(assignment);
+      return Promise.resolve({ structuredContent: { threadId: assignment.threadId, turnStatus: "completed" },
+        content: [{ type: "text" as const, text: "Original retained result after restart." }] });
+    });
+    const acknowledgeExecution = vi.fn();
+    const sameOwner = new FixtureUpstream();
+    Object.assign(sameOwner, { supportsExecutionRecovery: () => true, recoverExecution,
+      ownsRetainedResult: (_jobId: string, value: UpstreamWorkerAssignment) =>
+        _jobId === jobId && value.workerId === assignment.workerId &&
+        value.workerGeneration === assignment.workerGeneration &&
+        value.upstreamRequestId === assignment.upstreamRequestId &&
+        value.threadId === assignment.threadId,
+      acknowledgeExecution });
+    await reopen("user-a", sameOwner);
+    await eventually(() => state.listJobs().some(job => job.jobId === jobId && job.status === "completed"), 5_000);
+    expect(recoverExecution).toHaveBeenCalledExactlyOnceWith(jobId, expect.any(Function), expect.any(Function));
+    expect(state.listJobs()).toContainEqual(expect.objectContaining({
+      jobId, status: "completed", authBoundary: original.authBoundary,
+      result: expect.objectContaining({ content: [{ type: "text", text: "Original retained result after restart." }] })
+    }));
+    expect(state.listSessions()).toContainEqual(expect.objectContaining({
+      threadId: assignment.threadId, authBoundary: original.authBoundary
+    }));
+    await eventually(() => acknowledgeExecution.mock.calls.length === 1);
+    expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(jobId);
+    expect(sameOwner.calls).toHaveLength(0);
+    const recoveredStatus = await client.callTool({ name: "codex_status", _meta: metadata,
+      arguments: { query: { kind: "job", id: jobId } } });
+    expect(recoveredStatus.isError, JSON.stringify(recoveredStatus)).not.toBe(true);
+    expect(recoveredStatus.structuredContent).toMatchObject({ items: [expect.objectContaining({
+      id: jobId, state: "completed", answer: expect.stringContaining("Original retained result after restart.")
+    })] });
+  });
+
+  it.each([
+    { scenario: "live original worker", initialWorkerProof: true, loseReply: false },
+    { scenario: "worker proof recovered before send", initialWorkerProof: false, loseReply: false },
+    { scenario: "answer sent but reply lost", initialWorkerProof: true, loseReply: true }
+  ])("keeps the original Job question and ACK after an external login change: $scenario", async ({ initialWorkerProof, loseReply }) => {
+    const home = path.join(root, ".codex");
+    const authFile = path.join(home, "auth.json");
+    await mkdir(home);
+    const login = (userId: string) => JSON.stringify({ auth_mode: "chatgpt", tokens: {
+      account_id: "shared-workspace", id_token: syntheticIdToken(userId, "shared-workspace")
+    } });
+    await writeFile(authFile, login("user-a"));
+    const service = new CodexService({ HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+    config.codexService = service;
+    await service.assertCurrentAdmission();
+
+    await client.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    upstream = new FixtureUpstream();
+    let originalWorkerLive = false;
+    const acknowledgeExecution = vi.fn();
+    Object.assign(upstream, {
+      supportsExecutionRecovery: () => true,
+      ownsActiveExecution: (_jobId: string, assignment: UpstreamWorkerAssignment) =>
+        originalWorkerLive && assignment.workerId === "fixture-worker" &&
+        assignment.workerGeneration === 1 && assignment.threadId === "tool-contract-thread" &&
+        assignment.upstreamRequestId === fixtureTurnId,
+      ownsRetainedResult: (_jobId: string, assignment: UpstreamWorkerAssignment) =>
+        assignment.workerId === "fixture-worker" && assignment.workerGeneration === 1 &&
+        assignment.threadId === "tool-contract-thread" && assignment.upstreamRequestId === fixtureTurnId,
+      respondToInteraction: async (interactionId: string, response: CodexInteractionResponse) => {
+        upstream.interactionResponses.push({ interactionId, response });
+        if (loseReply) throw new Error("Synthetic reply lost after the answer reached the original worker.");
+      },
+      acknowledgeExecution
+    });
+    server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+    client = new Client(
+      { name: "original-job-question-owner-test", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } }
+    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+    await client.connect(new StreamableHTTPClientTransport(endpoint));
+
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const admitted = await client.callTool({ name: "codex_task", arguments: {
+      scopeId: randomUUID(), requestId: randomUUID(),
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Wait for the original worker's synthetic question.",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+      selection
+    }, _meta: metadata });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+    await hold.started;
+    hold.assign("tool-contract-thread");
+    const originalOwner = state.listJobs().find(job => job.jobId === jobId)?.authBoundary;
+    expect(originalOwner).toMatch(/^[a-f0-9]{64}$/);
+    const interactionId = "fixture-worker:1:question-original";
+    hold.progress({ progress: 0.5, event: {
+      eventId: "question-original", type: "input-required", phase: "waiting",
+      createdAt: Date.now(), summary: "Original worker question", details: { interaction: {
+        interactionId, kind: "user-input", origin: "codex-question",
+        threadId: "tool-contract-thread", turnId: fixtureTurnId,
+        itemId: "question-item", summary: "Original worker question",
+        questions: [{ id: "answer", question: "Continue?", isSecret: false }]
+      } }
+    } });
+    const input = await client.callTool({ name: "codex_status", _meta: metadata,
+      arguments: { query: { kind: "input", jobId } } });
+    expect(input.isError, JSON.stringify(input)).not.toBe(true);
+    const questionRef = (input.structuredContent as { questions?: Array<{ questionRef?: string }> })
+      .questions?.[0]?.questionRef;
+    expect(questionRef, JSON.stringify(input.structuredContent)).toBeTruthy();
+
+    await writeFile(authFile, login("user-b"));
+    await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_CHANGED");
+    expect(service.currentExecutionAuthBoundary()).toBeNull();
+    const respond = (requestId: string) => client.callTool({ name: "codex_answer", _meta: metadata,
+      arguments: { requestId, jobId, questionRef, answers: { answer: ["yes"] } } });
+    originalWorkerLive = initialWorkerProof;
+    const answerRequestId = randomUUID();
+    const answered = await respond(answerRequestId);
+    expect(answered.isError, JSON.stringify(answered)).not.toBe(true);
+    expect(answered.structuredContent).toMatchObject({
+      delivery: !initialWorkerProof ? "not-delivered" : loseReply ? "uncertain" : "delivered",
+      answersPersisted: false
+    });
+    expect(upstream.interactionResponses).toHaveLength(initialWorkerProof ? 1 : 0);
+    if (!initialWorkerProof) {
+      const stillBlocked = await respond(answerRequestId);
+      expect(stillBlocked.structuredContent).toMatchObject({ delivery: "not-delivered" });
+      expect(upstream.interactionResponses).toHaveLength(0);
+      const differentRequest = await respond(randomUUID());
+      expect(differentRequest.isError).toBe(true);
+      expect(JSON.stringify(differentRequest)).toContain("QUESTION_ALREADY_DISPATCHED");
+      originalWorkerLive = true;
+      const recovered = await respond(answerRequestId);
+      expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
+      expect(recovered.structuredContent).toMatchObject({ delivery: "delivered" });
+    } else if (loseReply) {
+      const repeated = await respond(answerRequestId);
+      expect(repeated.structuredContent).toMatchObject({ delivery: "uncertain" });
+      const differentRequest = await respond(randomUUID());
+      expect(differentRequest.isError).toBe(true);
+      expect(JSON.stringify(differentRequest)).toContain("QUESTION_ALREADY_DISPATCHED");
+    }
+    expect(upstream.interactionResponses).toEqual([{
+      interactionId, response: { answers: { answer: ["yes"] } }
+    }]);
+    hold.release({
+      structuredContent: { threadId: "tool-contract-thread", turnStatus: "completed" },
+      content: [{ type: "text", text: "Original worker result." }]
+    });
+    await eventually(() => state.listJobs().some(job => job.jobId === jobId && job.status === "completed"), 5_000);
+    expect((state.listSessions() as Array<{ threadId: string; authBoundary: string }>))
+      .toContainEqual(expect.objectContaining({ threadId: "tool-contract-thread", authBoundary: originalOwner }));
+    expect(acknowledgeExecution).toHaveBeenCalledExactlyOnceWith(jobId);
+  });
+
+  it("cancels an original Job after an external login change only with live proof of its worker", async () => {
+    const home = path.join(root, ".codex");
+    const authFile = path.join(home, "auth.json");
+    await mkdir(home);
+    const login = (userId: string) => JSON.stringify({ auth_mode: "chatgpt", tokens: {
+      account_id: "shared-workspace", id_token: syntheticIdToken(userId, "shared-workspace")
+    } });
+    await writeFile(authFile, login("user-a"));
+    const service = new CodexService({ HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+    config.codexService = service;
+    await service.assertCurrentAdmission();
+
+    await client.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    upstream = new FixtureUpstream();
+    let originalWorkerLive = false;
+    const forceTerminateWorker = vi.fn(async (assignment: UpstreamWorkerAssignment) => ({
+      ...assignment, mode: "turn-interrupt" as const, exited: true, workerExited: false, escalated: false
+    }));
+    Object.assign(upstream, {
+      supportsExecutionRecovery: () => true,
+      ownsActiveExecution: (_jobId: string, assignment: UpstreamWorkerAssignment) =>
+        originalWorkerLive && assignment.workerId === "fixture-worker" &&
+        assignment.workerGeneration === 1 && assignment.threadId === "tool-contract-thread" &&
+        assignment.upstreamRequestId === fixtureTurnId,
+      forceTerminateWorker
+    });
+    server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+    client = new Client({ name: "original-job-cancellation-owner-test", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    endpoint = new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`);
+    await client.connect(new StreamableHTTPClientTransport(endpoint));
+
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const hold = upstream.holdNextCall();
+    const admitted = await client.callTool({ name: "codex_task", arguments: {
+      scopeId: randomUUID(), requestId: randomUUID(),
+      taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      prompt: "Hold a synthetic original Job for cancellation.",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
+      selection
+    }, _meta: metadata });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+    await hold.started;
+    hold.assign("tool-contract-thread");
+    const originalOwner = state.listJobs().find(job => job.jobId === jobId)?.authBoundary;
+    await writeFile(authFile, login("user-b"));
+    await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_CHANGED");
+    const cancel = (requestId: string) => client.callTool({ name: "codex_cancel", _meta: metadata,
+      arguments: { requestId, target: { kind: "job", id: jobId },
+        expectedVersion: state.listJobs().find(job => job.jobId === jobId)?.version,
+        reason: "Stop the original synthetic Job." } });
+    try {
+      const blocked = await cancel(randomUUID());
+      expect(blocked.isError).toBe(true);
+      expect(JSON.stringify(blocked)).toContain("CODEX_AUTH_JOB_BOUNDARY");
+      expect(forceTerminateWorker).not.toHaveBeenCalled();
+      expect(state.listJobs().find(job => job.jobId === jobId)?.status).toBe("running");
+      originalWorkerLive = true;
+      const stopped = await cancel(randomUUID());
+      expect(stopped.isError, JSON.stringify(stopped)).not.toBe(true);
+      expect(state.listJobs().find(job => job.jobId === jobId)).toMatchObject({
+        status: "cancelled", authBoundary: originalOwner
+      });
+      expect(forceTerminateWorker).toHaveBeenCalledTimes(1);
+      expect(forceTerminateWorker.mock.calls[0]?.[0]).toMatchObject({
+        workerId: "fixture-worker", workerGeneration: 1, upstreamRequestId: fixtureTurnId
+      });
+      expect(upstream.calls).toHaveLength(1);
+    } finally {
+      hold.release();
+    }
   });
 
   it("keeps physical background-read slots across repeated native snapshot timeouts", async () => {

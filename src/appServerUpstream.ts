@@ -7,7 +7,7 @@ import {
   threadAccessParams, turnAccessParams, verifyExecutionAccess,
   type ExecutionAccessRequest, type VerifiedExecutionAccess
 } from "./executionAccess.js";
-import { projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
+import { localCodexAccountLabels, projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
 import { randomUUID } from "node:crypto";
 import { TOKEN_KEYS, tokenCounts, TurnUsageMeter, type TokenCounts } from "./tokenUsage.js";
 import { execFile } from "node:child_process";
@@ -552,6 +552,11 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   async readAccountSnapshot(): Promise<CodexAccountSnapshot | null> {
+    return (await this.readAccountDetails()).snapshot;
+  }
+
+  /** Account email is returned only to local authentication management. */
+  async readAccountDetails(): Promise<{ snapshot: CodexAccountSnapshot; email: string | null; workspaceName: string | null }> {
     const worker = this.leastBusyWorker();
     worker.activeCalls += 1;
     try {
@@ -559,8 +564,27 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       const account = await connection.readAccount();
       const limits = projectCodexAccount(account, null).authMode === "chatgpt"
         ? await connection.readAccountRateLimits().catch(() => null) : null;
-      return projectCodexAccount(account, limits);
+      const { email, workspaceName } = localCodexAccountLabels(account);
+      return { snapshot: projectCodexAccount(account, limits), email, workspaceName };
     } finally { worker.activeCalls -= 1; }
+  }
+
+  async readAuthenticationPolicy(): Promise<{ config: unknown; requirements: unknown }> {
+    const worker = this.leastBusyWorker();
+    worker.activeCalls += 1;
+    try {
+      const connection = await this.connectionFor(worker);
+      const config = await connection.readConfiguration();
+      const requirements = await connection.readConfigurationRequirements();
+      return { config, requirements };
+    } finally { worker.activeCalls -= 1; }
+  }
+
+  async logoutAccount(): Promise<void> {
+    const worker = this.leastBusyWorker();
+    worker.activeCalls += 1;
+    try { await (await this.connectionFor(worker)).logoutAccount(); }
+    finally { worker.activeCalls -= 1; }
   }
 
   async readAccountRateLimits(): Promise<CodexWeeklyUsage | null> {
@@ -691,6 +715,13 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
       this.forgetWorkerThreads(worker.index);
     }
     return result;
+  }
+
+  ownsActiveExecution(_jobId: string, assignment: UpstreamWorkerAssignment): boolean {
+    const worker = this.workers.find(candidate => `app-${candidate.index}` === assignment.workerId);
+    return Boolean(worker?.connection && worker.generation === assignment.workerGeneration &&
+      assignment.threadId && assignment.upstreamRequestId &&
+      worker.connection.hasExactTurn(assignment.threadId, assignment.upstreamRequestId));
   }
 
   private requireThreadAccess(threadId: string): ExecutionAccessRequest {
@@ -1423,6 +1454,18 @@ class AppServerConnection {
 
   async readAccount() { return this.rpc.request("account/read", { refreshToken: false }, { timeoutMs: this.protocolOptions.requestTimeoutMs }); }
 
+  async readConfiguration() {
+    return this.rpc.request("config/read", { includeLayers: false }, { timeoutMs: this.protocolOptions.requestTimeoutMs });
+  }
+
+  async readConfigurationRequirements() {
+    return this.rpc.request("configRequirements/read", {}, { timeoutMs: this.protocolOptions.requestTimeoutMs });
+  }
+
+  async logoutAccount() {
+    return this.rpc.request("account/logout", {}, { timeoutMs: this.protocolOptions.requestTimeoutMs });
+  }
+
   async readAccountRateLimits(): Promise<Record<string, unknown>> {
     return this.rpc.request<Record<string, unknown>>(
       "account/rateLimits/read",
@@ -1451,6 +1494,10 @@ class AppServerConnection {
 
   hasActiveTurn(threadId: string): boolean {
     return this.threadTurns.has(threadId);
+  }
+
+  hasExactTurn(threadId: string, turnId: string): boolean {
+    return this.threadTurns.get(threadId) === turnId;
   }
 
   interactionInput(interactionId: string): CodexInteractionInput | undefined {

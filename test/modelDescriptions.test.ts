@@ -168,14 +168,15 @@ describe("user model descriptions", () => {
     state.close();
     const database = new Database(file);
     database.exec(V24_DECISION_CARD_MIGRATION_SCHEMA);
+    database.exec("ALTER TABLE sessions DROP COLUMN auth_boundary");
     database.exec(`DROP TABLE model_description_versions;
       UPDATE bridge_meta SET value='25' WHERE key='schema_version';
-      DELETE FROM bridge_meta WHERE key IN ('schema_v26_created_at','schema_v27_created_at');`);
+      DELETE FROM bridge_meta WHERE key IN ('schema_v26_created_at','schema_v27_created_at','schema_v30_created_at');`);
     database.close();
     const upgradedState = new BridgeStateStore({ file });
     const upgraded = new UserSettingsStore(config(), { stateStore: upgradedState });
-    expect(upgradedState.schemaVersion).toBe(29);
-    expect(existsSync(`${file}.pre-v25-to-v29.sqlite`)).toBe(true);
+    expect(upgradedState.schemaVersion).toBe(30);
+    expect(existsSync(`${file}.pre-v25-to-v30.sqlite`)).toBe(true);
     expect(upgraded.current.modelDescriptionOverrides).toEqual({ "model-a": "Saved before versions" });
     expect(upgraded.modelDescriptionHistory("model-a").versions).toEqual([
       { version: 1, description: "Saved before versions", createdAt: null }

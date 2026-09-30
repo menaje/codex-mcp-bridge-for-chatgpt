@@ -282,6 +282,54 @@ final class AppPresentationTests: XCTestCase {
         )
     }
 
+    func testNativeRPCDiagnosticsAreNotLocalizationKeys() {
+        for code in BridgeAppLocalization.supportedLanguageCodes {
+            let locale = Locale(identifier: code)
+            let message = BridgeAppLocalization.errorDescription(
+                LocalRPCError.remote(code: -32000, message: "UNCATALOGUED_FAILURE: private diagnostic"),
+                locale: locale
+            )
+            XCTAssertEqual(message, BridgeAppLocalization.string(
+                "macos.therequestcouldnotbecompletedcheckthe", locale: locale
+            ))
+            XCTAssertFalse(message.contains(BridgeGeneratedLocalization.unavailableFallback))
+            XCTAssertFalse(message.contains("private diagnostic"))
+
+            let key = "macos.couldnotconnecttothelocalservice"
+            let template = BridgeGeneratedLocalization.defaultStrings[key]!
+            let wrapped = BridgeAppLocalization.errorDescription(
+                LocalRPCError.remote(
+                    code: -32000,
+                    message: String(format: template, "UNCATALOGUED_FAILURE: private diagnostic")
+                ),
+                locale: locale
+            )
+            XCTAssertEqual(wrapped, BridgeAppLocalization.format(key, locale: locale, message))
+            XCTAssertFalse(wrapped.contains("private diagnostic"))
+        }
+    }
+
+    func testNativeLocalSocketFailuresExplainTheirCause() {
+        let categories: [(Int32, String)] = [
+            (EAGAIN, "macos.localService.responseTimedOut"),
+            (ETIMEDOUT, "macos.localService.responseTimedOut"),
+            (ENOENT, "macos.localService.unavailable"),
+            (ECONNREFUSED, "macos.localService.unavailable"),
+            (EACCES, "macos.localService.permissionDenied")
+        ]
+        for code in BridgeAppLocalization.supportedLanguageCodes {
+            let locale = Locale(identifier: code)
+            for (errorNumber, key) in categories {
+                let reason = String(cString: strerror(errorNumber))
+                for error in [LocalRPCError.connectionFailed(reason), .writeFailed(reason)] {
+                    let message = BridgeAppLocalization.errorDescription(error, locale: locale)
+                    XCTAssertEqual(message, BridgeAppLocalization.string(key, locale: locale))
+                    XCTAssertFalse(message.contains(BridgeGeneratedLocalization.unavailableFallback))
+                }
+            }
+        }
+    }
+
     @MainActor
     func testPrimaryAppWindowsUseStageManagerPrimaryBehavior() {
         let window = NSWindow(
@@ -1559,10 +1607,12 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(client.factoryCallCount, 1)
         XCTAssertEqual(client.closeCallCount, 0)
 
+        let runtimeStatusReads = client.runtimeStatusCallCount
+        XCTAssertGreaterThan(runtimeStatusReads, 0)
         let didQuit = await model.shutdownApplication(force: false)
         XCTAssertTrue(didQuit)
         XCTAssertTrue(model.applicationShutdownCompleted)
-        XCTAssertEqual(client.runtimeStatusCallCount, 0)
+        XCTAssertEqual(client.runtimeStatusCallCount, runtimeStatusReads)
         XCTAssertEqual(client.closeCallCount, 1)
     }
 

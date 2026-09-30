@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Keep confirmed Codex usage visible while a same-account menu bar refresh is pending.",
+  "breaking": false,
+  "migration": null
+}

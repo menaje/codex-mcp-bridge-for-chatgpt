@@ -20,6 +20,7 @@ export function writeFakeLauncher(
     snapshotDelayFile?: string;
     healthDelayFile?: string;
     admissionFile?: string;
+    failAuthenticationActivation?: boolean;
   } = {}
 ): void {
   const runtimeEnvModule = new URL("../../scripts/runtime-env.mjs", import.meta.url).href;
@@ -28,12 +29,14 @@ import { appendFileSync, mkdirSync, readFileSync, rmdirSync, unlinkSync, writeFi
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import path from "node:path";
-import { codexAppliedEnvironment, codexChildEnvironmentFingerprint } from ${JSON.stringify(runtimeEnvModule)};
+import { codexAppliedEnvironment, codexChildEnvironment, codexChildEnvironmentFingerprint } from ${JSON.stringify(runtimeEnvModule)};
 const socketPath = process.env.CODEX_MCP_BRIDGE_COMPANION_SOCKET;
 const statusIndex = process.argv.indexOf("--runtime-status-file");
 const runtimeStatusFile = statusIndex >= 0 ? process.argv[statusIndex + 1] : null;
 const envIndex = process.argv.indexOf("--env-file");
 const envFile = envIndex >= 0 ? process.argv[envIndex + 1] : null;
+if (${JSON.stringify(Boolean(options.failAuthenticationActivation))} && process.env.CODEX_MCP_BRIDGE_AUTH_ACTIVATION_ID) process.exit(7);
+Object.assign(process.env, codexChildEnvironment(envFile, process.env));
 const lockIndex = process.argv.indexOf("--runtime-lock-directory");
 const runtimeLockDirectory = lockIndex >= 0 ? process.argv[lockIndex + 1] : null;
 const profileIndex = process.argv.indexOf("--profile");

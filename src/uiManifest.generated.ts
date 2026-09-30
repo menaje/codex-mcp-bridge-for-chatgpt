@@ -67,7 +67,7 @@ export const UI_RESOURCE_MANIFEST = {
       {
         "name": "dashboard",
         "uriVersion": 2,
-        "digest": "65d34a98834f4908629d1ca09898d95c68277eb778a99a4df36b0d0c1998754f",
+        "digest": "9de1176c5bb01bae35d2a20a84c99d86d61fdd094efb580d3291c7031784bc56",
         "uri": "ui://codex-mcp-bridge/dashboard/v2.html",
         "inventories": [
           "development-current"
@@ -133,7 +133,7 @@ export const UI_RESOURCE_MANIFEST = {
     },
     "dashboard": {
       "uriVersion": 2,
-      "digest": "65d34a98834f4908629d1ca09898d95c68277eb778a99a4df36b0d0c1998754f",
+      "digest": "9de1176c5bb01bae35d2a20a84c99d86d61fdd094efb580d3291c7031784bc56",
       "uri": "ui://codex-mcp-bridge/dashboard/v2.html",
       "metadata": {
         "descriptor": {
@@ -160,7 +160,7 @@ export const UI_RESOURCE_MANIFEST = {
             ]
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 35
+          "codex/uiContractGeneration": 36
         }
       },
       "releaseProvenance": {

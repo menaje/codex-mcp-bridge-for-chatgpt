@@ -137,6 +137,16 @@
         "common.detailsRefreshFailed": "Some details could not be refreshed. Last checked values may be shown.",
         "usage.weeklyRemaining": "Account-wide Codex weekly remaining",
         "usage.resetsAt": "Resets {time}",
+        "usage.status.checking": "Checking weekly usage…",
+        "usage.status.refreshing": "Checking for an updated value…",
+        "usage.status.switching": "Account changed. Checking the new account…",
+        "usage.status.timedOut": "The usage check timed out. Try refreshing.",
+        "usage.status.timedOutRetained": "The check timed out. Last confirmed value shown.",
+        "usage.status.unavailable": "Usage is temporarily unavailable. Try refreshing.",
+        "usage.status.unavailableRetained": "Could not refresh usage. Last confirmed value shown.",
+        "usage.status.no-limit": "No weekly Codex limit was reported for this account.",
+        "usage.status.signed-out": "Sign in to Codex to see account usage.",
+        "usage.status.not-applicable": "Account-wide weekly usage is unavailable in API key mode.",
         "cancellation.reason": "Cancellation reason",
         "cancellation.requestReason": "Cancellation request reason",
         "cancellation.attemptReason": "Cancellation attempt reason",
@@ -617,6 +627,16 @@
         "common.detailsRefreshFailed": "일부 추가 정보를 갱신하지 못했습니다. 마지막 확인값이 표시될 수 있습니다.",
         "usage.weeklyRemaining": "계정 전체 Codex 주간 잔여량",
         "usage.resetsAt": "다음 초기화 {time}",
+        "usage.status.checking": "주간 사용량을 확인하는 중…",
+        "usage.status.refreshing": "갱신된 사용량을 확인하는 중…",
+        "usage.status.switching": "계정이 변경되어 새 계정의 사용량을 확인하는 중…",
+        "usage.status.timedOut": "사용량 조회 시간이 초과됐습니다. 다시 새로고침하세요.",
+        "usage.status.timedOutRetained": "조회 시간이 초과됐습니다. 마지막 확인값을 표시합니다.",
+        "usage.status.unavailable": "일시적으로 사용량을 확인할 수 없습니다. 다시 새로고침하세요.",
+        "usage.status.unavailableRetained": "사용량을 갱신하지 못했습니다. 마지막 확인값을 표시합니다.",
+        "usage.status.no-limit": "이 계정에는 Codex 주간 한도가 제공되지 않았습니다.",
+        "usage.status.signed-out": "계정 사용량을 보려면 Codex에 로그인하세요.",
+        "usage.status.not-applicable": "API 키 방식에서는 계정 전체 주간 사용량을 볼 수 없습니다.",
         "cancellation.reason": "취소 사유",
         "cancellation.requestReason": "취소 요청 사유",
         "cancellation.attemptReason": "중단 시도 사유",
@@ -1097,6 +1117,16 @@
         "common.detailsRefreshFailed": "一部の詳細を更新できませんでした。最後に確認した値が表示される場合があります。",
         "usage.weeklyRemaining": "アカウント全体の Codex 週間残量",
         "usage.resetsAt": "リセット {time}",
+        "usage.status.checking": "週間使用量を確認中…",
+        "usage.status.refreshing": "最新の値を確認中…",
+        "usage.status.switching": "アカウントが変わりました。新しいアカウントを確認中…",
+        "usage.status.timedOut": "使用量の確認がタイムアウトしました。更新してください。",
+        "usage.status.timedOutRetained": "確認がタイムアウトしました。最後に確認した値を表示しています。",
+        "usage.status.unavailable": "使用量を一時的に確認できません。更新してください。",
+        "usage.status.unavailableRetained": "使用量を更新できませんでした。最後に確認した値を表示しています。",
+        "usage.status.no-limit": "このアカウントの Codex 週間上限は報告されていません。",
+        "usage.status.signed-out": "アカウントの使用量を見るには Codex にサインインしてください。",
+        "usage.status.not-applicable": "API キー方式ではアカウント全体の週間使用量を表示できません。",
         "cancellation.reason": "キャンセル理由",
         "cancellation.requestReason": "キャンセル依頼の理由",
         "cancellation.attemptReason": "中断を試みた理由",
@@ -1577,6 +1607,16 @@
         "common.detailsRefreshFailed": "部分详情未能刷新，可能显示上次确认的值。",
         "usage.weeklyRemaining": "整个账户的 Codex 每周剩余额度",
         "usage.resetsAt": "重置时间 {time}",
+        "usage.status.checking": "正在检查每周用量…",
+        "usage.status.refreshing": "正在检查更新后的数值…",
+        "usage.status.switching": "账户已更改，正在检查新账户…",
+        "usage.status.timedOut": "用量检查超时。请重试刷新。",
+        "usage.status.timedOutRetained": "检查超时，显示上次确认的数值。",
+        "usage.status.unavailable": "暂时无法获取用量。请重试刷新。",
+        "usage.status.unavailableRetained": "无法更新用量，显示上次确认的数值。",
+        "usage.status.no-limit": "此账户未报告 Codex 每周限额。",
+        "usage.status.signed-out": "请登录 Codex 以查看账户用量。",
+        "usage.status.not-applicable": "API 密钥模式下无法查看整个账户的每周用量。",
         "cancellation.reason": "取消原因",
         "cancellation.requestReason": "取消请求原因",
         "cancellation.attemptReason": "中断尝试原因",
@@ -2057,6 +2097,16 @@
         "common.detailsRefreshFailed": "部分詳細資料未能更新，可能顯示上次確認的值。",
         "usage.weeklyRemaining": "整個帳戶的 Codex 每週剩餘額度",
         "usage.resetsAt": "重設時間 {time}",
+        "usage.status.checking": "正在檢查每週用量…",
+        "usage.status.refreshing": "正在檢查更新後的數值…",
+        "usage.status.switching": "帳戶已變更，正在檢查新帳戶…",
+        "usage.status.timedOut": "用量檢查逾時。請重新整理。",
+        "usage.status.timedOutRetained": "檢查逾時，顯示上次確認的數值。",
+        "usage.status.unavailable": "暫時無法取得用量。請重新整理。",
+        "usage.status.unavailableRetained": "無法更新用量，顯示上次確認的數值。",
+        "usage.status.no-limit": "此帳戶未回報 Codex 每週上限。",
+        "usage.status.signed-out": "請登入 Codex 以查看帳戶用量。",
+        "usage.status.not-applicable": "API 金鑰模式無法查看整個帳戶的每週用量。",
         "cancellation.reason": "取消原因",
         "cancellation.requestReason": "取消請求原因",
         "cancellation.attemptReason": "中斷嘗試原因",
@@ -2537,6 +2587,16 @@
         "common.detailsRefreshFailed": "No se pudieron actualizar algunos datos. Pueden mostrarse los últimos valores comprobados.",
         "usage.weeklyRemaining": "Saldo semanal de Codex en toda la cuenta",
         "usage.resetsAt": "Se restablece el {time}",
+        "usage.status.checking": "Comprobando el uso semanal…",
+        "usage.status.refreshing": "Comprobando si hay un valor actualizado…",
+        "usage.status.switching": "La cuenta cambió. Comprobando la cuenta nueva…",
+        "usage.status.timedOut": "Se agotó el tiempo al consultar el uso. Vuelve a actualizar.",
+        "usage.status.timedOutRetained": "Se agotó el tiempo. Se muestra el último valor confirmado.",
+        "usage.status.unavailable": "El uso no está disponible temporalmente. Vuelve a actualizar.",
+        "usage.status.unavailableRetained": "No se pudo actualizar el uso. Se muestra el último valor confirmado.",
+        "usage.status.no-limit": "No se informó de un límite semanal de Codex para esta cuenta.",
+        "usage.status.signed-out": "Inicia sesión en Codex para ver el uso de la cuenta.",
+        "usage.status.not-applicable": "El uso semanal de toda la cuenta no está disponible con clave API.",
         "cancellation.reason": "Motivo de cancelación",
         "cancellation.requestReason": "Motivo de la solicitud de cancelación",
         "cancellation.attemptReason": "Motivo del intento de interrupción",
@@ -3017,6 +3077,16 @@
         "common.detailsRefreshFailed": "Certains détails n’ont pas pu être actualisés. Les dernières valeurs vérifiées peuvent être affichées.",
         "usage.weeklyRemaining": "Solde Codex hebdomadaire du compte",
         "usage.resetsAt": "Réinitialisation le {time}",
+        "usage.status.checking": "Vérification de l’utilisation hebdomadaire…",
+        "usage.status.refreshing": "Recherche d’une valeur actualisée…",
+        "usage.status.switching": "Le compte a changé. Vérification du nouveau compte…",
+        "usage.status.timedOut": "La vérification de l’utilisation a expiré. Actualisez à nouveau.",
+        "usage.status.timedOutRetained": "La vérification a expiré. La dernière valeur confirmée est affichée.",
+        "usage.status.unavailable": "L’utilisation est temporairement indisponible. Actualisez à nouveau.",
+        "usage.status.unavailableRetained": "Impossible d’actualiser l’utilisation. La dernière valeur confirmée est affichée.",
+        "usage.status.no-limit": "Aucune limite hebdomadaire Codex n’a été signalée pour ce compte.",
+        "usage.status.signed-out": "Connectez-vous à Codex pour voir l’utilisation du compte.",
+        "usage.status.not-applicable": "L’utilisation hebdomadaire du compte n’est pas disponible en mode clé API.",
         "cancellation.reason": "Motif de l’annulation",
         "cancellation.requestReason": "Motif de la demande d’annulation",
         "cancellation.attemptReason": "Motif de la tentative d’interruption",
@@ -3497,6 +3567,16 @@
         "common.detailsRefreshFailed": "Einige Details konnten nicht aktualisiert werden. Möglicherweise werden die zuletzt geprüften Werte angezeigt.",
         "usage.weeklyRemaining": "Kontoweites wöchentliches Codex-Restkontingent",
         "usage.resetsAt": "Zurücksetzung am {time}",
+        "usage.status.checking": "Wöchentliche Nutzung wird geprüft…",
+        "usage.status.refreshing": "Aktualisierter Wert wird geprüft…",
+        "usage.status.switching": "Das Konto hat sich geändert. Neues Konto wird geprüft…",
+        "usage.status.timedOut": "Zeitüberschreitung bei der Nutzungsabfrage. Bitte erneut aktualisieren.",
+        "usage.status.timedOutRetained": "Zeitüberschreitung. Der letzte bestätigte Wert wird angezeigt.",
+        "usage.status.unavailable": "Die Nutzung ist vorübergehend nicht verfügbar. Bitte erneut aktualisieren.",
+        "usage.status.unavailableRetained": "Die Nutzung konnte nicht aktualisiert werden. Der letzte bestätigte Wert wird angezeigt.",
+        "usage.status.no-limit": "Für dieses Konto wurde kein wöchentliches Codex-Limit gemeldet.",
+        "usage.status.signed-out": "Melde dich bei Codex an, um die Kontonutzung zu sehen.",
+        "usage.status.not-applicable": "Die wöchentliche Kontonutzung ist im API-Schlüssel-Modus nicht verfügbar.",
         "cancellation.reason": "Abbruchgrund",
         "cancellation.requestReason": "Grund der Abbruchanforderung",
         "cancellation.attemptReason": "Grund des Unterbrechungsversuchs",
@@ -3977,6 +4057,16 @@
         "common.detailsRefreshFailed": "Não foi possível atualizar alguns detalhes. Os últimos valores verificados podem ser exibidos.",
         "usage.weeklyRemaining": "Saldo semanal do Codex em toda a conta",
         "usage.resetsAt": "Redefine em {time}",
+        "usage.status.checking": "Verificando o uso semanal…",
+        "usage.status.refreshing": "Verificando se há um valor atualizado…",
+        "usage.status.switching": "A conta mudou. Verificando a nova conta…",
+        "usage.status.timedOut": "A consulta de uso expirou. Atualize novamente.",
+        "usage.status.timedOutRetained": "A consulta expirou. O último valor confirmado é exibido.",
+        "usage.status.unavailable": "O uso está temporariamente indisponível. Atualize novamente.",
+        "usage.status.unavailableRetained": "Não foi possível atualizar o uso. O último valor confirmado é exibido.",
+        "usage.status.no-limit": "Nenhum limite semanal do Codex foi informado para esta conta.",
+        "usage.status.signed-out": "Entre no Codex para ver o uso da conta.",
+        "usage.status.not-applicable": "O uso semanal da conta não está disponível no modo de chave de API.",
         "cancellation.reason": "Motivo do cancelamento",
         "cancellation.requestReason": "Motivo da solicitação de cancelamento",
         "cancellation.attemptReason": "Motivo da tentativa de interrupção",
@@ -5612,55 +5702,55 @@
             "de": {
               "stringUnit": {
                 "state": "translated",
-                "value": "Melden Sie sich im Browser bei Codex an, damit Bridge für dieses Konto arbeiten kann."
+                "value": "Verwenden Sie die bestehende Codex-Anmeldung oder richten Sie ein separates ChatGPT-Profil für die Bridge ein. Eine neue Anmeldung im gemeinsamen Profil kann die Codex-App abmelden."
               }
             },
             "en": {
               "stringUnit": {
                 "state": "translated",
-                "value": "Sign in to Codex in your browser so the Bridge can start work for this account."
+                "value": "Use your existing Codex login or prepare a separate ChatGPT profile for the Bridge. A new login in the shared home can sign out the Codex app."
               }
             },
             "es": {
               "stringUnit": {
                 "state": "translated",
-                "value": "Inicia sesión en Codex en el navegador para que el Bridge pueda trabajar con esta cuenta."
+                "value": "Usa tu sesión actual de Codex o prepara un perfil de ChatGPT separado para Bridge. Un nuevo inicio de sesión en el perfil compartido puede cerrar la sesión de la app Codex."
               }
             },
             "fr": {
               "stringUnit": {
                 "state": "translated",
-                "value": "Connectez-vous à Codex dans votre navigateur pour que Bridge puisse travailler avec ce compte."
+                "value": "Utilisez la connexion Codex existante ou préparez un profil ChatGPT distinct pour Bridge. Une nouvelle connexion dans le profil partagé peut déconnecter l’application Codex."
               }
             },
             "ja": {
               "stringUnit": {
                 "state": "translated",
-                "value": "このアカウントでブリッジが作業を開始できるよう、ブラウザでCodexにサインインします。"
+                "value": "既存のCodexログインを使うか、ブリッジ用に別のChatGPTプロファイルを準備してください。共有プロファイルで新たにログインすると、Codexアプリがログアウトする場合があります。"
               }
             },
             "ko": {
               "stringUnit": {
                 "state": "translated",
-                "value": "브리지에서 이 계정의 작업을 시작할 수 있도록 브라우저에서 Codex에 로그인하세요."
+                "value": "기존 Codex 로그인을 사용하거나 브리지용 별도 ChatGPT 프로필을 준비하세요. 공유 프로필에서 새로 로그인하면 Codex 앱이 로그아웃될 수 있습니다."
               }
             },
             "pt": {
               "stringUnit": {
                 "state": "translated",
-                "value": "Entre no Codex pelo navegador para que a Bridge possa trabalhar com esta conta."
+                "value": "Use a sessão atual do Codex ou prepare um perfil ChatGPT separado para a Bridge. Um novo login no perfil compartilhado pode desconectar o app Codex."
               }
             },
             "zh-Hans": {
               "stringUnit": {
                 "state": "translated",
-                "value": "在浏览器中登录 Codex，以便 Bridge 可以为此账户开始工作。"
+                "value": "使用现有的 Codex 登录，或为 Bridge 准备单独的 ChatGPT 配置。若在共享配置中重新登录，Codex 应用可能会退出登录。"
               }
             },
             "zh-Hant": {
               "stringUnit": {
                 "state": "translated",
-                "value": "在瀏覽器中登入 Codex，讓 Bridge 可以為此帳戶開始工作。"
+                "value": "使用現有的 Codex 登入，或為 Bridge 準備獨立的 ChatGPT 設定檔。若在共用設定檔中重新登入，Codex App 可能會登出。"
               }
             }
           }
@@ -21885,64 +21975,6 @@
           }
         }
       },
-      "macos.accountinformationisunavailable": {
-        "localizations": {
-          "de": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Kontoinformationen sind nicht verfügbar."
-            }
-          },
-          "en": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Account information is unavailable."
-            }
-          },
-          "es": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "La información de la cuenta no está disponible."
-            }
-          },
-          "fr": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Les informations du compte sont indisponibles."
-            }
-          },
-          "ja": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "アカウント情報を確認できません。"
-            }
-          },
-          "ko": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "계정 정보를 확인할 수 없습니다."
-            }
-          },
-          "pt": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "As informações da conta estão indisponíveis."
-            }
-          },
-          "zh-Hans": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "无法获取账户信息。"
-            }
-          },
-          "zh-Hant": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "無法取得帳戶資訊。"
-            }
-          }
-        }
-      },
       "macos.advancedconnectionsettings": {
         "localizations": {
           "de": {
@@ -29652,64 +29684,6 @@
           }
         }
       },
-      "macos.costinformationisunavailable": {
-        "localizations": {
-          "de": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Kosteninformationen sind nicht verfügbar."
-            }
-          },
-          "en": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Cost information is unavailable."
-            }
-          },
-          "es": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "No hay información de costes disponible."
-            }
-          },
-          "fr": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Les informations de coût sont indisponibles."
-            }
-          },
-          "ja": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "費用情報を確認できません。"
-            }
-          },
-          "ko": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "비용 정보를 확인할 수 없습니다."
-            }
-          },
-          "pt": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "As informações de custos estão indisponíveis."
-            }
-          },
-          "zh-Hans": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "无法获取费用信息。"
-            }
-          },
-          "zh-Hant": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "無法取得費用資訊。"
-            }
-          }
-        }
-      },
       "macos.connectcostreporting": {
         "localizations": {
           "de": {
@@ -30058,77 +30032,6 @@
               "value": "已選 Codex"
             }
           }
-        }
-      },
-      "macos.usageinformationisunavailable": {
-        "localizations": {
-          "de": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Nutzungsinformationen sind nicht verfügbar."
-            }
-          },
-          "en": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Usage information is unavailable."
-            }
-          },
-          "es": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "No hay información de uso disponible."
-            }
-          },
-          "fr": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Les informations d’utilisation sont indisponibles."
-            }
-          },
-          "ja": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "使用量情報を確認できません。"
-            }
-          },
-          "ko": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "사용량 정보를 확인할 수 없습니다."
-            }
-          },
-          "pt": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "As informações de uso estão indisponíveis."
-            }
-          },
-          "zh-Hans": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "无法获取用量信息。"
-            }
-          },
-          "zh-Hant": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "無法取得用量資訊。"
-            }
-          }
-        }
-      },
-      "macos.usageunconfirmed": {
-        "localizations": {
-          "de": { "stringUnit": { "state": "translated", "value": "Nutzung noch nicht bestätigt." } },
-          "en": { "stringUnit": { "state": "translated", "value": "Usage has not been confirmed yet." } },
-          "es": { "stringUnit": { "state": "translated", "value": "Aún no se ha confirmado el uso." } },
-          "fr": { "stringUnit": { "state": "translated", "value": "L’utilisation n’a pas encore été confirmée." } },
-          "ja": { "stringUnit": { "state": "translated", "value": "使用量をまだ確認できていません。" } },
-          "ko": { "stringUnit": { "state": "translated", "value": "사용량을 아직 확인하지 못했습니다." } },
-          "pt": { "stringUnit": { "state": "translated", "value": "O uso ainda não foi confirmado." } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "尚未确认用量。" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "尚未確認用量。" } }
         }
       },
       "macos.usageresetcoupons": {
@@ -49336,64 +49239,6 @@
           }
         }
       },
-      "macos.theexecutionkeycannotretrieveinvoicedcosts": {
-        "localizations": {
-          "de": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "Der Ausführungsschlüssel kann keine abgerechneten Kosten abrufen."
-            }
-          },
-          "en": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "The execution key cannot retrieve invoiced costs."
-            }
-          },
-          "es": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "La clave de ejecución no permite consultar los costes facturados."
-            }
-          },
-          "fr": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "La clé d’exécution ne permet pas de consulter les frais facturés."
-            }
-          },
-          "ja": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "実行用キーでは請求金額を取得できません。"
-            }
-          },
-          "ko": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "청구 금액은 실행 키로 조회할 수 없습니다."
-            }
-          },
-          "pt": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "A chave de execução não permite consultar os custos faturados."
-            }
-          },
-          "zh-Hans": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "执行密钥无法查询账单金额。"
-            }
-          },
-          "zh-Hant": {
-            "stringUnit": {
-              "state": "translated",
-              "value": "執行金鑰無法查詢帳單金額。"
-            }
-          }
-        }
-      },
       "macos.resets": {
         "localizations": {
           "de": {
@@ -54409,6 +54254,1794 @@
               "value": "儲存位置：%@"
             }
           }
+        }
+      },
+      "macos.auth.current": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Current connection"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "현재 연결"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "現在の接続"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "当前连接"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "目前連線"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Conexión actual"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Connexion actuelle"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Aktuelle Verbindung"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Conexão atual"
+            }
+          }
+        }
+      },
+      "macos.auth.pending": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Requested connection"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "변경 요청"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "変更予定の接続"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "待应用的连接"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "待套用的連線"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Conexión solicitada"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Connexion demandée"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Angeforderte Verbindung"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Conexão solicitada"
+            }
+          }
+        }
+      },
+      "macos.auth.override": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "An explicit CODEX_HOME setting controls this server. Change that setting before switching here."
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "명시적 CODEX_HOME 설정이 이 서버에 적용됩니다. 여기서 전환하려면 먼저 해당 설정을 변경하세요."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "明示的な CODEX_HOME 設定がこのサーバーに適用されています。ここで切り替える前に設定を変更してください。"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "显式 CODEX_HOME 设置控制此服务器。请先更改该设置。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "明確指定的 CODEX_HOME 設定控制此伺服器。請先變更該設定。"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Un ajuste explícito de CODEX_HOME controla este servidor. Cámbialo antes de cambiar aquí."
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Un réglage CODEX_HOME explicite contrôle ce serveur. Modifiez-le avant de changer ici."
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Eine explizite CODEX_HOME-Einstellung steuert diesen Server. Ändern Sie sie vor einem Wechsel hier."
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Uma configuração explícita de CODEX_HOME controla este servidor. Altere-a antes de mudar aqui."
+            }
+          }
+        }
+      },
+      "macos.auth.waiting": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "The current connection stays in use until existing work is safe to finish."
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "기존 작업이 안전하게 끝날 때까지 현재 연결을 유지합니다."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "既存の作業が安全に終わるまで現在の接続を維持します。"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "现有任务安全完成前，将继续使用当前连接。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "現有工作安全完成前，會繼續使用目前連線。"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "La conexión actual seguirá en uso hasta que finalice el trabajo existente."
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "La connexion actuelle reste utilisée jusqu’à la fin du travail en cours."
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Die aktuelle Verbindung bleibt bis zum sicheren Abschluss laufender Arbeit bestehen."
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "A conexão atual permanece em uso até o trabalho existente terminar com segurança."
+            }
+          }
+        }
+      },
+      "macos.auth.applyWhenSafe": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Apply after work finishes"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "작업 완료 후 적용"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "作業終了後に適用"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "任务完成后应用"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "工作完成後套用"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Aplicar al terminar el trabajo"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Appliquer après le travail"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Nach Abschluss der Arbeit anwenden"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Aplicar após o trabalho"
+            }
+          }
+        }
+      },
+      "macos.auth.choice": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Account and authentication"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "계정 및 인증"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "アカウントと認証"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "帐户与身份验证"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "帳戶與驗證"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Cuenta y autenticación"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Compte et authentification"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Konto und Authentifizierung"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Conta e autenticação"
+            }
+          }
+        }
+      },
+      "macos.auth.shared": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Use existing Codex login"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "기존 Codex 로그인 사용"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "既存の Codex ログインを使用"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "使用现有 Codex 登录"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "使用現有 Codex 登入"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Usar el inicio de sesión de Codex existente"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Utiliser la connexion Codex existante"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Bestehende Codex-Anmeldung verwenden"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Usar o login existente do Codex"
+            }
+          }
+        }
+      },
+      "macos.auth.bridgeChatgpt": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Separate ChatGPT login for the bridge"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "브리지용 별도 ChatGPT 로그인"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "ブリッジ専用の ChatGPT ログイン"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "桥接器专用 ChatGPT 登录"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "橋接器專用 ChatGPT 登入"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Inicio de sesión de ChatGPT separado para el puente"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Connexion ChatGPT distincte pour le pont"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Separate ChatGPT-Anmeldung für die Bridge"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Login separado do ChatGPT para a ponte"
+            }
+          }
+        }
+      },
+      "macos.auth.bridgeApi": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Use an API key for the bridge"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "브리지용 API 키 사용"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "ブリッジ用の API キーを使用"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "为桥接器使用 API 密钥"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "為橋接器使用 API 金鑰"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Usar una clave API para el puente"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Utiliser une clé API pour le pont"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API-Schlüssel für die Bridge verwenden"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Usar uma chave de API para a ponte"
+            }
+          }
+        }
+      },
+      "macos.auth.disconnect": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Disconnect from the bridge"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "브리지에서 연결 해제"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "ブリッジから切断"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "从桥接器断开连接"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "從橋接器中斷連線"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Desconectar del puente"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Déconnecter du pont"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Von der Bridge trennen"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Desconectar da ponte"
+            }
+          }
+        }
+      },
+      "macos.auth.externalHomeImpact": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Changing Codex locations can affect available conversations, skills, and settings. Existing history is kept." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "Codex 위치를 바꾸면 사용할 수 있는 대화·스킬·설정이 달라질 수 있습니다. 기존 기록은 보존됩니다." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "Codex の保存場所を変更すると、利用できる会話、スキル、設定が変わる場合があります。既存の履歴は保持されます。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "更改 Codex 存储位置可能影响可用的对话、技能和设置。现有历史记录会保留。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "變更 Codex 儲存位置可能影響可用的對話、技能與設定。現有歷史紀錄會保留。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Cambiar la ubicación de Codex puede afectar las conversaciones, habilidades y opciones disponibles. Se conserva el historial existente." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Changer l’emplacement de Codex peut modifier les conversations, les compétences et les réglages disponibles. L’historique existant est conservé." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Ein anderer Codex-Speicherort kann verfügbare Unterhaltungen, Skills und Einstellungen ändern. Der bisherige Verlauf bleibt erhalten." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Mudar o local do Codex pode afetar as conversas, habilidades e configurações disponíveis. O histórico existente é preservado." } }
+        }
+      },
+      "macos.auth.sharedHint": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Reuse the selected Codex login without copying credentials. Changes to that login can affect the bridge."
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "선택한 Codex 로그인을 자격증명 복사 없이 재사용합니다. 해당 로그인 변경은 브리지에도 영향을 줄 수 있습니다."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "認証情報をコピーせず、選択した Codex ログインを再利用します。そのログインの変更はブリッジにも影響します。"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "无需复制凭据即可复用所选 Codex 登录。该登录的变更也可能影响桥接器。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "不複製憑證即可重用所選 Codex 登入。該登入的變更也可能影響橋接器。"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Reutiliza el inicio de sesión de Codex sin copiar credenciales. Los cambios también pueden afectar al puente."
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Réutilise la connexion Codex sans copier d’identifiants. Ses changements peuvent aussi affecter le pont."
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Verwendet die Codex-Anmeldung ohne Kopie der Zugangsdaten. Änderungen können auch die Bridge betreffen."
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Reutiliza o login do Codex sem copiar credenciais. Alterações também podem afetar a ponte."
+            }
+          }
+        }
+      },
+      "macos.auth.bridgeChatgptHint": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Sign in separately with the same or another ChatGPT account. The existing Codex login is preserved."
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "같은 계정이나 다른 ChatGPT 계정으로 별도 로그인합니다. 기존 Codex 로그인은 유지됩니다."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "同じまたは別の ChatGPT アカウントで別途ログインします。既存の Codex ログインは保持されます。"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "可使用相同或其他 ChatGPT 帐户单独登录。现有 Codex 登录将保留。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "可使用相同或其他 ChatGPT 帳戶分別登入。現有 Codex 登入會保留。"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Inicia sesión por separado con la misma u otra cuenta de ChatGPT. Se conserva el inicio de sesión existente."
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Connectez-vous séparément avec le même compte ChatGPT ou un autre. La connexion Codex existante est conservée."
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Melden Sie sich separat mit demselben oder einem anderen ChatGPT-Konto an. Die bestehende Codex-Anmeldung bleibt erhalten."
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Entre separadamente com a mesma ou outra conta do ChatGPT. O login existente do Codex é preservado."
+            }
+          }
+        }
+      },
+      "macos.auth.bridgeApiHint": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API usage is billed separately from a ChatGPT subscription. The key stays in a bridge profile managed by Codex."
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API 사용에는 ChatGPT 구독과 별도 요금이 청구됩니다. 키는 Codex가 관리하는 브리지 프로필에 저장됩니다."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API の使用料金は ChatGPT の契約とは別です。キーは Codex 管理のブリッジ用プロファイルに保存されます。"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API 使用费用与 ChatGPT 订阅分开计费。密钥保存在由 Codex 管理的桥接器配置中。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API 使用費用與 ChatGPT 訂閱分開計費。金鑰存於 Codex 管理的橋接器設定檔。"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "El uso de la API se factura aparte de la suscripción a ChatGPT. Codex guarda la clave en un perfil del puente."
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "L’utilisation de l’API est facturée séparément de l’abonnement ChatGPT. Codex garde la clé dans un profil du pont."
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Die API-Nutzung wird getrennt vom ChatGPT-Abo abgerechnet. Codex speichert den Schlüssel in einem Bridge-Profil."
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "O uso da API é cobrado separadamente da assinatura do ChatGPT. O Codex guarda a chave em um perfil da ponte."
+            }
+          }
+        }
+      },
+      "macos.auth.disconnectHint": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Stop using an authentication source for new bridge work. This does not sign out the Codex app."
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "새 브리지 작업의 인증 연결을 해제합니다. Codex 앱에서 로그아웃하지 않습니다."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "新しいブリッジ作業で認証元を使用しません。Codex アプリからはログアウトしません。"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "停止将该身份验证来源用于新的桥接器任务。不会退出 Codex 应用。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "停止將此驗證來源用於新的橋接器工作。不會登出 Codex App。"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Deja de usar una fuente de autenticación para nuevas tareas del puente. No cierra sesión en Codex."
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Cesse d’utiliser une source d’authentification pour les nouvelles tâches du pont. Ne déconnecte pas Codex."
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Verwendet für neue Bridge-Aufgaben keine Authentifizierungsquelle mehr. Die Codex-App bleibt angemeldet."
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Deixa de usar uma fonte de autenticação para novas tarefas da ponte. Não encerra a sessão no Codex."
+            }
+          }
+        }
+      },
+      "macos.auth.billingConsent": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "I understand that API usage may incur charges"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API 사용에 요금이 발생할 수 있음을 확인했습니다"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API の使用に料金が発生する場合があることを理解しました"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "我了解 API 使用可能产生费用"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "我瞭解 API 使用可能產生費用"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Entiendo que el uso de la API puede generar cargos"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Je comprends que l’utilisation de l’API peut entraîner des frais"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Ich verstehe, dass API-Nutzung Kosten verursachen kann"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Entendo que o uso da API pode gerar cobranças"
+            }
+          }
+        }
+      },
+      "macos.auth.requestChange": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Request this connection"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "이 연결 적용 요청"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "この接続を申請"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "请求使用此连接"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "要求使用此連線"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Solicitar esta conexión"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Demander cette connexion"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Diese Verbindung anfordern"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Solicitar esta conexão"
+            }
+          }
+        }
+      },
+      "macos.auth.candidate": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Candidate"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "변경 후보"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "候補"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "候选"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "候選"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Candidata"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Candidate"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Kandidat"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Candidata"
+            }
+          }
+        }
+      },
+      "macos.auth.verified": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Account and models verified"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "계정 및 모델 확인됨"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "アカウントとモデルを確認済み"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "帐户和模型已验证"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "帳戶與模型已驗證"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Cuenta y modelos verificados"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Compte et modèles vérifiés"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Konto und Modelle geprüft"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Conta e modelos verificados"
+            }
+          }
+        }
+      },
+      "macos.auth.loginInProgress": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Sign-in in progress" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "로그인 진행 중" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ログイン中" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在登录" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在登入" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Inicio de sesión en curso" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Connexion en cours" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Anmeldung läuft" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Início de sessão em andamento" } }
+        }
+      },
+      "macos.auth.loginFailed": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Sign-in failed; try again" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "로그인 실패 · 다시 시도하세요" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ログインに失敗しました。再試行してください" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "登录失败，请重试" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "登入失敗，請重試" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Error al iniciar sesión; inténtalo de nuevo" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Échec de la connexion ; réessayez" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Anmeldung fehlgeschlagen; erneut versuchen" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Falha no início de sessão; tente novamente" } }
+        }
+      },
+      "macos.auth.loginUnconfirmed": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Sign-in result not confirmed; verify account" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "로그인 결과 미확인 · 계정을 확인하세요" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ログイン結果を確認できません。アカウントを確認してください" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "登录结果未确认，请验证帐户" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "登入結果未確認，請驗證帳戶" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Resultado del inicio de sesión sin confirmar; verifica la cuenta" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Résultat de connexion non confirmé ; vérifiez le compte" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Anmeldeergebnis nicht bestätigt; Konto prüfen" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Resultado do início de sessão não confirmado; verifique a conta" } }
+        }
+      },
+      "macos.auth.profileLoginUnconfirmed": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Previous sign-in may still be active. Start with a new profile." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "이전 로그인이 아직 진행 중일 수 있습니다. 새 프로필로 시작하세요." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "以前のログインがまだ進行中の可能性があります。新しいプロファイルで開始してください。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "之前的登录可能仍在进行。请使用新配置文件。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "先前的登入可能仍在進行。請使用新的設定檔。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "El inicio de sesión anterior puede seguir activo. Usa un perfil nuevo." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "La connexion précédente est peut-être encore active. Utilisez un nouveau profil." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Die vorherige Anmeldung ist möglicherweise noch aktiv. Verwenden Sie ein neues Profil." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "O login anterior pode ainda estar ativo. Use um novo perfil." } }
+        }
+      },
+      "macos.auth.accountEmail": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Account email" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "계정 이메일" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "アカウントのメール" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "帐户邮箱" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "帳戶電子郵件" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Correo de la cuenta" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Adresse e-mail du compte" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Konto-E-Mail" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "E-mail da conta" } }
+        }
+      },
+      "macos.auth.emailAtSelection": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Account email at last apply" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "마지막 적용 시 계정 이메일" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "前回適用時のアカウントのメール" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "上次应用时的帐户邮箱" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "上次套用時的帳戶電子郵件" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Correo de la cuenta al aplicar" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Adresse e-mail du compte lors de l’application" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Konto-E-Mail bei letzter Anwendung" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "E-mail da conta na última aplicação" } }
+        }
+      },
+      "macos.auth.billingTarget": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Billing target" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "요금 청구 대상" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "請求先" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "计费对象" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "計費對象" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Destino de facturación" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Compte de facturation" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Abrechnungsziel" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Destino da faturação" } }
+        }
+      },
+      "macos.auth.chatgptBilling": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "ChatGPT plan usage" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "ChatGPT 요금제 사용량" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ChatGPT プランの利用枠" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "ChatGPT 套餐用量" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "ChatGPT 方案用量" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Uso del plan ChatGPT" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Utilisation du forfait ChatGPT" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Nutzung des ChatGPT-Tarifs" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Utilização do plano ChatGPT" } }
+        }
+      },
+      "macos.auth.apiBilling": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "OpenAI API usage" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "OpenAI API 사용량" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "OpenAI API の利用料金" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "OpenAI API 用量" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "OpenAI API 用量" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Uso de la API de OpenAI" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Utilisation de l’API OpenAI" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Nutzung der OpenAI API" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Utilização da API OpenAI" } }
+        }
+      },
+      "macos.auth.plan": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "ChatGPT plan" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "ChatGPT 요금제" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ChatGPT プラン" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "ChatGPT 套餐" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "ChatGPT 方案" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Plan de ChatGPT" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Forfait ChatGPT" } },
+          "de": { "stringUnit": { "state": "translated", "value": "ChatGPT-Tarif" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Plano ChatGPT" } }
+        }
+      },
+      "macos.auth.connectionUnsupported": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "This connection cannot be used by the Bridge. Choose a separate Bridge login or a verified file-backed connection." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "이 연결은 Bridge에서 사용할 수 없습니다. Bridge 전용 로그인이나 확인된 파일 인증 연결을 선택하세요." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "この接続は Bridge では使用できません。Bridge 専用のログイン、または確認済みのファイル認証接続を選択してください。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "Bridge 无法使用此连接。请选择 Bridge 专用登录或已验证的文件认证连接。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "Bridge 無法使用此連線。請選擇 Bridge 專用登入或已驗證的檔案認證連線。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "El Bridge no puede usar esta conexión. Elige un inicio de sesión propio del Bridge o una conexión verificada con credenciales en archivo." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Le Bridge ne peut pas utiliser cette connexion. Choisissez une connexion dédiée au Bridge ou une connexion vérifiée avec des identifiants dans un fichier." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Der Bridge kann diese Verbindung nicht verwenden. Wählen Sie eine eigene Bridge-Anmeldung oder eine geprüfte Verbindung mit Anmeldedaten in einer Datei." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "O Bridge não pode usar esta conexão. Escolha um login próprio do Bridge ou uma conexão verificada com credenciais em arquivo." } }
+        }
+      },
+      "macos.auth.activationStarting": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Applying the selected connection and checking runtime readiness." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "선택한 연결을 적용하고 실행 준비를 확인하는 중입니다." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "選択した接続を適用し、実行準備を確認しています。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在应用所选连接并检查运行状态。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在套用所選連線並檢查執行狀態。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Aplicando la conexión seleccionada y comprobando que esté lista." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Application de la connexion choisie et vérification du démarrage." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Ausgewählte Verbindung wird angewendet und der Start geprüft." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "A aplicar a ligação selecionada e a verificar a prontidão." } }
+        }
+      },
+      "macos.auth.activationUncertain": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "The connection switch result is uncertain. Review runtime status before trying again." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "연결 전환 결과를 확인할 수 없습니다. 다시 시도하기 전에 실행 상태를 확인하세요." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "接続切り替えの結果が不明です。再試行前に実行状態を確認してください。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "连接切换结果尚不确定。重试前请检查运行状态。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "連線切換結果尚未確認。重試前請檢查執行狀態。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "El resultado del cambio de conexión es incierto. Revisa el estado antes de reintentar." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Le résultat du changement de connexion est incertain. Vérifiez l’état avant de réessayer." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Das Ergebnis des Verbindungswechsels ist unklar. Vor einem erneuten Versuch den Laufzeitstatus prüfen." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "O resultado da mudança de ligação é incerto. Verifique o estado antes de tentar novamente." } }
+        }
+      },
+      "macos.auth.reviewStopped": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Check stopped runtime" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "중지된 실행 확인" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "停止した実行環境を確認" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "检查已停止的运行环境" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "檢查已停止的執行環境" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Comprobar ejecución detenida" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Vérifier l’arrêt de l’exécution" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Gestoppte Laufzeit prüfen" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Verificar execução parada" } }
+        }
+      },
+      "macos.auth.reviewStoppedWarning": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "The attempted runtime may have processed work. Check that it has stopped and has no protected work, then keep the previous connection and pending change. The attempted result remains unconfirmed." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "시도한 실행이 작업을 처리했을 수 있습니다. 실행이 중지됐고 보호할 작업이 없는지 확인한 뒤 이전 연결과 대기 중인 변경을 유지합니다. 시도 결과는 미확정으로 남습니다." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "試行した実行環境が作業を処理した可能性があります。停止と保護対象の作業がないことを確認し、以前の接続と保留中の変更を維持します。試行結果は未確認のままです。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "尝试启动的运行环境可能处理了任务。确认它已停止且没有受保护的任务后，保留原连接和待处理更改。此次尝试的结果仍未确认。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "嘗試啟動的執行環境可能處理了工作。確認它已停止且沒有受保護的工作後，保留原連線及待處理變更。此次嘗試的結果仍未確認。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "La ejecución intentada pudo procesar trabajo. Comprueba que se detuvo y que no hay trabajo protegido; se conservarán la conexión anterior y el cambio pendiente. El resultado seguirá sin confirmar." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "L’exécution tentée a pu traiter des tâches. Vérifiez son arrêt et l’absence de tâche protégée ; la connexion précédente et le changement en attente seront conservés. Le résultat reste non confirmé." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Die versuchte Laufzeit könnte Arbeit verarbeitet haben. Prüfen Sie, dass sie gestoppt ist und keine geschützte Arbeit vorliegt. Die bisherige Verbindung und die ausstehende Änderung bleiben erhalten; das Ergebnis bleibt unbestätigt." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "A execução tentada pode ter processado trabalho. Confirme que parou e não há trabalho protegido; a ligação anterior e a mudança pendente serão mantidas. O resultado continua por confirmar." } }
+        }
+      },
+      "macos.auth.useSavedProfile": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Use saved profile" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "저장된 프로필 사용" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "保存済みプロファイルを使用" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "使用已保存的配置" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "使用已儲存的設定檔" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Usar perfil guardado" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Utiliser le profil enregistré" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Gespeichertes Profil verwenden" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Usar perfil guardado" } }
+        }
+      },
+      "macos.auth.logoutUnconfirmed": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Sign-out result unconfirmed; inspect this profile before retrying." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "로그아웃 결과가 확인되지 않았습니다. 재시도 전에 이 프로필을 확인하세요." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ログアウト結果が未確認です。再試行前にこのプロファイルを確認してください。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "退出登录的结果尚未确认。重试前请检查此配置。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "登出結果尚未確認。重試前請檢查此設定檔。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Cierre de sesión sin confirmar. Revisa este perfil antes de reintentar." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Déconnexion non confirmée. Vérifiez ce profil avant de réessayer." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Abmeldung nicht bestätigt. Profil vor erneutem Versuch prüfen." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Terminar sessão não confirmado. Verifique este perfil antes de tentar novamente." } }
+        }
+      },
+      "macos.auth.removeOwnedKey": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Remove saved API key" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "저장된 API 키 제거" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "保存済み API キーを削除" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "移除已保存的 API 密钥" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "移除已儲存的 API 金鑰" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Eliminar clave API guardada" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Supprimer la clé API enregistrée" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Gespeicherten API-Schlüssel entfernen" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Remover chave API guardada" } }
+        }
+      },
+      "macos.auth.logoutOwned": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Sign out of bridge profile" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "브리지 프로필 로그아웃" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ブリッジ用プロファイルからログアウト" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "退出桥接配置登录" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "登出橋接設定檔" } },
+          "es": { "stringUnit": { "state": "translated", "value": "Cerrar sesión del perfil del puente" } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Déconnecter le profil du pont" } },
+          "de": { "stringUnit": { "state": "translated", "value": "Vom Bridge-Profil abmelden" } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Terminar sessão do perfil da ponte" } }
+        }
+      },
+      "macos.auth.removalWarning": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Sign out of this inactive bridge profile? This may affect other server sessions for the account, and past conversations may no longer resume." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "이 비활성 브리지 프로필에서 로그아웃할까요? 해당 계정의 다른 서버 세션에 영향을 줄 수 있으며 이전 대화를 이어가지 못할 수 있습니다." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "この非アクティブなブリッジ用プロファイルからログアウトしますか？同じアカウントの他のサーバーセッションに影響し、過去の会話を再開できなくなる可能性があります。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "退出此非活动桥接配置的登录？这可能影响该帐户的其他服务器会话，也可能无法继续以往的对话。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "登出這個非使用中的橋接設定檔？這可能影響該帳戶的其他伺服器工作階段，也可能無法繼續先前的對話。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "¿Cerrar sesión en este perfil inactivo? Podría afectar a otras sesiones del servidor de esta cuenta e impedir reanudar conversaciones anteriores." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Se déconnecter de ce profil inactif ? Cela peut affecter d’autres sessions serveur du compte et empêcher la reprise d’anciennes conversations." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Von diesem inaktiven Bridge-Profil abmelden? Dies kann andere Serversitzungen des Kontos beeinflussen und das Fortsetzen früherer Unterhaltungen verhindern." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Terminar sessão neste perfil inativo? Isto pode afetar outras sessões da conta e impedir a continuação de conversas anteriores." } }
+        }
+      },
+      "macos.auth.removeKeyWarning": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Remove the saved API key from this inactive bridge profile? The key is not revoked at OpenAI. Past conversations may no longer resume." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "이 비활성 브리지 프로필의 저장된 API 키를 제거할까요? OpenAI에서 키가 폐기되지는 않습니다. 이전 대화를 이어가지 못할 수 있습니다." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "この非アクティブなブリッジ用プロファイルの保存済み API キーを削除しますか？OpenAI 側でキーは無効化されません。過去の会話を再開できなくなる可能性があります。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "移除此非活动桥接配置中保存的 API 密钥？OpenAI 端不会撤销此密钥。以往对话可能无法继续。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "移除此非使用中橋接設定檔儲存的 API 金鑰？OpenAI 端不會撤銷此金鑰。先前的對話可能無法繼續。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "¿Quitar la clave API guardada de este perfil inactivo? La clave no se revocará en OpenAI. Es posible que no puedas reanudar conversaciones anteriores." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "Supprimer la clé API enregistrée de ce profil inactif ? La clé ne sera pas révoquée chez OpenAI. Les anciennes conversations pourraient ne plus être reprises." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Gespeicherten API-Schlüssel aus diesem inaktiven Profil entfernen? Der Schlüssel wird bei OpenAI nicht widerrufen. Frühere Unterhaltungen können möglicherweise nicht fortgesetzt werden." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "Remover a chave de API guardada deste perfil inativo? A chave não será revogada na OpenAI. Poderá deixar de ser possível continuar conversas anteriores." } }
+        }
+      },
+      "macos.auth.needsVerification": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Sign in or enter a key, then verify"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "로그인하거나 키를 입력한 뒤 확인하세요"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "ログインまたはキー入力後に確認してください"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "登录或输入密钥后再验证"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "登入或輸入金鑰後再驗證"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Inicia sesión o introduce una clave y verifica"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Connectez-vous ou saisissez une clé, puis vérifiez"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Anmelden oder Schlüssel eingeben, dann prüfen"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Entre ou informe uma chave e depois verifique"
+            }
+          }
+        }
+      },
+      "macos.auth.startLogin": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Start separate ChatGPT login"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "별도 ChatGPT 로그인 시작"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "別の ChatGPT ログインを開始"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "开始单独的 ChatGPT 登录"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "開始個別的 ChatGPT 登入"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Iniciar sesión de ChatGPT por separado"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Démarrer une connexion ChatGPT distincte"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Separate ChatGPT-Anmeldung starten"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Iniciar login separado do ChatGPT"
+            }
+          }
+        }
+      },
+      "macos.auth.apiKey": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API execution key"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API 실행 키"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API 実行キー"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API 执行密钥"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API 執行金鑰"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Clave de ejecución de API"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Clé d’exécution API"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "API-Ausführungsschlüssel"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Chave de execução da API"
+            }
+          }
+        }
+      },
+      "macos.auth.saveCandidateKey": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Save key in candidate profile"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "후보 프로필에 키 저장"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "候補プロファイルにキーを保存"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "将密钥保存到候选配置"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "將金鑰存至候選設定檔"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Guardar clave en el perfil candidato"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Enregistrer la clé dans le profil candidat"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Schlüssel im Kandidatenprofil speichern"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Salvar chave no perfil candidato"
+            }
+          }
+        }
+      },
+      "macos.auth.verify": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Verify account and models"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "계정 및 모델 확인"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "アカウントとモデルを確認"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "验证帐户和模型"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "驗證帳戶與模型"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Verificar cuenta y modelos"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Vérifier le compte et les modèles"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Konto und Modelle prüfen"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Verificar conta e modelos"
+            }
+          }
+        }
+      },
+      "macos.auth.prepare": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Prepare separate profile"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "별도 프로필 준비"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "別のプロファイルを準備"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "准备单独配置"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "準備個別設定檔"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Preparar perfil separado"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Préparer un profil distinct"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Separates Profil vorbereiten"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Preparar perfil separado"
+            }
+          }
+        }
+      },
+      "macos.auth.remoteManaged": {
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Authentication is managed by the connected server. Open its local Codex settings to change the account." } },
+          "ko": { "stringUnit": { "state": "translated", "value": "인증은 연결된 서버에서 관리합니다. 계정을 바꾸려면 해당 서버의 로컬 Codex 설정을 여세요." } },
+          "ja": { "stringUnit": { "state": "translated", "value": "認証は接続先サーバーで管理されます。アカウントを変更するには、そのサーバーの Codex 設定を開いてください。" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "身份验证由连接的服务器管理。若要更改帐户，请打开该服务器本地的 Codex 设置。" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "驗證由已連線的伺服器管理。若要變更帳戶，請開啟該伺服器本機的 Codex 設定。" } },
+          "es": { "stringUnit": { "state": "translated", "value": "La autenticación se administra en el servidor conectado. Abre sus ajustes locales de Codex para cambiar de cuenta." } },
+          "fr": { "stringUnit": { "state": "translated", "value": "L’authentification est gérée par le serveur connecté. Ouvrez ses réglages Codex locaux pour changer de compte." } },
+          "de": { "stringUnit": { "state": "translated", "value": "Die Authentifizierung wird vom verbundenen Server verwaltet. Öffnen Sie dort die lokalen Codex-Einstellungen, um das Konto zu wechseln." } },
+          "pt": { "stringUnit": { "state": "translated", "value": "A autenticação é gerenciada pelo servidor conectado. Abra as configurações locais do Codex nesse servidor para trocar de conta." } }
+        }
+      },
+      "macos.auth.unavailable": {
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Authentication choices are unavailable. Refresh Codex status."
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "인증 선택을 표시할 수 없습니다. Codex 상태를 새로 고치세요."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "認証の選択肢を表示できません。Codex の状態を更新してください。"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "无法显示身份验证选项。请刷新 Codex 状态。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "無法顯示驗證選項。請重新整理 Codex 狀態。"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Las opciones de autenticación no están disponibles. Actualiza el estado de Codex."
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Les choix d’authentification sont indisponibles. Actualisez l’état de Codex."
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Authentifizierungsoptionen sind nicht verfügbar. Codex-Status aktualisieren."
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "As opções de autenticação não estão disponíveis. Atualize o status do Codex."
+            }
+          }
+        }
+      },
+      "macos.localService.responseTimedOut": {
+        "localizations": {
+          "en": {"stringUnit":{"state":"translated","value":"The local service did not respond in time. Refresh its status."}},
+          "ko": {"stringUnit":{"state":"translated","value":"로컬 서비스의 응답 시간이 초과됐습니다. 상태를 새로고침해 주세요."}},
+          "ja": {"stringUnit":{"state":"translated","value":"ローカルサービスの応答がタイムアウトしました。状態を更新してください。"}},
+          "zh-Hans": {"stringUnit":{"state":"translated","value":"本地服务未能及时响应。请刷新状态。"}},
+          "zh-Hant": {"stringUnit":{"state":"translated","value":"本機服務未能及時回應。請重新整理狀態。"}},
+          "es": {"stringUnit":{"state":"translated","value":"El servicio local no respondió a tiempo. Actualiza su estado."}},
+          "fr": {"stringUnit":{"state":"translated","value":"Le service local n’a pas répondu à temps. Actualisez son état."}},
+          "de": {"stringUnit":{"state":"translated","value":"Der lokale Dienst hat nicht rechtzeitig geantwortet. Aktualisieren Sie seinen Status."}},
+          "pt": {"stringUnit":{"state":"translated","value":"O serviço local não respondeu a tempo. Atualize o estado."}}
+        }
+      },
+      "macos.localService.unavailable": {
+        "localizations": {
+          "en": {"stringUnit":{"state":"translated","value":"The local service could not be reached. Check the server status."}},
+          "ko": {"stringUnit":{"state":"translated","value":"로컬 서비스에 연결할 수 없습니다. 서버 상태를 확인해 주세요."}},
+          "ja": {"stringUnit":{"state":"translated","value":"ローカルサービスに接続できません。サーバーの状態を確認してください。"}},
+          "zh-Hans": {"stringUnit":{"state":"translated","value":"无法连接本地服务。请检查服务器状态。"}},
+          "zh-Hant": {"stringUnit":{"state":"translated","value":"無法連接本機服務。請檢查伺服器狀態。"}},
+          "es": {"stringUnit":{"state":"translated","value":"No se pudo conectar con el servicio local. Comprueba el estado del servidor."}},
+          "fr": {"stringUnit":{"state":"translated","value":"Impossible de joindre le service local. Vérifiez l’état du serveur."}},
+          "de": {"stringUnit":{"state":"translated","value":"Der lokale Dienst ist nicht erreichbar. Prüfen Sie den Serverstatus."}},
+          "pt": {"stringUnit":{"state":"translated","value":"Não foi possível ligar ao serviço local. Verifique o estado do servidor."}}
+        }
+      },
+      "macos.localService.permissionDenied": {
+        "localizations": {
+          "en": {"stringUnit":{"state":"translated","value":"Access to the local service was denied. Check the connection permissions."}},
+          "ko": {"stringUnit":{"state":"translated","value":"로컬 서비스 접근이 거부됐습니다. 연결 권한을 확인해 주세요."}},
+          "ja": {"stringUnit":{"state":"translated","value":"ローカルサービスへのアクセスが拒否されました。接続の権限を確認してください。"}},
+          "zh-Hans": {"stringUnit":{"state":"translated","value":"访问本地服务被拒绝。请检查连接权限。"}},
+          "zh-Hant": {"stringUnit":{"state":"translated","value":"本機服務存取遭拒。請檢查連線權限。"}},
+          "es": {"stringUnit":{"state":"translated","value":"Se denegó el acceso al servicio local. Comprueba los permisos de conexión."}},
+          "fr": {"stringUnit":{"state":"translated","value":"L’accès au service local a été refusé. Vérifiez les autorisations de connexion."}},
+          "de": {"stringUnit":{"state":"translated","value":"Der Zugriff auf den lokalen Dienst wurde verweigert. Prüfen Sie die Verbindungsberechtigungen."}},
+          "pt": {"stringUnit":{"state":"translated","value":"O acesso ao serviço local foi negado. Verifique as permissões de ligação."}}
         }
       }
     }

@@ -62,6 +62,7 @@ export type CliRuntimeSnapshot = {
     rollback: boolean; cleanup: boolean; retry: boolean; applyPending: boolean; skip: boolean };
   billing?: import("./codexBilling.js").CodexBillingSnapshot;
   account?: import("./codexAccount.js").CodexAccountSnapshot | null;
+  authSelection?: import("./codexAuthSelection.js").AuthSelectionSnapshot;
   managedVersions: { version: string; bytes: number; active: boolean; staged: boolean; recovery: boolean }[];
 };
 export type CliEnvironmentSummary = {
@@ -335,7 +336,7 @@ export class CodexRuntimeManager {
   }
 
   /** Seal the selection and its usage record under the same lock as activation/removal. */
-  async acquire(explicitCommand: string | undefined = this.configuredCommand()): Promise<{ selection: CliSelection; fingerprint: string; release: () => Promise<void> }> {
+  async acquire(explicitCommand: string | undefined = this.configuredCommand()): Promise<{ selection: CliSelection; fingerprint: string; protocol?: CliProtocolSupport; release: () => Promise<void> }> {
     const selection = await this.resolve(explicitCommand);
     return withRuntimeLock(this.root, "cli", async () => {
       const state = await this.readState();
@@ -347,7 +348,7 @@ export class CodexRuntimeManager {
       assertCompatibleSelection(inspected);
       const release = await this.lease(selection);
       try {
-        return { selection, fingerprint: this.appliedContextFingerprint(), release };
+        return { selection, fingerprint: this.appliedContextFingerprint(), protocol: inspected.protocol, release };
       } catch (error) {
         await release();
         throw error;

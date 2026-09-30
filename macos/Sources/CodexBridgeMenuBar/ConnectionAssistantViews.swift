@@ -44,7 +44,6 @@ enum ConnectionSetupJourney {
         case waitForStatus
         case finish
         case openInstallationSettings
-        case startBrowserLogin
     }
 
     static func steps(for role: ConnectionSetupRole) -> [ConnectionSetupStep] {
@@ -83,13 +82,11 @@ enum ConnectionSetupJourney {
     static func codexAction(
         installed: Bool?,
         authenticated: Bool?,
-        loginInProgress: Bool,
         statusCheckFailed: Bool
     ) -> CodexAction {
-        if loginInProgress { return .waitForStatus }
         if authenticated == true { return .finish }
         if installed == false { return .openInstallationSettings }
-        if installed == true || statusCheckFailed { return .startBrowserLogin }
+        if installed == true || statusCheckFailed { return .openInstallationSettings }
         return .waitForStatus
     }
 }
@@ -106,7 +103,6 @@ enum ConnectionRecoveryRecommendedAction: Hashable {
     case repairPermissions
     case startRuntime
     case restartRuntime
-    case startCodexLogin
     case openCodexSettings
 }
 
@@ -136,7 +132,7 @@ enum ConnectionRecoveryPlan {
         case .codex:
             guard !isRemoteClient else { return [] }
             switch codexInstalled {
-            case true: return [.startCodexLogin]
+            case true: return [.openCodexSettings]
             case false: return [.openCodexSettings]
             case nil: return []
             }
@@ -679,6 +675,8 @@ struct ConnectionSetupFlowView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
+            CodexAuthSelectionControls()
+
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: codexStatusSymbol)
                     .font(.title2)
@@ -687,10 +685,6 @@ struct ConnectionSetupFlowView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(codexLoginStatusText)
                         .font(.headline)
-                    if model.loginInProgress {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
                     if let error = model.authErrorMessage {
                         Text(error)
                             .font(.caption)
@@ -812,8 +806,6 @@ struct ConnectionSetupFlowView: View {
                 key = "macos.connectionAssistant.continueAction"
             case .openInstallationSettings:
                 key = "macos.connectionAssistant.openCodexSettings"
-            case .startBrowserLogin:
-                key = "macos.startcodexbrowserlogin"
             case .waitForStatus:
                 key = "macos.checkingloginstatus"
             }
@@ -937,8 +929,6 @@ struct ConnectionSetupFlowView: View {
             withAnimation(.easeInOut(duration: 0.15)) { step = .complete }
         case .openInstallationSettings:
             openSettings(.codex)
-        case .startBrowserLogin:
-            _ = await model.launchCodexLogin()
         case .waitForStatus:
             break
         }
@@ -1032,9 +1022,7 @@ struct ConnectionSetupFlowView: View {
 
     private var codexLoginStatusText: String {
         let key: String
-        if model.loginInProgress {
-            key = "macos.waitingforbrowserlogin"
-        } else if model.authErrorMessage != nil {
+        if model.authErrorMessage != nil {
             key = "macos.couldnotcheckthecodexloginstatuscheck"
         } else if let status = model.authStatus {
             if !status.installed {
@@ -1054,20 +1042,18 @@ struct ConnectionSetupFlowView: View {
         ConnectionSetupJourney.codexAction(
             installed: model.authStatus?.installed,
             authenticated: model.authStatus?.authenticated,
-            loginInProgress: model.loginInProgress,
             statusCheckFailed: model.authErrorMessage != nil
         )
     }
 
     private var codexStatusSymbol: String {
         if model.authStatus?.authenticated == true { return "checkmark.circle.fill" }
-        if model.loginInProgress { return "arrow.triangle.2.circlepath.circle.fill" }
         return "person.crop.circle.badge.exclamationmark"
     }
 
     private var codexStatusColor: Color {
         if model.authStatus?.authenticated == true { return .green }
-        if model.loginInProgress || model.authStatus == nil { return .blue }
+        if model.authStatus == nil { return .blue }
         return .orange
     }
 
@@ -1257,12 +1243,6 @@ struct ConnectionRecoveryView: View {
                             Task { _ = await model.restartRuntime(force: false) }
                         }
                         .disabled(model.isBusy)
-                    case .startCodexLogin:
-                        Button("macos.startcodexbrowserlogin") {
-                            attemptedRecovery = true
-                            Task { _ = await model.launchCodexLogin() }
-                        }
-                        .disabled(model.isBusy || model.loginInProgress)
                     case .openCodexSettings:
                         Button("macos.connectionAssistant.openCodexSettings") {
                             attemptedRecovery = true

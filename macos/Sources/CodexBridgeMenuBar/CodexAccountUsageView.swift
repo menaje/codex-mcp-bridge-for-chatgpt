@@ -2,6 +2,7 @@ import CodexBridgeKit
 import SwiftUI
 
 struct CodexAccountUsageView: View {
+    @Environment(\.locale) private var locale
     @EnvironmentObject private var model: AppModel
     let account: CodexAccountUsage
     var runtimeKind: String? = nil
@@ -12,15 +13,25 @@ struct CodexAccountUsageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            LabeledContent("macos.authenticationmethod", value: account.authMode == "api-key" ? "macos.openaiapikey" : account.authMode == "chatgpt" ? "ChatGPT" : "—")
+            if account.authMode == "api-key" {
+                LabeledContent("macos.authenticationmethod") {
+                    Text("macos.openaiapikey")
+                }
+            } else if account.authMode == "chatgpt" {
+                LabeledContent("macos.authenticationmethod", value: "ChatGPT")
+            }
             if account.authMode == "chatgpt" {
-                Text("macos.codexusageforthesameaccountisshared")
-                    .font(.caption).foregroundStyle(.secondary)
+                if !account.windows.isEmpty {
+                    Text("macos.codexusageforthesameaccountisshared")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 ForEach(sortedWindows) { window in
                     VStack(alignment: .leading, spacing: 3) {
                         HStack {
-                            Text(Duration.seconds(Int64(window.windowDurationMins * 60)).formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated)))
-                            Text(window.displayName ?? BridgeAppLocalization.string("macos.additionalusage", locale: model.interfaceLocale)).foregroundStyle(.secondary)
+                            Text(Duration.seconds(Int64(window.windowDurationMins * 60)).formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated).locale(locale)))
+                            if let name = window.displayName {
+                                Text(name).foregroundStyle(.secondary)
+                            }
                             Spacer()
                             Text(window.remainingPercent / 100, format: .percent.precision(.fractionLength(0)))
                             Text("macos.accountUsage.remainingLabel")
@@ -34,13 +45,12 @@ struct CodexAccountUsageView: View {
                         }
                     }
                 }
-                if account.windows.isEmpty { Text("macos.usageinformationisunavailable").font(.caption) }
-                if let credits = account.credits {
+                if let credits = account.credits, credits.unlimited || credits.balance != nil {
                     LabeledContent("macos.additionalcredits") {
                         if credits.unlimited {
                             Text("macos.nocreditlimit")
-                        } else {
-                            Text(verbatim: credits.balance ?? "—")
+                        } else if let balance = credits.balance {
+                            Text(verbatim: balance)
                         }
                     }
                     .help("macos.abalancealonedoesnotshowwhethercredits")
@@ -48,21 +58,20 @@ struct CodexAccountUsageView: View {
                 if let credits = account.resetCredits, credits.availableCount > 0 {
                     LabeledContent("macos.usageresetcoupons", value: credits.availableCount.formatted())
                 }
-                HStack {
-                    Text("macos.lastchecked")
-                    Spacer()
-                    Text(Date(timeIntervalSince1970: account.observedAt / 1000), style: .relative)
-                }.font(.caption).foregroundStyle(.secondary)
+                if !account.windows.isEmpty {
+                    HStack {
+                        Text("macos.lastchecked")
+                        Spacer()
+                        Text(Date(timeIntervalSince1970: (account.usageObservedAt ?? account.observedAt) / 1000), style: .relative)
+                    }.font(.caption).foregroundStyle(.secondary)
+                }
             } else if account.authMode == "api-key" {
                 Text("macos.apirequeststokensandorganizationsalsohavelimits")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("macos.theexecutionkeycannotretrieveinvoicedcosts")
-                    .font(.caption).foregroundStyle(.secondary)
                 Link("macos.viewapiusageandcosts", destination: URL(string: "https://platform.openai.com/usage")!)
-                if let costs = account.billing?.actualCosts, costs.configured {
-                    if costs.status == "available", let usd = costs.usd {
-                        LabeledContent(costs.projectId == nil ? "macos.organizationcostthismonthutc" : "macos.projectcostthismonthutc", value: usd.formatted(.currency(code: "USD")))
-                    } else { Text("macos.costinformationisunavailable").font(.caption) }
+                if let costs = account.billing?.actualCosts, costs.configured,
+                   costs.status == "available", let usd = costs.usd {
+                    LabeledContent(costs.projectId == nil ? "macos.organizationcostthismonthutc" : "macos.projectcostthismonthutc", value: usd.formatted(.currency(code: "USD")))
                     Text("macos.includescostsfromworkoutsidethisbridge").font(.caption).foregroundStyle(.secondary)
                     if let organization = costs.organizationId { Text(verbatim: organization).font(.caption) }
                     if let project = costs.projectId { Text(verbatim: project).font(.caption) }

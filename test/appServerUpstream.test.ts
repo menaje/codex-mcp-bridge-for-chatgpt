@@ -63,6 +63,25 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   });
 
+  it("reads account metadata without assigning workspace routing as a login owner", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "codex-app-server-account-"));
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, { environment: {
+      ...process.env, HOME: home, CODEX_HOME: path.join(home, ".codex"),
+      CODEX_TEST_ACCOUNT_ID: "workspace-w"
+    } });
+    try {
+      const details = await pool.readAccountDetails();
+      const account = details.snapshot;
+      expect(account?.ownershipKey).toBeNull();
+      expect(account?.workspaceKey).toMatch(/^[a-f0-9]{64}$/);
+      expect(details).toMatchObject({ email: "private-fixture@example.com", workspaceName: null });
+      expect(JSON.stringify(account)).not.toContain("private-fixture@example.com");
+    } finally {
+      await pool.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("selects, caches, and invalidates the account-wide seven-day Codex limit", async () => {
     expect(CODEX_WEEKLY_WINDOW_MINUTES).toBe(10_080);
     expect(ACCOUNT_RATE_LIMITS_CACHE_TTL_MS).toBe(60_000);

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Show verified Codex weekly usage and explicit refresh states in the ChatGPT dashboard card.",
+  "breaking": false,
+  "migration": null
+}

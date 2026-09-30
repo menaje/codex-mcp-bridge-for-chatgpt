@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Show useful localized local-service failure reasons instead of missing-copy fallback text.",
+  "breaking": false,
+  "migration": null
+}
