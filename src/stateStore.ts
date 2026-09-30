@@ -4,7 +4,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import Database from "better-sqlite3";
 import { McpEventStore } from "./mcpEventStore.js";
-import { TaskFollowupStore, type ApprovedFollowup, type FollowupReference } from "./taskFollowups.js";
+import { TaskFollowupStore, issueApprovedFollowups, readFollowupReference, type ApprovedFollowup, type FollowupReference } from "./taskFollowups.js";
 import { canonicalHumanText, parseJsonTextStrict } from "./textIntegrity.js";
 import {
   CURRENT_STATE_SCHEMA,
@@ -5878,6 +5878,9 @@ export class BridgeStateStore {
     // Late snapshots cannot resurrect expired display data or release the
     // original request reservation.
     if (this.workHistory?.expired(job.jobId)) return;
+    if (job.approvedFollowups || job.followup) job = { ...job,
+      approvedFollowups: issueApprovedFollowups(job.jobId, job.approvedFollowups),
+      followup: job.followup ? readFollowupReference(job.followup) : undefined };
     if (!valueIsOneOf(ACTIVITY_JOB_STATUSES, job.status)) {
       throw new Error(`Invalid Codex job status for Activity storage: ${job.status}.`);
     }
@@ -6219,8 +6222,8 @@ export class BridgeStateStore {
         createdAt: job.updatedAt
       });
     }
-    if (nowTerminal) this.mcpEvents.enqueue(job);
     this.taskFollowups.admit({ ...job, activityId, agentId, scopeId });
+    if (nowTerminal) this.mcpEvents.enqueue(job);
     this.replaceJobInteractions(job.jobId, job.pendingInteractions || []);
 
     const agentStateChanged = agentId

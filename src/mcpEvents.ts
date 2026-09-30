@@ -6,6 +6,7 @@ import type { CodexJobRegistry } from "./tools.js";
 import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
 import { JOB_TERMINAL_EVENT, type EventJob, type EventSubscription } from "./mcpEventStore.js";
 import { EventDestinationVault, sendPublicWebhook, signedHeaders, validateCallbackUrl, validateSigningSecret, type WebhookSender } from "./mcpWebhook.js";
+import { FOLLOWUP_ID_PATTERN } from "./taskFollowups.js";
 
 const argsSchema = z.strictObject({ jobId: z.string().uuid() });
 const deliverySchema = z.strictObject({ mode: z.literal("webhook"), url: z.string().max(4_096), secret: z.string().max(100) });
@@ -46,6 +47,8 @@ export const JOB_TERMINAL_EVENT_DEFINITION = {
       activityId: { type: ["string", "null"] }, agentId: { type: ["string", "null"] },
       state: { enum: ["completed", "failed", "interrupted", "cancelled"] },
       terminalVersion: { type: "integer", minimum: 1 },
+      availableFollowups: { type: "array", maxItems: 8, items: { type: "object", additionalProperties: false,
+        properties: { followupId: { type: "string", pattern: FOLLOWUP_ID_PATTERN.source } }, required: ["followupId"] } },
       result: { type: "object", additionalProperties: false,
         properties: { tool: { const: "codex_status" }, query: { type: "object", additionalProperties: false,
           properties: { kind: { const: "job" }, id: { type: "string", format: "uuid" } }, required: ["kind", "id"] } }, required: ["tool", "query"] }

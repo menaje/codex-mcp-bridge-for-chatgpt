@@ -33,6 +33,14 @@ it. A future host-supported trusted identity adapter requires separate actual
 acceptance; this feature neither adds OAuth nor loosens existing scope checks.
 Existing execution and status tools continue normally.
 
+This is a product connection gate, not merely an unrun acceptance test. Before
+the actual trial, establish which officially supported ChatGPT/Tunnel connection
+can supply a verified subscriber principal to the bridge. Confirm whether an
+existing bearer connection works or a supported authentication adapter is needed.
+Do not substitute conversation metadata or callback challenge verification.
+Until that path is settled, enabling Events on the default No Auth connection
+does not make this feature usable. Issue #213 remains open.
+
 Discovery advertises `events` when the opt-in configuration is enabled. Use
 `events/list`, `events/subscribe` and `events/unsubscribe` on the same
 authenticated endpoint as tools. Rescan the plugin after changing event support.
@@ -101,13 +109,32 @@ approved:
 ```json
 {
   "approvedFollowups": [
-    { "stepId": "review-B", "prompt": "The exact already-approved B instruction" }
+    { "prompt": "The exact already-approved B instruction" }
   ]
 }
 ```
 
-This optional input is part of task contract 6. It grants at most eight named
-steps, scoped to A's original Activity and Agent. Prompts are stored as hashes.
+This optional input is part of task contract 6. It grants at most eight steps,
+scoped to A's original Activity and Agent. GPT supplies meaning, not stage IDs.
+The bridge issues opaque `followupId` and canonical `requestId` values at A's
+atomic admission and returns them in declaration order:
+
+```json
+{
+  "approvedFollowups": [
+    { "followupId": "<bridge-issued reference>", "requestId": "<bridge-issued UUID>", "status": "approved-pending" }
+  ]
+}
+```
+
+Admission retries and exact Job/request status reads recover those same values,
+including after server/store recreation. A completed event carries only
+`availableFollowups: [{"followupId":"<bridge-issued reference>"}]`; it is a
+snapshot hint, so requery the exact result and current references before acting.
+Never name, parse, regenerate or guess a reference. Separate declarations receive
+separate IDs even if their exact prompts match; repeating one reference cannot
+create another stage. The IDs are references, not authentication credentials.
+Prompts remain stored as hashes, so B must resubmit the exact approved text.
 The approval expires after seven days if unused; it cannot be added to A by
 reading its output or replaying an event. This is the model's declaration of
 existing user authorization, not proof of authorization independent of the
@@ -120,13 +147,12 @@ After an event, the resumed GPT calls the supplied exact query:
 ```
 
 It reviews that answer before calling `codex_task` with the exact B prompt,
-the current contract/envelope, any UUID requestId, and:
+the current contract/envelope, the returned canonical requestId, and:
 
 ```json
 {
   "followup": {
-    "jobId": "A-job-id",
-    "stepId": "review-B",
+    "followupId": "<bridge-issued reference>",
     "reviewedVersion": 2
   }
 }
@@ -140,8 +166,8 @@ retained result, thread, access mode and model in the atomic Job admission.
 It cannot inspect private GPT reasoning and does not equate result offer with
 actual human/model review.
 
-`original scope + predecessor Job + stepId` resolves to a durable canonical
-requestId. Admission binds that receipt and B's Job in the same existing
+`original scope + predecessor Job + system-issued followupId` resolves to a
+durable canonical requestId. Admission binds that receipt and B's Job in the same existing
 transaction. Different UUIDs, GPT runs, event batches, duplicate card delivery,
 and response-loss retries converge to B. An expired B result still reserves
 the stage and cannot admit a replacement. Distinct approved steps and explicitly
@@ -150,6 +176,15 @@ external side effects performed inside Codex. Consumed receipts remain durable
 admission tombstones; the existing receipt maintenance slice removes unused
 expired approvals in bounded pages.
 
+The general new-task requestId contract remains caller/host-owned. Followup
+callers may also use different submission UUIDs; the issued reference always
+resolves to the stored canonical receipt. Old `stepId` caller inputs are rejected.
+Refresh discovery and use returned references. Retained v1 Job metadata and
+receipts are adapted internally without changing their canonical requestIds or
+admitted Jobs; this is stored-data compatibility, not a public caller alias.
+Pending older webhook bodies stay intact and their exact result query recovers
+the references. No SQL schema migration or new workflow engine is introduced.
+
 Without a declared approved step, the backend rejects followup admission. The
 GPT may report the result and ask for a new instruction. Event text can never
 create a grant. Do not call an ordinary new task to evade a stage's receipt.
@@ -157,8 +192,9 @@ create a grant. Do not call an ordinary new task to evade a stage's receipt.
 ## Acceptance boundary
 
 Protocol and synthetic regression tests cover the implementation. Actual
-ChatGPT / Tunnel discovery, callback support, resumed-call metadata and
-original scope equality still need an isolated authenticated host trial.
+ChatGPT / Tunnel must first have an officially supported connection that supplies
+a verified subscriber principal. Its discovery, callback support, resumed-call
+metadata and original scope equality then need an isolated authenticated trial.
 Record webhook receipt separately from exact result retrieval, actual review,
 and B admission. The test must include a B-not-approved control and two distinct
 GPT runs delivering the same logical step.
