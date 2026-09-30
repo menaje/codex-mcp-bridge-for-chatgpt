@@ -53,5 +53,39 @@ The App Server schema check also matched the repository's isolated CLI
 **0.153.3** baseline (416 JSON and 827 TypeScript files). The first default-CLI
 attempt was rejected because the operating CLI is 0.159.0; it was not replaced.
 
-Exact bundle identity, full native validation, and installed acceptance will
-be recorded after those steps finish. The draft PR remains unmerged into `dev`.
+The exact clean source commit is
+`f6b98c46724d0c23d966a251f4140af0a01089af`. Its separate arm64 bundle passed
+**217 Swift tests, 2 skipped, 0 failures**, and compiled localization checks for
+**1,403 strings across nine languages**. Deep strict ad-hoc signature
+verification passed before and after installation. The embedded build identity
+is **`f6b98c46724d:f344f196e4a6`**, with `dirty: false` and source hash
+`f344f196e4a6057610f5aea9b31ab279f6e93e47f76bd1fdcaf2736f192feabb`.
+
+## Installed acceptance
+
+The idle `a8dc7ec` runtime completed a non-forced shutdown; its handoff receipt
+matched the request and reported completion. App/runtime processes and sockets
+were absent before bundle replacement. The old installed bundle is preserved
+for rollback. No login, logout, or authentication-selection change was made.
+
+At **2026-09-30 14:27:58 KST**, the installed app's Helper and Bridge both
+reported the expected `f6b98c46724d:f344f196e4a6` build. Runtime and lifecycle
+phases were running/completed, and both Bridge and Tunnel were connected.
+Applied/effective selection and the running Codex home still matched the
+separate profile at generation 1, without pending or uncertain activation.
+Active Jobs, admissions, input, and confirmed background processes were zero.
+
+All **13** original retained terminal payloads and delivery records remained
+unchanged (5 host-accepted, 8 acceptance-unknown). Shared and profile auth-file
+mtimes remained at their earlier baselines: September 29 08:12:34 KST and
+September 30 12:23:13 KST respectively. The original desktop usage read
+succeeded; its September 30 authentication-401 count remained **0**. No billed
+execution or result-receipt mutation occurred.
+
+These installed checks establish the new build and preserved service/auth
+state. The error-copy regressions and compiled-language checks establish its
+presentation correction. A real service timeout was not deliberately induced,
+and the native menu-bar accessibility snapshot was unavailable from the
+computer-use tool. Neither a full visual acceptance nor absence of future
+timeouts is claimed. A later actual token refresh remains under observation.
+The draft PR remains unmerged into `dev`.
