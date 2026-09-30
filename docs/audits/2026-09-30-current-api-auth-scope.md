@@ -202,12 +202,11 @@ preservation and non-billed authenticated reads. They do not establish a paid
 model turn, supported-mode switching or continuity after an actual later
 natural refresh.
 
-Direct installed native UI inspection remains unverified: two computer-use
-lookups of the exact installed app path timed out, and the bundle-ID lookup
-was ambiguous because preserved older app copies share it. The existing
-isolated 27-scenario AppKit and dashboard browser evidence is retained; it is
-not substituted for inspection of the installed app's screen. No new product
-defect is established by this tool limitation.
+The initial computer-use inspection was unavailable: two lookups of the exact
+installed app path timed out, and the bundle-ID lookup was ambiguous because
+preserved older app copies share it. At **19:19 KST**, the operator directed
+display verification to proceed with a renderer, Playwright or another
+alternative. The completed installed-data display check is recorded below.
 
 The existing **15-minute ACTIVE heartbeat** now watches installed build
 `238dcc2f7609:aac9a831bcdb`, with the same profile, result and credential-mtime
@@ -215,12 +214,78 @@ baselines. Its name, interval, destination and quiet notification behavior
 are preserved. Healthy status, elapsed time and file mtimes remain insufficient
 proof of refresh.
 
+## Installed display acceptance with approved alternative tools
+
+The installed source and build remain `238dcc2` /
+`238dcc2f7609:aac9a831bcdb`. The alternative native driver compiled unchanged
+production views and `AppModel` from that source with strict concurrency and
+warnings as errors. A separate temporary entry point loaded real account,
+runtime, authentication, settings and dashboard snapshots through the
+installed Helper/Bridge sockets. It used a no-op service bootstrap, preloaded
+the existing Helper status, and performed no lifecycle or authentication
+action. The production app and source were not edited.
+
+At **19:31 KST**, the driver generated seven AppKit renders: the Codex settings
+pane in Korean light/dark and English light, plus Korean/English account-usage
+and menu views. All seven images were inspected directly. The current CLI,
+applied separate ChatGPT connection, provided account email, authentication,
+plan, billing route, quota, credits, coupons and observation times were
+readable. Unprovided workspace/name information, internal fingerprints,
+unknown account rows and missing API cost rows were absent. English duration
+and authentication labels were localized correctly. Settings and registry
+revisions were unchanged before and after rendering. The report explicitly
+requires manual pixel review and does not invent OCR/recognized-text evidence.
+
+Playwright loaded the **installed** `dist/ui/dashboard.html` in a real headed
+browser. The HTML SHA-256 was
+`1627d37807ed56393fe30b545dbca6c207d40a32c3415dbf704051dba74b2a25`.
+A local host adapter allowed only dashboard reads, forwarding them to the
+installed Bridge's `dashboard.snapshot`; it did not substitute fixture
+responses. History was excluded. Four real reads covered initial
+structural/enriched loading and a manual refresh. At **19:37 KST**, the
+displayed weekly value and progress-bar accessibility value matched the
+actual response, and the observation time advanced after refresh. The
+1000-pixel desktop and 360-pixel light/dark mobile images were inspected;
+the narrow layout had no horizontal overflow or lost usage/timestamp.
+There were no JavaScript errors or rejected dashboard reads. A harness-only
+favicon request returned 404; it did not affect the product UI or data reads.
+The task-owned browser and local adapter were closed after capture.
+
+The dashboard also displayed the actual warning that some App Server agents
+could not be safely inspected without waking them or exceeded the inspection
+budget. That operational warning was retained. This display check does not
+claim that every historical agent's process state was known.
+
+| Evidence artifact | Local location |
+| --- | --- |
+| Native render report and seven manually reviewed PNGs | `/tmp/bridge-installed-ui-238dcc2-20260930/artifacts/` |
+| Installed dashboard HTML identity, read observations, browser assertions and desktop/mobile PNGs | `output/playwright/installed-238dcc2-dashboard/` |
+
+The **19:41 KST** post-display checkpoint again confirmed matching
+Helper/Bridge build IDs, completed lifecycle, connected Bridge/Tunnel,
+the same applied/effective profile and running home at generation **1**,
+and zero active Jobs, admissions, pending input and owned background
+processes. All **13** original payload/delivery hashes remained unchanged
+(five `host-accepted`, eight `acceptance-unknown`). Bridge account/usage and
+original desktop usage reads succeeded; desktop auth 401 count remained
+zero. Shared/profile auth-file mtimes and the initial login-log metadata
+remained unchanged. No actual later natural-refresh event was established.
+
+This completes the operator-approved alternative **display** check for the
+current installed ChatGPT state. Native OS window automation and login,
+mode-change, policy or reconnect interaction flows were not exercised.
+No credentials were copied or printed, no result was offered/read-marked/
+discarded/ACKed, and no login, source switch, forced refresh or paid turn was
+performed. Previous isolated supplied/missing ChatGPT/API renders remain
+the evidence for data states absent from the current live account.
+
 ## Operating acceptance still open
 
 The operating app is now `238dcc2f7609:aac9a831bcdb`, preserving the
 independently signed-in Bridge ChatGPT profile. Its existing 15-minute
 natural-refresh monitor remains active. A later actual refresh has not yet
-been established. Natural-refresh evidence, broader real supported-mode,
-policy/reconnect and installed UI acceptance, and `dev` integration remain
-pending. Branch, worktree, original credential stores, previous app bundles
+been established. The approved installed-data display check is complete;
+natural-refresh evidence, broader real supported-mode, policy/reconnect
+and interaction acceptance, and `dev` integration remain pending.
+Branch, worktree, original credential stores, previous app bundles
 and retained result records are preserved; safe Git cleanup follows integration.
