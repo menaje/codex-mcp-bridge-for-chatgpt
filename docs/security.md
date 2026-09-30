@@ -21,6 +21,12 @@ an operating-system sandbox or a multi-tenant service.
 - The bridge does not expose a public OAuth authorization server. A well-known
   OAuth resource request returns 404 rather than implying an unsupported flow.
 
+The planned [authenticated Events connection](mcp-events-authentication.md)
+uses an external OAuth 2.1 provider and a private HTTP Tunnel. Provider
+configuration and the bridge adapter are still pending. Its design keeps user
+identity, Tunnel credentials and callback verification separate; it does not
+change the current authorization behavior.
+
 Protocol version and request metadata identify a current request. They do not
 authorize a project, a task, a cancellation, or a settings change.
 

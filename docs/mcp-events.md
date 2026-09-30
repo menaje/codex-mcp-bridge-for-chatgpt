@@ -26,20 +26,21 @@ conversation scope. The original Activity, Agent and active project must also
 remain accessible. Scope IDs and `openai/session`, subject and organization
 metadata are correlation values, not authentication credentials.
 
-The current No Auth / Secure MCP Tunnel stdio path supplies no independently
+The current No Auth / Secure MCP Tunnel HTTP or stdio path supplies no independently
 verified subscriber principal. Events requests on that path are denied. Setting
 `openai/subject`, knowing a Job ID, or echoing a callback challenge cannot enable
-it. A future host-supported trusted identity adapter requires separate actual
-acceptance; this feature neither adds OAuth nor loosens existing scope checks.
+it. The current implementation does not add OAuth or loosen existing scope checks.
 Existing execution and status tools continue normally.
 
-This is a product connection gate, not merely an unrun acceptance test. Before
-the actual trial, establish which officially supported ChatGPT/Tunnel connection
-can supply a verified subscriber principal to the bridge. Confirm whether an
-existing bearer connection works or a supported authentication adapter is needed.
-Do not substitute conversation metadata or callback challenge verification.
-Until that path is settled, enabling Events on the default No Auth connection
-does not make this feature usable. Issue #213 remains open.
+The selected [product connection design](mcp-events-authentication.md) is user
+OAuth 2.1 over a private HTTP Tunnel, with a separately reachable public identity
+provider. OpenAI does not support customer-defined API keys for this ChatGPT
+connection. Provider configuration and the bridge's token-verification adapter
+are pending; no existing login provider is configured. This is a product
+connection gate before actual host acceptance. Conversation metadata and
+callback verification cannot replace authentication. Enabling Events on the
+default No Auth connection still does not make the feature usable. Issue #213
+remains open.
 
 Discovery advertises `events` when the opt-in configuration is enabled. Use
 `events/list`, `events/subscribe` and `events/unsubscribe` on the same
