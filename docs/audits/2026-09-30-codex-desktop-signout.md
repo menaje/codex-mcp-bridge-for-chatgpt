@@ -1,8 +1,9 @@
 # Codex desktop sign-out investigation — 2026-09-30 KST
 
-This is a read-only reconstruction of the reported repeated desktop sign-outs.
-No credential value, token, or account claim was read or copied, and no login,
-logout, refresh, app replacement, or billed request was performed.
+The initial reconstruction of the reported repeated desktop sign-outs was
+read-only. No credential value, token, or account claim was read or copied,
+and it performed no login, logout, refresh, app replacement, or billed request.
+The separately authorized correction and installed checks are recorded below.
 
 ## Observed sequence
 
@@ -58,16 +59,25 @@ the user to Codex settings, where a separate persistent ChatGPT profile runs
 the selected CLI with its own `CODEX_HOME`. The shared login remains usable
 as an existing connection; the Bridge does not initiate a replacement login
 there. Synthetic tests cover both legacy entry points and the separate
-profile path. The separately authorized `7116217` candidate is now installed.
+profile path. The separately authorized `7116217` candidate was installed.
 Both legacy Helper login actions reject with `CODEX_SHARED_LOGIN_DISABLED`. A
 new Bridge-owned profile completed login and candidate verification without
 changing the shared auth file's modification time. The previous `cd9d39b`
 candidate must not be used as the logout fix because it still contains the
 legacy action.
 
-Remaining acceptance includes installing the idle-restart guard correction,
-activating the staged profile, and confirming the operating app retains its
-login through a later refresh. Existing terminal results and delivery receipts
-remain stored and scoped through the corrected transition. Issues #208/#210 have additional
+The idle-restart guard correction `a8dc7ec` is now installed. A non-forced
+restart applied the separately signed-in profile, with matching Helper/Bridge
+builds and a connected Tunnel. All 13 retained terminal Job payloads and
+delivery records survived unchanged. The original Codex desktop usage read
+succeeded after activation; its shared auth file stayed at Sep 29 08:12:34 KST,
+and Sep 30 desktop logs still contained zero `desktop_fetch_auth_401` at the
+13:36 KST checkpoint. Both legacy login actions remained blocked.
+
+Remaining acceptance includes confirming the operating app retains its login
+through a later actual profile refresh. The profile auth file has not changed
+since the initial sign-in, so that refresh has not been observed. Existing
+terminal results and delivery receipts remain stored and scoped through the
+corrected transition. Issues #208/#210 have additional
 execution continuity, Keyring scope, and real-environment requirements in
 [the acceptance status](2026-09-29-auth-acceptance-status.md).

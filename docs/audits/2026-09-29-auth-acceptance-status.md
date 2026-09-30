@@ -4,8 +4,9 @@ This is a checkpoint for the implementation based on `origin/dev` at
 `031c193`. It is not evidence that either GitHub issue is complete. The issue
 checkboxes require separate product and operational evidence; a green unit
 test or a successful build cannot substitute for it. A separately authorized
-replacement installed the `7116217` candidate on Sep 30. Its shared-home
-login guard and separate-profile flow are now running in the operating app.
+replacement installed the `7116217` candidate on Sep 30, followed by the
+idle-restart correction `a8dc7ec`. Its shared-home login guard, separate-profile
+flow, and corrected restart guard are now running in the operating app.
 
 A [Sep 30 read-only sign-out investigation](2026-09-30-codex-desktop-signout.md)
 found four direct CLI browser-login starts followed within 9–28 seconds by
@@ -15,7 +16,7 @@ settings. The exact historical caller remains unknown.
 
 ## Sep 30 installed, non-billed acceptance checkpoint
 
-The signed app and Helper report build `7116217e9916:1fa30981c720`. Both
+The first signed app and Helper reported build `7116217e9916:1fa30981c720`. Both
 legacy shared-home login actions return `CODEX_SHARED_LOGIN_DISABLED`. The
 operating shared auth file was last modified Sep 29 at 08:12:34 KST. A new
 persistent Bridge-owned ChatGPT profile was prepared in a different
@@ -25,17 +26,17 @@ account, policy, and model checks. Its own auth file was created Sep 30 at
 desktop logs for Sep 30 contained no `desktop_fetch_auth_401` through this
 checkpoint. No billed API execution was requested.
 
-The verified profile is staged for activation. A non-forced restart reservation
+The verified profile was staged for activation. A non-forced restart reservation
 initially waited for active Bridge Jobs and protected memory-only threads.
 After active Jobs reached zero, the persisted-work guard failed the restart
 with `CODEX_AUTH_WORK_PENDING`. A read-only state inspection found 13 terminal
 Jobs protected by `undelivered-chatgpt-result`: eight delivery records marked
 `acceptance-unknown` and five marked `host-accepted`, all without an exact
 completion-result offer. Their Job updates date from Sep 20–26. The Bridge
-remains on the original shared connection; the verified separate profile and
-pending choice remain intact. No result was marked read or discarded. The
+remained on the original shared connection; the verified separate profile and
+pending choice stayed intact. No result was marked read or discarded. The
 later refresh, actual activation, and original-app continuity after activation
-are not yet verified. At this check the original desktop usage read succeeded,
+were not yet verified. At that check the original desktop usage read succeeded,
 the shared auth file still had its Sep 29 modification time, and the Sep 30
 desktop log still had zero `desktop_fetch_auth_401` events.
 
@@ -56,13 +57,40 @@ and home, lose the first exact completion-result response, and recover the
 same receipt and answer in the originating scope. The original owner and
 delivery state are preserved. Cross-conversation access and request replay
 are rejected; result reads invoke no execution recovery, upstream work, or
-new-executor ACK. Corrected app installation and real activation are pending
-at this source checkpoint.
+new-executor ACK.
 
 The correction passed the full four-worker Node suite: **1,078/1,078 tests in
 110 files**. Build, TypeScript, release checks, and localization passed. One
 older runtime-adoption fixture was isolated from the operator's runtime and
 state settings after its first run read the real staged authentication choice.
+
+The clean `a8dc7ec` arm64 app was then built separately and ad-hoc signed.
+Deep strict signature verification passed before and after installation. The
+bundle build ran 215 strict Swift tests with two skipped and zero failures,
+plus 1,400 macOS strings across nine languages. Embedded build identity is
+`a8dc7ec29623:c7f8390b654f`, commit
+`a8dc7ec296235407a63b59d39f4a80ba26d3158d`, `dirty: false`. The replaced
+`7116217` app bundle was preserved for rollback.
+
+With no active Jobs, admissions, input, or background processes, the old app
+completed a non-forced shutdown. Its verified candidate was preserved, then
+reverified and staged in the corrected app. A **non-forced restart completed**
+and applied the separate Bridge-owned ChatGPT profile. At Sep 30 13:36 KST,
+Helper and Bridge reported the new build; Bridge and Tunnel were connected.
+Applied and effective selections and the running Codex home all matched the
+profile, generation was 1, and no pending or uncertain activation remained.
+
+Read-only record comparisons confirmed all 13 old terminal Job payloads and
+delivery records were unchanged (five `host-accepted`, eight
+`acceptance-unknown`). No result was marked read or discarded. The original
+Codex desktop usage read still succeeded; its shared auth file remained at
+Sep 29 08:12:34 KST, and Sep 30 desktop logs had zero
+`desktop_fetch_auth_401`. Both legacy Helper login actions still rejected with
+`CODEX_SHARED_LOGIN_DISABLED`. No billed API execution was sent. The profile
+auth file remained at its initial Sep 30 12:23:13 KST modification time, so a
+later actual refresh remains unobserved and is tracked by the existing
+heartbeat. These results establish the installed idle-restart correction and
+separate-profile activation, not completion of all #208/#210 requirements.
 
 ## Follow-up implementation after PR checkpoint `c6cf380`
 
@@ -217,7 +245,7 @@ the exact evidence and remaining scenarios.
 | LOGIN-5 | Synthetic product path passed; live environment needed; support scope decision needed | Verify actual file/Keyring refresh and external account changes; current CLI cannot prove Keyring user identity. |
 | LOGIN-6 | Implementation incomplete; live environment needed | Establish App Server reconnect behavior after external login without interrupting original work. |
 | LOGIN-7 | Implementation incomplete; synthetic product path passed; live environment needed | Original Job question, cancel, result, and restart subsets passed; queue, transport ACK, and existing-thread combinations remain. |
-| LOGIN-8 | Partial live | The final candidate is installed and the shared auth file remained unchanged during separate login; the terminal-result guard defect is corrected in source, with installation, actual activation, and later refresh pending. |
+| LOGIN-8 | Partial live | Corrected `a8dc7ec` is installed; non-forced separate-profile activation passed while 13 retained terminal results and the shared auth file stayed unchanged. A later actual refresh remains pending. |
 | LOGIN-9 | Read-only operating-log error found; live acceptance needed | Desktop logged the signed-out-or-different-account refresh error. Verify the final candidate through a later refresh. |
 | LOGIN-10 | Synthetic product path passed; live environment needed | Re-run final-source checks and installed user acceptance; previous timer failure cause remains unknown. |
 | LOGIN-11 | Live environment needed | Compare independent and shared-store multi-process refresh under separate authorization. |
@@ -275,7 +303,7 @@ share a workspace.
 | LOGIN-5 | Synthetic: initial unknown, account-read → recovered file for the same explicit account ID, temporary read failure, stable refresh identity, and same-email/different-account rejection. An optional CLI active-session user ID plus matching workspace can identify Keyring ownership without relying on email or usage; unstable or absent session evidence remains unverified. The selected CLI lacks this endpoint, and real Keyring and external-account changes remain live checks. |
 | LOGIN-6 | Partial: transient admission observations can recover without relogin. Existing App Server re-read/reconnect behavior after an external login is unverified. |
 | LOGIN-7 | Partial: no automatic login/API fallback; authentication switch blocks active stored work and pending interactions while preserving retained terminal results and delivery receipts. New Jobs and schema-30 sessions persist a non-secret owner boundary; old completed results remain stored but cannot be replayed as executions. Original Job completion, failure, and interruption now record their session under the Job's admitted owner across an external login change and terminal commit retry. Active mismatched Jobs remain readable but cannot recover, be ACKed, cancelled, answered, or steered under a new owner without exact original-executor proof. A question blocked before upstream send records `not-delivered` and can retry the identical request after original-worker proof returns; a lost upstream reply remains `uncertain` and cannot resend. An HTTP Bridge restart with B leaves A's admitted Job dormant; a later restart with A recovers the same retained result under A and ACKs once, using a synthetic executor. Queue, transport ACK, and existing-thread behavior still need broader product acceptance. |
-| LOGIN-8 | Partial live: installed build `7116217e9916:1fa30981c720` launched with matching Helper/bridge builds and connected tunnel. Separate profile login and verification left the shared auth file unchanged. A non-forced activation restart stopped at `CODEX_AUTH_WORK_PENDING` after finding 13 protected terminal results; the original Codex app login through a later refresh remains unverified. |
+| LOGIN-8 | Partial live: installed build `a8dc7ec29623:c7f8390b654f` ran with matching Helper/Bridge builds and connected Tunnel. Separate profile login, verification, and non-forced activation left the shared auth file unchanged. All 13 protected terminal result payloads and delivery records survived unchanged. The original Codex app usage read succeeded after activation; continuity through a later actual refresh remains unverified. |
 | LOGIN-9 | Read-only operating desktop logs include the signed-out-or-different-account refresh error on Sep 25 and Sep 29. No token was collected or refresh forced. This supports cleared or changed auth state, but does not identify the direct CLI login caller. |
 | LOGIN-10 | Partial: after the menu-bar usage correction, API-profile matrix, original-Job question retry fix, previously used external-home selection, original-worker cancellation, Bridge restart owner-recovery HTTP case, and local workspace-name display, the full four-worker Node suite passed 1,064/1,064 tests in 109 files, including the process-probe elapsed-time assertion. The prior 7-second failure was not reproduced; its timer diagnostic was not retained, so its cause remains unclassified and the timeout was not relaxed. The focused three-installation matrix passed 10/10, TypeScript build/release/localization passed, and macOS passed 215 Swift tests (2 skipped) plus nine-language checks. Settings visual acceptance includes the explicit `CODEX_HOME` warning and previously used location; the isolated pinned App Server schema check is separate evidence. The newer `7116217` bundle is installed; separate-profile sign-in and verification passed, while later refresh and broader user acceptance remain separate. |
 | LOGIN-11 | Live: independent-copy and no-copy shared-store multi-process refresh must be measured separately with the selected CLI; neither was injected into operating auth. |
@@ -293,7 +321,7 @@ share a workspace.
 | AUTHSEL-4 | Partial: candidate prepare, persisted login intent before browser/API process launch, CLI exit, verify, stage, pending cancel, and launch-specific activation are implemented. A restarted Helper reports an unconfirmed login result rather than success; an in-process replacement simulation rejects verification of that unresolved login, retains its profile in an unavailable state on cancellation, and preserves a new candidate through the old login's late callback. A local review action can clear a failed activation only while holding the launcher lock, after confirming no managed runtime or protected work remains; it retains the old selection, pending choice, and a stopped-unconfirmed record. A synthetic Helper case verifies two distinct ChatGPT profiles and retries B after its failed launch while restoring A first. Separate-process replacement and real failure recovery remain untested. |
 | AUTHSEL-5 | Synthetic: bridge-owned file profiles live under persistent runtime home and survive candidate cancellation. Rebuild/reinstall/CLI replacement with real credentials needs acceptance. |
 | AUTHSEL-6 | Synthetic: new profile/credential preparation is separate from the applied store and never restores old auth files. Activation re-probes account/CLI/policy, selects the pending profile only for a launch-specific ID, and commits after readiness and exact owned-profile home confirmation. One distinct ChatGPT profile A→B failure/recovery path passes with a fake CLI and launcher; other mode pairs, key rotation, and real account changes remain untested. |
-| AUTHSEL-7 | Partial: graceful apply prevents routine switching with active work and pending input. Terminal result retention continues independently through an idle connection change. New execution and request replay require current user/workspace confirmation. After a confirmed change or logout, an existing Job's question/cancellation requires its original live worker generation and turn; its ACK requires the original executor's retained receipt. HTTP MCP product-path cancellation is blocked without original worker proof and interrupts the exact turn after proof returns; the Job keeps A's owner. Proven pre-send question rejection remains retryable only under the original request ID after fresh question and worker checks; a possibly sent answer cannot be retried. Completion callbacks, including failure and interruption, use the Job's fixed owner for session persistence and rollback rather than the current login; synthetic product-path tests include a failed terminal commit and retry. Restarted bridges defer persisted execution recovery until the new process confirms the matching owner, retry after a later successful admission, and retain the original owner if the external login changes after recovery starts. An HTTP MCP restart case confirms B does not recover A's Job, then A recovers its retained result once with the original owner and ACK; the retained executor is synthetic. Old Job history remains stored. Other queue/transport/result delivery paths still need product verification. |
+| AUTHSEL-7 | Partial: graceful apply prevents routine switching with active work and pending input. Terminal result retention continues independently through an idle connection change. New execution and request replay require current user/workspace confirmation. After a confirmed change or logout, an existing Job's question/cancellation requires its original live worker generation and turn; its ACK requires the original executor's retained receipt. HTTP MCP product-path cancellation is blocked without original worker proof and interrupts the exact turn after proof returns; the Job keeps A's owner. Proven pre-send question rejection remains retryable only under the original request ID after fresh question and worker checks; a possibly sent answer cannot be retried. Completion callbacks, including failure and interruption, use the Job's fixed owner for session persistence and rollback rather than the current login; synthetic product-path tests include a failed terminal commit and retry. Restarted bridges defer persisted execution recovery until the new process confirms the matching owner, retry after a later successful admission, and retain the original owner if the external login changes after recovery starts. An HTTP MCP restart case confirms B does not recover A's Job, then A recovers its retained result once with the original owner and ACK; the retained executor is synthetic. Old Job history remains stored. Accepted and unknown completion receipts also survive a distinct user/home and a lost HTTP result response. Other queue and active transport ACK paths still need product verification. |
 | AUTHSEL-8 | Partial: state revisions and candidate CLI/account/credential fingerprints reject common stale actions; a launched runtime failure leaves the prior selection and an uncertain activation marker. Explicit stopped-runtime reconciliation records an unconfirmed outcome and never restores credential files. A synthetic A→B profile switch confirms that startup remains blocked until reconciliation, A's home is restored, and the same B candidate applies on retry. Browser/API login intent and logout intent are durable before their side-effecting calls. In a simulated Helper replacement, an unresolved browser login cannot be verified or reused after cancellation and its late completion cannot overwrite the next candidate; in-flight API-key cancellation also quarantines its profile. Separate-process cancellation and other late-callback cases remain. |
 | AUTHSEL-9 | Partial: bridge disconnect leaves shared login untouched. Explicit inactive bridge-owned ChatGPT logout and API key removal exist with confirmation, effective storage-policy checks, and protected-work preflight; synthetic tests cover lost logout replies and shared-store preservation. Installed credential-store behavior remains unverified. |
 | AUTHSEL-10 | Synthetic: API switch needs billing confirmation and the execution key enters the selected CLI via stdin; no automatic API fallback. No billed real call was authorized. |
@@ -302,7 +330,7 @@ share a workspace.
 | AUTHSEL-13 | Partial: local method/store/workspace values share one parser. Candidate/shared probes and new admission reject conflicting effective method, workspace, and managed credential-store values. A managed Keyring/auto choice no longer treats a stale shared `auth.json` as ownership evidence; an unknown active owner blocks selection. Installed effective-policy provenance and actual workspace identity are not verified end to end. |
 | AUTHSEL-14 | Partial: schema-30 thread and Job metadata persist non-secret auth boundaries; legacy rows and completed results are retained but unowned threads cannot resume and an old request cannot be re-executed under a new connection. New owner boundaries include user and selected workspace; older workspace-only records stay stored but are not automatically attributed to a newly verified user. Original Job session results retain their admitted owner after an external login change, including terminal retry; session retention and in-memory rollback use that same owner. Unknown Keyring identities use a temporary process boundary until confirmed. Normal CLI replacement preserves the stable owner boundary, but an in-place replacement still requires runtime revalidation. The known-home choice now warns that conversations, skills, and settings may differ while history is retained. App resume, skills, and setting combinations need product acceptance. |
 | AUTHSEL-15 | Partial: absent saved choice defaults to existing shared auth, and explicit `CODEX_HOME` remains authoritative. Existing independent/API installations and their upgrade paths need installed acceptance. |
-| AUTHSEL-16 | Partial: full four-worker Node passed 1,074/1,074 tests in 110 files after the profile switch and cancelled-login changes; the historical process-probe timing failure did not recur and remains unclassified. The selected-CLI/auth-source product matrix passed 10/10, covering explicit shared home, saved Bridge-owned ChatGPT/API profiles, and a previously configured external home across app, terminal, and Bridge CLI choices. Separate HTTP MCP product-path cases passed live original-worker question proof, pre-send block followed by proof recovery and one delivery, lost upstream reply without a resend, and original-worker cancellation after external login change. The question cases retain fixed-owner result persistence and exact ACK; cancellation stays blocked without live original-worker proof. An HTTP Bridge restart case confirms B leaves A's Job dormant and a later A restart recovers its retained result once, preserving A's session and ACKing the same Job. Helper lifecycle coverage retries a pending choice after a stopped-unconfirmed activation, now including verified synthetic ChatGPT profile A→B. An in-process replacement simulation rejects unresolved login verification and preserves a new candidate through a late callback. The Helper file passed 53/53 and the auth-selection file passed 28/28; TypeScript type checking, release check, 215 Swift tests (2 skipped), and 1,400 strings across nine languages passed. Earlier settings visual acceptance includes a known external home and its continuity warning. The pinned App Server schema check passed separately at an earlier checkpoint; the selected installed CLI's isolated schema inspection confirms core compatibility without `account/sessions/list`. Installed `7116217` ran with matching Helper/bridge builds and a connected tunnel; its separate-profile login and verification passed without changing the shared auth file. Candidate bundle identity is tracked in the PR verification; activation, later refresh, billed API, and broader user acceptance remain outstanding. |
+| AUTHSEL-16 | Partial: source correction `a8dc7ec` passed the full four-worker Node suite, 1,078/1,078 tests in 110 files, plus TypeScript and release checks. Its separate arm64 bundle ran 215 strict Swift tests (two skipped, zero failures) and passed 1,400-string checks across nine languages and deep strict signature verification. The suite includes the selected-CLI/auth-source matrix, original-worker question/cancellation and retained-result ACK ownership, synthetic A→B activation failure/recovery, in-process Helper replacement with a late login, and accepted/unknown completion retrieval after a new login and a lost HTTP response. The installed `a8dc7ec29623:c7f8390b654f` completed non-forced separate-profile activation with matching Helper/Bridge builds and a connected Tunnel. Thirteen original retained Job payloads and delivery records were unchanged; original desktop usage remained readable and the shared auth file stayed unchanged. A later actual refresh, separate-process Helper behavior, billed API, and broader installed acceptance remain outstanding. The historical process-probe timing failure remains unclassified. |
 
 The previous checkpoint could not finish App Server schema reproducibility
 because the available CLI was `0.158.0-alpha.2.1` and the check requires its
