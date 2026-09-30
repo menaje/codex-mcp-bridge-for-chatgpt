@@ -34,6 +34,7 @@ import {
 } from "./helpers/stateSchemaFixtures.js";
 
 import { writeFakeLauncher } from "./fixtures/macosHelperLauncher.js";
+import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
 
 const servers: BridgeCompanionServer[] = [];
 
@@ -150,6 +151,89 @@ describe("central runtime lifecycle reservations", () => {
       });
     } finally { await f.supervisor.close({ runtime: "force-stop" }); }
   }, 15_000);
+
+  it("recovers profile A after profile B fails to launch and applies the same verified B candidate on retry", async () => {
+    const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+    const f = await lifecycleFixture(false, command);
+    vi.stubEnv("HOME", f.root);
+    writeFileSync(f.envFile, readFileSync(f.envFile, "utf8") +
+      `\nCODEX_MCP_BRIDGE_RUNTIME_HOME=${f.manager.root}\nCODEX_MCP_BRIDGE_STATE_DATABASE_FILE=${path.join(f.root, "state.sqlite")}\n`,
+      { mode: 0o600 });
+    const auth = new CodexAuthSelectionManager(f.manager.root);
+    const environment = { HOME: f.root, PATH: process.env.PATH,
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: f.manager.root };
+    const cliFingerprint = f.manager.appliedContextFingerprint();
+    const prepare = async (account: string) => {
+      const before = await auth.snapshot(environment);
+      const candidate = (await auth.prepare("bridge-chatgpt", before.revision, environment)).candidate!;
+      writeFileSync(path.join(f.manager.root, "auth-profiles", candidate.id, "auth.json"),
+        JSON.stringify({ auth_mode: "chatgpt", tokens: {
+          account_id: account, id_token: syntheticIdToken(`user-${account}`, account)
+        } }), { mode: 0o600 });
+      const verified = await auth.verify(candidate.id, command, cliFingerprint, environment);
+      expect(verified.candidate).toMatchObject({ id: candidate.id, status: "verified" });
+      expect(verified.candidate?.accountKey).toMatch(/^[a-f0-9]{64}$/);
+      const staged = await auth.stage(candidate.connection, verified.revision,
+        command, cliFingerprint, environment, false);
+      expect(staged.pending).toEqual(candidate.connection);
+      return { kind: "bridge-chatgpt" as const, profileId: candidate.id };
+    };
+    const restart = async () => {
+      await f.supervisor.requestLifecycle({ requestId: randomUUID(), kind: "restart", force: false });
+      await vi.waitFor(() => expect(["completed", "failed"]).toContain(f.supervisor.lifecycleStatus()?.phase), {
+        timeout: 8_000, interval: 50
+      });
+      return f.supervisor.lifecycleStatus();
+    };
+    f.update({ activeJobs: 0 });
+    try {
+      const profileA = await prepare("workspace-a");
+      await f.supervisor.start();
+      const firstApply = await restart();
+      if (firstApply?.phase === "failed") throw new Error(firstApply.error || "profile A activation failed");
+      expect(await auth.snapshot(environment)).toMatchObject({
+        applied: profileA, pending: null, activation: null, generation: 1
+      });
+      expect((await f.supervisor.codexRuntime({ action: "status", includeAccount: false }))
+        .runningEnvironment?.codexHome).toBe(path.join(f.manager.root, "auth-profiles", profileA.profileId));
+      const profileB = await prepare("workspace-b");
+      writeFakeLauncher(path.join(f.root, "runtime", "launcher.mjs"), path.join(f.root, "failed-arguments.json"),
+        { admissionFile: path.join(f.root, "admission.json"), writeRuntimeLock: true, failAuthenticationActivation: true });
+      const failedApply = await restart();
+      expect(failedApply?.phase).toBe("failed");
+      expect(failedApply?.error).toContain("CODEX_AUTH_ACTIVATION_UNCERTAIN");
+      const uncertain = await auth.snapshot(environment);
+      expect(uncertain).toMatchObject({
+        applied: profileA, pending: profileB, candidate: { id: profileB.profileId, status: "verified" },
+        activation: { from: profileA, to: profileB, status: "uncertain" }, generation: 1
+      });
+      await expect(f.supervisor.start()).rejects.toThrow("CODEX_AUTH_ACTIVATION_UNCERTAIN");
+      await f.supervisor.codexRuntime({ action: "auth-reconcile-stopped",
+        authActivationId: uncertain.activation!.id, authRevision: uncertain.revision,
+        authResolutionConfirmed: true });
+      const recovered = await f.supervisor.start();
+      expect(recovered.phase).toBe("running");
+      expect(await auth.snapshot(environment)).toMatchObject({
+        applied: profileA, pending: profileB, candidate: { id: profileB.profileId, status: "verified" },
+        activation: null, generation: 1
+      });
+      expect((await f.supervisor.codexRuntime({ action: "status", includeAccount: false }))
+        .runningEnvironment?.codexHome).toBe(path.join(f.manager.root, "auth-profiles", profileA.profileId));
+      writeFakeLauncher(path.join(f.root, "runtime", "launcher.mjs"), path.join(f.root, "recovered-arguments.json"),
+        { admissionFile: path.join(f.root, "admission.json"), writeRuntimeLock: true });
+      const retriedApply = await restart();
+      if (retriedApply?.phase === "failed") throw new Error(retriedApply.error || "profile B retry failed");
+      expect(await auth.snapshot(environment)).toMatchObject({
+        applied: profileB, pending: null, candidate: null, activation: null, generation: 2,
+        lastActivationResolution: { id: uncertain.activation!.id, outcome: "stopped-unconfirmed" }
+      });
+      expect((await f.supervisor.codexRuntime({ action: "status", includeAccount: false }))
+        .runningEnvironment?.codexHome).toBe(path.join(f.manager.root, "auth-profiles", profileB.profileId));
+    } finally {
+      try { await f.supervisor.close({ runtime: "force-stop" }); }
+      finally { vi.unstubAllEnvs(); }
+    }
+  }, 30_000);
 
   it("does not resolve an unconfirmed activation while its runtime still runs", async () => {
     const f = await lifecycleFixture();
@@ -373,7 +457,7 @@ describe("central runtime lifecycle reservations", () => {
   });
 });
 
-async function lifecycleFixture(autoRestart = false) {
+async function lifecycleFixture(autoRestart = false, codexCommand?: string) {
   const root = temporaryDirectory(), bridgeRoot = path.join(root, "runtime"), envFile = path.join(root, "c", ".env");
   const bridgeSocketPath = path.join(root, "c", "run", "bridge.sock"), launcherPath = path.join(bridgeRoot, "launcher.mjs");
   mkdirSync(path.join(bridgeRoot, "dist"), { recursive: true });
@@ -383,7 +467,8 @@ async function lifecycleFixture(autoRestart = false) {
   update({ activeJobs: 1 });
   writeFakeLauncher(launcherPath, path.join(root, "arguments.json"), { admissionFile, writeRuntimeLock: true });
   updateRuntimeEnvFile(envFile, { apiKey: "sk-lifecycle-test-1234567890123456", tunnelId: "tunnel_oooooooooooooooooooooooooooooooo" });
-  const manager = new CodexRuntimeManager({ root: path.join(root, "cli"), discoverExternal: false });
+  const manager = new CodexRuntimeManager({ root: path.join(root, "cli"),
+    discoverExternal: Boolean(codexCommand), ...(codexCommand ? { explicitCommand: codexCommand, appPaths: [] } : {}) });
   const supervisor = new MacOSBridgeSupervisor({ bridgeRoot, envFile, bridgeSocketPath, launcherPath,
     runtimeLockDirectory: path.join(root, "c", "run", "launcher.lock"), codexRuntimeManager: manager,
     registeredProjectRoots: () => [], autoRestart, lifecycleIntervalMs: 60_000, startTimeoutMs: 5000 });
