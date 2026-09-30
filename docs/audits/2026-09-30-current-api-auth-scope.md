@@ -59,9 +59,55 @@ and the renders regenerated. Harness text metadata describes scenarios; it
 is not OCR evidence. Latest renders are under
 `/tmp/bridge-current-api-scope-visual-reviewed-20260930/artifacts/`.
 
-The clean signed candidate identity and bundle-specific native gates are
-recorded in the following candidate checkpoint. The new candidate supersedes
-`21c31e8` as the proposed installation target and remains uninstalled.
+## Clean uninstalled candidate checkpoint
+
+Source `238dcc2f7609efb793125bc63b0fbc38aa73cee8` was committed and pushed
+before the separate app bundle was built. Its bundle gates passed **216 strict
+Swift tests (two skipped, zero failures)**, **1,390 strings across nine
+languages**, ten icon variants and strict release compilation. Deep strict
+ad-hoc signature verification passed both before and after retaining the
+arm64 candidate.
+
+| Candidate field | Recorded value |
+| --- | --- |
+| Embedded source commit | `238dcc2f7609efb793125bc63b0fbc38aa73cee8` |
+| Build ID | `238dcc2f7609:aac9a831bcdb` |
+| Source hash | `aac9a831bcdb896bc5ca77ae6cd4e9ab405b8caf480a14ca7de0b82d3da3771f` |
+| Embedded dirty flag | `false` |
+| Embedded build timestamp | `2026-09-30T08:41:41.951Z` |
+| Retained app | `macos/build/candidates/238dcc2/Codex MCP Bridge for ChatGPT.app` |
+| Operating installation | Not installed or launched |
+
+The new candidate supersedes `21c31e8` as the proposed installation target.
+Audit-only commits after this checkpoint do not change its embedded source
+commit or either operating bundle identity. The prior candidate remains
+preserved.
+
+## Read-only operating isolation checkpoint
+
+At Sep 30 **17:49 KST**, the operating Helper and Bridge still reported
+`f6b98c46724d:f344f196e4a6`; both connection paths were healthy. The applied
+and effective Bridge-owned ChatGPT profile and running home matched, at
+generation **1**, with no pending activation, active Jobs, admissions, pending
+input or background processes. The **13** original terminal Job payload and
+delivery-record hashes remained unchanged: five `host-accepted`, eight
+`acceptance-unknown`. Nothing was acknowledged, offered, read-marked or
+discarded by this check.
+
+Original desktop usage was readable and Sep 30 desktop authentication 401
+events remained **zero**. At **17:52 KST**, a non-billed Helper account/status
+probe using `account/read` with `refreshToken:false` confirmed authenticated
+ChatGPT mode and available usage with **one window** through the same profile.
+The shared auth-file mtime remained `2026-09-28T23:12:34.167Z` and the profile
+mtime remained `2026-09-30T03:23:13.881Z`. The profile login log retained its
+initial `2026-09-30T03:23:13.472Z` mtime and contained zero refresh-marker
+lines. These checks collected safe metadata and sanitized log counts, without
+reading or copying credential contents. No operating replacement, restart,
+login/logout, connection switch or billed turn was performed for the source
+and visual checks.
+
+Healthy requests and unchanged metadata do not establish an actual later
+token refresh. That event remains unobserved, and its acceptance stays pending.
 
 ## Operating acceptance still open
 
