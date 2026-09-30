@@ -56353,6 +56353,45 @@
             }
           }
         }
+      },
+      "macos.localService.responseTimedOut": {
+        "localizations": {
+          "en": {"stringUnit":{"state":"translated","value":"The local service did not respond in time. Refresh its status."}},
+          "ko": {"stringUnit":{"state":"translated","value":"로컬 서비스의 응답 시간이 초과됐습니다. 상태를 새로고침해 주세요."}},
+          "ja": {"stringUnit":{"state":"translated","value":"ローカルサービスの応答がタイムアウトしました。状態を更新してください。"}},
+          "zh-Hans": {"stringUnit":{"state":"translated","value":"本地服务未能及时响应。请刷新状态。"}},
+          "zh-Hant": {"stringUnit":{"state":"translated","value":"本機服務未能及時回應。請重新整理狀態。"}},
+          "es": {"stringUnit":{"state":"translated","value":"El servicio local no respondió a tiempo. Actualiza su estado."}},
+          "fr": {"stringUnit":{"state":"translated","value":"Le service local n’a pas répondu à temps. Actualisez son état."}},
+          "de": {"stringUnit":{"state":"translated","value":"Der lokale Dienst hat nicht rechtzeitig geantwortet. Aktualisieren Sie seinen Status."}},
+          "pt": {"stringUnit":{"state":"translated","value":"O serviço local não respondeu a tempo. Atualize o estado."}}
+        }
+      },
+      "macos.localService.unavailable": {
+        "localizations": {
+          "en": {"stringUnit":{"state":"translated","value":"The local service could not be reached. Check the server status."}},
+          "ko": {"stringUnit":{"state":"translated","value":"로컬 서비스에 연결할 수 없습니다. 서버 상태를 확인해 주세요."}},
+          "ja": {"stringUnit":{"state":"translated","value":"ローカルサービスに接続できません。サーバーの状態を確認してください。"}},
+          "zh-Hans": {"stringUnit":{"state":"translated","value":"无法连接本地服务。请检查服务器状态。"}},
+          "zh-Hant": {"stringUnit":{"state":"translated","value":"無法連接本機服務。請檢查伺服器狀態。"}},
+          "es": {"stringUnit":{"state":"translated","value":"No se pudo conectar con el servicio local. Comprueba el estado del servidor."}},
+          "fr": {"stringUnit":{"state":"translated","value":"Impossible de joindre le service local. Vérifiez l’état du serveur."}},
+          "de": {"stringUnit":{"state":"translated","value":"Der lokale Dienst ist nicht erreichbar. Prüfen Sie den Serverstatus."}},
+          "pt": {"stringUnit":{"state":"translated","value":"Não foi possível ligar ao serviço local. Verifique o estado do servidor."}}
+        }
+      },
+      "macos.localService.permissionDenied": {
+        "localizations": {
+          "en": {"stringUnit":{"state":"translated","value":"Access to the local service was denied. Check the connection permissions."}},
+          "ko": {"stringUnit":{"state":"translated","value":"로컬 서비스 접근이 거부됐습니다. 연결 권한을 확인해 주세요."}},
+          "ja": {"stringUnit":{"state":"translated","value":"ローカルサービスへのアクセスが拒否されました。接続の権限を確認してください。"}},
+          "zh-Hans": {"stringUnit":{"state":"translated","value":"访问本地服务被拒绝。请检查连接权限。"}},
+          "zh-Hant": {"stringUnit":{"state":"translated","value":"本機服務存取遭拒。請檢查連線權限。"}},
+          "es": {"stringUnit":{"state":"translated","value":"Se denegó el acceso al servicio local. Comprueba los permisos de conexión."}},
+          "fr": {"stringUnit":{"state":"translated","value":"L’accès au service local a été refusé. Vérifiez les autorisations de connexion."}},
+          "de": {"stringUnit":{"state":"translated","value":"Der Zugriff auf den lokalen Dienst wurde verweigert. Prüfen Sie die Verbindungsberechtigungen."}},
+          "pt": {"stringUnit":{"state":"translated","value":"O acesso ao serviço local foi negado. Verifique as permissões de ligação."}}
+        }
       }
     }
   }

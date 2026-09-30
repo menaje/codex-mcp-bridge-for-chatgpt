@@ -65,6 +65,13 @@ strings use the `macos.*` semantic-key namespace. If a native localization
 bundle or key is unavailable, the generated English fallback is shown rather
 than a raw key identifier.
 
+Native error diagnostics are not localization keys. Only a known semantic key
+may be passed to the string resolver; unknown diagnostics use the existing
+localized problem description. Local socket errors distinguish response
+timeouts, unavailable services, and denied access without showing raw POSIX
+messages. Legacy English error wrappers are recognized from their authored
+fallback templates, rather than from semantic key identifiers.
+
 ## External card JSON decision
 
 This change intentionally does **not** add a runtime JSON fetch for cards.
