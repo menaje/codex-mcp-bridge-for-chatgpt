@@ -58,12 +58,14 @@ the user to Codex settings, where a separate persistent ChatGPT profile runs
 the selected CLI with its own `CODEX_HOME`. The shared login remains usable
 as an existing connection; the Bridge does not initiate a replacement login
 there. Synthetic tests cover both legacy entry points and the separate
-profile path. This source correction has not been installed or tested against
-the operating account. The previous `cd9d39b` candidate must not be used as
-the logout fix because it still contains the legacy action.
+profile path. The separately authorized `7116217` candidate is now installed.
+Both legacy Helper login actions reject with `CODEX_SHARED_LOGIN_DISABLED`. A
+new Bridge-owned profile completed login and candidate verification without
+changing the shared auth file's modification time. The previous `cd9d39b`
+candidate must not be used as the logout fix because it still contains the
+legacy action.
 
-Remaining acceptance includes installing a new candidate with separate
-authorization, confirming the operating app retains its login through a
-later refresh, and testing the new Bridge profile without copying operating
-credentials. Issues #208/#210 have additional execution continuity, Keyring
+Remaining acceptance includes activating the staged profile after protected
+work finishes and confirming the operating app retains its login through a
+later refresh. Issues #208/#210 have additional execution continuity, Keyring
 scope, and real-environment requirements in [the acceptance status](2026-09-29-auth-acceptance-status.md).
