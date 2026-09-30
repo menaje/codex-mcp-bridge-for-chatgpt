@@ -105,8 +105,15 @@ states the method, actual operational warnings and limits. The **19:41 KST**
 checkpoint again confirmed the same profile, all 13 original results,
 unchanged credential metadata and successful Bridge/desktop reads.
 
-The existing 15-minute monitor watches `238dcc2`; an actual later natural
-refresh remains unestablished. Supported real-mode/policy/reconnect and
+At **20:03 KST**, the operator ended the recurring observation after repeated
+healthy checks. The existing 15-minute heartbeat is now **PAUSED**, with no
+further periodic checks scheduled. Its final **19:58 KST** checkpoint retained
+the same installed `238dcc2` build, profile/generation and all 13 original
+results, with successful Bridge/desktop authenticated reads, zero desktop
+auth 401s and unchanged credential/login-log metadata. An actual later natural
+refresh remains unestablished; the observation stop does not mark it passed.
+The [observation-stop record](2026-09-30-current-api-auth-scope.md#operator-ended-periodic-observation)
+preserves this distinction. Supported real-mode/policy/reconnect and
 interaction acceptance and `dev` integration are still pending, with branch
 and worktree preserved.
 
@@ -183,10 +190,11 @@ Codex desktop usage read still succeeded; its shared auth file remained at
 Sep 29 08:12:34 KST, and Sep 30 desktop logs had zero
 `desktop_fetch_auth_401`. Both legacy Helper login actions still rejected with
 `CODEX_SHARED_LOGIN_DISABLED`. No billed API execution was sent. The profile
-auth file remained at its initial Sep 30 12:23:13 KST modification time, so a
-later actual refresh remains unobserved and is tracked by the existing
-heartbeat. These results establish the installed idle-restart correction and
-separate-profile activation, not completion of all #208/#210 requirements.
+auth file remained at its initial Sep 30 12:23:13 KST modification time. At that
+checkpoint, a later actual refresh remained unobserved and was tracked by the
+existing heartbeat. These results establish the installed idle-restart
+correction and separate-profile activation, not completion of all #208/#210
+requirements.
 
 The later `f6b98c4` replacement corrected native local-service error messages.
 Its [installation record](2026-09-30-local-rpc-errors.md) confirms the same
@@ -196,7 +204,8 @@ records. Original desktop usage remained readable, both auth-file modification
 times stayed at their initial values, and no Sep 30 desktop auth 401 was found
 at that checkpoint. Actual refresh still had not been observed.
 
-The process-boundary follow-up leaves this installation and monitor intact.
+The process-boundary follow-up preserved this installation and monitor at
+that checkpoint, before the later replacement and operator-ended observation.
 Source `21c31e8` passes the full four-worker Node suite, 1,087/1,087 tests in
 111 files, with build, TypeScript, release/localization and isolated pinned-CLI
 schema checks. Its clean uninstalled arm64 bundle passed 217 strict Swift tests

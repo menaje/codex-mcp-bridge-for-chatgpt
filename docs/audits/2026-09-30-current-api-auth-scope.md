@@ -208,11 +208,12 @@ preserved older app copies share it. At **19:19 KST**, the operator directed
 display verification to proceed with a renderer, Playwright or another
 alternative. The completed installed-data display check is recorded below.
 
-The existing **15-minute ACTIVE heartbeat** now watches installed build
-`238dcc2f7609:aac9a831bcdb`, with the same profile, result and credential-mtime
-baselines. Its name, interval, destination and quiet notification behavior
-are preserved. Healthy status, elapsed time and file mtimes remain insufficient
-proof of refresh.
+At this installation checkpoint, the existing **15-minute ACTIVE heartbeat**
+watched installed build `238dcc2f7609:aac9a831bcdb`, with the same profile,
+result and credential-mtime baselines. Its name, interval, destination and quiet notification behavior
+were preserved. The later operator-requested observation stop is recorded
+below. Healthy status, elapsed time and file mtimes remain insufficient proof
+of refresh.
 
 ## Installed display acceptance with approved alternative tools
 
@@ -279,12 +280,35 @@ discarded/ACKed, and no login, source switch, forced refresh or paid turn was
 performed. Previous isolated supplied/missing ChatGPT/API renders remain
 the evidence for data states absent from the current live account.
 
+## Operator-ended periodic observation
+
+At **20:03 KST on Sep 30**, the operator requested ending the 15-minute
+observation after repeated healthy checks. The existing heartbeat
+**브리지 인증 갱신 확인** was set to **PAUSED**, and its saved status was
+verified. Its schedule and evidence baseline remain saved for a separately
+requested resumption; no further periodic checks are scheduled.
+
+The final scheduled checkpoint at **19:58 KST** confirmed matching installed
+Helper/Bridge identities, connected Bridge/Tunnel, the same profile/home and
+generation **1**, and zero active/admission/input/owned-background work.
+Authenticated Bridge account/usage and original desktop usage reads succeeded;
+desktop auth 401 count stayed **zero**. All **13** original payload/delivery
+hashes remained unchanged (**five host-accepted, eight acceptance-unknown**).
+Shared/profile auth-file mtimes and initial login-log metadata remained
+unchanged, with zero refresh-marker lines.
+
+No actual later natural-refresh event was established. Ending the observation
+is an operator decision, not a natural-refresh acceptance pass. The app,
+authentication choice, credentials and retained results were not changed by
+this stop. Accepted source and display evidence remains valid; broader live
+acceptance and Git integration retain their existing status.
+
 ## Operating acceptance still open
 
 The operating app is now `238dcc2f7609:aac9a831bcdb`, preserving the
-independently signed-in Bridge ChatGPT profile. Its existing 15-minute
-natural-refresh monitor remains active. A later actual refresh has not yet
-been established. The approved installed-data display check is complete;
+independently signed-in Bridge ChatGPT profile. Its 15-minute natural-refresh
+monitor is **PAUSED** at the operator's request. A later actual refresh has
+not been established. The approved installed-data display check is complete;
 natural-refresh evidence, broader real supported-mode, policy/reconnect
 and interaction acceptance, and `dev` integration remain pending.
 Branch, worktree, original credential stores, previous app bundles
