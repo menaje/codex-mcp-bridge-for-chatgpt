@@ -9,8 +9,10 @@ stable operator principal to Jobs, subscriptions and approved followups.
 
 The bridge now implements an opt-in HTTP access-JWT adapter and authenticated
 Tunnel launcher path, with isolated synthetic acceptance. As of 2026-10-01,
-the operator has no configured OAuth/OIDC provider. Provider configuration and
-actual ChatGPT acceptance remain pending; issue #213 stays open. The default
+no Bridge-specific OAuth issuer or access grant has been configured. An isolated
+OpenAI open-source registration/sign-in succeeded, but provider configuration
+for the Bridge resource and actual ChatGPT acceptance remain pending; issue
+#213 stays open. The default
 launcher still uses No Auth, and Events on that connection are denied. Existing
 static-bearer tests and the new JWT/JWKS fixture tests are bridge evidence,
 not evidence of a real ChatGPT login or conversation resume.
@@ -43,34 +45,49 @@ of ChatGPT interoperability. Provider choice remains an operator decision.
 
 ### OpenAI sign-in trial
 
-At the operator's request, an isolated OpenAI identity-only trial was started
-on 2026-10-01. [Sign in with ChatGPT](https://developers.openai.com/siwc/quickstart)
-provides verified OpenAI identity. The
-[plugin integration](https://developers.openai.com/siwc/chatgpt-plugin) still
-requires application-owned connector authorization and tokens; its website
-and plugin registration are currently a selected-commercial-partner trial.
-The actual interest form requests business contact and product details, rather
-than immediately issuing an OAuth client.
+At the operator's request, isolated OpenAI sign-in trials were run on
+2026-10-01. The [official cookbook](https://developers.openai.com/cookbook/articles/sign-in-with-chatgpt)
+distinguishes public open-source/local-project **ChatGPT plan usage** from
+**identity-only integration**, which is currently offered to selected commercial
+partners. The public open-source example requests `openid profile email
+offline_access resource.invoke chatgpt.tokens.use.direct`. The earlier
+profile-only trial requested just the first three scopes and returned
+`invalid_state` in the In-app Browser and Safari. Those failures do not establish
+that the complete public open-source registration flow is unavailable. Their
+precise cause remains unconfirmed; reaching a sign-in screen was not success.
 
-The [open-source flow](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)
-supports dynamic client registration and a loopback callback. The isolated
-trial requested only `openid profile email`, used a stable system-issued host
-ID, fresh state/nonce/PKCE for each attempt and a loopback-only listener. OpenAI's
-public discovery returned the documented issuer, authorization/token/JWKS
-endpoints and `S256`; no public DCR endpoint was advertised. The browser showed
-the Bridge's app name and its basic-profile sign-in screen. Selecting the cached
-account returned `invalid_state`, including after a fresh authorization request.
-A new login reached the existing account's password screen and is awaiting
-operator completion. No successful callback, issued client ID or verified ID
-token has been observed. This is an attempted login, not authenticated MCP or
-Events acceptance. No model request was made.
+After the operator explicitly approved the additional plan-use, API-access and
+refresh scopes, the [open-source flow](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)
+was tested in Safari with all six documented scopes. At 2026-10-01 05:32:10 UTC
+(14:32:10 KST), the loopback callback completed, OpenAI issued a client ID and
+authorization-code exchange succeeded. The probe verified the ID token's RS256
+signature against the advertised JWKS, exact issuer and issued-client audience,
+expiry, nonce and applicable `azp` checks. All six requested scopes were granted,
+with an access token and refresh token. No model/API inference or refresh
+request was made, and raw authorization codes or tokens were not retained by
+the probe. This establishes isolated registration and verified sign-in, not
+working model access, installed-product acceptance or MCP Events authentication.
 
-An OpenAI ID token identifies a user to its registered client. OpenAI plan-use
-tokens target the OpenAI API. Neither supplies the current Bridge's resource
-audience and `bridge` grant. Finish the identity trial first, then confirm the
-supported plugin registration and connector-token service before changing the
-Bridge configuration. Account hints, copied Codex credentials and the OpenAI
-API audience cannot replace that authorization boundary.
+The probe used a stable system-issued host ID, fresh state/nonce/PKCE `S256`,
+a loopback-only listener and the issued client ID for code exchange. A nonsecret
+registration ID and verified-identity hash were retained privately for retries;
+profile values, raw subject and credentials were not written to repository or
+trial reports. The listener exited after verification. The safe local report
+records `identity_verified`, successful signature/audience/nonce checks,
+`planPermissionGranted: true`, `modelRequests: 0` and
+`mcpEventsVerified: false`. No partner application was submitted, and the
+installed app, operational database, Tunnel and existing Codex credentials
+were not changed.
+
+An OpenAI ID token identifies a user to its issued client. OpenAI plan-use tokens
+target the OpenAI API. Neither supplies the current Bridge's resource audience
+and `bridge` grant. Using this verified identity for Events still needs a
+supported application-owned Bridge authorization/token service with the public
+HTTPS reachability described above. The [native plugin integration](https://developers.openai.com/siwc/chatgpt-plugin)
+has a separate selected-partner registration contract; that restriction must
+not be generalized to the successful public open-source trial. Account hints,
+copied Codex credentials and the OpenAI API audience cannot replace the Bridge
+authorization boundary.
 
 This OAuth route introduces an external authentication dependency beyond the
 existing local bridge and outbound Tunnel. It remains optional: the current
