@@ -11,8 +11,10 @@ The bridge now implements an opt-in HTTP access-JWT adapter and authenticated
 Tunnel launcher path, with isolated synthetic acceptance. As of 2026-10-01,
 no Bridge-specific OAuth issuer or access grant has been configured. An isolated
 OpenAI open-source registration/sign-in succeeded, but provider configuration
-for the Bridge resource and actual ChatGPT acceptance remain pending; issue
-#213 stays open. The default
+for the Bridge resource and actual ChatGPT acceptance remain pending. An opt-in
+[local OpenAI/Bridge authorization prototype](mcp-events-openai-authorization.md)
+now implements the separate token issuer with isolated HTTP integration tests;
+no public HTTPS host has been selected or deployed. Issue #213 stays open. The default
 launcher still uses No Auth, and Events on that connection are denied. Existing
 static-bearer tests and the new JWT/JWKS fixture tests are bridge evidence,
 not evidence of a real ChatGPT login or conversation resume.
@@ -81,9 +83,9 @@ were not changed.
 
 An OpenAI ID token identifies a user to its issued client. OpenAI plan-use tokens
 target the OpenAI API. Neither supplies the current Bridge's resource audience
-and `bridge` grant. Using this verified identity for Events still needs a
-supported application-owned Bridge authorization/token service with the public
-HTTPS reachability described above. The [native plugin integration](https://developers.openai.com/siwc/chatgpt-plugin)
+and `bridge` grant. The [local authorization prototype](mcp-events-openai-authorization.md)
+implements that separate grant boundary, but using it for actual Events still
+needs public HTTPS hosting and composed ChatGPT acceptance. The [native plugin integration](https://developers.openai.com/siwc/chatgpt-plugin)
 has a separate selected-partner registration contract; that restriction must
 not be generalized to the successful public open-source trial. Account hints,
 copied Codex credentials and the OpenAI API audience cannot replace the Bridge
@@ -223,7 +225,9 @@ The implementation applies these bounded changes to the existing architecture:
    non-operator tokens. `jose` verifies asymmetric signatures against the
    configured HTTPS JWKS, with a five-second fetch timeout, 128 KiB response
    limit, no redirects and bounded cache/rotation refresh. Token headers cannot
-   select key URLs. The bridge does not create an authorization server.
+   select key URLs. MCP dispatch does not create an authorization server; the
+   opt-in OpenAI prototype is a separate command with its own private listeners
+   and configuration.
 2. A dedicated verified principal passes from middleware into
    `authenticatedMcpPrincipal()` and the existing task/scope checks. Derive it
    from the configured resource and verified issuer/subject, using an unambiguous
