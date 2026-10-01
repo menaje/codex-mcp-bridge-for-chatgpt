@@ -35,6 +35,12 @@ hosts its login pages on the provider's authorization server. Self-hosting an
 identity provider would instead require operating that public HTTPS service.
 Neither hosting option has been selected or provisioned.
 
+The [Auth0 setup runbook](mcp-events-auth0.md) provides a concrete managed
+provider candidate, including resource compatibility, operator permissions,
+client registration choices and the tenant-plan limitation on CIMD private-key
+authentication. It is a configuration plan, not a provisioned account or proof
+of ChatGPT interoperability. Provider choice remains an operator decision.
+
 This OAuth route introduces an external authentication dependency beyond the
 existing local bridge and outbound Tunnel. It remains optional: the current
 No Auth connection and local execution continue without provider configuration.
@@ -256,3 +262,5 @@ Provider configuration and actual host acceptance remain pending. The
 source/synthetic evidence from installed-product acceptance.
 The [delivery and JWKS regression audit](audits/2026-10-01-issue-213-delivery-races.md)
 records the subsequent race/error-classification corrections.
+The user subsequently accepted those two corrections through static review;
+that acceptance did not independently rerun tests or complete issue #213.

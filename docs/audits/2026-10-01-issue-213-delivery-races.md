@@ -9,6 +9,21 @@ awaits and provider lookup failures reported as invalid credentials.
 The isolated regressions reproduced both problems before production changes.
 Issue #213 remains open for provider configuration and actual ChatGPT acceptance.
 
+## Subsequent static review acceptance
+
+On 2026-10-01 KST, the user reviewed production changes and regression cases at
+`3ea31e323588c714bdc998d98bbad0b16d983381` through the GitHub plugin and accepted
+the delivery/renewal revision corrections and JWKS outage classification.
+Their review found no further acceptance-blocking defect in those changed
+paths and confirmed that remote `dev` matched that commit at the time of review.
+
+This is acceptance of the two reported defects and their related code paths.
+The user did not independently rerun the test suites, inspect local cleanup or
+accept issue #213 as a whole. The local results below retain their original
+scope. These two defects no longer block provider configuration or the actual
+ChatGPT trial; authenticated login, conversation resume, GPT review of A and
+one execution of approved B still require installed-product evidence.
+
 ## Reproduction and correction
 
 Four added regressions failed on the original code: S2 unsubscribe during S1
