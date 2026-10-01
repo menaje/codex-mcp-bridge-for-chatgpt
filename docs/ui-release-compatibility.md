@@ -12,7 +12,7 @@ integrity checks; it is not part of the file name or URI.
 | Card | Source file | Packaged file | Resource URI |
 | --- | --- | --- | --- |
 | Settings | `ui-resources/settings.html` | `dist/ui/settings.html` | `ui://codex-mcp-bridge/settings/v3.html` |
-| Dashboard | `ui-resources/dashboard.html` | `dist/ui/dashboard.html` | `ui://codex-mcp-bridge/dashboard/v2.html` |
+| Dashboard | `ui-resources/dashboard.html` | `dist/ui/dashboard.html` | `ui://codex-mcp-bridge/dashboard/v3.html` |
 
 Activity, Question, and Decision are retired presentation resources. Their
 historical state remains only where migration or current orchestration requires
@@ -33,6 +33,20 @@ call, changing an app-only request or response shape in a way the cached card
 cannot handle, or changing initialization behavior so the old card cannot mount
 safely. The increment creates a new URI such as `v2.html`; it does not create a
 second source or package file.
+
+Changes to completion routing or result handoff also require a new URI when
+the previous cached card can select the wrong connection or continue asking
+GPT to retrieve a receipt through a superseded path. Internal digests and
+`codex/uiContractGeneration` do not invalidate the host's URI cache. Dashboard
+`v3` carries generation 37's originating-connection result handoff and its
+additional `codex_status` dependency. It is distinct from the cached `v2` card.
+
+After deployment, compare the real tool descriptor's `_meta.ui.resourceUri`
+and `openai/outputTemplate`, the same connection's `resources/read` URI/HTML
+hash, and the mounted iframe's code. Dashboard startup records its URI and
+contract generation in non-visible `data-card-resource-uri` and
+`data-card-contract-generation` attributes; their presence confirms that the
+new script started. A current file on disk alone is not live-serving evidence.
 
 Product SemVer and card URI versions are independent. A product release does
 not change a card URI by itself, and the two cards can advance their URI

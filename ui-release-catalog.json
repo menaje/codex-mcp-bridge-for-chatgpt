@@ -16,7 +16,7 @@
       ]
     },
     "dashboard": {
-      "uriVersion": 2,
+      "uriVersion": 3,
       "presenterTool": "codex_dashboard",
       "requiredTools": [
         "codex_dashboard",

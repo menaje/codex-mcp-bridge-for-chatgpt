@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
+import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
 import { describe, expect, it } from "vitest";
 import { DASHBOARD_CARD_HTML } from "../src/dashboardCard.js";
 import { SETTINGS_CARD_HTML, uiBridgeErrorMessage } from "../src/settingsCard.js";
 import { UI_RESOURCE_MANIFEST } from "../src/uiManifest.generated.js";
+import { serializeUiFunction } from "../src/uiFunctionSerialization.js";
+import { uiJsonTextIsWellFormed } from "../src/uiHostToolResult.js";
 import {
   currentUiResourceRevision,
   currentUiResourceUri,
@@ -12,6 +15,17 @@ import {
 } from "../src/uiResources.js";
 
 describe("serialized card runtime compatibility", () => {
+  it("serializes text-integrity checks identically in the source runner and compiled runtime", () => {
+    const source = readFileSync(fileURLToPath(new URL("../src/uiHostToolResult.ts", import.meta.url)), "utf8");
+    const compiled: Record<string, Function> = {};
+    const { outputText } = transpileModule(source, {
+      compilerOptions: { target: ScriptTarget.ES2022, module: ModuleKind.CommonJS }
+    });
+    runInNewContext(outputText, { exports: compiled });
+    expect(serializeUiFunction(compiled.uiJsonTextIsWellFormed!))
+      .toBe(serializeUiFunction(uiJsonTextIsWellFormed));
+  });
+
   it("keeps all serialized card helpers free of compiler helpers", () => {
     for (const html of [SETTINGS_CARD_HTML, DASHBOARD_CARD_HTML]) {
       expect(html).not.toContain("__name(");
@@ -35,7 +49,7 @@ describe("serialized card runtime compatibility", () => {
       expect(currentFile, revision.uri).toBe(rendered);
       expect(rendered).toContain("<!doctype html>");
       expect(revision.uri).toBe(
-        `ui://codex-mcp-bridge/${name}/${name === "settings" ? "v3" : "v2"}.html`
+        `ui://codex-mcp-bridge/${name}/v3.html`
       );
     });
   }

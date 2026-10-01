@@ -12,7 +12,7 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "releaseInventory": {
     "catalog": "ui-release-catalog.json",
-    "catalogSha256": "ca50c51cd1534f67a20f7dd2f6e00bab11caa7baee8a86da6fcfe8e8d08e895a",
+    "catalogSha256": "af454c14c7cef88292089fcddbcbab4608acbd24539e1bf4eef6bf004a7194de",
     "activeResources": [
       "settings",
       "dashboard"
@@ -66,9 +66,9 @@ export const UI_RESOURCE_MANIFEST = {
       },
       {
         "name": "dashboard",
-        "uriVersion": 2,
-        "digest": "62f2d44ad632632d459f55da11bf1a7ac3fdd6d4401646fbe82e59db6d90699d",
-        "uri": "ui://codex-mcp-bridge/dashboard/v2.html",
+        "uriVersion": 3,
+        "digest": "39d1860fde5e7ca45c73deea998599a4a5a610b9cf60c2e1225cecec01b30580",
+        "uri": "ui://codex-mcp-bridge/dashboard/v3.html",
         "inventories": [
           "development-current"
         ],
@@ -133,9 +133,9 @@ export const UI_RESOURCE_MANIFEST = {
       }
     },
     "dashboard": {
-      "uriVersion": 2,
-      "digest": "62f2d44ad632632d459f55da11bf1a7ac3fdd6d4401646fbe82e59db6d90699d",
-      "uri": "ui://codex-mcp-bridge/dashboard/v2.html",
+      "uriVersion": 3,
+      "digest": "39d1860fde5e7ca45c73deea998599a4a5a610b9cf60c2e1225cecec01b30580",
+      "uri": "ui://codex-mcp-bridge/dashboard/v3.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Codex Status",

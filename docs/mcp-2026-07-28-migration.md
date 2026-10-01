@@ -68,7 +68,7 @@ current HTML file:
 | Card | Current resource |
 | --- | --- |
 | Settings | `ui://codex-mcp-bridge/settings/v3.html` |
-| Dashboard | `ui://codex-mcp-bridge/dashboard/v2.html` |
+| Dashboard | `ui://codex-mcp-bridge/dashboard/v3.html` |
 
 `ui-release-catalog.json` has no published-baseline or temporary compatibility
 entries. The package selector emits only these resources. Earlier files may

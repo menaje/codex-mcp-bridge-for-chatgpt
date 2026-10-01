@@ -3,7 +3,8 @@ type UnknownRecord = Record<string, unknown>;
 /**
  * Browser-safe counterpart to assertJsonTextIntegrity. Card helpers are
  * serialized into standalone HTML, so this deliberately has no module-local
- * dependency and is emitted before the functions that call it.
+ * dependency and is emitted before the functions that call it. Decimal code
+ * points and the short node-limit literal keep esbuild and tsc byte-identical.
  */
 export function uiJsonTextIsWellFormed(value: unknown): boolean {
   const seen = new Set<object>();
@@ -14,21 +15,21 @@ export function uiJsonTextIsWellFormed(value: unknown): boolean {
     if (typeof candidate === "string") {
       for (let index = 0; index < candidate.length; index += 1) {
         const codeUnit = candidate.charCodeAt(index);
-        if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+        if (codeUnit >= 55296 && codeUnit <= 56319) {
           const following = candidate.charCodeAt(index + 1);
-          if (following >= 0xdc00 && following <= 0xdfff) {
+          if (following >= 56320 && following <= 57343) {
             index += 1;
             continue;
           }
           return false;
         }
-        if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) return false;
+        if (codeUnit >= 56320 && codeUnit <= 57343) return false;
       }
       continue;
     }
     if (!candidate || typeof candidate !== "object") continue;
     if (seen.has(candidate)) continue;
-    if (seen.size >= 10_000) return false;
+    if (seen.size >= 1e4) return false;
     seen.add(candidate);
     try {
       if (Array.isArray(candidate)) {
@@ -38,15 +39,15 @@ export function uiJsonTextIsWellFormed(value: unknown): boolean {
       for (const [key, entry] of Object.entries(candidate)) {
         for (let index = 0; index < key.length; index += 1) {
           const codeUnit = key.charCodeAt(index);
-          if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+          if (codeUnit >= 55296 && codeUnit <= 56319) {
             const following = key.charCodeAt(index + 1);
-            if (following >= 0xdc00 && following <= 0xdfff) {
+            if (following >= 56320 && following <= 57343) {
               index += 1;
               continue;
             }
             return false;
           }
-          if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) return false;
+          if (codeUnit >= 56320 && codeUnit <= 57343) return false;
         }
         candidates.push(entry);
       }

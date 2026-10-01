@@ -433,6 +433,8 @@ ${PROBLEM_REVIEW_MARKUP.trimStart()}
     <footer class="footer"><span class="message" id="message" role="status" aria-live="polite" data-i18n="common.loading"></span><span class="updated" id="updated"></span></footer>
   </main>
   <script>
+    document.documentElement.dataset.cardResourceUri=${JSON.stringify(DASHBOARD_CARD_URI)};
+    document.documentElement.dataset.cardContractGeneration=${DASHBOARD_CARD_CONTRACT_GENERATION};
     const BUNDLES=${serializedUiTranslations(["problem", "common", "usage", "cancellation", "history.finite", "history.unlimited", "history.notice", "history.cleanup", "history.acknowledge", "history.started", ...DASHBOARD_TRANSLATION_KEYS, "activity.lastChanged", "activity.approve", "activity.approveSession", "activity.decline", "activity.answer", "activity.inputRequired", "activity.approval", "activity.optionalInput", "activity.openRequest", "activity.otherAnswer", "activity.yes", "activity.no", "question.gptHandles"])};
     const LOCALE_RESOLUTION=${JSON.stringify(UI_LOCALE_RESOLUTION)};
     ${serializeUiFunction(resolveHostUiLocaleTag)}

@@ -45,6 +45,11 @@ callback verification cannot replace authentication. Enabling Events on the
 default No Auth connection still does not make the feature usable. Issue #213
 remains open.
 
+Observed native subscriptions omit the original tool-call conversation field.
+The [restricted subscription-delegation proposal](mcp-events-subscription-delegation.md)
+describes an alternative for an explicit authorization-design decision. It is
+not implemented or enabled, and the current scope checks still apply.
+
 Discovery advertises `events` when the opt-in configuration is enabled. Use
 `events/list`, `events/subscribe` and `events/unsubscribe` on the same
 authenticated endpoint as tools. Rescan the plugin after changing event support.
