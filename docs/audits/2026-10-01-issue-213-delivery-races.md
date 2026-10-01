@@ -4,25 +4,30 @@
 
 This correction starts from `dev` at
 `0eafc8fbf1fc695bbfe97461ea24c661692b4356` on 2026-10-01 KST.
-The user's static review identified stale subscription writes across webhook
-awaits and provider lookup failures reported as invalid credentials.
+ChatGPT's static review, performed at the user's request, identified stale
+subscription writes across webhook awaits and provider lookup failures
+reported as invalid credentials.
 The isolated regressions reproduced both problems before production changes.
 Issue #213 remains open for provider configuration and actual ChatGPT acceptance.
 
-## Subsequent static review acceptance
+## Subsequent static review assessment
 
-On 2026-10-01 KST, the user reviewed production changes and regression cases at
-`3ea31e323588c714bdc998d98bbad0b16d983381` through the GitHub plugin and accepted
-the delivery/renewal revision corrections and JWKS outage classification.
-Their review found no further acceptance-blocking defect in those changed
-paths and confirmed that remote `dev` matched that commit at the time of review.
+On 2026-10-01 KST, ChatGPT, at the user's request, statically reviewed production
+changes and regression cases at
+`3ea31e323588c714bdc998d98bbad0b16d983381` through the GitHub plugin and judged
+the delivery/renewal revision corrections and JWKS outage classification
+acceptable. That review found no further acceptance-blocking defect in those
+changed paths and confirmed that remote `dev` matched the reviewed commit.
 
-This is acceptance of the two reported defects and their related code paths.
-The user did not independently rerun the test suites, inspect local cleanup or
-accept issue #213 as a whole. The local results below retain their original
-scope. These two defects no longer block provider configuration or the actual
-ChatGPT trial; authenticated login, conversation resume, GPT review of A and
-one execution of approved B still require installed-product evidence.
+The earlier wording incorrectly attributed this tool use and static review
+to the human user. This record now identifies ChatGPT as the reviewer and
+keeps any final human acceptance separate, requiring its own explicit evidence.
+The review covered the two reported defects and related code paths; it did not
+independently rerun tests, verify local cleanup or complete issue #213. The local
+results below retain their original scope. These two defects no longer block
+provider configuration or the actual ChatGPT trial; authenticated login,
+conversation resume, GPT review of A and one execution of approved B still
+require installed-product evidence.
 
 ## Reproduction and correction
 

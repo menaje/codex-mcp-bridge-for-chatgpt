@@ -21,9 +21,13 @@ The [Stytch MCP guide](https://stytch.com/docs/connected-apps/guides/mcp-auth-ov
 requires an application-hosted consent component. For an operator without a
 public application, that adds a hosting task beyond the provider account.
 Self-hosting an identity provider adds operation of a public HTTPS service.
-This makes Auth0 a useful first configuration candidate, not a requirement of
-the bridge. Tenant feature availability and charges must be checked before
-provisioning; this document does not promise a free or supported tenant plan.
+This makes Auth0 a useful first configuration candidate. On 2026-10-01, the
+[pricing page](https://auth0.com/pricing) lists Free at $0/month, includes Auth
+for MCP and requires no card for signup. It describes a 22-day trial followed
+by automatic Free activation, but excludes Role Management from Free. Use the
+provider domain; verify the required user-permission configuration remains
+available after trial expiry. A trial-only feature does not prove an ongoing
+free configuration. Account creation and a paid plan remain unapproved.
 
 ## Choose the OAuth client registration method
 
@@ -33,10 +37,15 @@ is the user's access token. A client secret used during code exchange is a
 different credential and is configured on the ChatGPT connection, not the
 bridge or Codex.
 
+For the first single-operator login trial, check the predefined-client path
+first. Confirm that the actual ChatGPT/Tunnel management page supports its
+settings and that the selected tenant supports the required permissions.
+CIMD is a later option when its tenant and metadata requirements are met.
+
 | Method | Configuration for this trial |
 | --- | --- |
-| CIMD | Prefer it when the tenant supports the method in the actual ChatGPT metadata. Import the exact metadata URL from the connection management page. Auth0 documents `private_key_jwt` as Enterprise-only; ChatGPT's transition metadata also carries a singular preference. Verify import and token-exchange compatibility instead of assuming `none` will be selected. |
-| Predefined client | A documented alternative when CIMD is unavailable. Register one third-party Regular Web Application, with authorization code, PKCE and a supported code-exchange method such as `client_secret_post`. Enter the issued client ID/secret in ChatGPT's OAuth configuration and allow its exact callback. Confirm this selection in the actual Tunnel connection UI. |
+| Predefined client | First path to check for this trial. Register one third-party Regular Web Application, with authorization code, PKCE and a supported code-exchange method such as `client_secret_post`. Enter the issued client ID/secret in ChatGPT's OAuth configuration and allow its exact callback. Confirm this selection in the actual Tunnel connection UI. |
+| CIMD | An option when the tenant supports the method in the actual ChatGPT metadata. Import the exact metadata URL from the connection management page. Auth0 documents `private_key_jwt` as Enterprise-only; ChatGPT's transition metadata also carries a singular preference. Verify import and token-exchange compatibility instead of assuming `none` will be selected. |
 | DCR | Requires enabled registration and default third-party API access. It creates connection-specific clients. For this single-operator trial, use an individually registered client when available, rather than granting all dynamically registered clients default API access. |
 
 Auth0's [CIMD guide](https://auth0.com/ai/docs/mcp/guides/registering-your-mcp-client-application/manual-cimd-registration)
@@ -141,6 +150,11 @@ Use the [actual acceptance sequence](mcp-events-authentication.md#actual-accepta
 with a harmless fixture project. Store only redacted evidence; do not paste an
 access token into chat, logs, public issues or an online JWT decoder.
 
+A read-only ChatGPT UI check on 2026-10-01 found the new-plugin dialog's
+Tunnel and OAuth choices. With the Tunnel ID unset, advanced OAuth settings
+were disabled. No client-credential configuration or login was verified, and
+the draft was cancelled without creating or changing a connection.
+
 | Evidence | Current status |
 | --- | --- |
 | Selected provider, tenant and available client registration method | Pending operator selection/configuration |
@@ -150,7 +164,7 @@ access token into chat, logs, public issues or an online JWT decoder.
 | GPT retrieves/reviews A; one admitted B and one upstream B execution | Pending actual ChatGPT trial |
 | Repeated reference/event, restart and no-approval/foreign-scope controls | Pending actual ChatGPT trial |
 
-The fixes in `3ea31e3` have user static-review acceptance for the reported
-delivery/JWKS defects. That review and this provider plan do not establish any
-of the pending outcomes above. Issue #213 remains open until the required
-installed-product evidence is recorded.
+ChatGPT's static review at the user's request judged the reported delivery/JWKS
+fixes in `3ea31e3` acceptable. That assessment and this provider plan do not
+establish the pending outcomes above or final human acceptance. Issue #213
+remains open until the required installed-product evidence is recorded.

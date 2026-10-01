@@ -262,5 +262,6 @@ Provider configuration and actual host acceptance remain pending. The
 source/synthetic evidence from installed-product acceptance.
 The [delivery and JWKS regression audit](audits/2026-10-01-issue-213-delivery-races.md)
 records the subsequent race/error-classification corrections.
-The user subsequently accepted those two corrections through static review;
-that acceptance did not independently rerun tests or complete issue #213.
+ChatGPT subsequently judged those two corrections acceptable through static
+review at the user's request. This assessment did not independently rerun tests
+or complete issue #213; final human acceptance requires separate evidence.
