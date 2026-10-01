@@ -16,7 +16,7 @@ verification remain separate facts.
 
 ## Authentication and enablement
 
-Enable an isolated HTTP installation with
+For the isolated static-bearer bridge tests, enable HTTP with
 `CODEX_MCP_BRIDGE_EVENTS_ENABLED=1`, a configured
 `CODEX_MCP_BRIDGE_TOKEN`, and `CODEX_MCP_BRIDGE_NO_AUTH=0`. The endpoint's
 existing bearer check establishes one installation operator principal; it is
@@ -29,15 +29,16 @@ metadata are correlation values, not authentication credentials.
 The current No Auth / Secure MCP Tunnel HTTP or stdio path supplies no independently
 verified subscriber principal. Events requests on that path are denied. Setting
 `openai/subject`, knowing a Job ID, or echoing a callback challenge cannot enable
-it. The current implementation does not add OAuth or loosen existing scope checks.
+it. The opt-in OAuth adapter preserves the existing scope checks.
 Existing execution and status tools continue normally.
 
 The selected [product connection design](mcp-events-authentication.md) is user
 OAuth 2.1 over a private HTTP Tunnel, with a separately reachable public identity
 provider. OpenAI does not support customer-defined API keys for this ChatGPT
-connection. Provider configuration and the bridge's token-verification adapter
-are pending; no existing login provider is configured. This is a product
-connection gate before actual host acceptance. Conversation metadata and
+connection. The access-JWT adapter and authenticated HTTP launcher are implemented
+and synthetically tested. Provider configuration is pending; no existing login
+provider is configured. This remains a product connection gate before actual
+host acceptance. Conversation metadata and
 callback verification cannot replace authentication. Enabling Events on the
 default No Auth connection still does not make the feature usable. Issue #213
 remains open.
@@ -53,6 +54,10 @@ Subscribe using `name: "codex.job.terminal"`, `arguments: {"jobId":"..."}` and
 `delivery: {"mode":"webhook","url":"https://...","secret":"whsec_..."}`.
 The signing key must decode from base64 to 24–64 bytes. The service grants one
 hour by default and at most 24 hours; a smaller positive `ttlMs` is honored.
+In OAuth mode, the granted expiry is also capped at verified access-token expiry
+and checked again after callback verification. Renewal uses the same stable
+operator identity and subscription ID. Expiry stops delivery without cancelling
+or repeating the Job.
 `ttlMs: null` still receives a finite grant. `refreshBefore` is the granted
 expiration. Refresh uses the same principal, scope, exact Job and callback
 identity. Unsubscribe uses that event, arguments and callback URL, without a key.
@@ -72,12 +77,16 @@ event ID and current signing timestamp. Application bodies remain below 256 KiB;
 responses and connection lifetimes are bounded.
 
 Callback URLs and signing keys are AES-GCM encrypted in the existing database
-using a key derived from the installation bearer credential, which remains
+using a key derived from the stable installation `CODEX_MCP_BRIDGE_TOKEN`, which remains
 outside SQLite. The subscription ID is authenticated encryption context.
 Database-only dumps cannot disclose destinations or signing keys. Backups need
 the separately secured original bearer credential to recover those encrypted
-records. Rotating that credential changes the operator principal and revokes
-old subscriptions; it does not change Codex authentication or cancel Jobs.
+records. In static-bearer mode, rotating that credential changes the operator
+principal and revokes old subscriptions. In OAuth mode it is only a local
+sealing secret; rotating access tokens preserves the issuer/subject/resource
+principal and does not change it. Keep the original sealing secret to recover
+old encrypted destinations. Neither operation changes Codex authentication or
+cancels Jobs.
 
 The bounded subscription journal uses `bridge_meta` keys under
 `mcp_events_v1/`, with at most 256 records and eight per Job. It has its own

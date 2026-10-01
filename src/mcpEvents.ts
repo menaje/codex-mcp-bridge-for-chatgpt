@@ -7,6 +7,7 @@ import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
 import { JOB_TERMINAL_EVENT, type EventJob, type EventSubscription } from "./mcpEventStore.js";
 import { EventDestinationVault, sendPublicWebhook, signedHeaders, validateCallbackUrl, validateSigningSecret, type WebhookSender } from "./mcpWebhook.js";
 import { FOLLOWUP_ID_PATTERN } from "./taskFollowups.js";
+import { mcpOAuthPrincipal } from "./mcpOAuth.js";
 
 const argsSchema = z.strictObject({ jobId: z.string().uuid() });
 const deliverySchema = z.strictObject({ mode: z.literal("webhook"), url: z.string().max(4_096), secret: z.string().max(100) });
@@ -32,7 +33,8 @@ export function mcpBearerPrincipal(token: string): string {
 
 export function authenticatedMcpPrincipal(context: Pick<ServerContext, "http">): string | undefined {
   const auth = context.http?.authInfo;
-  return auth?.scopes.includes("bridge") ? auth.clientId : undefined;
+  if (!auth?.scopes.includes("bridge") || (auth.expiresAt !== undefined && auth.expiresAt * 1_000 <= Date.now())) return undefined;
+  return typeof auth.extra?.bridgeMcpPrincipal === "string" ? auth.extra.bridgeMcpPrincipal : undefined;
 }
 
 export const JOB_TERMINAL_EVENT_DEFINITION = {
@@ -71,7 +73,7 @@ export class McpEventsController {
   constructor(private readonly config: BridgeConfig, private readonly jobs: CodexJobRegistry,
     private readonly scopes: ScopeResolver, private readonly sender: WebhookSender = sendPublicWebhook) {
     if (config.token && !config.noAuth) {
-      this.principal = mcpBearerPrincipal(config.token);
+      this.principal = config.oauth ? mcpOAuthPrincipal(config.oauth) : mcpBearerPrincipal(config.token);
       this.vault = new EventDestinationVault(config.token);
     }
     this.unsubscribe = jobs.subscribeChanges(reason => { if (reason === "terminal") this.wake(); });
@@ -138,7 +140,9 @@ export class McpEventsController {
         }
       }
       const verifiedAt = Date.now();
-      const expiresAt = verifiedAt + Math.min(params.ttlMs ?? SUBSCRIPTION_TTL_MS, MAX_TTL_MS);
+      this.authorize(context); // A token can expire while the callback challenge is running.
+      const expiresAt = Math.min(verifiedAt + Math.min(params.ttlMs ?? SUBSCRIPTION_TTL_MS, MAX_TTL_MS),
+        context.http?.authInfo?.expiresAt !== undefined ? context.http.authInfo.expiresAt * 1_000 : Infinity);
       this.jobs.activityTransaction(() => {
         const current = ledger.get(params.arguments.jobId, id);
         if (this.verifying.get(id) !== 0) throw new ProtocolError(-32015, "CallbackEndpointError", { reason: "subscription_changed" });

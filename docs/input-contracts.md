@@ -79,9 +79,9 @@ channel without changing that snapshot. Subscription authorization requires a
 server-verified principal as well as the original conversation scope. Callback
 ACK never settles a live-card claim or counts as result review. No Auth / Tunnel
 correlation metadata alone cannot authorize a subscription; actual ChatGPT
-resume support first requires the planned [OAuth product connection](mcp-events-authentication.md),
-then isolated host acceptance. Its provider configuration and Bridge adapter
-are pending. The default No Auth path cannot use Events today.
+resume support requires the [OAuth product connection](mcp-events-authentication.md)
+and isolated host acceptance. Its JWT adapter is implemented; provider configuration
+and actual host acceptance are pending. The default No Auth path cannot use Events today.
 
 An exact Job/request `codex_status` wait is a bounded read. `waitFor="change"`
 wakes on a Job version change; `waitFor="terminal"` uses a lifecycle-only signal

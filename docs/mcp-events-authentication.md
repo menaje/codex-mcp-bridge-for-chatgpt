@@ -7,12 +7,13 @@ is **user OAuth 2.1 through a private HTTP Secure MCP Tunnel**. An established
 identity provider issues access tokens; the bridge verifies them and binds a
 stable operator principal to Jobs, subscriptions and approved followups.
 
-This is a connection design, not an implemented setup option. As of 2026-10-01,
-the operator has no existing OAuth/OIDC provider. Provider selection and its
-configuration must precede the bridge adapter and actual host acceptance.
-Issue #213 remains open. The default launcher still uses No Auth, and Events
-on that connection are denied. The existing isolated static-bearer HTTP tests
-remain valid bridge tests, not evidence of a supported ChatGPT login path.
+The bridge now implements an opt-in HTTP access-JWT adapter and authenticated
+Tunnel launcher path, with isolated synthetic acceptance. As of 2026-10-01,
+the operator has no configured OAuth/OIDC provider. Provider configuration and
+actual ChatGPT acceptance remain pending; issue #213 stays open. The default
+launcher still uses No Auth, and Events on that connection are denied. Existing
+static-bearer tests and the new JWT/JWKS fixture tests are bridge evidence,
+not evidence of a real ChatGPT login or conversation resume.
 
 OpenAI documents OAuth 2.1 authorization-code with PKCE `S256` for authenticated
 MCP connections. ChatGPT cannot present a customer-defined API key. Adding the
@@ -25,6 +26,21 @@ The authorization server is not automatically tunneled: its discovery, browser
 login and token endpoints must be reachable from the public internet and the
 tunnel-client host. This design uses the private developer-mode connection;
 public plugin distribution has a separate public-HTTPS endpoint requirement.
+
+The operator does not need to publish the bridge, Codex, local project files or
+a login server they operate themselves. A managed identity provider can host
+the HTTPS login and token service; for example,
+[Auth0 Universal Login](https://auth0.com/docs/authenticate/login/auth0-universal-login)
+hosts its login pages on the provider's authorization server. Self-hosting an
+identity provider would instead require operating that public HTTPS service.
+Neither hosting option has been selected or provisioned.
+
+This OAuth route introduces an external authentication dependency beyond the
+existing local bridge and outbound Tunnel. It remains optional: the current
+No Auth connection and local execution continue without provider configuration.
+Events on that connection remain unavailable under the current authenticated
+ownership contract. Provider selection must not be treated as permission to
+deploy a service or change the installed app's connection.
 
 ## Roles and credentials
 
@@ -47,7 +63,7 @@ sequenceDiagram
     B-->>C: Tools and Events through the same endpoint
 ```
 
-This is the intended flow after implementation. Tunnel workspace association
+This is the product flow to validate after provider configuration. Tunnel workspace association
 and its control-plane runtime key authorize the transport. They are separate
 from the user's OAuth token and do not supply a verified end-user principal to
 the bridge. Callback challenge verification establishes callback control, not
@@ -62,21 +78,21 @@ The Codex login used to execute a Job is a separate credential. [Issue #214](htt
 concerns execution-provider subscription authentication, not the MCP subscriber
 identity, and is not a prerequisite for this OAuth connection.
 
-## Configuration required before implementation acceptance
+## Configuration required before actual host acceptance
 
-No provider, tenant, issuer or login has been provisioned. The following are
-configuration inputs to the future adapter, not environment variables accepted
-by the current release.
+No provider, tenant, issuer or login has been provisioned. The table identifies
+the external configuration and evidence needed before the installed-product
+trial. The current adapter supports access JWTs, not opaque-token introspection.
 
 | Input | Required configuration and evidence |
 | --- | --- |
 | Identity provider | An established provider with public HTTPS OAuth/OIDC discovery, authorization-code flow, advertised PKCE `S256`, and authorization/token endpoints reachable by the required clients. Select by these capabilities; no vendor or account is chosen yet. |
 | Exact issuer | One canonical issuer string, identical in provider discovery and the bridge's `authorization_servers` metadata. Preserve paths, case and trailing slashes exactly. |
 | MCP resource / audience | One canonical HTTPS resource identifier, echoed in authorization and token requests and bound into the access token audience. Capture the actual ChatGPT/Tunnel discovery and challenge URLs before configuring it; do not guess a Tunnel URL or use the local HTTP forwarding address. |
-| Operator and permission | The provider's verified stable subject for the permitted operator and an enabled Bridge API scope. The initial adapter should retain the existing `bridge` permission. An email, OAuth client ID or caller-supplied subject is insufficient. |
+| Operator and permission | The provider's verified stable subject for the permitted operator and an enabled Bridge API scope. The initial adapter requires the existing `bridge` permission. An email, OAuth client ID or caller-supplied subject is insufficient. |
 | Client registration | Prefer Client ID Metadata Documents (CIMD) when supported. DCR or a predefined OAuth client are also documented paths. Record the selected method and token-endpoint authentication method. |
 | Redirect and client metadata | Copy the exact redirect URI and, for CIMD, client metadata URL shown on the actual ChatGPT connection management page. Stable redirects depend on provider support for RFC 9207 issuer identification; do not construct or guess them. |
-| Token validation | Record whether access tokens are JWTs or opaque. Use the provider's supported verification method: signature validation against trusted JWKS, or authenticated introspection with an active token and validated resource, scope and subject. An OIDC ID token is not a Bridge access token. |
+| Token validation | Configure the provider to issue access JWTs signed with RS256, PS256, ES256 or EdDSA and publish a trusted HTTPS JWKS endpoint. Opaque tokens/introspection are not implemented. Tokens need the exact resource audience, stable subject, expiry and a space-delimited `scope` containing `bridge`. OIDC ID tokens are not Bridge access tokens. |
 | Renewal and revocation | Define token lifetime, refresh/reauthorization, operator revocation and a finite subscription grant policy. JWT validation by itself cannot prove immediate remote revocation. Advertised OIDC scopes must also be enabled for the chosen client. |
 | Tunnel | Use a dedicated authenticated HTTP profile and the intended ChatGPT workspace association. Keep the control-plane runtime key separate from OAuth credentials. Verify metadata discovery through the actual connection. |
 | Local sealing key | Keep a stable installation-owned secret outside SQLite for callback URL/signing-secret encryption. OAuth access tokens rotate and must not become the database encryption key. |
@@ -88,47 +104,98 @@ with a machine-to-machine JWT bearer grant. OpenAI does not support that grant,
 client credentials, service accounts or customer-defined API keys for this path.
 These requirements come from [OpenAI's authentication contract](https://developers.openai.com/plugins/build/auth).
 
-## Minimum bridge implementation
+## Configure the opt-in adapter
 
-Once a provider and the values above are selected, implement the following
-bounded changes against the existing architecture:
+Put these values in the private runtime environment file outside registered
+projects. Use exact values from the selected provider and actual ChatGPT/Tunnel
+connection; the following names are supported, but the placeholders are not a
+working configuration:
 
-1. Add an explicit HTTP OAuth mode in configuration and `src/server.ts`. Serve
+```dotenv
+CODEX_MCP_BRIDGE_NO_AUTH=0
+CODEX_MCP_BRIDGE_OAUTH_ISSUER=<exact-provider-issuer>
+CODEX_MCP_BRIDGE_OAUTH_RESOURCE=<canonical-https-mcp-resource>
+CODEX_MCP_BRIDGE_OAUTH_RESOURCE_METADATA_URL=<actual-https-metadata-url>
+CODEX_MCP_BRIDGE_OAUTH_JWKS_URI=<provider-https-jwks-uri>
+CODEX_MCP_BRIDGE_OAUTH_OPERATOR_SUBJECT=<verified-provider-subject>
+CODEX_MCP_BRIDGE_EVENTS_ENABLED=1
+CODEX_MCP_BRIDGE_TOKEN=<stable-installation-secret-of-at-least-32-bytes>
+```
+
+Do not normalize the issuer or subject. URLs must use HTTPS without credentials,
+query, fragment or unescaped whitespace. Obtain the subject through the
+provider's authenticated operator account, not ChatGPT request metadata.
+`CODEX_MCP_BRIDGE_TOKEN` is the stable callback-encryption secret in OAuth mode;
+submitting it to `/mcp` does not authenticate. Retain it separately for backups,
+and never replace it with a rotating OAuth access token.
+
+With the provider ready, start the Node server using `npm run bridge:secure`
+with HTTP transport and this private configuration. The launcher selects a
+separate default `codex-mcp-bridge-oauth` profile and the OAuth-discovery sample
+`sample_mcp_with_dcr`; the sample name does not choose the provider's client
+registration method. Its managed identity includes an authentication digest,
+and OAuth mode does not ignore discovery failures as No Auth. An explicit
+OAuth/No Auth combination or OAuth/stdio request fails before execution starts.
+The native app has no new provider-configuration form in this change.
+
+The bridge serves metadata at both
+`/.well-known/oauth-protected-resource` and
+`/.well-known/oauth-protected-resource/mcp`, retaining Host/Origin checks.
+Capture how the actual Tunnel publishes or forwards these paths before filling
+the external metadata URL. Only `server/discover` and `tools/list` are public
+without a token. Each tool advertises OAuth `securitySchemes` at the HTTP
+descriptor and in `_meta`; unauthenticated tool calls return linking metadata
+without running a handler. Other protected requests return a `401` Bearer
+challenge. A token must be verified before result, card or Events access.
+
+## Bridge implementation boundaries
+
+The implementation applies these bounded changes to the existing architecture:
+
+1. An explicit HTTP OAuth mode in configuration and `src/server.ts` serves
    protected resource metadata and a proper `401` Bearer challenge carrying
-   `resource_metadata`. Verify each access token before MCP dispatch. Reject
+   `resource_metadata`. Each access token is verified before protected MCP
+   dispatch, rejecting
    missing, invalid, expired, wrong-issuer, wrong-audience, missing-scope and
-   non-operator tokens. Keep the existing Host and Origin boundary. Use a
-   maintained verifier for the selected provider instead of creating an
-   authorization server inside the bridge.
-2. Carry a dedicated verified principal from middleware into
+   non-operator tokens. `jose` verifies asymmetric signatures against the
+   configured HTTPS JWKS, with a five-second fetch timeout, 128 KiB response
+   limit, no redirects and bounded cache/rotation refresh. Token headers cannot
+   select key URLs. The bridge does not create an authorization server.
+2. A dedicated verified principal passes from middleware into
    `authenticatedMcpPrincipal()` and the existing task/scope checks. Derive it
    from the configured resource and verified issuer/subject, using an unambiguous
-   stable encoding. Do not derive it from token bytes, expiry, JWT ID or OAuth
-   `client_id`. The current bearer implementation puts its private operator
-   identifier in SDK `AuthInfo.clientId`; a standard OAuth client's ID cannot
-   be reused as the user's principal.
-3. Adapt `McpEventsController` to authorize the configured operator principal
+   stable encoding. It is independent of token bytes, expiry, JWT ID and OAuth
+   `client_id`. SDK `AuthInfo.extra` carries the bridge-verified principal;
+   `clientId` remains client-application information.
+3. `McpEventsController` authorizes the configured operator principal
    independently of the current installation-bearer hash. Separate
    `EventDestinationVault` key ownership from short-lived access tokens.
    Preserve exact Job/scope/Activity/Agent checks, callback verification, the
    terminal-result transaction, receipt identity and retry/retention behavior.
-4. Bound subscriptions by the explicit authorization grant policy. If only
-   access-token expiry is verified, cap the grant to that expiry. Renewal by
-   the same verified user must preserve the logical subscription and followup
-   identities. Expiry or revocation stops delivery without cancelling Codex,
+4. Subscriptions are capped at verified access-token expiry, even when the
+   requested/default TTL is longer. Expiry is checked again after the callback
+   challenge. Renewal by the same verified user preserves the logical
+   subscription and followup identities. Expiry or revocation stops delivery without cancelling Codex,
    rerunning a Job or releasing the retained result early.
-5. Add an opt-in authenticated HTTP launcher/profile path in
-   `scripts/start-codex-mcp-bridge.mjs`, which currently forces No Auth. Its
-   managed profile identity must distinguish authentication configurations.
-   Explicit OAuth plus stdio must fail clearly until there is a verified stdio
-   identity contract; it must never silently start No Auth.
-6. Exercise these changes through the real HTTP MCP handler with an isolated
-   test authorization server and temporary state. Cover invalid tokens,
-   foreign users, token renewal, discovery/challenges, grant expiry, restart,
+5. The opt-in HTTP launcher/profile path preserves OAuth configuration and
+   never downgrades to No Auth. OAuth settings and the installation sealing
+   secret are stripped from Codex and Tunnel child environments; only the
+   bridge process receives them. Authentication changes invalidate profile
+   reuse. Explicit OAuth plus stdio fails clearly.
+6. Isolated tests exercise the real HTTP MCP handler, current SDK client,
+   fixture JWT signing/JWKS HTTP server and temporary state. They cover invalid
+   tokens, foreign users, token renewal, discovery/challenges, grant expiry, restart,
    callback access and concurrent repeated B admissions. Synthetic provider
-   tests do not replace actual ChatGPT login and Events acceptance.
+   tests do not implement browser login or replace actual ChatGPT acceptance.
 
-The adapter must not rewrite existing Job principals or approval receipts when
+Revocation is bounded by token expiry and the configured operator. An operator
+change revokes old deliveries at the bridge boundary. Provider-side immediate
+revocation is not promised with offline JWT validation; use an appropriate
+provider token lifetime and reauthorization policy. Changing the local sealing
+secret without retaining the original key makes old encrypted destinations
+unreadable and is not a token-refresh operation.
+
+The adapter does not rewrite existing Job principals or approval receipts when
 switching authentication modes. A new OAuth-authenticated A is required for the
 first trial. Retained No Auth or static-bearer Jobs cannot gain OAuth ownership
 just because the same local operator enables the new mode. Any later migration
@@ -140,8 +207,8 @@ separate workflow or review engine is needed.
 
 ## Actual acceptance sequence
 
-Use an isolated bridge/database and a harmless fixture project after the
-adapter exists. Record transport, authentication and host behavior separately.
+Use an isolated bridge/database and a harmless fixture project after configuring
+the provider. Record transport, authentication and host behavior separately.
 The sequence follows [connect and test](https://developers.openai.com/plugins/deploy/connect-chatgpt)
 and the [MCP Events contract](https://developers.openai.com/plugins/build/mcp-events).
 
@@ -169,7 +236,8 @@ and the [MCP Events contract](https://developers.openai.com/plugins/build/mcp-ev
    loss separately. Record the actual Chat model, Pro/usage behavior and
    limitations; webhook `2xx` is not evidence of preserved mode or GPT review.
 
-The completed item in this phase is the official connection design. Provider
-configuration, the OAuth adapter, synthetic adapter validation and actual host
-acceptance remain pending. [The investigation record](audits/2026-10-01-issue-213-auth-connection.md)
-separates source evidence from installed-product acceptance.
+The official connection design, JWT adapter and synthetic acceptance are complete.
+Provider configuration and actual host acceptance remain pending. The
+[design investigation](audits/2026-10-01-issue-213-auth-connection.md) and
+[implementation audit](audits/2026-10-01-issue-213-oauth-http.md) separate
+source/synthetic evidence from installed-product acceptance.

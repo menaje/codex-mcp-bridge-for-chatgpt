@@ -1,7 +1,8 @@
 import { execFile as execCatalogFile } from "node:child_process";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
-import { McpEventsController, mcpBearerPrincipal } from "./mcpEvents.js";
+import { McpEventsController, mcpBearerPrincipal, authenticatedMcpPrincipal } from "./mcpEvents.js";
+import { McpOAuthVerifier, MCP_OAUTH_SCOPES, mcpOAuthPrincipal, oauthChallenge, oauthRequiredResult } from "./mcpOAuth.js";
 import type { WebhookSender } from "./mcpWebhook.js";
 import { promisify as promisifyCatalog } from "node:util";
 import { createMcpHandler, inputRequired, McpServer } from "@modelcontextprotocol/server";
@@ -106,6 +107,8 @@ export type BridgeHttpRuntimeOptions = {
   canAcceptNewJobs?: () => boolean;
   /** Deterministic callback transport for isolated protocol acceptance tests. */
   eventWebhookSender?: WebhookSender;
+  /** Isolated authorization-server fixture transport; production uses HTTPS fetch. */
+  oauthJwksFetch?: typeof fetch;
   /**
    * Opt-in protocol-suite fixtures. These are never enabled by normal bridge
    * startup and exist solely to exercise SDK paths that the product does not
@@ -221,7 +224,7 @@ export function createBridgeMcpServer(
     ? new McpEventsController(config, jobRegistry, effectiveScopeResolver)
     : undefined);
   events?.install(server);
-  installMcpToolTextIntegrityGuard(server, onOperationFailure);
+  installMcpToolTextIntegrityGuard(server, onOperationFailure, config);
   const toolRegistration = registerBridgeTools(
     server,
     config,
@@ -267,6 +270,8 @@ export function createHttpServer(
   modelCatalogOverride?: CodexModelCatalogProvider,
   runtimeOptions: BridgeHttpRuntimeOptions = {}
 ): BridgeHttpServer {
+  if (config.oauth && config.noAuth) throw new Error("MCP OAuth cannot run with No Auth.");
+  const oauthVerifier = config.oauth ? new McpOAuthVerifier(config.oauth, runtimeOptions.oauthJwksFetch) : undefined;
   const stateStore = runtimeOptions.stateStore || new BridgeStateStore({ file: config.stateDatabaseFile });
   const ownsStateStore = runtimeOptions.stateStore === undefined;
   const sessions = new SessionRegistry({
@@ -345,7 +350,22 @@ export function createHttpServer(
     }
   );
   notifyToolsChanged = () => mcpHandler.notify.toolsChanged();
-  const nodeMcpHandler = toNodeHandler(mcpHandler, {
+  // SDK v2 retains extension metadata but its built-in Tool schema strips a
+  // top-level securitySchemes field. Publish OpenAI's extension after encoding,
+  // preserving the same declaration in _meta for standard MCP clients.
+  const oauthMcpHandler: Parameters<typeof toNodeHandler>[0] = { fetch: async (request, options) => {
+    const response = await mcpHandler.fetch(request, options);
+    if (!config.oauth || request.headers.get("mcp-method") !== "tools/list" ||
+        !response.headers.get("content-type")?.includes("application/json") || response.status !== 200) return response;
+    const body = await response.json();
+    if (Array.isArray(body?.result?.tools)) {
+      for (const tool of body.result.tools) tool.securitySchemes = [{ type: "oauth2", scopes: MCP_OAUTH_SCOPES }];
+    }
+    const headers = new Headers(response.headers);
+    headers.delete("content-length");
+    return new Response(JSON.stringify(body), { status: response.status, headers });
+  } };
+  const nodeMcpHandler = toNodeHandler(oauthMcpHandler, {
     onerror: (error) => {
       observeOperationFailure(runtimeOptions.onOperationFailure, error);
       logMcpError("MCP node adapter failed", error);
@@ -374,7 +394,8 @@ export function createHttpServer(
           ? "state-incompatible"
           : "admission-draining",
         limitations: ["state-execution-in-process"]
-      }))
+      })),
+      oauthVerifier
     );
   }) as BridgeHttpServer;
   httpServer.once("listening", () => stateStore.markServiceOpen("http"));
@@ -505,7 +526,8 @@ async function handleHttpRequest(
     response: ServerResponse,
     parsedBody?: unknown
   ) => Promise<void>,
-  readiness: () => BridgeReadinessSnapshot
+  readiness: () => BridgeReadinessSnapshot,
+  oauthVerifier?: McpOAuthVerifier
 ): Promise<void> {
   const pathname = new URL(req.url || "/", "http://bridge.invalid").pathname;
   if (pathname === "/healthz" && req.method === "GET") {
@@ -537,6 +559,13 @@ async function handleHttpRequest(
       pathname === "/.well-known/oauth-protected-resource/mcp") &&
     req.method === "GET"
   ) {
+    if (config.oauth) {
+      if (!validateHost(req, res) || !validateOrigin(req, res)) return;
+      res.setHeader("cache-control", "no-store");
+      writeJson(res, 200, { resource: config.oauth.resource, authorization_servers: [config.oauth.issuer],
+        scopes_supported: MCP_OAUTH_SCOPES, bearer_methods_supported: ["header"] });
+      return;
+    }
     res.statusCode = 404;
     res.end();
     return;
@@ -547,15 +576,19 @@ async function handleHttpRequest(
     return;
   }
   if (!validateHost(req, res) || !validateOrigin(req, res)) return;
-  if (!isAuthorized(req.headers.authorization, config)) {
+  const oauthAuth = oauthVerifier ? await oauthVerifier.authenticate(req.headers.authorization) : undefined;
+  if (!oauthVerifier && !isAuthorized(req.headers.authorization, config)) {
     writeJson(res, 401, { error: "unauthorized" });
     return;
   }
-  if (!config.noAuth && config.token) {
+  if (oauthAuth) {
+    (req as IncomingMessage & { auth?: unknown }).auth = oauthAuth;
+  } else if (!oauthVerifier && !config.noAuth && config.token) {
     // The Node adapter forwards only this server-validated bearer identity.
     // Host metadata and callback verification can never populate authInfo.
     (req as IncomingMessage & { auth?: unknown }).auth = {
-      token: config.token, clientId: mcpBearerPrincipal(config.token), scopes: ["bridge"]
+      token: config.token, clientId: mcpBearerPrincipal(config.token), scopes: ["bridge"],
+      extra: { bridgeMcpPrincipal: mcpBearerPrincipal(config.token) }
     };
   }
   let parsedBody: unknown;
@@ -568,6 +601,22 @@ async function handleHttpRequest(
       id: null
     });
     return;
+  }
+  if (config.oauth && !oauthAuth) {
+    const body = parsedBody as { method?: unknown; id?: unknown } | undefined;
+    // Discovery is public; no project, result, card contents or event grants are.
+    const discovery = req.method === "POST" && ["server/discover", "tools/list"].includes(String(body?.method)) &&
+      req.headers.authorization === undefined;
+    if (!discovery) {
+      res.setHeader("www-authenticate", oauthChallenge(config.oauth));
+      res.setHeader("cache-control", "no-store");
+      if (req.method === "POST" && body?.method === "tools/call" &&
+          (typeof body.id === "string" || typeof body.id === "number")) {
+        writeJson(res, 200, { jsonrpc: "2.0", id: body.id,
+          result: { ...oauthRequiredResult(config.oauth), resultType: "complete" } });
+      } else writeJson(res, 401, { error: "unauthorized" });
+      return;
+    }
   }
   await handleMcp(req, res, parsedBody);
 }
@@ -628,7 +677,8 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
 /** Apply the same JSON-string invariant to every MCP tool in one place. */
 function installMcpToolTextIntegrityGuard(
   server: McpServer,
-  onOperationFailure?: (error: unknown) => void
+  onOperationFailure?: (error: unknown) => void,
+  bridgeConfig?: BridgeConfig
 ): void {
   type UntypedToolCallback = (args: unknown, context: unknown) => unknown;
   type UntypedRegisterTool = (
@@ -640,9 +690,14 @@ function installMcpToolTextIntegrityGuard(
   const registerTool = target.registerTool.bind(server);
   target.registerTool = (name, config, callback) => registerTool(
     name,
-    config,
+    bridgeConfig?.oauth ? { ...(config as Record<string, unknown>),
+      _meta: { ...(config as { _meta?: Record<string, unknown> })._meta,
+        securitySchemes: [{ type: "oauth2", scopes: MCP_OAUTH_SCOPES }] } } : config,
     async (args, context) => {
       try {
+        if (bridgeConfig?.oauth && authenticatedMcpPrincipal(context as import("@modelcontextprotocol/server").ServerContext) !== mcpOAuthPrincipal(bridgeConfig.oauth)) {
+          return oauthRequiredResult(bridgeConfig.oauth);
+        }
         assertJsonTextIntegrity(args, `MCP tool ${name} input`);
         const result = await callback(args, context);
         assertJsonTextIntegrity(result, `MCP tool ${name} result`);
