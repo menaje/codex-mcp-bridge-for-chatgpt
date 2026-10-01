@@ -148,6 +148,15 @@ descriptor and in `_meta`; unauthenticated tool calls return linking metadata
 without running a handler. Other protected requests return a `401` Bearer
 challenge. A token must be verified before result, card or Events access.
 
+If a required JWKS lookup fails, verification remains unavailable: HTTP returns
+`503`, `Retry-After: 5` and `{ "error": "authentication_unavailable", "retryable": true }`.
+It does not emit an `invalid_token` challenge or account-linking metadata.
+Fresh cached keys can still verify requests locally. A retry after provider
+recovery can verify the same token; no re-login, new Job or receipt is inferred.
+An invalid signature/claim, expired token or unknown key in a usable JWKS still
+uses the existing authentication-error/linking path. Fetch/parser diagnostics
+and token bytes are never included in the response.
+
 ## Bridge implementation boundaries
 
 The implementation applies these bounded changes to the existing architecture:
@@ -177,6 +186,10 @@ The implementation applies these bounded changes to the existing architecture:
    challenge. Renewal by the same verified user preserves the logical
    subscription and followup identities. Expiry or revocation stops delivery without cancelling Codex,
    rerunning a Job or releasing the retained result early.
+   Delivery re-reads each exact grant before sending and after the response;
+   revision-checked journal writes prevent an older delivery snapshot from
+   undoing a renewal or unsubscribe. Renewal preserves delivery progress
+   committed while its callback challenge was awaiting a response.
 5. The opt-in HTTP launcher/profile path preserves OAuth configuration and
    never downgrades to No Auth. OAuth settings and the installation sealing
    secret are stripped from Codex and Tunnel child environments; only the
@@ -241,3 +254,5 @@ Provider configuration and actual host acceptance remain pending. The
 [design investigation](audits/2026-10-01-issue-213-auth-connection.md) and
 [implementation audit](audits/2026-10-01-issue-213-oauth-http.md) separate
 source/synthetic evidence from installed-product acceptance.
+The [delivery and JWKS regression audit](audits/2026-10-01-issue-213-delivery-races.md)
+records the subsequent race/error-classification corrections.
