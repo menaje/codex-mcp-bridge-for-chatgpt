@@ -10,6 +10,11 @@ Bridge requires. Callback verification never started.** The earlier
 conversation's “no subscription tool” answer was not a transport diagnosis.
 The native event-based automation route was subsequently found and invoked.
 
+A further **Refresh tools → new GPT conversation → new A** trial reproduced
+the same missing-metadata rejection. The new A successfully read the fixture;
+its result was obtained by direct Job lookup, not by an event. See the
+fresh-session observations below.
+
 This is an observed incompatibility between this host route and the Bridge's
 conversation-bound authorization contract. It is not proof of an OpenAI bug,
 universal Events unavailability, callback failure or missing OAuth support.
@@ -138,8 +143,10 @@ complete code-mode execution acceptance test. Original A result and B=0 remain.
 request exists or OAuth works. It is the supported authorization/correlation
 contract for native Events requests that omit the original conversation field.
 Callback verification/delivery and event-triggered conversation resumption are
-not tested because this boundary rejects the request first. A successful new
-A followed by reviewed B once also remains untested; neither was executed.
+not tested because this boundary rejects the request first. At the original
+observations above, no new A or B was executed. The subsequent fresh-session
+trial below established a successful new A; event-triggered review followed by
+exactly one approved B remains untested.
 
 The next technical inquiry is ready, but **has not been submitted**:
 
@@ -158,3 +165,69 @@ The active private trial services still use the task checkout. Git integration
 is separate from service shutdown; task branch/worktree removal is deferred
 until those processes can be safely stopped. No Codex conversations are
 archived, renamed or removed for cleanup.
+
+## Fresh-session trial after another tool refresh
+
+At the user's explicit request, **Refresh tools** was clicked again before
+opening a new ChatGPT Work conversation. Authenticated discovery, tool listing,
+Events listing and resource reads returned HTTP 200 at **13:11:08–13:11:11 UTC**.
+The new conversation used the exact OAuth test app by @-mention. The picker
+again displayed Light, 2 of 6, fast mode off; no precise host model ID was
+exposed. Its resolved scope differs from the original A's scope, while the
+verified OAuth principal remains the same.
+
+One new read-only A was admitted in that new scope using
+**gpt-5.6-luna / low**, network access false and zero writable roots. It returned
+the fixture JSON, with parsed content exactly equal to `fixture-a.json` and
+`canProceed=true`. This is a real model-backed A execution following restoration
+of the CLI helper, unlike the earlier model-free sandbox probe. The original
+failed A was not changed or rerun. No approved followup was declared for the new
+A, and no B was executed.
+
+| UTC time | Fresh-session operation | Observed result |
+| --- | --- | --- |
+| 13:13:54–13:13:56 | New A `codex_task` | HTTP 200; authenticated, wire/handler session present; scope resolved and different from the original A. Exactly one admission. |
+| 13:14:06 | New A terminal result | Completed, terminal version 1; exact fixture JSON and `canProceed=true`. |
+| 13:14:13.107 | Native `events/subscribe` for new A | Reached public ingress and authenticated handler; OAuth passed; wire/handler session absent; scope unresolved; HTTP 200 / JSON-RPC **-32001**. Callback verification did not start. |
+| 13:14:13.648 | Host cleanup `events/unsubscribe` | Same missing-session rejection; HTTP 200 / JSON-RPC **-32001**. |
+| 13:14:28.990 | Exact new A `codex_status` | HTTP 200; session present and new scope resolved; GPT reported the successful JSON. |
+
+The native automation creation returned `status=ERROR` and the same unexpected
+task-service error. The trial DB now contains **two A Jobs** (one historical
+failed-result A and one fresh successful A), **zero B Jobs** and **zero
+subscriptions**. Across these observed attempts, callback verification starts
+remain zero. No callback or signing secret was fabricated, and no polling or
+time-based automation was substituted. The successful A result is a direct
+retrieval control, not evidence of event delivery or conversation resumption.
+
+This reproduces the authorization-contract mismatch after a real refresh and
+new conversation, rather than merely checking feature exposure in a new chat.
+It does not establish that every ChatGPT host omits this field or that omission
+violates the documented Events contract. The supported way to authorize a
+subscription for its originating conversation remains the gate.
+
+### Separate live-card artifact observation
+
+The new chat's dashboard still loaded a script containing the former
+`Use only Codex MCP Bridge for ChatGPT.` instruction, with no
+`completionResultMessage` helper. The rendered GPT response recorded an
+ordinary-connection receipt lookup rejected as `HANDLE_UNAVAILABLE`.
+Read-only inspection of the actual nested iframe script confirms the old
+instruction; the current checkout's compiled dashboard and generated HTML
+contain the new handoff implementation and omit that instruction.
+
+Thus the source/synthetic validation of the correction must remain separate
+from actual artifact adoption on this live connection. **Whether the old
+artifact came from the live resource response, retained host state or another
+cache was not established.** Tool refresh plus a new conversation alone did
+not establish that the updated card ran. This is independent of the missing
+Events metadata and does not justify weakening connection or scope checks.
+The private screenshot/script evidence was retained locally; no raw script,
+scope value, credential or receipt was published.
+
+This followup changes only the audit and sanitized evidence summary. The
+previous 1,212 Node / 216 Swift results were not rerun or claimed as a new result.
+JSON, UTF-8, privacy and diff validation were performed for this documentation
+update. **#213 remains OPEN**, and the live trial still uses the task checkout,
+so its safe removal remains deferred. No conversation was renamed, archived
+or removed.

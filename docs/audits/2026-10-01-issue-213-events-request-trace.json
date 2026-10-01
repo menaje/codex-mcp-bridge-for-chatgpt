@@ -100,5 +100,116 @@
     "callbackLocationsLogged": false,
     "scopeOrPrincipalValuesLogged": false
   },
-  "supportInquirySent": false
+  "supportInquirySent": false,
+  "freshSessionTrial": {
+    "baseline": "a969f8b",
+    "refreshedToolsBeforeNewConversation": true,
+    "newConversation": true,
+    "observations": [
+      {
+        "label": "fresh-refreshed-Events-discovery",
+        "time": "2026-10-01T13:11:09.102Z",
+        "method": "events/list",
+        "httpStatus": 200,
+        "jsonRpcErrorCode": null,
+        "authenticated": true,
+        "sameOAuthPrincipalAsOriginalA": true,
+        "handlerHasOpenaiSession": false,
+        "callbackVerificationStarted": false
+      },
+      {
+        "label": "fresh-A-admission",
+        "time": "2026-10-01T13:13:56.004Z",
+        "method": "tools/call",
+        "httpStatus": 200,
+        "jsonRpcErrorCode": null,
+        "authenticated": true,
+        "sameOAuthPrincipalAsOriginalA": true,
+        "handlerHasOpenaiSession": true,
+        "callbackVerificationStarted": false,
+        "tool": "codex_task",
+        "scopeResolved": true,
+        "scopeMatchesOriginalA": false,
+        "wireHasOpenaiSession": true
+      },
+      {
+        "label": "fresh-native-subscription",
+        "time": "2026-10-01T13:14:13.107Z",
+        "method": "events/subscribe",
+        "httpStatus": 200,
+        "jsonRpcErrorCode": -32001,
+        "authenticated": true,
+        "sameOAuthPrincipalAsOriginalA": true,
+        "handlerHasOpenaiSession": false,
+        "callbackVerificationStarted": false,
+        "scopeResolved": false,
+        "scopeMatchesOriginalA": null,
+        "wireHasOpenaiSession": false
+      },
+      {
+        "label": "fresh-native-cleanup",
+        "time": "2026-10-01T13:14:13.648Z",
+        "method": "events/unsubscribe",
+        "httpStatus": 200,
+        "jsonRpcErrorCode": -32001,
+        "authenticated": true,
+        "sameOAuthPrincipalAsOriginalA": true,
+        "handlerHasOpenaiSession": false,
+        "callbackVerificationStarted": false,
+        "scopeResolved": false,
+        "scopeMatchesOriginalA": null,
+        "wireHasOpenaiSession": false
+      },
+      {
+        "label": "fresh-A-direct-result-read",
+        "time": "2026-10-01T13:14:28.990Z",
+        "method": "tools/call",
+        "httpStatus": 200,
+        "jsonRpcErrorCode": null,
+        "authenticated": true,
+        "sameOAuthPrincipalAsOriginalA": true,
+        "handlerHasOpenaiSession": true,
+        "callbackVerificationStarted": false,
+        "tool": "codex_status",
+        "scopeResolved": true,
+        "scopeMatchesOriginalA": false,
+        "wireHasOpenaiSession": true
+      }
+    ],
+    "newA": {
+      "newConversationScope": true,
+      "sameOAuthPrincipal": true,
+      "state": "completed",
+      "terminalVersion": 1,
+      "fixtureJsonEqual": true,
+      "canProceed": true,
+      "sandbox": "read-only",
+      "networkAccess": false,
+      "writableRootCount": 0,
+      "approvedFollowups": 0,
+      "model": {
+        "model": "gpt-5.6-luna",
+        "reasoningEffort": "low"
+      }
+    },
+    "nativeAutomationCreationCount": 1,
+    "nativeAutomationStatus": "ERROR",
+    "retainedTrialState": {
+      "totalCodexJobs": 2,
+      "originalAJobs": 1,
+      "freshAJobs": 1,
+      "BJobs": 0,
+      "subscriptions": 0
+    },
+    "callbackVerificationStarts": 0,
+    "eventTriggeredResumeVerified": false,
+    "liveCard": {
+      "loadedFormerRoutingInstruction": true,
+      "loadedNewResultHandoff": false,
+      "ordinaryConnectionLookupRejected": true,
+      "oldArtifactSourceEstablished": false
+    },
+    "testsRerun": false
+  },
+  "retainedTrialStateObservation": "original-conversation trials before the fresh-session test"
 }
