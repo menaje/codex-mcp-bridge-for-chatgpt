@@ -90,7 +90,7 @@ export class McpEventsController {
     server.server.setRequestHandler("events/subscribe", { params: subscribeSchema }, (params, context) => this.subscribe(params, context));
     server.server.setRequestHandler("events/unsubscribe", { params: unsubscribeSchema }, (params, context) => {
       const principal = this.authorize(context);
-      const scopeId = this.scopes.require(context.mcpReq._meta as ToolCallMetadata, undefined, "Event unsubscribe").scopeId;
+      const scopeId = this.requireScope(context);
       const id = this.identity(principal, scopeId, params.arguments.jobId, params.delivery.url);
       if (this.verifying.has(id)) this.verifying.set(id, this.verifying.get(id)! + 1);
       const ledger = this.jobs.admissionStateStore.mcpEvents;
@@ -108,7 +108,7 @@ export class McpEventsController {
 
   private async subscribe(params: z.infer<typeof subscribeSchema>, context: ServerContext) {
     const principal = this.authorize(context);
-    const scopeId = this.scopes.require(context.mcpReq._meta as ToolCallMetadata, undefined, "Event subscription").scopeId;
+    const scopeId = this.requireScope(context);
     this.requireJob(params.arguments.jobId, scopeId, principal);
     const id = this.identity(principal, scopeId, params.arguments.jobId, params.delivery.url);
     const ledger = this.jobs.admissionStateStore.mcpEvents;
@@ -177,6 +177,19 @@ export class McpEventsController {
   }
 
   private denied() { return new ProtocolError(-32001, "Events require an authenticated connection and the original conversation's owned Job."); }
+
+  private requireScope(context: ServerContext): string {
+    let scope;
+    try {
+      scope = this.scopes.resolve(context.mcpReq._meta as ToolCallMetadata);
+    } catch {
+      throw new ProtocolError(-32001, "Events require valid original conversation metadata.", { reason: "invalid_conversation_scope" });
+    }
+    if (!scope) {
+      throw new ProtocolError(-32001, "Events require original conversation metadata.", { reason: "missing_conversation_scope" });
+    }
+    return scope.scopeId;
+  }
 
   private requireJob(jobId: string, scopeId: string, principal: string): EventJob {
     const job = this.jobs.get(jobId);
