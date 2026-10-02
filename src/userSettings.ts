@@ -146,6 +146,14 @@ export class UserSettingsStore {
     return this.stateStore.persistent;
   }
 
+  get recoverableProjects(): ProjectTarget[] {
+    return this.stateStore.getRecoverableProjects();
+  }
+
+  projectRestoreTarget(projectId: string): ProjectTarget {
+    return this.stateStore.getProjectRestoreTarget(projectId);
+  }
+
   get persistencePath(): string | null {
     return this.stateStore.persistencePath;
   }

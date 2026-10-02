@@ -12476,55 +12476,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Each project must use a different canonical folder."
+            "value": "Another active project already uses this folder."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "각 프로젝트는 서로 다른 canonical 폴더를 사용해야 합니다."
+            "value": "다른 활성 프로젝트가 이미 이 폴더를 사용하고 있습니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "各プロジェクトには異なる正規フォルダーが必要です。"
+            "value": "別の有効なプロジェクトがこのフォルダを使用しています。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "每个项目必须使用不同的规范文件夹。"
+            "value": "另一个活动项目已在使用此文件夹。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "每個專案必須使用不同的正規資料夾。"
+            "value": "另一個使用中的專案已在使用此資料夾。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Cada proyecto debe usar una carpeta canónica distinta."
+            "value": "Otro proyecto activo ya utiliza esta carpeta."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Chaque projet doit utiliser un dossier canonique différent."
+            "value": "Un autre projet actif utilise déjà ce dossier."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Jedes Projekt muss einen anderen kanonischen Ordner verwenden."
+            "value": "Ein anderes aktives Projekt verwendet diesen Ordner bereits."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Cada projeto deve usar uma pasta canônica diferente."
+            "value": "Outro projeto ativo já utiliza esta pasta."
           }
         }
       }
@@ -28301,6 +28301,238 @@
           "stringUnit": {
             "state": "translated",
             "value": "visão geral"
+          }
+        }
+      }
+    },
+    "settings.recoverableProjects": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recover deleted projects"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "삭제된 프로젝트 복구"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "削除したプロジェクトを復元"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "恢复已删除的项目"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "復原已刪除的專案"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recuperar proyectos eliminados"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Récupérer les projets supprimés"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gelöschte Projekte wiederherstellen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recuperar projetos eliminados"
+          }
+        }
+      }
+    },
+    "settings.projectRecoveryHint": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "These deleted registrations still have resumable work. Restore the existing project to keep its conversations and history."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "삭제된 등록에 재개 가능한 작업이 남아 있습니다. 기존 프로젝트를 복구하면 대화와 작업 기록이 유지됩니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "削除した登録に再開可能な作業が残っています。既存のプロジェクトを復元すると、会話と作業履歴を維持できます。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这些已删除的注册仍有可恢复的工作。恢复原项目可保留会话和工作历史。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這些已刪除的註冊仍有可繼續的工作。復原原專案可保留對話和工作記錄。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estos registros eliminados conservan trabajo que puede reanudarse. Restaura el proyecto existente para conservar sus conversaciones e historial."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ces inscriptions supprimées conservent du travail pouvant être repris. Restaurez le projet existant pour conserver ses conversations et son historique."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese gelöschten Registrierungen enthalten fortsetzbare Arbeit. Stellen Sie das bestehende Projekt wieder her, um Gespräche und Verlauf zu erhalten."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estes registos eliminados mantêm trabalho que pode ser retomado. Restaure o projeto existente para preservar as conversas e o histórico."
+          }
+        }
+      }
+    },
+    "settings.projectCwdStillPinned": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Earlier resumable work still owns this folder. Restore its existing project; deleted registrations appear under Recover deleted projects."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이전 작업의 재개 가능한 연결이 이 폴더를 계속 사용하고 있습니다. 기존 프로젝트를 복원하세요. 삭제된 등록은 ‘삭제된 프로젝트 복구’에서 복구할 수 있습니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "以前の再開可能な作業がこのフォルダを使用しています。既存のプロジェクトを復元してください。削除した登録は「削除したプロジェクトを復元」に表示されます。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "之前可恢复的工作仍在使用此文件夹。请恢复原项目；已删除的注册显示在“恢复已删除的项目”中。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "先前可繼續的工作仍在使用此資料夾。請復原原專案；已刪除的註冊顯示於「復原已刪除的專案」。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El trabajo anterior que puede reanudarse sigue usando esta carpeta. Restaura su proyecto; los registros eliminados aparecen en Recuperar proyectos eliminados."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un travail antérieur pouvant être repris utilise encore ce dossier. Restaurez son projet ; les inscriptions supprimées figurent dans Récupérer les projets supprimés."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Frühere fortsetzbare Arbeit verwendet diesen Ordner weiterhin. Stellen Sie das bestehende Projekt wieder her; gelöschte Registrierungen stehen unter Gelöschte Projekte wiederherstellen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trabalho anterior que pode ser retomado ainda utiliza esta pasta. Restaure o projeto existente; os registos eliminados aparecem em Recuperar projetos eliminados."
+          }
+        }
+      }
+    },
+    "settings.projectDeleteStillPinned": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This project still has resumable work or active jobs. Keep it archived, or finish and release those contexts before deleting its registration."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 프로젝트에 재개 가능한 작업이나 실행 중인 작업이 남아 있습니다. 보관 상태로 유지하거나 해당 작업과 연결을 종료한 뒤 등록을 삭제하세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このプロジェクトには再開可能な作業または実行中のジョブが残っています。アーカイブしたままにするか、作業と接続を終了してから登録を削除してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此项目仍有可恢复的工作或正在运行的任务。请保持归档状态，或先结束工作并释放连接，再删除注册。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此專案仍有可繼續的工作或執行中的任務。請維持封存狀態，或先結束工作並釋放連線，再刪除註冊。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este proyecto conserva trabajo que puede reanudarse o tareas activas. Mantenlo archivado o finaliza el trabajo y libera sus conexiones antes de eliminar el registro."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce projet conserve du travail pouvant être repris ou des tâches actives. Gardez-le archivé ou terminez le travail et libérez ses connexions avant de supprimer son inscription."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieses Projekt enthält fortsetzbare Arbeit oder aktive Aufträge. Lassen Sie es archiviert oder beenden Sie die Arbeit und geben Sie die Verbindungen frei, bevor Sie die Registrierung löschen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este projeto mantém trabalho que pode ser retomado ou tarefas ativas. Mantenha-o arquivado ou conclua o trabalho e liberte as ligações antes de eliminar o registo."
           }
         }
       }

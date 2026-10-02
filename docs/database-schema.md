@@ -128,6 +128,18 @@ sessions keep a null boundary because an upgrade cannot infer their owner.
 | `automatic_recovery_incidents` | Stable incident identity to active recovery relationship | Keep current and historical incident identity so a restart does not reset attempt limits; one recovery key per incident. |
 | `operational_command_receipts` | Isolated-state command ID, operation, payload digest, optional aggregate/version, compact result, committing generation and time | Keep through the unresolved IPC uncertainty window. Idempotent `maintain` receipts are eligible after 24 hours and are removed in bounded 500-row slices; future business-command receipts require a separate reference-aware policy. An identical retained command retry returns the original result; a changed operation, payload hash, or aggregate fails closed. Receipt storage does not prove an external recipient accepted an effect. |
 
+Project registration deletion requires an archived project with no resumable
+Activity, current non-orphaned Agent thread, or running/unsettled Job. A rejected
+delete leaves both settings and registry revisions unchanged. Older deleted
+registrations that still own such work appear in the private Settings recovery
+list (up to the 100 most recent entries, refreshed after each recovery). Restoring
+an explicitly selected tombstone clears its archive/delete markers, preserves
+its UUID, selection reference and all work relationships, and advances the
+project and registry revisions under the ordinary registry CAS. It checks the
+current name, folder, allowed roots, registered-project limit and managed
+credentials location before committing. It never transfers retained work to a
+new registration or removes that work to free a folder.
+
 Schema 18 also had `scope_versions` and `job_summaries`; both are removed above.
 Its other project label/UUID/name/cwd snapshot columns, session payload, Agent archive
 column, and dynamic retention/history meta keys are represented in the matrix by

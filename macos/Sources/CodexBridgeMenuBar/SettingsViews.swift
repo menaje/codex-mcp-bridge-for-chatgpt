@@ -2423,6 +2423,29 @@ private struct ProjectsSettingsPane: View {
                         delete: { deletionTarget = project }
                     )
                 }
+                if let recoverable = snapshot.capabilities.recoverableProjects, !recoverable.isEmpty {
+                    Section {
+                        Text("settings.projectRecoveryHint")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ForEach(recoverable) { project in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(project.name)
+                                    Text(project.cwd)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                                Spacer()
+                                Button("settings.restoreProject") { editor = .restore(project) }
+                                    .disabled(model.isBusy)
+                            }
+                        }
+                    } header: {
+                        Text("settings.recoverableProjects")
+                    }
+                }
             }
             .listStyle(.inset)
 

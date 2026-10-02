@@ -459,6 +459,8 @@ public struct SettingsCapabilities: Codable, Sendable {
     public let availableAccessStrategies: [String]
     public let availableUiLocalePreferences: [String]
     public let projectAvailability: [ProjectAvailability]
+    /// Deleted registrations with retained context; absent on older servers.
+    public let recoverableProjects: [BridgeProject]?
     public let maxConcurrentJobs: Int
     public let defaultBackend: String
     public let allowWorkspaceWrite: Bool

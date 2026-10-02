@@ -337,7 +337,7 @@ describe("user settings and project registry", () => {
     state.close();
   });
 
-  it("deletes only archived registrations while retaining pinned work history", () => {
+  it("deletes only archived registrations while retaining finished work history", () => {
     const root = temporaryDirectory("settings-delete-project-");
     const state = new BridgeStateStore({ file: ":memory:" });
     const store = new UserSettingsStore(configFor(), { stateStore: state });
@@ -366,6 +366,7 @@ describe("user settings and project registry", () => {
     )).toThrow(PROJECT_DELETE_REQUIRES_ARCHIVE);
     expect(store.current.registryRevision).toBe(1);
 
+    state.completeActivity(activityId, "Finished before deleting the registration", 2);
     store.updateWithProjectOperations(
       {},
       [{ kind: "archive", projectId: project.id }],

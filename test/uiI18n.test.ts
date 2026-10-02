@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { usesFastProcessing } from "../src/executionPresentation.js";
 import {
   dashboardHistoryActivityHeading,
@@ -60,12 +61,24 @@ const PROJECT_TRANSLATION_KEYS = [
   "settings.projectInvalidLabel",
   "settings.projectInvalidCwd",
   "settings.projectDuplicatePath",
+  "settings.projectCwdStillPinned",
+  "settings.projectDeleteStillPinned",
+  "settings.recoverableProjects",
+  "settings.projectRecoveryHint",
   "settings.projectUnavailableSave",
   "settings.projectLimit",
   "settings.projectError"
 ] as const;
 
 describe("human-facing UI localization", () => {
+  it("round-trips compact Settings translations in every locale within the existing card budget", () => {
+    const namespaces = ["common", "settings", "effort", "history", "problem.historyNotice", "problem.automaticHistoryNotice"];
+    const ordinary = serializedUiTranslations(namespaces);
+    const compact = serializedUiTranslations(namespaces, true);
+    expect(JSON.stringify(runInNewContext(compact))).toBe(ordinary);
+    expect(compact.length).toBeLessThan(ordinary.length);
+    expect(compact).not.toContain("<");
+  });
   it("materializes every native key in every generated language, including the source language", () => {
     const native = JSON.parse(readFileSync("macos/Resources/Localization/Localizable.xcstrings", "utf8"));
     for (const [key, entry] of Object.entries(native.strings) as Array<[string, {
@@ -367,7 +380,7 @@ describe("human-facing UI localization", () => {
       expect(bundle).not.toHaveProperty("activity.prompt.handoff");
     }
     expect(SETTINGS_CARD_HTML).toContain(
-      serializedUiTranslations(["common", "settings", "effort", "history", "problem.historyNotice", "problem.automaticHistoryNotice"])
+      serializedUiTranslations(["common", "settings", "effort", "history", "problem.historyNotice", "problem.automaticHistoryNotice"], true)
     );
     const dashboardBundles = JSON.parse(DASHBOARD_CARD_HTML.match(/const BUNDLES=(.*);/)![1]);
     const dashboardKeys = [...DASHBOARD_CARD_HTML.matchAll(/t\["([a-zA-Z0-9.-]+)"\]/g)].map(match => match[1]);

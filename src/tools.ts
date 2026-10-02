@@ -942,6 +942,7 @@ const settingsViewOutputSchema = z.strictObject({
       available: z.boolean(),
       archived: z.boolean()
     })),
+    recoverableProjects: bridgeUserSettingsOutputSchema.shape.projects.optional(),
     maxConcurrentJobs: z.number().int().positive(),
     defaultBackend: z.literal("app-server"),
     allowWorkspaceWrite: z.boolean(),
@@ -7900,7 +7901,6 @@ export function registerBridgeTools(
 
     const managedRuntimeEnv = process.env.CODEX_MCP_BRIDGE_ENV_FILE;
     if (managedRuntimeEnv && projectOperations.length > 0) {
-      const currentProjects = userSettings.current.projects;
       const candidateRoots = projectOperations.flatMap((operation) => {
         switch (operation.kind) {
           case "add":
@@ -7910,9 +7910,7 @@ export function registerBridgeTools(
           case "restore":
             return operation.cwd
               ? [operation.cwd]
-              : currentProjects
-                  .filter((project) => project.id === operation.projectId)
-                  .map((project) => project.cwd);
+              : [userSettings.projectRestoreTarget(operation.projectId).cwd];
           default:
             return [];
         }
@@ -14291,6 +14289,7 @@ async function buildSettingsView(
     capabilities: {
       availableAccessStrategies,
       availableUiLocalePreferences: [...UI_LOCALE_PREFERENCES],
+      recoverableProjects: userSettings.recoverableProjects,
       projectAvailability: userSettings.projectRegistry.availability.map(
         ({ project, available }) => ({
           projectId: project.id,

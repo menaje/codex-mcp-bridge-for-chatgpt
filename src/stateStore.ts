@@ -123,6 +123,7 @@ import {
   PROJECT_CWD_CONFLICT,
   PROJECT_CWD_STILL_PINNED,
   PROJECT_DELETE_REQUIRES_ARCHIVE,
+  PROJECT_DELETE_STILL_PINNED,
   PROJECT_LIMIT_EXCEEDED,
   PROJECT_NAME_CONFLICT,
   PROJECT_NOT_FOUND,
@@ -299,6 +300,18 @@ export type ArchivedJobAdmissionReceipt = {
 
 type JsonRow = { payload: string };
 type CountRow = { count: number };
+// Deletion and tombstone discovery share one identity-owned context boundary.
+// Older paths of a relocated project remain protected by assertProjectCwdReusable().
+const PROJECT_RESUMABLE_CONTEXT_PREDICATE = `
+  EXISTS (SELECT 1 FROM activities a WHERE a.project_id = p.project_id
+    AND a.lifecycle IN ('open','sealed','terminating'))
+  OR EXISTS (SELECT 1 FROM agent_threads t JOIN sessions s ON s.thread_id = t.thread_id
+    JOIN agents a ON a.agent_id = t.agent_id
+    WHERE s.project_id = p.project_id AND t.is_current = 1 AND a.lifecycle <> 'orphaned')
+  OR EXISTS (SELECT 1 FROM jobs j JOIN activities a ON a.activity_id = j.activity_id
+    WHERE a.project_id = p.project_id AND j.archived_at IS NULL
+      AND j.status IN ('running','terminating','termination-failed'))
+`;
 type ProjectStorageRow = {
   project_id: string;
   project_ref: string;
@@ -3774,6 +3787,22 @@ export class BridgeStateStore {
     return row.registry_revision;
   }
 
+  /** App-private recovery list; these tombstones remain excluded from admission. */
+  getRecoverableProjects(): ProjectTarget[] {
+    return (this.database.prepare(`
+      SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
+             created_at, updated_at, archived_at, deleted_at
+        FROM projects p
+       WHERE deleted_at IS NOT NULL AND (${PROJECT_RESUMABLE_CONTEXT_PREDICATE})
+       ORDER BY deleted_at DESC, project_id ASC
+       LIMIT ?
+    `).all(MAX_REGISTERED_PROJECTS) as ProjectStorageRow[]).map(readProjectStorageRow);
+  }
+
+  getProjectRestoreTarget(projectId: string): ProjectTarget {
+    return readProjectStorageRow(this.requireProjectStorageRow(normalizeProjectId(projectId), true));
+  }
+
   assertProjectRegistryRevision(expectedRevision: number): void {
     if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
       throw new Error(
@@ -3970,7 +3999,7 @@ export class BridgeStateStore {
         }
 
         const projectId = normalizeProjectId(operation.projectId);
-        const row = this.requireProjectStorageRow(projectId);
+        const row = this.requireProjectStorageRow(projectId, operation.kind === "restore");
         if (operation.kind === "rename") {
           if (row.archived_at !== null) {
             throw new Error(`${PROJECT_ARCHIVED}: Restore an archived project to change its active name.`);
@@ -4019,6 +4048,14 @@ export class BridgeStateStore {
               `${PROJECT_DELETE_REQUIRES_ARCHIVE}: Archive the project before deleting its registration.`
             );
           }
+          if (this.database.prepare(`
+            SELECT 1 FROM projects p WHERE project_id = ?
+              AND (${PROJECT_RESUMABLE_CONTEXT_PREDICATE})
+          `).get(projectId)) {
+            throw new Error(
+              `${PROJECT_DELETE_STILL_PINNED}: This project still has resumable Activities, current Agent threads, or active Jobs. Keep its registration archived, or finish those contexts before deleting it.`
+            );
+          }
           this.database
             .prepare("UPDATE projects SET deleted_at = ?, updated_at = ? WHERE project_id = ?")
             .run(now, now, projectId);
@@ -4027,7 +4064,15 @@ export class BridgeStateStore {
           continue;
         }
 
-        if (row.archived_at === null) {
+        if (row.deleted_at !== null) {
+          const count = Number((this.database.prepare(
+            "SELECT COUNT(*) AS count FROM projects WHERE deleted_at IS NULL"
+          ).get() as CountRow).count);
+          if (count >= MAX_REGISTERED_PROJECTS) {
+            throw new Error(`${PROJECT_LIMIT_EXCEEDED}: At most ${MAX_REGISTERED_PROJECTS} projects may be registered.`);
+          }
+        }
+        if (row.archived_at === null && row.deleted_at === null) {
           if (operation.name !== undefined || operation.cwd !== undefined) {
             throw new Error(`${PROJECT_OPERATION_CONFLICT}: The project is already active.`);
           }
@@ -4041,7 +4086,7 @@ export class BridgeStateStore {
         this.database
           .prepare(`
             UPDATE projects
-               SET name = ?, name_key = ?, cwd = ?, archived_at = NULL, updated_at = ?
+               SET name = ?, name_key = ?, cwd = ?, archived_at = NULL, deleted_at = NULL, updated_at = ?
              WHERE project_id = ?
           `)
           .run(name, nameKey, cwd, now, projectId);
@@ -4068,14 +4113,14 @@ export class BridgeStateStore {
     });
   }
 
-  private requireProjectStorageRow(projectId: string): ProjectStorageRow {
+  private requireProjectStorageRow(projectId: string, includeDeleted = false): ProjectStorageRow {
     const row = this.database
       .prepare(`
         SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
                created_at, updated_at, archived_at, deleted_at
-          FROM projects WHERE project_id = ? AND deleted_at IS NULL
+          FROM projects WHERE project_id = ? AND (? OR deleted_at IS NULL)
       `)
-      .get(projectId) as ProjectStorageRow | undefined;
+      .get(projectId, includeDeleted ? 1 : 0) as ProjectStorageRow | undefined;
     if (!row) throw new Error(`${PROJECT_NOT_FOUND}: Unknown project.`);
     return row;
   }

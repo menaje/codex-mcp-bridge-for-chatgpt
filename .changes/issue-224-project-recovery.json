@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Prevent deleting project registrations with resumable work and recover existing deleted identities from Settings without losing conversations or history.",
+  "breaking": false,
+  "migration": null
+}

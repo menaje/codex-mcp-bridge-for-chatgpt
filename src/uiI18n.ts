@@ -218,7 +218,7 @@ export function resolveHostUiLocaleTag(
   return typeof fallbackLocale === "string" && fallbackLocale.trim() ? fallbackLocale.trim() : "en";
 }
 
-export function serializedUiTranslations(namespaces?: readonly string[]): string {
+export function serializedUiTranslations(namespaces?: readonly string[], compact = false): string {
   const select = (bundle: UiTranslationBundle) => Object.fromEntries(
     Object.entries(bundle).filter(([key]) =>
       !RETIRED_ACTIVITY_CARD_TRANSLATION_KEYS.has(key) &&
@@ -230,6 +230,16 @@ export function serializedUiTranslations(namespaces?: readonly string[]): string
   const selected = Object.fromEntries(
     Object.entries(UI_TRANSLATIONS).map(([locale, bundle]) => [locale, select(bundle)])
   );
+  if (compact) {
+    // Settings is close to its wire budget. Store shared keys once instead of
+    // repeating them in every locale, preserving exactly the same browser map.
+    const keys = Object.keys(Object.values(selected)[0] || {});
+    const locales = Object.fromEntries(Object.entries(selected).map(([locale, bundle]) =>
+      [locale, keys.map(key => bundle[key])]
+    ));
+    const table = JSON.stringify({ keys, locales }).replaceAll("<", "\\u003c");
+    return `((table)=>Object.fromEntries(Object.entries(table.locales).map(([locale,values])=>[locale,Object.fromEntries(table.keys.map((key,index)=>[key,values[index]]))])))(${table})`;
+  }
   return JSON.stringify(selected).replaceAll("<", "\\u003c");
 }
 

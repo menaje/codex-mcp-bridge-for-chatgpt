@@ -2,6 +2,29 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class BridgeModelsTests: XCTestCase {
+    func testProjectRecoveryCapabilitiesPreserveIdentityAndAcceptOlderServers() throws {
+        var capabilities: [String: Any] = [
+            "availableAccessStrategies": ["read-only"],
+            "availableUiLocalePreferences": ["en"],
+            "projectAvailability": [], "maxConcurrentJobs": 30,
+            "defaultBackend": "app-server", "allowWorkspaceWrite": false,
+            "allowDangerFullAccess": false, "persistent": true
+        ]
+        let old = try JSONDecoder().decode(SettingsCapabilities.self,
+            from: JSONSerialization.data(withJSONObject: capabilities))
+        XCTAssertNil(old.recoverableProjects)
+        capabilities["recoverableProjects"] = [[
+            "id": "original-id", "projectRef": "original-ref", "projectRevision": 4,
+            "name": "Recover me", "nameKey": "recover me", "cwd": "/private/project",
+            "sortOrder": 0, "createdAt": 1, "updatedAt": 2, "archivedAt": 2
+        ]]
+        let current = try JSONDecoder().decode(SettingsCapabilities.self,
+            from: JSONSerialization.data(withJSONObject: capabilities))
+        XCTAssertEqual(current.recoverableProjects?.first?.id, "original-id")
+        XCTAssertEqual(current.recoverableProjects?.first?.projectRef, "original-ref")
+        XCTAssertEqual(current.recoverableProjects?.first?.projectRevision, 4)
+    }
+
     func testBridgeProjectDecodesTheServerProjectContract() throws {
         let data = #"""
         {

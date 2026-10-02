@@ -15,3 +15,21 @@ export function replaceStoredSettingsPayloadForTest(
     database.close();
   }
 }
+
+/** Reproduces the pre-#224 delete behavior in an isolated test database. */
+export function tombstoneProjectForTest(file: string, projectId: string, now = Date.now()): void {
+  const database = new Database(file);
+  try {
+    database.transaction(() => {
+      const result = database.prepare(`
+        UPDATE projects SET archived_at = COALESCE(archived_at, ?), deleted_at = ?, updated_at = ?
+         WHERE project_id = ? AND deleted_at IS NULL
+      `).run(now, now, now, projectId);
+      if (result.changes !== 1) throw new Error("Expected one legacy project tombstone.");
+      database.prepare(`UPDATE project_registry SET registry_revision = registry_revision + 1, updated_at = ?`)
+        .run(now);
+    })();
+  } finally {
+    database.close();
+  }
+}

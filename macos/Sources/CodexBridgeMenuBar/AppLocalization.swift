@@ -431,6 +431,14 @@ enum BridgeAppLocalization {
     }
 
     private static func localizedErrorDetail(_ message: String, locale: Locale) -> String {
+        let projectErrors = [
+            ("PROJECT_CWD_STILL_PINNED", "settings.projectCwdStillPinned"),
+            ("PROJECT_DELETE_STILL_PINNED", "settings.projectDeleteStillPinned"),
+            ("PROJECT_CWD_CONFLICT", "settings.projectDuplicatePath")
+        ]
+        if let entry = projectErrors.first(where: { message.contains($0.0) }) {
+            return string(entry.1, locale: locale)
+        }
         if message.contains("CODEX_AUTH_IDENTITY_UNAVAILABLE") {
             return string("macos.auth.connectionUnsupported", locale: locale)
         }

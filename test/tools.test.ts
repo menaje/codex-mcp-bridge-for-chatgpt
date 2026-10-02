@@ -26,6 +26,7 @@ import type {
 } from "../src/upstream.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 import { syntheticIdToken } from "./fixtures/syntheticAuth.js";
+import { tombstoneProjectForTest } from "./helpers/sqliteSettings.js";
 
 const selection = { model: "gpt-5.6-sol", reasoningEffort: "medium" };
 const metadata = { "openai/session": "current-tool-contract-test" };
@@ -208,6 +209,43 @@ describe("current bridge tool contracts", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     state.close();
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("exposes legacy project recovery in Settings and restores the original identity through the application service", async () => {
+    const project = settings.current.projects[0]!;
+    const activity = state.createActivity({ scopeId: "11111111-1111-4111-8111-111111111111",
+      projectId: project.id, projectName: project.name, projectCwd: project.cwd });
+    tombstoneProjectForTest(path.join(root, "state.sqlite"), project.id);
+    const view = await server.applicationService.settingsSnapshot();
+    expect(view.settings.projects).toEqual([]);
+    expect(view.capabilities.recoverableProjects).toEqual([expect.objectContaining({
+      id: project.id, projectRef: project.projectRef
+    })]);
+    const updated = await server.applicationService.updateSettings({
+      expectedRegistryRevision: view.settings.registryRevision,
+      operation: { kind: "patch", settings: { projectOperations: [{ kind: "restore", projectId: project.id }] } }
+    });
+    expect(updated.settings.projects[0]).toMatchObject({ id: project.id, projectRef: project.projectRef });
+    expect(updated.capabilities.recoverableProjects).toEqual([]);
+    expect(state.getActivityProjectAdmission(activity.activityId)?.projectId).toBe(project.id);
+    expect(updated.settings.settingsRevision).toBe(view.settings.settingsRevision);
+  });
+
+  it("revalidates the runtime credential boundary when restoring a deleted project without an explicit cwd", async () => {
+    const project = settings.current.projects[0]!;
+    tombstoneProjectForTest(path.join(root, "state.sqlite"), project.id);
+    const priorEnv = process.env.CODEX_MCP_BRIDGE_ENV_FILE;
+    process.env.CODEX_MCP_BRIDGE_ENV_FILE = path.join(root, "runtime.env");
+    try {
+      await expect(server.applicationService.updateSettings({
+        expectedRegistryRevision: settings.current.registryRevision,
+        operation: { kind: "patch", settings: { projectOperations: [{ kind: "restore", projectId: project.id }] } }
+      })).rejects.toThrow("RUNTIME_ENV_PROJECT_CONFLICT");
+      expect(settings.current.projects).toEqual([]);
+    } finally {
+      if (priorEnv === undefined) delete process.env.CODEX_MCP_BRIDGE_ENV_FILE;
+      else process.env.CODEX_MCP_BRIDGE_ENV_FILE = priorEnv;
+    }
   });
 
   it("publishes one current tool surface without compatibility tiers", async () => {

@@ -251,6 +251,25 @@ final class AppPresentationTests: XCTestCase {
         )
     }
 
+    func testNativeProjectConflictsExplainRecoveryWithoutExposingDiagnostics() {
+        let locale = Locale(identifier: "ko")
+        let messages = [
+            ("PROJECT_CWD_CONFLICT", "settings.projectDuplicatePath"),
+            ("PROJECT_CWD_STILL_PINNED", "settings.projectCwdStillPinned"),
+            ("PROJECT_DELETE_STILL_PINNED", "settings.projectDeleteStillPinned")
+        ].map { code, key in
+            let message = BridgeAppLocalization.errorDescription(
+                LocalRPCError.remote(code: -32000, message: "\(code): /private/project diagnostics"),
+                locale: locale
+            )
+            XCTAssertEqual(message, BridgeAppLocalization.string(key, locale: locale))
+            XCTAssertFalse(message.contains(code))
+            XCTAssertFalse(message.contains("/private/project"))
+            return message
+        }
+        XCTAssertEqual(Set(messages).count, 3)
+    }
+
     func testNativeLocalizationDoesNotExposeBridgeSkillDiagnostics() {
         let locale = Locale(identifier: "ko")
         XCTAssertEqual(

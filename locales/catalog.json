@@ -267,7 +267,7 @@
         "settings.projectDeletePending": "Press Save to delete this project registration.",
         "settings.projectInvalidLabel": "Enter 1–120 printable Unicode characters for the project name.",
         "settings.projectInvalidCwd": "Enter an existing absolute folder path.",
-        "settings.projectDuplicatePath": "Each project must use a different canonical folder.",
+        "settings.projectDuplicatePath": "Another active project already uses this folder.",
         "settings.projectUnavailableSave": "Fix or archive every project that needs recovery before saving.",
         "settings.projectLimit": "At most 100 projects can be registered.",
         "settings.projectError": "Review the Projects section and correct the highlighted values.",
@@ -539,7 +539,11 @@
         "stale.body": "This {card} card revision is no longer retained. Refresh the plugin metadata and open a new conversation.",
         "stale.currentResource": "Current resource:",
         "stale.card.settings": "settings",
-        "stale.card.dashboard": "overview"
+        "stale.card.dashboard": "overview",
+        "settings.recoverableProjects": "Recover deleted projects",
+        "settings.projectRecoveryHint": "These deleted registrations still have resumable work. Restore the existing project to keep its conversations and history.",
+        "settings.projectCwdStillPinned": "Earlier resumable work still owns this folder. Restore its existing project; deleted registrations appear under Recover deleted projects.",
+        "settings.projectDeleteStillPinned": "This project still has resumable work or active jobs. Keep it archived, or finish and release those contexts before deleting its registration."
       },
       "ko": {
         "problem.history": "실패 기록",
@@ -757,7 +761,7 @@
         "settings.projectDeletePending": "저장 버튼을 누르면 이 프로젝트 등록이 삭제됩니다.",
         "settings.projectInvalidLabel": "프로젝트 이름을 출력 가능한 Unicode 1~120자로 입력하세요.",
         "settings.projectInvalidCwd": "현재 존재하는 절대 폴더 경로를 입력하세요.",
-        "settings.projectDuplicatePath": "각 프로젝트는 서로 다른 canonical 폴더를 사용해야 합니다.",
+        "settings.projectDuplicatePath": "다른 활성 프로젝트가 이미 이 폴더를 사용하고 있습니다.",
         "settings.projectUnavailableSave": "복구가 필요한 프로젝트를 수정하거나 보관한 뒤 저장하세요.",
         "settings.projectLimit": "프로젝트는 최대 100개까지 등록할 수 있습니다.",
         "settings.projectError": "프로젝트 섹션의 강조된 값을 확인하고 수정하세요.",
@@ -1029,7 +1033,11 @@
         "stale.body": "이 {card} 카드 버전은 더 이상 보관되지 않습니다. 플러그인 메타데이터를 새로고침하고 새 대화를 여세요.",
         "stale.currentResource": "현재 리소스:",
         "stale.card.settings": "설정",
-        "stale.card.dashboard": "전체 현황"
+        "stale.card.dashboard": "전체 현황",
+        "settings.recoverableProjects": "삭제된 프로젝트 복구",
+        "settings.projectRecoveryHint": "삭제된 등록에 재개 가능한 작업이 남아 있습니다. 기존 프로젝트를 복구하면 대화와 작업 기록이 유지됩니다.",
+        "settings.projectCwdStillPinned": "이전 작업의 재개 가능한 연결이 이 폴더를 계속 사용하고 있습니다. 기존 프로젝트를 복원하세요. 삭제된 등록은 ‘삭제된 프로젝트 복구’에서 복구할 수 있습니다.",
+        "settings.projectDeleteStillPinned": "이 프로젝트에 재개 가능한 작업이나 실행 중인 작업이 남아 있습니다. 보관 상태로 유지하거나 해당 작업과 연결을 종료한 뒤 등록을 삭제하세요."
       },
       "ja": {
         "problem.history": "失敗の履歴",
@@ -1247,7 +1255,7 @@
         "settings.projectDeletePending": "保存するとこのプロジェクト登録が削除されます。",
         "settings.projectInvalidLabel": "表示名を印刷可能な Unicode 1～120 文字で入力してください。",
         "settings.projectInvalidCwd": "存在する絶対フォルダーパスを入力してください。",
-        "settings.projectDuplicatePath": "各プロジェクトには異なる正規フォルダーが必要です。",
+        "settings.projectDuplicatePath": "別の有効なプロジェクトがこのフォルダを使用しています。",
         "settings.projectUnavailableSave": "復旧が必要なプロジェクトを修正またはアーカイブしてから保存してください。",
         "settings.projectLimit": "登録できるプロジェクトは最大 100 件です。",
         "settings.projectError": "プロジェクト欄の強調表示された値を確認して修正してください。",
@@ -1519,7 +1527,11 @@
         "stale.body": "この{card}カードの版は保持されていません。プラグインのメタデータを更新して、新しい会話を開いてください。",
         "stale.currentResource": "現在のリソース:",
         "stale.card.settings": "設定",
-        "stale.card.dashboard": "全体状況"
+        "stale.card.dashboard": "全体状況",
+        "settings.recoverableProjects": "削除したプロジェクトを復元",
+        "settings.projectRecoveryHint": "削除した登録に再開可能な作業が残っています。既存のプロジェクトを復元すると、会話と作業履歴を維持できます。",
+        "settings.projectCwdStillPinned": "以前の再開可能な作業がこのフォルダを使用しています。既存のプロジェクトを復元してください。削除した登録は「削除したプロジェクトを復元」に表示されます。",
+        "settings.projectDeleteStillPinned": "このプロジェクトには再開可能な作業または実行中のジョブが残っています。アーカイブしたままにするか、作業と接続を終了してから登録を削除してください。"
       },
       "zh-Hans": {
         "problem.history": "失败记录",
@@ -1737,7 +1749,7 @@
         "settings.projectDeletePending": "保存后将删除此项目注册。",
         "settings.projectInvalidLabel": "请输入 1–120 个可打印 Unicode 字符作为项目名称。",
         "settings.projectInvalidCwd": "请输入现有文件夹的绝对路径。",
-        "settings.projectDuplicatePath": "每个项目必须使用不同的规范文件夹。",
+        "settings.projectDuplicatePath": "另一个活动项目已在使用此文件夹。",
         "settings.projectUnavailableSave": "请先修复或归档需要恢复的项目，再保存。",
         "settings.projectLimit": "最多可注册 100 个项目。",
         "settings.projectError": "请检查并修正“项目”部分中突出显示的值。",
@@ -2009,7 +2021,11 @@
         "stale.body": "此{card}卡片版本已不再保留。请刷新插件元数据并打开新对话。",
         "stale.currentResource": "当前资源：",
         "stale.card.settings": "设置",
-        "stale.card.dashboard": "概览"
+        "stale.card.dashboard": "概览",
+        "settings.recoverableProjects": "恢复已删除的项目",
+        "settings.projectRecoveryHint": "这些已删除的注册仍有可恢复的工作。恢复原项目可保留会话和工作历史。",
+        "settings.projectCwdStillPinned": "之前可恢复的工作仍在使用此文件夹。请恢复原项目；已删除的注册显示在“恢复已删除的项目”中。",
+        "settings.projectDeleteStillPinned": "此项目仍有可恢复的工作或正在运行的任务。请保持归档状态，或先结束工作并释放连接，再删除注册。"
       },
       "zh-Hant": {
         "problem.history": "失敗記錄",
@@ -2227,7 +2243,7 @@
         "settings.projectDeletePending": "儲存後將刪除此專案註冊。",
         "settings.projectInvalidLabel": "請輸入 1–120 個可列印 Unicode 字元作為專案名稱。",
         "settings.projectInvalidCwd": "請輸入現有資料夾的絕對路徑。",
-        "settings.projectDuplicatePath": "每個專案必須使用不同的正規資料夾。",
+        "settings.projectDuplicatePath": "另一個使用中的專案已在使用此資料夾。",
         "settings.projectUnavailableSave": "請先修正或封存需要復原的專案，再儲存。",
         "settings.projectLimit": "最多可登錄 100 個專案。",
         "settings.projectError": "請檢查並修正「專案」區段中突顯的值。",
@@ -2499,7 +2515,11 @@
         "stale.body": "此{card}卡片版本已不再保留。請重新整理外掛程式中繼資料並開啟新對話。",
         "stale.currentResource": "目前資源：",
         "stale.card.settings": "設定",
-        "stale.card.dashboard": "概覽"
+        "stale.card.dashboard": "概覽",
+        "settings.recoverableProjects": "復原已刪除的專案",
+        "settings.projectRecoveryHint": "這些已刪除的註冊仍有可繼續的工作。復原原專案可保留對話和工作記錄。",
+        "settings.projectCwdStillPinned": "先前可繼續的工作仍在使用此資料夾。請復原原專案；已刪除的註冊顯示於「復原已刪除的專案」。",
+        "settings.projectDeleteStillPinned": "此專案仍有可繼續的工作或執行中的任務。請維持封存狀態，或先結束工作並釋放連線，再刪除註冊。"
       },
       "es": {
         "problem.history": "Historial de fallos",
@@ -2717,7 +2737,7 @@
         "settings.projectDeletePending": "Guarda para eliminar el registro de este proyecto.",
         "settings.projectInvalidLabel": "Introduce de 1 a 120 caracteres Unicode imprimibles para el nombre.",
         "settings.projectInvalidCwd": "Introduce la ruta absoluta de una carpeta existente.",
-        "settings.projectDuplicatePath": "Cada proyecto debe usar una carpeta canónica distinta.",
+        "settings.projectDuplicatePath": "Otro proyecto activo ya utiliza esta carpeta.",
         "settings.projectUnavailableSave": "Corrige o archiva los proyectos que necesitan recuperación antes de guardar.",
         "settings.projectLimit": "Se pueden registrar como máximo 100 proyectos.",
         "settings.projectError": "Revisa la sección Proyectos y corrige los valores resaltados.",
@@ -2989,7 +3009,11 @@
         "stale.body": "Esta versión de la tarjeta de {card} ya no se conserva. Actualiza los metadatos del plugin y abre una conversación nueva.",
         "stale.currentResource": "Recurso actual:",
         "stale.card.settings": "configuración",
-        "stale.card.dashboard": "resumen"
+        "stale.card.dashboard": "resumen",
+        "settings.recoverableProjects": "Recuperar proyectos eliminados",
+        "settings.projectRecoveryHint": "Estos registros eliminados conservan trabajo que puede reanudarse. Restaura el proyecto existente para conservar sus conversaciones e historial.",
+        "settings.projectCwdStillPinned": "El trabajo anterior que puede reanudarse sigue usando esta carpeta. Restaura su proyecto; los registros eliminados aparecen en Recuperar proyectos eliminados.",
+        "settings.projectDeleteStillPinned": "Este proyecto conserva trabajo que puede reanudarse o tareas activas. Mantenlo archivado o finaliza el trabajo y libera sus conexiones antes de eliminar el registro."
       },
       "fr": {
         "problem.history": "Historique des échecs",
@@ -3207,7 +3231,7 @@
         "settings.projectDeletePending": "Enregistrez pour supprimer cet enregistrement de projet.",
         "settings.projectInvalidLabel": "Saisissez 1 à 120 caractères Unicode imprimables pour le libellé.",
         "settings.projectInvalidCwd": "Saisissez le chemin absolu d’un dossier existant.",
-        "settings.projectDuplicatePath": "Chaque projet doit utiliser un dossier canonique différent.",
+        "settings.projectDuplicatePath": "Un autre projet actif utilise déjà ce dossier.",
         "settings.projectUnavailableSave": "Corrigez ou archivez les projets à récupérer avant l’enregistrement.",
         "settings.projectLimit": "Au maximum 100 projets peuvent être enregistrés.",
         "settings.projectError": "Vérifiez la section Projets et corrigez les valeurs surlignées.",
@@ -3479,7 +3503,11 @@
         "stale.body": "Cette version de la carte {card} n’est plus conservée. Actualisez les métadonnées du plugin et ouvrez une nouvelle conversation.",
         "stale.currentResource": "Ressource actuelle :",
         "stale.card.settings": "des paramètres",
-        "stale.card.dashboard": "de la vue d’ensemble"
+        "stale.card.dashboard": "de la vue d’ensemble",
+        "settings.recoverableProjects": "Récupérer les projets supprimés",
+        "settings.projectRecoveryHint": "Ces inscriptions supprimées conservent du travail pouvant être repris. Restaurez le projet existant pour conserver ses conversations et son historique.",
+        "settings.projectCwdStillPinned": "Un travail antérieur pouvant être repris utilise encore ce dossier. Restaurez son projet ; les inscriptions supprimées figurent dans Récupérer les projets supprimés.",
+        "settings.projectDeleteStillPinned": "Ce projet conserve du travail pouvant être repris ou des tâches actives. Gardez-le archivé ou terminez le travail et libérez ses connexions avant de supprimer son inscription."
       },
       "de": {
         "problem.history": "Fehlerverlauf",
@@ -3697,7 +3725,7 @@
         "settings.projectDeletePending": "Speichern Sie, um diese Projektregistrierung zu löschen.",
         "settings.projectInvalidLabel": "Geben Sie 1–120 druckbare Unicode-Zeichen als Anzeigename ein.",
         "settings.projectInvalidCwd": "Geben Sie den absoluten Pfad eines vorhandenen Ordners ein.",
-        "settings.projectDuplicatePath": "Jedes Projekt muss einen anderen kanonischen Ordner verwenden.",
+        "settings.projectDuplicatePath": "Ein anderes aktives Projekt verwendet diesen Ordner bereits.",
         "settings.projectUnavailableSave": "Korrigieren oder archivieren Sie wiederherzustellende Projekte vor dem Speichern.",
         "settings.projectLimit": "Es können höchstens 100 Projekte registriert werden.",
         "settings.projectError": "Prüfen Sie den Bereich Projekte und korrigieren Sie die hervorgehobenen Werte.",
@@ -3969,7 +3997,11 @@
         "stale.body": "Diese Version der {card}-Karte wird nicht mehr vorgehalten. Aktualisieren Sie die Plugin-Metadaten und öffnen Sie eine neue Unterhaltung.",
         "stale.currentResource": "Aktuelle Ressource:",
         "stale.card.settings": "Einstellungen",
-        "stale.card.dashboard": "Übersicht"
+        "stale.card.dashboard": "Übersicht",
+        "settings.recoverableProjects": "Gelöschte Projekte wiederherstellen",
+        "settings.projectRecoveryHint": "Diese gelöschten Registrierungen enthalten fortsetzbare Arbeit. Stellen Sie das bestehende Projekt wieder her, um Gespräche und Verlauf zu erhalten.",
+        "settings.projectCwdStillPinned": "Frühere fortsetzbare Arbeit verwendet diesen Ordner weiterhin. Stellen Sie das bestehende Projekt wieder her; gelöschte Registrierungen stehen unter Gelöschte Projekte wiederherstellen.",
+        "settings.projectDeleteStillPinned": "Dieses Projekt enthält fortsetzbare Arbeit oder aktive Aufträge. Lassen Sie es archiviert oder beenden Sie die Arbeit und geben Sie die Verbindungen frei, bevor Sie die Registrierung löschen."
       },
       "pt": {
         "problem.history": "Histórico de falhas",
@@ -4187,7 +4219,7 @@
         "settings.projectDeletePending": "Salve para excluir este registro de projeto.",
         "settings.projectInvalidLabel": "Digite de 1 a 120 caracteres Unicode imprimíveis para o rótulo.",
         "settings.projectInvalidCwd": "Digite o caminho absoluto de uma pasta existente.",
-        "settings.projectDuplicatePath": "Cada projeto deve usar uma pasta canônica diferente.",
+        "settings.projectDuplicatePath": "Outro projeto ativo já utiliza esta pasta.",
         "settings.projectUnavailableSave": "Corrija ou arquive os projetos que precisam de recuperação antes de salvar.",
         "settings.projectLimit": "No máximo 100 projetos podem ser registrados.",
         "settings.projectError": "Revise a seção Projetos e corrija os valores destacados.",
@@ -4459,7 +4491,11 @@
         "stale.body": "Esta versão do cartão de {card} não é mais mantida. Atualize os metadados do plugin e abra uma nova conversa.",
         "stale.currentResource": "Recurso atual:",
         "stale.card.settings": "configurações",
-        "stale.card.dashboard": "visão geral"
+        "stale.card.dashboard": "visão geral",
+        "settings.recoverableProjects": "Recuperar projetos eliminados",
+        "settings.projectRecoveryHint": "Estes registos eliminados mantêm trabalho que pode ser retomado. Restaure o projeto existente para preservar as conversas e o histórico.",
+        "settings.projectCwdStillPinned": "Trabalho anterior que pode ser retomado ainda utiliza esta pasta. Restaure o projeto existente; os registos eliminados aparecem em Recuperar projetos eliminados.",
+        "settings.projectDeleteStillPinned": "Este projeto mantém trabalho que pode ser retomado ou tarefas ativas. Mantenha-o arquivado ou conclua o trabalho e liberte as ligações antes de eliminar o registo."
       }
     },
     "parameters": {
