@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "a": { "phase": "A", "marker": "receiver-222-public-a-v1", "value": 42 },
+  "b": { "phase": "B", "marker": "receiver-222-public-b-v1", "value": 84 },
+  "bPrompt": "Read the exact public fixture B and return its phase, marker and value."
+}
