@@ -216,6 +216,14 @@ weaken result or followup checks. Temporary public issuer reachability and the
 prototype authorization service's restart/refresh persistence are separate
 operational conditions; product-ledger persistence does not resolve them.
 
+The [2026-10-02 real-host audit](audits/2026-10-02-issue-213-host-scope-gate.md)
+now observes native subscribe/unsubscribe preserving both custom arguments,
+callback verification, terminal delivery and GPT resumption. The resumed
+ordinary exact-Job read resolves to a different scope despite the same OAuth
+principal and the UI's same-chat setting, and remains denied. B was not admitted.
+Native refresh, departure while A was running and full A-to-B acceptance remain
+unverified; no result/task authority is added to the monitoring reference.
+
 Dashboard iframe deployment acceptance remains a separate UI test. The prepared
 OpenAI inquiry is still unsent. Issue #213 stays **OPEN** until the real card-free
 Events A-to-B acceptance succeeds.

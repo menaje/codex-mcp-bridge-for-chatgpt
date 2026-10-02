@@ -1,0 +1,273 @@
+{
+  "schemaVersion": 1,
+  "issue": 213,
+  "dateKst": "2026-10-02",
+  "codeCommit": "6102c5073f7463531c47c55d83f791a4272796a3",
+  "scope": "actual isolated ChatGPT Work host observation, not full acceptance",
+  "performedBy": "Codex on the user-authorized Mac and ChatGPT trial connection",
+  "integrationTarget": "dev",
+  "issueState": "OPEN",
+  "complete": false,
+  "configuration": {
+    "appName": "Codex MCP Bridge — #213 카드 없는 Events 시험",
+    "freshApp": true,
+    "existingConnectionsPreserved": true,
+    "authentication": "OpenAI sign-in via isolated OAuth authorization service",
+    "transport": "private HTTP Secure MCP Tunnel",
+    "oauthScope": "bridge",
+    "publicExposure": "authorization service only; no public Bridge/Codex endpoint",
+    "discoveryRescan": true,
+    "mode": "ChatGPT web Work",
+    "initialHostModel": "GPT-6.1 Sol Light",
+    "postEventUiModel": "GPT-6.1 Sol High",
+    "eventTaskExecutionSetting": "same chat on every run",
+    "oldJobsNotMigratedToNewIssuer": true
+  },
+  "execution": {
+    "newA": 1,
+    "newB": 0,
+    "aJobId": "51bb2c61-c0ea-4c79-94db-0f456db85ab8",
+    "aCreatedAt": "2026-10-02T02:36:59.802Z",
+    "aTerminalRecordedAt": "2026-10-02T02:37:09.613Z",
+    "aState": "completed",
+    "aVersion": 15,
+    "aModel": "gpt-5.6-luna",
+    "aReasoningEffort": "low",
+    "sandbox": "read-only",
+    "completionDeliveryPolicy": "events",
+    "approvedFollowups": 1,
+    "approvedBPromptHashMatches": true,
+    "bAdmitted": false,
+    "retainedAResultMatchesFixture": true,
+    "retainedResultCheckWasLocalReadOnlySql": true,
+    "gptReviewedAOriginal": false,
+    "oldFreshAWithNoApprovalReused": false
+  },
+  "lifecycle": {
+    "subscribe": {
+      "requests": 1,
+      "hasHostSession": false,
+      "sameJobAsIssued": true,
+      "sameReferenceAsIssued": true,
+      "argumentKeys": [
+        "jobId",
+        "subscriptionRef"
+      ],
+      "sameOAuthPrincipalAsJob": true,
+      "httpStatus": 200,
+      "callbackVerificationHttpStatus": 200
+    },
+    "delivery": {
+      "stateBeforeStop": "acknowledged",
+      "attempts": 1,
+      "httpStatus": 200,
+      "gptResumed": true
+    },
+    "refresh": {
+      "status": "unverified",
+      "actualRefreshRequests": 0,
+      "reason": "Host exposed no verified same-identity manual refresh control; stopped before automatic expiry refresh. No update was forced, no callback or reference was fabricated."
+    },
+    "unsubscribe": {
+      "hasHostSession": false,
+      "sameJobAsIssued": true,
+      "sameReferenceAsIssued": true,
+      "argumentKeys": [
+        "jobId",
+        "subscriptionRef"
+      ],
+      "httpStatus": 200,
+      "ledgerDisabled": "unsubscribed",
+      "ledgerRevision": 2,
+      "receiptRetired": true,
+      "receiptRevision": 3,
+      "hostWatchPaused": true
+    }
+  },
+  "scopeGate": {
+    "resumedExactJob": true,
+    "hasHostSession": true,
+    "sameOAuthPrincipalAsJob": true,
+    "matchesOriginalJobScope": false,
+    "httpStatus": 200,
+    "toolIsError": true,
+    "displayedError": "HANDLE_UNAVAILABLE",
+    "scopeChecksWeakened": false,
+    "causeOfChangedHostIdentityComponents": "not determined; observer keeps derived scope comparisons, not raw session/subject/organization"
+  },
+  "departure": {
+    "navigationRequestedAt": "2026-10-02T02:37:41.762Z",
+    "navigationCompletedAt": "2026-10-02T02:37:42.461Z",
+    "beforeATerminal": false,
+    "beforeWebhookDelivery": true,
+    "acceptance": "not met: A completed before departure"
+  },
+  "cardFreeObservation": {
+    "dashboardOpenedByOperator": false,
+    "automaticDashboardToolCalls": 0,
+    "completionLeaseToolCalls": 0,
+    "completionClaimAttempts": 0,
+    "completionLeasePresent": false,
+    "originalResultOfferRecorded": false,
+    "exactJobStatusReadsAfterEvent": 1,
+    "cardlessHostReportUiMessages": 0,
+    "browserDashboardObserved": false,
+    "browserObservationLimit": "CDP event buffer reported truncation; no exhaustive window.postMessage counter. Snapshot saw the generic DIL execution sandbox, not a Bridge Dashboard. ui/message=0 is host-reported and supported by no Dashboard/completion-claim path, not a full JS event measurement.",
+    "prefetchedCatalogResourcesNotDashboardMount": true,
+    "timeScheduleFallback": false,
+    "pollingFallback": false
+  },
+  "verification": {
+    "runtimeBuild": "passed this turn at codeCommit",
+    "toolsAndEventsLoopbackDiscovery": "passed; not host acceptance",
+    "nodeAndSwiftSuites": "not rerun this turn; prior audit keeps per-invocation results, including final full Node 1256 pass/1 packaging cleanup failure and separate 6-pass retry",
+    "independentGithubCi": false,
+    "documentationAffected": {
+      "status": "passed",
+      "changedPaths": 4,
+      "nodeSelected": false,
+      "macosSelected": false,
+      "pinnedCli": "0.153.3",
+      "checks": [
+        "localization",
+        "release manifest",
+        "release policy",
+        "App Server schema",
+        "audit JSON/assertions/privacy scan",
+        "Markdown links",
+        "git diff --check"
+      ]
+    }
+  },
+  "remainingGates": [
+    "original scope in ordinary event-resumed tool calls",
+    "same-identity native refresh with unchanged custom arguments",
+    "departure while A is running",
+    "GPT original A review, exactly one approved B and B terminal event",
+    "exhaustive actual UI-message measurement, duplicate event, old-card, token renewal and restart controls"
+  ],
+  "supportInquiry": "not sent",
+  "timeline": [
+    {
+      "time": "2026-10-02T02:34:51.131Z",
+      "stage": "request",
+      "method": "tools/call",
+      "tool": "codex_status",
+      "jobId": null,
+      "hasHostSession": true,
+      "argumentKeys": [
+        "query"
+      ]
+    },
+    {
+      "time": "2026-10-02T02:36:59.818Z",
+      "stage": "task-result",
+      "jobId": "51bb2c61-c0ea-4c79-94db-0f456db85ab8",
+      "completionDeliveryPolicy": "events",
+      "approvedFollowups": 1
+    },
+    {
+      "time": "2026-10-02T02:37:00.718Z",
+      "stage": "issued-reference",
+      "jobId": "51bb2c61-c0ea-4c79-94db-0f456db85ab8",
+      "event": "codex.job.terminal",
+      "argumentKeys": [
+        "jobId",
+        "subscriptionRef"
+      ],
+      "sameReferenceAsIssued": true
+    },
+    {
+      "time": "2026-10-02T02:37:42.593Z",
+      "stage": "request",
+      "method": "events/subscribe",
+      "tool": null,
+      "jobId": "51bb2c61-c0ea-4c79-94db-0f456db85ab8",
+      "hasHostSession": false,
+      "argumentKeys": [
+        "jobId",
+        "subscriptionRef"
+      ],
+      "sameReferenceAsIssued": true
+    },
+    {
+      "time": "2026-10-02T02:37:42.622Z",
+      "stage": "callback-verification-start",
+      "jobId": null
+    },
+    {
+      "time": "2026-10-02T02:37:43.151Z",
+      "stage": "callback-verification-response",
+      "jobId": null,
+      "httpStatus": 200
+    },
+    {
+      "time": "2026-10-02T02:37:43.158Z",
+      "stage": "result",
+      "method": "events/subscribe",
+      "tool": null,
+      "httpStatus": 200,
+      "rpcCode": null,
+      "resultError": null,
+      "authenticated": true,
+      "principalMatchesRequestedJob": true
+    },
+    {
+      "time": "2026-10-02T02:37:43.162Z",
+      "stage": "terminal-webhook-start",
+      "jobId": "51bb2c61-c0ea-4c79-94db-0f456db85ab8"
+    },
+    {
+      "time": "2026-10-02T02:37:46.329Z",
+      "stage": "terminal-webhook-response",
+      "jobId": "51bb2c61-c0ea-4c79-94db-0f456db85ab8",
+      "httpStatus": 200
+    },
+    {
+      "time": "2026-10-02T02:38:09.958Z",
+      "stage": "request",
+      "method": "tools/call",
+      "tool": "codex_status",
+      "jobId": "51bb2c61-c0ea-4c79-94db-0f456db85ab8",
+      "hasHostSession": true,
+      "argumentKeys": [
+        "query"
+      ]
+    },
+    {
+      "time": "2026-10-02T02:38:09.995Z",
+      "stage": "result",
+      "method": "tools/call",
+      "tool": "codex_status",
+      "httpStatus": 200,
+      "rpcCode": null,
+      "resultError": true,
+      "authenticated": true,
+      "principalMatchesRequestedJob": true
+    },
+    {
+      "time": "2026-10-02T02:44:50.754Z",
+      "stage": "request",
+      "method": "events/unsubscribe",
+      "tool": null,
+      "jobId": "51bb2c61-c0ea-4c79-94db-0f456db85ab8",
+      "hasHostSession": false,
+      "argumentKeys": [
+        "jobId",
+        "subscriptionRef"
+      ],
+      "sameReferenceAsIssued": true
+    },
+    {
+      "time": "2026-10-02T02:44:50.806Z",
+      "stage": "result",
+      "method": "events/unsubscribe",
+      "tool": null,
+      "httpStatus": 200,
+      "rpcCode": null,
+      "resultError": null,
+      "authenticated": true,
+      "principalMatchesRequestedJob": true
+    }
+  ]
+}
