@@ -114,6 +114,7 @@ export function evaluate(expected: RunContext, input: unknown) {
   const lifecycle = [start, departed, release, terminal];
   if (lifecycle.some(e => !e)) reasons.push("Missing or duplicate lifecycle record");
   else if (!(start!.seq < departed!.seq && departed!.seq < release!.seq && release!.seq < terminal!.seq)) reasons.push("Completion before controlled departure");
+  if ([start, release].some(e => e && e.success !== true)) reasons.push("Fixture hold/release success not established");
   if (departed && (departed.provenance !== run.observation || departed.success !== true)) reasons.push("Departure was not observed on the requested surface");
   if (terminal && (terminal.resultDigest !== digest(fixture.a) || terminal.success !== true || !terminal.terminalVersion)) reasons.push("Terminal fixture result/version missing or mismatched");
   const signals = find("signal"), subscription = one("subscribe");
@@ -121,6 +122,7 @@ export function evaluate(expected: RunContext, input: unknown) {
     if (!signals.length) reasons.push("Missing event signal observation");
     if (!subscription || subscription.success !== true || subscription.provenance !== run.observation) reasons.push("Missing exact subscription observation");
     for (const e of signals) {
+      if (e.success !== true || e.provenance !== run.observation) reasons.push("Event signal was not successful on the requested surface");
       if (!e.eventId || !terminal || !subscription || e.seq <= subscription.seq || e.seq <= terminal.seq ||
           e.terminalVersion !== terminal.terminalVersion || (terminal.seq < subscription.seq && e.replay !== true)) {
         reasons.push("Unverified event/subscription ordering or retained replay");
@@ -128,10 +130,21 @@ export function evaluate(expected: RunContext, input: unknown) {
     }
   }
   if (signals.some(e => !terminal || e.seq <= terminal.seq || e.terminalVersion !== terminal.terminalVersion)) reasons.push("Signal precedes or mismatches terminal");
+  // Check contradictory assertions before filtering to successful proofs. Scope
+  // and source labels must not hide a failure for the same exact target.
+  const reviewRecords = find("result-reviewed"), approvalRecords = find("b-approved");
+  if (reviewRecords.some(a => a.success === true && reviewRecords.some(b => b.success === false &&
+      a.jobRef === b.jobRef && a.resultDigest === b.resultDigest && a.terminalVersion === b.terminalVersion))) {
+    reasons.push("Contradictory review success/failure for the same exact A result");
+  }
+  if (approvalRecords.some(a => a.success === true && approvalRecords.some(b => b.success === false &&
+      a.jobRef === b.jobRef && a.promptDigest === b.promptDigest))) {
+    reasons.push("Contradictory approval success/failure for the same exact B prompt");
+  }
   const evidence = (k: Evidence["kind"]) => observation(k).filter(e => e.success === true && terminal && e.seq > terminal.seq);
   const reads = evidence("result-read");
   const exactReads = reads.filter(e => e.scopeMatches === true && e.resultDigest === digest(fixture.a) && e.terminalVersion === terminal!.terminalVersion);
-  const reviews = evidence("result-reviewed").filter(e => exactReads.some(read => read.seq < e.seq) && e.resultDigest === digest(fixture.a) && e.terminalVersion === terminal!.terminalVersion);
+  const reviews = evidence("result-reviewed").filter(e => e.scopeMatches === true && exactReads.some(read => read.seq < e.seq) && e.resultDigest === digest(fixture.a) && e.terminalVersion === terminal!.terminalVersion);
   const proof = (k: Evidence["kind"], records: Evidence[], reason: string): Verdict => ({
     status: observation(k).some(e => e.success === false) ? "fail" : records.length ? "pass" : "unknown",
     evidence: records.map(e => e.seq), provenance: run.observation, reason
@@ -147,7 +160,7 @@ export function evaluate(expected: RunContext, input: unknown) {
     capabilities.BindAuthority.reason = "Original scope or exact result mismatch";
   }
   if (evidence("chat-bound").some(e => e.chatMatches === false)) capabilities.BindChat.status = "fail";
-  const approvals = find("b-approved").filter(e => e.success === true && e.provenance === run.observation && start && e.seq < start.seq && e.promptDigest === digest(fixture.bPrompt));
+  const approvals = approvalRecords.filter(e => e.success === true && e.provenance === run.observation && start && e.seq < start.seq && e.promptDigest === digest(fixture.bPrompt));
   const admissions = find("b-admitted"), executions = find("b-executed");
   const eligibleB = Boolean(approvals.length === 1 && reviews.length && capabilities.BindAuthority.status === "pass" && capabilities.BindChat.status === "pass");
   const bChecks = (e: Evidence) => e.success === true && e.scopeMatches === true && e.promptDigest === digest(fixture.bPrompt) && reviews.some(review => review.seq < e.seq);

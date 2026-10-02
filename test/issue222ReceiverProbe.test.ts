@@ -22,13 +22,19 @@ function trace(observation: Run["observation"] = "synthetic-upstream") {
   add("model-wake", { automatic: true });
   add("chat-bound", { chatMatches: true });
   add("result-read", { scopeMatches: true, terminalVersion: 1, resultDigest: digest(fixture.a) });
-  add("result-reviewed", { terminalVersion: 1, resultDigest: digest(fixture.a) });
+  add("result-reviewed", { scopeMatches: true, terminalVersion: 1, resultDigest: digest(fixture.a) });
   add("b-admitted", { scopeMatches: true, promptDigest: digest(fixture.bPrompt) });
   add("b-executed", { scopeMatches: true, promptDigest: digest(fixture.bPrompt), resultDigest: digest(fixture.b) });
   return { context, run, add, score: () => evaluate(context, run), get: (kind: Evidence["kind"]) => run.records.find(e => e.kind === kind)! };
 }
 function renumber(run: Run) { run.records.forEach((e, i) => { e.seq = i + 1; e.atMs = (i + 1) * 10; }); }
 function statuses(report: ReturnType<typeof evaluate>) { return Object.values(report.capabilities).map(v => v.status); }
+function expectInvalid(report: ReturnType<typeof evaluate>) {
+  expect(report.validity).toBe("invalid");
+  expect(statuses(report)).toEqual(["unknown", "unknown", "unknown", "unknown"]);
+  expect(report.followup.status).toBe("unknown");
+  expect(report.actualHostAcceptance).toBe("unknown");
+}
 
 describe("issue #222 test-only receiver evidence", () => {
   it("demonstrates a controlled local fixture without claiming wake, review, B or host acceptance", async () => {
@@ -70,6 +76,56 @@ describe("issue #222 test-only receiver evidence", () => {
   it.each(["hold-started", "departure-observed", "release", "terminal"] as const)("does not pass with missing %s", kind => {
     const f = trace(); f.run.records = f.run.records.filter(e => e.kind !== kind);
     expect(f.score().validity).toBe("invalid"); expect(statuses(f.score())).not.toContain("pass");
+  });
+  it.each([
+    ["hold-started", false], ["hold-started", undefined], ["release", false], ["release", undefined]
+  ] as const)("requires explicit %s success, not %s", (kind, success) => {
+    const f = trace("local-browser"); f.get(kind).success = success;
+    expectInvalid(f.score());
+  });
+  it.each(["positive", "failed", "missing-success", "synthetic"])("checks event surface/success: %s", mode => {
+    const f = trace("local-browser"); f.run.route = f.context.route = "events";
+    f.add("subscribe");
+    const signal = f.add("signal", { eventId: "same-event", terminalVersion: 1, replay: true });
+    if (mode === "failed") signal.success = false;
+    if (mode === "missing-success") delete signal.success;
+    if (mode === "synthetic") signal.provenance = "synthetic-upstream";
+    if (mode !== "positive") expectInvalid(f.score());
+    else {
+      expect(f.score().validity).toBe("valid"); expect(f.score().followup.status).toBe("pass");
+      expect(f.score().actualHostAcceptance).toBe("unknown");
+    }
+  });
+  it.each([false, undefined])("requires explicit review scope proof, not %s", scopeMatches => {
+    const f = trace("local-browser"); f.get("result-reviewed").scopeMatches = scopeMatches;
+    expect(f.score().counts?.reviewRecords).toBe(0);
+    expect(f.score().followup.status).toBe("fail");
+  });
+  it.each(["review", "review-wrong-scope", "approval", "approval-wrong-scope"])(
+    "rejects success followed by same-target failure before B: %s", mode => {
+      const f = trace("local-browser"), review = mode.startsWith("review");
+      const original = f.get(review ? "result-reviewed" : "b-approved");
+      const failure = { ...original, success: false };
+      if (mode.endsWith("wrong-scope")) failure.scopeMatches = false;
+      else delete failure.scopeMatches;
+      f.run.records.splice(f.run.records.indexOf(original) + 1, 0, failure); renumber(f.run);
+      expectInvalid(f.score());
+    });
+  it("keeps a failed-only review out of B eligibility", () => {
+    const f = trace("local-browser"); f.get("result-reviewed").success = false;
+    expect(f.score().validity).toBe("valid"); expect(f.score().counts?.reviewRecords).toBe(0);
+    expect(f.score().followup.status).toBe("fail");
+  });
+  it.each(["review-digest", "review-version", "approval-prompt"])("limits contradictions to the same exact target: %s", mode => {
+    const f = trace("local-browser"), approval = mode === "approval-prompt";
+    const original = f.get(approval ? "b-approved" : "result-reviewed");
+    const failure = { ...original, success: false };
+    if (mode === "review-digest") failure.resultDigest = digest(fixture.b);
+    if (mode === "review-version") failure.terminalVersion = 2;
+    if (approval) failure.promptDigest = digest("other B prompt");
+    f.run.records.splice(f.run.records.indexOf(original) + 1, 0, failure); renumber(f.run);
+    expect(f.score().validity).toBe("valid"); expect(f.score().followup.status).toBe("pass");
+    expect(f.score().actualHostAcceptance).toBe("unknown");
   });
   it("rejects completion before departure", () => {
     const f = trace(), t = f.get("terminal"), d = f.get("departure-observed");
