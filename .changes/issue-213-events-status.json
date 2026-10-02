@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Expose exact Events delivery failures and preserve explicit monitoring stops without automatic reference reissuance.",
+  "breaking": false,
+  "migration": null
+}

@@ -11,8 +11,10 @@ import { modelPolicyRecoveryActions } from "./toolGuidance.js";
 import {
   guidance,
   modelNextActionOutputSchema,
+  monitoringNextActionOutputSchema,
   nextActionSummary,
   projectModelNextAction,
+  projectMonitoringNextAction,
   settingsAction,
   statusAction
 } from "./nextActions.js";
@@ -137,7 +139,7 @@ import {
   registerDashboardCardResource
 } from "./dashboardCard.js";
 import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
-import { eventAccessOutputSchema, eventSubscriptionStateSchema } from "./mcpEventAccess.js";
+import { eventAccessOutputSchema, eventSubscriptionStateSchema, type EventSubscriptionState } from "./mcpEventAccess.js";
 import {
   BridgeStateStore,
   canonicalActivityTitle,
@@ -517,7 +519,7 @@ const codexTaskOutputSchema = z.strictObject({
   answer: z.string().nullable(),
   error: taskStructuredErrorOutputSchema.nullable(),
   warnings: z.array(z.string()),
-  nextActions: z.array(modelNextActionOutputSchema)
+  nextActions: z.array(monitoringNextActionOutputSchema)
 }).superRefine((value, context) => {
   const issue = (path: string[], message: string) => context.addIssue({ code: "custom", path, message });
   const hasJob = value.jobId !== null;
@@ -1122,7 +1124,7 @@ const statusItemOutputSchema = z.strictObject({
   answer: z.string().optional(),
   error: structuredErrorOutputSchema.optional(),
   wait: jobWaitOutputSchema.optional(),
-  nextActions: z.array(modelNextActionOutputSchema).optional(),
+  nextActions: z.array(monitoringNextActionOutputSchema).optional(),
   message: z.string().optional()
 });
 
@@ -10602,6 +10604,17 @@ function steeringFailureResult(
   });
 }
 
+function eventMonitoringStopGuidance(subscription: EventSubscriptionState | undefined): string | undefined {
+  if (subscription?.reason !== "revoked" && subscription?.reason !== "unsubscribed") return undefined;
+  return `Events monitoring was explicitly ${subscription.reason}. Resume it only when the user asks, by issuing a new subscriptionRef in the original conversation. Do not automatically issue, resubscribe or replace this Job; keep manual exact-result reads available without card, schedule or polling fallback.`;
+}
+
+function eventDeliveryFailureGuidance(subscription: EventSubscriptionState | undefined): string | undefined {
+  if (subscription?.delivery?.state !== "failed") return undefined;
+  const delivery = subscription.delivery;
+  return `Events delivery has permanently failed (${delivery.failureReason}${delivery.lastHttpStatus === null ? "" : `; HTTP ${delivery.lastHttpStatus}`}). Automatic webhook retries have stopped. Report this delivery failure separately from Codex execution; preserve the original Job and result for manual exact reads. Do not automatically reissue monitoring, rerun the Job, mount Dashboard, send ui/message, schedule tasks or repeatedly poll.`;
+}
+
 function formatJobStatus(
   job: CodexJob,
   staleAfterMs: number,
@@ -10668,11 +10681,20 @@ function formatJobStatus(
       : [])
   ];
   const eventsAvailable = registry?.eventDeliveryAvailableFor(job);
-  const eventSubscription = job.completionDeliveryPolicy === "events"
-    ? eventsAvailable && registry ? registry.admissionStateStore.mcpEventAccess.subscriptionState(job) : { state: "unavailable" as const }
+  let eventSubscription: EventSubscriptionState | undefined = job.completionDeliveryPolicy === "events"
+    ? registry?.admissionStateStore.mcpEventAccess.subscriptionState(job) || { state: "unavailable", reason: "runtime_unavailable" }
     : undefined;
+  const monitoringStopped = eventMonitoringStopGuidance(eventSubscription);
+  if (eventSubscription && !eventsAvailable && !monitoringStopped) {
+    eventSubscription = { ...eventSubscription, state: "unavailable", reason: "runtime_unavailable" };
+  }
+  const deliveryFailed = eventDeliveryFailureGuidance(eventSubscription);
+  if (monitoringStopped) warnings.push(monitoringStopped);
+  if (deliveryFailed) warnings.push(deliveryFailed);
+  const canIssueEventAccess = eventsAvailable && !monitoringStopped && !deliveryFailed &&
+    (eventSubscription?.state === "pending" || eventSubscription?.reason === "expired");
   const nextActions = eventSubscription
-    ? eventSubscription.state === "active" || !eventsAvailable ? [] : [{
+    ? !canIssueEventAccess ? [] : [{
         tool: "codex_event_access",
         arguments: { action: "issue", jobId: job.jobId },
         userPrompt: "Obtain or recover this exact Job's Bridge-issued subscriptionRef in the original conversation. Preserve its event arguments through native subscribe, refresh and unsubscribe. If subscription fails, report the failure and preserve the Job; do not mount Dashboard, send ui/message, schedule a task or repeatedly poll for completion."
@@ -10800,9 +10822,9 @@ function formatJobStatus(
             : job.completionDeliveryPolicy === "direct-wait"
               ? "Codex is running independently in experimental direct-result mode. Keep the current orchestration active with bounded terminal waits on this exact Job; a timeout or aborted read does not cancel it."
               : job.completionDeliveryPolicy === "events"
-                ? eventsAvailable
+                ? monitoringStopped || deliveryFailed || (eventsAvailable
                   ? "Codex is running with card-free Events intent. Ensure this exact Job's native subscription is active. Subscription or input failure requires an explicit report; never automatically fall back to Dashboard, ui/message, schedules or repeated polling."
-                  : "This Job retains its Events policy, but this runtime cannot deliver it. Preserve the original Job and result, report the unavailable connection, and use manual exact reads only when requested; do not restore card delivery or start replacement work."
+                  : "This Job retains its Events policy, but this runtime cannot deliver it. Preserve the original Job and result, report the unavailable connection, and use manual exact reads only when requested; do not restore card delivery or start replacement work.")
               : "Codex is running independently. Query this exact Job when needed, handle any pending input, and retrieve its terminal result before reporting completion."
         : job.status === "completed"
           ? resultOmitted
@@ -15694,14 +15716,17 @@ function taskProjectionForJob(
       ? [...semantic.warnings, MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING]
       : semantic.warnings,
     nextActions: [
-      ...semantic.nextActions.map(modelNextActionProjection),
+      ...semantic.nextActions.map(projectMonitoringNextAction),
       ...(semantic.terminal
         ? []
         : [guidance(
             semantic.completionDeliveryPolicy === "direct-wait"
               ? "Experimental direct-result mode applies to this Job. After every non-terminal return, inspect the supplied exact-Job input action before repeating a bounded terminal wait on this same Job. Review the terminal result and continue only already-approved work; stop at any new approval or user-input boundary. If the GPT run ends, the user must request an exact-Job read in the originating conversation; there is no automatic live-card fallback."
               : semantic.completionDeliveryPolicy === "events"
-                ? "This exact Job uses card-free native Events. Complete its exact Events subscription before ending orchestration. An event ACK is not result review: resumed ordinary tools must retain the original conversation scope. Retrieve and review this Job's exact original result, then admit only an already-approved followup and subscribe to that new exact Job. Do not call Dashboard for completion, send ui/message, schedule tasks or repeatedly poll. Surface subscription or input failures without fallback."
+                ? eventMonitoringStopGuidance(semantic.eventSubscription) || eventDeliveryFailureGuidance(semantic.eventSubscription) ||
+                  (semantic.eventSubscription?.state === "unavailable" && semantic.eventSubscription.reason !== "expired"
+                    ? "This Job's Events monitoring is unavailable. Report that state and preserve the original Job for manual exact reads; do not automatically issue access, restore card delivery, schedule tasks or repeatedly poll."
+                    : "This exact Job uses card-free native Events. Complete its exact Events subscription before ending orchestration. An event ACK is not result review: resumed ordinary tools must retain the original conversation scope. Retrieve and review this Job's exact original result, then admit only an already-approved followup and subscribe to that new exact Job. Do not call Dashboard for completion, send ui/message, schedule tasks or repeatedly poll. Surface subscription or input failures without fallback.")
               : "This Job continues independently of the current GPT response. Query the exact Job when needed, answer pending questions, and retrieve its terminal result before reporting completion."
           )])
     ]
@@ -15959,7 +15984,7 @@ function statusItemProjection(
     ...(wait.success ? { wait: wait.data } : {}),
     ...(() => {
       const actions = Array.isArray(input.nextActions)
-        ? input.nextActions.map(modelNextActionProjection)
+        ? input.nextActions.map(projectMonitoringNextAction)
         : structuredErrorNextActions(input.error);
       return actions.length ? { nextActions: actions } : {};
     })(),

@@ -1,19 +1,28 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { BridgeStateStore } from "./stateStore.js";
-import { JOB_TERMINAL_EVENT, type EventJob } from "./mcpEventStore.js";
+import { JOB_TERMINAL_EVENT, type EventJob, type EventSubscription } from "./mcpEventStore.js";
 import { parseJsonTextStrict } from "./textIntegrity.js";
 
 const PREFIX = "mcp_event_access_v1/";
+const STOP_PREFIX = "mcp_event_monitoring_stop_v1/";
 export const EVENT_ACCESS_LIFETIME_MS = 24 * 60 * 60 * 1_000;
 export const SUBSCRIPTION_REF_PATTERN = /^esr_[A-Za-z0-9_-]{43}$/;
 const MAX_GRANTS = 256;
 const MAX_JOB_GRANTS = 8;
 
 export const eventSubscriptionStateSchema = z.strictObject({
-  state: z.enum(["pending", "active", "unavailable"])
+  state: z.enum(["pending", "active", "unavailable"]),
+  reason: z.enum(["revoked", "unsubscribed", "expired", "callback_gone", "job_unavailable", "project_unavailable", "runtime_unavailable"]).optional(),
+  delivery: z.strictObject({
+    state: z.enum(["waiting", "pending", "acknowledged", "failed"]),
+    attempts: z.number().int().nonnegative(),
+    lastHttpStatus: z.number().int().min(100).max(599).nullable(),
+    failureReason: z.enum(["callback_rejected", "retry_exhausted"]).nullable()
+  }).optional()
 });
-export const eventAccessOutputSchema = z.strictObject({
+export type EventSubscriptionState = z.infer<typeof eventSubscriptionStateSchema>;
+export const eventAccessOutputSchema = eventSubscriptionStateSchema.extend({
   jobId: z.string().uuid(),
   state: z.enum(["pending", "active", "unavailable", "revoked"]),
   event: z.literal(JOB_TERMINAL_EVENT),
@@ -35,9 +44,21 @@ export type EventAccessReceipt = {
   expiresAt: number;
   revision: number;
   revokedAt?: number;
+  unsubscribedAt?: number;
   callbackHash?: string;
   subscriptionId?: string;
 };
+
+type MonitoringStop = { principal: string; scopeId: string; event: typeof JOB_TERMINAL_EVENT;
+  reason: "revoked" | "unsubscribed"; stoppedAt: number };
+
+function deliveryState(subscription: EventSubscription): NonNullable<EventSubscriptionState["delivery"]> {
+  const status = subscription.lastStatus;
+  const transient = status === undefined || status === 0 || status === 408 || status === 425 || status === 429 || status >= 500;
+  return { state: subscription.delivery, attempts: subscription.attempts,
+    lastHttpStatus: status !== undefined && status >= 100 && status <= 599 ? status : null,
+    failureReason: subscription.delivery === "failed" ? transient ? "retry_exhausted" : "callback_rejected" : null };
+}
 
 function referenceHash(ref: string): string { return createHash("sha256").update(ref).digest("hex"); }
 export function eventCallbackHash(url: string): string { return createHash("sha256").update(url).digest("hex"); }
@@ -83,8 +104,10 @@ export class McpEventAccessStore {
 
   issue(job: EventJob, principal: string, secret: string, now = Date.now()): { record: EventAccessReceipt; subscriptionRef: string } {
     return this.state.transaction(() => {
+      if (!this.state.isEventJobRetained(job.jobId)) throw new Error("EVENT_ACCESS_OWNER_REQUIRED: The exact Events Job is no longer retained.");
       this.maintain(now);
-      const prior = this.list(job.jobId).find(record => record.revokedAt === undefined && record.expiresAt > now && this.matches(record, job, principal));
+      const prior = this.list(job.jobId).find(record => record.revokedAt === undefined && record.unsubscribedAt === undefined && record.expiresAt > now && this.matches(record, job, principal) &&
+        (!record.subscriptionId || this.state.mcpEvents.get(job.jobId, record.subscriptionId)?.disabled !== "unsubscribed"));
       if (prior) {
         const ref = this.reference(prior, secret);
         if (referenceHash(ref) !== prior.referenceHash) throw new Error("EVENT_ACCESS_KEY_CHANGED: Explicitly revoke and issue a new delegation after installation-key rotation.");
@@ -103,6 +126,9 @@ export class McpEventAccessStore {
       const ref = this.reference(record, secret);
       record.referenceHash = referenceHash(ref);
       if (!this.save(record, 0)) throw new Error("EVENT_ACCESS_CHANGED: Delegation admission changed.");
+      // Only this authenticated original-conversation issuance can resume a
+      // stopped watch. Status and maintenance never clear the user's stop intent.
+      this.forgetJob(job.jobId);
       return { record, subscriptionRef: ref };
     });
   }
@@ -131,25 +157,87 @@ export class McpEventAccessStore {
           }
         }
       }
+      this.rememberStop(jobId, { principal, scopeId, event: JOB_TERMINAL_EVENT, reason: "revoked", stoppedAt: now });
     });
   }
+
+  unsubscribe(record: EventAccessReceipt, now = Date.now()): boolean {
+    return this.state.transaction(() => {
+      if (!this.save({ ...record, unsubscribedAt: record.unsubscribedAt ?? now, revision: record.revision + 1 }, record.revision)) return false;
+      // An old reference can disable its own callback after a deliberate
+      // reissue, but cannot stop the newer watch or alter its status guidance.
+      if (!this.list(record.jobId).some(other => other.referenceHash !== record.referenceHash && other.issuedAt >= record.issuedAt &&
+          other.revokedAt === undefined && other.unsubscribedAt === undefined)) {
+        this.rememberStop(record.jobId, { principal: record.principal, scopeId: record.scopeId, event: record.event,
+          reason: record.revokedAt !== undefined ? "revoked" : "unsubscribed", stoppedAt: now });
+      }
+      return true;
+    });
+  }
+
+  private rememberStop(jobId: string, stopped: MonitoringStop): void {
+    if (this.state.isEventJobRetained(jobId)) this.state.setMeta(STOP_PREFIX + jobId, JSON.stringify(stopped));
+  }
+
+  /** One small stop record per retained Job; removed with that Job/history. */
+  forgetJob(jobId: string): void { this.state.deleteMeta(STOP_PREFIX + jobId); }
 
   /** Expired receipts cannot create access. Removing them cannot revive a late
    * challenge: its transaction requires the same still-present grant revision. */
   maintain(now = Date.now()): void {
-    for (const record of this.list()) if (record.expiresAt + EVENT_ACCESS_LIFETIME_MS <= now) this.state.deleteMeta(PREFIX + record.referenceHash);
+    this.state.transaction(() => {
+      const records = this.list().map(record => {
+        if (record.unsubscribedAt === undefined && record.subscriptionId &&
+            this.state.mcpEvents.get(record.jobId, record.subscriptionId)?.disabled === "unsubscribed") {
+          const stopped = { ...record, unsubscribedAt: now, revision: record.revision + 1 };
+          if (!this.save(stopped, record.revision)) throw new Error("EVENT_ACCESS_CHANGED: Delegation changed during maintenance.");
+          return stopped;
+        }
+        return record;
+      }).sort((a, b) => b.issuedAt - a.issuedAt || (b.revokedAt ?? b.unsubscribedAt ?? 0) - (a.revokedAt ?? a.unsubscribedAt ?? 0));
+      // Preserve explicit stops in receipts written before stop records existed.
+      // Expiry alone never creates a stop, and an older receipt cannot stop a
+      // newer delegation. No credential is retained in the stop record.
+      for (const record of records) {
+        const unsubscribed = record.unsubscribedAt !== undefined || record.subscriptionId &&
+          this.state.mcpEvents.get(record.jobId, record.subscriptionId)?.disabled === "unsubscribed";
+        if ((record.revokedAt !== undefined || unsubscribed) && !this.state.getMeta(STOP_PREFIX + record.jobId) &&
+            !records.some(other => other.jobId === record.jobId && other.referenceHash !== record.referenceHash &&
+              other.issuedAt >= record.issuedAt && other.revokedAt === undefined && other.unsubscribedAt === undefined)) {
+          this.rememberStop(record.jobId, { principal: record.principal, scopeId: record.scopeId, event: record.event,
+            reason: record.revokedAt !== undefined ? "revoked" : "unsubscribed", stoppedAt: record.revokedAt ?? record.unsubscribedAt ?? now });
+        }
+        if (record.expiresAt + EVENT_ACCESS_LIFETIME_MS <= now) this.state.deleteMeta(PREFIX + record.referenceHash);
+      }
+    });
   }
 
-  subscriptionState(job: EventJob, now = Date.now()): { state: "pending" | "active" | "unavailable" } {
-    if (job.projectId && !this.state.isEventProjectAvailable(job.projectId)) return { state: "unavailable" };
+  subscriptionState(job: EventJob, now = Date.now()): EventSubscriptionState {
+    if (!this.state.isEventJobRetained(job.jobId)) return { state: "unavailable", reason: "job_unavailable" };
     const grants = this.list(job.jobId);
     const subscriptions = this.state.mcpEvents.list(job.jobId);
-    const active = subscriptions.some(subscription => !subscription.disabled && subscription.expiresAt > now &&
+    const active = subscriptions.find(subscription => !subscription.disabled && subscription.expiresAt > now &&
       subscription.accessReferenceHash && grants.some(grant => grant.referenceHash === subscription.accessReferenceHash &&
-        grant.revokedAt === undefined && grant.expiresAt > now && grant.callbackHash && grant.subscriptionId === subscription.id &&
+        grant.revokedAt === undefined && grant.unsubscribedAt === undefined && grant.expiresAt > now && grant.callbackHash && grant.subscriptionId === subscription.id &&
         this.matches(grant, job, subscription.principal)));
-    const pending = grants.some(grant => grant.revokedAt === undefined && grant.expiresAt > now && !grant.callbackHash &&
+    const ownedGrants = grants.filter(grant => this.matches(grant, job, grant.principal));
+    const latest = ownedGrants.find(grant => grant.revokedAt === undefined && grant.unsubscribedAt === undefined && grant.expiresAt > now) ||
+      ownedGrants.sort((a, b) => b.issuedAt - a.issuedAt)[0];
+    const subscription = active || subscriptions.find(sub => sub.accessReferenceHash === latest?.referenceHash && sub.id === latest?.subscriptionId);
+    const delivery = subscription ? { delivery: deliveryState(subscription) } : {};
+    const stoppedRaw = this.state.getMeta(STOP_PREFIX + job.jobId);
+    const stopped = stoppedRaw ? parseJsonTextStrict(stoppedRaw, "MCP event monitoring stop") as MonitoringStop : undefined;
+    if (stopped && stopped.principal === job.mcpPrincipal && stopped.scopeId === job.scopeId && stopped.event === JOB_TERMINAL_EVENT) {
+      return { state: "unavailable", reason: stopped.reason, ...delivery };
+    }
+    if (job.projectId && !this.state.isEventProjectAvailable(job.projectId)) return { state: "unavailable", reason: "project_unavailable", ...delivery };
+    if (active) return { state: "active", ...delivery };
+    const pending = grants.some(grant => grant.revokedAt === undefined && grant.unsubscribedAt === undefined && grant.expiresAt > now && !grant.callbackHash &&
       this.matches(grant, job, grant.principal));
-    return { state: active ? "active" : pending || !grants.length && !subscriptions.length ? "pending" : "unavailable" };
+    if (latest?.revokedAt !== undefined || subscription?.disabled === "revoked") return { state: "unavailable", reason: "revoked", ...delivery };
+    if (latest?.unsubscribedAt !== undefined || subscription?.disabled === "unsubscribed") return { state: "unavailable", reason: "unsubscribed", ...delivery };
+    if (subscription?.disabled === "gone") return { state: "unavailable", reason: "callback_gone", ...delivery };
+    if (pending || !grants.length && !subscriptions.length) return { state: "pending" };
+    return { state: "unavailable", reason: "expired", ...delivery };
   }
 }

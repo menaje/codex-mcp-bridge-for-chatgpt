@@ -87,6 +87,29 @@ export const modelNextActionOutputSchema = z.union([
 
 export type ModelNextAction = z.infer<typeof modelNextActionOutputSchema>;
 
+const monitoringIssueActionSchema = z.strictObject({
+  kind: z.literal("tool"), tool: z.literal("codex_event_access"),
+  arguments: z.strictObject({ action: z.literal("issue"), jobId: z.string().uuid() }),
+  message: message.optional()
+});
+
+/** Only task/status may suggest an exact Job's already-authorized monitoring
+ * issuance. Their producers suppress this action after an explicit stop. */
+export const monitoringNextActionOutputSchema = z.union([
+  ...modelNextActionOutputSchema.options, monitoringIssueActionSchema
+]).meta({ id: "monitoringNextAction" });
+export type MonitoringNextAction = z.infer<typeof monitoringNextActionOutputSchema>;
+
+export function projectMonitoringNextAction(value: unknown): MonitoringNextAction {
+  if (record(value) && value.tool === "codex_event_access") {
+    const candidate = monitoringIssueActionSchema.safeParse({ kind: "tool", tool: value.tool, arguments: value.arguments,
+      ...(typeof value.userPrompt === "string" ? { message: value.userPrompt }
+        : typeof value.message === "string" ? { message: value.message } : {}) });
+    if (candidate.success) return candidate.data;
+  }
+  return projectModelNextAction(value);
+}
+
 export function guidance(value: string): ModelNextAction {
   const normalized = value.replace(/\s+/g, " ").trim().slice(0, 1_000);
   return modelNextActionOutputSchema.parse({
@@ -166,7 +189,7 @@ export function projectModelNextAction(value: unknown): ModelNextAction {
   return guidance(rawMessage || "Inspect the current authoritative state before deciding the next action.");
 }
 
-export function nextActionSummary(action: ModelNextAction): string {
+export function nextActionSummary(action: MonitoringNextAction): string {
   if (action.kind === "guidance") return action.message;
   const call = `${action.tool}(${JSON.stringify(action.arguments)})`;
   return action.message ? `${call}. ${action.message}` : call;

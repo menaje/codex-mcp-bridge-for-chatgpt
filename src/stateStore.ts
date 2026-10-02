@@ -1530,6 +1530,7 @@ export class BridgeStateStore {
       this.database
         .prepare("UPDATE jobs SET archived_at = ?, payload = ? WHERE job_id = ?")
         .run(now, JSON.stringify({ resultOmitted: true }), row.job_id);
+      this.mcpEventAccess.forgetJob(row.job_id);
       this.database.prepare("DELETE FROM job_events WHERE job_id=?").run(jobId);
       this.insertJobEvent({
         jobId: row.job_id,
@@ -1738,6 +1739,7 @@ export class BridgeStateStore {
     const receipt = {resultOmitted:true,historyExpired:true};
     this.database.prepare("UPDATE jobs SET payload=?,summary='{}' WHERE job_id=?")
       .run(JSON.stringify(receipt), candidate.jobId);
+    this.mcpEventAccess.forgetJob(candidate.jobId);
     this.eventRetention.deleteJobEventsForHistory(candidate.jobId);
     this.database.prepare("DELETE FROM job_completion_deliveries WHERE job_id=?")
       .run(candidate.jobId);
@@ -4180,6 +4182,10 @@ export class BridgeStateStore {
   get mcpEventAccess(): McpEventAccessStore { return new McpEventAccessStore(this); }
   get taskFollowups(): TaskFollowupStore { return new TaskFollowupStore(this); }
   get readOnly(): boolean { return this.options.readOnly === true; }
+
+  isEventJobRetained(jobId: string): boolean {
+    return Boolean(this.database.prepare("SELECT 1 FROM jobs WHERE job_id=? AND archived_at IS NULL AND json_extract(payload, '$.historyExpired') IS NOT 1").get(jobId));
+  }
 
   isEventProjectAvailable(projectId: string): boolean {
     return Boolean(this.database.prepare("SELECT 1 FROM projects WHERE project_id=? AND archived_at IS NULL").get(projectId));

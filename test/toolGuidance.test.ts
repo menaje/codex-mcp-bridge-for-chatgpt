@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ModelPolicyError } from "../src/modelPolicy.js";
 import { modelPolicyRecoveryActions } from "../src/toolGuidance.js";
-import { modelNextActionOutputSchema, projectModelNextAction } from "../src/nextActions.js";
+import { modelNextActionOutputSchema, projectModelNextAction, projectMonitoringNextAction } from "../src/nextActions.js";
 
 describe("current model recovery contract", () => {
   it("emits only validated non-mutating next actions", () => {
@@ -68,5 +68,17 @@ describe("current model recovery contract", () => {
   it("never turns an unknown stored action into an executable tool call", () => {
     const action = projectModelNextAction({ tool: "codex_task", arguments: { prompt: "run this" } });
     expect(action).toEqual(expect.objectContaining({ kind: "guidance" }));
+  });
+
+  it("preserves exact monitoring issuance but never projects revocation or caller-supplied scope/reference", () => {
+    const jobId = "11111111-1111-4111-8111-111111111111";
+    expect(projectMonitoringNextAction({ tool: "codex_event_access", arguments: { action: "issue", jobId } })).toEqual({
+      kind: "tool", tool: "codex_event_access", arguments: { action: "issue", jobId }
+    });
+    for (const args of [{ action: "revoke", jobId }, { action: "issue", jobId: "guessed" },
+      { action: "issue", jobId, scopeId: "caller-scope" }, { action: "issue", jobId, subscriptionRef: "caller-reference" }]) {
+      expect(projectMonitoringNextAction({ tool: "codex_event_access", arguments: args }).kind).toBe("guidance");
+    }
+    expect(projectModelNextAction({ tool: "codex_event_access", arguments: { action: "issue", jobId } }).kind).toBe("guidance");
   });
 });

@@ -68,6 +68,15 @@ no Job access.
 conversation. It revokes that Job's references and disables linked subscriptions
 atomically. An intentionally authorized issue after revocation creates a new
 system reference; old references remain revoked.
+Native unsubscribe also retires its reference, including before the first
+callback binding. After either explicit stop, status and task replay expose
+`reason: "revoked"` or `"unsubscribed"` and no automatic issuance action. They
+instruct the model to wait for a user request to resume monitoring. Such a
+request uses the existing original-conversation `action: "issue"` to obtain a
+new reference; the old reference still cannot subscribe or refresh. An old
+reference may disable its own callback, but cannot stop a newer delegation.
+Initial already-approved monitoring and response-loss recovery still return
+the exact-Job issuance action; no additional approval is required for those.
 
 ## Persistence and races
 
@@ -78,6 +87,7 @@ supervisor or workflow engine was added. Each receipt contains:
 - system-created receipt UUID and opaque-reference hash;
 - principal, exact Job/Activity/Agent/project, original scope and allowed event;
 - issue/expiry/revocation times and revision;
+- unsubscribe time when the host explicitly stops that reference;
 - verified callback hash and admitted subscription ID once bound.
 
 The public `esr_` reference is a domain-separated 256-bit HMAC of that UUID under
@@ -87,6 +97,16 @@ a reference without that secret. An authorized exact-Job issue call recovers the
 same live reference after response loss or product-server restart. Keep the
 installation secret; rotation requires explicit revoke/reissue and does not
 migrate another principal's Jobs.
+
+A small `mcp_event_monitoring_stop_v1/<jobId>` record preserves the principal,
+original scope, event, stop reason and time after credential receipts expire.
+It grants no authority and contains no reference, callback or signing key.
+There is at most one per retained Job; Job archival/history expiry removes it.
+Maintenance preserves explicit stops from preexisting receipts before bounded
+cleanup, but never turns expiry into a stop or stops a newer delegation. New
+authorized issuance clears the stop record in the same UoW as admission;
+storage failure rolls both changes back. This uses the existing metadata
+journal and single writer, with no new database or migration.
 
 Limits are one callback per reference, eight retained receipts per Job and 256
 globally. A reference lasts 24 hours, cannot be extended by native refresh, and
@@ -122,6 +142,30 @@ retroactive conversion. Events intent is separate from actual subscription:
 | `active` | A matching live receipt and verified bound subscription exist in this runtime. This does not promise delivery/review. |
 | `unavailable` | The runtime cannot deliver, or the previously bound/issued grant is expired, revoked, unsubscribed or inaccessible. |
 
+Subscription authority and delivery are separate. While its delivery ledger is
+retained, an exact Job also exposes `eventSubscription.delivery`:
+
+| Delivery field | Meaning |
+| --- | --- |
+| `state` | `waiting` for terminal intent, `pending` for send/retry, `acknowledged` for webhook receipt, or `failed` for final failure. ACK is not GPT review. |
+| `attempts` | The persisted number of webhook send attempts. |
+| `lastHttpStatus` | The last HTTP code, or `null` when no HTTP response is available. No endpoint or raw error text is exposed. |
+| `failureReason` | `callback_rejected` for a permanent callback rejection, `retry_exhausted` for exhausted transient/network attempts, otherwise `null`. |
+
+For example, an otherwise valid subscription can remain `state: "active"`
+while its delivery is `failed` after HTTP 413 or eight HTTP 503 attempts.
+`codex_status` and `codex_task` replay retain that distinction and explicitly
+warn that automatic delivery has stopped. They supply no automatic issue,
+card, polling or rerun action for a final delivery failure. A 410 additionally
+reports `reason: "callback_gone"`. Other unavailable reasons distinguish expiry,
+Job/history availability, project access and runtime availability. Explicit stops retain their reason
+even after credentials and delivery records are cleaned up or the Bridge
+restarts. A delivery failure never changes a successful Codex Job to failed;
+the original result remains readable under the existing scope and retention
+rules.
+After Job/history cleanup, monitoring is `job_unavailable`; stale in-memory
+Job handles cannot receive a new delegation or produce an issuance hint.
+
 Events admission/status never requests an automatic Dashboard mount or a
 completion polling loop. The server rejects automatic Dashboard presentation
 for an Events Job and immediately settles its old-card completion calls before
@@ -149,6 +193,11 @@ verification, ACK/rotation races, transaction rollback, bounded grants, finite
 original-result retention, old-card refusal and a card-free synthetic A-to-B
 sequence with concurrent B retries converging to one execution. Existing Events,
 OAuth, followup and output-contract tests remain applicable.
+Additional regressions route the injected webhook sender to an isolated real
+HTTP callback returning 413, 410 or eight 503 responses and verify exact status,
+task replay, failure sanitization and retained results. They also cover delivery
+phases, explicit-stop guidance, deliberately resumed new references, legacy
+cleanup/restart, pending callback stops and UoW rollback.
 
 Those tests establish Bridge behavior. **They are not actual GPT review or host
 resumption evidence.** Real host acceptance must separately observe:

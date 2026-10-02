@@ -187,6 +187,172 @@ function presentation(f: Fixture, jobId: string) {
 }
 
 describe("card-free OAuth Events delegation", () => {
+  it.each([413, 410, 503])("exposes terminal callback failure through exact status and task replay (%s)", async statusCode => {
+    const received: any[] = [];
+    const callback = createServer(async (req, res) => {
+      let raw = "";
+      for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw);
+      res.setHeader("content-type", "application/json");
+      if (body.type === "verification") { res.end(JSON.stringify({ challenge: body.challenge })); return; }
+      received.push(body); res.statusCode = statusCode; res.end("private callback diagnostics");
+    });
+    await new Promise<void>(r => callback.listen(0, "127.0.0.1", r));
+    const callbackUrl = `http://127.0.0.1:${(callback.address() as { port: number }).port}/events`;
+    try {
+      // The test-only sender routes the host's public callback to this isolated
+      // HTTP fixture. Production SSRF/DNS checks are unchanged.
+      const f = await start({ sender: async (_url, raw, headers, signal) => {
+        const response = await fetch(callbackUrl, { method: "POST", body: raw, headers, signal });
+        return { status: response.status, body: await response.text() };
+      } });
+      const token = await accessToken(); const a = await task(f, token); await completed(f, a.jobId, token);
+      const grant = await issue(f, a.jobId, token);
+      const sub = await rpc(f, "events/subscribe", delegated(grant), token, {});
+      const attempts = statusCode === 503 ? 8 : 1;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        await vi.waitFor(() => {
+          const current = f.state.mcpEvents.get(a.jobId, sub.body.result.id)!;
+          expect(current.attempts).toBe(attempt); expect(current.lastStatus).toBe(statusCode);
+          expect(current.nextAttemptAt).toBeGreaterThan(Date.now());
+          expect(current.delivery).toBe(attempt === attempts ? "failed" : "pending");
+        });
+        if (attempt < attempts) {
+          const current = f.state.mcpEvents.get(a.jobId, sub.body.result.id)!;
+          expect(f.state.mcpEvents.save({ ...current, nextAttemptAt: 0 }, current.revision)).toBe(true);
+          expect((await rpc(f, "events/subscribe", delegated(grant), token, {})).body.error).toBeUndefined();
+        }
+      }
+      const failure = { state: "failed", attempts, lastHttpStatus: statusCode,
+        failureReason: statusCode === 503 ? "retry_exhausted" : "callback_rejected" };
+      const status = await completed(f, a.jobId, token); const exact = status.items[0];
+      expect(exact.eventSubscription).toMatchObject({ state: statusCode === 410 ? "unavailable" : "active", delivery: failure });
+      if (statusCode === 410) expect(exact.eventSubscription.reason).toBe("callback_gone");
+      expect(exact.answer).toContain("Original OAuth fixture result");
+      expect(status.warnings.join(" ")).toContain("Automatic webhook retries have stopped");
+      expect(exact.nextActions || []).toHaveLength(0);
+      const replay = await task(f, token, { requestId: a.requestId });
+      expect(replay.eventSubscription.delivery).toEqual(failure); expect(replay.state).toBe("completed");
+      expect(replay.error).toBeNull(); expect(replay.nextActions).toHaveLength(0);
+      expect(replay.warnings.join(" ")).toContain(failure.failureReason);
+      const exposed = JSON.stringify({ exact, replay });
+      for (const privateValue of ["private callback diagnostics", "receiver.example.com", webhookSecret, grant.arguments.subscriptionRef]) {
+        expect(exposed).not.toContain(privateValue);
+      }
+      expect(new Set(received.map(body => body.eventId)).size).toBe(1); expect(received).toHaveLength(attempts);
+      expect(f.state.retentionProtection(a.jobId)).toContain("mcp-event-result-recovery");
+      expect(f.upstream.calls).toBe(1); expect(f.state.listJobs()).toHaveLength(1);
+      expect(f.requests.filter(request => request.name === "codex_dashboard" || request.method === "ui/message")).toHaveLength(0);
+    } finally { await close(callback); }
+  });
+
+  it("reports waiting, in-flight and acknowledged delivery independently of active subscription authority", async () => {
+    const sending = deferred(); const releaseSend = deferred();
+    const f = await start({ sender: async (_url, raw) => {
+      const body = JSON.parse(raw);
+      if (body.type !== "verification") { sending.resolve(); await releaseSend.promise; }
+      return { status: 200, body: JSON.stringify({ challenge: body.challenge }) };
+    } });
+    const token = await accessToken(); const releaseJob = f.upstream.hold();
+    try {
+      const a = await task(f, token); const grant = await issue(f, a.jobId, token);
+      const sub = await rpc(f, "events/subscribe", delegated(grant), token, {});
+      const query = { query: { kind: "job", id: a.jobId } };
+      const waiting = (await call(f, "codex_status", query, token)).result.structuredContent.items[0];
+      expect(waiting.eventSubscription).toEqual({ state: "active", delivery: { state: "waiting", attempts: 0, lastHttpStatus: null, failureReason: null } });
+      releaseJob(); await sending.promise;
+      const pending = (await call(f, "codex_status", query, token)).result.structuredContent.items[0];
+      expect(pending.eventSubscription).toEqual({ state: "active", delivery: { state: "pending", attempts: 1, lastHttpStatus: null, failureReason: null } });
+      releaseSend.resolve();
+      await vi.waitFor(() => expect(f.state.mcpEvents.get(a.jobId, sub.body.result.id)?.delivery).toBe("acknowledged"));
+      const ack = (await call(f, "codex_status", query, token)).result.structuredContent.items[0];
+      expect(ack.eventSubscription).toEqual({ state: "active", delivery: { state: "acknowledged", attempts: 1, lastHttpStatus: 200, failureReason: null } });
+    } finally { releaseJob(); releaseSend.resolve(); }
+  });
+
+  it.each(["revoke", "unsubscribe"] as const)("omits automatic issue after %s and resumes only with a new original-scope issuance", async action => {
+    const f = await start(); const token = await accessToken(); const release = f.upstream.hold();
+    try {
+      const a = await task(f, token);
+      expect(a.nextActions.some((next: any) => next.tool === "codex_event_access" && next.arguments.action === "issue")).toBe(true);
+      const grant = await issue(f, a.jobId, token);
+      expect((await issue(f, a.jobId, token)).arguments).toEqual(grant.arguments);
+      const sub = await rpc(f, "events/subscribe", delegated(grant), token, {});
+      if (action === "revoke") await call(f, "codex_event_access", { action, jobId: a.jobId }, token);
+      else expect((await rpc(f, "events/unsubscribe", unsubscribe(grant), token, {})).body.error).toBeUndefined();
+      const stoppedStatus = (await call(f, "codex_status", { query: { kind: "job", id: a.jobId } }, token)).result.structuredContent;
+      const stopped = stoppedStatus.items[0];
+      expect(stopped.eventSubscription).toMatchObject({ state: "unavailable", reason: action === "revoke" ? "revoked" : "unsubscribed" });
+      expect(stopped.nextActions || []).toHaveLength(0);
+      expect(stoppedStatus.warnings.join(" ")).toContain("Resume it only when the user asks");
+      const replay = await task(f, token, { requestId: a.requestId });
+      expect(replay.nextActions.some((next: any) => next.tool === "codex_event_access")).toBe(false);
+      expect(JSON.stringify(replay.nextActions)).not.toContain("Complete its exact Events subscription");
+      expect((await rpc(f, "events/subscribe", delegated(grant), token, {})).body.error.code).toBe(-32001);
+      // Represents a new, explicit user request to resume monitoring. No such
+      // action is supplied by status or task replay after the user's stop.
+      const resumed = await issue(f, a.jobId, token);
+      expect(resumed.arguments.subscriptionRef).not.toBe(grant.arguments.subscriptionRef);
+      expect(resumed.state).toBe("pending");
+      expect((await rpc(f, "events/subscribe", delegated(resumed), token, {})).body.error).toBeUndefined();
+      expect((await rpc(f, "events/subscribe", delegated(grant), token, {})).body.error.code).toBe(-32001);
+      expect((await rpc(f, "events/unsubscribe", unsubscribe(grant), token, {})).body.error).toBeUndefined();
+      const current = (await call(f, "codex_status", { query: { kind: "job", id: a.jobId } }, token)).result.structuredContent.items[0];
+      expect(current.eventSubscription.state).toBe("active"); expect(current.eventSubscription.reason).toBeUndefined();
+      expect(f.state.mcpEvents.get(a.jobId, sub.body.result.id)?.disabled).toBe("unsubscribed");
+      expect(f.upstream.calls).toBe(1);
+      expect(f.requests.filter(request => request.name === "codex_dashboard" || request.method === "ui/message")).toHaveLength(0);
+    } finally { release(); }
+  });
+
+  it.each(["revoke", "unsubscribe"] as const)("preserves %s intent across legacy receipt cleanup and restart, without retaining credentials", async action => {
+    const f = await start(); const token = await accessToken(); const a = await task(f, token); await completed(f, a.jobId, token);
+    const grant = await issue(f, a.jobId, token);
+    const sub = await rpc(f, "events/subscribe", delegated(grant), token, {});
+    await vi.waitFor(() => expect(f.state.mcpEvents.get(a.jobId, sub.body.result.id)?.delivery).toBe("acknowledged"));
+    if (action === "revoke") await call(f, "codex_event_access", { action, jobId: a.jobId }, token);
+    else await rpc(f, "events/unsubscribe", unsubscribe(grant), token, {});
+    // Emulate 53c91d6 receipts: no durable stop marker or unsubscribedAt field.
+    const key = "mcp_event_monitoring_stop_v1/" + a.jobId;
+    f.state.deleteMeta(key);
+    const old = f.state.mcpEventAccess.list(a.jobId)[0];
+    expect(f.state.mcpEventAccess.save({ ...old, unsubscribedAt: undefined, revision: old.revision + 1 }, old.revision)).toBe(true);
+    const future = Date.now() + 3 * EVENT_ACCESS_LIFETIME_MS;
+    f.state.mcpEventAccess.maintain(future); f.state.mcpEvents.maintain(future);
+    expect(f.state.mcpEventAccess.list()).toHaveLength(0); expect(f.state.mcpEvents.list()).toHaveLength(0);
+    expect(f.state.getMeta(key)).toBeDefined(); expect(f.state.getMeta(key)).not.toContain(grant.arguments.subscriptionRef);
+    await close(f.server); await close(f.provider); f.state.close();
+    const restarted = await start({ root: f.root });
+    const exact = (await completed(restarted, a.jobId, token)).items[0];
+    expect(exact.eventSubscription).toEqual({ state: "unavailable", reason: action === "revoke" ? "revoked" : "unsubscribed" });
+    expect(exact.nextActions || []).toHaveLength(0); expect(exact.answer).toContain("Original OAuth fixture result");
+    expect((await rpc(restarted, "events/subscribe", delegated(grant), token, {})).body.error.code).toBe(-32001);
+    expect(restarted.upstream.calls).toBe(0);
+    expect(restarted.state.deleteJob(a.jobId, future)).toBe(true);
+    expect(restarted.state.getMeta(key)).toBeUndefined();
+    const archived = (await call(restarted, "codex_status", { query: { kind: "job", id: a.jobId } }, token)).result.structuredContent;
+    expect(archived.items[0].eventSubscription).toEqual({ state: "unavailable", reason: "job_unavailable" });
+    expect(archived.items[0].nextActions || []).toHaveLength(0);
+    expect((await call(restarted, "codex_event_access", { action: "issue", jobId: a.jobId }, token)).result.isError).toBe(true);
+  });
+
+  it("honors revocation before first issuance and rolls failed resume admission back with its stop intent", async () => {
+    const f = await start(); const token = await accessToken(); const a = await task(f, token); await completed(f, a.jobId, token);
+    await call(f, "codex_event_access", { action: "revoke", jobId: a.jobId }, token);
+    expect(f.state.mcpEventAccess.list()).toHaveLength(0);
+    const key = "mcp_event_monitoring_stop_v1/" + a.jobId; const stopped = f.state.getMeta(key);
+    expect((await completed(f, a.jobId, token)).items[0].nextActions || []).toHaveLength(0);
+    const remove = f.state.deleteMeta.bind(f.state);
+    const failure = vi.spyOn(f.state, "deleteMeta").mockImplementation(candidate => {
+      if (candidate === key) throw new Error("isolated resume storage failure"); remove(candidate);
+    });
+    expect((await call(f, "codex_event_access", { action: "issue", jobId: a.jobId }, token)).result.isError).toBe(true);
+    expect(f.state.mcpEventAccess.list()).toHaveLength(0); expect(f.state.getMeta(key)).toBe(stopped);
+    failure.mockRestore();
+    expect((await issue(f, a.jobId, token)).state).toBe("pending"); expect(f.state.getMeta(key)).toBeUndefined();
+    expect(f.upstream.calls).toBe(1);
+  });
+
   it("delivers exact A then exactly one preapproved B without Dashboard or ui/message", async () => {
     const f = await start(); const token = await accessToken();
     const releaseA = f.upstream.hold();
@@ -419,6 +585,12 @@ describe("card-free OAuth Events delegation", () => {
       release.resolve(); expect((await pending).body.error).toBeDefined();
       expect(f.state.mcpEvents.list()).toHaveLength(0);
       expect(f.state.mcpEventAccess.list()[0].callbackHash).toBeUndefined();
+      if (action !== "project-unavailable") {
+        const stopped = (await call(f, "codex_status", { query: { kind: "job", id: a.jobId } }, token)).result.structuredContent;
+        expect(stopped.items[0].eventSubscription.reason).toBe(action === "revoke" ? "revoked" : "unsubscribed");
+        expect(stopped.items[0].nextActions || []).toHaveLength(0);
+        expect((await rpc(f, "events/subscribe", delegated(grant), token, {})).body.error.code).toBe(-32001);
+      }
       expect(f.upstream.calls).toBe(1);
     } finally { release.resolve(); await pending; }
   });
@@ -582,19 +754,21 @@ describe("card-free OAuth Events delegation", () => {
     } finally { releaseSend.resolve(); releaseVerify.resolve(); }
   });
 
-  it("rolls revocation and linked-subscription disabling back together on a write failure", async () => {
+  it.each(["revoke", "unsubscribe"] as const)("rolls %s, stop intent and linked-subscription disabling back together on a write failure", async action => {
     const f = await start(); const token = await accessToken(); const a = await task(f, token); await completed(f, a.jobId, token);
     const grant = await issue(f, a.jobId, token); const sub = await rpc(f, "events/subscribe", delegated(grant), token, {});
     await vi.waitFor(() => expect(f.state.mcpEvents.get(a.jobId, sub.body.result.id)?.delivery).toBe("acknowledged"));
     const access = f.state.mcpEventAccess.list()[0]; const subscription = f.state.mcpEvents.get(a.jobId, sub.body.result.id);
     const save = f.state.setMeta.bind(f.state);
     vi.spyOn(f.state, "setMeta").mockImplementation((key, value) => {
-      if (key.startsWith("mcp_events_v1/") && JSON.parse(value).disabled === "revoked") throw new Error("isolated revoke failure");
+      if (key.startsWith("mcp_events_v1/") && JSON.parse(value).disabled === (action === "revoke" ? "revoked" : "unsubscribed")) throw new Error("isolated stop failure");
       save(key, value);
     });
-    expect((await call(f, "codex_event_access", { action: "revoke", jobId: a.jobId }, token)).result.isError).toBe(true);
+    if (action === "revoke") expect((await call(f, "codex_event_access", { action, jobId: a.jobId }, token)).result.isError).toBe(true);
+    else expect((await rpc(f, "events/unsubscribe", unsubscribe(grant), token, {})).body.error).toBeDefined();
     expect(f.state.mcpEventAccess.list()[0]).toEqual(access);
     expect(f.state.mcpEvents.get(a.jobId, sub.body.result.id)).toEqual(subscription);
+    expect(f.state.getMeta("mcp_event_monitoring_stop_v1/" + a.jobId)).toBeUndefined();
     expect(f.upstream.calls).toBe(1);
   });
 });

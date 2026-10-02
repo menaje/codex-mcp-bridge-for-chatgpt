@@ -87,7 +87,7 @@ export class McpEventsController {
     if (this.config.oauth && this.vault) {
       server.registerTool("codex_event_access", {
         title: "Delegate Exact Job Events",
-        description: "Issue or recover a Bridge-generated subscriptionRef for this exact Events Job, or revoke its delegations. Requires an authenticated ordinary tool call in the original conversation. Supply only the returned Job ID; never invent a reference or scope. Pass the returned event and exact arguments unchanged to native events/subscribe, refresh and unsubscribe. This grants monitoring only, never result reads, task execution or configuration. Subscription success does not prove the callback belongs to the original conversation. No Dashboard, ui/message, scheduled task or polling fallback is permitted.",
+        description: "Issue or recover a Bridge-generated subscriptionRef for this exact Events Job, or revoke its delegations. After explicit revocation or unsubscribe, issue a new reference only when the user asks to resume monitoring; never treat their stop as an automatic recovery step. Requires an authenticated ordinary tool call in the original conversation. Supply only the returned Job ID; never invent a reference or scope. Pass the returned event and exact arguments unchanged to native events/subscribe, refresh and unsubscribe. This grants monitoring only, never result reads, task execution or configuration. Subscription success does not prove the callback belongs to the original conversation. No Dashboard, ui/message, scheduled task or polling fallback is permitted.",
         inputSchema: z.strictObject({ action: z.enum(["issue", "revoke"]), jobId: z.string().uuid() }),
         outputSchema: eventAccessOutputSchema,
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
@@ -105,7 +105,7 @@ export class McpEventsController {
           }
           const issued = access.issue(job, principal, this.config.token!);
           return eventAccessOutputSchema.parse({ jobId: job.jobId,
-            state: access.subscriptionState(job).state,
+            ...access.subscriptionState(job),
             event: JOB_TERMINAL_EVENT, arguments: { jobId: job.jobId, subscriptionRef: issued.subscriptionRef },
             expiresAt: new Date(issued.record.expiresAt).toISOString() });
         });
@@ -143,7 +143,7 @@ export class McpEventsController {
           if (currentAccess.callbackHash && (currentAccess.callbackHash !== eventCallbackHash(params.delivery.url) ||
               currentAccess.subscriptionId !== id)) throw this.denied();
           // Also fences a still-pending first challenge without creating a binding.
-          if (!this.jobs.admissionStateStore.mcpEventAccess.save({ ...currentAccess, revision: currentAccess.revision + 1 }, currentAccess.revision)) throw this.changed();
+          if (!this.jobs.admissionStateStore.mcpEventAccess.unsubscribe(currentAccess)) throw this.changed();
         }
         if (!record) return;
         if (record.scopeId !== scopeId || record.principal !== principal) throw this.denied();
@@ -261,7 +261,8 @@ export class McpEventsController {
     const access = this.jobs.admissionStateStore.mcpEventAccess.get(args.subscriptionRef, this.config.token!);
     if (!access || access.principal !== principal || access.jobId !== args.jobId || access.event !== JOB_TERMINAL_EVENT ||
         hostScope && hostScope !== access.scopeId ||
-        !allowInactive && (access.revokedAt !== undefined || access.expiresAt <= Date.now())) throw this.denied();
+        !allowInactive && (access.revokedAt !== undefined || access.unsubscribedAt !== undefined || access.expiresAt <= Date.now() ||
+          access.subscriptionId && this.jobs.admissionStateStore.mcpEvents.get(access.jobId, access.subscriptionId)?.disabled === "unsubscribed")) throw this.denied();
     const job = !allowInactive ? this.requireJob(args.jobId, access.scopeId, principal) : undefined;
     if (job) {
       if (!this.jobs.admissionStateStore.mcpEventAccess.matches(access, job, principal)) throw this.denied();
@@ -286,7 +287,7 @@ export class McpEventsController {
     const job = this.jobs.get(jobId);
     const activity = job && this.jobs.getActivity(job.activityId);
     const agent = job?.agentId && this.jobs.getAgent(job.agentId);
-    if (!job || job.scopeId !== scopeId || job.mcpPrincipal !== principal ||
+    if (!job || !this.jobs.admissionStateStore.isEventJobRetained(jobId) || job.scopeId !== scopeId || job.mcpPrincipal !== principal ||
         activity?.scopeId !== scopeId || !agent || agent.scopeId !== scopeId ||
         job.projectId && !this.jobs.admissionStateStore.isEventProjectAvailable(job.projectId)) throw this.denied();
     const completion = this.jobs.admissionStateStore.getJobCompletionDelivery(jobId, scopeId);
@@ -346,7 +347,7 @@ export class McpEventsController {
         if (record.principal !== this.principal) throw this.denied();
         if (record.accessReferenceHash) {
           const access = this.jobs.admissionStateStore.mcpEventAccess.getByHash(record.accessReferenceHash);
-          if (!access || access.revokedAt !== undefined || access.expiresAt <= Date.now() ||
+          if (!access || access.revokedAt !== undefined || access.unsubscribedAt !== undefined || access.expiresAt <= Date.now() ||
               access.subscriptionId !== id || !this.jobs.admissionStateStore.mcpEventAccess.matches(access, job, record.principal)) throw this.denied();
         } else if (job.completionDeliveryPolicy === "events") throw this.denied();
       }

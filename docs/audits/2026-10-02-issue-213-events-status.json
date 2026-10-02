@@ -1,0 +1,67 @@
+{
+  "date": "2026-10-02",
+  "timezone": "Asia/Seoul",
+  "issue": 213,
+  "integrationTarget": "dev",
+  "baseline": "53c91d6c6c7977912fcd805627d357bbdc9dfa0b",
+  "scope": "Expose final Events delivery failure and preserve explicit monitoring stop intent without automatic reissue guidance",
+  "reviewSource": "ChatGPT static review supplied by the user; not an independent test run by the reviewer",
+  "implementation": {
+    "authorityAndDeliverySeparate": true,
+    "safeFinalFailureReason": true,
+    "codexStatusAndTaskReplayExposeFailure": true,
+    "explicitStopsSuppressAutomaticIssue": true,
+    "initialApprovedMonitoringIssuePreserved": true,
+    "closedIssueActionOnlyInTaskAndStatus": true,
+    "unsubscribedReferenceRetired": true,
+    "deliberateResumeIssuesNewReference": true,
+    "oldReferenceCannotStopNewWatch": true,
+    "stopSurvivesCredentialGcAndRestart": true,
+    "legacyStoppedReceiptsPreserved": true,
+    "oneNoncredentialStopRecordPerRetainedJob": true,
+    "jobCleanupRemovesStopAndDeniesNewDelegation": true,
+    "stopAndResumeUseExistingAtomicUow": true,
+    "ordinaryResultAndFollowupScopeUnchanged": true,
+    "noNewDatabaseWriterOrMigration": true
+  },
+  "validation": {
+    "newRegressionCases": 11,
+    "delegationCases": 43,
+    "focusedPassed": 143,
+    "focusedFiles": 5,
+    "callbackHttpStatuses": [413, 410, 503],
+    "transientFailureHttpAttempts": 8,
+    "node": {
+      "total": 1257,
+      "testFiles": 116,
+      "affectedRunBeforeFinalJobCleanupGuard": { "passed": 1257, "failed": 0 },
+      "settledSourceFullRun": { "passed": 1256, "failed": 1, "failure": "macOS hdiutil detach fixture cleanup; unchanged releasePayload test suite" },
+      "isolatedReleasePayloadRerun": { "passed": 6, "failed": 0, "maxWorkers": 1, "sourceOrTestChanged": false },
+      "unresolvedFailedTests": 0,
+      "origin": "local Vitest; no actual model/host"
+    },
+    "swift": { "executed": 216, "skipped": 2, "failed": 0, "origin": "local strict-concurrency warnings-as-errors" },
+    "codexCliSchemaVersion": "0.153.3",
+    "settledSourceTypeBuildReleaseAndSchemaChecks": "passed",
+    "independentGitHubCiRun": false
+  },
+  "isolatedRequestInventory": {
+    "automaticDashboardCalls": 0,
+    "uiMessageCalls": 0,
+    "actualGptOrIframeInvolved": false,
+    "scope": "synthetic preapproved A-to-B sequence and new delivery-failure/stop HTTP regression cases"
+  },
+  "actualHost": {
+    "nativeCustomArgumentsSubscribeRefreshUnsubscribe": "unverified",
+    "resumedOrdinaryToolOriginalScope": "unverified",
+    "dashboardNeverOpenedAReviewOneBAndBEvent": "unverified",
+    "duplicateEventAndTokenRestartControls": "unverified",
+    "operationalIssuerReachabilityAndPersistence": "requires verification",
+    "newLiveABExecutedThisTask": false,
+    "operationalConnectionChangedThisTask": false,
+    "freshANoApprovalReusedForB": false,
+    "openaiInquirySent": false
+  },
+  "issueState": "OPEN",
+  "guarantee": "Exact Job/event monitoring delegated by the original conversation to the same OAuth principal; no independent callback-conversation proof or new permission for result reads or task admission"
+}
