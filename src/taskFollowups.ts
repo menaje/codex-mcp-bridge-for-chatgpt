@@ -16,12 +16,14 @@ type FollowupJob = {
   jobId: string; scopeId: string; activityId?: string; agentId?: string;
   requestId: string; approvedFollowups?: ApprovedFollowup[]; followup?: FollowupReference;
   createdAt?: number; mcpPrincipal?: string;
+  completionDeliveryPolicy?: "live-card" | "direct-wait" | "events";
   sandbox?: string; threadId?: string; executionDecision?: { effectiveSelection: { model: string; reasoningEffort: string; serviceTier?: string } };
 };
 type FollowupReceipt = ApprovedFollowup & {
   followupId: string;
   parentJobId: string; scopeId: string; activityId: string; agentId: string;
   mcpPrincipal?: string;
+  completionDeliveryPolicy?: "live-card" | "direct-wait" | "events";
   requestId: string; expiresAt: number; admittedJobId?: string;
   reviewedVersion?: number; reviewClaimedAt?: number;
 };
@@ -101,6 +103,7 @@ export class TaskFollowupStore {
       const receipt = this.get(job.followup.followupId);
       if (!receipt || receipt.scopeId !== job.scopeId || receipt.activityId !== job.activityId ||
           receipt.mcpPrincipal !== job.mcpPrincipal ||
+          receipt.completionDeliveryPolicy !== undefined && receipt.completionDeliveryPolicy !== job.completionDeliveryPolicy ||
           receipt.agentId !== job.agentId || receipt.requestId !== job.requestId ||
           receipt.admittedJobId && receipt.admittedJobId !== job.jobId ||
           !receipt.admittedJobId && receipt.expiresAt <= Date.now()) {
@@ -133,6 +136,7 @@ export class TaskFollowupStore {
         ...step, parentJobId: job.jobId, scopeId: job.scopeId, activityId: job.activityId, agentId: job.agentId,
         followupId: step.followupId!,
         mcpPrincipal: job.mcpPrincipal,
+        completionDeliveryPolicy: job.completionDeliveryPolicy,
         requestId, expiresAt: (job.createdAt || Date.now()) + APPROVAL_LIFETIME_MS
       } satisfies FollowupReceipt));
     }

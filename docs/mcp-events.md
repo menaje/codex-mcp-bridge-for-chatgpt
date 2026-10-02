@@ -7,12 +7,14 @@ on the existing MCP `2026-07-28` endpoint. It signals a committed `completed`,
 `codex_status` query. It does not include the prompt, answer, callback, signing
 key, or instructions to execute work.
 
-The default completion policy remains `live-card`; retained Jobs preserve
-their existing `live-card` or `direct-wait` snapshot. Events are an additional
-opt-in observation channel. No default switch, card retirement, new execution
-engine, automatic approval, or unrestricted flow is introduced. Callback ACK,
-result offer, caller's review assertion, followup admission and Activity
-verification remain separate facts.
+The default completion policy remains `live-card`; retained Jobs preserve their
+existing policy. New OAuth Jobs can explicitly request `completionDelivery:
+"events"` for **card-free** completion. This stores Events intent, excludes
+automatic Dashboard mounting/watchers/ui/message and propagates the policy to
+preapproved B Jobs. Each exact Job needs its own native subscription. There is
+no card, schedule or repeated-polling fallback. Manual Dashboard status/history/
+control and exact result reads remain available. ACK, result offer, review,
+followup admission and Activity verification remain separate facts.
 
 ## Authentication and enablement
 
@@ -29,7 +31,8 @@ metadata are correlation values, not authentication credentials.
 The current No Auth / Secure MCP Tunnel HTTP or stdio path supplies no independently
 verified subscriber principal. Events requests on that path are denied. Setting
 `openai/subject`, knowing a Job ID, or echoing a callback challenge cannot enable
-it. The opt-in OAuth adapter preserves the existing scope checks.
+it. The opt-in OAuth adapter preserves ordinary tool scope checks; only native
+subscription methods accept the limited receipt-backed delegation below.
 Existing execution and status tools continue normally.
 
 The selected [product connection design](mcp-events-authentication.md) is user
@@ -46,9 +49,12 @@ default No Auth connection still does not make the feature usable. Issue #213
 remains open.
 
 Observed native subscriptions omit the original tool-call conversation field.
-The [restricted subscription-delegation proposal](mcp-events-subscription-delegation.md)
-describes an alternative for an explicit authorization-design decision. It is
-not implemented or enabled, and the current scope checks still apply.
+The implemented [restricted subscription delegation](mcp-events-subscription-delegation.md)
+authorizes the same OAuth principal to monitor an exact Events Job without a
+native session. The reference is issued/recovered by `codex_event_access` in the
+original authenticated host conversation. Present bad/different sessions remain
+denied; result reads and B execution still require original tool scope. Actual
+host argument preservation and resumed scope remain acceptance gates.
 
 Discovery advertises `events` when the opt-in configuration is enabled. Use
 `events/list`, `events/subscribe` and `events/unsubscribe` on the same
@@ -57,12 +63,15 @@ Read-only projection workers never activate delivery or become a second writer.
 
 ## Subscription and delivery
 
-Subscribe using `name: "codex.job.terminal"`, `arguments: {"jobId":"..."}` and
+For OAuth Events Jobs, first issue/recover the system reference with
+`codex_event_access {action:"issue", jobId:"..."}`. Subscribe using
+`name: "codex.job.terminal"`,
+`arguments: {"jobId":"...", "subscriptionRef":"esr_..."}` and
 `delivery: {"mode":"webhook","url":"https://...","secret":"whsec_..."}`.
 The signing key must decode from base64 to 24–64 bytes. The service grants one
 hour by default and at most 24 hours; a smaller positive `ttlMs` is honored.
 In OAuth mode, the granted expiry is also capped at verified access-token expiry
-and checked again after callback verification. Renewal uses the same stable
+and the finite delegation expiry, with access checked again after callback verification. Renewal uses the same stable
 operator identity and subscription ID. Expiry stops delivery without cancelling
 or repeating the Job.
 `ttlMs: null` still receives a finite grant. `refreshBefore` is the granted
@@ -113,6 +122,9 @@ subscription uses the retained original terminal receipt to backfill the same
 event. This closes the result/intent crash boundary without polling or rerunning
 Codex. Cursors are `null`: this is an exact retained terminal snapshot, not a
 general event-history replay API.
+
+Before subscription, a terminal Events Job already protects its original result
+for 24 hours. No failed subscription can implicitly restore card delivery.
 
 An event keeps its ID across callbacks, response loss and retries. Attempts are
 persisted before sending and capped at eight. Network errors, 408, 425, 429 and

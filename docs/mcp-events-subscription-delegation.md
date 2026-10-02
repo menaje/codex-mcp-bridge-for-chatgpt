@@ -1,161 +1,172 @@
-# Proposal: original-conversation authorization for native Events
+# Restricted original-conversation Events delegation
 
-Status: **proposal; no delegated authorization is implemented or enabled**.
-The current product still rejects a native subscription without its original
-conversation metadata. This document is a concrete alternative for an explicit
-security-design decision, not a claim of strict conversation isolation or an
-OpenAI-provided authorization feature.
+Status: **implemented for opt-in OAuth Events Jobs; actual ChatGPT host acceptance remains pending**.
+The user explicitly authorized this design in [#213's card-free acceptance supplement](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/213#issuecomment-5942805508).
+This replaces the proposal status recorded at `01392e9`. It does not change
+ordinary result/task scope or assert independent callback-conversation proof.
 
-## Why a decision is needed
+## Guarantee and boundary
 
-Actual authenticated native `events/subscribe` and `events/unsubscribe` omit
-`openai/session`, including after tool refresh and a new conversation. Ordinary
-calls in the same connection include it. The [official reference](https://developers.openai.com/plugins/reference)
-describes this field under **Tool calls**; the [Events contract](https://developers.openai.com/plugins/build/mcp-events)
-requires authorization of the authenticated user, event and arguments but does
-not promise that conversation field on native event methods.
+Observed native `events/subscribe` and `events/unsubscribe` omit `openai/session`,
+while ordinary tools in the same connection include it. The [official reference](https://developers.openai.com/plugins/reference)
+describes this field under Tool calls. The [Events contract](https://developers.openai.com/plugins/build/mcp-events)
+authorizes the authenticated user, event and arguments without promising that
+native conversation field.
 
-Two guarantees must be distinguished:
+The Bridge proves that **the original conversation delegated monitoring one
+exact Job/event to the same authenticated OAuth principal**. It cannot
+independently prove that the callback belongs to that conversation. A supplied
+malformed or different session is rejected; only absent native session metadata
+uses the delegation. OAuth authentication and callback verification alone grant
+no Job access.
 
-| Guarantee | Evidence required |
-| --- | --- |
-| The subscription request itself came from the original conversation. | Trusted host conversation evidence on that request, or an equivalent official contract. The current native request does not supply it. |
-| The original conversation authorized monitoring one exact Job for the same authenticated user. | A retained system-issued authorization receipt, issued only after the original conversation's normal scope and ownership checks. |
+## Public flow
 
-The proposed mode supplies the second guarantee. It cannot independently prove
-that the callback belongs to the original conversation. If the product requires
-the first guarantee for subscriptions, retain the present denial and await an
-official host contract. An OAuth user or callback challenge alone proves neither.
+1. Admit A with `codex_task`'s `completionDelivery: "events"`. This requires
+   enabled Events, OAuth authentication and original **host** conversation
+   metadata. A caller's compatibility `scopeId` cannot enable this policy.
+   Declare only exact B prompts the user already approved in `approvedFollowups`.
+2. Follow the returned exact-Job `codex_event_access` action:
 
-## Proposed public flow
+   ```json
+   { "action": "issue", "jobId": "the returned exact A Job UUID" }
+   ```
 
-1. In the original conversation, a normal authenticated tool call explicitly
-   requests monitoring authorization for an exact retained Job. A dedicated
-   `codex_event_access` action would issue or revoke this permission; it would
-   not create a webhook subscription or execute work.
-2. The Bridge checks that Job, Activity, Agent and active project against the
-   call's resolved conversation scope and authenticated principal. It returns
-   an opaque **system-issued `subscriptionRef`**, event name, exact Job and
-   finite expiry. GPT does not choose, synthesize or rename the reference.
-3. The event's custom `inputSchema` requires these arguments:
+   This is an ordinary authenticated tool in the original conversation. It
+   rechecks Job, Activity, Agent, active project, principal and scope inside the
+   existing State UoW. It issues or recovers a system reference; caller-supplied
+   scope, reference and receipt IDs are rejected. No additional card or approval
+   is required for already-authorized monitoring.
+3. Preserve the tool's event and **exact arguments** in the native lifecycle:
 
    ```json
    {
-     "jobId": "the exact authorized Job",
-     "subscriptionRef": "an opaque Bridge-issued reference"
+     "name": "codex.job.terminal",
+     "arguments": { "jobId": "exact A", "subscriptionRef": "esr_..." },
+     "delivery": { "mode": "webhook", "url": "host-provided HTTPS callback", "secret": "host-provided signing secret" }
    }
    ```
 
-4. Native `events/subscribe` presents those arguments and the host-supplied
-   callback/signing secret. The Bridge authenticates the user, validates the
-   stored authorization receipt and exact Job, then verifies the callback.
-   It never fills in a missing scope by looking up an arbitrary Job.
-5. Refresh and unsubscribe use the same original arguments and callback. Result
-   reads and followup execution still require their existing original-scope
-   checks; the reference never authorizes `codex_status` or `codex_task`.
+   OAuth event discovery requires both arguments. GPT neither creates callback
+   credentials nor imitates `events/subscribe` with an ordinary tool.
+4. Subscribe/refresh revalidate the receipt before the callback challenge and
+   again after it in the writer transaction. Both arguments must remain exact
+   for refresh and unsubscribe. A supplied session must resolve to the original
+   scope; a reference cannot override it. The first successful challenge binds
+   one callback atomically. Another callback requires an authorized new grant.
+5. A terminal event carries an exact original-result query, version and available
+   system-issued followup IDs. Its ACK is receipt only. Resumed ordinary
+   `codex_status` and `codex_task` calls still need the original conversation
+   scope. Read/review A before returning its reviewedVersion and exact approved
+   B prompt. Existing followup receipt checks and atomic deduplication remain.
+6. B inherits A's immutable Events policy, even if Settings changed. It gets its
+   **own exact B Job** delegation and native subscription. A's reference cannot
+   authorize B or a different event. With no preapproved followup, report A and
+   await instructions; result data such as `canProceed=true` is not approval.
 
-The [official Events lifecycle](https://developers.openai.com/plugins/build/mcp-events)
-defines user-selected arguments and their reuse for refresh/unsubscribe. Actual
-host preservation of this proposed reference still needs observation. No extra
-general tool would imitate `events/subscribe`, and callbacks/secrets would never
-be generated by GPT or inserted directly into a live ledger.
+`codex_event_access` action `revoke` takes only the exact Job ID in its original
+conversation. It revokes that Job's references and disables linked subscriptions
+atomically. An intentionally authorized issue after revocation creates a new
+system reference; old references remain revoked.
 
-## Receipt and reference
+## Persistence and races
 
-The existing single writer would store a bounded receipt with:
+`src/mcpEventAccess.ts` stores bounded receipts in the existing `bridge_meta`
+journal, under `mcp_event_access_v1/`. No new database, connection, writer,
+supervisor or workflow engine was added. Each receipt contains:
 
-- a system-created receipt UUID and opaque-reference hash;
-- exact authenticated principal, original scope, Job, Activity, Agent and project;
-- the allowed event name, issue time, expiry, revision and explicit revocation;
-- the hash of the verified callback once bound, plus its admitted subscription ID.
+- system-created receipt UUID and opaque-reference hash;
+- principal, exact Job/Activity/Agent/project, original scope and allowed event;
+- issue/expiry/revocation times and revision;
+- verified callback hash and admitted subscription ID once bound.
 
-The public reference would be a domain-separated HMAC of the system receipt UUID
-under the stable installation sealing secret. It would have at least 256 bits
-of output and an opaque prefix such as `esr_`. The raw reference would not be
-persisted or logged. The authorized original conversation could recover it from
-the retained receipt after a lost response or restart; database contents alone
-would not let a reader regenerate it without the installation secret. No
-caller-generated request, step or reference ID would supply durable identity.
+The public `esr_` reference is a domain-separated 256-bit HMAC of that UUID under
+the stable installation sealing secret. Neither its raw value nor callback URL
+or signing key is stored in the receipt. Database data alone cannot regenerate
+a reference without that secret. An authorized exact-Job issue call recovers the
+same live reference after response loss or product-server restart. Keep the
+installation secret; rotation requires explicit revoke/reissue and does not
+migrate another principal's Jobs.
 
-Issuance would be idempotent for an active exact Job/event receipt in its original
-scope. Explicit revocation would be terminal for that reference; a separately
-authorized reissue would create a new system receipt/reference. Proposed limits
-are **one active callback per reference, eight references per Job, 256 globally**,
-and a **24-hour maximum reference lifetime**. A subscription's expiry would also
-remain capped by both the receipt expiry and the verified OAuth-token expiry.
-Longer monitoring would require another authorized original-conversation grant;
-this design does not promise indefinite unattended renewal.
+Limits are one callback per reference, eight retained receipts per Job and 256
+globally. A reference lasts 24 hours, cannot be extended by native refresh, and
+is removed after an additional bounded 24-hour expired-disable window. OAuth
+subscription expiry is capped by requested finite TTL, reference expiry and
+verified access-token expiry. `ttlMs: null` does not grant indefinite renewal.
+A longer watch requires an authorized original-conversation issue call.
 
-Knowing a reference without the same authenticated principal would grant
-nothing. With that principal, it conveys only the monitoring permission issued
-by the original conversation. It is therefore a restricted delegation reference,
-not equivalent to an ordinary identifier such as a Job ID. It would appear only
-in the authorized tool result and required event arguments, not an event payload,
-general logs, callback diagnostics or unrelated conversation.
+Binding, revocation, unsubscribe and subscription writes compare revisions in
+the existing writer transaction. Simultaneous different callbacks cannot both
+bind. Expiry, revocation, ownership loss or unsubscribe during a challenge
+prevents late admission. Expired/revoked references can only disable an existing
+exact callback subscription; unsubscribe cannot bind or re-enable one. A pending
+first unsubscribe advances the receipt revision without binding a callback,
+fencing its late challenge. An already-started webhook cannot be recalled, but
+its late ACK cannot undo refresh/unsubscribe/revocation. Refresh merges the
+latest ACK, attempts, retry and result-recovery state after verification.
 
-## Authorization and race rules
+Existing HTTPS, SSRF/DNS checks, socket pinning, no redirects, encrypted
+callback destinations, key rotation and bounded webhook retry remain intact.
+Every send rechecks the current subscription, receipt and exact Job access.
+Raw references stay out of event payloads, generic status summaries and logs.
 
-The proposed opt-in mode would check the receipt **before callback verification**
-and again **inside the subscription transaction after the network await**. The
-exact Job, Activity, Agent, scope, principal and project must still match and
-remain available. Unknown, mismatched, expired and revoked receipts are denied.
-If host conversation metadata is present, malformed or different metadata is
-denied even when a reference is supplied; the delegate path only handles absence.
+## Card-free policy and retained recovery
 
-The first successful callback binds the receipt atomically. Simultaneous claims
-for different callbacks cannot both win, and neither may deliver an event before
-that binding is committed. Refresh may change a signing key only for the bound
-callback after verification. A new callback needs a separately authorized
-reference; it cannot redirect an existing grant.
+The optional input is persisted as `completionDeliveryPolicy: "events"`.
+Legacy Jobs keep their original `live-card` or `direct-wait` policy; there is no
+retroactive conversion. Events intent is separate from actual subscription:
 
-Issuance, binding, revocation and subscription writes use the existing State UoW.
-Revocation increments the receipt revision and disables linked subscriptions
-in one transaction. A late callback challenge cannot reactivate it. Delivery
-rechecks the receipt and current subscription grant before each send; existing
-revision comparisons keep late responses from overwriting refresh, unsubscribe
-or revocation. Unsubscribe remains authenticated and idempotent for the original
-event, exact arguments and bound callback. It may disable the matching existing
-subscription even after receipt expiry; it never creates or reactivates one.
-
-Callback HTTPS, SSRF/DNS checks, socket pinning, no redirects, signing-key
-validation, encrypted destinations, retries and finite result recovery remain
-unchanged. Callback success and ACK never establish scope, review, execution
-approval or deletion permission. No new database, writer, supervisor or execution
-engine is needed.
-
-## Result and followup boundaries
-
-The webhook would still carry only the current bounded terminal-event payload.
-Receiving it in another conversation would not authorize reading the Job or
-executing its followup. If the resumed host does not supply the original tool-call
-scope, result retrieval must fail and expose a separate host/resumption gate.
-The reference must not be extended into a substitute result-read credential to
-make that acceptance test pass.
-
-The successful fresh A from the current trial has **zero approved followups**.
-Its `canProceed=true` is fixture data, not B authorization. The original failed
-A's receipt cannot be transferred. A final A-to-B acceptance trial still needs
-a separately approved exact B declaration before A admission and the Bridge's
-system-issued followup reference, reviewed version and existing single-admission
-checks. No additional A is needed to investigate present subscription behavior.
-
-## Validation before enabling
-
-| Test | Required result |
+| Exact-Job field | Meaning |
 | --- | --- |
-| Same user, missing native session, valid exact reference | Only the authorized Job/event and verified bound callback may be subscribed. |
-| Job ID alone, invented reference, wrong user, wrong Job/event | Denial before a callback request or ledger write. |
-| Different/malformed supplied conversation metadata | Denial; a reference cannot override it. |
-| Callback claims race, expiry/revocation during challenge | One authorized binding at most; no revived permission. |
-| Refresh/key rotation overlaps ACK or unsubscribe | Preserve the latest delivery and grant state; no old overwrite. |
-| Restart, lost issuance response, OAuth-token refresh | Recover the same authorized reference and subscription identity within finite expiry. |
-| Project/Activity/Agent access revoked | No later delivery; retained original result remains recoverable under its normal policy. |
-| Reference used for result read or B execution | Existing original-scope/followup authorization still denies it. |
-| Actual native create, refresh and unsubscribe | Observe preservation of the exact reference without logging its value. |
-| Actual event-triggered original result read | Verify the resumed tool-call scope; do not infer it from callback ACK. |
+| `eventSubscription.state=pending` | No callback is active yet; an unbound live grant may exist. A failed challenge still admits no subscription. |
+| `active` | A matching live receipt and verified bound subscription exist in this runtime. This does not promise delivery/review. |
+| `unavailable` | The runtime cannot deliver, or the previously bound/issued grant is expired, revoked, unsubscribed or inaccessible. |
 
-An explicit decision to allow this restricted delegation is needed before
-implementing/enabling the alternate authorization path in the live connection.
-Until then, the product's current scope checks remain enforced. A concrete
-OpenAI inquiry can ask both about native conversation evidence and preservation
-of the custom reference; the existing inquiry remains **unsent**.
+Events admission/status never requests an automatic Dashboard mount or a
+completion polling loop. The server rejects automatic Dashboard presentation
+for an Events Job and immediately settles its old-card completion calls before
+waiting, claiming a lease or sending `ui/message`. The SQL claim boundary
+permits only live-card Jobs. The existing Dashboard watcher already requires a
+live-card presentation, so no HTML change or new resource URI is needed. Manual
+Dashboard state/history/control remains available on user request.
+
+Subscription failure must be surfaced. There is no implicit card, schedule or
+repeated status-poll fallback. Manual exact reads remain available. Terminal
+Events intent protects the original result for 24 hours even before callback
+admission; subscribed result recovery also survives ACK, failure, unsubscribe
+and revocation. Afterwards existing retention applies. Terminal receipts,
+result-offer evidence, reviewedVersion and followup deduplication remain distinct.
+Intermediate input/approval is not terminal completion; no claim is made that
+terminal-only Events resolve every unattended input boundary.
+
+## Local verification and actual host gates
+
+`test/mcpEventDelegation.test.ts` uses signed OAuth JWTs, a loopback JWKS server,
+real HTTP MCP handlers and temporary SQLite. It exercises missing/present bad
+sessions, principal/Job/event substitution, system-owned references, response
+loss/restart/refresh, first-callback races, expiry/revocation/unsubscribe during
+verification, ACK/rotation races, transaction rollback, bounded grants, finite
+original-result retention, old-card refusal and a card-free synthetic A-to-B
+sequence with concurrent B retries converging to one execution. Existing Events,
+OAuth, followup and output-contract tests remain applicable.
+
+Those tests establish Bridge behavior. **They are not actual GPT review or host
+resumption evidence.** Real host acceptance must separately observe:
+
+- custom arguments preserved on native subscribe, refresh and unsubscribe;
+- resumed ordinary tools keep the original conversation scope;
+- Dashboard unopened throughout; leave A's chat before terminal; A event resumes
+  GPT, exact A is read/reviewed, exactly one preapproved B is admitted and B's
+  own event completes, with zero automatic Dashboard calls and zero ui/message;
+- duplicate events, old cards, token refresh/restart and denied-access controls.
+
+The successful prior fresh A has `approvedFollowups=0`; do not use it to run B.
+The final trial needs a separately authorized A with the exact B approved before
+admission. If resumed tools lack the original scope, leave a host gate and do not
+weaken result or followup checks. Temporary public issuer reachability and the
+prototype authorization service's restart/refresh persistence are separate
+operational conditions; product-ledger persistence does not resolve them.
+
+Dashboard iframe deployment acceptance remains a separate UI test. The prepared
+OpenAI inquiry is still unsent. Issue #213 stays **OPEN** until the real card-free
+Events A-to-B acceptance succeeds.

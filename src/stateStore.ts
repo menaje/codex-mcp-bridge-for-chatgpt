@@ -3,7 +3,8 @@ import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import Database from "better-sqlite3";
-import { McpEventStore } from "./mcpEventStore.js";
+import { EVENT_RESULT_RECOVERY_MS, McpEventStore } from "./mcpEventStore.js";
+import { McpEventAccessStore } from "./mcpEventAccess.js";
 import { TaskFollowupStore, issueApprovedFollowups, readFollowupReference, type ApprovedFollowup, type FollowupReference } from "./taskFollowups.js";
 import { canonicalHumanText, parseJsonTextStrict } from "./textIntegrity.js";
 import {
@@ -222,7 +223,7 @@ type JobRowInput = {
   sessionDecision?: { threadId?: string };
   terminalOrigin?: JobTerminalOrigin;
   cancellationIntentId?: string;
-  completionDeliveryPolicy?: "live-card" | "direct-wait";
+  completionDeliveryPolicy?: "live-card" | "direct-wait" | "events";
 };
 
 /**
@@ -1553,8 +1554,9 @@ export class BridgeStateStore {
     now = Date.now(),
     completionResultRecoveryMs = 0
   ): string[] {
-    const row = this.database.prepare("SELECT status,activity_id,updated_at FROM jobs WHERE job_id=?").get(jobId) as {
-      status:string;activity_id:string;updated_at:number;
+    const row = this.database.prepare(`SELECT status,activity_id,updated_at,
+      json_extract(payload,'$.completionDeliveryPolicy') AS completion_policy FROM jobs WHERE job_id=?`).get(jobId) as {
+      status:string;activity_id:string;updated_at:number;completion_policy:string|null;
     } | undefined;
     if (!row) return [];
     const reasons: string[] = [];
@@ -1562,10 +1564,15 @@ export class BridgeStateStore {
     if (isActiveActivityJobStatus(row.status)) reasons.push("active-work");
     if (this.database.prepare("SELECT 1 FROM job_interactions WHERE job_id=? AND is_blocking=1 LIMIT 1").get(jobId)) reasons.push("pending-interaction");
     if (this.database.prepare("SELECT 1 FROM completion_outbox WHERE activity_id=? AND delivered_at IS NULL AND acknowledged_at IS NULL LIMIT 1").get(row.activity_id)) reasons.push("undelivered-result");
-    const completionDelivery = this.database.prepare(`SELECT state,completion_result_offered_at
+    const completionDelivery = this.database.prepare(`SELECT state,created_at,completion_result_offered_at
       FROM job_completion_deliveries WHERE job_id=?`).get(jobId) as {
-        state:string;completion_result_offered_at:number|null;
+        state:string;created_at:number;completion_result_offered_at:number|null;
       } | undefined;
+    // Card-free intent exists before callback admission. A failed/absent
+    // subscription must still leave a finite original-result recovery window.
+    if (row.completion_policy === "events" && !isActiveActivityJobStatus(row.status) &&
+        now < (completionDelivery?.created_at ?? row.updated_at) + EVENT_RESULT_RECOVERY_MS &&
+        !reasons.includes("mcp-event-result-recovery")) reasons.push("mcp-event-result-recovery");
     if (completionDelivery) {
       const settings = this.getSettingsRecord()?.payload;
       const retentionDays = historyRetentionDays(
@@ -4170,6 +4177,7 @@ export class BridgeStateStore {
   deleteMeta(key: string): void { this.database.prepare("DELETE FROM bridge_meta WHERE key=?").run(key); }
 
   get mcpEvents(): McpEventStore { return new McpEventStore(this); }
+  get mcpEventAccess(): McpEventAccessStore { return new McpEventAccessStore(this); }
   get taskFollowups(): TaskFollowupStore { return new TaskFollowupStore(this); }
   get readOnly(): boolean { return this.options.readOnly === true; }
 
@@ -5980,12 +5988,14 @@ export class BridgeStateStore {
     if (
       job.completionDeliveryPolicy !== undefined &&
       job.completionDeliveryPolicy !== "live-card" &&
-      job.completionDeliveryPolicy !== "direct-wait"
+      job.completionDeliveryPolicy !== "direct-wait" &&
+      job.completionDeliveryPolicy !== "events"
     ) {
       throw new Error("Invalid Codex job completion delivery policy.");
     }
     const completionDeliveryPolicy = job.completionDeliveryPolicy ||
-      (previous?.completion_delivery_policy === "direct-wait" ? "direct-wait" : "live-card");
+      (previous?.completion_delivery_policy === "events" ? "events" :
+        previous?.completion_delivery_policy === "direct-wait" ? "direct-wait" : "live-card");
     if (previous && previous.completion_delivery_policy !== completionDeliveryPolicy) {
       throw new Error("A persisted Codex job completion delivery policy cannot change.");
     }

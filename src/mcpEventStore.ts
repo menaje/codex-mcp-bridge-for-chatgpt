@@ -17,6 +17,7 @@ export type EventJob = {
   agentId?: string;
   projectId?: string;
   mcpPrincipal?: string;
+  completionDeliveryPolicy?: "live-card" | "direct-wait" | "events";
   status: string;
   terminalVersion?: number;
   version?: number;
@@ -44,6 +45,8 @@ export type EventSubscription = {
   jobId: string;
   scopeId: string;
   principal: string;
+  /** Hash of a persisted subscription-only delegation; absent for legacy scoped grants. */
+  accessReferenceHash?: string;
   /** AES-GCM protected callback URL and signing keys; never a tool result. */
   destination: string;
   revision: number;

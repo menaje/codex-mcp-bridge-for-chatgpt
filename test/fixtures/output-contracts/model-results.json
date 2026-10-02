@@ -448,5 +448,28 @@
         ]
       }
     }
+  ],
+  "codex_event_access": [
+    {
+      "fixture": "issued-subscription-only",
+      "structuredContent": {
+        "jobId": "11111111-1111-4111-8111-111111111111",
+        "state": "pending",
+        "event": "codex.job.terminal",
+        "arguments": {
+          "jobId": "11111111-1111-4111-8111-111111111111",
+          "subscriptionRef": "esr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "expiresAt": "2026-10-03T00:00:00.000Z"
+      }
+    },
+    {
+      "fixture": "revoked",
+      "structuredContent": {
+        "jobId": "11111111-1111-4111-8111-111111111111",
+        "state": "revoked",
+        "event": "codex.job.terminal"
+      }
+    }
   ]
 }

@@ -137,6 +137,7 @@ import {
   registerDashboardCardResource
 } from "./dashboardCard.js";
 import type { ScopeResolver, ToolCallMetadata } from "./scopeResolver.js";
+import { eventAccessOutputSchema, eventSubscriptionStateSchema } from "./mcpEventAccess.js";
 import {
   BridgeStateStore,
   canonicalActivityTitle,
@@ -475,8 +476,8 @@ const dashboardPresentationOutputSchema = z.strictObject({
   openTool: z.literal("codex_dashboard"),
   scope: z.literal("conversation"),
   automatic: z.boolean(),
-  reason: z.enum(["default", "experimental-direct-wait"]),
-  completionDeliveryRoute: z.enum(["live-card", "direct-wait"])
+  reason: z.enum(["default", "experimental-direct-wait", "events"]),
+  completionDeliveryRoute: z.enum(["live-card", "direct-wait", "events"])
 });
 
 const followupViewOutputSchema = z.strictObject({
@@ -503,7 +504,8 @@ const codexTaskOutputSchema = z.strictObject({
   activityVersion: z.number().int().min(1).nullable(),
   backend: z.enum(["mcp-server", "app-server", "codex-sdk"]).nullable(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).nullable(),
-  completionDeliveryPolicy: z.enum(["live-card", "direct-wait"]).nullable(),
+  completionDeliveryPolicy: z.enum(["live-card", "direct-wait", "events"]).nullable(),
+  eventSubscription: eventSubscriptionStateSchema.nullable(),
   requestedModel: z.string().nullable(),
   requestedReasoningEffort: z.string().nullable(),
   actualModel: z.string().nullable(),
@@ -538,7 +540,7 @@ const codexTaskOutputSchema = z.strictObject({
     if (!value.terminal || value.delivery !== "none" || value.resultAvailability !== "unavailable" || value.error === null) {
       issue(["state"], "A pre-admission task result must be terminal, unavailable, and carry a structured error.");
     }
-    for (const field of ["activityId", "agentId", "threadId", "requestId", "approvedFollowups", "jobVersion", "activityVersion", "backend", "sandbox", "completionDeliveryPolicy"] as const) {
+    for (const field of ["activityId", "agentId", "threadId", "requestId", "approvedFollowups", "jobVersion", "activityVersion", "backend", "sandbox", "completionDeliveryPolicy", "eventSubscription"] as const) {
       if (value[field] !== null) issue([field], "A pre-admission task result cannot contain Job identity or execution fields.");
     }
     return;
@@ -549,6 +551,9 @@ const codexTaskOutputSchema = z.strictObject({
   // thread identity merely to satisfy the task envelope.
   for (const field of ["activityId", "agentId", "requestId", "jobVersion", "backend", "sandbox", "completionDeliveryPolicy"] as const) {
     if (value[field] === null) issue([field], "An admitted Job result requires its current identity and execution fields.");
+  }
+  if ((value.completionDeliveryPolicy === "events") !== (value.eventSubscription !== null)) {
+    issue(["eventSubscription"], "Only an Events Job must expose its actual subscription state.");
   }
   if (active) {
     if (value.terminal || value.delivery !== "status" || value.resultAvailability !== "pending" || value.answer !== null) {
@@ -1010,7 +1015,8 @@ const jobSemanticOutputSchema = z.strictObject({
   operation: z.enum(["start", "continue"]),
   projectName: z.string().nullable(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
-  completionDeliveryPolicy: z.enum(["live-card", "direct-wait"]),
+  completionDeliveryPolicy: z.enum(["live-card", "direct-wait", "events"]),
+  eventSubscription: eventSubscriptionStateSchema.optional(),
   executionAudit: compactExecutionAuditOutputSchema.nullable(),
   scopeId: z.string(),
   requestId: z.string(),
@@ -1085,7 +1091,8 @@ const statusItemOutputSchema = z.strictObject({
   threadId: z.string().optional(),
   terminal: z.boolean().optional(),
   delivery: z.enum(["status", "primary-content", "omitted", "none"]).optional(),
-  completionDeliveryPolicy: z.enum(["live-card", "direct-wait"]).optional(),
+  completionDeliveryPolicy: z.enum(["live-card", "direct-wait", "events"]).optional(),
+  eventSubscription: eventSubscriptionStateSchema.optional(),
   completionEvidence: z.strictObject({
     jobRecord: z.enum(["active-last-known", "terminal-committed"]),
     ownerObservation: z.enum(["connected", "liveness-unknown", "worker-lost", "orphaned"]).nullable(),
@@ -1666,6 +1673,7 @@ export const MODEL_VISIBLE_OUTPUT_SCHEMAS = Object.freeze({
   codex_agent: agentMutationOutputSchema,
   codex_cancel: z.union([cancelMutationOutputSchema, activityCancelMutationOutputSchema]),
   codex_dashboard: dashboardModelOutputSchema,
+  codex_event_access: eventAccessOutputSchema,
   codex_models: codexModelsOutputSchema,
   bridge_skill: bridgeSkillOutputSchema,
   bridge_skill_manage: bridgeSkillManageOutputSchema,
@@ -1825,6 +1833,7 @@ type BackendHandoff = BackendHandoffAudit & {
 
 type CodexRouting = {
   mcpPrincipal?: string;
+  completionDeliveryPolicy?: CompletionDeliveryPolicy;
   approvedFollowups?: ApprovedFollowup[];
   followup?: FollowupReference;
   scopeId: string;
@@ -1864,7 +1873,7 @@ function mountedWidgetInstanceId(
   return args.widgetInstanceId || metadataString(meta, "openai/widgetSessionId");
 }
 
-type CompletionDeliveryPolicy = "live-card" | "direct-wait";
+type CompletionDeliveryPolicy = "live-card" | "direct-wait" | "events";
 
 type CodexJob = {
   mcpPrincipal?: string;
@@ -2199,6 +2208,7 @@ export class CodexJobRegistry {
   private readonly projectionOnly: boolean;
   private readonly activityStore: BridgeStateStore;
   private readonly allowedRoots: string[];
+  private eventDeliveryPrincipal?: string;
   // HTTP requests and the native companion share one runtime admission gate.
   readonly runtimeAdmission: {
     acceptingNewJobs: boolean;
@@ -2392,6 +2402,12 @@ export class CodexJobRegistry {
   /** Internal composition hook for registry/admission transaction sharing. */
   get admissionStateStore(): BridgeStateStore {
     return this.activityStore;
+  }
+
+  configureEventDelivery(principal?: string): void { this.eventDeliveryPrincipal = principal; }
+
+  eventDeliveryAvailableFor(job: Pick<CodexJob, "mcpPrincipal">): boolean {
+    return this.eventDeliveryPrincipal !== undefined && this.eventDeliveryPrincipal === job.mcpPrincipal && !this.activityStore.readOnly;
   }
 
   get staleThresholdMs(): number {
@@ -6084,6 +6100,9 @@ export function registerBridgeTools(
                 "DASHBOARD_AUTOMATIC_PRESENTATION_UNAVAILABLE: Refresh the exact Dashboard render action for this Job."
               );
             }
+            if (job.completionDeliveryPolicy === "events") {
+              throw new Error("DASHBOARD_AUTOMATIC_PRESENTATION_DISABLED: This Job uses Events. Open Dashboard manually without a completion presentation for status or control.");
+            }
             return job;
           })()
         : undefined;
@@ -6254,7 +6273,7 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read project selectors and Codex work state, ordinary questions, and results in the current conversation. Exact Job change/terminal waits are bounded reads; a terminal wait wakes only for terminal lifecycle state, not ordinary progress, and an aborted or timed-out read never cancels the Job. A Job marked completionDeliveryPolicy='direct-wait' requires repeated bounded terminal waits on that same exact Job until terminal; never replace it after a timeout, inspect the exact Job's supplied input action after every non-terminal return before waiting again, and stop at any new approval or user-input boundary. For the default live-card policy, a mounted originating Dashboard already watches terminal completion, so do not keep a parallel terminal wait solely to trigger the same completion delivery; manual exact reads remain supported. An authenticated exact Job or request query records only that the server offered a retained result; it does not prove GPT received the result and does not settle or cancel live-card delivery. The originating live-card component reads query kind='completion' with its opaque receipt and includes the exact public result in its completion message; that response is also offer evidence, the authenticated conversation scope is still required, and the receipt never authorizes cross-conversation access.",
+        "Read project selectors and Codex work state, ordinary questions, and results in the current conversation. Exact Job change/terminal waits are bounded reads; a terminal wait wakes only for terminal lifecycle state, not ordinary progress, and an aborted or timed-out read never cancels the Job. A Job marked completionDeliveryPolicy='direct-wait' requires repeated bounded terminal waits on that same exact Job until terminal; never replace it after a timeout, inspect the exact Job's supplied input action after every non-terminal return before waiting again, and stop at any new approval or user-input boundary. For the default live-card policy, a mounted originating Dashboard already watches terminal completion, so do not keep a parallel terminal wait solely to trigger the same completion delivery; manual exact reads remain supported. For an Events Job, completion subscription and resumption remain native Events: do not automatically poll, mount Dashboard or send ui/message as a fallback. Resumed ordinary calls must keep the original conversation scope; a subscriptionRef never authorizes results or execution. An authenticated exact Job or request query records only that the server offered a retained result; it does not prove GPT received the result and does not settle or cancel live-card delivery. The originating live-card component reads query kind='completion' with its opaque receipt and includes the exact public result in its completion message; that response is also offer evidence, the authenticated conversation scope is still required, and the receipt never authorizes cross-conversation access.",
       inputSchema: codexStatusInput,
       outputSchema: MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status,
       annotations: {
@@ -8033,7 +8052,7 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Durably admit one asynchronous Codex turn in the current conversation and return its exact Job identity without waiting for completion. Follow the returned Job's completionDeliveryPolicy and nextActions. The default live-card policy supplies a codex_dashboard render action: call it immediately before any prose response so the originating conversation mounts its exact live Dashboard and can resume ChatGPT once with the terminal result. The opt-in experimental direct-wait policy supplies an exact bounded terminal codex_status wait instead: repeat that same Job wait after timeout or host abort, inspect the supplied input action after every non-terminal return, review the terminal result, and continue only work already approved by the user; never cross a new approval or input boundary. Each admitted Job keeps its policy snapshot even if Settings changes later. Explicit Activity policies still control separate native notification and verification channels.",
+        "Durably admit one asynchronous Codex turn in the current conversation and return its exact Job identity without waiting for completion. Follow the returned Job's completionDeliveryPolicy and nextActions. Opt-in events delivery requires codex_event_access followed by native subscription for each exact Job, including every approved B; never mount Dashboard, send ui/message or automatically fall back to polling or schedules. The default live-card policy supplies a codex_dashboard render action: call it immediately before any prose response so the originating conversation mounts its exact live Dashboard and can resume ChatGPT once with the terminal result. The opt-in experimental direct-wait policy supplies an exact bounded terminal codex_status wait instead: repeat that same Job wait after timeout or host abort, inspect the supplied input action after every non-terminal return, review the terminal result, and continue only work already approved by the user; never cross a new approval or input boundary. Each admitted Job keeps its policy snapshot even if Settings changes later. Explicit Activity policies still control separate native notification and verification channels.",
       inputSchema: codexTaskInputSchema(config, taskExecutionEnvelopeRef()),
       outputSchema: codexTaskOutputSchema,
       annotations: codexTaskEnvelopeAnnotations(config)
@@ -8064,6 +8083,13 @@ export function registerBridgeTools(
           args = resolveApprovedFollowup(args, jobs, scope.scopeId);
           const prior = jobs.peekRequest(scope.scopeId, args.requestId);
           if (prior) return resultForJob(prior, config.jobStaleAfterMs, preferences, jobs);
+        }
+        if (args.completionDelivery === "events") {
+          const hostScope = scopeResolver.resolve(_meta as ToolCallMetadata);
+          if (!config.eventsEnabled || !config.oauth || !args.mcpPrincipal || !hostScope ||
+              hostScope.source !== "host-metadata" || hostScope.scopeId !== scope.scopeId) {
+            throw new Error("EVENTS_DELIVERY_UNAVAILABLE: Events admission requires enabled Events, OAuth authentication and original host conversation metadata.");
+          }
         }
         if (testTaskReadStorageError) {
           const code = testTaskReadStorageError;
@@ -8483,13 +8509,13 @@ export function registerBridgeTools(
         "COMPLETION_PRESENTATION_MISMATCH: Refresh the exact Dashboard render action for this Job."
       );
     }
-    if (current.completionDeliveryPolicy === "direct-wait") {
+    if (current.completionDeliveryPolicy !== "live-card") {
       const structured = jobCompletionDeliveryOutputSchema.parse({
         kind: "job-completion-delivery",
         state: "settled"
       });
       return {
-        content: [{ type: "text", text: "This Job uses experimental direct-result delivery; live-card completion delivery is disabled." }],
+        content: [{ type: "text", text: "This Job's completion policy disables live-card delivery." }],
         structuredContent: structured
       };
     }
@@ -8809,6 +8835,9 @@ type CodexTaskAgentInput =
 
 type CodexTaskArgs = {
   mcpPrincipal?: string;
+  completionDelivery?: "events";
+  /** Captured from the approved predecessor receipt, never supplied by callers. */
+  inheritedCompletionDeliveryPolicy?: CompletionDeliveryPolicy;
   /** Recovered only from a persisted v1 receipt, never from public input. */
   legacyFollowupIdentity?: { jobId: string; stepId: string };
   approvedFollowups?: Array<{ prompt: string }>;
@@ -8876,6 +8905,7 @@ function resolveApprovedFollowup(args: CodexTaskArgs, jobs: CodexJobRegistry, sc
     throw new Error("FOLLOWUP_NOT_APPROVED: This exact step and prompt were not approved in the original conversation.");
   }
   if (args.approvedFollowups || args.project || args.selection || args.handoffSummary ||
+      args.completionDelivery && receipt.completionDeliveryPolicy !== "events" ||
       args.activity && (args.activity.mode !== "existing" || args.activity.id !== receipt.activityId) ||
       args.agent && (args.agent.mode !== "existing" || args.agent.id !== receipt.agentId ||
         args.agent.context && args.agent.context !== "continue")) {
@@ -8896,6 +8926,8 @@ function resolveApprovedFollowup(args: CodexTaskArgs, jobs: CodexJobRegistry, sc
     throw new Error("TASK_RESULT_EXPIRED: The approved step already admitted a Job whose result is no longer retained. Its canonical requestId remains reserved.");
   }
   return normalizeCodexTaskInput({ ...args, requestId: receipt.requestId,
+    inheritedCompletionDeliveryPolicy: receipt.completionDeliveryPolicy,
+    completionDelivery: receipt.completionDeliveryPolicy === "events" ? "events" : args.completionDelivery,
     legacyFollowupIdentity: receipt.stepId === undefined ? undefined : { jobId: receipt.parentJobId, stepId: receipt.stepId },
     activity: { mode: "existing", id: receipt.activityId },
     agent: { mode: "existing", id: receipt.agentId, context: "continue" },
@@ -10158,11 +10190,11 @@ async function runCodex(input: {
       contextMode: input.contextMode,
       role: input.agentRole
     });
-    const completionDeliveryPolicy: CompletionDeliveryPolicy =
-      (input.userSettings?.current.experimentalDirectResultDelivery ??
+    const completionDeliveryPolicy: CompletionDeliveryPolicy = input.routing.completionDeliveryPolicy ||
+      ((input.userSettings?.current.experimentalDirectResultDelivery ??
         input.preferences.experimentalDirectResultDelivery)
         ? "direct-wait"
-        : "live-card";
+        : "live-card");
     job = input.jobs.start(
       {
         operation: input.operation,
@@ -10635,7 +10667,17 @@ function formatJobStatus(
       ? ["Cancellation does not roll back partial filesystem changes."]
       : [])
   ];
-  const nextActions = active
+  const eventsAvailable = registry?.eventDeliveryAvailableFor(job);
+  const eventSubscription = job.completionDeliveryPolicy === "events"
+    ? eventsAvailable && registry ? registry.admissionStateStore.mcpEventAccess.subscriptionState(job) : { state: "unavailable" as const }
+    : undefined;
+  const nextActions = eventSubscription
+    ? eventSubscription.state === "active" || !eventsAvailable ? [] : [{
+        tool: "codex_event_access",
+        arguments: { action: "issue", jobId: job.jobId },
+        userPrompt: "Obtain or recover this exact Job's Bridge-issued subscriptionRef in the original conversation. Preserve its event arguments through native subscribe, refresh and unsubscribe. If subscription fails, report the failure and preserve the Job; do not mount Dashboard, send ui/message, schedule a task or repeatedly poll for completion."
+      }]
+    : active
     ? job.completionDeliveryPolicy === "direct-wait"
       ? [
           {
@@ -10702,6 +10744,7 @@ function formatJobStatus(
     projectName: job.projectName || null,
     sandbox: job.sandbox,
     completionDeliveryPolicy: job.completionDeliveryPolicy,
+    ...(eventSubscription ? { eventSubscription } : {}),
     executionAudit: formatExecutionAudit(job),
     scopeId: job.scopeId,
     requestId: job.requestId,
@@ -10756,6 +10799,10 @@ function formatJobStatus(
               ? "This Job's last committed state is active, but current execution-owner liveness is unconfirmed. Recover the same Job and original result; do not start a replacement turn from this observation."
             : job.completionDeliveryPolicy === "direct-wait"
               ? "Codex is running independently in experimental direct-result mode. Keep the current orchestration active with bounded terminal waits on this exact Job; a timeout or aborted read does not cancel it."
+              : job.completionDeliveryPolicy === "events"
+                ? eventsAvailable
+                  ? "Codex is running with card-free Events intent. Ensure this exact Job's native subscription is active. Subscription or input failure requires an explicit report; never automatically fall back to Dashboard, ui/message, schedules or repeated polling."
+                  : "This Job retains its Events policy, but this runtime cannot deliver it. Preserve the original Job and result, report the unavailable connection, and use manual exact reads only when requested; do not restore card delivery or start replacement work."
               : "Codex is running independently. Query this exact Job when needed, handle any pending input, and retrieve its terminal result before reporting completion."
         : job.status === "completed"
           ? resultOmitted
@@ -10818,13 +10865,14 @@ function dashboardPresentationHint(
 ) {
   void registry;
   const direct = job.completionDeliveryPolicy === "direct-wait";
+  const events = job.completionDeliveryPolicy === "events";
   return {
     statusTool: "codex_status",
     openTool: "codex_dashboard",
     scope: "conversation",
-    automatic: !direct,
-    reason: direct ? "experimental-direct-wait" as const : "default" as const,
-    completionDeliveryRoute: direct ? "direct-wait" as const : "live-card" as const
+    automatic: !direct && !events,
+    reason: events ? "events" as const : direct ? "experimental-direct-wait" as const : "default" as const,
+    completionDeliveryRoute: job.completionDeliveryPolicy
   };
 }
 
@@ -13910,6 +13958,9 @@ function codexTaskInputSchema(
     executionEnvelopeRef: z.literal(executionEnvelopeRefValue).describe(
       "Opaque installation/operator envelope. Settings, catalog, and project changes do not change this value."
     ),
+    completionDelivery: z.literal("events").optional().describe(
+      "Card-free completion for this Job and its preapproved followups. Requires enabled Events, OAuth and original host conversation metadata. Obtain its subscriptionRef with codex_event_access and subscribe through native Events; never mount Dashboard or fall back to cards, scheduled tasks or repeated polling. Omit for the existing Settings delivery policy."
+    ),
     requestId,
     prompt,
     project,
@@ -14021,6 +14072,7 @@ function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
         version: CURRENT_TASK_REQUEST_HASH_VERSION,
         scopeId: input.scopeId,
         prompt: input.args.prompt,
+        ...(input.args.completionDelivery ? { completionDelivery: input.args.completionDelivery } : {}),
         ...(input.args.approvedFollowups ? { approvedFollowups: approvedFollowupDigests(input.args.approvedFollowups) } : {}),
         ...(input.args.followup ? { followup: input.args.legacyFollowupIdentity || { followupId: input.args.followup.followupId } } : {}),
         taskContractVersion: CODEX_TASK_INPUT_CONTRACT_VERSION,
@@ -14085,6 +14137,8 @@ function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
     requestHash,
     requestHashVersion: CURRENT_TASK_REQUEST_HASH_VERSION,
     mcpPrincipal: input.args.mcpPrincipal,
+    completionDeliveryPolicy: input.args.inheritedCompletionDeliveryPolicy ||
+      (input.args.completionDelivery === "events" ? "events" : undefined),
     approvedFollowups: approvedFollowupDigests(input.args.approvedFollowups),
     followup: input.args.followup
   };
@@ -14908,7 +14962,7 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
   const completionDeliveryPolicy: CompletionDeliveryPolicy | undefined =
     value.completionDeliveryPolicy === undefined
       ? "live-card"
-      : value.completionDeliveryPolicy === "live-card" || value.completionDeliveryPolicy === "direct-wait"
+      : value.completionDeliveryPolicy === "live-card" || value.completionDeliveryPolicy === "direct-wait" || value.completionDeliveryPolicy === "events"
         ? value.completionDeliveryPolicy
         : undefined;
   const activityId =
@@ -15625,6 +15679,7 @@ function taskProjectionForJob(
     backend: semantic.backendKind,
     sandbox: semantic.sandbox,
     completionDeliveryPolicy: semantic.completionDeliveryPolicy,
+    eventSubscription: semantic.eventSubscription || null,
     requestedModel: semantic.executionAudit?.requested?.model ?? null,
     requestedReasoningEffort: semantic.executionAudit?.requested?.reasoningEffort ?? null,
     actualModel: semantic.executionAudit?.actual.model ?? null,
@@ -15645,6 +15700,8 @@ function taskProjectionForJob(
         : [guidance(
             semantic.completionDeliveryPolicy === "direct-wait"
               ? "Experimental direct-result mode applies to this Job. After every non-terminal return, inspect the supplied exact-Job input action before repeating a bounded terminal wait on this same Job. Review the terminal result and continue only already-approved work; stop at any new approval or user-input boundary. If the GPT run ends, the user must request an exact-Job read in the originating conversation; there is no automatic live-card fallback."
+              : semantic.completionDeliveryPolicy === "events"
+                ? "This exact Job uses card-free native Events. Complete its exact Events subscription before ending orchestration. An event ACK is not result review: resumed ordinary tools must retain the original conversation scope. Retrieve and review this Job's exact original result, then admit only an already-approved followup and subscribe to that new exact Job. Do not call Dashboard for completion, send ui/message, schedule tasks or repeatedly poll. Surface subscription or input failures without fallback."
               : "This Job continues independently of the current GPT response. Query the exact Job when needed, answer pending questions, and retrieve its terminal result before reporting completion."
           )])
     ]
@@ -15882,9 +15939,10 @@ function statusItemProjection(
     ...(typeof input.threadId === "string" ? { threadId: input.threadId } : {}),
     ...(typeof input.terminal === "boolean" ? { terminal: input.terminal } : {}),
     ...(typeof input.delivery === "string" ? { delivery: input.delivery } : {}),
-    ...(input.completionDeliveryPolicy === "live-card" || input.completionDeliveryPolicy === "direct-wait"
+    ...(input.completionDeliveryPolicy === "live-card" || input.completionDeliveryPolicy === "direct-wait" || input.completionDeliveryPolicy === "events"
       ? { completionDeliveryPolicy: input.completionDeliveryPolicy }
       : {}),
+    ...(isRecord(input.eventSubscription) ? { eventSubscription: input.eventSubscription } : {}),
     ...(isRecord(input.completionEvidence)
       ? { completionEvidence: input.completionEvidence }
       : {}),
@@ -16492,6 +16550,7 @@ function taskPreflightErrorResult(
     backend: null,
     sandbox: null,
     completionDeliveryPolicy: null,
+    eventSubscription: null,
     requestedModel: null,
     requestedReasoningEffort: null,
     actualModel: null,

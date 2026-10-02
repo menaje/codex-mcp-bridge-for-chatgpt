@@ -44,7 +44,8 @@
           "message": "Open Settings and register the project folder."
         }
       ],
-      "approvedFollowups": null
+      "approvedFollowups": null,
+      "eventSubscription": null
     }
   },
   {
@@ -82,10 +83,16 @@
         {
           "kind": "tool",
           "tool": "codex_status",
-          "arguments": { "query": { "kind": "job", "id": "job-replay" } }
+          "arguments": {
+            "query": {
+              "kind": "job",
+              "id": "job-replay"
+            }
+          }
         }
       ],
-      "approvedFollowups": null
+      "approvedFollowups": null,
+      "eventSubscription": null
     }
   },
   {
@@ -120,7 +127,8 @@
       "error": null,
       "warnings": [],
       "nextActions": [],
-      "approvedFollowups": null
+      "approvedFollowups": null,
+      "eventSubscription": null
     }
   },
   {
@@ -155,7 +163,8 @@
       "error": null,
       "warnings": [],
       "nextActions": [],
-      "approvedFollowups": null
+      "approvedFollowups": null,
+      "eventSubscription": null
     }
   },
   {
@@ -201,7 +210,8 @@
           "message": "Start a fresh Agent context with an explicit handoff summary."
         }
       ],
-      "approvedFollowups": null
+      "approvedFollowups": null,
+      "eventSubscription": null
     }
   },
   {
@@ -240,9 +250,12 @@
         "missingFields": null,
         "contextContinuity": null
       },
-      "warnings": ["Cancellation does not roll back partial filesystem changes."],
+      "warnings": [
+        "Cancellation does not roll back partial filesystem changes."
+      ],
       "nextActions": [],
-      "approvedFollowups": null
+      "approvedFollowups": null,
+      "eventSubscription": null
     }
   }
 ]
