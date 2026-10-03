@@ -1999,9 +1999,9 @@ type CodexJobStartInput = Omit<
 };
 
 export type CodexJobRegistryOptions = {
+  /** Current admission provenance; never an ACL for retained work. */
   authBoundary?: () => string | null;
-  /** Verify the current owner before attaching persisted execution receipts. */
-  recoveryAdmission?: () => Promise<void>;
+  /** Attach persisted receipts to their exact original executor. */
   recoverExecutions?: boolean;
   maxConcurrentJobs?: number;
   ttlMs?: number;
@@ -2218,7 +2218,6 @@ export class CodexJobRegistry {
   } = { acceptingNewJobs: true, pendingAdmissions: 0 };
   private upstream?: CodexUpstream;
   private readonly recoverExecutions: boolean;
-  private readonly recoveryAdmission?: () => Promise<void>;
   private recoverySessions?: SessionRegistry;
   private readonly recoveryJobs = new Set<string>();
   private recoveryStarted = false;
@@ -2369,7 +2368,6 @@ export class CodexJobRegistry {
     this.telemetry = options.telemetry;
     this.projectionOnly = options.projectionOnly === true;
     this.recoverExecutions = options.recoverExecutions === true;
-    this.recoveryAdmission = options.recoveryAdmission;
     this.activityStore = options.stateStore || new BridgeStateStore({ file: ":memory:" });
     this.allowedRoots = options.allowedRoots || [];
     this.progressPersistenceQueue = new ScopeFairQueue<ProgressPersistenceSnapshot>({
@@ -2429,15 +2427,10 @@ export class CodexJobRegistry {
     if (this.recoveryStarted || !this.recoverExecutions || !sessions || this.projectionOnly) return;
     this.recoveryStarted = true;
     this.recoverySessions = sessions;
-    if (this.recoveryAdmission && (this.recoveryJobs.size > 0 ||
-        [...this.jobs.values()].some(job => job.executionReceipt && isTerminalActivityJobStatus(job.status)))) {
-      void this.recoveryAdmission().then(() => this.resumeAuthorizedRecoveries()).catch(() => {});
-    } else {
-      this.resumeAuthorizedRecoveries();
-    }
+    this.resumeAuthorizedRecoveries();
   }
 
-  /** A failed startup check leaves receipts dormant until a later successful admission. */
+  /** Recover exact retained executions even when new-execution authentication is unavailable. */
   resumeAuthorizedRecoveries(): void {
     const upstream = this.upstream;
     const sessions = this.recoverySessions;
@@ -2458,7 +2451,6 @@ export class CodexJobRegistry {
         this.acknowledgeSettledExecution(job); continue;
       }
       if (!this.recoveryJobs.has(job.jobId) || !upstream.recoverExecution) continue;
-      if (this.authBoundary && job.authBoundary !== this.authBoundary()) continue;
       this.recoveryJobs.delete(job.jobId);
       // A cancellation dispatch whose controller vanished is unconfirmed,
       // not proof of a stopped turn. Exact terminal replay settles the race.
@@ -2475,8 +2467,7 @@ export class CodexJobRegistry {
 
   private acknowledgeSettledExecution(job: CodexJob): void {
     const assignment = this.jobAssignment(job);
-    if (this.authBoundary && job.authBoundary !== this.authBoundary() &&
-        (!assignment || this.upstream?.ownsRetainedResult?.(job.jobId, assignment) !== true)) return;
+    if (!assignment || this.upstream?.ownsRetainedResult?.(job.jobId, assignment) !== true) return;
     if (job.executionReceipt && isTerminalActivityJobStatus(job.status) && job.terminalOrigin) {
       void Promise.resolve(this.upstream?.acknowledgeExecution?.(job.jobId)).catch(() => {});
     }
@@ -2566,14 +2557,7 @@ export class CodexJobRegistry {
     if (job && job.requestHashVersion >= 2 && job.requestHash !== requestHash) {
       throw new Error("requestId was already used for a different Codex task in this scope.");
     }
-    if (job) this.assertCurrentJobOwner(job);
     return job;
-  }
-
-  private assertCurrentJobOwner(job: CodexJob): void {
-    if (this.authBoundary && job.authBoundary !== this.authBoundary()) {
-      throw new Error("CODEX_AUTH_JOB_BOUNDARY: This Job belongs to another or unverified authentication connection.");
-    }
   }
 
   private jobAssignment(job: CodexJob): UpstreamWorkerAssignment | null {
@@ -2586,11 +2570,14 @@ export class CodexJobRegistry {
 
   /** Existing controls must still target the original live request after login changes. */
   private assertOriginalJobControl(job: CodexJob): void {
-    if (!this.authBoundary || job.authBoundary === this.authBoundary()) return;
+    if (!isActiveActivityJobStatus(job.status)) return;
+    // Production adapters prove the exact live request, regardless of login.
+    // Legacy adapters validate their own opaque control handles at dispatch.
+    if (!this.upstream?.ownsActiveExecution) return;
     const assignment = this.jobAssignment(job);
     if (isActiveActivityJobStatus(job.status) && job.trackingState === "connected" && assignment &&
-        this.upstream?.ownsActiveExecution?.(job.jobId, assignment) === true) return;
-    throw new Error("CODEX_AUTH_JOB_BOUNDARY: This Job belongs to another or unverified authentication connection.");
+        this.upstream.ownsActiveExecution(job.jobId, assignment) === true) return;
+    throw new Error("CODEX_EXECUTION_OWNER_UNAVAILABLE: The original live worker request cannot be verified.");
   }
 
   private assertCancellationTargetOwner(target: { jobId?: string; activityId: string }): void {
@@ -3316,7 +3303,7 @@ export class CodexJobRegistry {
     const now = Date.now();
     const currentAuthBoundary = this.authBoundary?.();
     if (this.authBoundary && !currentAuthBoundary) {
-      throw new Error("CODEX_AUTH_JOB_BOUNDARY: Confirm the current authentication owner before starting a Job.");
+      throw new Error("CODEX_AUTH_ADMISSION_REQUIRED: Validate the current execution conditions before starting a Job.");
     }
     const job: CodexJob = {
       ...input,
@@ -3393,8 +3380,6 @@ export class CodexJobRegistry {
   }
 
   activateDeferredExecution(jobId: string): void {
-    const job = this.jobs.get(jobId);
-    if (job) this.assertCurrentJobOwner(job);
     this.deferredExecutions.get(jobId)?.launch();
   }
 
@@ -3698,10 +3683,9 @@ export class CodexJobRegistry {
         throw new Error("The selected Codex job is not active.");
       }
       this.assertOriginalJobControl(current);
-      if (this.authBoundary && current.authBoundary !== this.authBoundary() &&
-          current.workerId && current.workerGeneration !== undefined &&
+      if (current.workerId && current.workerGeneration !== undefined &&
           !interactionId.startsWith(`${current.workerId}:${current.workerGeneration}:`)) {
-        throw new Error("CODEX_AUTH_JOB_BOUNDARY: The interaction does not belong to the original worker generation.");
+        throw new Error("CODEX_EXECUTION_OWNER_UNAVAILABLE: The interaction does not belong to the original worker generation.");
       }
       const pending = current.pendingInteractions.find((entry) => entry.interactionId === interactionId);
       if (!pending) throw new Error("Unknown or already resolved Codex interaction id for this job.");
@@ -3747,7 +3731,7 @@ export class CodexJobRegistry {
   async steer(jobId: string, prompt: string): Promise<CodexJob> {
     const job = this.get(jobId);
     if (!job || job.status !== "running") throw new Error("The selected Codex job has no active turn to steer.");
-    this.assertCurrentJobOwner(job);
+    this.assertOriginalJobControl(job);
     if (!backendSupports(job.backendKind, "supportsSteering") || !job.threadId || !this.upstream?.steerThread) {
       throw new Error("Steering is available only for an active Codex App Server turn.");
     }
@@ -4404,14 +4388,6 @@ export class CodexJobRegistry {
     for (const persisted of loaded) {
       const job: CodexJob = { ...persisted, promise: Promise.resolve() };
       if (this.projectionOnly) {
-        this.setIndexedJob(job);
-        continue;
-      }
-      if (isActiveActivityJobStatus(job.status) && this.authBoundary && job.authBoundary !== this.authBoundary()) {
-        // Keep the exact durable Job and its original execution receipt. A
-        // different or unverified owner must neither recover nor ACK it.
-        job.trackingState = "liveness-unknown";
-        if (this.recoverExecutions && job.executionReceipt) this.recoveryJobs.add(job.jobId);
         this.setIndexedJob(job);
         continue;
       }
@@ -7124,6 +7100,7 @@ export function registerBridgeTools(
               )
             };
           }
+          await config.codexService?.assertCurrentAdmission();
           jobs.markSteeringDeliveryDispatching(
             scope.scopeId,
             args.requestId,
@@ -7997,10 +7974,6 @@ export function registerBridgeTools(
         resolveImplicitTaskAgent(args, jobs, scope.scopeId);
         const requestedActivity = validateActivityTaskRequest(args, jobs, scope.scopeId);
         const agentResolution = resolveAgentForTask(args, jobs, scope.scopeId, requestedActivity);
-        if (agentResolution.agent?.currentThreadId &&
-            sessions.belongsToAnotherAuthentication(agentResolution.agent.currentThreadId)) {
-          throw new Error("CODEX_AUTH_AGENT_BOUNDARY: This Agent belongs to another authentication connection. Create a new Agent after switching accounts.");
-        }
         validateTaskSelectionInput(args, preferences, requestedActivity, agentResolution);
         if (
           args.project === undefined &&
@@ -9166,9 +9139,6 @@ async function requireAgentSession(
   if (!resolution.agent) throw new Error("Agent resolution is missing an existing thread owner.");
   const threadId = resolution.agent.currentThreadId as string;
   const session = sessions.get(threadId);
-  if (!session && sessions.belongsToAnotherAuthentication(threadId)) {
-    throw new Error("CODEX_AUTH_THREAD_BOUNDARY: The Agent's thread belongs to another authentication connection.");
-  }
   if (!session || session.scopeId !== scopeId) {
     jobs.setAgentExecutionState(resolution.agent.agentId, "orphaned", {
       orphanedReason: "The Agent's persisted current thread session is unavailable after bridge recovery."

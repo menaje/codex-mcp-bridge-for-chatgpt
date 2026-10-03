@@ -81,10 +81,10 @@ describe("CodexJobRegistry persistence", () => {
         } } } });
       expect(registry.get(job.jobId)?.pendingInteractions).toHaveLength(1);
       writeAuth("user-b");
-      await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_CHANGED");
+      await expect(service.assertCurrentAdmission()).resolves.toBeUndefined();
       expect(service.sessionAuthBoundary().key).not.toBe(ownerA);
-      expect(service.currentExecutionAuthBoundary()).toBeNull();
-      expect(() => registry.findRequest(SCOPE_A, REQUEST_A, job.requestHash)).toThrow("CODEX_AUTH_JOB_BOUNDARY");
+      expect(service.currentExecutionAuthBoundary()).not.toBe(ownerA);
+      expect(registry.findRequest(SCOPE_A, REQUEST_A, job.requestHash)?.jobId).toBe(job.jobId);
       await registry.respondToInteraction(job.jobId, interactionId, { answers: { answer: ["yes"] } });
       expect(respondToInteraction).toHaveBeenCalledExactlyOnceWith(interactionId, { answers: { answer: ["yes"] } });
       rmSync(authFile);
@@ -123,7 +123,7 @@ describe("CodexJobRegistry persistence", () => {
       await Promise.resolve();
       await Promise.resolve();
       currentOwner = "b".repeat(64);
-      expect(() => durableCancelIntent(registry, job.jobId, REQUEST_B)).toThrow("CODEX_AUTH_JOB_BOUNDARY");
+      expect(() => durableCancelIntent(registry, job.jobId, REQUEST_B)).toThrow("CODEX_EXECUTION_OWNER_UNAVAILABLE");
       originalWorkerLive = true;
       const intent = durableCancelIntent(registry, job.jobId, REQUEST_B);
       await registry.cancel(job.jobId, intent, { interruptOnly: true });
@@ -170,7 +170,7 @@ describe("CodexJobRegistry persistence", () => {
     } finally { reopened.close(); }
   });
 
-  it("retains an old result for history but rejects execution replay under a new authentication owner", async () => {
+  it("returns the original completed Job after account change and restart", async () => {
     const root = temporaryRoot();
     const file = path.join(root, "state.sqlite");
     const firstOwner = "a".repeat(64), secondOwner = "b".repeat(64);
@@ -185,11 +185,11 @@ describe("CodexJobRegistry persistence", () => {
     try {
       const second = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root], authBoundary: () => secondOwner });
       expect(second.get(job.jobId)?.status).toBe("completed");
-      expect(() => second.findRequest(SCOPE_A, REQUEST_A, job.requestHash)).toThrow("CODEX_AUTH_JOB_BOUNDARY");
+      expect(second.findRequest(SCOPE_A, REQUEST_A, job.requestHash)?.jobId).toBe(job.jobId);
     } finally { reopened.close(); }
   });
 
-  it("quarantines a still active Job from another authentication owner without changing its stored result", async () => {
+  it("marks an unrecoverable original execution interrupted independently of the current account", async () => {
     const root = temporaryRoot(), file = path.join(root, "state.sqlite");
     const store = new BridgeStateStore({ file });
     const first = new CodexJobRegistry({ stateStore: store, allowedRoots: [root], authBoundary: () => "a".repeat(64) });
@@ -199,21 +199,22 @@ describe("CodexJobRegistry persistence", () => {
     try {
       const second = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
         authBoundary: () => "b".repeat(64), recoverExecutions: true });
-      expect(second.get(job.jobId)).toMatchObject({ status: "running", trackingState: "liveness-unknown" });
-      expect(() => second.findRequest(SCOPE_A, REQUEST_A, job.requestHash))
-        .toThrow("CODEX_AUTH_JOB_BOUNDARY");
-      expect(() => second.beginCancellationOperation({
+      expect(second.get(job.jobId)).toMatchObject({ status: "interrupted", trackingState: "orphaned" });
+      expect(second.findRequest(SCOPE_A, REQUEST_A, job.requestHash)?.jobId).toBe(job.jobId);
+      const { intent } = second.beginCancellationOperation({
         scopeId: job.scopeId, requestId: REQUEST_B, actionHash: "b".repeat(64),
         source: "operator", toolName: "job-registry-test", actionName: "cancel-job",
         target: { kind: "job", jobId: job.jobId, activityId: job.activityId },
-        expectedVersion: job.version, reasonCode: "test-cancel"
-      })).toThrow("CODEX_AUTH_JOB_BOUNDARY");
-      await expect(second.steer(job.jobId, "new account prompt")).rejects.toThrow("CODEX_AUTH_JOB_BOUNDARY");
-      expect(reopened.listJobs()[0]?.status).toBe("running");
+        expectedVersion: second.get(job.jobId)!.version, reasonCode: "test-cancel"
+      });
+      await expect(second.cancel(job.jobId, intent)).resolves.toMatchObject({ status: "interrupted" });
+      expect(second.getCancellationIntent(intent.intentId)?.status).toBe("no-op");
+      await expect(second.steer(job.jobId, "new account prompt")).rejects.toThrow("no active turn");
+      expect(reopened.listJobs()[0]?.status).toBe("interrupted");
     } finally { reopened.close(); }
   });
 
-  it("resumes a persisted execution only after the restarted bridge confirms the same owner", async () => {
+  it("recovers the original receipt without depending on a restarted login check", async () => {
     const root = temporaryRoot(), home = path.join(root, ".codex"), file = path.join(root, "state.sqlite");
     mkdirSync(home);
     writeFileSync(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt",
@@ -235,13 +236,9 @@ describe("CodexJobRegistry persistence", () => {
     const restartedService = new CodexService(environment);
     const reopened = new BridgeStateStore({ file });
     try {
-      let loginCheckAvailable = false;
+      expect(restartedService.currentExecutionAuthBoundary()).toBeNull();
       const recovered = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
-        authBoundary: () => restartedService.currentExecutionAuthBoundary(), recoverExecutions: true,
-        recoveryAdmission: async () => {
-          if (!loginCheckAvailable) throw new Error("synthetic account lookup unavailable");
-          await restartedService.assertCurrentAdmission();
-        } });
+        authBoundary: () => restartedService.currentExecutionAuthBoundary(), recoverExecutions: true });
       const recoverExecution = vi.fn(() => new Promise<ToolResult>(() => undefined));
       recovered.attachUpstream({ async listTools() { return { tools: [] }; },
         async callTool() { return result("unused"); }, async close() {},
@@ -249,9 +246,8 @@ describe("CodexJobRegistry persistence", () => {
       new SessionRegistry({ stateStore: reopened, allowedRoots: [root],
         authBoundary: () => restartedService.sessionAuthBoundary() }));
       await Promise.resolve();
-      expect(recoverExecution).not.toHaveBeenCalled();
+      expect(recoverExecution).toHaveBeenCalledTimes(1);
       expect(recovered.get(job.jobId)).toMatchObject({ status: "running", trackingState: "liveness-unknown" });
-      loginCheckAvailable = true;
       await restartedService.assertCurrentAdmission();
       recovered.resumeAuthorizedRecoveries();
       expect(recoverExecution).toHaveBeenCalledTimes(1);
@@ -281,12 +277,8 @@ describe("CodexJobRegistry persistence", () => {
 
     const reopened = new BridgeStateStore({ file });
     try {
-      let admissionAvailable = false;
       const recovered = new CodexJobRegistry({ stateStore: reopened, allowedRoots: [root],
-        authBoundary: () => currentOwner, recoverExecutions: true,
-        recoveryAdmission: async () => {
-          if (!admissionAvailable) throw new Error("synthetic temporary account outage");
-        } });
+        authBoundary: () => currentOwner, recoverExecutions: true });
       const assignment: UpstreamWorkerAssignment = { backendKind: "app-server",
         workerId: "original-worker", workerGeneration: 7, upstreamRequestId: "original-turn",
         threadId: "original-thread" };
@@ -307,8 +299,7 @@ describe("CodexJobRegistry persistence", () => {
       new SessionRegistry({ stateStore: reopened, allowedRoots: [root],
         authBoundary: () => ({ key: currentOwner, allowLegacyShared: false }) }));
       await Promise.resolve();
-      expect(recoverExecution).not.toHaveBeenCalled();
-      admissionAvailable = true;
+      expect(recoverExecution).toHaveBeenCalledTimes(1);
       recovered.resumeAuthorizedRecoveries();
       expect(recoverExecution).toHaveBeenCalledTimes(1);
       expect(reopened.listSessions()).toContainEqual(expect.objectContaining({
@@ -1160,11 +1151,14 @@ describe("CodexJobRegistry persistence", () => {
     const store = registry.admissionStateStore;
     const originalUpsert = store.upsertJob.bind(store);
     const acknowledgeExecution = vi.fn();
+    const assignment = { backendKind: "app-server" as const, workerId: "retained-worker", workerGeneration: 1,
+      upstreamRequestId: "retained-turn", threadId: "exact-completed-thread" };
     registry.attachUpstream({
       async listTools() { return { tools: [] }; },
       async callTool() { return result("unused"); },
       async close() {},
       supportsExecutionRecovery: () => true,
+      ownsRetainedResult: (_jobId, candidate) => JSON.stringify(candidate) === JSON.stringify(assignment),
       acknowledgeExecution
     });
     let blocked = true;
@@ -1177,7 +1171,8 @@ describe("CodexJobRegistry persistence", () => {
       return originalUpsert(value);
     });
     try {
-      const job = registry.start(jobInput(root), async () => {
+      const job = registry.start(jobInput(root), async (_progress, assigned) => {
+        assigned(assignment);
         if (status === "failed") throw new Error("exact upstream failure");
         return result("exact-completed-thread");
       });
@@ -1521,6 +1516,8 @@ describe("CodexJobRegistry persistence", () => {
       async callTool() { return result("unused"); },
       async close() {},
       supportsExecutionRecovery: () => true,
+      ownsRetainedResult: (_jobId, candidate) => candidate.workerId === "race-worker" && candidate.workerGeneration === 1 &&
+        candidate.upstreamRequestId === "original-turn" && candidate.threadId === "completion-won-race",
       acknowledgeExecution,
       async forceTerminateWorker(assignment) {
         finish(result("completion-won-race"));
@@ -1540,7 +1537,7 @@ describe("CodexJobRegistry persistence", () => {
     try {
       const job = registry.start(jobInput(root), async (_progress, assigned) => {
         assigned({ backendKind: "app-server", workerId: "race-worker", workerGeneration: 1,
-          upstreamRequestId: "original-turn" });
+          upstreamRequestId: "original-turn", threadId: "completion-won-race" });
         return run;
       });
       originalPromise = job.promise;

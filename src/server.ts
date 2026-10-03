@@ -167,7 +167,6 @@ export function createBridgeMcpServer(
   });
   const jobRegistry = jobs || new CodexJobRegistry({
     authBoundary: config.codexService ? () => config.codexService!.currentExecutionAuthBoundary() : undefined,
-    recoveryAdmission: config.codexService ? () => config.codexService!.assertCurrentAdmission() : undefined,
     maxConcurrentJobs: config.maxConcurrentJobs,
     ttlMs: config.jobTtlMs,
     maxJobs: config.maxRetainedJobs,
@@ -310,7 +309,6 @@ export function createHttpServer(
   });
   const jobs = new CodexJobRegistry({
     authBoundary: config.codexService ? () => config.codexService!.currentExecutionAuthBoundary() : undefined,
-    recoveryAdmission: config.codexService ? () => config.codexService!.assertCurrentAdmission() : undefined,
     maxConcurrentJobs: config.maxConcurrentJobs,
     ttlMs: config.jobTtlMs,
     maxJobs: config.maxRetainedJobs,

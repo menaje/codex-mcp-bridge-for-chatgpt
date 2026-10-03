@@ -36,7 +36,7 @@ import {
 } from "./helpers/stateSchemaFixtures.js";
 
 describe("current state schema after asynchronous-execution normalization", { timeout: 15_000 }, () => {
-  it("keeps schema-29 sessions without owner evidence quarantined after the upgrade", () => {
+  it("keeps schema-29 legacy sessions accessible without inventing creation-account evidence", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-schema-v29-session-owner-"));
     const file = path.join(root, "state.sqlite");
     let store = new BridgeStateStore({ file });
@@ -54,15 +54,16 @@ describe("current state schema after asynchronous-execution normalization", { ti
     const boundary = { key: "a".repeat(64), allowLegacyShared: false };
     expect(store.listSessions()).toMatchObject([{ threadId: "legacy-thread" }]);
     const registry = new SessionRegistry({ stateStore: store, authBoundary: boundary });
-    expect(registry.get("legacy-thread")).toBeUndefined();
-    expect(registry.belongsToAnotherAuthentication("legacy-thread")).toBe(true);
+    expect(registry.get("legacy-thread")).toMatchObject({ threadId: "legacy-thread", scopeId });
+    expect(registry.get("legacy-thread")).not.toHaveProperty("authBoundary");
     registry.record({ threadId: "owned-thread", scopeId, backendKind: "app-server", cwd: root,
       sandbox: "read-only", createdAt: now, updatedAt: now, lastUsedAt: now });
     store.close();
     const reopened = new BridgeStateStore({ file });
     try {
       const restored = new SessionRegistry({ stateStore: reopened, authBoundary: boundary });
-      expect(restored.get("legacy-thread")).toBeUndefined();
+      expect(restored.get("legacy-thread")).toMatchObject({ threadId: "legacy-thread", scopeId });
+      expect(restored.get("legacy-thread")).not.toHaveProperty("authBoundary");
       expect(restored.get("owned-thread")?.authBoundary).toBe(boundary.key);
       expect(reopened.countSessions()).toBe(2);
     } finally { reopened.close(); }

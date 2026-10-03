@@ -59,45 +59,44 @@ Restarting or forcing the server to apply authentication is not automatic.
 An explicit `CODEX_HOME` setting keeps precedence and prevents a saved
 connection from changing that server's effective home.
 
-Disconnecting the bridge is a separate choice that blocks new bridge work; it
-does not call Codex logout or delete shared credentials. Bridge-owned profiles
-are retained when changing connections or canceling a candidate. A profile
-containing credentials must never be deleted merely because another profile
-was selected. The bridge does not move thread history, skills, settings, or
-credentials between homes. Existing Codex-app history remains in its original
-home; a thread created there cannot be assumed resumable from a different
-home or account. New bridge thread records retain a non-secret authentication
-boundary. A changed connection hides earlier threads from new execution while
-retaining their records; switching back to the same boundary can restore
-access. Pre-existing untagged records remain stored for history, but cannot
-be resumed because the first upgrade cannot retroactively prove which account
-created them.
-When credential ownership cannot be verified, a process uses a temporary
-unverified thread boundary. It cannot authorize new work or resume another
-process's unknown sessions. Retained results keep their original owner.
+Disconnecting the bridge blocks new work without calling Codex logout or
+removing credentials. Bridge profiles remain retained when changing connections
+or canceling a candidate. The Bridge does not copy authentication or conversation
+files between homes. Original Codex storage availability and actual runtime
+resumability are checked separately from access to Bridge records.
+
+Bridge Activity, Agent, Job, session and result access follows the originating
+Bridge principal, conversation scope and project permissions. Changing the
+execution login does not hide those records or require proof of their creation
+account. Each admitted Job preserves its original authentication and billing
+provenance. A later Job on the same Agent/thread uses the currently validated
+execution authentication. Legacy sessions keep their original untagged state.
+A missing or busy original thread can still prevent actual continuation; use an
+explicit fresh context or handoff when the runtime cannot resume it.
+
+Session loading never deletes records merely because authentication access
+rules changed. Inherited session counts above the configured retention limit
+remain available across restart and updates to existing records. New session
+creation keeps the existing bounded retention cohorts, including each cohort's
+inherited capacity. List page size is independent of record retention.
 
 ## Supported authentication and displayed information
 
-For ChatGPT execution ownership, a selected workspace ID alone is insufficient:
-different users can belong to that workspace. A file profile uses the login
-user claim in its selected ID token together with the selected workspace.
-Neither email nor the optional usage response proves the login user. Token
-refreshes that retain the same user and workspace keep the owner boundary.
-An explicit environment API key can also identify API execution when the
-selected App Server confirms API authentication and effective storage policy
-permits that source; an unrelated ambient key never identifies a managed
-Keyring, `auto`, or ephemeral credential.
+The selected Codex remains responsible for authentication, storage and refresh.
+New work requires a successful current authentication and policy check. Extra
+Bridge parsing of a file token's user claim is optional historical provenance,
+not a second login requirement. Native authenticated App Server account status
+can admit work without that claim, including when Codex uses its own credential
+store. Administrator restrictions on method, workspace and store still apply;
+a required workspace must have verified routing evidence. An unrelated ambient
+API key cannot identify a Keyring, auto or ephemeral native login.
 
-Keyring authentication is outside this Bridge release's supported scope.
-Codex can use its own OS credential store, but the current public App Server
-API does not supply the login-user proof the Bridge needs. The Bridge does
-not read the OS keychain or implement a hypothetical session endpoint. It
-rejects an unverifiable existing connection and offers a separate Bridge
-login or a verified file connection. Effective administrator policy remains
-authoritative: a required unsupported store cannot be bypassed by choosing
-another profile. Bridge-owned profiles request file storage in their private
-persistent homes; credentials are managed by Codex and stored with restricted
-file permissions. No credential migration or copy is performed.
+Bridge-owned login candidates retain their private file-backed homes and the
+separate login, account/model verification, requested application and graceful
+restart protections. The Bridge neither reads the OS keychain nor supplies or
+refreshes host-managed access tokens. Native store support here describes the
+admission contract; live login, refresh and account-switch evidence is tracked
+separately and must not be inferred from synthetic tests.
 
 Connection settings show the selected executable, connection source,
 API-provided email, known authentication method, known billing route and
@@ -110,17 +109,18 @@ available through its separate admin API connection and shows only confirmed
 cost data. A temporary refresh failure may label a retained confirmed value;
 real sign-in, policy or connection failures keep their actionable error.
 
-After a confirmed login change, logout, or failed current owner check, the
-last confirmed owner remains read-only history. It no longer authorizes new
-Jobs or request replay. A live Job can still answer its own pending question
-or be cancelled when its original worker generation and turn are verified.
-Its terminal result is acknowledged only when the original executor still
-holds that exact retained receipt. Additional guidance remains a new
-execution input and needs current authentication confirmation.
-After a full Bridge restart, persisted execution receipts remain dormant until
-the new operational process confirms the same owner. A failed startup check
-keeps them available for a later successful admission rather than recovering
-them under an unverified login.
+Logout or an unavailable account blocks new execution input while retained
+history and canonical request replay remain readable. A live Job can answer its
+own pending question or be canceled only through its original execution handle;
+production adapters verify the worker, generation, thread and turn. Terminal
+cancellation is a no-op. Result ACK requires the exact retained executor receipt
+and a committed terminal Job result. Additional guidance is new execution input
+and requires current authentication confirmation.
+
+After Bridge restart, receipt recovery attaches to the original executor
+independently of current new-work authentication. Missing original execution
+proof cannot create another turn, substitute another result or authorize ACK.
+Historical provenance remains unchanged when a recovered outcome is stored.
 
 ## Live test credentials
 

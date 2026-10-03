@@ -8,6 +8,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import Database from "better-sqlite3";
 import { loadConfig } from "../src/config.js";
 import { CodexService } from "../src/codexService.js";
+import { projectCodexAccount } from "../src/codexAccount.js";
 import { CodexRuntimeManager } from "../src/codexRuntime.js";
 import { createExecutionRuntime } from "../src/executionRuntime.js";
 import { ChildProcessCodexExecutionService } from "../src/executionServiceProcess.js";
@@ -212,6 +213,103 @@ describe("current bridge tool contracts", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it("continues, replaces and forks the same Agent across accounts while keeping Bridge scope and logout admission checks", async () => {
+    const home = path.join(root, "codex-home");
+    await mkdir(home);
+    await writeFile(path.join(home, "config.toml"), 'cli_auth_credentials_store = "file"\n');
+    const authFile = path.join(home, "auth.json");
+    const login = async (user: string) => writeFile(authFile, JSON.stringify({ auth_mode: "chatgpt", tokens: {
+      account_id: "shared-workspace", id_token: syntheticIdToken(user, "shared-workspace")
+    } }));
+    await login("user-a");
+    const service = new CodexService({ HOME: root, CODEX_HOME: home, PATH: "",
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime") });
+    service.setAccountReader(async () => projectCodexAccount({ account: null }, null));
+    config.codexService = service;
+    Object.assign(upstream, {
+      capabilities: () => ({ selectionScope: "turn", supportsModelOverrideOnContinue: true,
+        supportsEffortOverrideOnContinue: true, supportsServiceTierOverrideOnContinue: true, supportsFork: true }),
+      forkThread: (input: Record<string, unknown>, progress?: (value: CodexProgress) => void,
+        assigned?: (value: UpstreamWorkerAssignment) => void) => upstream.callTool("codex-fork", input, progress, assigned)
+    });
+    await client.close();
+    await new Promise<void>(resolve => server.close(resolve));
+    server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+    client = new Client({ name: "account-continuity-test", version: "1.0.0" },
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    await client.connect(new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`)));
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const scopeId = randomUUID();
+    const common = { scopeId, taskContractVersion: properties.taskContractVersion?.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef?.const };
+    const projectSelection = { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision };
+    const originalArgs = { ...common, requestId: randomUUID(), prompt: "Create the original context.",
+      project: projectSelection, selection };
+    const call = (args: Record<string, unknown>, hostMetadata = metadata) =>
+      client.callTool({ name: "codex_task", arguments: args, _meta: hostMetadata });
+    const original = await call(originalArgs);
+    expect(original.isError, JSON.stringify(original)).not.toBe(true);
+    const handles = original.structuredContent as { jobId: string; agentId: string; activityId: string };
+    await eventually(() => state.listJobs().some(job => job.jobId === handles.jobId && job.status === "completed"));
+    const ownerA = state.listJobs().find(job => job.jobId === handles.jobId)!.authBoundary;
+    expect(ownerA).toMatch(/^[a-f0-9]{64}$/);
+
+    await login("user-b");
+    const continued = await call({ ...common, requestId: randomUUID(), prompt: "Continue with the current login.",
+      activity: { mode: "existing", id: handles.activityId },
+      agent: { mode: "existing", id: handles.agentId, context: "continue" } });
+    expect(continued.isError, JSON.stringify(continued)).not.toBe(true);
+    const continuedId = (continued.structuredContent as { jobId: string }).jobId;
+    await eventually(() => state.listJobs().some(job => job.jobId === continuedId && job.status === "completed"));
+    const ownerB = state.listJobs().find(job => job.jobId === continuedId)!.authBoundary;
+    expect(ownerB).not.toBe(ownerA);
+    expect(state.listSessions()).toContainEqual(expect.objectContaining({ threadId: fixtureThreadId, authBoundary: ownerA }));
+
+    const replacementThread = randomUUID();
+    upstream.setNextThreadId(replacementThread);
+    const fresh = await call({ ...common, requestId: randomUUID(), prompt: "Begin a fresh context in the same Agent.",
+      activity: { mode: "existing", id: handles.activityId },
+      agent: { mode: "existing", id: handles.agentId, context: "fresh" }, project: projectSelection, selection });
+    expect(fresh.isError, JSON.stringify(fresh)).not.toBe(true);
+    const freshId = (fresh.structuredContent as { jobId: string }).jobId;
+    await eventually(() => state.listJobs().some(job => job.jobId === freshId && job.status === "completed"));
+    await login("user-a");
+    const forkThread = randomUUID();
+    upstream.setNextThreadId(forkThread);
+    const fork = await call({ ...common, requestId: randomUUID(), prompt: "Fork the current context with the applied login.",
+      activity: { mode: "existing", id: handles.activityId },
+      agent: { mode: "existing", id: handles.agentId, context: "fork" } });
+    expect(fork.isError, JSON.stringify(fork)).not.toBe(true);
+    const forkId = (fork.structuredContent as { jobId: string }).jobId;
+    await eventually(() => state.listJobs().some(job => job.jobId === forkId && job.status === "completed"));
+    expect(state.listJobs().find(job => job.jobId === forkId)?.authBoundary).toBe(ownerA);
+    expect(state.listSessions()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ threadId: fixtureThreadId, authBoundary: ownerA }),
+      expect.objectContaining({ threadId: replacementThread, authBoundary: ownerB }),
+      expect.objectContaining({ threadId: forkThread, authBoundary: ownerA })
+    ]));
+    const foreignScope = await call({ ...common, scopeId: randomUUID(), requestId: randomUUID(),
+      prompt: "Try a different Bridge scope.", agent: { mode: "existing", id: handles.agentId, context: "fresh" },
+      project: projectSelection, selection }, { "openai/session": "account-continuity-foreign-scope" });
+    expect(foreignScope.isError).toBe(true);
+    await rm(authFile);
+    const replay = await call(originalArgs);
+    expect(replay.isError, JSON.stringify(replay)).not.toBe(true);
+    expect(replay.structuredContent).toMatchObject({ jobId: handles.jobId, replay: true });
+    const history = await client.callTool({ name: "codex_status", _meta: metadata,
+      arguments: { scopeId, query: { kind: "job", id: handles.jobId } } });
+    expect(history.isError, JSON.stringify(history)).not.toBe(true);
+    const signedOut = await call({ ...originalArgs, requestId: randomUUID() });
+    expect(signedOut.isError).toBe(true);
+    expect(JSON.stringify(signedOut)).toContain("CODEX_AUTH_REQUIRED");
+    expect(upstream.calls).toHaveLength(4);
+    expect(state.listJobs()).toHaveLength(4);
+  });
+
   it("exposes legacy project recovery in Settings and restores the original identity through the application service", async () => {
     const project = settings.current.projects[0]!;
     const activity = state.createActivity({ scopeId: "11111111-1111-4111-8111-111111111111",
@@ -361,8 +459,8 @@ describe("current bridge tool contracts", () => {
 
       await writeFile(authFile, login("user-b"));
       expect(service.sessionAuthBoundary().key).not.toBe(originalOwner);
-      await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_CHANGED");
-      expect(service.currentExecutionAuthBoundary()).toBeNull();
+      await expect(service.assertCurrentAdmission()).resolves.toBeUndefined();
+      expect(service.currentExecutionAuthBoundary()).toMatch(/^[a-f0-9]{64}$/);
 
       const persistJob = state.upsertJob.bind(state);
       let failedOnce = false;
@@ -479,11 +577,11 @@ describe("current bridge tool contracts", () => {
         const original = state.listJobs().find(job => job.jobId === jobId)!;
         expect(original.authBoundary).toMatch(/^[a-f0-9]{64}$/);
         await writeFile(authFile, login("user-b"));
-        const foreign = await client.callTool({ name: "codex_task", _meta: metadata,
-          arguments: { ...arguments_, requestId: randomUUID(), prompt: "new owner must not execute" } });
-        expect(foreign.isError).toBe(true);
-        expect(JSON.stringify(foreign)).toContain("CODEX_AUTH_CHANGED");
-        expect(config.codexService!.currentExecutionAuthBoundary()).toBeNull();
+        const replayAfterChange = await client.callTool({ name: "codex_task", _meta: metadata,
+          arguments: arguments_ });
+        expect(replayAfterChange.isError, JSON.stringify(replayAfterChange)).not.toBe(true);
+        expect(replayAfterChange.structuredContent).toMatchObject({ jobId, replay: true });
+        expect(config.codexService!.currentExecutionAuthBoundary()).not.toBe(original.authBoundary);
         expect(state.listJobs()).toHaveLength(1);
         if (phase === "queued request") { dropQueued = false; peer.disconnect(); }
         else await runtime.steerThread(original.threadId!, "finish the original transport Job");
@@ -626,8 +724,8 @@ describe("current bridge tool contracts", () => {
         arguments: { query: { kind: "job", id: jobId } } });
       expect(foreign.isError).toBe(true);
       const replay = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
-      expect(replay.isError).toBe(true);
-      expect(JSON.stringify(replay)).toContain("CODEX_AUTH_JOB_BOUNDARY");
+      expect(replay.isError, JSON.stringify(replay)).not.toBe(true);
+      expect(replay.structuredContent).toMatchObject({ jobId, replay: true });
       expect(state.listJobs()).toHaveLength(1);
       expect(nextUpstream.calls).toHaveLength(0);
       expect(recoverExecution).not.toHaveBeenCalled();
@@ -635,7 +733,7 @@ describe("current bridge tool contracts", () => {
     }
   );
 
-  it("recovers an original Job through HTTP only after a restarted bridge confirms its owner", async () => {
+  it("recovers an original Job through HTTP under another account using its exact retained receipt", async () => {
     const home = path.join(root, ".codex");
     const authFile = path.join(home, "auth.json");
     const stateFile = path.join(root, "state.sqlite");
@@ -703,26 +801,6 @@ describe("current bridge tool contracts", () => {
       return startupAdmission;
     };
 
-    const wrongOwnerRecovery = vi.fn();
-    const wrongOwner = new FixtureUpstream();
-    Object.assign(wrongOwner, { supportsExecutionRecovery: () => true,
-      recoverExecution: wrongOwnerRecovery });
-    const foreignAdmission = await reopen("user-b", wrongOwner);
-    await eventually(() => foreignAdmission.mock.calls.length === 1);
-    await foreignAdmission.mock.results[0]!.value;
-    await Promise.resolve();
-    expect(config.codexService!.currentExecutionAuthBoundary()).not.toBe(original.authBoundary);
-    expect(wrongOwnerRecovery).not.toHaveBeenCalled();
-    expect(state.listJobs()).toContainEqual(expect.objectContaining({
-      jobId, status: "running", authBoundary: original.authBoundary
-    }));
-    const foreignStatus = await client.callTool({ name: "codex_status", _meta: metadata,
-      arguments: { query: { kind: "job", id: jobId } } });
-    expect(foreignStatus.isError, JSON.stringify(foreignStatus)).not.toBe(true);
-    expect(foreignStatus.structuredContent).toMatchObject({ items: [expect.objectContaining({
-      id: jobId, state: "running"
-    })] });
-
     const recoverExecution = vi.fn((_jobId: string, _onProgress: (progress: CodexProgress) => void,
       onAssigned: (value: UpstreamWorkerAssignment) => void) => {
       onAssigned(assignment);
@@ -738,7 +816,7 @@ describe("current bridge tool contracts", () => {
         value.upstreamRequestId === assignment.upstreamRequestId &&
         value.threadId === assignment.threadId,
       acknowledgeExecution });
-    await reopen("user-a", sameOwner);
+    await reopen("user-b", sameOwner);
     await eventually(() => state.listJobs().some(job => job.jobId === jobId && job.status === "completed"), 5_000);
     expect(recoverExecution).toHaveBeenCalledExactlyOnceWith(jobId, expect.any(Function), expect.any(Function));
     expect(state.listJobs()).toContainEqual(expect.objectContaining({
@@ -841,8 +919,8 @@ describe("current bridge tool contracts", () => {
     expect(questionRef, JSON.stringify(input.structuredContent)).toBeTruthy();
 
     await writeFile(authFile, login("user-b"));
-    await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_CHANGED");
-    expect(service.currentExecutionAuthBoundary()).toBeNull();
+    await expect(service.assertCurrentAdmission()).resolves.toBeUndefined();
+    expect(service.currentExecutionAuthBoundary()).toMatch(/^[a-f0-9]{64}$/);
     const respond = (requestId: string) => client.callTool({ name: "codex_answer", _meta: metadata,
       arguments: { requestId, jobId, questionRef, answers: { answer: ["yes"] } } });
     originalWorkerLive = initialWorkerProof;
@@ -938,7 +1016,7 @@ describe("current bridge tool contracts", () => {
     hold.assign("tool-contract-thread");
     const originalOwner = state.listJobs().find(job => job.jobId === jobId)?.authBoundary;
     await writeFile(authFile, login("user-b"));
-    await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_CHANGED");
+    await expect(service.assertCurrentAdmission()).resolves.toBeUndefined();
     const cancel = (requestId: string) => client.callTool({ name: "codex_cancel", _meta: metadata,
       arguments: { requestId, target: { kind: "job", id: jobId },
         expectedVersion: state.listJobs().find(job => job.jobId === jobId)?.version,
@@ -946,7 +1024,7 @@ describe("current bridge tool contracts", () => {
     try {
       const blocked = await cancel(randomUUID());
       expect(blocked.isError).toBe(true);
-      expect(JSON.stringify(blocked)).toContain("CODEX_AUTH_JOB_BOUNDARY");
+      expect(JSON.stringify(blocked)).toContain("CODEX_EXECUTION_OWNER_UNAVAILABLE");
       expect(forceTerminateWorker).not.toHaveBeenCalled();
       expect(state.listJobs().find(job => job.jobId === jobId)?.status).toBe("running");
       originalWorkerLive = true;
@@ -1558,6 +1636,9 @@ describe("current bridge tool contracts", () => {
     const acknowledgeExecution = vi.fn();
     Object.assign(upstream, {
       supportsExecutionRecovery: () => true,
+      ownsRetainedResult: (_jobId: string, candidate: UpstreamWorkerAssignment) =>
+        candidate.workerId === "fixture-worker" && candidate.workerGeneration === 1 &&
+        candidate.threadId === "tool-contract-thread" && candidate.upstreamRequestId === fixtureTurnId,
       acknowledgeExecution
     });
     const originalUpsert = state.upsertJob.bind(state);
@@ -1591,6 +1672,7 @@ describe("current bridge tool contracts", () => {
     expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
     const jobId = (admitted.structuredContent as { jobId: string }).jobId;
     await hold.started;
+    hold.assign("tool-contract-thread");
 
     const running = await client.callTool({
       name: "codex_status", arguments: { query: { kind: "job", id: jobId } }, _meta: metadata
