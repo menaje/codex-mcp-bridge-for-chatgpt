@@ -127,7 +127,7 @@ export type CodexThreadResumeProbe = (
     }
   | {
       state: "unknown";
-      reason: "unsupported" | "transient";
+      reason: "unsupported" | "transient" | "storage-unavailable";
       threadId: string;
       retryable: true;
     }

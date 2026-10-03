@@ -28,7 +28,8 @@ it("keeps existing users on shared auth until they explicitly stage a different 
   const candidate = prepared.candidate!;
   expect(candidate.status).toBe("prepared");
   expect(await readFile(path.join(f.root, "auth-profiles", candidate.id, "config.toml"), "utf8"))
-    .toBe('cli_auth_credentials_store = "file"\n');
+    .toBe('cli_auth_credentials_store = "file"\n' +
+      `sqlite_home = ${JSON.stringify(path.join(f.root, "execution-storage", "sqlite"))}\n`);
   expect(codexChildEnvironment(undefined, f.environment).CODEX_HOME).toBeUndefined();
   await expect(f.manager.prepare("bridge-api", 0, f.environment)).rejects.toThrow("CODEX_AUTH_REVISION_CHANGED");
   await f.manager.cancelCandidate(candidate.id, (await f.manager.snapshot(f.environment)).revision);
@@ -250,11 +251,27 @@ it("ignores a stale shared auth file when effective managed storage selects a di
   const environment = { ...f.environment,
     CODEX_TEST_AUTH_CONFIG: JSON.stringify({ cliAuthCredentialsStore: "keyring" }),
     CODEX_TEST_ACCOUNT_ID: "live-keyring-b" };
-  await expect(f.manager.stage({ kind: "shared" }, 0, command, "fixture-cli", environment, false))
-    .rejects.toThrow("CODEX_AUTH_IDENTITY_UNAVAILABLE");
+  const staged = await f.manager.stage({ kind: "shared" }, 0, command, "fixture-cli", environment, false);
+  expect(staged.pending).toEqual({ kind: "shared" });
   const state = JSON.parse(await readFile(path.join(f.root, "auth-selection.json"), "utf8"));
-  expect(state.pending).toBeNull();
+  expect(state.pendingVerification).toMatchObject({ accountKey: null, credentialKey: null,
+    workspaceKey: codexChatgptOwnerKey("live-keyring-b") });
+  await f.manager.beginActivation(command, "fixture-cli", environment);
   expect(await readFile(path.join(home, "auth.json"), "utf8")).toContain("stale-file-a");
+});
+
+it("verifies a native file login without optional user claims and refuses a replaced candidate", async () => {
+  const f = await fixture();
+  const candidate = (await f.manager.prepare("bridge-chatgpt", 0, f.environment)).candidate!;
+  const file = path.join(f.root, "auth-profiles", candidate.id, "auth.json");
+  await writeFile(file, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "opaque-workspace", refresh_token: "synthetic-first" } }));
+  const command = path.resolve("test/fixtures/fake-codex-app-server.mjs");
+  const environment = { ...f.environment, CODEX_TEST_ACCOUNT_ID: "opaque-workspace" };
+  const verified = await f.manager.verify(candidate.id, command, "cli", environment);
+  expect(verified.candidate).toMatchObject({ status: "verified", accountKey: null, credentialKey: expect.stringMatching(/^[a-f0-9]{64}$/) });
+  await writeFile(file, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "opaque-workspace", refresh_token: "synthetic-replaced" } }));
+  await expect(f.manager.stage(candidate.connection, verified.revision, command, "cli", environment, false)).rejects.toThrow("CODEX_AUTH_CANDIDATE_UNVERIFIED");
+  expect((await f.manager.snapshot(environment)).pending).toBeNull();
 });
 
 it("keeps explicit CODEX_HOME authoritative and never forwards ambient API keys to a bridge profile", async () => {
@@ -752,7 +769,7 @@ it("removes only an inactive bridge API credential without touching shared authe
   await expect(readFile(file)).rejects.toMatchObject({ code: "ENOENT" });
   expect(await readFile(sharedFile, "utf8")).toContain("shared");
   expect((await f.manager.snapshot(f.environment)).profiles).toContainEqual({
-    id: candidate.id, kind: "bridge-api", status: "removed"
+    id: candidate.id, kind: "bridge-api", status: "removed", storageId: expect.any(String)
   });
 });
 
@@ -774,7 +791,7 @@ it("logs out only an inactive bridge ChatGPT profile and records an uncertain re
     ...f.environment, CODEX_TEST_AUTH_LOGOUT_LOST_RESPONSE: "1"
   })).rejects.toThrow("CODEX_AUTH_LOGOUT_UNCONFIRMED");
   expect((await f.manager.snapshot(f.environment)).profiles).toContainEqual({
-    id: candidate.id, kind: "bridge-chatgpt", status: "logout-unconfirmed"
+    id: candidate.id, kind: "bridge-chatgpt", status: "logout-unconfirmed", storageId: expect.any(String)
   });
   await expect(f.manager.logoutOwnedChatGpt(candidate.id, 3, command, f.environment))
     .rejects.toThrow("CODEX_AUTH_PROFILE_UNAVAILABLE");

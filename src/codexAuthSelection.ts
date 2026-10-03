@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -10,7 +10,8 @@ import { assertEffectiveCodexAuthPolicy, effectiveCodexCredentialStore,
   parseCodexLocalAuthPolicy, type CodexLocalAuthPolicy } from "./codexAuthPolicy.js";
 import { atomicRuntimeJson, withRuntimeLock } from "./codexRuntime.js";
 import { parseJsonUtf8Strict } from "./textIntegrity.js";
-import { authProfileHome, knownExternalHome } from "../scripts/auth-selection.mjs";
+import { authProfileHome, authProfileEnvironment, knownExternalHome } from "../scripts/auth-selection.mjs";
+import { createIndependentProfileStorage } from "../scripts/execution-storage.mjs";
 
 const connectionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("shared") }),
@@ -59,6 +60,7 @@ const activationResolutionSchema = z.strictObject({
 });
 const ownedProfileSchema = z.strictObject({
   id: z.string().uuid(), kind: z.enum(["bridge-chatgpt", "bridge-api"]),
+  storageId: z.string().uuid().optional(),
   status: z.enum(["available", "removed", "login-unconfirmed", "logout-unconfirmed"])
 });
 const knownHomeSchema = z.strictObject({ id: z.string().uuid(), home: z.string().refine(path.isAbsolute),
@@ -165,13 +167,15 @@ export class CodexAuthSelectionManager {
       const id = randomUUID();
       const home = authProfileHome(this.root, id);
       await mkdir(home, { recursive: true, mode: 0o700 });
-      await writeFile(path.join(home, "config.toml"), this.profileConfig(policy), { mode: 0o600, flag: "wx" });
+      const storage = await createIndependentProfileStorage(this.root, home);
+      await writeFile(path.join(home, "config.toml"), this.profileConfig(policy) +
+        `sqlite_home = ${JSON.stringify(storage.sqliteHome)}\n`, { mode: 0o600, flag: "wx" });
       state.candidate = { id, connection: { kind, profileId: id }, status: "prepared",
         reused: false,
         accountKey: null, accountEmail: null, workspaceName: null, workspaceKey: null, billingTarget: null,
         credentialKey: null, verifiedCli: null,
         verifiedCliFingerprint: null, verifiedAt: null };
-      state.profiles.push({ id, kind, status: "available" });
+      state.profiles.push({ id, kind, status: "available", storageId: storage.storageId });
       state.revision++;
     });
     return this.snapshot({});
@@ -429,9 +433,14 @@ export class CodexAuthSelectionManager {
       if (!Array.isArray(models.data) || models.data.length === 0) {
         throw new Error("CODEX_AUTH_MODELS_UNAVAILABLE: The candidate model catalog could not be verified.");
       }
-      const credentialKey = codexCredentialIdentity(profileEnvironment.CODEX_HOME!, profileEnvironment);
-      if (!credentialKey || !ownerKey) {
-        throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: The candidate's file-backed identity could not be confirmed.");
+      let credentialKey = codexCredentialIdentity(profileEnvironment.CODEX_HOME!, profileEnvironment);
+      if (!credentialKey) {
+        // Native Codex verifies login; an optional user claim is not required.
+        // Opaque file evidence still prevents applying a replaced candidate.
+        const file = path.join(profileEnvironment.CODEX_HOME!, "auth.json");
+        const metadata = await lstat(file);
+        if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("CODEX_AUTH_CANDIDATE_UNVERIFIED: The private candidate credential is unavailable.");
+        credentialKey = createHash("sha256").update(await readFile(file)).digest("hex");
       }
       return { accountKey: ownerKey, accountEmail, workspaceName,
         workspaceKey: fileWorkspaceKey || account.workspaceKey, billingTarget: account.billing.kind, credentialKey };
@@ -551,9 +560,6 @@ export class CodexAuthSelectionManager {
         fileWorkspaceKey || account.workspaceKey, false);
       if (fileWorkspaceKey && account.workspaceKey && fileWorkspaceKey !== account.workspaceKey) {
         throw new Error("CODEX_AUTH_SHARED_UNAVAILABLE: Codex reported a different workspace from the shared credential.");
-      }
-      if (!credentialKey || !ownerKey) {
-        throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: This connection cannot be used by the Bridge. Choose a separate Bridge login or a verified file-backed connection.");
       }
       return { accountKey: ownerKey, accountEmail, workspaceName,
         workspaceKey: fileWorkspaceKey || account.workspaceKey, billingTarget: account.billing.kind, credentialKey };
@@ -782,7 +788,7 @@ export class CodexAuthSelectionManager {
   }
 
   private profileEnvironment(environment: NodeJS.ProcessEnv, profileId: string): NodeJS.ProcessEnv {
-    return { ...environment, CODEX_HOME: authProfileHome(this.root, profileId),
+    return { ...authProfileEnvironment(this.root, profileId, environment),
       OPENAI_API_KEY: undefined, CODEX_API_KEY: undefined, CODEX_MCP_BRIDGE_AUTH_DISCONNECTED: undefined };
   }
 
@@ -826,7 +832,9 @@ export class CodexAuthSelectionManager {
     let saved: string;
     try { saved = await readFile(path.join(authProfileHome(this.root, connection.profileId), "config.toml"), "utf8"); }
     catch { throw new Error("CODEX_AUTH_POLICY_MISMATCH: The candidate profile configuration is unavailable."); }
-    if (saved !== this.profileConfig(policy)) {
+    const sqliteHome = authProfileEnvironment(this.root, connection.profileId).CODEX_SQLITE_HOME;
+    const expected = this.profileConfig(policy) + (sqliteHome ? `sqlite_home = ${JSON.stringify(sqliteHome)}\n` : "");
+    if (saved !== expected) {
       throw new Error("CODEX_AUTH_POLICY_MISMATCH: The candidate profile no longer has the current local login restrictions.");
     }
   }

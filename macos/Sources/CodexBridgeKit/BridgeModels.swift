@@ -376,6 +376,7 @@ public struct BridgeSettings: Codable, Sendable {
     public let uiLocalePreference: String
     public let maxConcurrentJobs: Int
     public let showBridgeThreadsInCodexApp: Bool
+    public let bridgeThreadPersistence: String?
     public let experimentalDirectResultDelivery: Bool
 }
 
@@ -636,6 +637,7 @@ public struct SettingsPatch: Encodable, Sendable {
     public var maxConcurrentJobs: Int?
     public var historyRetentionDays: Int?
     public var showBridgeThreadsInCodexApp: Bool?
+    public var bridgeThreadPersistence: String?
     public var experimentalDirectResultDelivery: Bool?
     public var projectOperations: [ProjectOperation]?
 
@@ -648,6 +650,7 @@ public struct SettingsPatch: Encodable, Sendable {
         maxConcurrentJobs: Int? = nil,
         historyRetentionDays: Int? = nil,
         showBridgeThreadsInCodexApp: Bool? = nil,
+        bridgeThreadPersistence: String? = nil,
         experimentalDirectResultDelivery: Bool? = nil,
         projectOperations: [ProjectOperation]? = nil
     ) {
@@ -659,6 +662,7 @@ public struct SettingsPatch: Encodable, Sendable {
         self.maxConcurrentJobs = maxConcurrentJobs
         self.historyRetentionDays = historyRetentionDays
         self.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
+        self.bridgeThreadPersistence = bridgeThreadPersistence
         self.experimentalDirectResultDelivery = experimentalDirectResultDelivery
         self.projectOperations = projectOperations
     }

@@ -20,6 +20,8 @@
       "scripts/auth-selection.d.mts",
       "scripts/build-fingerprint.mjs",
       "scripts/child-shutdown.mjs",
+      "scripts/execution-storage.mjs",
+      "scripts/execution-storage.d.mts",
       "scripts/launcher-options.mjs",
       "scripts/managed-file.mjs",
       "scripts/managed-file.d.mts",

@@ -146,9 +146,21 @@ createInterface({ input: process.stdin }).on("line", line => {
     await expect(f.service.sessionPolicy(kind, true, "old-thread")).rejects.toThrow("CODEX_BACKEND_RETIRED");
     expect(await f.service.readAccount(kind)).toBeNull();
     expect(await readFile(file, "utf8")).toBe(original);
-    expect(await f.service.sessionPolicy("app-server", false)).toEqual({ persistent: false, persistence: "ephemeral", visibleInCodexApp: false, constraint: "hidden-persistent-unsupported" });
+    expect(await f.service.sessionPolicy("app-server", false)).toEqual({ persistent: true, persistence: "persistent", visibleInCodexApp: false, constraint: "app-visibility-unverified" });
     expect(await f.service.sessionPolicy("app-server", true)).toEqual({ persistent: true, persistence: "persistent", visibleInCodexApp: true });
-    await expect(f.service.sessionPolicy("app-server", false, undefined, "persistent")).rejects.toThrow(/HIDDEN_PERSISTENT_UNSUPPORTED/);
+    expect(await f.service.sessionPolicy("app-server", false, undefined, "ephemeral"))
+      .toEqual({ persistent: false, persistence: "ephemeral", visibleInCodexApp: false });
+    await expect(f.service.sessionPolicy("app-server", true, undefined, "ephemeral")).rejects.toThrow("EPHEMERAL_NOT_VISIBLE");
+  });
+
+  it("keeps private-home conversations durable without advertising direct app visibility", async () => {
+    const f = await fixture();
+    f.service.environment.CODEX_HOME = path.join(f.root, "bridge-home");
+    expect(await f.service.sessionPolicy("app-server", true))
+      .toEqual({ persistent: true, persistence: "persistent", visibleInCodexApp: false, constraint: "app-visibility-unverified" });
+    f.service.environment.CODEX_HOME = path.join(f.root, ".codex");
+    f.service.environment.CODEX_SQLITE_HOME = path.join(f.root, "another-sqlite-location");
+    expect((await f.service.sessionPolicy("app-server", true)).visibleInCodexApp).toBe(false);
   });
 
   it("keeps stale account display during same-context refreshes but clears it when authentication or selection changes", async () => {

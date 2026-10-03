@@ -25,7 +25,21 @@ async function fixture() {
   return { directory, root, bin, options, manager, external };
 }
 
+async function chooseExternal(manager: CodexRuntimeManager, command: string) {
+  const candidate = (await manager.discover()).find(item => item.command === command)!;
+  await manager.select(candidate.id);
+}
+
 describe("Codex installation ownership and selection", () => {
+  it("selects an already installed active managed CLI before external candidates in a new selection state", async () => {
+    const f = await fixture(); const installed = await f.manager.install(); await f.external();
+    const file = path.join(f.root, "cli-state.json");
+    const state = JSON.parse(await readFile(file, "utf8"));
+    state.selection = null; state.selectionRequired = false;
+    await writeFile(file, JSON.stringify(state));
+    expect((await new CodexRuntimeManager(f.options).snapshot()).selection)
+      .toMatchObject({ source: "bridge", command: installed.selection!.command });
+  });
   it("freezes the activation target across pending CLI application and checks it under the state lock", async () => {
     const f = await fixture(); await f.manager.install();
     const lease = await f.manager.acquire();
@@ -42,7 +56,8 @@ describe("Codex installation ownership and selection", () => {
     await expect(f.manager.applyPending(target)).rejects.toThrow("LIFECYCLE_TARGET_CHANGED");
   });
   it("marks a version-valid but permission-incompatible installation unavailable for execution", async () => {
-    const f = await fixture(); await f.external();
+    const f = await fixture(); const command = await f.external();
+    await chooseExternal(f.manager, command);
     const support = inspectClientRequestContract(protocolContract);
     const manager = new CodexRuntimeManager({ ...f.options, protocolProbe: async () => ({ ...support, compatible: false, missingCore: ["thread/resume.sandbox"] }) });
     expect((await manager.snapshot()).selection).toMatchObject({ available: true, compatible: false });
@@ -51,6 +66,11 @@ describe("Codex installation ownership and selection", () => {
 
   it("persists a single installation and does not replace it when another appears or discovery order changes", async () => {
     const f = await fixture(); const command = await f.external();
+    const initial = await f.manager.snapshot();
+    expect(initial.selection).toBeNull();
+    expect(initial.selectionRequired).toBe(true);
+    expect(initial.actions.install).toBe(true);
+    await chooseExternal(f.manager, command);
     expect((await f.manager.snapshot()).selection?.command).toBe(command);
     const second = await f.external("app-codex");
     const reentered = new CodexRuntimeManager({ ...f.options, appPaths: [second] });
@@ -68,6 +88,7 @@ describe("Codex installation ownership and selection", () => {
     await mkdir(path.dirname(oldCommand), { recursive: true });
     await writeFile(oldCommand, "version=0.153.4", { mode: 0o700 });
     const manager = new CodexRuntimeManager({ ...f.options, environment: { PATH: "" }, appPaths });
+    await chooseExternal(manager, oldCommand);
     expect((await manager.snapshot()).selection?.command).toBe(oldCommand);
 
     await rm(oldCommand);
@@ -86,6 +107,8 @@ describe("Codex installation ownership and selection", () => {
     await symlink(app, path.join(f.bin, "codex"));
     const manager = new CodexRuntimeManager({ ...f.options, appPaths: [app] });
     expect((await manager.snapshot()).candidates).toHaveLength(1);
+    expect((await manager.snapshot()).selection).toBeNull();
+    await chooseExternal(manager, app);
     expect((await manager.snapshot()).selection?.source).toBe("app");
     const other = await f.external("another-app");
     expect(await new CodexRuntimeManager({ ...f.options, appPaths: [app, other] }).discover()).toHaveLength(2);
@@ -99,7 +122,7 @@ describe("Codex installation ownership and selection", () => {
     expect((await manager.resolve()).version).toBe("0.153.3");
   });
   it("respects explicit paths without replacing a saved choice", async () => {
-    const f = await fixture(); const original = await f.external(); await f.manager.snapshot();
+    const f = await fixture(); const original = await f.external(); await chooseExternal(f.manager, original);
     const explicit = await f.external("custom");
     expect((await f.manager.resolve(explicit)).command).toBe(explicit);
     expect((await f.manager.resolve()).command).toBe(original);
@@ -151,7 +174,7 @@ describe("Codex installation ownership and selection", () => {
     expect((await manager.snapshot()).candidates).toHaveLength(1);
     const terminal = new CodexRuntimeManager({ ...f.options, probe: async () => f.options.probe!(native) });
     expect((await terminal.discover())[0]).toMatchObject({ physicalPath: await realpath(native), version: "0.153.3" });
-    await terminal.snapshot();
+    await chooseExternal(terminal, (await terminal.discover())[0].command);
     const beforeFingerprint = terminal.appliedContextFingerprint();
     // The real launcher reads its native executable; only that executable changed.
     await writeFile(`${native}.next`, "version=0.153.4", { mode: 0o700 });
@@ -160,7 +183,7 @@ describe("Codex installation ownership and selection", () => {
     expect((await terminal.discover())[0].version).toBe("0.153.4");
   });
   it("never updates, removes or repairs an external installation", async () => {
-    const f = await fixture(); const original = await f.external(); await f.manager.checkUpdates();
+    const f = await fixture(); const original = await f.external(); await chooseExternal(f.manager, original); await f.manager.checkUpdates();
     const snapshot = await f.manager.snapshot();
     expect(snapshot.actions.update).toBe(false); expect(snapshot.actions.remove).toBe(false); expect(snapshot.actions.reinstall).toBe(false);
     await expect(f.manager.remove()).rejects.toThrow("CODEX_NOT_BRIDGE_OWNED");
@@ -170,6 +193,7 @@ describe("Codex installation ownership and selection", () => {
     const f = await fixture();
     const command = await f.external();
     const manager = new CodexRuntimeManager({ ...f.options, appPaths: source === "app" ? [command] : [] });
+    await chooseExternal(manager, command);
     const before = (await manager.snapshot()).selection!;
     expect(before.source).toBe(source);
     const lease = await manager.acquire();
@@ -280,7 +304,7 @@ describe("Bridge-owned version lifecycle", () => {
     let proceed!: () => void;
     const wait = new Promise<void>(resolve => { proceed = resolve; });
     const manager = new CodexRuntimeManager({ ...f.options, installer: async options => { await wait; return f.options.installer!(options); } });
-    const external = (await manager.snapshot()).selection!;
+    const external = (await manager.snapshot()).candidates.find(item => item.source === "terminal")!;
     const installing = manager.install();
     await expect.poll(async () => (await manager.snapshot()).operation?.phase).toBe("downloading");
     await manager.select(external.id);
@@ -372,7 +396,8 @@ describe("Bridge-owned version lifecycle", () => {
     expect((await manager.install("update")).installedVersion).toBe("99.0.0");
   });
   it("queues a user selection while running and never changes the executable used by the live process", async () => {
-    const f = await fixture(); await f.external(); const selected = await f.manager.resolve(); const release = await f.manager.lease(selected);
+    const f = await fixture(); const command = await f.external(); await chooseExternal(f.manager, command);
+    const selected = await f.manager.resolve(); const release = await f.manager.lease(selected);
     await f.manager.install();
     const pending = await f.manager.snapshot(); expect(pending.selection?.source).toBe("terminal");
     expect(pending.stagedVersion).toBe("0.153.3");

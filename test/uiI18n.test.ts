@@ -226,7 +226,7 @@ describe("human-facing UI localization", () => {
       "브리지 스레드를 Codex 앱에 표시"
     );
     expect(UI_TRANSLATIONS.ko["settings.codexAppThreadsHint"]).toContain(
-      "Codex 앱 목록에 나타나지 않으며"
+      "대화 저장과 Codex 앱에서 열기는 별개"
     );
     expect(UI_TRANSLATIONS.ko["settings.experimental.directResults"])
       .toBe("Codex 결과 직접 수신");

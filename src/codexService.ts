@@ -1,6 +1,6 @@
 import { CodexBilling } from "./codexBilling.js";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, statSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, statSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { CodexRuntimeManager, type CliSelection } from "./codexRuntime.js";
@@ -14,8 +14,9 @@ import { assertEffectiveCodexAuthPolicy, effectiveCodexAuthPolicyIdentity,
 import { validateInitializeResponse } from "./runtimeCompatibility.js";
 import { decodeUtf8Strict, parseJsonUtf8Strict } from "./textIntegrity.js";
 import { codexProcessEnvironment } from "../scripts/runtime-env.mjs";
+import { assertAuthProfileStorageEnvironment } from "../scripts/auth-selection.mjs";
 
-export type CodexSessionPolicy = { contextId?: string; visibleInCodexApp: boolean; persistent: boolean; persistence: "persistent" | "ephemeral"; constraint?: "hidden-persistent-unsupported" };
+export type CodexSessionPolicy = { contextId?: string; visibleInCodexApp: boolean; persistent: boolean; persistence: "persistent" | "ephemeral"; constraint?: "app-visibility-unverified" };
 /** Non-secret ownership evidence for read-only projections; never grants execution. */
 export type CodexSessionAuthBoundaryEvidence = {
   key: string;
@@ -238,6 +239,7 @@ export class CodexService {
     let policyKey: string | null = null;
     let observedOwner: string | null = null;
     try {
+      assertAuthProfileStorageEnvironment(this.environment);
       const policy = localAuthPolicy(home);
       policyKey = digest(JSON.stringify([policy.credentialStore, policy.forcedMethod, policy.workspaceId]));
       observedOwner = (!this.authPolicyReader || this.effectivePolicyConfirmed) &&
@@ -290,6 +292,7 @@ export class CodexService {
     let pending: Promise<void> = Promise.resolve();
     const check = async () => {
       this.currentOwnerConfirmed = false;
+      assertAuthProfileStorageEnvironment(this.environment);
       if (this.environment.CODEX_MCP_BRIDGE_AUTH_DISCONNECTED === "1") {
         throw new Error("CODEX_AUTH_DISCONNECTED: Connect a Codex authentication source before starting new work.");
       }
@@ -401,12 +404,18 @@ export class CodexService {
         "CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "SSL_CERT_DIR", "SSL_CERT_FILE"].map(name => this.environment[name])
     ]));
   }
-  async sessionPolicy(kind: CodexBackendKind, visible: boolean, _parent?: string, persistence: "persistent" | "ephemeral" = visible ? "persistent" : "ephemeral"): Promise<CodexSessionPolicy> {
+  async sessionPolicy(kind: CodexBackendKind, visible: boolean, _parent?: string, persistence: "persistent" | "ephemeral" = "persistent"): Promise<CodexSessionPolicy> {
     if (kind !== "app-server") throw new Error("CODEX_BACKEND_RETIRED: Start a fresh App Server context with an explicit handoff summary. Existing history is preserved.");
-    if (persistence === "persistent" && !visible) throw new Error("HIDDEN_PERSISTENT_UNSUPPORTED: This Codex version has no verified durable-but-hidden creation option. Enable Codex app visibility for resumable conversations, or explicitly use a memory-only conversation.");
     if (persistence === "ephemeral" && visible) throw new Error("EPHEMERAL_NOT_VISIBLE: Memory-only conversations cannot be shown in the Codex app.");
-    return { visibleInCodexApp: visible, persistent: persistence === "persistent", persistence,
-      ...(!visible ? { constraint: "hidden-persistent-unsupported" as const } : {}) };
+    const appHome = path.join(this.environment.HOME || homedir(), ".codex");
+    const executionHome = this.environment.CODEX_HOME || appHome;
+    let sharesAppStorage = path.resolve(executionHome) === path.resolve(appHome);
+    try { sharesAppStorage = realpathSync(executionHome) === realpathSync(appHome); } catch { /* Not yet materialized. */ }
+    const sqliteHome = this.environment.CODEX_SQLITE_HOME;
+    if (sqliteHome && path.resolve(sqliteHome) !== path.resolve(appHome)) sharesAppStorage = false;
+    const visibleInCodexApp = visible && sharesAppStorage && persistence === "persistent";
+    return { visibleInCodexApp, persistent: persistence === "persistent", persistence,
+      ...(!visibleInCodexApp && persistence === "persistent" ? { constraint: "app-visibility-unverified" as const } : {}) };
   }
   async readAccount(kind: CodexBackendKind, includeBilling = false, requireFresh = false): Promise<CodexAccountSnapshot | null> {
     // Observe and permanently evict a confirmed display-boundary change before

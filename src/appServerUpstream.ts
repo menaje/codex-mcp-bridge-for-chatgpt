@@ -1392,7 +1392,8 @@ class AppServerConnection {
       return { state: "unknown", reason: "unsupported", threadId, retryable: true };
     } catch (error) {
       if (isMissingThreadError(error)) {
-        return { state: "orphaned", reason: "missing", threadId, retryable: false };
+        // Absence in the selected home does not prove deletion from its original store.
+        return { state: "unknown", reason: "storage-unavailable", threadId, retryable: true };
       }
       if (isUnsupportedThreadReadError(error)) {
         return { state: "unknown", reason: "unsupported", threadId, retryable: true };

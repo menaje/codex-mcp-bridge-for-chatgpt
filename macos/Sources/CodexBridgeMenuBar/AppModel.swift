@@ -47,6 +47,7 @@ struct SettingsDraft: Equatable {
     var maxConcurrentJobs: Int
     var historyRetentionDays: Int
     var showBridgeThreadsInCodexApp: Bool
+    var bridgeThreadPersistence: String
     var experimentalDirectResultDelivery: Bool
     private let originalPolicyState: PolicyState
 
@@ -74,6 +75,7 @@ struct SettingsDraft: Equatable {
         maxConcurrentJobs = settings.maxConcurrentJobs
         historyRetentionDays = settings.historyRetentionDays ?? 30
         showBridgeThreadsInCodexApp = settings.showBridgeThreadsInCodexApp
+        bridgeThreadPersistence = settings.bridgeThreadPersistence ?? "persistent"
         experimentalDirectResultDelivery = settings.experimentalDirectResultDelivery
         originalPolicyState = PolicyState(
             mode: policyMode,
@@ -111,6 +113,7 @@ struct SettingsDraft: Equatable {
         rebased.maxConcurrentJobs = maxConcurrentJobs
         rebased.historyRetentionDays = historyRetentionDays
         rebased.showBridgeThreadsInCodexApp = showBridgeThreadsInCodexApp
+        rebased.bridgeThreadPersistence = bridgeThreadPersistence
         rebased.experimentalDirectResultDelivery = experimentalDirectResultDelivery
         return rebased
     }
@@ -127,6 +130,7 @@ struct SettingsDraft: Equatable {
             maxConcurrentJobs == other.maxConcurrentJobs &&
             historyRetentionDays == other.historyRetentionDays &&
             showBridgeThreadsInCodexApp == other.showBridgeThreadsInCodexApp &&
+            bridgeThreadPersistence == other.bridgeThreadPersistence &&
             experimentalDirectResultDelivery == other.experimentalDirectResultDelivery
     }
 
@@ -2648,6 +2652,7 @@ final class AppModel: ObservableObject {
                 maxConcurrentJobs: draft.maxConcurrentJobs,
                 historyRetentionDays: settings?.settings.historyRetentionDays == nil ? nil : draft.historyRetentionDays,
                 showBridgeThreadsInCodexApp: draft.showBridgeThreadsInCodexApp,
+                bridgeThreadPersistence: draft.bridgeThreadPersistence,
                 experimentalDirectResultDelivery: nil
             ))
         )

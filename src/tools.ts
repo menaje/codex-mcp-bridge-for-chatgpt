@@ -883,6 +883,7 @@ const bridgeUserSettingsOutputSchema = z.strictObject({
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
   showBridgeThreadsInCodexApp: z.boolean(),
+  bridgeThreadPersistence: z.enum(["persistent", "ephemeral"]),
   experimentalDirectResultDelivery: z.boolean()
 });
 
@@ -2443,7 +2444,8 @@ export class CodexJobRegistry {
         agent, threadId, scopeId: job.scopeId, cwd: job.cwd, sandbox: job.sandbox,
         ...(job.projectId && job.projectName ? { projectAdmission: { projectId: job.projectId, projectName: job.projectName } } : {}),
         selection: job.executionDecision.effectiveSelection, policyRevision: job.executionDecision.policyRevision,
-        backendKind: job.backendKind, visibleInCodexApp: job.threadPersistence !== "ephemeral",
+        backendKind: job.backendKind, visibleInCodexApp: sessions.getForJob(threadId, job.authBoundary)?.visibleInCodexApp ?? false,
+        persistence: job.threadPersistence,
         contextMode: job.contextMode || "fresh", ...lineage });
     };
     for (const job of this.jobs.values()) {
@@ -7661,6 +7663,7 @@ export function registerBridgeTools(
     uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
     maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
     showBridgeThreadsInCodexApp: z.boolean().optional(),
+    bridgeThreadPersistence: z.enum(["persistent", "ephemeral"]).optional(),
     experimentalDirectResultDelivery: z.boolean().optional(),
     projectOperations: z.array(projectRegistryOperationInput)
       .min(1)
@@ -7707,6 +7710,7 @@ export function registerBridgeTools(
         "uiLocalePreference",
         "maxConcurrentJobs",
         "showBridgeThreadsInCodexApp",
+        "bridgeThreadPersistence",
         "experimentalDirectResultDelivery",
         "projectOperations"
       ] as const;
@@ -7722,6 +7726,7 @@ export function registerBridgeTools(
         "uiLocalePreference",
         "maxConcurrentJobs",
         "showBridgeThreadsInCodexApp",
+        "bridgeThreadPersistence",
         "experimentalDirectResultDelivery"
       ] as const) {
         if (settings[key] !== undefined) {
@@ -9280,6 +9285,7 @@ function recordAdmittedThread(input: {
   policyRevision: number;
   backendKind: CodexBackendKind;
   visibleInCodexApp: boolean;
+  persistence?: import("./threadConnections.js").ThreadPersistence;
   contextMode: AgentContextMode;
   sessionId?: string;
   forkedFromThreadId?: string;
@@ -9314,7 +9320,7 @@ function recordAdmittedThread(input: {
         policyRevision: input.policyRevision,
         backendKind: input.backendKind,
         visibleInCodexApp: input.visibleInCodexApp,
-        persistence: input.jobs.admissionStateStore.threadConnections.get(input.threadId)?.persistence || previousSession?.persistence || "unknown",
+        persistence: input.jobs.admissionStateStore.threadConnections.get(input.threadId)?.persistence || previousSession?.persistence || input.persistence || "unknown",
         updatedAt: now,
         createdAt: now,
         lastUsedAt: now
@@ -9383,8 +9389,8 @@ async function startNewSession(input: {
   };
   const ephemeralAppServerThread =
     backendSupports(input.config.defaultBackend, "supportsEphemeralThreads") &&
-    !input.preferences.showBridgeThreadsInCodexApp;
-  const storage = await input.config.codexService?.sessionPolicy(input.config.defaultBackend, input.preferences.showBridgeThreadsInCodexApp);
+    input.preferences.bridgeThreadPersistence === "ephemeral";
+  const storage = await input.config.codexService?.sessionPolicy(input.config.defaultBackend, input.preferences.showBridgeThreadsInCodexApp, undefined, input.preferences.bridgeThreadPersistence);
   if (backendSupports(input.config.defaultBackend, "supportsEphemeralThreads")) {
     payload.ephemeral = ephemeralAppServerThread;
   }
@@ -9457,8 +9463,9 @@ async function startNewSession(input: {
         selection: executionDecision.effectiveSelection,
         policyRevision: executionDecision.policyRevision,
         backendKind: assignment.backendKind,
+        persistence: storage?.persistence ?? input.preferences.bridgeThreadPersistence,
         visibleInCodexApp:
-          storage?.visibleInCodexApp ?? (backendSupports(assignment.backendKind, "supportsThreadInspection") && !ephemeralAppServerThread),
+          storage?.visibleInCodexApp ?? (backendSupports(assignment.backendKind, "supportsThreadInspection") && input.preferences.showBridgeThreadsInCodexApp && !ephemeralAppServerThread),
         contextMode: input.contextMode,
         sessionId: assignment.sessionId,
         forkedFromThreadId: assignment.forkedFromThreadId
@@ -9483,8 +9490,10 @@ async function startNewSession(input: {
         selection: executionDecision.effectiveSelection,
         policyRevision: executionDecision.policyRevision,
         backendKind: extractResultBackendKind(result) || input.config.defaultBackend,
+        persistence: storage?.persistence ?? input.preferences.bridgeThreadPersistence,
         visibleInCodexApp:
           storage?.visibleInCodexApp ?? (backendSupports((extractResultBackendKind(result) || input.config.defaultBackend), "supportsThreadInspection") &&
+          input.preferences.showBridgeThreadsInCodexApp &&
           !ephemeralAppServerThread),
         sessionId: lineage.sessionId,
         forkedFromThreadId: lineage.forkedFromThreadId,
@@ -9699,7 +9708,7 @@ async function forkTrackedSession(input: {
       `CONTEXT_MODE_UNSUPPORTED: Backend ${input.session.backendKind} does not support contextMode='fork'. Use continue or fresh.`
     );
   }
-  const storage = await input.config.codexService?.sessionPolicy(input.session.backendKind, input.preferences.showBridgeThreadsInCodexApp, input.session.threadId);
+  const storage = await input.config.codexService?.sessionPolicy(input.session.backendKind, input.preferences.showBridgeThreadsInCodexApp, input.session.threadId, input.preferences.bridgeThreadPersistence);
   const currentCwd = resolvePinnedAgentCwd(input);
   await enforceSensitiveFilePreflight(input.config, currentCwd, "fork Codex context");
   const prompt = input.prompt;
@@ -9745,7 +9754,7 @@ async function forkTrackedSession(input: {
         threadId: input.session.threadId,
         prompt,
         selection: input.executionDecision.effectiveSelection,
-        ephemeral: !input.preferences.showBridgeThreadsInCodexApp
+        ephemeral: input.preferences.bridgeThreadPersistence === "ephemeral"
       },
       onProgress,
       onAssigned
@@ -9766,6 +9775,7 @@ async function forkTrackedSession(input: {
         selection: input.executionDecision.effectiveSelection,
         policyRevision: input.executionDecision.policyRevision,
         backendKind: input.session.backendKind,
+        persistence: storage?.persistence ?? input.preferences.bridgeThreadPersistence,
         visibleInCodexApp:
           storage?.visibleInCodexApp ?? (backendSupports(input.session.backendKind, "supportsThreadInspection") &&
           input.preferences.showBridgeThreadsInCodexApp),
@@ -9792,6 +9802,7 @@ async function forkTrackedSession(input: {
         selection: input.executionDecision.effectiveSelection,
         policyRevision: input.executionDecision.policyRevision,
         backendKind: input.session.backendKind,
+        persistence: storage?.persistence ?? input.preferences.bridgeThreadPersistence,
         visibleInCodexApp:
           storage?.visibleInCodexApp ?? (backendSupports(input.session.backendKind, "supportsThreadInspection") &&
           input.preferences.showBridgeThreadsInCodexApp),
@@ -10832,6 +10843,7 @@ export type BridgeSettingsPatchInput = {
   uiLocalePreference?: UiLocalePreference;
   maxConcurrentJobs?: number;
   showBridgeThreadsInCodexApp?: boolean;
+  bridgeThreadPersistence?: "persistent" | "ephemeral";
   experimentalDirectResultDelivery?: boolean;
   projectOperations?: ProjectRegistryOperation[];
 };

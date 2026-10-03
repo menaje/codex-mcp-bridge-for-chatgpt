@@ -280,7 +280,7 @@
         "settings.experimental.directResults": "Receive Codex results directly",
         "settings.experimental.directResultsHint": "While the current ChatGPT run remains active, it waits for each new Codex job in bounded intervals and receives the terminal result directly. Codex keeps running if the conversation, app, screen, or connection interrupts the wait, but automatic continuation in those states is not guaranteed. Applies only to new jobs.",
         "settings.codexAppThreads": "Show bridge threads in the Codex app",
-        "settings.codexAppThreadsHint": "Applies to new and forked App Server threads. Turning this off keeps them in memory only: they will not appear in the Codex app and cannot be resumed after the App Server worker or bridge restarts. Existing threads are unchanged.",
+        "settings.codexAppThreadsHint": "Saving a conversation and opening it in the Codex app are separate. Opening requires access to its original storage and release of the current writer. Independent Bridge storage is not automatically shared with the app.",
         "settings.cardVisibility": "Activity card",
         "settings.cardVisibility.always": "Automatically show for all Codex work",
         "settings.cardVisibility.background": "Automatically show only for background Codex work",
@@ -543,7 +543,10 @@
         "settings.recoverableProjects": "Recover deleted projects",
         "settings.projectRecoveryHint": "These deleted registrations still have resumable work. Restore the existing project to keep its conversations and history.",
         "settings.projectCwdStillPinned": "Earlier resumable work still owns this folder. Restore its existing project; deleted registrations appear under Recover deleted projects.",
-        "settings.projectDeleteStillPinned": "This project still has resumable work or active jobs. Keep it archived, or finish and release those contexts before deleting its registration."
+        "settings.projectDeleteStillPinned": "This project still has resumable work or active jobs. Keep it archived, or finish and release those contexts before deleting its registration.",
+        "settings.threadStorage": "Conversation storage",
+        "settings.threadStorage.persistent": "Save across restarts",
+        "settings.threadStorage.ephemeral": "Memory only"
       },
       "ko": {
         "problem.history": "실패 기록",
@@ -774,7 +777,7 @@
         "settings.experimental.directResults": "Codex 결과 직접 수신",
         "settings.experimental.directResultsHint": "현재 ChatGPT 실행이 유지되는 동안 새 Codex 작업을 제한 시간 단위로 기다려 종료 결과를 직접 받습니다. 대화 이동, 앱 백그라운드, 화면 잠금 또는 연결 유실로 대기가 끊겨도 Codex 작업은 계속되지만, 해당 상태에서 자동 연속 진행은 보장되지 않습니다. 이후 새 작업부터 적용됩니다.",
         "settings.codexAppThreads": "브리지 스레드를 Codex 앱에 표시",
-        "settings.codexAppThreadsHint": "새로 만들거나 포크하는 App Server 스레드에 적용됩니다. 끄면 메모리에만 유지되어 Codex 앱 목록에 나타나지 않으며, App Server worker 또는 브리지를 재시작한 뒤에는 이어갈 수 없습니다. 기존 스레드는 바뀌지 않습니다.",
+        "settings.codexAppThreadsHint": "대화 저장과 Codex 앱에서 열기는 별개입니다. 앱에서 열려면 원본 저장소에 접근하고 현재 실행 연결을 해제해야 합니다. Bridge 전용 저장소는 앱에 자동 공유되지 않습니다.",
         "settings.cardVisibility": "Activity 카드",
         "settings.cardVisibility.always": "항상 표시",
         "settings.cardVisibility.background": "백그라운드 작업만 표시",
@@ -1037,7 +1040,10 @@
         "settings.recoverableProjects": "삭제된 프로젝트 복구",
         "settings.projectRecoveryHint": "삭제된 등록에 재개 가능한 작업이 남아 있습니다. 기존 프로젝트를 복구하면 대화와 작업 기록이 유지됩니다.",
         "settings.projectCwdStillPinned": "이전 작업의 재개 가능한 연결이 이 폴더를 계속 사용하고 있습니다. 기존 프로젝트를 복원하세요. 삭제된 등록은 ‘삭제된 프로젝트 복구’에서 복구할 수 있습니다.",
-        "settings.projectDeleteStillPinned": "이 프로젝트에 재개 가능한 작업이나 실행 중인 작업이 남아 있습니다. 보관 상태로 유지하거나 해당 작업과 연결을 종료한 뒤 등록을 삭제하세요."
+        "settings.projectDeleteStillPinned": "이 프로젝트에 재개 가능한 작업이나 실행 중인 작업이 남아 있습니다. 보관 상태로 유지하거나 해당 작업과 연결을 종료한 뒤 등록을 삭제하세요.",
+        "settings.threadStorage": "대화 저장",
+        "settings.threadStorage.persistent": "재시작 후에도 저장",
+        "settings.threadStorage.ephemeral": "메모리에만 저장"
       },
       "ja": {
         "problem.history": "失敗の履歴",
@@ -1268,7 +1274,7 @@
         "settings.experimental.directResults": "Codex の結果を直接受信",
         "settings.experimental.directResultsHint": "現在の ChatGPT 実行が続く間、新しい Codex ジョブを時間制限付きで待ち、終了結果を直接受信します。会話の移動、アプリのバックグラウンド化、画面ロック、接続切断で待機が途切れても Codex は実行を続けますが、その状態での自動継続は保証されません。新しいジョブにのみ適用されます。",
         "settings.codexAppThreads": "ブリッジのスレッドを Codex アプリに表示",
-        "settings.codexAppThreadsHint": "新規およびフォークした App Server スレッドに適用されます。オフにするとメモリ内だけに保持され、Codex アプリには表示されず、App Server ワーカーまたはブリッジの再起動後は再開できません。既存のスレッドは変わりません。",
+        "settings.codexAppThreadsHint": "会話の保存とCodexアプリで開く操作は別です。元の保存先へのアクセスと現在の書き込み接続の解放が必要です。Bridge専用の保存先はアプリに自動共有されません。",
         "settings.cardVisibility": "Activity カード",
         "settings.cardVisibility.always": "常に表示",
         "settings.cardVisibility.background": "バックグラウンド作業のみ",
@@ -1531,7 +1537,10 @@
         "settings.recoverableProjects": "削除したプロジェクトを復元",
         "settings.projectRecoveryHint": "削除した登録に再開可能な作業が残っています。既存のプロジェクトを復元すると、会話と作業履歴を維持できます。",
         "settings.projectCwdStillPinned": "以前の再開可能な作業がこのフォルダを使用しています。既存のプロジェクトを復元してください。削除した登録は「削除したプロジェクトを復元」に表示されます。",
-        "settings.projectDeleteStillPinned": "このプロジェクトには再開可能な作業または実行中のジョブが残っています。アーカイブしたままにするか、作業と接続を終了してから登録を削除してください。"
+        "settings.projectDeleteStillPinned": "このプロジェクトには再開可能な作業または実行中のジョブが残っています。アーカイブしたままにするか、作業と接続を終了してから登録を削除してください。",
+        "settings.threadStorage": "会話の保存",
+        "settings.threadStorage.persistent": "再起動後も保存",
+        "settings.threadStorage.ephemeral": "メモリのみ"
       },
       "zh-Hans": {
         "problem.history": "失败记录",
@@ -1762,7 +1771,7 @@
         "settings.experimental.directResults": "直接接收 Codex 结果",
         "settings.experimental.directResultsHint": "当前 ChatGPT 运行保持活动时，它会分段限时等待每个新的 Codex 任务并直接接收终止结果。切换对话、应用进入后台、锁屏或断开连接会中断等待，但 Codex 会继续运行；这些状态下不保证自动继续。仅适用于新任务。",
         "settings.codexAppThreads": "在 Codex 应用中显示桥接线程",
-        "settings.codexAppThreadsHint": "适用于新建和分叉的 App Server 线程。关闭后，线程只保留在内存中，不会出现在 Codex 应用里，并且在 App Server 工作进程或桥接重启后无法继续。现有线程不会改变。",
+        "settings.codexAppThreadsHint": "保存对话与在Codex应用中打开是独立功能。打开需要访问原始存储并释放当前写入连接。Bridge专用存储不会自动与应用共享。",
         "settings.cardVisibility": "Activity 卡片",
         "settings.cardVisibility.always": "始终显示",
         "settings.cardVisibility.background": "仅后台任务",
@@ -2025,7 +2034,10 @@
         "settings.recoverableProjects": "恢复已删除的项目",
         "settings.projectRecoveryHint": "这些已删除的注册仍有可恢复的工作。恢复原项目可保留会话和工作历史。",
         "settings.projectCwdStillPinned": "之前可恢复的工作仍在使用此文件夹。请恢复原项目；已删除的注册显示在“恢复已删除的项目”中。",
-        "settings.projectDeleteStillPinned": "此项目仍有可恢复的工作或正在运行的任务。请保持归档状态，或先结束工作并释放连接，再删除注册。"
+        "settings.projectDeleteStillPinned": "此项目仍有可恢复的工作或正在运行的任务。请保持归档状态，或先结束工作并释放连接，再删除注册。",
+        "settings.threadStorage": "对话存储",
+        "settings.threadStorage.persistent": "重启后保留",
+        "settings.threadStorage.ephemeral": "仅内存"
       },
       "zh-Hant": {
         "problem.history": "失敗記錄",
@@ -2256,7 +2268,7 @@
         "settings.experimental.directResults": "直接接收 Codex 結果",
         "settings.experimental.directResultsHint": "目前 ChatGPT 執行保持活動時，會以有界等待接收每個新 Codex 工作的終止結果。切換對話、應用程式進入背景、鎖定螢幕或連線中斷會中止等待，但 Codex 仍會繼續執行；這些狀態下不保證自動接續。只套用至新工作。",
         "settings.codexAppThreads": "在 Codex 應用程式中顯示橋接執行緒",
-        "settings.codexAppThreadsHint": "適用於新建與分支的 App Server 執行緒。關閉後，執行緒只保留在記憶體中，不會出現在 Codex 應用程式，且 App Server 工作程序或橋接重新啟動後無法繼續。現有執行緒不會改變。",
+        "settings.codexAppThreadsHint": "儲存對話與在Codex應用程式中開啟是獨立功能。開啟需要存取原始儲存位置並釋放目前的寫入連線。Bridge專用儲存空間不會自動與應用程式共用。",
         "settings.cardVisibility": "Activity 卡片",
         "settings.cardVisibility.always": "一律顯示",
         "settings.cardVisibility.background": "僅背景工作",
@@ -2519,7 +2531,10 @@
         "settings.recoverableProjects": "復原已刪除的專案",
         "settings.projectRecoveryHint": "這些已刪除的註冊仍有可繼續的工作。復原原專案可保留對話和工作記錄。",
         "settings.projectCwdStillPinned": "先前可繼續的工作仍在使用此資料夾。請復原原專案；已刪除的註冊顯示於「復原已刪除的專案」。",
-        "settings.projectDeleteStillPinned": "此專案仍有可繼續的工作或執行中的任務。請維持封存狀態，或先結束工作並釋放連線，再刪除註冊。"
+        "settings.projectDeleteStillPinned": "此專案仍有可繼續的工作或執行中的任務。請維持封存狀態，或先結束工作並釋放連線，再刪除註冊。",
+        "settings.threadStorage": "對話儲存",
+        "settings.threadStorage.persistent": "重新啟動後保留",
+        "settings.threadStorage.ephemeral": "僅記憶體"
       },
       "es": {
         "problem.history": "Historial de fallos",
@@ -2750,7 +2765,7 @@
         "settings.experimental.directResults": "Recibir los resultados de Codex directamente",
         "settings.experimental.directResultsHint": "Mientras la ejecución actual de ChatGPT siga activa, espera cada trabajo nuevo de Codex en intervalos limitados y recibe directamente el resultado final. Codex sigue ejecutándose si un cambio de conversación, el segundo plano, el bloqueo de pantalla o una desconexión interrumpen la espera, pero no se garantiza la continuación automática en esos estados. Solo se aplica a trabajos nuevos.",
         "settings.codexAppThreads": "Mostrar los hilos del puente en la app Codex",
-        "settings.codexAppThreadsHint": "Se aplica a los hilos nuevos y bifurcados de App Server. Al desactivarlo, solo se conservan en memoria: no aparecen en la app Codex y no pueden reanudarse tras reiniciar el worker de App Server o el puente. Los hilos existentes no cambian.",
+        "settings.codexAppThreadsHint": "Guardar una conversación y abrirla en la aplicación Codex son funciones independientes. Abrirla requiere acceso al almacenamiento original y liberar la conexión que escribe. El almacenamiento de Bridge no se comparte automáticamente con la aplicación.",
         "settings.cardVisibility": "Tarjeta de Activity",
         "settings.cardVisibility.always": "Mostrar siempre",
         "settings.cardVisibility.background": "Solo tareas en segundo plano",
@@ -3013,7 +3028,10 @@
         "settings.recoverableProjects": "Recuperar proyectos eliminados",
         "settings.projectRecoveryHint": "Estos registros eliminados conservan trabajo que puede reanudarse. Restaura el proyecto existente para conservar sus conversaciones e historial.",
         "settings.projectCwdStillPinned": "El trabajo anterior que puede reanudarse sigue usando esta carpeta. Restaura su proyecto; los registros eliminados aparecen en Recuperar proyectos eliminados.",
-        "settings.projectDeleteStillPinned": "Este proyecto conserva trabajo que puede reanudarse o tareas activas. Mantenlo archivado o finaliza el trabajo y libera sus conexiones antes de eliminar el registro."
+        "settings.projectDeleteStillPinned": "Este proyecto conserva trabajo que puede reanudarse o tareas activas. Mantenlo archivado o finaliza el trabajo y libera sus conexiones antes de eliminar el registro.",
+        "settings.threadStorage": "Almacenamiento de conversaciones",
+        "settings.threadStorage.persistent": "Conservar tras reiniciar",
+        "settings.threadStorage.ephemeral": "Solo en memoria"
       },
       "fr": {
         "problem.history": "Historique des échecs",
@@ -3244,7 +3262,7 @@
         "settings.experimental.directResults": "Recevoir directement les résultats Codex",
         "settings.experimental.directResultsHint": "Tant que l’exécution ChatGPT actuelle reste active, elle attend chaque nouvelle tâche Codex par intervalles bornés et reçoit directement le résultat final. Codex continue si un changement de conversation, l’arrière-plan, le verrouillage de l’écran ou une déconnexion interrompt l’attente, mais la continuation automatique n’est pas garantie dans ces états. S’applique uniquement aux nouvelles tâches.",
         "settings.codexAppThreads": "Afficher les fils du pont dans l’app Codex",
-        "settings.codexAppThreadsHint": "S’applique aux fils App Server nouveaux et dérivés. Si cette option est désactivée, ils restent uniquement en mémoire : ils n’apparaissent pas dans l’app Codex et ne peuvent pas être repris après le redémarrage du worker App Server ou du pont. Les fils existants ne changent pas.",
+        "settings.codexAppThreadsHint": "Enregistrer une conversation et l’ouvrir dans l’application Codex sont deux fonctions distinctes. L’ouverture exige l’accès au stockage d’origine et la libération de la connexion d’écriture. Le stockage Bridge n’est pas partagé automatiquement avec l’application.",
         "settings.cardVisibility": "Carte Activity",
         "settings.cardVisibility.always": "Toujours afficher",
         "settings.cardVisibility.background": "Travaux en arrière-plan uniquement",
@@ -3507,7 +3525,10 @@
         "settings.recoverableProjects": "Récupérer les projets supprimés",
         "settings.projectRecoveryHint": "Ces inscriptions supprimées conservent du travail pouvant être repris. Restaurez le projet existant pour conserver ses conversations et son historique.",
         "settings.projectCwdStillPinned": "Un travail antérieur pouvant être repris utilise encore ce dossier. Restaurez son projet ; les inscriptions supprimées figurent dans Récupérer les projets supprimés.",
-        "settings.projectDeleteStillPinned": "Ce projet conserve du travail pouvant être repris ou des tâches actives. Gardez-le archivé ou terminez le travail et libérez ses connexions avant de supprimer son inscription."
+        "settings.projectDeleteStillPinned": "Ce projet conserve du travail pouvant être repris ou des tâches actives. Gardez-le archivé ou terminez le travail et libérez ses connexions avant de supprimer son inscription.",
+        "settings.threadStorage": "Stockage des conversations",
+        "settings.threadStorage.persistent": "Conserver après redémarrage",
+        "settings.threadStorage.ephemeral": "En mémoire uniquement"
       },
       "de": {
         "problem.history": "Fehlerverlauf",
@@ -3738,7 +3759,7 @@
         "settings.experimental.directResults": "Codex-Ergebnisse direkt empfangen",
         "settings.experimental.directResultsHint": "Solange der aktuelle ChatGPT-Lauf aktiv bleibt, wartet er in begrenzten Intervallen auf jeden neuen Codex-Job und empfängt das Endergebnis direkt. Codex läuft weiter, wenn ein Gesprächswechsel, der Hintergrund, die Bildschirmsperre oder ein Verbindungsabbruch das Warten unterbricht; eine automatische Fortsetzung ist in diesen Zuständen jedoch nicht garantiert. Gilt nur für neue Jobs.",
         "settings.codexAppThreads": "Bridge-Threads in der Codex-App anzeigen",
-        "settings.codexAppThreadsHint": "Gilt für neue und geforkte App-Server-Threads. Wenn dies deaktiviert ist, bleiben sie nur im Arbeitsspeicher: Sie erscheinen nicht in der Codex-App und können nach einem Neustart des App-Server-Workers oder der Bridge nicht fortgesetzt werden. Bestehende Threads bleiben unverändert.",
+        "settings.codexAppThreadsHint": "Das Speichern und Öffnen eines Gesprächs in der Codex-App sind getrennte Funktionen. Zum Öffnen sind der ursprüngliche Speicher und die Freigabe der Schreibverbindung erforderlich. Bridge-Speicher wird nicht automatisch mit der App geteilt.",
         "settings.cardVisibility": "Activity-Karte",
         "settings.cardVisibility.always": "Immer anzeigen",
         "settings.cardVisibility.background": "Nur Hintergrundaufgaben",
@@ -4001,7 +4022,10 @@
         "settings.recoverableProjects": "Gelöschte Projekte wiederherstellen",
         "settings.projectRecoveryHint": "Diese gelöschten Registrierungen enthalten fortsetzbare Arbeit. Stellen Sie das bestehende Projekt wieder her, um Gespräche und Verlauf zu erhalten.",
         "settings.projectCwdStillPinned": "Frühere fortsetzbare Arbeit verwendet diesen Ordner weiterhin. Stellen Sie das bestehende Projekt wieder her; gelöschte Registrierungen stehen unter Gelöschte Projekte wiederherstellen.",
-        "settings.projectDeleteStillPinned": "Dieses Projekt enthält fortsetzbare Arbeit oder aktive Aufträge. Lassen Sie es archiviert oder beenden Sie die Arbeit und geben Sie die Verbindungen frei, bevor Sie die Registrierung löschen."
+        "settings.projectDeleteStillPinned": "Dieses Projekt enthält fortsetzbare Arbeit oder aktive Aufträge. Lassen Sie es archiviert oder beenden Sie die Arbeit und geben Sie die Verbindungen frei, bevor Sie die Registrierung löschen.",
+        "settings.threadStorage": "Gesprächsspeicherung",
+        "settings.threadStorage.persistent": "Nach Neustart behalten",
+        "settings.threadStorage.ephemeral": "Nur im Speicher"
       },
       "pt": {
         "problem.history": "Histórico de falhas",
@@ -4232,7 +4256,7 @@
         "settings.experimental.directResults": "Receber resultados do Codex diretamente",
         "settings.experimental.directResultsHint": "Enquanto a execução atual do ChatGPT permanecer ativa, ela aguarda cada novo trabalho do Codex em intervalos limitados e recebe diretamente o resultado final. O Codex continua executando se a troca de conversa, o segundo plano, o bloqueio de tela ou uma desconexão interromperem a espera, mas a continuação automática não é garantida nesses estados. Aplica-se apenas a novos trabalhos.",
         "settings.codexAppThreads": "Mostrar threads da ponte no app Codex",
-        "settings.codexAppThreadsHint": "Aplica-se a threads novos e bifurcados do App Server. Ao desativar, eles ficam apenas na memória: não aparecem no app Codex e não podem ser retomados após reiniciar o worker do App Server ou a ponte. Threads existentes não mudam.",
+        "settings.codexAppThreadsHint": "Salvar uma conversa e abri-la no aplicativo Codex são funções separadas. Abrir exige acesso ao armazenamento original e liberar a conexão de escrita. O armazenamento do Bridge não é compartilhado automaticamente com o aplicativo.",
         "settings.cardVisibility": "Cartão de Activity",
         "settings.cardVisibility.always": "Mostrar sempre",
         "settings.cardVisibility.background": "Somente tarefas em segundo plano",
@@ -4495,7 +4519,10 @@
         "settings.recoverableProjects": "Recuperar projetos eliminados",
         "settings.projectRecoveryHint": "Estes registos eliminados mantêm trabalho que pode ser retomado. Restaure o projeto existente para preservar as conversas e o histórico.",
         "settings.projectCwdStillPinned": "Trabalho anterior que pode ser retomado ainda utiliza esta pasta. Restaure o projeto existente; os registos eliminados aparecem em Recuperar projetos eliminados.",
-        "settings.projectDeleteStillPinned": "Este projeto mantém trabalho que pode ser retomado ou tarefas ativas. Mantenha-o arquivado ou conclua o trabalho e liberte as ligações antes de eliminar o registo."
+        "settings.projectDeleteStillPinned": "Este projeto mantém trabalho que pode ser retomado ou tarefas ativas. Mantenha-o arquivado ou conclua o trabalho e liberte as ligações antes de eliminar o registo.",
+        "settings.threadStorage": "Armazenamento de conversas",
+        "settings.threadStorage.persistent": "Manter após reiniciar",
+        "settings.threadStorage.ephemeral": "Somente na memória"
       }
     },
     "parameters": {
@@ -50505,55 +50532,55 @@
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Wenn diese Option aktiviert ist, werden neue Aufgaben und Kontexte als dauerhafte Threads gespeichert und ihre Codex-Unterhaltungen können aus der Übersicht geöffnet werden. Bestehende temporäre Aufgaben bleiben unverändert. Bei deaktivierter Option werden temporäre Threads verwendet, die nach einem Serverneustart nicht fortgesetzt werden können."
+              "value": "Das Speichern und Öffnen eines Gesprächs in der Codex-App sind getrennte Funktionen. Zum Öffnen sind der ursprüngliche Speicher und die Freigabe der Schreibverbindung erforderlich. Bridge-Speicher wird nicht automatisch mit der App geteilt."
             }
           },
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "When enabled, new tasks and fresh contexts are saved as persistent threads, and their Codex conversations can be opened from the overview. Existing ephemeral tasks are unchanged. When disabled, threads are ephemeral and cannot continue after the server restarts."
+              "value": "Saving a conversation and opening it in the Codex app are separate. Opening requires access to its original storage and release of the current writer. Independent Bridge storage is not automatically shared with the app."
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Al activarlo, las tareas y los contextos nuevos se guardan como hilos persistentes y sus conversaciones de Codex se pueden abrir desde el resumen. No se aplica a las tareas temporales existentes. Al desactivarlo, se usan hilos temporales que no pueden continuar después de reiniciar el servidor."
+              "value": "Guardar una conversación y abrirla en la aplicación Codex son funciones independientes. Abrirla requiere acceso al almacenamiento original y liberar la conexión que escribe. El almacenamiento de Bridge no se comparte automáticamente con la aplicación."
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Lorsque cette option est activée, les nouvelles tâches et les nouveaux contextes sont enregistrés sous forme de threads persistants et leurs conversations Codex peuvent être ouvertes depuis l’aperçu. Les tâches temporaires existantes ne sont pas modifiées. Lorsque l’option est désactivée, des threads temporaires sont utilisés et ne peuvent pas reprendre après le redémarrage du serveur."
+              "value": "Enregistrer une conversation et l’ouvrir dans l’application Codex sont deux fonctions distinctes. L’ouverture exige l’accès au stockage d’origine et la libération de la connexion d’écriture. Le stockage Bridge n’est pas partagé automatiquement avec l’application."
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "有効にすると、以降の新規タスクと新規コンテキストを永続スレッドとして保存し、概要からCodex会話を開けるようにします。既存の一時タスクには適用されません。無効にすると一時スレッドとして実行され、サーバー再起動後は続行できません。"
+              "value": "会話の保存とCodexアプリで開く操作は別です。元の保存先へのアクセスと現在の書き込み接続の解放が必要です。Bridge専用の保存先はアプリに自動共有されません。"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Quando ativado, novas tarefas e novos contextos são salvos como threads permanentes e suas conversas do Codex podem ser abertas pela visão geral. As tarefas temporárias existentes não são alteradas. Quando desativado, as threads são temporárias e não podem continuar após a reinicialização do servidor."
+              "value": "Salvar uma conversa e abri-la no aplicativo Codex são funções separadas. Abrir exige acesso ao armazenamento original e liberar a conexão de escrita. O armazenamento do Bridge não é compartilhado automaticamente com o aplicativo."
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "启用后，后续新任务和新上下文将保存为持久线程，并可从概览打开对应的 Codex 对话。此设置不追溯应用于现有临时任务。关闭后，任务将在线程中临时运行，服务器重启后无法继续。"
+              "value": "保存对话与在Codex应用中打开是独立功能。打开需要访问原始存储并释放当前写入连接。Bridge专用存储不会自动与应用共享。"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "啟用後，後續新任務和新上下文將儲存為持久執行緒，並可從概覽開啟對應的 Codex 對話。此設定不追溯應用於現有臨時任務。關閉後，任務將以暫時執行緒執行，伺服器重新啟動後無法繼續。"
+              "value": "儲存對話與在Codex應用程式中開啟是獨立功能。開啟需要存取原始儲存位置並釋放目前的寫入連線。Bridge專用儲存空間不會自動與應用程式共用。"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "켜면 이후 새 작업과 새 컨텍스트를 영구 스레드로 저장하고 현황에서 Codex 대화를 열 수 있습니다. 기존 임시 작업에는 소급 적용되지 않습니다. 끄면 임시 스레드로 실행되어 서버 재시작 뒤 이어갈 수 없습니다."
+              "value": "대화 저장과 Codex 앱에서 열기는 별개입니다. 앱에서 열려면 원본 저장소에 접근하고 현재 실행 연결을 해제해야 합니다. Bridge 전용 저장소는 앱에 자동 공유되지 않습니다."
             }
           }
         }
@@ -56078,6 +56105,242 @@
           "fr": {"stringUnit":{"state":"translated","value":"L’accès au service local a été refusé. Vérifiez les autorisations de connexion."}},
           "de": {"stringUnit":{"state":"translated","value":"Der Zugriff auf den lokalen Dienst wurde verweigert. Prüfen Sie die Verbindungsberechtigungen."}},
           "pt": {"stringUnit":{"state":"translated","value":"O acesso ao serviço local foi negado. Verifique as permissões de ligação."}}
+        }
+      },
+      "macos.threadStorage": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Conversation storage"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "대화 저장"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "会話の保存"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "对话存储"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "對話儲存"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Almacenamiento de conversaciones"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Stockage des conversations"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Gesprächsspeicherung"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Armazenamento de conversas"
+            }
+          }
+        }
+      },
+      "macos.threadStorage.persistent": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Save across restarts"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "재시작 후에도 저장"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "再起動後も保存"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "重启后保留"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "重新啟動後保留"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Conservar tras reiniciar"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Conserver après redémarrage"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Nach Neustart behalten"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Manter após reiniciar"
+            }
+          }
+        }
+      },
+      "macos.threadStorage.ephemeral": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Memory only"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "메모리에만 저장"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "メモリのみ"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "仅内存"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "僅記憶體"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Solo en memoria"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "En mémoire uniquement"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Nur im Speicher"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Somente na memória"
+            }
+          }
+        }
+      },
+      "macos.bridgecliRecommended": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Bridge CLI (Recommended)"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Bridge CLI (권장)"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Bridge CLI（推奨）"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Bridge CLI（推荐）"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Bridge CLI（建議）"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Bridge CLI (Recomendado)"
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Bridge CLI (Recommandé)"
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Bridge CLI (Empfohlen)"
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Bridge CLI (Recomendado)"
+            }
+          }
         }
       }
     }

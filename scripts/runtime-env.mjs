@@ -15,7 +15,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { parseEnv } from "node:util";
 import { decodeUtf8Strict } from "./text-integrity.mjs";
-import { authProfileHome, authSelectionRoot, desiredAuthSelection, knownExternalHome, readAuthSelection } from "./auth-selection.mjs";
+import { assertAuthProfileStorageEnvironment, authProfileEnvironment, authSelectionRoot, desiredAuthSelection, knownExternalHome, readAuthSelection } from "./auth-selection.mjs";
 
 const RUNTIME_CONFIG_DIRECTORY = "codex-mcp-bridge";
 const RUNTIME_ENV_FILENAME = ".env";
@@ -60,7 +60,7 @@ export const RUNTIME_ENV_MANAGED_KEYS = [
 // The same Codex child settings are projected for the native helper and the
 // launcher. Tunnel, billing, and API-key credentials are deliberately absent.
 export const CODEX_CHILD_ENV_KEYS = Object.freeze([
-  "CODEX_HOME", "CODEX_MCP_BRIDGE_RUNTIME_HOME", "CODEX_MCP_BRIDGE_AUTH_DISCONNECTED", "CODEX_MCP_BRIDGE_AUTH_SOURCE",
+  "CODEX_HOME", "CODEX_SQLITE_HOME", "CODEX_MCP_BRIDGE_RUNTIME_HOME", "CODEX_MCP_BRIDGE_AUTH_DISCONNECTED", "CODEX_MCP_BRIDGE_AUTH_SOURCE",
   "CODEX_MCP_BRIDGE_AUTH_GENERATION",
   "CODEX_MCP_BRIDGE_CODEX", "CODEX_GPT_BRIDGE_CODEX",
   "XDG_CONFIG_HOME", "XDG_STATE_HOME",
@@ -119,7 +119,7 @@ export function codexChildEnvironment(filePath, inherited = process.env) {
     else if (connection.kind === "external") {
       const root = authSelectionRoot({ ...inherited, ...projected });
       projected.CODEX_HOME = knownExternalHome(readAuthSelection({ CODEX_MCP_BRIDGE_RUNTIME_HOME: root }), connection.homeId);
-    } else projected.CODEX_HOME = authProfileHome(authSelectionRoot({ ...inherited, ...projected }), connection.profileId);
+    } else Object.assign(projected, authProfileEnvironment(authSelectionRoot({ ...inherited, ...projected }), connection.profileId, projected));
   }
   return projected;
 }
@@ -144,9 +144,10 @@ export function codexProcessEnvironment(environment) {
   if (!projected.CODEX_HOME && (connection === "bridge-chatgpt" || connection === "bridge-api")) {
     const selected = desired.connection;
     if (selected.kind !== connection) throw new Error("CODEX_AUTH_SELECTION_INVALID: The applied authentication profile is unavailable.");
-    projected.CODEX_HOME = authProfileHome(authSelectionRoot(projected), selected.profileId);
+    Object.assign(projected, authProfileEnvironment(authSelectionRoot(projected), selected.profileId, projected));
   }
   if (connection === "external" || connection === "bridge-chatgpt" || connection === "bridge-api") {
+    assertAuthProfileStorageEnvironment(projected);
     delete projected.OPENAI_API_KEY;
     delete projected.CODEX_API_KEY;
   }

@@ -11,22 +11,21 @@ Open **Settings → Codex** in the macOS app. App-bundled Codex, terminal instal
 | Situation | Initial behavior |
 | --- | --- |
 | Saved selection or explicit `CODEX_MCP_BRIDGE_CODEX` path | Preserve it; an explicit environment setting takes precedence. |
-| One independent external installation | Select and save it automatically. |
-| Several independent external installations | Ask the user to select once. |
-| Only a managed installation exists | Select the managed installation. |
+| External installations, without a saved choice | Recommend a managed CLI; offer explicit installation or external selection. Never choose an external binary automatically. |
+| An active managed installation exists, without a saved choice | Select the verified active managed installation, even if external candidates exist. |
 | No installation | Offer installation without starting it automatically. |
 
 Symlinks and official npm launchers resolving to the same native executable count as one installation. Independent copies remain distinct. Installing another CLI does not replace the saved choice. A missing selection requires repair or an explicit new choice; there is no automatic fallback.
 
 Terminal-managed servers can set an explicit executable path in their private runtime environment file. Remove that override and restart the helper before changing the saved selection in the app. Authentication, model discovery and execution use the same selected installation.
 
-The helper and launcher read Codex child settings from the same private file. For the executable override, precedence is: exported `CODEX_MCP_BRIDGE_CODEX`, exported legacy `CODEX_GPT_BRIDGE_CODEX`, private-file current name, private-file legacy name, saved selection, then initial single-install discovery. For `CODEX_HOME`, `CODEX_MCP_BRIDGE_RUNTIME_HOME`, proxy and certificate settings, an exported value wins over the private-file value of the same name. The runtime home is resolved to one physical directory even when a parent path is a symlink. Changing it does not migrate or merge another directory's selection.
+The helper and launcher read Codex child settings from the same private file. For the executable override, precedence is: exported `CODEX_MCP_BRIDGE_CODEX`, exported legacy `CODEX_GPT_BRIDGE_CODEX`, private-file current name, private-file legacy name, saved selection, then an already installed active managed CLI. For `CODEX_HOME`, `CODEX_SQLITE_HOME`, `CODEX_MCP_BRIDGE_RUNTIME_HOME`, proxy and certificate settings, an exported value wins over the private-file value of the same name. The runtime home is resolved to one physical directory even when a parent path is a symlink. Changing it does not migrate or merge another directory's selection.
 
 The launcher records a fingerprint and the allowlisted Codex environment it applied in a current-user-only internal status file. Raw values are not returned through the Helper or MCP status APIs. If the private file changes while that runtime is running, Settings shows the current applied and running environment alongside the requested environment waiting for a safe restart. Existing workers retain their acquired command and lease. Account, usage, update checks, preferences and the billing connection continue to use the applied environment; login and actions that change the CLI wait for the restart. A new worker checks the executable's current protocol, including a changed npm native binary. A missing or damaged selected CLI produces an explicit error. No other executable on `PATH` takes its place.
 
-Only the allowlisted Codex child settings are copied into helper login and account processes: Codex home, runtime home, executable override, XDG and locale settings, proxies and certificate paths. Tunnel credentials and billing credentials stay in their separate paths. App-managed Codex children do not inherit an API key from the launcher. Management probes use a stable home directory; task turns retain the validated project or thread directory.
+Only the allowlisted Codex child settings are copied into helper login and account processes: Codex home, SQLite location, runtime home, executable override, XDG and locale settings, proxies and certificate paths. Tunnel credentials and billing credentials stay in their separate paths. App-managed Codex children do not inherit an API key from the launcher. Management probes use a stable home directory; task turns retain the validated project or thread directory.
 
-The isolated execution process receives the chosen executable through its private parent envelope. It strips Bridge-only configuration variables, including runtime home and executable override, before starting a CLI worker. The worker still receives the Codex home and allowed proxy/certificate settings; it does not need access to Bridge state files.
+The isolated execution process receives the chosen executable through its private parent envelope. It strips Bridge-only configuration variables, including runtime home and executable override, before starting a CLI worker. The worker still receives the Codex home, SQLite location and allowed proxy/certificate settings; it does not need access to Bridge state files.
 
 ## Central execution policy
 

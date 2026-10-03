@@ -45,7 +45,7 @@
       {
         "name": "settings",
         "uriVersion": 4,
-        "digest": "278340e6de0dd254bd26b6aad325fd53b13ba19c6c13f95fe9c50f9727f27776",
+        "digest": "9a3ed4b720c50b0a574ecf765a4bde014ec10f14f7348e346657b26d44d0e45d",
         "uri": "ui://codex-mcp-bridge/settings/v4.html",
         "inventories": [
           "development-current"
@@ -84,7 +84,7 @@
   "resources": {
     "settings": {
       "uriVersion": 4,
-      "digest": "278340e6de0dd254bd26b6aad325fd53b13ba19c6c13f95fe9c50f9727f27776",
+      "digest": "9a3ed4b720c50b0a574ecf765a4bde014ec10f14f7348e346657b26d44d0e45d",
       "uri": "ui://codex-mcp-bridge/settings/v4.html",
       "metadata": {
         "descriptor": {

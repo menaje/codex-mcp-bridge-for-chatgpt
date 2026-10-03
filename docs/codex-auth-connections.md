@@ -15,7 +15,7 @@ The native first setup and Codex settings show three connection choices:
 
 | Choice | Storage and billing |
 | --- | --- |
-| Existing Codex login | Uses a verified file credential in the selected CLI's existing home. It can be a ChatGPT or API login; the observed method determines billing. Unsupported stores are rejected with an action to choose a separate Bridge login. No credential is copied. |
+| Existing Codex login | Uses the selected CLI's native account status and effective policy in its existing home, including native keyring/auto stores. It can be a ChatGPT or API login; the observed method determines billing. No credential is copied. |
 | Separate ChatGPT login | Creates a persistent bridge profile outside the app bundle. The selected Codex CLI performs a new login in that profile. The existing Codex app login remains in its original store. |
 | API key for the bridge | Creates a different persistent bridge profile. The key is sent to the selected CLI through standard input for `codex login --with-api-key`; it is never put in a process argument or the bridge state file. API usage can incur separate charges. |
 
@@ -80,6 +80,45 @@ remain available across restart and updates to existing records. New session
 creation keeps the existing bounded retention cohorts, including each cohort's
 inherited capacity. List page size is independent of record retention.
 
+## Independent conversation storage for new profiles
+
+A newly prepared Bridge login profile joins this runtime instance's owned
+`execution-storage` directory. Both `sessions` and `archived_sessions` are
+native directory links to their common rollout directories. `sqlite_home` in
+the profile configuration and `CODEX_SQLITE_HOME` both name the common SQLite
+directory. Sharing SQLite alone would not preserve the full conversation.
+
+The physical conversation store stays fixed across these profiles. Native
+`CODEX_HOME` remains the selected profile's home: it holds that profile's
+`auth.json`, configuration and logs. This is deliberately not a single literal
+`CODEX_HOME` with a swapped credential. Codex performs login and refresh in its
+own private home; the Bridge supplies neither access tokens nor a refresh
+manager. Login failure, cancellation and credential removal preserve the other
+profiles and the shared conversation files. Retained profile directories also
+preserve native metadata references to rollout paths through earlier profiles.
+
+Existing saved CLI choices, explicit external homes and previously created
+profiles keep their original paths. Selecting an old profile does not adopt or
+merge its data. To opt into independent storage, explicitly prepare, sign in,
+verify and apply a new Bridge profile through the existing safe lifecycle.
+Moving a legacy conversation into the new store is not implemented. Its Bridge
+records remain accessible; actual resume requires the original store and native
+runtime support. A missing thread in the selected home is a retryable storage
+observation, not proof that the original thread was deleted.
+
+Ownership markers bind new profiles to this one store. Only new empty profiles
+can join it. A missing or changed marker, replaced rollout directory link, or
+changed SQLite binding blocks execution; reads never migrate, repair, copy or
+silently replace the store. Back up the owned store and retained profile
+directories together. Moving only SQLite or deleting an inactive profile's
+rollout links can break native continuation.
+
+This native directory-link contract was exercised with CLI 0.153.3 and 0.160.0
+in empty temporary homes using a deterministic local provider. That proves
+restart, read, resume and persistent fork against those binaries; it does not
+establish real account-switch, token-refresh or Codex-app/Dot acceptance. See the
+[#225 acceptance record](audits/issue-225-independent-execution.md).
+
 ## Supported authentication and displayed information
 
 The selected Codex remains responsible for authentication, storage and refresh.
@@ -93,7 +132,10 @@ API key cannot identify a Keyring, auto or ephemeral native login.
 
 Bridge-owned login candidates retain their private file-backed homes and the
 separate login, account/model verification, requested application and graceful
-restart protections. The Bridge neither reads the OS keychain nor supplies or
+restart protections. When a file lacks an optional user claim, a private file
+fingerprint still detects replacement before application; native account status
+and workspace policy validate the login. The fingerprint never supplies
+authentication to Codex. The Bridge neither reads the OS keychain nor supplies or
 refreshes host-managed access tokens. Native store support here describes the
 admission contract; live login, refresh and account-switch evidence is tracked
 separately and must not be inferred from synthetic tests.

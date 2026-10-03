@@ -219,10 +219,8 @@ export class CodexRuntimeManager {
     const candidates = await this.discover(state);
     const configuredCommand = this.configuredCommand();
     if (options.selectInitial !== false && !configuredCommand && !state.selection && !state.selectionRequired) {
-      const external = candidates.filter(candidate => candidate.source !== "bridge");
-      const initial = external.length === 1 ? external[0] : external.length === 0
-        ? candidates.find(candidate => state.managed.find(install => install.id === state.activeId && this.managedCommand(install) === candidate.command))
-        : undefined;
+      const initial = candidates.find(candidate => state.managed.find(install =>
+        install.id === state.activeId && this.managedCommand(install) === candidate.command));
       if (initial) {
         await this.changeState(current => {
           if (!current.selection && !current.selectionRequired) current.selection = selectionSchema.parse(initial);

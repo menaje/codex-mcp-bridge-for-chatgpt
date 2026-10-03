@@ -50,6 +50,7 @@ export type BridgeUserSettings = {
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
   showBridgeThreadsInCodexApp: boolean;
+  bridgeThreadPersistence: "persistent" | "ephemeral";
   /** Retired compatibility field; always true and never chooses Job delivery. */
   experimentalDirectResultDelivery: boolean;
   historyRetentionDays: HistoryRetentionDays;
@@ -117,6 +118,7 @@ export class UserSettingsStore {
       // Durable context is the default for a new installation. Loaded legacy
       // settings retain their explicit (or historical missing-field) choice.
       showBridgeThreadsInCodexApp: true,
+      bridgeThreadPersistence: "persistent",
       experimentalDirectResultDelivery: true,
       historyRetentionDays: DEFAULT_HISTORY_RETENTION_DAYS
     });
@@ -203,6 +205,7 @@ export class UserSettingsStore {
         // but do not make an otherwise equivalent admission snapshot stale.
         admissionCatalogFingerprint,
         showBridgeThreadsInCodexApp: settings.showBridgeThreadsInCodexApp,
+        bridgeThreadPersistence: settings.bridgeThreadPersistence,
         maxConcurrentJobs: settings.maxConcurrentJobs,
         operator: canonicalExecutionOperatorEnvelope(this.config)
       }))
@@ -293,6 +296,7 @@ export class UserSettingsStore {
       uiLocalePreference: this.initial.uiLocalePreference,
       maxConcurrentJobs: this.initial.maxConcurrentJobs,
       showBridgeThreadsInCodexApp: this.initial.showBridgeThreadsInCodexApp,
+      bridgeThreadPersistence: this.initial.bridgeThreadPersistence,
       experimentalDirectResultDelivery: this.initial.experimentalDirectResultDelivery,
       historyRetentionDays: this.initial.historyRetentionDays
     };
@@ -427,6 +431,12 @@ export class UserSettingsStore {
       "Concurrent job limit",
       "jobs"
     );
+    if (!["persistent", "ephemeral"].includes(candidate.bridgeThreadPersistence)) {
+      throw new Error("Invalid Bridge conversation storage preference.");
+    }
+    if (candidate.bridgeThreadPersistence === "ephemeral" && candidate.showBridgeThreadsInCodexApp) {
+      throw new Error("EPHEMERAL_NOT_VISIBLE: Turn off Codex app visibility before choosing memory-only conversations.");
+    }
     if (typeof candidate.showBridgeThreadsInCodexApp !== "boolean") {
       throw new Error("Invalid Codex app thread-visibility preference.");
     }
@@ -650,6 +660,7 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
+    "bridgeThreadPersistence",
     "experimentalDirectResultDelivery",
     "historyRetentionDays"
   ];
@@ -723,6 +734,7 @@ function readGeneralSettings(
       ? value.uiLocalePreference
       : "auto",
     maxConcurrentJobs,
+    bridgeThreadPersistence: value.bridgeThreadPersistence === "ephemeral" ? "ephemeral" : "persistent",
     showBridgeThreadsInCodexApp: typeof value.showBridgeThreadsInCodexApp === "boolean"
       ? value.showBridgeThreadsInCodexApp
       : false,
@@ -798,6 +810,7 @@ function assertSettingsPatchKeys(patch: BridgeUserSettingsPatch): void {
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
+    "bridgeThreadPersistence",
     "experimentalDirectResultDelivery",
     "historyRetentionDays"
   ]);

@@ -88,8 +88,9 @@ describe("issue 162 selected CLI across product entry points", () => {
     mkdirSync(privateDirectory, { recursive: true, mode: 0o700 });
     symlinkSync(otherCli, path.join(bin, "codex"));
     writeFileSync(envFile, `CODEX_MCP_BRIDGE_RUNTIME_HOME=${runtimeHome}\n`, { mode: 0o600 });
-    await new CodexRuntimeManager({ root: runtimeHome, environment: { PATH: "" }, appPaths: [selectedCli],
-      probe: async () => "0.153.3", protocolProbe: async () => inspectClientRequestContract(protocolContract) }).snapshot();
+    const manager = new CodexRuntimeManager({ root: runtimeHome, environment: { PATH: "" }, appPaths: [selectedCli],
+      probe: async () => "0.153.3", protocolProbe: async () => inspectClientRequestContract(protocolContract) });
+    await manager.select((await manager.discover()).find(candidate => candidate.command === selectedCli)!.id);
     rmSync(selectedCli);
     process.env.HOME = root;
     process.env.PATH = `${bin}${path.delimiter}${originalEnvironment.PATH || "/usr/bin:/bin"}`;
