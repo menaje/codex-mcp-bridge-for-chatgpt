@@ -1,5 +1,7 @@
 # Authenticated ChatGPT / Tunnel connection for MCP Events
 
+This is a separate disabled-by-default experiment. Startup requires `CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE=events` and `CODEX_MCP_BRIDGE_EVENTS_ENABLED=1` in addition to the authentication configuration below. A legacy enable flag alone does not activate it. Ordinary direct-wait setup requires none of these services.
+
 ## Decision and current status
 
 The product connection selected for [issue #213](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/213)

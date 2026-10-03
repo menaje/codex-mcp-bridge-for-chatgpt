@@ -1,3 +1,5 @@
+// Historical sender regression for pre-#221 source only. Current cards are
+// verified by test:issue-221-card, including a frozen v3 sender fixture.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";

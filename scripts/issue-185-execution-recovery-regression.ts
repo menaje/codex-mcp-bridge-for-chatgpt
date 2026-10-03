@@ -1,3 +1,4 @@
+import { installLocalFixtureAuth } from "./local-fixture-auth.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -14,6 +15,7 @@ const dist = process.env.CODEX_TEST_BUNDLE_DIST;
 const { loadConfig } = await import(dist ? pathToFileURL(path.join(dist, "config.js")).href : "../src/config.js");
 const { createIsolatedHttpServer } = await import(dist ? pathToFileURL(path.join(dist, "runtimeProcess.js")).href : "../src/runtimeProcess.js");
 const root = await mkdtemp(path.join(tmpdir(), "issue-185-runtime-"));
+installLocalFixtureAuth(root);
 const stateFile = path.join(root, "state.sqlite");
 const turnFile = path.join(root, "turns.jsonl");
 const gate = path.join(root, "complete");

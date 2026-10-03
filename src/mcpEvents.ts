@@ -29,15 +29,8 @@ const MAX_ATTEMPTS = 8;
 const VERIFICATION_CACHE_MS = 5 * 60 * 1_000;
 const ROTATION_MS = 5 * 60 * 1_000;
 
-export function mcpBearerPrincipal(token: string): string {
-  return "bridge-bearer-" + createHash("sha256").update("mcp-events/principal/v1\0" + token).digest("hex");
-}
-
-export function authenticatedMcpPrincipal(context: Pick<ServerContext, "http">): string | undefined {
-  const auth = context.http?.authInfo;
-  if (!auth?.scopes.includes("bridge") || (auth.expiresAt !== undefined && auth.expiresAt * 1_000 <= Date.now())) return undefined;
-  return typeof auth.extra?.bridgeMcpPrincipal === "string" ? auth.extra.bridgeMcpPrincipal : undefined;
-}
+export { mcpBearerPrincipal, authenticatedMcpPrincipal } from "./mcpPrincipal.js";
+import { mcpBearerPrincipal, authenticatedMcpPrincipal } from "./mcpPrincipal.js";
 
 export const JOB_TERMINAL_EVENT_DEFINITION = {
   name: JOB_TERMINAL_EVENT,
@@ -74,10 +67,14 @@ export class McpEventsController {
 
   constructor(private readonly config: BridgeConfig, private readonly jobs: CodexJobRegistry,
     private readonly scopes: ScopeResolver, private readonly sender: WebhookSender = sendPublicWebhook) {
+    if (config.experimentalProfile !== "events" || !config.eventsEnabled) {
+      throw new Error("EVENTS_PROFILE_DISABLED: Select the explicit Events experiment before initializing its services.");
+    }
     if (config.token && !config.noAuth) {
       this.principal = config.oauth ? mcpOAuthPrincipal(config.oauth) : mcpBearerPrincipal(config.token);
       this.vault = new EventDestinationVault(config.token);
     }
+    jobs.admissionStateStore.configureExperimentalEvents(true);
     jobs.configureEventDelivery(config.oauth ? this.principal : undefined);
     this.unsubscribe = jobs.subscribeChanges(reason => { if (reason === "terminal") this.wake(); });
     this.wake();
@@ -386,5 +383,5 @@ export class McpEventsController {
     }
   }
 
-  async close(): Promise<void> { this.stop.abort(); this.unsubscribe(); if (this.timer) clearTimeout(this.timer); await this.running; }
+  async close(): Promise<void> { this.stop.abort(); this.unsubscribe(); if (this.timer) clearTimeout(this.timer); await this.running; this.jobs.configureEventDelivery(undefined, false); this.jobs.admissionStateStore.configureExperimentalEvents(false); }
 }

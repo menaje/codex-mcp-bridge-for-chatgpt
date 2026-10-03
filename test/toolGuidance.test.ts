@@ -34,7 +34,7 @@ describe("current model recovery contract", () => {
     });
   });
 
-  it("retains a scoped Dashboard render action for a job", () => {
+  it("projects a retained automatic Dashboard handoff into an exact Job read", () => {
     const jobId = "11111111-1111-4111-8111-111111111111";
     const presentationRef = "1".repeat(64);
     const action = projectModelNextAction({
@@ -44,9 +44,9 @@ describe("current model recovery contract", () => {
     });
     expect(action).toEqual({
       kind: "tool",
-      tool: "codex_dashboard",
-      arguments: { scope: "conversation", jobId, presentationRef },
-      message: "Mount the originating Dashboard before replying."
+      tool: "codex_status",
+      arguments: { query: { kind: "job", id: jobId } },
+      message: "Card delivery is retired. Recover the original exact Job; open Dashboard only on explicit user request."
     });
   });
 
@@ -60,9 +60,27 @@ describe("current model recovery contract", () => {
       userPrompt: "Mount the originating Dashboard before replying."
     });
     expect(action).toEqual({
-      kind: "guidance",
-      message: "Mount the originating Dashboard before replying."
+      kind: "tool",
+      tool: "codex_status",
+      arguments: { query: { kind: "job", id: "11111111-1111-4111-8111-111111111111" } },
+      message: "Card delivery is retired. Recover the original exact Job; open Dashboard only on explicit user request."
     });
+  });
+
+  it.each([undefined, "tool"])("restricts a retained display opener to explicit requests (kind=%s)", kind => {
+    expect(projectModelNextAction({ kind, tool: "codex_dashboard", arguments: { scope: "conversation" },
+      userPrompt: "Open the card for input automatically." })).toEqual({ kind: "tool", tool: "codex_dashboard",
+      arguments: { scope: "conversation" }, message: "Open Dashboard only when the user explicitly requests its display." });
+  });
+
+  it("does not carry retired sender guidance into current results", () => {
+    for (const action of [{ tool: "codex_ui_completion", arguments: { jobId: "job-123", operation: "wait" } },
+      { tool: "codex_status", arguments: { query: { kind: "completion", receipt: "old-receipt" } } }]) {
+      expect(projectModelNextAction({ ...action, userPrompt: "Send a completion message now." })).toMatchObject({
+        kind: "tool", tool: "codex_status",
+        message: "Card delivery is retired. Recover the original exact Job; open Dashboard only on explicit user request."
+      });
+    }
   });
 
   it("never turns an unknown stored action into an executable tool call", () => {

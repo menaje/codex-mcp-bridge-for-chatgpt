@@ -1,3 +1,4 @@
+import { installLocalFixtureAuth } from "./local-fixture-auth.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -14,6 +15,7 @@ const { createExecutionRuntime } = await import(moduleUrl("executionRuntime"));
 const { createHttpServer } = await import(moduleUrl("server"));
 const keepAlive = setInterval(() => {}, 1000);
 const root = await mkdtemp(path.join(tmpdir(), "issue-189-retention-"));
+installLocalFixtureAuth(root);
 const stateFile = path.join(root, "state.sqlite");
 const turnFile = path.join(root, "turns.jsonl");
 const env = { ...process.env, HOME: root, CODEX_HOME: path.join(root, ".codex"),

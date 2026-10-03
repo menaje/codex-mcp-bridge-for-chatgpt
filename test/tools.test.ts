@@ -1,3 +1,4 @@
+import { historicalCompletion } from "./fixtures/historicalCompletion.js";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -573,11 +574,8 @@ describe("current bridge tool contracts", () => {
       const original = state.listJobs().find(job => job.jobId === jobId)!;
       const scopeId = original.scopeId!;
       expect(original.authBoundary).toMatch(/^[a-f0-9]{64}$/);
-      const leaseOwner = randomUUID();
-      const leased = state.claimJobCompletionDelivery(jobId, scopeId, leaseOwner)!;
-      const lease = { jobId, scopeId, leaseOwner, receipt: leased.receipt };
-      if (deliveryState === "host-accepted") state.markJobCompletionHostAccepted(lease);
-      else state.markJobCompletionAcceptanceUnknown(lease);
+      const leased = historicalCompletion(state, jobId, deliveryState, deliveryState === "host-accepted"
+        ? { host_accepted_at: Date.now() } : { acceptance_unknown_at: Date.now() });
       const originalDelivery = state.getJobCompletionDelivery(jobId, scopeId)!;
       expect(state.retentionProtection(jobId)).toContain("undelivered-chatgpt-result");
 
@@ -595,7 +593,7 @@ describe("current bridge tool contracts", () => {
       let loseResultResponse = true;
       const lossyFetch: typeof globalThis.fetch = async (input, init) => {
         const response = await globalThis.fetch(input, init);
-        if (loseResultResponse && typeof init?.body === "string" && init.body.includes(leased.receipt)) {
+        if (loseResultResponse && typeof init?.body === "string" && init.body.includes(jobId)) {
           loseResultResponse = false;
           await response.body?.cancel();
           throw new TypeError("synthetic lost completion response");
@@ -607,25 +605,25 @@ describe("current bridge tool contracts", () => {
       await lossyClient.connect(new StreamableHTTPClientTransport(endpoint, { fetch: lossyFetch }));
       try {
         await expect(lossyClient.callTool({ name: "codex_status", _meta: metadata,
-          arguments: { scopeId, query: { kind: "completion", receipt: leased.receipt } } }))
+          arguments: { scopeId, query: { kind: "job", id: jobId } } }))
           .rejects.toThrow("synthetic lost completion response");
       } finally { await lossyClient.close(); }
       const offered = state.getJobCompletionDelivery(jobId, scopeId)!;
       expect(offered).toMatchObject({ state: deliveryState, receipt: leased.receipt,
-        attemptCount: 1, completionResultOfferedAt: expect.any(Number) });
+        attemptCount: 1, directResultOfferedAt: expect.any(Number) });
       expect(offered.resultReadAt).toBeUndefined();
 
       const recovered = await client.callTool({ name: "codex_status", _meta: metadata,
-        arguments: { scopeId, query: { kind: "completion", receipt: leased.receipt } } });
+        arguments: { scopeId, query: { kind: "job", id: jobId } } });
       expect(recovered.isError, JSON.stringify(recovered)).not.toBe(true);
       expect(recovered.structuredContent).toMatchObject({ kind: "job", items: [expect.objectContaining({
         id: jobId, state: "completed", answer: expect.stringContaining("Completed fixture work.")
       })] });
-      expect(state.getJobCompletionDelivery(jobId, scopeId)?.completionResultOfferedAt)
-        .toBe(offered.completionResultOfferedAt);
+      expect(state.getJobCompletionDelivery(jobId, scopeId)?.directResultOfferedAt)
+        .toBe(offered.directResultOfferedAt);
       const foreign = await client.callTool({ name: "codex_status",
         _meta: { "openai/session": "foreign-retained-result" },
-        arguments: { query: { kind: "completion", receipt: leased.receipt } } });
+        arguments: { query: { kind: "job", id: jobId } } });
       expect(foreign.isError).toBe(true);
       const replay = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
       expect(replay.isError).toBe(true);
@@ -1540,7 +1538,7 @@ describe("current bridge tool contracts", () => {
       contractVersion: "4",
       state: "running",
       terminal: false,
-      completionDeliveryPolicy: "live-card",
+      completionDeliveryPolicy: "direct-wait",
       jobId: expect.any(String),
       requestId: expect.any(String),
       threadId: null,
@@ -1645,210 +1643,26 @@ describe("current bridge tool contracts", () => {
     expect(acknowledgeExecution).toHaveBeenCalledWith(jobId);
   });
 
-  it("snapshots experimental direct-result delivery per Job and keeps the default live-card path unchanged", async () => {
-    const descriptorBefore = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
-    const properties = descriptorBefore.inputSchema.properties as Record<string, { const?: string }>;
+  it("ignores retired delivery preferences for new Jobs without changing admitted identities", async () => {
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as any;
     const project = settings.current.projects[0]!;
-    const enabled = await client.callTool({
-      name: "codex_update_settings",
-      arguments: {
-        expectedSettingsRevision: settings.current.settingsRevision,
-        operation: {
-          kind: "patch",
-          settings: { experimentalDirectResultDelivery: true }
-        }
-      },
-      _meta: metadata
-    });
-    expect(enabled.isError, JSON.stringify(enabled)).not.toBe(true);
-    expect(enabled.structuredContent).toHaveProperty(
-      "settings.experimentalDirectResultDelivery",
-      true
-    );
-    const enabledRevision = (enabled.structuredContent as any).settings.settingsRevision as number;
-    const descriptorAfter = (await client.listTools()).tools.find((tool) => tool.name === "codex_task")!;
-    expect((descriptorAfter.inputSchema.properties as any).executionEnvelopeRef.const)
-      .toBe(properties.executionEnvelopeRef?.const);
-    expect(descriptorAfter.description).toContain("Follow the returned Job's completionDeliveryPolicy and nextActions");
-    expect(descriptorAfter.description).toContain("repeat that same Job wait after timeout or host abort");
-
-    const hold = upstream.holdNextCall();
-    const requestId = randomUUID();
-    const argumentsValue = {
-      scopeId: "78787878-7878-4878-8878-787878787878",
-      requestId,
-      taskContractVersion: properties.taskContractVersion?.const,
-      executionEnvelopeRef: properties.executionEnvelopeRef?.const,
-      prompt: "Complete the direct-result fixture work.",
-      project: {
-        name: project.name,
-        projectRef: project.projectRef,
-        projectRevision: project.projectRevision
-      },
-      selection
-    };
-    const admitted = await client.callTool({
-      name: "codex_task",
-      arguments: argumentsValue,
-      _meta: metadata
-    });
-    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
-    await hold.started;
-    const task = admitted.structuredContent as any;
-    expect(task).toMatchObject({
-      contractVersion: "4",
-      state: "running",
-      completionDeliveryPolicy: "direct-wait"
-    });
-    expect(task.nextActions).toContainEqual(expect.objectContaining({
-      kind: "tool",
-      tool: "codex_status",
-      arguments: {
-        query: {
-          kind: "job",
-          id: task.jobId,
-          waitFor: "terminal",
-          waitMs: 60_000
-        }
-      }
-    }));
-    expect(task.nextActions.some((action: any) => action.tool === "codex_dashboard")).toBe(false);
-    expect(JSON.stringify(admitted.content)).toContain("Required before replying:");
-    expect(JSON.stringify(admitted.content)).toContain("codex_status");
-
-    const timedOut = await client.callTool({
-      name: "codex_status",
-      arguments: {
-        query: { kind: "job", id: task.jobId, waitFor: "terminal", waitMs: 1 }
-      },
-      _meta: metadata
-    });
-    expect(timedOut.isError, JSON.stringify(timedOut)).not.toBe(true);
-    expect(timedOut.structuredContent).toMatchObject({
-      kind: "job",
-      items: [expect.objectContaining({
-        id: task.jobId,
-        state: "running",
-        completionDeliveryPolicy: "direct-wait",
-        completionEvidence: expect.objectContaining({
-          jobRecord: "active-last-known",
-          terminalOrigin: null,
-          deliveryRecord: null,
-          resultOffer: "none",
-          activityLifecycle: "open"
-        }),
-        wait: expect.objectContaining({ waitFor: "terminal", timedOut: true }),
-        nextActions: expect.arrayContaining([expect.objectContaining({
-          tool: "codex_status",
-          arguments: { query: expect.objectContaining({ id: task.jobId, waitFor: "terminal" }) }
-        })])
-      })]
-    });
-
-    const replay = await client.callTool({
-      name: "codex_task",
-      arguments: argumentsValue,
-      _meta: metadata
-    });
-    expect(replay.isError, JSON.stringify(replay)).not.toBe(true);
-    expect(replay.structuredContent).toMatchObject({
-      jobId: task.jobId,
-      replay: true,
-      completionDeliveryPolicy: "direct-wait"
-    });
-    expect(upstream.calls).toHaveLength(1);
-
-    const disabled = await client.callTool({
-      name: "codex_update_settings",
-      arguments: {
-        expectedSettingsRevision: enabledRevision,
-        operation: {
-          kind: "patch",
-          settings: { experimentalDirectResultDelivery: false }
-        }
-      },
-      _meta: metadata
-    });
-    expect(disabled.isError, JSON.stringify(disabled)).not.toBe(true);
-    expect(disabled.structuredContent).toHaveProperty(
-      "settings.experimentalDirectResultDelivery",
-      false
-    );
-
-    hold.release();
-    await eventually(() => state.listJobs().some((job) =>
-      job.jobId === task.jobId && job.status === "completed"
-    ));
-    const terminal = await client.callTool({
-      name: "codex_status",
-      arguments: {
-        query: { kind: "job", id: task.jobId, waitFor: "terminal", waitMs: 60_000 }
-      },
-      _meta: metadata
-    });
-    expect(terminal.isError, JSON.stringify(terminal)).not.toBe(true);
-    expect(terminal.structuredContent).toMatchObject({
-      kind: "job",
-      items: [expect.objectContaining({
-        id: task.jobId,
-        state: "completed",
-        completionDeliveryPolicy: "direct-wait",
-        completionEvidence: expect.objectContaining({
-          jobRecord: "terminal-committed",
-          ownerObservation: null,
-          terminalOrigin: "normal-completion",
-          deliveryRecord: "pending",
-          resultOffer: "none",
-          activityLifecycle: "open"
-        }),
-        answer: expect.stringContaining("Completed delayed fixture work")
-      })]
-    });
-    const directDelivery = state.getJobCompletionDelivery(task.jobId)!;
-    expect(directDelivery).toMatchObject({
-      state: "pending",
-      attemptCount: 0,
-      directResultOfferedAt: expect.any(Number)
-    });
-    const offeredAgain = await client.callTool({
-      name: "codex_status",
-      arguments: { query: { kind: "job", id: task.jobId } },
-      _meta: metadata
-    });
-    expect(offeredAgain.isError, JSON.stringify(offeredAgain)).not.toBe(true);
-    expect(offeredAgain.structuredContent).toMatchObject({
-      kind: "job",
-      items: [expect.objectContaining({
-        id: task.jobId,
-        completionEvidence: expect.objectContaining({
-          jobRecord: "terminal-committed",
-          resultOffer: "direct-query",
-          deliveryRecord: "pending",
-          activityLifecycle: "open"
-        })
-      })]
-    });
-    expect(state.claimJobCompletionDelivery(
-      task.jobId,
-      directDelivery.scopeId,
-      randomUUID()
-    )).toBeUndefined();
-
-    const defaultTask = await client.callTool({
-      name: "codex_task",
-      arguments: {
-        ...argumentsValue,
-        requestId: randomUUID(),
-        prompt: "Complete the default delivery fixture work."
-      },
-      _meta: metadata
-    });
-    expect(defaultTask.isError, JSON.stringify(defaultTask)).not.toBe(true);
-    expect(defaultTask.structuredContent).toMatchObject({
-      state: "running",
-      completionDeliveryPolicy: "live-card",
-      nextActions: expect.arrayContaining([expect.objectContaining({ tool: "codex_dashboard" })])
-    });
+    const task = async () => client.callTool({ name: "codex_task", _meta: metadata, arguments: {
+      requestId: randomUUID(), taskContractVersion: properties.taskContractVersion.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef.const, prompt: "Fixture direct result",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision }, selection
+    } });
+    for (const legacy of [false, true]) {
+      upstream.setNextThreadId(randomUUID());
+      settings.update({ experimentalDirectResultDelivery: legacy }, settings.current.revision);
+      const result = await task();
+      expect(result.structuredContent).toMatchObject({ completionDeliveryPolicy: "direct-wait" });
+      expect(JSON.stringify((result.structuredContent as any).nextActions)).not.toContain("codex_dashboard");
+      const id = (result.structuredContent as any).jobId;
+      await eventually(() => state.listJobs().some(job => job.jobId === id && job.status === "completed"));
+      const retained = await client.callTool({ name: "codex_status", _meta: metadata, arguments: { query: { kind: "job", id } } });
+      expect(retained.structuredContent).toMatchObject({ items: [expect.objectContaining({ id, completionDeliveryPolicy: "direct-wait" })] });
+    }
   });
 
   it("keeps a direct-wait Job pending at an unapproved Codex command boundary", async () => {
@@ -2915,369 +2729,40 @@ describe("current bridge tool contracts", () => {
     ));
   });
 
-  it("automatically opens the originating conversation Dashboard for admitted work and queues completion delivery", async () => {
+  it("opens Dashboard explicitly and rejects every retired sender operation without mutating a Job", async () => {
     const tools = await client.listTools();
-    const descriptor = tools.tools.find((tool) => tool.name === "codex_task")!;
-    const statusDescriptor = tools.tools.find((tool) => tool.name === "codex_status")!;
-    const dashboardDescriptor = tools.tools.find((tool) => tool.name === "codex_dashboard")!;
-    expect(statusDescriptor.description).toContain(
-      "does not prove GPT received the result and does not settle or cancel live-card delivery"
-    );
-    expect(statusDescriptor.description).not.toContain("settles any still-pending live-card follow-up");
-    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    expect(tools.tools.some(tool => tool.name === "codex_ui_completion")).toBe(false);
+    const task = tools.tools.find(tool => tool.name === "codex_task")!;
+    const properties = task.inputSchema.properties as any;
     const project = settings.current.projects[0]!;
-    expect((dashboardDescriptor._meta as Record<string, any>)["openai/outputTemplate"])
-      .toBe(DASHBOARD_CARD_URI);
-    expect((dashboardDescriptor._meta as Record<string, any>).ui)
-      .toMatchObject({ resourceUri: DASHBOARD_CARD_URI });
-    const hold = upstream.holdNextCall();
-    const result = await client.callTool({
-      name: "codex_task",
-      arguments: {
-        scopeId: "88888888-8888-4888-8888-888888888888",
-        requestId: randomUUID(),
-        taskContractVersion: properties.taskContractVersion?.const,
-        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
-        prompt: "Complete background fixture work.",
-        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
-        activity: {
-          mode: "new",
-          title: "Fixture completion delivery"
-        },
-        selection
-      },
-      _meta: metadata
-    });
-
-    expect(result.isError, JSON.stringify(result)).not.toBe(true);
-    await hold.started;
-    expect(result._meta || {}).not.toHaveProperty("openai/outputTemplate");
-    expect(result._meta || {}).not.toHaveProperty("codex/dashboardOpen@1");
-    const task = result.structuredContent as any;
-    const renderAction = task.nextActions.find((action: any) =>
-      action.kind === "tool" &&
-      action.tool === "codex_dashboard" &&
-      action.arguments.scope === "conversation" &&
-      action.arguments.jobId === task.jobId
-    );
-    expect(renderAction).toMatchObject({
-      kind: "tool",
-      tool: "codex_dashboard",
-      arguments: {
-        scope: "conversation",
-        jobId: task.jobId,
-        presentationRef: expect.stringMatching(/^[a-f0-9]{64}$/)
-      },
-      message: expect.stringContaining("originating Dashboard")
-    });
-    const origin = state.listJobs().find((job) =>
-      job.jobId === task.jobId
-    );
-    expect(origin).toBeDefined();
-    const runningStatus = await client.callTool({
-      name: "codex_status",
-      arguments: { query: { kind: "job", id: origin!.jobId } },
-      _meta: metadata
-    });
-    expect(runningStatus.isError, JSON.stringify(runningStatus)).not.toBe(true);
-    expect(state.getJobCompletionDelivery(origin!.jobId, origin!.scopeId)).toBeUndefined();
-
-    const mismatchedDashboardOpen = await client.callTool({
-      name: "codex_dashboard",
-      arguments: {
-        ...renderAction.arguments,
-        presentationRef: "0".repeat(64)
-      },
-      _meta: metadata
-    });
-    expect(mismatchedDashboardOpen.isError).toBe(true);
-
-    const dashboardOpen = await client.callTool({
-      name: "codex_dashboard",
-      arguments: renderAction.arguments,
-      _meta: metadata
-    });
-    expect(dashboardOpen.isError, JSON.stringify(dashboardOpen)).not.toBe(true);
-    expect(dashboardOpen._meta || {}).not.toHaveProperty("openai/outputTemplate");
-    const dashboardOpenMeta = dashboardOpen._meta as Record<string, any>;
-    expect(dashboardOpenMeta["codex/dashboardOpen@1"]).toMatchObject({
-      scope: "conversation",
-      automatic: true,
-      presentationRef: renderAction.arguments.presentationRef,
-      completionDeliveryRoute: "live-card"
-    });
-    expect(dashboardOpenMeta["codex/dashboardOpen@1"]).not.toHaveProperty("presentationToken");
-    expect(dashboardOpenMeta["codex/dashboardOpen@1"]).not.toHaveProperty("jobId");
-    expect(dashboardOpenMeta["codex/dashboardOpen@1"]).not.toHaveProperty("scopeId");
-
-    const repeatedDashboardOpen = await client.callTool({
-      name: "codex_dashboard",
-      arguments: renderAction.arguments,
-      _meta: metadata
-    });
-    expect(repeatedDashboardOpen.isError, JSON.stringify(repeatedDashboardOpen)).not.toBe(true);
-    expect((repeatedDashboardOpen._meta as Record<string, any>)["codex/dashboardOpen@1"])
-      .toEqual(dashboardOpenMeta["codex/dashboardOpen@1"]);
-
-    const differentJobWithSameReference = await client.callTool({
-      name: "codex_dashboard",
-      arguments: {
-        ...renderAction.arguments,
-        jobId: randomUUID()
-      },
-      _meta: metadata
-    });
-    expect(differentJobWithSameReference.isError).toBe(true);
-
-    const foreignConversationWithOriginFallback = await client.callTool({
-      name: "codex_dashboard",
-      arguments: {
-        ...renderAction.arguments,
-        scopeId: origin!.scopeId
-      },
-      _meta: { "openai/session": "foreign-tool-contract-test" }
-    });
-    expect(foreignConversationWithOriginFallback.isError).toBe(true);
-
-    hold.release();
-    await eventually(() => state.listJobs().some((job) =>
-      job.jobId === origin!.jobId && job.status === "completed"
-    ));
-    const completedActivity = state.getActivity(origin!.activityId);
-    expect(completedActivity).toMatchObject({
-      lifecycle: "open",
-      handoffPolicy: "none",
-      completionTrigger: "manual"
-    });
-    const completionDelivery = state.getJobCompletionDelivery(origin!.jobId, origin!.scopeId)!;
-    expect(completionDelivery).toMatchObject({
-      jobId: origin!.jobId,
-      scopeId: origin!.scopeId,
-      state: "pending",
-      attemptCount: 0,
-      receipt: expect.stringMatching(/^completion-[0-9a-f]{64}$/)
-    });
-    const widgetInstanceId = randomUUID();
-    const claimedCompletion = await client.callTool({
-      name: "codex_ui_completion",
-      arguments: {
-        operation: "wait",
-        jobId: origin!.jobId,
-        presentationRef: renderAction.arguments.presentationRef,
-        widgetInstanceId
-      },
-      _meta: metadata
-    });
-    expect(claimedCompletion.isError, JSON.stringify(claimedCompletion)).not.toBe(true);
-    expect(claimedCompletion.structuredContent).toMatchObject({
-      kind: "job-completion-delivery",
-      state: "claimed",
-      receipt: completionDelivery.receipt,
-      attempt: 1,
-      deliveryState: "leased"
-    });
-    const directReadAfterLease = await client.callTool({
-      name: "codex_status",
-      arguments: { query: { kind: "job", id: origin!.jobId } },
-      _meta: metadata
-    });
-    expect(directReadAfterLease.isError, JSON.stringify(directReadAfterLease)).not.toBe(true);
-    expect(directReadAfterLease.structuredContent).toMatchObject({
-      kind: "job",
-      items: [expect.objectContaining({
-        id: origin!.jobId,
-        completionEvidence: expect.objectContaining({
-          jobRecord: "terminal-committed",
-          deliveryRecord: "leased",
-          resultOffer: "none",
-          activityLifecycle: "open"
-        })
-      })]
-    });
-    expect(state.getJobCompletionDelivery(origin!.jobId, origin!.scopeId)).toMatchObject({
-      state: "leased",
-      directResultOfferedAt: expect.any(Number),
-      resultReadSource: undefined
-    });
-    const foreignCompletion = await client.callTool({
-      name: "codex_ui_completion",
-      arguments: {
-        operation: "wait",
-        jobId: origin!.jobId,
-        presentationRef: renderAction.arguments.presentationRef,
-        widgetInstanceId: randomUUID()
-      },
-      _meta: { "openai/session": "foreign-completion-contract-test" }
-    });
-    expect(foreignCompletion.isError).toBe(true);
-    const acceptedCompletion = await client.callTool({
-      name: "codex_ui_completion",
-      arguments: {
-        operation: "accepted",
-        jobId: origin!.jobId,
-        presentationRef: renderAction.arguments.presentationRef,
-        widgetInstanceId,
-        receipt: completionDelivery.receipt
-      },
-      _meta: metadata
-    });
-    expect(acceptedCompletion.isError, JSON.stringify(acceptedCompletion)).not.toBe(true);
-    expect(acceptedCompletion.structuredContent).toMatchObject({
-      state: "settled",
-      deliveryState: "host-accepted"
-    });
-    const explicitScopeIsNotAuthority = await client.callTool({
-      name: "codex_status",
-      arguments: {
-        scopeId: origin!.scopeId,
-        query: { kind: "completion", receipt: completionDelivery.receipt }
-      }
-    });
-    expect(explicitScopeIsNotAuthority.isError).toBe(true);
-    const exactCompletion = await client.callTool({
-      name: "codex_status",
-      arguments: { query: { kind: "completion", receipt: completionDelivery.receipt } },
-      _meta: metadata
-    });
-    expect(exactCompletion.isError, JSON.stringify(exactCompletion)).not.toBe(true);
-    expect(exactCompletion.structuredContent).toMatchObject({
-      kind: "job",
-      items: [expect.objectContaining({
-        id: origin!.jobId,
-        state: "completed",
-        completionEvidence: expect.objectContaining({
-          terminalOrigin: "normal-completion",
-          deliveryRecord: "host-accepted",
-          resultOffer: "direct-query",
-          activityLifecycle: "open"
-        })
-      })]
-    });
-    expect(state.getJobCompletionDelivery(origin!.jobId, origin!.scopeId)).toMatchObject({
-      state: "host-accepted",
-      completionResultOfferedAt: expect.any(Number),
-      resultReadSource: undefined
-    });
-    expect(state.listPendingCompletionOutbox(origin!.scopeId)).toEqual([]);
-
-    const dashboard = await client.callTool({
-      name: "codex_ui_read",
-      arguments: {
-        view: "dashboard",
-        widgetInstanceId,
-        scope: "conversation"
-      },
-      _meta: metadata
-    });
+    const result = await client.callTool({ name: "codex_task", _meta: metadata, arguments: {
+      requestId: randomUUID(), taskContractVersion: properties.taskContractVersion.const,
+      executionEnvelopeRef: properties.executionEnvelopeRef.const, prompt: "Fixture completion",
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision }, selection
+    } });
+    const id = (result.structuredContent as any).jobId;
+    expect(JSON.stringify((result.structuredContent as any).nextActions)).not.toContain("codex_dashboard");
+    await eventually(() => state.listJobs().some(job => job.jobId === id && job.status === "completed"));
+    const job = state.listJobs().find(job => job.jobId === id)!;
+    const receipt = state.getJobCompletionDelivery(id, job.scopeId)!;
+    for (const operation of ["wait", "accepted", "rejected", "uncertain", "release"]) {
+      const rejected = await client.callTool({ name: "codex_ui_completion", _meta: metadata, arguments: {
+        operation, jobId: id, receipt: receipt.receipt, presentationRef: "a".repeat(64), widgetInstanceId: randomUUID()
+      } });
+      expect(rejected.isError).toBe(true);
+      expect(JSON.stringify(rejected)).toContain("CARD_DELIVERY_RETIRED");
+    }
+    const rejectedRead = await client.callTool({ name: "codex_status", _meta: metadata,
+      arguments: { query: { kind: "completion", receipt: receipt.receipt } } });
+    expect(JSON.stringify(rejectedRead)).toContain("CARD_DELIVERY_RETIRED");
+    expect(state.getJobCompletionDelivery(id, job.scopeId)).toEqual(receipt);
+    expect(state.listJobs()).toHaveLength(1);
+    const dashboard = await client.callTool({ name: "codex_dashboard", _meta: metadata, arguments: {} });
     expect(dashboard.isError, JSON.stringify(dashboard)).not.toBe(true);
-    expect((dashboard.structuredContent as any)).not.toHaveProperty("completionDelivery");
-    expect(state.listPendingCompletionOutbox(origin!.scopeId)).toEqual([]);
-
-    const leaseOwner = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const nativeEvents = await server.applicationService.claimNativeCompletionNotifications!({
-      leaseOwner,
-      limit: 10
-    });
-    expect(nativeEvents).toEqual([]);
-    expect(state.listPendingCompletionOutbox(origin!.scopeId)).toEqual([]);
-
-    const settingsUpdate = await client.callTool({
-      name: "codex_update_settings",
-      arguments: {
-        expectedSettingsRevision: settings.current.settingsRevision,
-        operation: { kind: "patch", settings: { dashboardAutoOpen: false } }
-      },
-      _meta: metadata
-    });
-    expect(settingsUpdate.isError).toBe(true);
-
-    const secondTask = await client.callTool({
-      name: "codex_task",
-      arguments: {
-        scopeId: "99999999-9999-4999-8999-999999999999",
-        requestId: randomUUID(),
-        taskContractVersion: properties.taskContractVersion?.const,
-        executionEnvelopeRef: properties.executionEnvelopeRef?.const,
-        prompt: "Complete another background fixture work.",
-        project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision },
-        selection
-      },
-      _meta: metadata
-    });
-    expect(secondTask.isError, JSON.stringify(secondTask)).not.toBe(true);
-    expect(secondTask._meta).not.toHaveProperty("openai/outputTemplate");
-    expect(secondTask._meta).not.toHaveProperty("codex/dashboardOpen@1");
-    const secondRenderAction = (secondTask.structuredContent as any).nextActions.find(
-      (action: any) =>
-        action.kind === "tool" &&
-        action.tool === "codex_dashboard" &&
-        action.arguments.jobId === (secondTask.structuredContent as any).jobId
-    );
-    expect(secondRenderAction).toMatchObject({
-      kind: "tool",
-      tool: "codex_dashboard",
-      arguments: expect.objectContaining({
-        scope: "conversation",
-        jobId: (secondTask.structuredContent as any).jobId,
-        presentationRef: expect.stringMatching(/^[a-f0-9]{64}$/)
-      })
-    });
-    const secondJob = state.listJobs().find((job) =>
-      job.jobId === (secondTask.structuredContent as any).jobId
-    );
-    expect(secondJob).toBeDefined();
-    await eventually(() => state.listJobs().some((job) =>
-      job.jobId === secondJob!.jobId && job.status === "completed"
-    ));
-    expect(state.getActivity(secondJob!.activityId)).toMatchObject({
-      handoffPolicy: "none",
-      completionTrigger: "manual"
-    });
-    expect(state.getJobCompletionDelivery(secondJob!.jobId, secondJob!.scopeId)).toMatchObject({
-      state: "pending"
-    });
-    const explicitScopeRead = await client.callTool({
-      name: "codex_status",
-      arguments: {
-        scopeId: secondJob!.scopeId,
-        query: { kind: "job", id: secondJob!.jobId }
-      }
-    });
-    expect(explicitScopeRead.isError, JSON.stringify(explicitScopeRead)).not.toBe(true);
-    expect(state.getJobCompletionDelivery(secondJob!.jobId, secondJob!.scopeId)).toMatchObject({
-      state: "pending",
-      directResultOfferedAt: undefined,
-      resultReadSource: undefined
-    });
-    const authenticatedDirectRead = await client.callTool({
-      name: "codex_status",
-      arguments: { query: { kind: "job", id: secondJob!.jobId } },
-      _meta: metadata
-    });
-    expect(authenticatedDirectRead.isError, JSON.stringify(authenticatedDirectRead)).not.toBe(true);
-    expect(state.getJobCompletionDelivery(secondJob!.jobId, secondJob!.scopeId)).toMatchObject({
-      state: "pending",
-      directResultOfferedAt: expect.any(Number),
-      resultReadSource: undefined,
-      attemptCount: 0
-    });
-    const claimedAfterDirectOffer = await client.callTool({
-      name: "codex_ui_completion",
-      arguments: {
-        operation: "wait",
-        jobId: secondJob!.jobId,
-        presentationRef: secondRenderAction.arguments.presentationRef,
-        widgetInstanceId: randomUUID()
-      },
-      _meta: metadata
-    });
-    expect(claimedAfterDirectOffer.isError, JSON.stringify(claimedAfterDirectOffer)).not.toBe(true);
-    expect(claimedAfterDirectOffer.structuredContent).toMatchObject({
-      state: "claimed",
-      deliveryState: "leased",
-      receipt: expect.stringMatching(/^completion-[0-9a-f]{64}$/)
-    });
+    expect(dashboard._meta).toHaveProperty("codex/dashboardOpen@2", { scope: "auto", automatic: false });
+    expect(upstream.calls).toHaveLength(1);
   });
+
 });
 
 async function eventually(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {

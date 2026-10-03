@@ -25,30 +25,9 @@ const statusQueryArguments = z.strictObject({
   ]).optional()
 });
 
-/**
- * The Dashboard is a render tool. An admitted task can ask the model to
- * render the originating conversation with a scoped Job handle, while an
- * ordinary Dashboard opener remains argument-free.
- */
+/** Explicit display scope only; no completion handoff identity. */
 const dashboardArguments = z.strictObject({
-  scope: z.literal("conversation").optional(),
-  jobId: z.string().uuid().optional(),
-  presentationRef: z.string().regex(/^[a-f0-9]{64}$/).optional()
-}).superRefine((value, context) => {
-  if (value.jobId && value.scope !== "conversation") {
-    context.addIssue({
-      code: "custom",
-      path: ["scope"],
-      message: "jobId requires the originating conversation scope."
-    });
-  }
-  if (Boolean(value.jobId) !== Boolean(value.presentationRef)) {
-    context.addIssue({
-      code: "custom",
-      path: value.jobId ? ["presentationRef"] : ["jobId"],
-      message: "jobId and presentationRef must be supplied together."
-    });
-  }
+  scope: z.enum(["conversation", "all"]).optional()
 });
 
 /**
@@ -157,8 +136,19 @@ export function projectModelNextAction(value: unknown): ModelNextAction {
   if (typeof value === "string") return guidance(value);
   if (!record(value)) return guidance("Inspect the current authoritative state before deciding the next action.");
 
+  const retainedArguments = record(value.arguments) ? value.arguments : {};
+  if (value.tool === "codex_ui_completion" ||
+      value.tool === "codex_dashboard" && (retainedArguments.jobId !== undefined || retainedArguments.presentationRef !== undefined) ||
+      value.tool === "codex_status" && record(retainedArguments.query) && retainedArguments.query.kind === "completion") {
+    const jobId = identifier.safeParse(retainedArguments.jobId);
+    return statusAction(jobId.success ? { query: { kind: "job", id: jobId.data } } : {},
+      "Card delivery is retired. Recover the original exact Job; open Dashboard only on explicit user request.");
+  }
+
   const direct = modelNextActionOutputSchema.safeParse(value);
-  if (direct.success) return direct.data;
+  if (direct.success) return direct.data.kind === "tool" && direct.data.tool === "codex_dashboard"
+    ? { ...direct.data, message: "Open Dashboard only when the user explicitly requests its display." }
+    : direct.data;
 
   const rawTool = typeof value.tool === "string" ? value.tool : undefined;
   const rawArguments = record(value.arguments) ? value.arguments : {};
@@ -174,7 +164,9 @@ export function projectModelNextAction(value: unknown): ModelNextAction {
       arguments: rawArguments,
       ...(rawMessage ? { message: rawMessage } : {})
     });
-    if (candidate.success) return candidate.data;
+    if (candidate.success) return candidate.data.kind === "tool" && candidate.data.tool === "codex_dashboard"
+      ? { ...candidate.data, message: "Open Dashboard only when the user explicitly requests its display." }
+      : candidate.data;
   }
 
   // A retained cancellation hint is never translated into an executable stop.

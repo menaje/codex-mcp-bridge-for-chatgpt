@@ -1827,19 +1827,11 @@ function isPriorityMcpRequest(body: Buffer): boolean {
     const name = params.name;
     if (name === "codex_answer" || name === "codex_cancel" ||
         name === "codex_steer" || name === "codex_interaction_respond") return true;
-    if (name === "codex_ui_completion") {
-      const args = params.arguments;
-      if (!args || typeof args !== "object" || Array.isArray(args)) return false;
-      return ["accepted", "rejected", "uncertain", "release"].includes(
-        String((args as Record<string, unknown>).operation)
-      );
-    }
     if (name !== "codex_status" || !params.arguments ||
         typeof params.arguments !== "object" || Array.isArray(params.arguments)) return false;
     const query = (params.arguments as Record<string, unknown>).query;
     if (!query || typeof query !== "object" || Array.isArray(query)) return false;
     const exact = query as Record<string, unknown>;
-    if (exact.kind === "completion") return true;
     if (exact.kind === "input") return exact.waitMs === undefined || exact.waitMs === 0;
     return (exact.kind === "job" || exact.kind === "request") &&
       exact.waitFor === undefined && exact.waitMs === undefined;

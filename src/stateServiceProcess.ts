@@ -701,6 +701,8 @@ async function runChild(file: string): Promise<void> {
   const active = new Set<Promise<unknown>>();
   try {
     store = new BridgeStateStore({ file });
+    store.configureExperimentalEvents(process.env.CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE?.trim() === "events" &&
+      ["1", "true", "yes"].includes(process.env.CODEX_MCP_BRIDGE_EVENTS_ENABLED || ""));
     const heartbeat = () => sendToParent({
       type: "heartbeat",
       generation,

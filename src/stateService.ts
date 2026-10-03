@@ -193,7 +193,6 @@ export function executeOperationalStateCommand(
     changed = report.recordsRemoved + report.incidentsRemoved;
   } else if (command.slice === "receipts") {
     changed = store.maintainOperationalCommandReceiptRetention().receiptsRemoved + store.taskFollowups.maintain();
-    store.mcpEvents.maintain();
   } else {
     throw new Error("STATE_REQUEST_INVALID: Operational state slice is invalid.");
   }

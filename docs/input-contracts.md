@@ -56,7 +56,7 @@ Different caller UUIDs and resumed GPT runs using the same issued reference
 converge to one admission. A different prompt, changed context/model, unavailable
 result, unapproved step or occupied canonical ID is rejected. The exact result
 offer and the caller's review assertion do not prove private GPT review.
-See [MCP Events and approved followups](mcp-events.md) for expiry and recovery.
+See the [delivery transition](issue-221-delivery-transition.md) for legacy followup recovery.
 Old caller `stepId` inputs are rejected. Retained v1 receipts keep their canonical
 IDs and admitted Jobs, exposed through current system-issued references.
 
@@ -66,22 +66,9 @@ for Codex completion in the task call, and losing the MCP or HTTP connection doe
 not cancel the admitted Job. Read progress and the terminal result with
 `codex_status`; use `codex_cancel` only for explicit stop intent.
 
-Each admission also snapshots `completionDeliveryPolicy`. The default
-`live-card` policy returns an exact Dashboard render action. The opt-in
-experimental `direct-wait` policy returns an exact Job terminal-wait action and
-suppresses that Job's live-card claim path. Settings changes apply only to later
-Jobs and never rewrite a retained Job policy. After every non-terminal wait
-return, inspect the supplied exact-Job input action before waiting again so an
-approval or user-input boundary stops automatic continuation.
+Each ordinary admission snapshots `completionDeliveryPolicy="direct-wait"`. New and existing installations use it without opt-in. The retired setting is compatibility input only and is normalized to true; it never alters new admission policy. Historical Job policies remain immutable. Inspect the exact input action after every non-terminal wait and stop at a current question or approval. No task result automatically opens Dashboard.
 
-Opt-in authenticated `codex.job.terminal` Events add an independent delivery
-channel without changing that snapshot. Subscription authorization requires a
-server-verified principal as well as the original conversation scope. Callback
-ACK never settles a live-card claim or counts as result review. No Auth / Tunnel
-correlation metadata alone cannot authorize a subscription; actual ChatGPT
-resume support requires the [OAuth product connection](mcp-events-authentication.md)
-and isolated host acceptance. Its JWT adapter is implemented; provider configuration
-and actual host acceptance are pending. The default No Auth path cannot use Events today.
+Events admission, tools, instructions, schemas, and controller startup require the explicit `CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE=events` profile together with its enable flag and authentication configuration. Ordinary discovery has no Events inputs or output metadata. Historical Events policy remains readable, but gives no new ordinary execution permission. See the separate [experiment](mcp-events.md).
 
 An exact Job/request `codex_status` wait is a bounded read. `waitFor="change"`
 wakes on a Job version change; `waitFor="terminal"` uses a lifecycle-only signal
@@ -119,7 +106,7 @@ requires one. A later policy change is rechecked at admission.
 ## Read, mutation, and card inputs
 
 `codex_status` has closed query variants for an exact request receipt, Job,
-completion receipt, Activity, thread, project, or bounded input wait.
+Activity, thread, project, or bounded input wait.
 
 An exact Job or request query can return a compact terminal admission receipt
 after the full result is pruned. It confirms that the request already ran and
@@ -127,12 +114,8 @@ gives its Job ID and terminal state, but cannot restore the expired result.
 Such a receipt does not authorize a replacement or a dependent step whose
 required result is absent. Missing and foreign handles remain indistinguishable.
 
-Completion receipt reads require current ChatGPT conversation metadata; an explicit
-compatibility `scopeId` is not authority. When an authenticated exact Job or
-request query returns a retained terminal result, the Bridge records only that
-it offered the result. That evidence neither proves GPT received it nor settles,
-claims, or cancels a pending live-card delivery. A `direct-wait` Job cannot be
-claimed by the live-card path at all.
+Authenticated exact Job/request reads record a result offer. That evidence does not prove GPT received or reviewed the result and does not rewrite historical delivery receipts. The removed completion-receipt query and `codex_ui_completion` return `CARD_DELIVERY_RETIRED` without mutating a Job. Old automatic Dashboard arguments are likewise refused. Refresh discovery, close old cards, and read the retained exact Job instead.
+
 `codex_cancel` and state-changing tools require their own idempotency UUID and
 exact version. An out-of-date version, a different retry payload, or a
 scope/ownership mismatch is a rejection, not a best-effort mutation.
@@ -141,8 +124,7 @@ App-private tools use card proofs, revisions, and scoped targets where
 applicable. They are current card operations, not public fallback aliases.
 `codex_ui_read` returns the current view selected by a closed `view` enum;
 settings changes use `codex_update_settings` with the required revision checks;
-`codex_ui_completion` owns the bounded exact-Job live-card delivery lease and
-settles without claiming when the exact Job uses `direct-wait`.
+`codex_dashboard` accepts only an explicit display scope and optional compatibility scope ID. It has no Job/presentation handoff inputs.
 
 ## Host metadata and scope
 

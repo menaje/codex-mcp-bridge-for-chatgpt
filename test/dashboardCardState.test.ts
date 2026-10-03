@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  completionMessageErrorDisposition,
-  completionResultMessage,
+  DASHBOARD_CARD_HTML,
   reconcileDashboardPageCaches
 } from "../src/dashboardCard.js";
 
@@ -22,63 +21,11 @@ const mergeRows = (current: Row[], incoming: Row[]): Row[] => {
 };
 const rowKey = (row: Row): string => row.id;
 
-describe("Dashboard completion message outcomes", () => {
-  const jobId = "21300000-0000-4000-8000-000000000001";
-  const exactResult = (answer = "Fixture A from this connection") => ({
-    structuredContent: { kind: "job", items: [{ type: "job", id: jobId, terminal: true, state: "completed", answer }] },
-    content: [{ type: "text", text: answer }],
-    _meta: { privateProof: "never-send-this-proof" }
-  });
-
-  it("hands off the exact result obtained through the component connection without a named-app lookup", () => {
-    const message = completionResultMessage(exactResult(), jobId);
-    expect(message).toContain("Fixture A from this connection");
-    expect(message).toContain("select it explicitly");
-    expect(message).not.toContain("Use only Codex MCP Bridge for ChatGPT");
-    expect(message).not.toContain("Call codex_status");
-    expect(message).not.toContain("never-send-this-proof");
-    expect(message).not.toContain("_meta");
-  });
-
-  it("keeps same-ID results from separate installations distinct instead of guessing a connection", () => {
-    expect(completionResultMessage(exactResult("trial connection"), jobId)).not.toContain("operational connection");
-    expect(completionResultMessage(exactResult("operational connection"), jobId)).not.toContain("trial connection");
-  });
-
-  it.each([
-    { isError: true, ...exactResult() },
-    { ...exactResult(), structuredContent: { kind: "overview", items: [] } },
-    { ...exactResult(), structuredContent: { kind: "job", items: [{ type: "job", id: "other", terminal: true }] } },
-    { ...exactResult(), structuredContent: { kind: "job", items: [{ type: "job", id: jobId, terminal: false }] } },
-    { ...exactResult(), structuredContent: { kind: "job", items: [exactResult().structuredContent.items[0], exactResult().structuredContent.items[0]] } },
-    null
-  ])("refuses an error, mismatched, nonterminal, ambiguous, or malformed connection result %#", (result) => {
-    expect(() => completionResultMessage(result, jobId)).toThrow("Select the original connection explicitly");
-  });
-
-  it("copies only public text blocks and never carries private metadata from a content block", () => {
-    const result = { ...exactResult(), content: [{ type: "text", text: "exact text", _meta: { secret: "block-private" } }, { type: "image", data: "image-private" }] };
-    const message = completionResultMessage(result, jobId);
-    expect(message).toContain("exact text");
-    expect(message).not.toContain("block-private");
-    expect(message).not.toContain("image-private");
-  });
-
-  it("retries only a resolved explicit host rejection", () => {
-    expect(completionMessageErrorDisposition({ code: "COMPLETION_HOST_REJECTED" }))
-      .toBe("rejected");
-    expect(completionMessageErrorDisposition({ code: "MCP_RPC_RESPONSE_ERROR" }))
-      .toBe("rejected");
-  });
-
-  it("preserves timeout, disconnect, teardown, and unknown throws as uncertain", () => {
-    expect(completionMessageErrorDisposition({ code: "COMPLETION_MESSAGE_TIMEOUT" }))
-      .toBe("uncertain");
-    expect(completionMessageErrorDisposition({ code: "ECONNRESET" }))
-      .toBe("uncertain");
-    expect(completionMessageErrorDisposition(new Error("Codex overview unmounted")))
-      .toBe("uncertain");
-    expect(completionMessageErrorDisposition(undefined)).toBe("uncertain");
+describe("Dashboard sender retirement", () => {
+  it("contains no executable completion sender or payload builder", () => {
+    expect(DASHBOARD_CARD_HTML).not.toMatch(/ui\/message|sendFollowUpMessage|codex_ui_completion|completionResultMessage|completionWatcher/);
+    expect(DASHBOARD_CARD_HTML).toContain('rpcRequest("ui/initialize"');
+    expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_read"');
   });
 });
 

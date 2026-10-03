@@ -50,7 +50,7 @@ export type BridgeUserSettings = {
   uiLocalePreference: UiLocalePreference;
   maxConcurrentJobs: number;
   showBridgeThreadsInCodexApp: boolean;
-  /** Presentation-only experiment. Each admitted Job snapshots this value. */
+  /** Retired compatibility field; always true and never chooses Job delivery. */
   experimentalDirectResultDelivery: boolean;
   historyRetentionDays: HistoryRetentionDays;
 };
@@ -117,11 +117,16 @@ export class UserSettingsStore {
       // Durable context is the default for a new installation. Loaded legacy
       // settings retain their explicit (or historical missing-field) choice.
       showBridgeThreadsInCodexApp: true,
-      experimentalDirectResultDelivery: false,
+      experimentalDirectResultDelivery: true,
       historyRetentionDays: DEFAULT_HISTORY_RETENTION_DAYS
     });
     this.settings = cloneGeneralSettings(this.initial);
     this.load();
+    if (!this.projectionOnly && !this.stateStore.readOnly) this.stateStore.transaction(() => {
+      if (!this.stateStore.getMeta("ordinary_delivery_transition_v2")) this.stateStore.setMeta(
+        "ordinary_delivery_transition_v2", JSON.stringify({ version: 2, appliedAt: new Date(this.now()).toISOString(), policy: "direct-wait", cardSender: "retired", historicalAdmissions: "preserved" })
+      );
+    });
     this.noteUnavailableProjects();
   }
 
@@ -434,6 +439,7 @@ export class UserSettingsStore {
     if (candidate.updatedAt !== null && !Number.isFinite(Date.parse(candidate.updatedAt))) {
       throw new Error("Invalid settings update timestamp.");
     }
+    candidate.experimentalDirectResultDelivery = true;
     return cloneGeneralSettings(candidate);
   }
 
@@ -648,7 +654,7 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
     "historyRetentionDays"
   ];
   if (required.some((key) => !Object.prototype.hasOwnProperty.call(value, key))) return true;
-  if (value.schemaVersion !== MODEL_POLICY_SCHEMA_VERSION) return true;
+  if (value.schemaVersion !== MODEL_POLICY_SCHEMA_VERSION || value.experimentalDirectResultDelivery !== true) return true;
   if (
     [
       "revision",
@@ -720,9 +726,7 @@ function readGeneralSettings(
     showBridgeThreadsInCodexApp: typeof value.showBridgeThreadsInCodexApp === "boolean"
       ? value.showBridgeThreadsInCodexApp
       : false,
-    experimentalDirectResultDelivery: typeof value.experimentalDirectResultDelivery === "boolean"
-      ? value.experimentalDirectResultDelivery
-      : false,
+    experimentalDirectResultDelivery: true,
     historyRetentionDays: historyRetentionDays(value.historyRetentionDays),
   };
 }

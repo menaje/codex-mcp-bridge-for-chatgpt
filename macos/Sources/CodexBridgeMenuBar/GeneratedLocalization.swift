@@ -1334,7 +1334,7 @@ enum BridgeGeneratedLocalization {
         "settings.removeProject": "Remove",
         "settings.reset": "Restore general defaults",
         "settings.resetDone": "General defaults restored. Projects were kept.",
-        "settings.resetHint": "Restores access, model, experimental direct-result delivery, Codex-app thread visibility, interface, and concurrency settings. Projects, their order, and model description history are kept.",
+        "settings.resetHint": "Restores access, model, Codex-app thread visibility, interface, and concurrency settings. Projects, their order, and model description history are kept.",
         "settings.resetting": "Restoring…",
         "settings.restoreProject": "Restore",
         "settings.save": "Save settings",

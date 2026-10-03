@@ -405,8 +405,8 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).not.toContain('data-i18n="settings.orchestrationDefaultsHint"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="activity-card-visibility"');
     expect(SETTINGS_CARD_HTML).not.toContain('id="completion-handoff"');
-    expect(SETTINGS_CARD_HTML).toContain('id="experimental-direct-result-delivery"');
-    expect(SETTINGS_CARD_HTML).toContain("experimentalDirectResultDelivery:elements.directResultDelivery.checked");
+    expect(SETTINGS_CARD_HTML).not.toContain('id="experimental-direct-result-delivery"');
+    expect(SETTINGS_CARD_HTML).not.toContain("experimentalDirectResultDelivery:elements.directResultDelivery.checked");
     expect(DASHBOARD_CARD_HTML).toContain('callTool("codex_ui_read"');
     expect(DASHBOARD_CARD_HTML).not.toContain("codex_ui_stop");
     expect(DASHBOARD_CARD_HTML).toContain('if(row.controlKind!=="request")return');
@@ -430,7 +430,7 @@ describe("human-facing UI localization", () => {
     expect(staleHtml).not.toContain("<title>Plugin refresh required</title>");
   });
 
-  it("uses the standard Apps bridge and delegates exact completion delivery to Dashboard", () => {
+  it("uses the standard Apps display bridge without a completion sender", () => {
     for (const html of [SETTINGS_CARD_HTML, DASHBOARD_CARD_HTML]) {
       expect(html).toContain('dir="auto"');
       expect(html).toContain('"openai/locale"');
@@ -440,27 +440,18 @@ describe("human-facing UI localization", () => {
       expect(html).not.toContain("openai/userLocation");
       expect(html).not.toMatch(/geolocation|navigator\.geolocation/i);
     }
-    expect(DASHBOARD_CARD_HTML).toContain('rpcRequest("ui/message"');
-    expect(DASHBOARD_CARD_HTML).toContain('standardToolCall("codex_ui_completion"');
-    expect(DASHBOARD_CARD_HTML).toContain('standardToolCall("codex_status",{query:{kind:"completion",receipt}})');
-    expect(DASHBOARD_CARD_HTML).not.toContain('Use only Codex MCP Bridge for ChatGPT');
-    expect(DASHBOARD_CARD_HTML).toContain('completionIdentity("wait"');
-    expect(DASHBOARD_CARD_HTML).toContain('completionMessageErrorDisposition(error)');
+    expect(DASHBOARD_CARD_HTML).not.toMatch(/ui\/message|sendFollowUpMessage|codex_ui_completion|completionWatcher|completionResultMessage/);
     expect(DASHBOARD_CARD_HTML).toContain('error.code="MCP_RPC_RESPONSE_ERROR"');
-    expect(DASHBOARD_CARD_HTML).not.toContain('presentationToken');
     expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/notifications/tool-input"');
     expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/notifications/tool-result"');
-    expect(DASHBOARD_CARD_HTML).toContain('globals,"toolInput"');
-    expect(DASHBOARD_CARD_HTML).toContain('globals,"toolResponseMetadata"');
-    expect(DASHBOARD_CARD_HTML).toContain('dataset.dashboardPresentation=presentationLinked?"ready"');
     expect(DASHBOARD_CARD_HTML.indexOf('window.addEventListener("message"'))
       .toBeLessThan(DASHBOARD_CARD_HTML.indexOf('standardBridgeReady=beginStandardBridge()'));
     expect(DASHBOARD_CARD_HTML).toContain('message.method==="ui/resource-teardown"');
     expect(DASHBOARD_CARD_HTML).toContain('tornDown=true;mounted=false');
     expect(DASHBOARD_CARD_HTML).toContain('if(tornDown)return;mounted=true');
     expect(DASHBOARD_CARD_HTML).toContain('document.visibilityState==="hidden"');
-    expect(DASHBOARD_CARD_HTML).toContain('presentationDeliveryRoute==="live-card"');
-    expect(DASHBOARD_CARD_HTML).toContain('dataset.completionDeliveryRoute=presentationDeliveryRoute||"missing"');
+    expect(DASHBOARD_CARD_HTML).not.toContain('presentationDeliveryRoute==="live-card"');
+    expect(DASHBOARD_CARD_HTML).not.toContain("completionDeliveryRoute");
     expect(SETTINGS_CARD_HTML).toContain('callTool("codex_ui_read"');
     expect(SETTINGS_CARD_HTML).not.toContain('callTool("codex_settings",');
   });

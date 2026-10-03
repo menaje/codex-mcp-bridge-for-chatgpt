@@ -562,7 +562,6 @@ export type JobCompletionDeliveryRecord = {
   updatedAt: number;
 };
 
-export const JOB_COMPLETION_MAX_DELIVERY_ATTEMPTS = 3;
 
 /**
  * An accepted UI message cannot be observed end-to-end. Keep an uncertain
@@ -675,6 +674,9 @@ export type StateMigrationProgress = {
  * transaction, one scope version, and an idempotent completion outbox.
  */
 export class BridgeStateStore {
+  private experimentalEventsEnabled = false;
+
+  configureExperimentalEvents(enabled: boolean): void { this.experimentalEventsEnabled = enabled; }
   readonly questions: QuestionStore;
   readonly threadConnections: ThreadConnectionStore;
   readonly eventRetention: EventRetention;
@@ -3309,139 +3311,6 @@ export class BridgeStateStore {
       normalizeUuid(scopeId, "completion delivery scopeId")
     ) as Record<string, unknown> | undefined;
     return row ? readJobCompletionDeliveryRow(row) : undefined;
-  }
-
-  claimJobCompletionDelivery(
-    jobId: string,
-    scopeId: string,
-    leaseOwner: string,
-    leaseMs = 20_000,
-    now = Date.now()
-  ): JobCompletionDeliveryRecord | undefined {
-    const normalizedJobId = normalizeUuid(jobId, "completion delivery jobId");
-    const normalizedScopeId = normalizeUuid(scopeId, "completion delivery scopeId");
-    const normalizedLeaseOwner = normalizeUuid(leaseOwner, "completion delivery leaseOwner");
-    if (!Number.isInteger(leaseMs) || leaseMs < 1_000 || leaseMs > 60_000) {
-      throw new Error("COMPLETION_LEASE_INVALID: Lease duration must be between 1 and 60 seconds.");
-    }
-    return this.transaction(() => {
-      // A process can disappear after crossing the host-send boundary. Once a
-      // lease expires, never infer that no message was sent and never resend.
-      this.database.prepare(`
-        UPDATE job_completion_deliveries
-           SET state='acceptance-unknown', lease_owner=NULL, lease_expires_at=NULL,
-               acceptance_unknown_at=COALESCE(acceptance_unknown_at,?), updated_at=?
-         WHERE job_id=? AND scope_id=? AND state='leased' AND lease_expires_at<=?
-      `).run(now, now, normalizedJobId, normalizedScopeId, now);
-      const result = this.database.prepare(`
-        UPDATE job_completion_deliveries
-           SET state='leased', attempt_count=attempt_count+1,
-               lease_owner=?, lease_expires_at=?, next_attempt_at=NULL, updated_at=?
-         WHERE job_id=? AND scope_id=?
-           AND attempt_count < ?
-           AND EXISTS (
-             SELECT 1 FROM jobs
-              WHERE jobs.job_id=job_completion_deliveries.job_id
-                AND COALESCE(json_extract(jobs.payload,'$.completionDeliveryPolicy'),'live-card')='live-card'
-           )
-           AND (
-             state='pending' OR
-             (state='host-rejected' AND next_attempt_at IS NOT NULL AND next_attempt_at<=?)
-           )
-      `).run(
-        normalizedLeaseOwner,
-        now + leaseMs,
-        now,
-        normalizedJobId,
-        normalizedScopeId,
-        JOB_COMPLETION_MAX_DELIVERY_ATTEMPTS,
-        now
-      );
-      if (result.changes !== 1) return undefined;
-      return this.getJobCompletionDelivery(normalizedJobId, normalizedScopeId);
-    });
-  }
-
-  markJobCompletionHostAccepted(input: {
-    jobId: string;
-    scopeId: string;
-    receipt: string;
-    leaseOwner: string;
-    now?: number;
-  }): JobCompletionDeliveryRecord {
-    return this.finishJobCompletionLease(input, "host-accepted");
-  }
-
-  markJobCompletionAcceptanceUnknown(input: {
-    jobId: string;
-    scopeId: string;
-    receipt: string;
-    leaseOwner: string;
-    now?: number;
-  }): JobCompletionDeliveryRecord {
-    return this.finishJobCompletionLease(input, "acceptance-unknown");
-  }
-
-  markJobCompletionHostRejected(input: {
-    jobId: string;
-    scopeId: string;
-    receipt: string;
-    leaseOwner: string;
-    error?: string;
-    now?: number;
-  }): JobCompletionDeliveryRecord {
-    const now = normalizeEventTimestamp(input.now ?? Date.now());
-    const jobId = normalizeUuid(input.jobId, "completion delivery jobId");
-    const scopeId = normalizeUuid(input.scopeId, "completion delivery scopeId");
-    const receipt = normalizeJobCompletionReceipt(input.receipt);
-    const owner = normalizeUuid(input.leaseOwner, "completion delivery leaseOwner");
-    const error = input.error?.trim().slice(0, 500) || null;
-    return this.transaction(() => {
-      const current = this.getJobCompletionDelivery(jobId, scopeId);
-      if (!current || current.receipt !== receipt) {
-        throw new Error("COMPLETION_DELIVERY_UNAVAILABLE: Exact completion delivery is unavailable.");
-      }
-      if (current.state === "result-read") return current;
-      if (current.state !== "leased" || current.leaseOwner !== owner) {
-        throw new Error("COMPLETION_LEASE_MISMATCH: Completion delivery lease is missing or owned by another card.");
-      }
-      const nextAttemptAt = current.attemptCount < JOB_COMPLETION_MAX_DELIVERY_ATTEMPTS
-        ? now + Math.min(120_000, 5_000 * 2 ** Math.max(0, current.attemptCount - 1))
-        : null;
-      this.database.prepare(`
-        UPDATE job_completion_deliveries
-           SET state='host-rejected', next_attempt_at=?, lease_owner=NULL,
-               lease_expires_at=NULL, last_host_rejected_at=?, last_host_error=?, updated_at=?
-         WHERE job_id=? AND scope_id=? AND receipt=? AND state='leased' AND lease_owner=?
-      `).run(nextAttemptAt, now, error, now, jobId, scopeId, receipt, owner);
-      return this.requireJobCompletionDelivery(jobId, scopeId);
-    });
-  }
-
-  releaseJobCompletionDelivery(input: {
-    jobId: string;
-    scopeId: string;
-    receipt: string;
-    leaseOwner: string;
-    now?: number;
-  }): JobCompletionDeliveryRecord {
-    const now = normalizeEventTimestamp(input.now ?? Date.now());
-    const jobId = normalizeUuid(input.jobId, "completion delivery jobId");
-    const scopeId = normalizeUuid(input.scopeId, "completion delivery scopeId");
-    const receipt = normalizeJobCompletionReceipt(input.receipt);
-    const owner = normalizeUuid(input.leaseOwner, "completion delivery leaseOwner");
-    return this.transaction(() => {
-      const result = this.database.prepare(`
-        UPDATE job_completion_deliveries
-           SET state='pending', attempt_count=MAX(0,attempt_count-1),
-               next_attempt_at=NULL, lease_owner=NULL, lease_expires_at=NULL, updated_at=?
-         WHERE job_id=? AND scope_id=? AND receipt=? AND state='leased' AND lease_owner=?
-      `).run(now, jobId, scopeId, receipt, owner);
-      if (result.changes !== 1) {
-        throw new Error("COMPLETION_LEASE_MISMATCH: Completion delivery lease is missing or owned by another card.");
-      }
-      return this.requireJobCompletionDelivery(jobId, scopeId);
-    });
   }
 
   recordJobCompletionResultOffer(input: {
@@ -6284,7 +6153,7 @@ export class BridgeStateStore {
       });
     }
     this.taskFollowups.admit({ ...job, activityId, agentId, scopeId });
-    if (nowTerminal) this.mcpEvents.enqueue(job);
+    if (nowTerminal && this.experimentalEventsEnabled) this.mcpEvents.enqueue(job);
     this.replaceJobInteractions(job.jobId, job.pendingInteractions || []);
 
     const agentStateChanged = agentId
@@ -6919,61 +6788,6 @@ export class BridgeStateStore {
       input.createdAt,
       input.createdAt
     );
-  }
-
-  private finishJobCompletionLease(
-    input: {
-      jobId: string;
-      scopeId: string;
-      receipt: string;
-      leaseOwner: string;
-      now?: number;
-    },
-    state: "host-accepted" | "acceptance-unknown"
-  ): JobCompletionDeliveryRecord {
-    const now = normalizeEventTimestamp(input.now ?? Date.now());
-    const jobId = normalizeUuid(input.jobId, "completion delivery jobId");
-    const scopeId = normalizeUuid(input.scopeId, "completion delivery scopeId");
-    const receipt = normalizeJobCompletionReceipt(input.receipt);
-    const owner = normalizeUuid(input.leaseOwner, "completion delivery leaseOwner");
-    return this.transaction(() => {
-      const current = this.getJobCompletionDelivery(jobId, scopeId);
-      if (!current || current.receipt !== receipt) {
-        throw new Error("COMPLETION_DELIVERY_UNAVAILABLE: Exact completion delivery is unavailable.");
-      }
-      if (current.state === "result-read" || current.state === state) return current;
-      if (current.state !== "leased" || current.leaseOwner !== owner) {
-        throw new Error("COMPLETION_LEASE_MISMATCH: Completion delivery lease is missing or owned by another card.");
-      }
-      if (state === "host-accepted") {
-        this.database.prepare(`
-          UPDATE job_completion_deliveries
-             SET state='host-accepted', next_attempt_at=NULL, lease_owner=NULL,
-                 lease_expires_at=NULL, host_accepted_at=COALESCE(host_accepted_at,?), updated_at=?
-           WHERE job_id=? AND scope_id=? AND receipt=? AND state='leased' AND lease_owner=?
-        `).run(now, now, jobId, scopeId, receipt, owner);
-      } else {
-        this.database.prepare(`
-          UPDATE job_completion_deliveries
-             SET state='acceptance-unknown', next_attempt_at=NULL, lease_owner=NULL,
-                 lease_expires_at=NULL,
-                 acceptance_unknown_at=COALESCE(acceptance_unknown_at,?), updated_at=?
-           WHERE job_id=? AND scope_id=? AND receipt=? AND state='leased' AND lease_owner=?
-        `).run(now, now, jobId, scopeId, receipt, owner);
-      }
-      return this.requireJobCompletionDelivery(jobId, scopeId);
-    });
-  }
-
-  private requireJobCompletionDelivery(
-    jobId: string,
-    scopeId: string
-  ): JobCompletionDeliveryRecord {
-    const record = this.getJobCompletionDelivery(jobId, scopeId);
-    if (!record) {
-      throw new Error("COMPLETION_DELIVERY_UNAVAILABLE: Exact completion delivery is unavailable.");
-    }
-    return record;
   }
 
   private getActivityRow(activityId: string): ActivityStorageRow | undefined {

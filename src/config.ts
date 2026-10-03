@@ -38,6 +38,8 @@ export type BridgeConfig = {
   oauth?: McpOAuthConfig;
   /** Opt-in MCP Events. No Auth/Tunnel correlation metadata is insufficient. */
   eventsEnabled?: boolean;
+  /** Explicit experimental profile; ordinary startup never enables Events. */
+  experimentalProfile?: "events";
   allowedHosts?: string[];
   /** Browser Origin hostnames permitted to reach the MCP endpoint. */
   allowedOrigins?: string[];
@@ -87,6 +89,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   const port = parsePort(read("PORT") || "8765");
   const token = normalizeOptional(read("TOKEN"));
   const noAuth = parseBool(read("NO_AUTH"));
+  const profile = normalizeOptional(read("EXPERIMENTAL_PROFILE"));
+  if (profile && profile !== "events") throw new Error("EXPERIMENTAL_PROFILE_UNSUPPORTED: Use events only for explicit experiments.");
+  const experimentalProfile = profile as "events" | undefined;
+  const eventsEnabled = experimentalProfile === "events" && parseBool(read("EVENTS_ENABLED"));
   const oauth = mcpOAuthRequested(env) ? loadMcpOAuthConfig(read, noAuth, host, port) : undefined;
   const allowedHosts = parseAllowedHosts(read("ALLOWED_HOSTS"));
   const allowedOrigins = parseAllowedHosts(read("ALLOWED_ORIGINS"));
@@ -210,7 +216,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   if (noAuth && !LOCAL_HOSTS.has(host)) {
     throw new Error("CODEX_MCP_BRIDGE_NO_AUTH=1 is allowed only for local host bindings.");
   }
-  if (oauth && parseBool(read("EVENTS_ENABLED")) && (!token || Buffer.byteLength(token) < 32)) {
+  if (oauth && eventsEnabled && (!token || Buffer.byteLength(token) < 32)) {
     throw new Error("OAuth Events require a stable CODEX_MCP_BRIDGE_TOKEN of at least 32 bytes for callback encryption; it is not an OAuth access token.");
   }
 
@@ -245,7 +251,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     token,
     noAuth,
     oauth,
-    eventsEnabled: parseBool(read("EVENTS_ENABLED")),
+    eventsEnabled,
+    experimentalProfile,
     allowedHosts,
     allowedOrigins,
     codexCommand: read("CODEX") || "codex",

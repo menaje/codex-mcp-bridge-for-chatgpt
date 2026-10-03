@@ -34,7 +34,6 @@ const CURRENT_TOOL_ORDER = [
   "codex_settings",
   "codex_update_settings",
   "codex_task",
-  "codex_ui_completion",
   "codex_ui_read",
   "codex_ui_problem"
 ] as const;
@@ -386,7 +385,7 @@ describe("MCP 2026-07-28 HTTP server", () => {
         "codex-settings-card"
       ]);
       const dashboard = resources.resources.find((resource) => resource.name === "codex-dashboard-card");
-      expect(dashboard?.uri).toBe("ui://codex-mcp-bridge/dashboard/v3.html");
+      expect(dashboard?.uri).toBe("ui://codex-mcp-bridge/dashboard/v4.html");
       const dashboardTools = tools.tools.filter(tool =>
         (tool._meta?.ui as { resourceUri?: string } | undefined)?.resourceUri?.startsWith("ui://codex-mcp-bridge/dashboard/") ||
         String(tool._meta?.["openai/outputTemplate"] || "").startsWith("ui://codex-mcp-bridge/dashboard/"));
@@ -401,9 +400,9 @@ describe("MCP 2026-07-28 HTTP server", () => {
       expect(content).toHaveLength(1);
       expect(content[0]).toMatchObject({ uri: dashboard!.uri });
       const html = (content[0] as { text: string }).text;
-      expect(html).toContain('dataset.cardResourceUri="ui://codex-mcp-bridge/dashboard/v3.html"');
-      expect(html).toContain('dataset.cardContractGeneration=37');
-      expect(html).toContain('function completionResultMessage');
+      expect(html).toContain('dataset.cardResourceUri="ui://codex-mcp-bridge/dashboard/v4.html"');
+      expect(html).toContain('dataset.cardContractGeneration=38');
+      expect(html).not.toContain('function completionResultMessage');
       expect(html).not.toContain('Use only Codex MCP Bridge for ChatGPT.');
       await expect(client.readResource({ uri: "ui://codex-mcp-bridge/dashboard/v2.html" })).rejects.toThrow();
     } finally {

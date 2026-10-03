@@ -1,5 +1,7 @@
 # Restricted original-conversation Events delegation
 
+This is a separate disabled-by-default experiment. Startup requires `CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE=events` and `CODEX_MCP_BRIDGE_EVENTS_ENABLED=1` in addition to the authentication configuration below. A legacy enable flag alone does not activate it. Ordinary direct-wait setup requires none of these services.
+
 Status: **implemented for opt-in OAuth Events Jobs; actual ChatGPT host acceptance remains pending**.
 The user explicitly authorized this design in [#213's card-free acceptance supplement](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/213#issuecomment-5942805508).
 This replaces the proposal status recorded at `01392e9`. It does not change
@@ -166,13 +168,7 @@ rules.
 After Job/history cleanup, monitoring is `job_unavailable`; stale in-memory
 Job handles cannot receive a new delegation or produce an issuance hint.
 
-Events admission/status never requests an automatic Dashboard mount or a
-completion polling loop. The server rejects automatic Dashboard presentation
-for an Events Job and immediately settles its old-card completion calls before
-waiting, claiming a lease or sending `ui/message`. The SQL claim boundary
-permits only live-card Jobs. The existing Dashboard watcher already requires a
-live-card presentation, so no HTML change or new resource URI is needed. Manual
-Dashboard state/history/control remains available on user request.
+Events admission/status never requests an automatic Dashboard mount or a completion polling loop. The card sender is retired for every policy: old completion calls and automatic Dashboard arguments return `CARD_DELIVERY_RETIRED` before any wait, claim, or Job mutation. New Dashboard v4 keeps explicit state/history/control display and has no watcher or message sender. See the [deployment transition](issue-221-delivery-transition.md).
 
 Subscription failure must be surfaced. There is no implicit card, schedule or
 repeated status-poll fallback. Manual exact reads remain available. Terminal

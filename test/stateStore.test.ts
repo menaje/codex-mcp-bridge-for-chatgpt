@@ -8,6 +8,8 @@ import {
   COMPLETION_OUTBOX_UNCERTAIN_HOLD_AT
 } from "../src/stateStore.js";
 
+import { historicalCompletion } from "./fixtures/historicalCompletion.js";
+
 describe("BridgeStateStore", () => {
   it("lists only retryable notify events for the local native delivery path", () => {
     const store = new BridgeStateStore({ file: ":memory:" });
@@ -145,80 +147,18 @@ describe("BridgeStateStore", () => {
     }
   });
 
-  it("leases one exact Job completion and records rejection, acceptance, and a result offer", () => {
+  it("preserves a historical host receipt while recording an exact Job result offer", () => {
     const store = new BridgeStateStore({ file: ":memory:" });
     const jobId = "14141414-1414-4414-8414-141414141414";
-    const requestId = "15151515-1515-4515-8515-151515151515";
-    const firstOwner = "16161616-1616-4616-8616-161616161616";
-    const secondOwner = "17171717-1717-4717-8717-171717171717";
     try {
-      store.upsertJob({ ...job(jobId, requestId), status: "running", updatedAt: 1 });
-      expect(store.getJobCompletionDelivery(jobId, SCOPE_A)).toBeUndefined();
-
-      store.upsertJob({ ...job(jobId, requestId), updatedAt: 2 });
-      const pending = store.getJobCompletionDelivery(jobId, SCOPE_A)!;
-      expect(pending).toMatchObject({
-        jobId,
-        scopeId: SCOPE_A,
-        terminalVersion: 1,
-        state: "pending",
-        attemptCount: 0,
-        receipt: expect.stringMatching(/^completion-[0-9a-f]{64}$/)
-      });
-
-      const claimed = store.claimJobCompletionDelivery(jobId, SCOPE_A, firstOwner, 1_000, 10)!;
-      expect(claimed).toMatchObject({ state: "leased", attemptCount: 1, leaseOwner: firstOwner });
-      expect(store.claimJobCompletionDelivery(jobId, SCOPE_A, secondOwner, 1_000, 11))
-        .toBeUndefined();
-
-      const rejected = store.markJobCompletionHostRejected({
-        jobId,
-        scopeId: SCOPE_A,
-        receipt: pending.receipt,
-        leaseOwner: firstOwner,
-        error: "host busy",
-        now: 20
-      });
-      expect(rejected).toMatchObject({
-        state: "host-rejected",
-        attemptCount: 1,
-        nextAttemptAt: 5_020,
-        lastHostError: "host busy"
-      });
-      expect(store.claimJobCompletionDelivery(jobId, SCOPE_A, secondOwner, 1_000, 5_019))
-        .toBeUndefined();
-
-      const retried = store.claimJobCompletionDelivery(jobId, SCOPE_A, secondOwner, 1_000, 5_020)!;
-      expect(retried).toMatchObject({ state: "leased", attemptCount: 2, leaseOwner: secondOwner });
-      const accepted = store.markJobCompletionHostAccepted({
-        jobId,
-        scopeId: SCOPE_A,
-        receipt: pending.receipt,
-        leaseOwner: secondOwner,
-        now: 5_021
-      });
-      expect(accepted).toMatchObject({ state: "host-accepted", hostAcceptedAt: 5_021 });
+      store.upsertJob(job(jobId, "15151515-1515-4515-8515-151515151515"));
+      const original = historicalCompletion(store, jobId, "host-accepted", { host_accepted_at: 5_021 });
       expect(store.retentionProtection(jobId, 5_021)).toContain("undelivered-chatgpt-result");
-
-      expect(store.recordJobCompletionResultOffer({
-        scopeId: SCOPE_A,
-        source: "completion-receipt",
-        receipt: pending.receipt,
-        now: 5_022
-      })).toMatchObject({
-        state: "host-accepted",
-        completionResultOfferedAt: 5_022,
-        resultReadAt: undefined,
-        resultReadSource: undefined
-      });
-      expect(store.retentionProtection(jobId, 5_022)).not.toContain("undelivered-chatgpt-result");
-      expect(store.retentionProtection(jobId, 5_022, 6_000))
-        .toContain("chatgpt-result-recovery");
-      expect(store.retentionProtection(jobId, 11_022, 6_000))
-        .not.toContain("chatgpt-result-recovery");
-    } finally {
-      store.close();
-    }
+      expect(store.recordJobCompletionResultOffer({ scopeId: SCOPE_A, source: "direct-job-query", jobId, now: 5_022 }))
+        .toMatchObject({ ...original, directResultOfferedAt: 5_022, updatedAt: 5_022 });
+      expect(store.retentionProtection(jobId, 5_022)).toContain("undelivered-chatgpt-result");
+      expect(store.getJobCompletionDelivery(jobId)?.resultReadAt).toBeUndefined();
+    } finally { store.close(); }
   });
 
   it("bounds unresolved ChatGPT completion results by run-history retention", () => {
@@ -236,14 +176,7 @@ describe("BridgeStateStore", () => {
 
       expect(store.retentionProtection(jobId, terminalAt + 1, recoveryMs))
         .not.toContain("undelivered-chatgpt-result");
-      store.claimJobCompletionDelivery(jobId, SCOPE_A, owner, 1_000, terminalAt + 1);
-      store.markJobCompletionHostAccepted({
-        jobId,
-        scopeId: SCOPE_A,
-        receipt: delivery.receipt,
-        leaseOwner: owner,
-        now: terminalAt + 2
-      });
+      historicalCompletion(store, jobId, "host-accepted", { host_accepted_at: terminalAt + 2 });
       expect(store.retentionProtection(jobId, terminalAt + 7 * day - 1, recoveryMs))
         .toContain("undelivered-chatgpt-result");
       expect(store.retentionProtection(jobId, terminalAt + 7 * day, recoveryMs))
@@ -286,11 +219,8 @@ describe("BridgeStateStore", () => {
         resultReadSource: undefined,
         attemptCount: 0
       });
-      expect(store.claimJobCompletionDelivery(pendingJobId, SCOPE_A, owner, 1_000, 11))
-        .toMatchObject({ state: "leased", attemptCount: 1 });
-
       store.upsertJob(job(leasedJobId, "27272727-2727-4727-8727-272727272727"));
-      const leased = store.claimJobCompletionDelivery(leasedJobId, SCOPE_A, owner, 1_000, 20)!;
+      historicalCompletion(store, leasedJobId, "leased", { lease_owner: owner, lease_expires_at: 1_020 });
       expect(store.recordJobCompletionResultOffer({
         scopeId: SCOPE_A,
         source: "direct-job-query",
@@ -301,23 +231,8 @@ describe("BridgeStateStore", () => {
         directResultOfferedAt: 21,
         resultReadSource: undefined
       });
-      expect(store.markJobCompletionHostAccepted({
-        jobId: leasedJobId,
-        scopeId: SCOPE_A,
-        receipt: leased.receipt,
-        leaseOwner: owner,
-        now: 22
-      })).toMatchObject({ state: "host-accepted" });
-
       store.upsertJob(job(rejectedJobId, "30303030-3030-4030-8030-303030303030"));
-      const rejected = store.claimJobCompletionDelivery(rejectedJobId, SCOPE_A, owner, 1_000, 30)!;
-      store.markJobCompletionHostRejected({
-        jobId: rejectedJobId,
-        scopeId: SCOPE_A,
-        receipt: rejected.receipt,
-        leaseOwner: owner,
-        now: 31
-      });
+      historicalCompletion(store, rejectedJobId, "host-rejected", { last_host_rejected_at: 31, next_attempt_at: 5_031 });
       expect(store.recordJobCompletionResultOffer({
         scopeId: SCOPE_A,
         source: "direct-job-query",
@@ -332,14 +247,7 @@ describe("BridgeStateStore", () => {
         .toContain("undelivered-chatgpt-result");
 
       store.upsertJob(job(unknownJobId, "32323232-3232-4232-8232-323232323232"));
-      const unknown = store.claimJobCompletionDelivery(unknownJobId, SCOPE_A, owner, 1_000, 40)!;
-      store.markJobCompletionAcceptanceUnknown({
-        jobId: unknownJobId,
-        scopeId: SCOPE_A,
-        receipt: unknown.receipt,
-        leaseOwner: owner,
-        now: 41
-      });
+      historicalCompletion(store, unknownJobId, "acceptance-unknown", { acceptance_unknown_at: 41 });
       expect(store.recordJobCompletionResultOffer({
         scopeId: SCOPE_A,
         source: "direct-job-query",
@@ -380,11 +288,7 @@ describe("BridgeStateStore", () => {
         state: "pending",
         attemptCount: 0
       });
-      expect(store.claimJobCompletionDelivery(
-        jobId,
-        SCOPE_A,
-        "47474747-4747-4747-8747-474747474747"
-      )).toBeUndefined();
+      expect(store).not.toHaveProperty("claimJobCompletionDelivery");
       expect(() => store.upsertJob({
         ...job(jobId, requestId),
         completionDeliveryPolicy: "live-card"
@@ -405,11 +309,7 @@ describe("BridgeStateStore", () => {
         state: "pending",
         attemptCount: 0
       });
-      expect(restarted.claimJobCompletionDelivery(
-        jobId,
-        SCOPE_A,
-        "48484848-4848-4848-8848-484848484848"
-      )).toBeUndefined();
+      expect(restarted).not.toHaveProperty("claimJobCompletionDelivery");
       restarted.upsertJob({
         ...job(jobId, requestId),
         completionDeliveryPolicy: "direct-wait"
@@ -424,29 +324,22 @@ describe("BridgeStateStore", () => {
     }
   });
 
-  it("turns an expired completion send lease into uncertainty without replay", () => {
-    const store = new BridgeStateStore({ file: ":memory:" });
+  it("keeps an expired historical send lease unchanged across restart", () => {
+    const file = stateFile();
+    const store = new BridgeStateStore({ file });
     const jobId = "18181818-1818-4818-8818-181818181818";
-    const requestId = "19191919-1919-4919-8919-191919191919";
-    const firstOwner = "20202020-2020-4020-8020-202020202020";
-    const secondOwner = "21212121-2121-4121-8121-212121212121";
+    store.upsertJob(job(jobId, "19191919-1919-4919-8919-191919191919"));
+    const original = historicalCompletion(store, jobId, "leased", {
+      lease_owner: "20202020-2020-4020-8020-202020202020", lease_expires_at: 1_010
+    });
+    store.close();
+    const restored = new BridgeStateStore({ file });
     try {
-      store.upsertJob(job(jobId, requestId));
-      const delivery = store.getJobCompletionDelivery(jobId, SCOPE_A)!;
-      expect(store.claimJobCompletionDelivery(jobId, SCOPE_A, firstOwner, 1_000, 10))
-        .toMatchObject({ state: "leased" });
-      expect(store.claimJobCompletionDelivery(jobId, SCOPE_A, secondOwner, 1_000, 1_010))
-        .toBeUndefined();
-      expect(store.getJobCompletionDeliveryByReceipt(delivery.receipt, SCOPE_A)).toMatchObject({
-        state: "acceptance-unknown",
-        acceptanceUnknownAt: 1_010,
-        leaseOwner: undefined
-      });
-      expect(store.claimJobCompletionDelivery(jobId, SCOPE_A, secondOwner, 1_000, 10_000))
-        .toBeUndefined();
-    } finally {
-      store.close();
-    }
+      expect(restored.getJobCompletionDelivery(jobId)).toEqual(original);
+      expect(restored).not.toHaveProperty("claimJobCompletionDelivery");
+      expect(restored).not.toHaveProperty("markJobCompletionHostAccepted");
+      expect(restored).not.toHaveProperty("releaseJobCompletionDelivery");
+    } finally { restored.close(); }
   });
 
   it("finds retained status-card work and filters archived jobs before applying its limit", () => {

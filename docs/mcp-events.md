@@ -1,5 +1,7 @@
 # Exact-Job MCP Events
 
+This is a separate disabled-by-default experiment. Startup requires `CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE=events` and `CODEX_MCP_BRIDGE_EVENTS_ENABLED=1` in addition to the authentication configuration below. A legacy enable flag alone does not activate it. Ordinary direct-wait setup requires none of these services.
+
 The opt-in `codex.job.terminal` event implements the webhook portion of
 [OpenAI's MCP Events contract](https://developers.openai.com/plugins/build/mcp-events)
 on the existing MCP `2026-07-28` endpoint. It signals a committed `completed`,
@@ -7,8 +9,7 @@ on the existing MCP `2026-07-28` endpoint. It signals a committed `completed`,
 `codex_status` query. It does not include the prompt, answer, callback, signing
 key, or instructions to execute work.
 
-The default completion policy remains `live-card`; retained Jobs preserve their
-existing policy. New OAuth Jobs can explicitly request `completionDelivery:
+Ordinary admission defaults to `direct-wait`; retained Jobs preserve their original policy. New OAuth Jobs can explicitly request `completionDelivery:
 "events"` for **card-free** completion. This stores Events intent, excludes
 automatic Dashboard mounting/watchers/ui/message and propagates the policy to
 preapproved B Jobs. Each exact Job needs its own native subscription. There is

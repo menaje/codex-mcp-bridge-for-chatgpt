@@ -2648,7 +2648,7 @@ final class AppModel: ObservableObject {
                 maxConcurrentJobs: draft.maxConcurrentJobs,
                 historyRetentionDays: settings?.settings.historyRetentionDays == nil ? nil : draft.historyRetentionDays,
                 showBridgeThreadsInCodexApp: draft.showBridgeThreadsInCodexApp,
-                experimentalDirectResultDelivery: draft.experimentalDirectResultDelivery
+                experimentalDirectResultDelivery: nil
             ))
         )
         return await performSettingsMutation(

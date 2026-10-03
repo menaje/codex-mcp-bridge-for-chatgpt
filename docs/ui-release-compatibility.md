@@ -11,8 +11,8 @@ integrity checks; it is not part of the file name or URI.
 
 | Card | Source file | Packaged file | Resource URI |
 | --- | --- | --- | --- |
-| Settings | `ui-resources/settings.html` | `dist/ui/settings.html` | `ui://codex-mcp-bridge/settings/v3.html` |
-| Dashboard | `ui-resources/dashboard.html` | `dist/ui/dashboard.html` | `ui://codex-mcp-bridge/dashboard/v3.html` |
+| Settings | `ui-resources/settings.html` | `dist/ui/settings.html` | `ui://codex-mcp-bridge/settings/v4.html` |
+| Dashboard | `ui-resources/dashboard.html` | `dist/ui/dashboard.html` | `ui://codex-mcp-bridge/dashboard/v4.html` |
 
 Activity, Question, and Decision are retired presentation resources. Their
 historical state remains only where migration or current orchestration requires
@@ -37,9 +37,9 @@ second source or package file.
 Changes to completion routing or result handoff also require a new URI when
 the previous cached card can select the wrong connection or continue asking
 GPT to retrieve a receipt through a superseded path. Internal digests and
-`codex/uiContractGeneration` do not invalidate the host's URI cache. Dashboard
-`v3` carries generation 37's originating-connection result handoff and its
-additional `codex_status` dependency. It is distinct from the cached `v2` card.
+`codex/uiContractGeneration` do not invalidate the host's URI cache. Dashboard `v4` removes the completion sender, watcher, receipt query and `codex_ui_completion` dependency. Settings `v4` removes the delivery experiment switch. Both advance in the same upgrade as direct-wait admission and server-path refusal. Historical `v3` bytes remain test fixtures only and are not served or packaged.
+
+Server-side refusal and old-iframe behavior are separate gates. An already-open v3 iframe may hold result text or a message retry in memory; rejecting another server call cannot revoke its host `ui/message` capability. Close/tear down old instances, refresh connector tools, and reopen v4 before accepting the migration. Verify old waiting calls, in-flight result replies and rejected-message retry independently. Preserve any observed limitation instead of claiming server refusal alone proves no old-card send.
 
 After deployment, compare the real tool descriptor's `_meta.ui.resourceUri`
 and `openai/outputTemplate`, the same connection's `resources/read` URI/HTML

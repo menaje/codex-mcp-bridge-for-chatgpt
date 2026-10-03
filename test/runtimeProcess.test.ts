@@ -1100,7 +1100,7 @@ describe("isolated production runtime", () => {
     expect(ordinary.status).not.toBe(503);
   }, 20_000);
 
-  it("keeps completion waits out of the control reserve while admitting delivery decisions", async () => {
+  it("keeps every retired card sender operation out of the control reserve", async () => {
     const runtime = await start();
     const sockets: Socket[] = [];
     const body = (operation: string, id: string) => JSON.stringify({
@@ -1127,24 +1127,16 @@ describe("isolated production runtime", () => {
         .toBe(true);
       expect(await observedStateInFlight(runtime.baseUrl)).toBe(112);
       const decision = await postMcpChunks(runtime.baseUrl,
-        [Buffer.from(body("accepted", "card-accepted"))], {
-          accept: "application/json", "content-type": "application/json",
-          "mcp-protocol-version": CURRENT_PROTOCOL,
-          "mcp-method": "tools/call", "mcp-name": "codex_ui_completion"
-        });
-      expect(decision.status).toBe(200);
-      expect(decision.body).toMatchObject({
-        jsonrpc: "2.0", id: "card-accepted", result: { isError: true }
-      });
-      // Invalid fixture references reach the real handler and fail its scope
-      // checks. They cannot turn into a successful host receipt.
+        [Buffer.from(body("accepted", "card-accepted"))]);
+      expect(decision.status).toBe(503);
+      expect((decision.body.error as any).data.outcome).toBe("not-observed");
       expect(await observedStateInFlight(runtime.baseUrl)).toBe(112);
     } finally {
       for (const socket of sockets) socket.destroy();
     }
   }, 20_000);
 
-  it("finishes valid question, cancellation, result and host receipt controls during observer saturation", async () => {
+  it("finishes valid question, cancellation and exact result controls during observer saturation", async () => {
     const runtime = await start(undefined, undefined, {
       CODEX_MCP_BRIDGE_CODEX: path.join(process.cwd(), "test/fixtures/fake-codex-app-server.mjs"),
       CODEX_MCP_BRIDGE_UPSTREAM_POOL_SIZE: "2",
@@ -1218,23 +1210,7 @@ describe("isolated production runtime", () => {
         questionRef = (input.structuredContent as any).questions?.[0]?.questionRef;
         return Boolean(questionRef);
       });
-      const render = finished.nextActions.find(action =>
-        action.kind === "tool" && action.tool === "codex_dashboard")!;
-      expect(render).toBeDefined();
-      const opened = await client.callTool({
-        name: "codex_dashboard", arguments: render.arguments!, _meta: finished.metadata
-      });
-      expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-      const widgetInstanceId = randomUUID();
-      const claimed = await client.callTool({
-        name: "codex_ui_completion", _meta: finished.metadata,
-        arguments: { operation: "wait", jobId: finished.jobId,
-          presentationRef: render.arguments!.presentationRef, widgetInstanceId }
-      });
-      expect(claimed.isError, JSON.stringify(claimed)).not.toBe(true);
-      const receipt = (claimed.structuredContent as any).receipt as string;
-      expect(receipt).toMatch(/^completion-/);
-
+      expect(finished.nextActions.some(action => action.tool === "codex_dashboard")).toBe(false);
       for (let index = 0; index < 112; index += 1) {
         sockets.push(await openIncompleteMcpRequest(runtime.baseUrl));
       }
@@ -1255,14 +1231,6 @@ describe("isolated production runtime", () => {
           expectedVersion: cancelVersion, reason: "Priority control fixture" }
       });
       expect(cancelled.isError, JSON.stringify(cancelled)).not.toBe(true);
-      const accepted = await client.callTool({
-        name: "codex_ui_completion", _meta: finished.metadata,
-        arguments: { operation: "accepted", jobId: finished.jobId,
-          presentationRef: render.arguments!.presentationRef,
-          widgetInstanceId, receipt }
-      });
-      expect(accepted.isError, JSON.stringify(accepted)).not.toBe(true);
-      expect(accepted.structuredContent).toMatchObject({ deliveryState: "host-accepted" });
       const exact = await client.callTool({
         name: "codex_status", _meta: finished.metadata,
         arguments: { query: { kind: "job", id: finished.jobId } }
@@ -1271,7 +1239,7 @@ describe("isolated production runtime", () => {
       expect(exact.structuredContent).toMatchObject({
         items: [expect.objectContaining({ id: finished.jobId, state: "completed",
           completionEvidence: expect.objectContaining({
-            deliveryRecord: "host-accepted", jobRecord: "terminal-committed"
+            deliveryRecord: "pending", jobRecord: "terminal-committed"
           }) })]
       });
       await until(() => readJob(question.jobId)?.status === "completed");

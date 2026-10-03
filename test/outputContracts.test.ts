@@ -209,9 +209,9 @@ describe("model-visible output contracts", () => {
     ).toEqual({ type: "string", const: "4" });
   });
 
-  it("publishes codex_task as a strict all-required schema with nullable absence", () => {
+  it("publishes strict task fields with optional experimental metadata and nullable absence", () => {
     const schema = z.toJSONSchema(MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_task) as any;
-    expect(schema.required.sort()).toEqual(Object.keys(schema.properties).sort());
+    expect(schema.required.sort()).toEqual(Object.keys(schema.properties).filter(key => key !== "eventSubscription").sort());
     expect(schema.properties.jobId.anyOf.map((entry: any) => entry.type)).toEqual(["string", "null"]);
     expect(schema.properties.answer.anyOf.map((entry: any) => entry.type)).toEqual(["string", "null"]);
     const errorBranch = schema.properties.error.anyOf.find((entry: any) => entry.type === "object");

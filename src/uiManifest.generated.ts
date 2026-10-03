@@ -12,7 +12,7 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "releaseInventory": {
     "catalog": "ui-release-catalog.json",
-    "catalogSha256": "af454c14c7cef88292089fcddbcbab4608acbd24539e1bf4eef6bf004a7194de",
+    "catalogSha256": "f5ceac2b092e876a40cd4850caf26d77cc90015e0c822c912c9cde034a501836",
     "activeResources": [
       "settings",
       "dashboard"
@@ -48,9 +48,9 @@ export const UI_RESOURCE_MANIFEST = {
     "selected": [
       {
         "name": "settings",
-        "uriVersion": 3,
-        "digest": "1db2e8196c872a053f6a500a1f19891555c329d4593500e86579bdf7c93a5593",
-        "uri": "ui://codex-mcp-bridge/settings/v3.html",
+        "uriVersion": 4,
+        "digest": "278340e6de0dd254bd26b6aad325fd53b13ba19c6c13f95fe9c50f9727f27776",
+        "uri": "ui://codex-mcp-bridge/settings/v4.html",
         "inventories": [
           "development-current"
         ],
@@ -66,9 +66,9 @@ export const UI_RESOURCE_MANIFEST = {
       },
       {
         "name": "dashboard",
-        "uriVersion": 3,
-        "digest": "39d1860fde5e7ca45c73deea998599a4a5a610b9cf60c2e1225cecec01b30580",
-        "uri": "ui://codex-mcp-bridge/dashboard/v3.html",
+        "uriVersion": 4,
+        "digest": "02c43e7a3565adfcb611b3168702a007cac6edaa37b7365570e75c1bd8136161",
+        "uri": "ui://codex-mcp-bridge/dashboard/v4.html",
         "inventories": [
           "development-current"
         ],
@@ -78,8 +78,6 @@ export const UI_RESOURCE_MANIFEST = {
         "presenterTool": "codex_dashboard",
         "requiredTools": [
           "codex_dashboard",
-          "codex_status",
-          "codex_ui_completion",
           "codex_ui_problem",
           "codex_ui_read",
           "codex_interaction_respond"
@@ -89,9 +87,9 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "resources": {
     "settings": {
-      "uriVersion": 3,
-      "digest": "1db2e8196c872a053f6a500a1f19891555c329d4593500e86579bdf7c93a5593",
-      "uri": "ui://codex-mcp-bridge/settings/v3.html",
+      "uriVersion": 4,
+      "digest": "278340e6de0dd254bd26b6aad325fd53b13ba19c6c13f95fe9c50f9727f27776",
+      "uri": "ui://codex-mcp-bridge/settings/v4.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -107,14 +105,14 @@ export const UI_RESOURCE_MANIFEST = {
             },
             "domain": "https://web-sandbox.oaiusercontent.com"
           },
-          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, experimental direct-result delivery, Codex-app thread visibility, interface language, history, and concurrency for Codex MCP Bridge for ChatGPT.",
+          "openai/widgetDescription": "Configure named projects, saved access, model/effort policy, Codex-app thread visibility, interface language, history, and concurrency for Codex MCP Bridge for ChatGPT.",
           "openai/widgetPrefersBorder": false,
           "openai/widgetCSP": {
             "connect_domains": [],
             "resource_domains": []
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 24
+          "codex/uiContractGeneration": 25
         }
       },
       "releaseProvenance": {
@@ -133,9 +131,9 @@ export const UI_RESOURCE_MANIFEST = {
       }
     },
     "dashboard": {
-      "uriVersion": 3,
-      "digest": "39d1860fde5e7ca45c73deea998599a4a5a610b9cf60c2e1225cecec01b30580",
-      "uri": "ui://codex-mcp-bridge/dashboard/v3.html",
+      "uriVersion": 4,
+      "digest": "02c43e7a3565adfcb611b3168702a007cac6edaa37b7365570e75c1bd8136161",
+      "uri": "ui://codex-mcp-bridge/dashboard/v4.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Codex Status",
@@ -161,7 +159,7 @@ export const UI_RESOURCE_MANIFEST = {
             ]
           },
           "openai/widgetDomain": "https://web-sandbox.oaiusercontent.com",
-          "codex/uiContractGeneration": 37
+          "codex/uiContractGeneration": 38
         }
       },
       "releaseProvenance": {
@@ -174,8 +172,6 @@ export const UI_RESOURCE_MANIFEST = {
         "presenterTool": "codex_dashboard",
         "requiredTools": [
           "codex_dashboard",
-          "codex_status",
-          "codex_ui_completion",
           "codex_ui_problem",
           "codex_ui_read",
           "codex_interaction_respond"

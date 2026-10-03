@@ -26,7 +26,7 @@ import {
   type NativeCompletionNotification
 } from "./completionDelivery.js";
 import { createHash, randomUUID } from "node:crypto";
-import { authenticatedMcpPrincipal } from "./mcpEvents.js";
+import { authenticatedMcpPrincipal } from "./mcpPrincipal.js";
 import { approvedFollowupDigests, issueApprovedFollowups, readFollowupReference, FOLLOWUP_ID_PATTERN, promptDigest, type ApprovedFollowup, type FollowupReference } from "./taskFollowups.js";
 import { ThreadConnectionController, type ThreadConnectionRecord } from "./threadConnections.js";
 import { STATE_MAINTENANCE_SLICES, StateMaintenanceScheduler } from "./maintenanceScheduler.js";
@@ -477,9 +477,9 @@ const dashboardPresentationOutputSchema = z.strictObject({
   statusTool: z.literal("codex_status"),
   openTool: z.literal("codex_dashboard"),
   scope: z.literal("conversation"),
-  automatic: z.boolean(),
-  reason: z.enum(["default", "experimental-direct-wait", "events"]),
-  completionDeliveryRoute: z.enum(["live-card", "direct-wait", "events"])
+  automatic: z.literal(false),
+  reason: z.enum(["direct-wait", "events"]),
+  completionDeliveryRoute: z.enum(["direct-wait", "events"])
 });
 
 const followupViewOutputSchema = z.strictObject({
@@ -488,7 +488,7 @@ const followupViewOutputSchema = z.strictObject({
 });
 const approvedFollowupsOutputSchema = z.array(followupViewOutputSchema).min(1).max(8).optional();
 
-const codexTaskOutputSchema = z.strictObject({
+const codexTaskOutputBase = z.strictObject({
   contractVersion: z.literal("4"),
   kind: z.enum(["task"]),
   state: z.enum([...ACTIVITY_JOB_STATUSES, "setup-required"]),
@@ -507,7 +507,7 @@ const codexTaskOutputSchema = z.strictObject({
   backend: z.enum(["mcp-server", "app-server", "codex-sdk"]).nullable(),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]).nullable(),
   completionDeliveryPolicy: z.enum(["live-card", "direct-wait", "events"]).nullable(),
-  eventSubscription: eventSubscriptionStateSchema.nullable(),
+  eventSubscription: eventSubscriptionStateSchema.nullable().optional(),
   requestedModel: z.string().nullable(),
   requestedReasoningEffort: z.string().nullable(),
   actualModel: z.string().nullable(),
@@ -520,7 +520,8 @@ const codexTaskOutputSchema = z.strictObject({
   error: taskStructuredErrorOutputSchema.nullable(),
   warnings: z.array(z.string()),
   nextActions: z.array(monitoringNextActionOutputSchema)
-}).superRefine((value, context) => {
+});
+function refineTaskOutput(value: z.infer<typeof codexTaskOutputBase>, context: z.RefinementCtx) {
   const issue = (path: string[], message: string) => context.addIssue({ code: "custom", path, message });
   const hasJob = value.jobId !== null;
   const active = value.state === "running" || value.state === "terminating" || value.state === "termination-failed";
@@ -543,7 +544,7 @@ const codexTaskOutputSchema = z.strictObject({
       issue(["state"], "A pre-admission task result must be terminal, unavailable, and carry a structured error.");
     }
     for (const field of ["activityId", "agentId", "threadId", "requestId", "approvedFollowups", "jobVersion", "activityVersion", "backend", "sandbox", "completionDeliveryPolicy", "eventSubscription"] as const) {
-      if (value[field] !== null) issue([field], "A pre-admission task result cannot contain Job identity or execution fields.");
+      if (value[field] != null) issue([field], "A pre-admission task result cannot contain Job identity or execution fields.");
     }
     return;
   }
@@ -554,7 +555,7 @@ const codexTaskOutputSchema = z.strictObject({
   for (const field of ["activityId", "agentId", "requestId", "jobVersion", "backend", "sandbox", "completionDeliveryPolicy"] as const) {
     if (value[field] === null) issue([field], "An admitted Job result requires its current identity and execution fields.");
   }
-  if ((value.completionDeliveryPolicy === "events") !== (value.eventSubscription !== null)) {
+  if (value.eventSubscription != null && value.completionDeliveryPolicy !== "events") {
     issue(["eventSubscription"], "Only an Events Job must expose its actual subscription state.");
   }
   if (active) {
@@ -583,7 +584,10 @@ const codexTaskOutputSchema = z.strictObject({
   if (terminalFailure && (value.delivery !== "none" || value.resultAvailability !== "unavailable" || value.answer !== null || value.error === null)) {
     issue(["state"], "A failed, interrupted, or cancelled Job must expose only a terminal structured error.");
   }
-});
+}
+const codexTaskOutputSchema = codexTaskOutputBase.superRefine(refineTaskOutput);
+const ordinaryTaskOutputSchema = codexTaskOutputBase.omit({ eventSubscription: true })
+  .extend({ nextActions: z.array(modelNextActionOutputSchema) }).superRefine(refineTaskOutput);
 
 export const DASHBOARD_STATUSES = [
   "running",
@@ -759,21 +763,6 @@ const dashboardModelOutputSchema = z.strictObject({
   summary: z.string()
 });
 
-const jobCompletionDeliveryOutputSchema = z.strictObject({
-  kind: z.literal("job-completion-delivery"),
-  state: z.enum(["claimed", "waiting", "settled"]),
-  receipt: z.string().regex(/^completion-[a-f0-9]{64}$/).optional(),
-  attempt: z.number().int().min(1).optional(),
-  leaseExpiresAt: z.iso.datetime().optional(),
-  deliveryState: z.enum([
-    "pending",
-    "leased",
-    "host-rejected",
-    "host-accepted",
-    "acceptance-unknown",
-    "result-read"
-  ]).optional()
-});
 
 const cardEnrichmentOutputSchema = z.strictObject({
   state: z.enum(["structural", "enriched"]),
@@ -1148,6 +1137,12 @@ const codexStatusOutputSchema = z.strictObject({
   }).optional(),
   items: z.array(statusItemOutputSchema),
   warnings: z.array(z.string())
+});
+
+const ordinaryStatusOutputSchema = codexStatusOutputSchema.extend({
+  items: z.array(statusItemOutputSchema.omit({ eventSubscription: true }).extend({
+    nextActions: z.array(modelNextActionOutputSchema).optional()
+  }))
 });
 
 const projectStatusOutputSchema = z.strictObject({
@@ -1692,7 +1687,6 @@ export const OPERATOR_OUTPUT_SCHEMAS = Object.freeze({
 });
 export const APP_ONLY_OUTPUT_SCHEMAS = Object.freeze({
   codex_ui_read: z.union([dashboardViewOutputSchema, dashboardHistoryDetailOutputSchema, settingsViewOutputSchema, modelDescriptionHistoryPageOutputSchema, uiControlSummaryOutputSchema]),
-  codex_ui_completion: jobCompletionDeliveryOutputSchema,
   codex_ui_problem: problemActionResultSchema,
   codex_interaction_respond: mutationOutputSchema,
   codex_update_settings: settingsViewOutputSchema
@@ -2215,6 +2209,7 @@ export class CodexJobRegistry {
   private readonly activityStore: BridgeStateStore;
   private readonly allowedRoots: string[];
   private eventDeliveryPrincipal?: string;
+  private eventDeliveryProfileEnabled = false;
   // HTTP requests and the native companion share one runtime admission gate.
   readonly runtimeAdmission: {
     acceptingNewJobs: boolean;
@@ -2410,7 +2405,9 @@ export class CodexJobRegistry {
     return this.activityStore;
   }
 
-  configureEventDelivery(principal?: string): void { this.eventDeliveryPrincipal = principal; }
+  configureEventDelivery(principal?: string, enabled = true): void { this.eventDeliveryPrincipal = principal; this.eventDeliveryProfileEnabled = enabled; }
+
+  get experimentalEventsEnabled(): boolean { return this.eventDeliveryProfileEnabled; }
 
   eventDeliveryAvailableFor(job: Pick<CodexJob, "mcpPrincipal">): boolean {
     return this.eventDeliveryPrincipal !== undefined && this.eventDeliveryPrincipal === job.mcpPrincipal && !this.activityStore.readOnly;
@@ -3330,7 +3327,7 @@ export class CodexJobRegistry {
       trackingState: "liveness-unknown",
       bridgeInstanceId: this.activityStore.bridgeInstanceId,
       requestHashVersion: input.requestHashVersion || CURRENT_TASK_REQUEST_HASH_VERSION,
-      completionDeliveryPolicy: input.completionDeliveryPolicy || "live-card",
+      completionDeliveryPolicy: input.completionDeliveryPolicy || "direct-wait",
       jobId: randomUUID(),
       executionReceipt: this.upstream?.supportsExecutionRecovery?.() === true,
       createdAt: now,
@@ -5323,7 +5320,7 @@ export function registerBridgeTools(
     },
     async claimNativeCompletionNotifications(input) {
       // Native alerts are a separate, explicit Activity channel. They never
-      // stand in for the default live-card ChatGPT completion delivery.
+      // stand in for ordinary exact-result review in ChatGPT.
       return jobs.claimNativeCompletionNotifications(input.limit ?? 10, input.leaseOwner)
         .flatMap((record) => record.channel === "notify"
           ? [nativeCompletionNotification({
@@ -5981,27 +5978,10 @@ export function registerBridgeTools(
   );
 
   const codexDashboardInput = z.strictObject({
-    scopeId: scopeIdSchema()
-      .optional()
-      .describe("Conversation UUID for hosts that do not supply scoped MCP metadata."),
-    scope: z.enum(["conversation", "all"]).optional().describe(
-      "Open a conversation-scoped Dashboard when the host identifies this conversation, or open all retained work."
-    ),
-    jobId: z.string().uuid().optional().describe(
-      "Exact asynchronous Job from a codex_task Dashboard render action. It may be used only with scope='conversation'."
-    ),
-    presentationRef: z.string().regex(/^[a-f0-9]{64}$/).optional().describe(
-      "Non-authorizing correlation reference paired with jobId by a codex_task Dashboard render action."
-    )
-  }).superRefine((value, context) => {
-    if (Boolean(value.jobId) !== Boolean(value.presentationRef)) {
-      context.addIssue({
-        code: "custom",
-        path: value.jobId ? ["presentationRef"] : ["jobId"],
-        message: "jobId and presentationRef must be supplied together."
-      });
-    }
+    scopeId: scopeIdSchema().optional(),
+    scope: z.enum(["conversation", "all"]).optional()
   });
+
   const dashboardSnapshotInput = z.strictObject({
     problems: problemQuerySchema.optional(),
     scopeId: scopeIdSchema().optional(),
@@ -6029,47 +6009,12 @@ export function registerBridgeTools(
     scopeId: scopeIdSchema().optional(),
     scope: z.enum(["conversation", "all"])
   });
-  const jobCompletionIdentityInput = {
-    jobId: z.string().uuid(),
-    presentationRef: z.string().regex(/^[a-f0-9]{64}$/),
-    widgetInstanceId: widgetInstanceIdSchema
-  } as const;
-  const jobCompletionReceiptInput = z.string().regex(/^completion-[a-f0-9]{64}$/);
-  const jobCompletionDeliveryInput = z.discriminatedUnion("operation", [
-    z.strictObject({
-      operation: z.literal("wait"),
-      ...jobCompletionIdentityInput,
-      waitMs: z.number().int().min(1).max(10_000).optional()
-    }),
-    z.strictObject({
-      operation: z.literal("accepted"),
-      ...jobCompletionIdentityInput,
-      receipt: jobCompletionReceiptInput
-    }),
-    z.strictObject({
-      operation: z.literal("rejected"),
-      ...jobCompletionIdentityInput,
-      receipt: jobCompletionReceiptInput,
-      error: z.string().max(500).optional()
-    }),
-    z.strictObject({
-      operation: z.literal("uncertain"),
-      ...jobCompletionIdentityInput,
-      receipt: jobCompletionReceiptInput
-    }),
-    z.strictObject({
-      operation: z.literal("release"),
-      ...jobCompletionIdentityInput,
-      receipt: jobCompletionReceiptInput
-    })
-  ]);
-
   server.registerTool(
     "codex_dashboard",
     {
       title: `${PRODUCT_INFO.displayName} Codex Status`,
       description:
-        "Open the Codex status card. It starts with this conversation when it has Activity or Job records, including completed history; otherwise it shows all conversations. For a codex_task result that supplies a Dashboard render action, call this tool immediately with its scope, jobId, and presentationRef before replying; that scoped render mounts the automatic Dashboard in that conversation. The user can switch between this conversation and all work in the card.",
+        "Open the Codex status card only when the user explicitly requests to see the card or Dashboard. A request to check status uses structured codex_status reads. Admission, completion, errors, questions, approvals, timeouts and notifications never authorize automatic opening. The explicitly opened card displays state, history, problems and existing management controls; it never sends chat messages or launches followups.",
       inputSchema: codexDashboardInput,
       outputSchema: dashboardModelOutputSchema,
       annotations: {
@@ -6088,55 +6033,16 @@ export function registerBridgeTools(
       if (args.scope === "conversation" && !scope) {
         throw new Error("DASHBOARD_CONVERSATION_UNAVAILABLE: Reopen the Dashboard in its conversation.");
       }
-      const presentationJob = args.jobId
-        ? (() => {
-            if (args.scope !== "conversation" || !scope) {
-              throw new Error(
-                "DASHBOARD_AUTOMATIC_PRESENTATION_UNAVAILABLE: Render the Dashboard in the originating conversation."
-              );
-            }
-            const job = jobs.get(args.jobId);
-            if (!job || job.scopeId !== scope.scopeId) {
-              throw new Error(
-                "DASHBOARD_AUTOMATIC_PRESENTATION_UNAVAILABLE: The requested work is unavailable in this conversation."
-              );
-            }
-            if (args.presentationRef !== dashboardPresentationRef(job)) {
-              throw new Error(
-                "DASHBOARD_AUTOMATIC_PRESENTATION_UNAVAILABLE: Refresh the exact Dashboard render action for this Job."
-              );
-            }
-            if (job.completionDeliveryPolicy === "events") {
-              throw new Error("DASHBOARD_AUTOMATIC_PRESENTATION_DISABLED: This Job uses Events. Open Dashboard manually without a completion presentation for status or control.");
-            }
-            return job;
-          })()
-        : undefined;
-      const automaticPresentation = Boolean(presentationJob);
-      const completionDeliveryRoute = presentationJob?.completionDeliveryPolicy;
-      const summary = presentationJob
-        ? presentationJob.completionDeliveryPolicy === "direct-wait"
-          ? "The originating conversation Dashboard is open for this Codex job; experimental direct-result delivery remains owned by the bounded status wait."
-          : "The originating conversation Dashboard is open for this Codex job."
-        : args.scope === "conversation"
+      const summary = args.scope === "conversation"
         ? "The Codex status card is open for this conversation."
-        : "The Codex status card is open. The card loads current retained work, starting with this conversation when it has records and otherwise showing all conversations.";
+        : "The Codex status card is open. It displays retained status, history and explicit management controls without sending chat messages.";
       return contractedToolResult(dashboardModelResultContract, {}, {
         kind: "dashboard", scope: "bridge-wide", readOnly: true,
         statusSource: "codex-runtime-only", summary
       }, { text: summary }, { appHydration: {
         "openai/locale": resolvePreferredUiLocale(userSettings.current.uiLocalePreference,
           metadataString(_meta, "openai/locale") || metadataString(_meta, "webplus/i18n")),
-        "codex/dashboardOpen@1": {
-          scope: automaticPresentation ? "conversation" : args.scope || "auto",
-          automatic: automaticPresentation,
-          ...(automaticPresentation
-            ? {
-                presentationRef: args.presentationRef,
-                completionDeliveryRoute: completionDeliveryRoute!
-              }
-            : {})
-        }
+        "codex/dashboardOpen@2": { scope: args.scope || "auto", automatic: false }
       } });
     }
   );
@@ -6243,12 +6149,6 @@ export function registerBridgeTools(
     (query) => query.waitMs === undefined || query.waitFor !== undefined,
     "waitFor is required whenever waitMs is sent."
   ).describe("Resolve one exact Job or minimal expired-result admission receipt by its scope-bound logical requestId.");
-  const statusCompletionQueryInput = z.strictObject({
-    kind: z.literal("completion"),
-    receipt: z.string().regex(/^completion-[a-f0-9]{64}$/).describe(
-      "Opaque receipt supplied by the live Dashboard completion message. The authenticated conversation scope remains authoritative."
-    )
-  }).describe("Read the exact retained terminal Job selected by a live Dashboard completion receipt.");
   const statusInputQueryInput = z.strictObject({
     kind: z.literal("input"),
     ...codexInputs.questionInputSchema.shape
@@ -6260,7 +6160,6 @@ export function registerBridgeTools(
   const codexStatusQueryInput = z.union([
     statusJobQueryInput,
     statusRequestQueryInput,
-    statusCompletionQueryInput,
     statusInputQueryInput,
     statusActivityQueryInput,
     statusThreadQueryInput,
@@ -6279,9 +6178,11 @@ export function registerBridgeTools(
     {
       title: `${PRODUCT_INFO.displayName} Status`,
       description:
-        "Read project selectors and Codex work state, ordinary questions, and results in the current conversation. Exact Job change/terminal waits are bounded reads; a terminal wait wakes only for terminal lifecycle state, not ordinary progress, and an aborted or timed-out read never cancels the Job. A Job marked completionDeliveryPolicy='direct-wait' requires repeated bounded terminal waits on that same exact Job until terminal; never replace it after a timeout, inspect the exact Job's supplied input action after every non-terminal return before waiting again, and stop at any new approval or user-input boundary. For the default live-card policy, a mounted originating Dashboard already watches terminal completion, so do not keep a parallel terminal wait solely to trigger the same completion delivery; manual exact reads remain supported. For an Events Job, completion subscription and resumption remain native Events: do not automatically poll, mount Dashboard or send ui/message as a fallback. Resumed ordinary calls must keep the original conversation scope; a subscriptionRef never authorizes results or execution. An authenticated exact Job or request query records only that the server offered a retained result; it does not prove GPT received the result and does not settle or cancel live-card delivery. The originating live-card component reads query kind='completion' with its opaque receipt and includes the exact public result in its completion message; that response is also offer evidence, the authenticated conversation scope is still required, and the receipt never authorizes cross-conversation access.",
+        "Read project selectors, exact Job state, current questions and original results in this conversation. Repeat bounded terminal waits on the same ordinary Job; timeout or host abort never cancels it or permits replacement. A terminal wait wakes only for terminal lifecycle state; inspect its exact input action after every non-terminal return. At a current question or approval, do not keep a parallel terminal wait. Stop at current approval or user-input boundaries, review the original result before approved followups, and keep the original scope. Summary reads contain no original answer; retrieve the supplied exact Job action. A response offer is not proof of GPT review. Status checks never require opening Dashboard.",
       inputSchema: codexStatusInput,
-      outputSchema: MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status,
+      outputSchema: config.experimentalProfile === "events" && config.eventsEnabled
+        ? MODEL_VISIBLE_OUTPUT_SCHEMAS.codex_status
+        : z.union([ordinaryStatusOutputSchema, CODEX_INPUT_MODEL_OUTPUT_SCHEMAS.status_input, projectStatusOutputSchema]),
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -6298,7 +6199,6 @@ export function registerBridgeTools(
         return codexInputs.readInput(input, extra);
       }
       const jobQuery = query?.kind === "job" || query?.kind === "request" ? query : undefined;
-      const completionQuery = query?.kind === "completion" ? query : undefined;
       const activityQuery = query?.kind === "activity" ? query : undefined;
       const threadQuery = query?.kind === "thread" ? query : undefined;
       const pageQuery = query?.kind === "page" ? query : undefined;
@@ -6315,54 +6215,6 @@ export function registerBridgeTools(
       }
       if (jobQuery?.waitMs && !jobQuery.waitFor) {
         throw new Error("waitMs requires waitFor='change' or waitFor='terminal'.");
-      }
-      if (completionQuery) {
-        const authenticatedScope = scopeResolver.resolve(
-          _meta as ToolCallMetadata,
-          undefined
-        );
-        if (!authenticatedScope || authenticatedScope.source !== "host-metadata") {
-          throw new Error(
-            "Completion lookup requires authenticated ChatGPT conversation metadata; an explicit scopeId is not authorization."
-          );
-        }
-        const completionScopeId = authenticatedScope.scopeId;
-        const delivery = jobs.admissionStateStore.getJobCompletionDeliveryByReceipt(
-          completionQuery.receipt,
-          completionScopeId
-        );
-        const job = delivery ? jobs.get(delivery.jobId) : undefined;
-        if (
-          !delivery ||
-          !job ||
-          job.scopeId !== completionScopeId ||
-          !isTerminalActivityJobStatus(job.status)
-        ) {
-          throw scopedHandleUnavailable("job");
-        }
-        const structured = {
-          kind: "job" as const,
-          ...formatJobStatus(job, jobs.staleThresholdMs, undefined, userSettings.current, jobs),
-          completionEvidence: exactJobCompletionEvidence(job, jobs),
-          inputs: {
-            cursor: codexInputCursor(job),
-            ordinaryQuestions: job.pendingInteractions.filter(ordinaryCodexQuestion).length,
-            approvalRequests: job.pendingInteractions.filter(q => !ordinaryCodexQuestion(q)).length,
-            readTool: "codex_status" as const,
-            queryKind: "input" as const
-          }
-        };
-        const result = statusToolResult(
-          compactStatusProjection(structured),
-          job,
-          config.maxJobResultBytes
-        );
-        jobs.admissionStateStore.recordJobCompletionResultOffer({
-          scopeId: completionScopeId,
-          source: "completion-receipt",
-          receipt: completionQuery.receipt
-        });
-        return result;
       }
       if (jobQuery) {
         if (!scopeId) {
@@ -6449,7 +6301,7 @@ export function registerBridgeTools(
         if (scopeResolution?.source === "host-metadata" && deliveredResult) {
           // Constructing a same-conversation tool response is not evidence that
           // ChatGPT received it. Record the offer for audit, but never consume
-          // the pending live-card delivery or steal its lease.
+          // the historical completion delivery state.
           jobs.admissionStateStore.recordJobCompletionResultOffer({
             scopeId,
             source: "direct-job-query",
@@ -8055,9 +7907,9 @@ export function registerBridgeTools(
     {
       title: "Run or Continue Codex Task",
       description:
-        "Durably admit one asynchronous Codex turn in the current conversation and return its exact Job identity without waiting for completion. Follow the returned Job's completionDeliveryPolicy and nextActions. Opt-in events delivery requires codex_event_access followed by native subscription for each exact Job, including every approved B; never mount Dashboard, send ui/message or automatically fall back to polling or schedules. The default live-card policy supplies a codex_dashboard render action: call it immediately before any prose response so the originating conversation mounts its exact live Dashboard and can resume ChatGPT once with the terminal result. The opt-in experimental direct-wait policy supplies an exact bounded terminal codex_status wait instead: repeat that same Job wait after timeout or host abort, inspect the supplied input action after every non-terminal return, review the terminal result, and continue only work already approved by the user; never cross a new approval or input boundary. Each admitted Job keeps its policy snapshot even if Settings changes later. Explicit Activity policies still control separate native notification and verification channels.",
+        "Durably admit one asynchronous Codex turn and return its exact Job identity immediately. Ordinary Jobs use direct-wait. Follow the returned Job nextActions: repeat bounded exact terminal waits, inspect input after each non-terminal return, review the original result, and continue only already-approved work. Never replace a Job after timeout or host abort. Open Dashboard only when the user explicitly requests its display; it never sends results or starts followups. Historical admission policy remains in records without enabling retired delivery." + (config.experimentalProfile === "events" && config.eventsEnabled ? " Explicit experimental completionDelivery=events requires original OAuth scope and codex_event_access for each exact Job; never fall back to another receiver." : ""),
       inputSchema: codexTaskInputSchema(config, taskExecutionEnvelopeRef()),
-      outputSchema: codexTaskOutputSchema,
+      outputSchema: config.experimentalProfile === "events" && config.eventsEnabled ? codexTaskOutputSchema : ordinaryTaskOutputSchema,
       annotations: codexTaskEnvelopeAnnotations(config)
     },
     async (args, extra) => {
@@ -8089,7 +7941,7 @@ export function registerBridgeTools(
         }
         if (args.completionDelivery === "events") {
           const hostScope = scopeResolver.resolve(_meta as ToolCallMetadata);
-          if (!config.eventsEnabled || !config.oauth || !args.mcpPrincipal || !hostScope ||
+          if (config.experimentalProfile !== "events" || !config.eventsEnabled || !config.oauth || !args.mcpPrincipal || !hostScope ||
               hostScope.source !== "host-metadata" || hostScope.scopeId !== scope.scopeId) {
             throw new Error("EVENTS_DELIVERY_UNAVAILABLE: Events admission requires enabled Events, OAuth authentication and original host conversation metadata.");
           }
@@ -8475,129 +8327,6 @@ export function registerBridgeTools(
       }
     }
   );
-  server.registerTool("codex_ui_completion", {
-    title: "Deliver Exact Job Completion",
-    description:
-      "App-only live Dashboard lease for one exact terminal Job. It coordinates a single standard ui/message attempt and records host acceptance, rejection, or uncertainty without treating the receipt as authorization.",
-    inputSchema: jobCompletionDeliveryInput,
-    outputSchema: jobCompletionDeliveryOutputSchema,
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false
-    },
-    _meta: {
-      ui: { visibility: ["app"] },
-      "openai/visibility": "private",
-      "openai/widgetAccessible": true
-    }
-  }, async (args, extra) => {
-    const scope = scopeResolver.require(
-      extra.mcpReq._meta as ToolCallMetadata,
-      undefined,
-      "Dashboard completion delivery"
-    );
-    const widgetInstanceId = mountedWidgetInstanceId(args, extra.mcpReq._meta);
-    if (!widgetInstanceId) {
-      throw new Error("MOUNTED_WIDGET_REQUIRED: Refresh the exact originating Dashboard.");
-    }
-    const current = jobs.get(args.jobId);
-    if (
-      !current ||
-      current.scopeId !== scope.scopeId ||
-      args.presentationRef !== dashboardPresentationRef(current)
-    ) {
-      throw new Error(
-        "COMPLETION_PRESENTATION_MISMATCH: Refresh the exact Dashboard render action for this Job."
-      );
-    }
-    if (current.completionDeliveryPolicy !== "live-card") {
-      const structured = jobCompletionDeliveryOutputSchema.parse({
-        kind: "job-completion-delivery",
-        state: "settled"
-      });
-      return {
-        content: [{ type: "text", text: "This Job's completion policy disables live-card delivery." }],
-        structuredContent: structured
-      };
-    }
-    const store = jobs.admissionStateStore;
-    let record;
-    if (args.operation === "wait") {
-      let job = current;
-      if (isActiveActivityJobStatus(job.status)) {
-        const waited = await jobs.wait(
-          job.jobId,
-          "terminal",
-          args.waitMs ?? 8_000,
-          extra.mcpReq.signal,
-          "dashboard-completion"
-        );
-        job = waited.job;
-      }
-      if (isActiveActivityJobStatus(job.status)) {
-        const structured = jobCompletionDeliveryOutputSchema.parse({
-          kind: "job-completion-delivery",
-          state: "waiting"
-        });
-        return { content: [{ type: "text", text: "Completion is not ready." }], structuredContent: structured };
-      }
-      record = store.claimJobCompletionDelivery(
-        job.jobId,
-        scope.scopeId,
-        widgetInstanceId
-      );
-      if (record) {
-        const structured = jobCompletionDeliveryOutputSchema.parse({
-          kind: "job-completion-delivery",
-          state: "claimed",
-          receipt: record.receipt,
-          attempt: record.attemptCount,
-          leaseExpiresAt: new Date(record.leaseExpiresAt!).toISOString(),
-          deliveryState: record.state
-        });
-        return { content: [{ type: "text", text: "Completion delivery lease claimed." }], structuredContent: structured };
-      }
-      const existing = store.getJobCompletionDelivery(job.jobId, scope.scopeId);
-      const settled = Boolean(existing && (
-        existing.state === "host-accepted" ||
-        existing.state === "acceptance-unknown" ||
-        existing.state === "result-read" ||
-        existing.state === "host-rejected" && existing.attemptCount >= 3
-      ));
-      const structured = jobCompletionDeliveryOutputSchema.parse({
-        kind: "job-completion-delivery",
-        state: settled ? "settled" : "waiting",
-        ...(existing ? { deliveryState: existing.state } : {})
-      });
-      return { content: [{ type: "text", text: settled ? "Completion delivery is settled." : "Completion delivery is waiting." }], structuredContent: structured };
-    }
-
-    const mutation = {
-      jobId: current.jobId,
-      scopeId: scope.scopeId,
-      receipt: args.receipt,
-      leaseOwner: widgetInstanceId
-    };
-    record = args.operation === "accepted"
-      ? store.markJobCompletionHostAccepted(mutation)
-      : args.operation === "rejected"
-        ? store.markJobCompletionHostRejected({ ...mutation, error: args.error })
-        : args.operation === "uncertain"
-          ? store.markJobCompletionAcceptanceUnknown(mutation)
-          : store.releaseJobCompletionDelivery(mutation);
-    const structured = jobCompletionDeliveryOutputSchema.parse({
-      kind: "job-completion-delivery",
-      state: record.state === "host-rejected" && record.attemptCount < 3
-        ? "waiting"
-        : record.state === "pending"
-          ? "waiting"
-          : "settled",
-      deliveryState: record.state
-    });
-    return { content: [{ type: "text", text: "Completion delivery state recorded." }], structuredContent: structured };
-  });
   server.registerTool("codex_ui_read", {
     title: "Read Card Data", description: "App-only data reads for Dashboard, Settings, and selected work details. Each view retains its own scope and proof checks.",
     inputSchema: z.union([
@@ -8915,6 +8644,10 @@ function resolveApprovedFollowup(args: CodexTaskArgs, jobs: CodexJobRegistry, sc
     throw new Error("FOLLOWUP_SCOPE_CHANGED: Approved followups must continue the original Activity, Agent, project and model selection.");
   }
   if (!receipt.admittedJobId) {
+    if (receipt.completionDeliveryPolicy === "live-card" ||
+        receipt.completionDeliveryPolicy === "events" && !jobs.experimentalEventsEnabled) {
+      throw new Error("FOLLOWUP_DELIVERY_RETIRED: This unexecuted historical approval uses a retired delivery policy. Review the original result and obtain explicit reapproval as new logical work with a fresh requestId in the original Activity and Agent. The old approval and canonical requestId remain unchanged.");
+    }
     if (jobs.peekRequest(scopeId, receipt.requestId)) {
       throw new Error("FOLLOWUP_ADMISSION_CONFLICT: The approved step's canonical requestId is already occupied by different work.");
     }
@@ -9100,7 +8833,7 @@ class AgentThreadResumeError extends Error {
       ? "The backend reports that this Agent thread is missing or in a system-error state. Use contextMode='fresh' for an explicit replacement."
       : code === "AGENT_THREAD_BUSY"
         ? "The Agent thread already has an active App Server turn. Wait for that turn to finish, then retry."
-        : "The bridge could not verify the Agent thread because the App Server probe was unavailable. Retry without replacing the Agent thread."
+        : `The bridge could not verify the Agent thread because the App Server probe was unavailable (${probe.state === "unknown" ? probe.reason : "unavailable"}). Retry without replacing the Agent thread.`
     super(`${code}: ${message}`);
     this.name = "AgentThreadResumeError";
   }
@@ -10193,11 +9926,7 @@ async function runCodex(input: {
       contextMode: input.contextMode,
       role: input.agentRole
     });
-    const completionDeliveryPolicy: CompletionDeliveryPolicy = input.routing.completionDeliveryPolicy ||
-      ((input.userSettings?.current.experimentalDirectResultDelivery ??
-        input.preferences.experimentalDirectResultDelivery)
-        ? "direct-wait"
-        : "live-card");
+    const completionDeliveryPolicy: CompletionDeliveryPolicy = input.routing.completionDeliveryPolicy || "direct-wait";
     job = input.jobs.start(
       {
         operation: input.operation,
@@ -10682,7 +10411,7 @@ function formatJobStatus(
       : [])
   ];
   const eventsAvailable = registry?.eventDeliveryAvailableFor(job);
-  let eventSubscription: EventSubscriptionState | undefined = job.completionDeliveryPolicy === "events"
+  let eventSubscription: EventSubscriptionState | undefined = registry?.experimentalEventsEnabled && job.completionDeliveryPolicy === "events"
     ? registry?.admissionStateStore.mcpEventAccess.subscriptionState(job) || { state: "unavailable", reason: "runtime_unavailable" }
     : undefined;
   const monitoringStopped = eventMonitoringStopGuidance(eventSubscription);
@@ -10701,7 +10430,7 @@ function formatJobStatus(
         userPrompt: "Obtain or recover this exact Job's Bridge-issued subscriptionRef in the original conversation. Preserve its event arguments through native subscribe, refresh and unsubscribe. If subscription fails, report the failure and preserve the Job; do not mount Dashboard, send ui/message, schedule a task or repeatedly poll for completion."
       }]
     : active
-    ? job.completionDeliveryPolicy === "direct-wait"
+    ? job.completionDeliveryPolicy !== "events"
       ? [
           {
             tool: "codex_status",
@@ -10729,21 +10458,7 @@ function formatJobStatus(
               "If the Job requests input or approval, stop automatic continuation at that boundary and surface it to the user."
           }
         ]
-      : [
-          { tool: "codex_status", arguments: { query: { kind: "input", jobId: job.jobId, waitMs: DEFAULT_CODEX_STATUS_WAIT_MS } } },
-          ...(dashboard.automatic
-            ? [{
-                tool: "codex_dashboard",
-                arguments: {
-                  scope: "conversation",
-                  jobId: job.jobId,
-                  presentationRef: dashboardPresentationRef(job)
-                },
-                userPrompt:
-                  "Call this render tool before replying so the originating Dashboard is mounted."
-              }]
-            : [])
-        ]
+      : [{ tool: "codex_status", arguments: { query: { kind: "input", jobId: job.jobId, waitMs: DEFAULT_CODEX_STATUS_WAIT_MS } } }]
     : [];
   return {
     status: job.status,
@@ -10820,8 +10535,8 @@ function formatJobStatus(
             ? "Codex termination is unconfirmed; refresh status and retry the explicit cancellation if needed."
             : job.trackingState === "liveness-unknown"
               ? "This Job's last committed state is active, but current execution-owner liveness is unconfirmed. Recover the same Job and original result; do not start a replacement turn from this observation."
-            : job.completionDeliveryPolicy === "direct-wait"
-              ? "Codex is running independently in experimental direct-result mode. Keep the current orchestration active with bounded terminal waits on this exact Job; a timeout or aborted read does not cancel it."
+            : job.completionDeliveryPolicy !== "events"
+              ? "Codex is running independently with direct result delivery. Keep the current orchestration active with bounded terminal waits on this exact Job; a timeout or aborted read does not cancel it."
               : job.completionDeliveryPolicy === "events"
                 ? monitoringStopped || deliveryFailed || (eventsAvailable
                   ? "Codex is running with card-free Events intent. Ensure this exact Job's native subscription is active. Subscription or input failure requires an explicit report; never automatically fall back to Dashboard, ui/message, schedules or repeated polling."
@@ -10864,38 +10579,21 @@ function exactJobCompletionEvidence(job: CodexJob, registry: CodexJobRegistry) {
   };
 }
 
-/**
- * Correlates the host's Dashboard tool input with its private tool result.
- * This digest is deliberately not an authorization credential: the render
- * handler still resolves host scope and verifies exact Job ownership.
- */
-function dashboardPresentationRef(
-  job: Pick<CodexJob, "jobId" | "scopeId">
-): string {
-  return createHash("sha256")
-    .update("codex-dashboard-presentation-v1", "utf8")
-    .update("\0", "utf8")
-    .update(job.scopeId, "utf8")
-    .update("\0", "utf8")
-    .update(job.jobId, "utf8")
-    .digest("hex");
-}
-
+/** Display is explicit even when the stored Job used a historical policy. */
 function dashboardPresentationHint(
   job: Pick<CodexJob, "activityId" | "completionDeliveryPolicy">,
   _preferences?: BridgeUserSettings,
   registry?: CodexJobRegistry
 ) {
   void registry;
-  const direct = job.completionDeliveryPolicy === "direct-wait";
   const events = job.completionDeliveryPolicy === "events";
   return {
     statusTool: "codex_status",
     openTool: "codex_dashboard",
     scope: "conversation",
-    automatic: !direct && !events,
-    reason: events ? "events" as const : direct ? "experimental-direct-wait" as const : "default" as const,
-    completionDeliveryRoute: job.completionDeliveryPolicy
+    automatic: false as const,
+    reason: events ? "events" as const : "direct-wait" as const,
+    completionDeliveryRoute: events ? "events" as const : "direct-wait" as const
   };
 }
 
@@ -13981,9 +13679,11 @@ function codexTaskInputSchema(
     executionEnvelopeRef: z.literal(executionEnvelopeRefValue).describe(
       "Opaque installation/operator envelope. Settings, catalog, and project changes do not change this value."
     ),
+    ...(config.experimentalProfile === "events" && config.eventsEnabled ? {
     completionDelivery: z.literal("events").optional().describe(
-      "Card-free completion for this Job and its preapproved followups. Requires enabled Events, OAuth and original host conversation metadata. Obtain its subscriptionRef with codex_event_access and subscribe through native Events; never mount Dashboard or fall back to cards, scheduled tasks or repeated polling. Omit for the existing Settings delivery policy."
+      "Card-free completion for this Job and its preapproved followups. Requires enabled Events, OAuth and original host conversation metadata. Obtain its subscriptionRef with codex_event_access and subscribe through native Events; never mount Dashboard or fall back to cards, scheduled tasks or repeated polling. Omit for ordinary direct-wait admission."
     ),
+    } : {}),
     requestId,
     prompt,
     project,
@@ -15703,7 +15403,7 @@ function taskProjectionForJob(
     backend: semantic.backendKind,
     sandbox: semantic.sandbox,
     completionDeliveryPolicy: semantic.completionDeliveryPolicy,
-    eventSubscription: semantic.eventSubscription || null,
+    ...(semantic.eventSubscription ? { eventSubscription: semantic.eventSubscription } : {}),
     requestedModel: semantic.executionAudit?.requested?.model ?? null,
     requestedReasoningEffort: semantic.executionAudit?.requested?.reasoningEffort ?? null,
     actualModel: semantic.executionAudit?.actual.model ?? null,
@@ -15722,9 +15422,9 @@ function taskProjectionForJob(
       ...(semantic.terminal
         ? []
         : [guidance(
-            semantic.completionDeliveryPolicy === "direct-wait"
-              ? "Experimental direct-result mode applies to this Job. After every non-terminal return, inspect the supplied exact-Job input action before repeating a bounded terminal wait on this same Job. Review the terminal result and continue only already-approved work; stop at any new approval or user-input boundary. If the GPT run ends, the user must request an exact-Job read in the originating conversation; there is no automatic live-card fallback."
-              : semantic.completionDeliveryPolicy === "events"
+            semantic.completionDeliveryPolicy !== "events"
+              ? "Direct result delivery applies to this Job. After every non-terminal return, inspect the supplied exact-Job input action before repeating a bounded terminal wait on this same Job. Review the terminal result and continue only already-approved work; stop at any new approval or user-input boundary. If the GPT run ends, the user must request an exact-Job read in the originating conversation; there is no automatic live-card fallback."
+              : semantic.completionDeliveryPolicy === "events" && semantic.eventSubscription
                 ? eventMonitoringStopGuidance(semantic.eventSubscription) || eventDeliveryFailureGuidance(semantic.eventSubscription) ||
                   (semantic.eventSubscription?.state === "unavailable" && semantic.eventSubscription.reason !== "expired"
                     ? "This Job's Events monitoring is unavailable. Report that state and preserve the original Job for manual exact reads; do not automatically issue access, restore card delivery, schedule tasks or repeatedly poll."
@@ -16100,15 +15800,6 @@ function taskCompatibilityText(value: z.infer<typeof codexTaskOutputSchema>): st
   }
   if (value.state === "cancelled") {
     return "Codex was cancelled. Partial filesystem changes may remain.";
-  }
-  const dashboardAction = value.nextActions.find(
-    (action) => action.kind === "tool" && action.tool === "codex_dashboard"
-  );
-  if (dashboardAction) {
-    return (
-      `Codex job ${value.jobId || "unassigned"} is ${value.state}. ` +
-      `Required before replying: ${nextActionSummary(dashboardAction)}`
-    );
   }
   const directWaitAction = value.nextActions.find(
     (action) => action.kind === "tool" &&
@@ -16577,7 +16268,6 @@ function taskPreflightErrorResult(
     backend: null,
     sandbox: null,
     completionDeliveryPolicy: null,
-    eventSubscription: null,
     requestedModel: null,
     requestedReasoningEffort: null,
     actualModel: null,
@@ -16606,4 +16296,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isInputInteraction(interaction: CodexPendingInteraction): boolean {
   return interaction.kind === "user-input" || interaction.kind === "mcp-elicitation";
+}
+
+export function retiredTaskDeliveryError(code: string, message: string): ToolResult {
+  return taskPreflightErrorResult({ code, message, retryable: false });
 }

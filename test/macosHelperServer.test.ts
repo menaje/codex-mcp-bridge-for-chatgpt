@@ -1,3 +1,4 @@
+import { historicalCompletion } from "./fixtures/historicalCompletion.js";
 import {
   chmodSync,
   mkdirSync,
@@ -296,11 +297,8 @@ describe("central runtime lifecycle reservations", () => {
     if (protection === "user-hold") {
       store.holdResult(jobId, "Keep the original result", Date.now() + 60_000);
     } else {
-      const leaseOwner = randomUUID();
-      const leased = store.claimJobCompletionDelivery(jobId, scopeId, leaseOwner)!;
-      const input = { jobId, scopeId, leaseOwner, receipt: leased.receipt };
-      if (protection === "host-accepted") store.markJobCompletionHostAccepted(input);
-      else store.markJobCompletionAcceptanceUnknown(input);
+      historicalCompletion(store, jobId, protection, protection === "host-accepted"
+        ? { host_accepted_at: Date.now() } : { acceptance_unknown_at: Date.now() });
     }
     const delivery = store.getJobCompletionDelivery(jobId, scopeId);
     const reason = protection === "user-hold" ? "user-hold" : "undelivered-chatgpt-result";
@@ -396,14 +394,7 @@ describe("central runtime lifecycle reservations", () => {
       result: { content: [{ type: "text", text: "retained after helper restart" }] }
     } as any);
     const completion = original.getJobCompletionDelivery(jobId, scopeId)!;
-    original.claimJobCompletionDelivery(jobId, scopeId, owner, 1_000, 10);
-    original.markJobCompletionAcceptanceUnknown({
-      jobId,
-      scopeId,
-      receipt: completion.receipt,
-      leaseOwner: owner,
-      now: 11
-    });
+    historicalCompletion(original, jobId, "acceptance-unknown", { acceptance_unknown_at: 11 });
     original.close();
 
     const f = await lifecycleFixture();

@@ -87,6 +87,17 @@ describe("persistent stdio bridge", { timeout: 15_000 }, () => {
       expect(before.inputSchema.properties).not.toHaveProperty("executionPolicyRef");
       expect((before.inputSchema.properties?.taskContractVersion as { const?: string }).const).toBe("6");
 
+      expect(before.inputSchema.properties).not.toHaveProperty("completionDelivery");
+      expect(JSON.stringify(before.outputSchema)).not.toContain("eventSubscription");
+      expect((await client.listTools()).tools.map(tool => tool.name)).not.toContain("codex_ui_completion");
+      for (const operation of ["wait", "accepted", "rejected", "uncertain", "release"]) {
+        const retired = await client.callTool({ name: "codex_ui_completion", arguments: { operation } });
+        expect(retired.isError).toBe(true);
+        expect(JSON.stringify(retired)).toContain("CARD_DELIVERY_RETIRED");
+      }
+      const oldQuery = await client.callTool({ name: "codex_status", arguments: { query: { kind: "completion", receipt: "old" } } });
+      expect(JSON.stringify(oldQuery)).toContain("CARD_DELIVERY_RETIRED");
+      expect(stateStore.listJobs()).toEqual([]);
       const models = await client.callTool({ name: "codex_models", arguments: { refresh: true } });
       expect(models.isError).not.toBe(true);
       expect(models.structuredContent).toMatchObject({ contractVersion: "2" });

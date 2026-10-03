@@ -1,3 +1,4 @@
+import { installLocalFixtureAuth } from "./local-fixture-auth.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -12,6 +13,7 @@ const dist = process.env.CODEX_TEST_BUNDLE_DIST;
 const durationMs = Number(process.env.CODEX_TEST_OBSERVATION_OUTAGE_MS || 90_000);
 assert(Number.isInteger(durationMs) && durationMs >= 30_000 && durationMs <= 600_000);
 const root = await mkdtemp(path.join(tmpdir(), "issue-186-observation-"));
+installLocalFixtureAuth(root);
 const stateFile = path.join(root, "state.sqlite");
 const faultFile = path.join(root, "fault.json");
 const traceFile = path.join(root, "probes.jsonl");

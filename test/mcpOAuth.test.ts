@@ -87,7 +87,7 @@ async function start(options: { root?: string; sender?: WebhookSender; bearer?: 
   const config = loadConfig({ ...(options.bearer ? {} : oauthEnv),
     ...(options.localMetadata ? { CODEX_MCP_BRIDGE_PORT: String(metadataPort),
       CODEX_MCP_BRIDGE_OAUTH_RESOURCE_METADATA_URL: `http://127.0.0.1:${metadataPort}/.well-known/oauth-protected-resource/mcp` } : {}),
-    CODEX_MCP_BRIDGE_TOKEN: sealingKey, CODEX_MCP_BRIDGE_EVENTS_ENABLED: "1",
+    CODEX_MCP_BRIDGE_TOKEN: sealingKey, CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE: "events", CODEX_MCP_BRIDGE_EVENTS_ENABLED: "1",
     CODEX_MCP_BRIDGE_ROOTS: root, CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(root, "state.sqlite") });
   const settings = new UserSettingsStore(config, { stateStore: state });
   if (!options.root) {
@@ -209,8 +209,8 @@ describe("MCP OAuth configuration and HTTP discovery", () => {
     expect(loadConfig(oauthEnv).oauth?.issuer).toBe(oauthEnv.CODEX_MCP_BRIDGE_OAUTH_ISSUER);
     expect(() => loadConfig({ CODEX_MCP_BRIDGE_OAUTH_ISSUER: oauthEnv.CODEX_MCP_BRIDGE_OAUTH_ISSUER })).toThrow("OAUTH_OPERATOR_SUBJECT");
     expect(() => loadConfig({ ...oauthEnv, CODEX_MCP_BRIDGE_NO_AUTH: "1" })).toThrow("cannot be combined");
-    expect(() => loadConfig({ ...oauthEnv, CODEX_MCP_BRIDGE_EVENTS_ENABLED: "1" })).toThrow("32 bytes");
-    expect(() => loadConfig({ ...oauthEnv, CODEX_MCP_BRIDGE_EVENTS_ENABLED: "1", CODEX_MCP_BRIDGE_TOKEN: "weak" })).toThrow("32 bytes");
+    expect(() => loadConfig({ ...oauthEnv, CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE: "events", CODEX_MCP_BRIDGE_EVENTS_ENABLED: "1" })).toThrow("32 bytes");
+    expect(() => loadConfig({ ...oauthEnv, CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE: "events", CODEX_MCP_BRIDGE_EVENTS_ENABLED: "1", CODEX_MCP_BRIDGE_TOKEN: "weak" })).toThrow("32 bytes");
     for (const issuer of ["http://id.example", "https://user:secret@id.example", "https://id.example/#x", "https://id.example/?secret=x", "https://id.example/\n"]) {
       expect(() => loadConfig({ ...oauthEnv, CODEX_MCP_BRIDGE_OAUTH_ISSUER: issuer })).toThrow();
     }
@@ -236,7 +236,7 @@ describe("MCP OAuth configuration and HTTP discovery", () => {
     }
     expect((await rpc(f, "server/discover")).body.result.capabilities.events).toEqual({});
     const list = await rpc(f, "tools/list");
-    expect(list.body.result.tools).toHaveLength(18);
+    expect(list.body.result.tools).toHaveLength(17);
     for (const tool of list.body.result.tools) {
       expect(tool.securitySchemes).toEqual([{ type: "oauth2", scopes: ["bridge"] }]);
       expect(tool._meta.securitySchemes).toEqual(tool.securitySchemes);

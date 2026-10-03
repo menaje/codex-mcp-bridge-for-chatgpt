@@ -70,28 +70,28 @@ describe("user settings and project registry", () => {
     restored.stateStore.close();
   });
 
-  it("defaults experimental direct-result delivery off, persists it, and migrates older settings off", () => {
+  it.each([true, false, undefined])("normalizes retired direct-result preference %s once without changing other settings", legacyValue => {
     const databaseFile = path.join(temporaryDirectory("settings-direct-results-"), "state.sqlite");
     const config = configFor();
     const first = persistentSettings(config, databaseFile);
-    expect(first.settings.current.experimentalDirectResultDelivery).toBe(false);
-    first.settings.update({ experimentalDirectResultDelivery: true }, 0);
     expect(first.settings.current.experimentalDirectResultDelivery).toBe(true);
+    first.settings.update({ uiLocalePreference: "ko", historyRetentionDays: 7, experimentalDirectResultDelivery: false }, 0);
+    expect(first.settings.current.experimentalDirectResultDelivery).toBe(true);
+    const legacy = first.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
+    if (legacyValue === undefined) delete legacy.experimentalDirectResultDelivery;
+    else legacy.experimentalDirectResultDelivery = legacyValue;
     first.stateStore.close();
-
-    const second = persistentSettings(config, databaseFile);
-    expect(second.settings.current.experimentalDirectResultDelivery).toBe(true);
-    const legacy = second.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
-    legacy.schemaVersion = 6;
-    delete legacy.experimentalDirectResultDelivery;
-    second.stateStore.close();
     replaceStoredSettingsPayloadForTest(databaseFile, legacy);
-
-    const restored = persistentSettings(config, databaseFile);
-    expect(restored.settings.current.experimentalDirectResultDelivery).toBe(false);
-    expect((restored.stateStore.getSettingsRecord()!.payload as Record<string, unknown>))
-      .toMatchObject({ schemaVersion: 7, experimentalDirectResultDelivery: false });
-    restored.stateStore.close();
+    const migrated = persistentSettings(config, databaseFile);
+    expect(migrated.settings.current).toMatchObject({ experimentalDirectResultDelivery: true, uiLocalePreference: "ko", historyRetentionDays: 7 });
+    const normalized = migrated.stateStore.getSettingsRecord();
+    const marker = migrated.stateStore.getMeta("ordinary_delivery_transition_v2");
+    expect(JSON.parse(marker!)).toMatchObject({ policy: "direct-wait", cardSender: "retired", historicalAdmissions: "preserved" });
+    migrated.stateStore.close();
+    const restarted = persistentSettings(config, databaseFile);
+    expect(restarted.stateStore.getSettingsRecord()).toEqual(normalized);
+    expect(restarted.stateStore.getMeta("ordinary_delivery_transition_v2")).toBe(marker);
+    restarted.stateStore.close();
   });
 
   it("retires legacy Dashboard and completion delivery preferences", () => {

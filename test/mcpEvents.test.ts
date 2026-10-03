@@ -62,7 +62,7 @@ async function start(sender?: WebhookSender, noAuth = false, database?: { root: 
   const root = database?.root || await mkdtemp(path.join(tmpdir(), "issue-213-"));
   const state = database?.state || new BridgeStateStore({ file: path.join(root, "state.sqlite") });
   const config = loadConfig({ CODEX_MCP_BRIDGE_TOKEN: token, CODEX_MCP_BRIDGE_NO_AUTH: noAuth ? "1" : "0",
-    CODEX_MCP_BRIDGE_EVENTS_ENABLED: "1", CODEX_MCP_BRIDGE_ROOTS: root,
+    CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE: "events", CODEX_MCP_BRIDGE_EVENTS_ENABLED: "1", CODEX_MCP_BRIDGE_ROOTS: root,
     CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(root, "state.sqlite") });
   const settings = new UserSettingsStore(config, { stateStore: state });
   if (!database) {

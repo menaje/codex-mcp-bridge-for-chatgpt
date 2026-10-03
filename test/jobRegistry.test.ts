@@ -1,3 +1,4 @@
+import { historicalCompletion } from "./fixtures/historicalCompletion.js";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -950,15 +951,7 @@ describe("CodexJobRegistry persistence", () => {
       const completed = registry.start(jobInput(root), async () => result("recovery-window"));
       await completed.promise;
       const delivery = stateStore.getJobCompletionDelivery(completed.jobId, SCOPE_A)!;
-      const owner = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-      stateStore.claimJobCompletionDelivery(completed.jobId, SCOPE_A, owner, 1_000, 1_010);
-      stateStore.markJobCompletionHostAccepted({
-        jobId: completed.jobId,
-        scopeId: SCOPE_A,
-        receipt: delivery.receipt,
-        leaseOwner: owner,
-        now: 1_020
-      });
+      historicalCompletion(stateStore, completed.jobId, "host-accepted", { host_accepted_at: 1_020 });
       stateStore.recordJobCompletionResultOffer({
         scopeId: SCOPE_A,
         source: "completion-receipt",

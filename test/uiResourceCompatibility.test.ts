@@ -49,7 +49,7 @@ describe("serialized card runtime compatibility", () => {
       expect(currentFile, revision.uri).toBe(rendered);
       expect(rendered).toContain("<!doctype html>");
       expect(revision.uri).toBe(
-        `ui://codex-mcp-bridge/${name}/v3.html`
+        `ui://codex-mcp-bridge/${name}/v4.html`
       );
     });
   }

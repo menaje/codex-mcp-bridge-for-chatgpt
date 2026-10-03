@@ -1,5 +1,7 @@
 # #196 요청 수명별 용량 회계
 
+#221 현재 계약: 카드 전달 실행은 제거되었다. 모든 `codex_ui_completion` 요청과 completion-receipt 조회는 더 이상 제어 예약 대상이 아니다. 현재 우선 대상은 정식 답변·취소·steer·interaction 응답과 무대기 exact Job/request/input 조회다. 아래 PR #201/#202의 카드 결정 시험과 수치는 역사적 근거로 보존한다.
+
 ## 기준과 판정
 
 PR #201 당시 검토 기준은 `origin/dev`의 `e068a45ab9f6`(state schema 29, package 0.4.1)이다. 아래 후속 보완은 #200 통합 커밋 `3555bd392d2c`를 기준으로 한다. 이 문서는 격리된 제품 경로와 기존 회귀로 확인한 사실만 기록한다. 운영 중인 앱이나 실제 ChatGPT 터널을 교체하거나 장애 주입하지 않았다.

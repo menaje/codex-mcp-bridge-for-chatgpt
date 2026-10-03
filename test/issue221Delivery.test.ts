@@ -322,6 +322,28 @@ describe("#221 delivery transition", () => {
     const result = await exact(bId);
     expect(result.items[0].answer).toBe("Completed fixture work.");
   });
+  it.each(["unsupported", "transient"] as const)("reports probe reason %s without orphaning or replacing the Agent", async reason => {
+    const a = await admit(); const parent = (await exact((a.structuredContent as any).jobId)).items[0];
+    Object.assign(upstream, { probeThread: async (threadId: string) => ({ state: "unknown", reason, threadId, retryable: true }) });
+    const before = state.getAgent(parent.agentId);
+    const blocked = await admit({ prompt: "Same Agent continuation", project: undefined, selection: undefined,
+      activity: { mode: "existing", id: parent.activityId },
+      agent: { mode: "existing", id: parent.agentId, context: "continue" } });
+    expect(blocked.structuredContent).toMatchObject({ jobId: null, error: { code: "THREAD_PROBE_UNAVAILABLE", retryable: true } });
+    expect(JSON.stringify(blocked)).toContain(reason);
+    expect(state.getAgent(parent.agentId)).toEqual(before);
+    expect(upstream.calls).toHaveLength(1);
+    expect(state.listJobs()).toHaveLength(1);
+  });
+  it("retrieves delivered summaries on every ordinary MCP surface without inserting answers", async () => {
+    const a = await admit(); const parent = (await exact((a.structuredContent as any).jobId)).items[0];
+    for (const query of [undefined, { kind: "page", collection: "jobs" },
+      { kind: "activity", id: parent.activityId }, { kind: "thread", id: parent.threadId }]) {
+      const summary = await client.callTool({ name: "codex_status", _meta: metadata, arguments: { query } });
+      expect(summary.isError, JSON.stringify(summary)).not.toBe(true);
+      expect(JSON.stringify(summary.structuredContent)).not.toContain("Completed fixture work.");
+    }
+  });
   it("continues bounded reads of the same historical active live-card Job", async () => {
     const held = upstream.holdNextCall();
     const a = await admit(); const id = (a.structuredContent as any).jobId;
@@ -329,7 +351,7 @@ describe("#221 delivery transition", () => {
     const hash = registry.get(id)!.requestHash;
     const read = await client.callTool({ name: "codex_status", _meta: metadata,
       arguments: { query: { kind: "job", id, waitFor: "terminal", waitMs: 1 } } });
-    expect(read.structuredContent).toMatchObject({ items: [expect.objectContaining({ id, state: "running", wait: { timedOut: true } })] });
+    expect(read.structuredContent).toMatchObject({ items: [expect.objectContaining({ id, state: "running", wait: expect.objectContaining({ timedOut: true }) })] });
     expect(JSON.stringify(read.structuredContent)).not.toContain('"tool":"codex_dashboard"');
     expect(JSON.stringify(read.structuredContent)).toContain('"waitFor":"terminal"');
     expect(registry.get(id)!.requestHash).toBe(hash);

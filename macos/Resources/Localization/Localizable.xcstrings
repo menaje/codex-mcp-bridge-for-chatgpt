@@ -13984,55 +13984,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restores access, model, experimental direct-result delivery, Codex-app thread visibility, interface, and concurrency settings. Projects, their order, and model description history are kept."
+            "value": "Restores access, model, Codex-app thread visibility, interface, and concurrency settings. Projects, their order, and model description history are kept."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "접근, 모델, 실험적 직접 결과 수신, Codex 앱 목록 표시, 인터페이스와 동시 작업 수 설정을 복원합니다. 프로젝트와 순서는 유지됩니다. 모델 설명 버전 기록도 유지됩니다."
+            "value": "접근, 모델, Codex 앱 목록 표시, 인터페이스와 동시 작업 수 설정을 복원합니다. 프로젝트와 순서는 유지됩니다. 모델 설명 버전 기록도 유지됩니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "アクセス、モデル、試験的な結果の直接受信、Codex アプリでのスレッド表示、表示言語、同時実行数を戻します。プロジェクト、順序、モデルの説明履歴は保持されます。"
+            "value": "アクセス、モデル、Codex アプリでのスレッド表示、表示言語、同時実行数を戻します。プロジェクト、順序、モデルの説明履歴は保持されます。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "恢复访问、模型、实验性直接结果接收、Codex 应用线程显示、界面和并发数。项目、顺序和模型说明版本记录会保留。"
+            "value": "恢复访问、模型、Codex 应用线程显示、界面和并发数。项目、顺序和模型说明版本记录会保留。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "還原存取、模型、實驗性直接結果接收、Codex 應用程式執行緒顯示、介面與並行數。專案、順序和模型說明版本記錄會保留。"
+            "value": "還原存取、模型、Codex 應用程式執行緒顯示、介面與並行數。專案、順序和模型說明版本記錄會保留。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restaura el acceso, el modelo, la recepción directa experimental, la visibilidad de hilos en Codex, la interfaz y la concurrencia. Se conservan los proyectos, su orden y el historial de descripciones de modelos."
+            "value": "Restaura el acceso, el modelo, la visibilidad de hilos en Codex, la interfaz y la concurrencia. Se conservan los proyectos, su orden y el historial de descripciones de modelos."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Rétablit l’accès, le modèle, la réception directe expérimentale, la visibilité des fils Codex, l’interface et la simultanéité. Les projets, leur ordre et l’historique des descriptions des modèles sont conservés."
+            "value": "Rétablit l’accès, le modèle, la visibilité des fils Codex, l’interface et la simultanéité. Les projets, leur ordre et l’historique des descriptions des modèles sont conservés."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Setzt Zugriff, Modell, experimentellen Direktempfang, Codex-Thread-Sichtbarkeit, Oberfläche und Parallelität zurück. Projekte, Reihenfolge und der Versionsverlauf der Modellbeschreibungen bleiben erhalten."
+            "value": "Setzt Zugriff, Modell, Codex-Thread-Sichtbarkeit, Oberfläche und Parallelität zurück. Projekte, Reihenfolge und der Versionsverlauf der Modellbeschreibungen bleiben erhalten."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restaura acesso, modelo, recebimento direto experimental, visibilidade de threads no Codex, interface e concorrência. Projetos, ordem e histórico das descrições dos modelos são mantidos."
+            "value": "Restaura acesso, modelo, visibilidade de threads no Codex, interface e concorrência. Projetos, ordem e histórico das descrições dos modelos são mantidos."
           }
         }
       }

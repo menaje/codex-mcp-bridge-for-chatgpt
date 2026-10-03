@@ -89,7 +89,7 @@ async function start(options: { root?: string; sender?: WebhookSender; bearer?: 
     ...(options.localMetadata ? { CODEX_MCP_BRIDGE_PORT: String(metadataPort),
       CODEX_MCP_BRIDGE_OAUTH_RESOURCE_METADATA_URL: `http://127.0.0.1:${metadataPort}/.well-known/oauth-protected-resource/mcp` } : {}),
     ...(options.operator ? { CODEX_MCP_BRIDGE_OAUTH_OPERATOR_SUBJECT: options.operator } : {}),
-    CODEX_MCP_BRIDGE_TOKEN: sealingKey, CODEX_MCP_BRIDGE_EVENTS_ENABLED: options.eventsEnabled === false ? "0" : "1",
+    CODEX_MCP_BRIDGE_TOKEN: sealingKey, CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE: "events", CODEX_MCP_BRIDGE_EVENTS_ENABLED: options.eventsEnabled === false ? "0" : "1",
     CODEX_MCP_BRIDGE_ROOTS: root, CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(root, "state.sqlite") });
   const settings = new UserSettingsStore(config, { stateStore: state });
   if (!options.root) {
@@ -497,13 +497,13 @@ describe("card-free OAuth Events delegation", () => {
     }
   });
 
-  it("keeps legacy live-card Jobs unchanged and refuses to issue a delegated reference for them", async () => {
+  it("keeps ordinary direct-wait Jobs outside delegated Events admission", async () => {
     const f = await start(); const token = await accessToken();
     const release = f.upstream.hold();
     try {
       const a = await task(f, token, { completionDelivery: undefined });
-      expect(a.completionDeliveryPolicy).toBe("live-card"); expect(a.eventSubscription).toBeNull();
-      expect(a.nextActions.some((action: any) => action.tool === "codex_dashboard")).toBe(true);
+      expect(a.completionDeliveryPolicy).toBe("direct-wait"); expect(a).not.toHaveProperty("eventSubscription");
+      expect(a.nextActions.some((action: any) => action.tool === "codex_dashboard")).toBe(false);
       expect((await call(f, "codex_event_access", { action: "issue", jobId: a.jobId }, token)).result.isError).toBe(true);
       expect((await rpc(f, "events/subscribe", subscribe(a.jobId), token)).body.error).toBeUndefined();
       expect(f.state.mcpEventAccess.list()).toHaveLength(0);
@@ -516,14 +516,16 @@ describe("card-free OAuth Events delegation", () => {
       const a = await task(f, token);
       const identity = { jobId: a.jobId, presentationRef: presentation(f, a.jobId), widgetInstanceId: randomUUID() };
       const card = await call(f, "codex_ui_completion", { ...identity, operation: "wait", waitMs: 10 }, token);
-      expect(card.result.structuredContent.state).toBe("settled");
+      expect(card.result.isError).toBe(true);
+      expect(JSON.stringify(card)).toContain("CARD_DELIVERY_RETIRED");
       expect((await call(f, "codex_dashboard", { scope: "conversation", jobId: a.jobId, presentationRef: identity.presentationRef }, token)).result.isError).toBe(true);
       expect((await call(f, "codex_dashboard", { scope: "conversation" }, token)).result.isError).not.toBe(true);
       release(); await completed(f, a.jobId, token);
       const scopeId = (f.state.listJobs()[0] as any).scopeId;
-      expect(f.state.claimJobCompletionDelivery(a.jobId, scopeId, identity.widgetInstanceId)).toBeUndefined();
+      expect(f.state).not.toHaveProperty("claimJobCompletionDelivery");
       const later = await call(f, "codex_ui_completion", { ...identity, operation: "wait" }, token);
-      expect(later.result.structuredContent.state).toBe("settled");
+      expect(later.result.isError).toBe(true);
+      expect(JSON.stringify(later)).toContain("CARD_DELIVERY_RETIRED");
       expect(f.state.getJobCompletionDelivery(a.jobId, scopeId)?.attemptCount).toBe(0);
       expect(f.state.getJobCompletionDelivery(a.jobId, scopeId)?.directResultOfferedAt).toBeDefined();
     } finally { release(); }
@@ -699,7 +701,8 @@ describe("card-free OAuth Events delegation", () => {
     await close(f.server); await close(f.provider); f.state.close();
     const restarted = await start({ root: f.root, eventsEnabled: false });
     const status = await completed(restarted, a.jobId, await accessToken());
-    expect(status.items[0]).toMatchObject({ completionDeliveryPolicy: "events", eventSubscription: { state: "unavailable" } });
+    expect(status.items[0]).toMatchObject({ completionDeliveryPolicy: "events" });
+    expect(status.items[0]).not.toHaveProperty("eventSubscription");
     expect(status.items[0].nextActions || []).toEqual([]);
     expect(restarted.requests.some(request => request.name === "codex_dashboard")).toBe(false);
     expect(restarted.upstream.calls).toBe(0);

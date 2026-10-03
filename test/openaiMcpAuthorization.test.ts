@@ -427,7 +427,7 @@ describe("isolated OpenAI / Bridge authorization", () => {
     const config = loadConfig({ CODEX_MCP_BRIDGE_OAUTH_ISSUER: oauth.issuer, CODEX_MCP_BRIDGE_OAUTH_RESOURCE: oauth.resource,
       CODEX_MCP_BRIDGE_OAUTH_RESOURCE_METADATA_URL: oauth.resourceMetadataUrl, CODEX_MCP_BRIDGE_OAUTH_JWKS_URI: oauth.jwksUri,
       CODEX_MCP_BRIDGE_OAUTH_OPERATOR_SUBJECT: oauth.operatorSubject, CODEX_MCP_BRIDGE_ROOTS: root,
-      CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(root, "state.sqlite"), CODEX_MCP_BRIDGE_TOKEN: randomBytes(32).toString("hex"), CODEX_MCP_BRIDGE_EVENTS_ENABLED: "1" });
+      CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: path.join(root, "state.sqlite"), CODEX_MCP_BRIDGE_TOKEN: randomBytes(32).toString("hex"), CODEX_MCP_BRIDGE_EXPERIMENTAL_PROFILE: "events", CODEX_MCP_BRIDGE_EVENTS_ENABLED: "1" });
     const selection = { model: "gpt-5.6-sol", reasoningEffort: "medium" }, settings = new UserSettingsStore(config, { stateStore: state });
     settings.update({ modelPolicy: { mode: "automatic", constraints: { allowDelegation: false },
       allowedSelections: { kind: "explicit", selections: [selection] } } }, settings.current.revision);

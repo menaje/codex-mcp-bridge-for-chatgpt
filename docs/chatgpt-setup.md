@@ -137,35 +137,11 @@ for completion. If that response is lost, query the same `requestId` with
 thread, project, or bounded input wait. Use `codex_cancel` only for explicit
 stop intent and its required version/idempotency arguments.
 
-Exact terminal status waits are bounded to a 20-second default and ignore
-ordinary progress events. A Job reports its immutable `completionDeliveryPolicy`.
-For the default `live-card` route, the mounted originating Dashboard already
-watches terminal completion, so do not keep a parallel wait solely for the same
-delivery. For experimental `direct-wait`, repeat bounded terminal waits on that
-same exact Job until it is terminal, then review the result before continuing
-only already-approved work. After each non-terminal return, inspect the supplied
-exact-Job input action before waiting again. A timeout or host abort never stops
-the Job and never authorizes a replacement Job. Stop at every new approval or
-input boundary.
+New ordinary Jobs use direct-wait by default. Repeat bounded exact terminal waits on the same Job; each read defaults to 20 seconds and allows up to 60 seconds. After each non-terminal return, inspect the supplied exact input action and stop at every current question or approval. Retrieve and review the original result before an already-approved followup. Timeout or host abort ends the read only; it never cancels Codex or authorizes a replacement.
 
-If the GPT run itself ends, this experimental route does not fall back to a
-live-card completion message. Reopen the originating conversation and request
-an exact `codex_status` read of that retained Job, within the configured result
-retention window. A timeout of a single wait (default 20 seconds, maximum 60
-seconds) limits that read only; it is not a Codex execution deadline. Manual
-recovery cannot bypass conversation-scope checks and does not authorize a new
-follow-up Job by itself.
+For preapproved A→B, declare the exact approved B prompt on A admission. After reading A's result, use its Bridge-issued followup ID, canonical request ID, and current reviewed version. Repeat calls converge to the same B. No external receiver or card is required.
 
-Host support is empirical, not a promise that macOS or ChatGPT keeps every run
-alive. On 2026-09-23, the tested ChatGPT Work in-app browser and signed Bridge
-build completed an already-approved second Job while this Mac's screen was
-locked, and completed one ordered two-Job workflow after a short Clamshell
-Sleep. The original conversation was not reopened to start the second Job.
-This does **not** validate the separate native ChatGPT app, long or repeated
-sleep, whole-device network loss, or a GPT run that the host has actually
-ended. In that last case, use the retained exact Job's manual recovery above;
-the direct route does not send an automatic live-card fallback. The observed
-times and build are in the [#154 audit](audits/2026-09-22-issue-154-direct-result-receiving.md).
+When automatic continuation does not occur, return to the originating authenticated conversation and request an exact retained Job read. The [#222 evidence](audits/2026-10-03-issue-222-final-evidence.md) preserves actual 30/60-minute results and user-confirmed resumption after screen departure/app exit. These observations remain valid for the tested environment and are not an unconditional guarantee for every host. A result-expired receipt establishes prior execution and cannot authorize rerunning it.
 
 ## 6. Cards and questions
 
@@ -178,27 +154,13 @@ The active immutable cards are:
 
 The Dashboard shows retained and current work, including scoped monitoring and
 controls. GPT asks for ordinary user decisions directly in the current ChatGPT
-conversation; original Codex approvals and non-ordinary input remain in the
-Dashboard work detail.
+conversation. Original approvals retain their current formal response contract and are also visible in explicitly opened work detail. Required approvals are never inferred or bypassed.
 
 For a complex choice, GPT may create a [standalone HTML file](standalone-decision-html.md).
 The user sends its decision summary back to this conversation. That file cannot
 call Bridge tools or approve a Codex action.
 
-By default, a new Job's task result includes an exact Dashboard render action.
-GPT opens it immediately. While that originating card is live, terminal
-completion uses one server lease and a standard `ui/message` to resume the same
-conversation. The resumed turn reads the exact retained result with
-`codex_status({query:{kind:"completion",receipt:"…"}})`. If experimental direct
-receiving was enabled when the Job was admitted, the task result instead
-includes an exact bounded terminal wait and the Dashboard live-card watcher is
-disabled for that Job. If the card or direct wait is closed, torn down, or
-disconnected, the Job remains queryable but automatic
-follow-up is not guaranteed. If the current authenticated response has already
-received that exact retained result through a Job or request query before the
-card claims it, the pending automatic follow-up is settled instead of creating a
-duplicate turn. An explicit `scopeId`, a running result, or a delivery that has
-already crossed the card send boundary does not trigger that suppression.
+Open Dashboard only when the user explicitly asks to see the status card or dashboard. Use `codex_status` for ordinary status requests. Input, error, and approval states do not open a card automatically. Explicitly opened cards refresh display and retain their scoped management tools, while sending no chat message and starting no automatic followup.
 
 ## 7. Refresh after a release
 
@@ -207,9 +169,11 @@ deploying a change to either:
 
 1. start the newly built bridge;
 2. use **Refresh** on the ChatGPT connection;
-3. start a new conversation or reopen the card;
+3. close old Dashboard and Settings instances, then reopen current cards (use a new conversation if the host retains stale discovery);
 4. verify the current resources listed in
    [the UI release policy](ui-release-compatibility.md).
+
+Dashboard and Settings now use v4 URIs. The old sender API and automatic mount inputs are refused. A server refusal cannot retract result text or a queued message already held in a v3 iframe; close/tear down those old instances before accepting the cutover.
 
 The bridge offers no old resource URI or old descriptor fallback. A conversation
 that cached a previous resource must refresh and use the current card. Retired
@@ -236,23 +200,13 @@ npm test
 
 In a fresh ChatGPT conversation:
 
-1. Open Settings and register a project.
-2. Open Dashboard and Settings; confirm both load and the experimental direct-result switch is off by default.
-3. Ask GPT for a small standalone HTML comparison, open it, change one condition, copy the summary, and send it in the same conversation without starting Codex.
-4. Call `codex_models` and confirm its one current catalog response.
-5. Start a harmless task with contract version 6 and its exact envelope
-   constant.
-6. With the experiment off, confirm the task opens its exact Dashboard and,
-   without a diagnostic button or user message, terminal completion resumes the
-   same conversation and reads the exact result once.
-7. If Codex asks an ordinary question, answer it through the current ChatGPT
-   conversation and verify that it reaches the exact active Job.
-8. Enable the experiment and start a second harmless task. Confirm the task
-   reports `direct-wait`, GPT repeats bounded terminal waits on that same Job,
-   reviews the result, and does not mount or use a competing live-card completion
-   watcher. Disable it again and confirm the already-admitted Job keeps its
-   policy while the next Job returns to `live-card`.
-9. Restart the bridge, reconnect, and confirm retained work is still visible.
+1. Open Settings and register a project; confirm the retired delivery switch is absent.
+2. With no Dashboard open, admit harmless A with an explicitly approved B declaration. Verify direct-wait, bounded waits, A result review, B admission/result review, and same B replay without another execution.
+3. Exercise a current question and approval boundary without automatic card display. Refresh input after user deliberation before answering the same current question.
+4. Read overview, Job list, Activity and thread summaries; verify exact retrieval actions without embedded result text.
+5. Explicitly open Dashboard. Verify state/history refresh and scoped management while observing no chat message or automatic followup.
+6. Verify old completion calls are refused without cancelling, failing or recreating Jobs; existing completed B replays and unexecuted legacy B requests follow the documented reapproval rule.
+7. Restart the bridge and verify retained work and upgrade settings remain consistent. Confirm Bridge/app build identity and the actual v4 URI/HTML hash served by the connector.
 
 For release acceptance, also record a real current-protocol discovery, tool
 call, and card open through ChatGPT and Secure MCP Tunnel. A host that cannot
