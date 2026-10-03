@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T00:40:49.875Z",
+  "jobId": "89f45a29-49e8-4466-902a-f5e6fd2c29f8",
+  "verdict": "PASS",
+  "source": "independent Reviewer result reported to writing agent in final user instruction",
+  "reviewScope": "stored raw evidence and source review, not a direct Reviewer MCP/network invocation",
+  "reportedChecks": {
+    "cloudHttpRequests": 8,
+    "localHttpRequests": 1,
+    "states": [
+      "queued",
+      "claimed",
+      "acked"
+    ],
+    "duplicateEnqueueInserted": false,
+    "duplicateAck": true,
+    "count": 1,
+    "firstTimestampsPreserved": true,
+    "readFixtureSelectOnly": true,
+    "existingD1FixturePreserved": true,
+    "manifestEntriesMatched": 23,
+    "digestsRecomputedSeparately": true,
+    "requestDigestDiffersFromResponseDigest": true
+  },
+  "qualifications": {
+    "localEvents": "same runner authored the local events; no independent external instrument",
+    "operationalDbAndSettings": "not directly audited; unchanged as a performed-scope/report claim",
+    "historicalSnapshots": "preserve pre-v3-parent-read README/validation/parent observation snapshots; connect final originating observation as a separate source"
+  },
+  "reviewerRawJobTranscriptAcquiredThisTurn": false
+}

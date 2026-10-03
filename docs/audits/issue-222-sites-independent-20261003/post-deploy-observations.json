@@ -1,0 +1,99 @@
+{
+  "projectId": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+  "captures": [
+    {
+      "tool": "mcp__codex_apps__sites_get_deployment_status",
+      "observedAt": "2026-10-02T23:37:58.313Z",
+      "response": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Action completed."
+          }
+        ],
+        "structuredContent": {
+          "id": "appgdep_6ac0402a4d3881918caaf9ab124ebfb0",
+          "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+          "title": "#222 무해한 Receiver 시험",
+          "version_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a~appgver_2b2c83c586188191bf94acb1145b82f7",
+          "type": "publish",
+          "status": "succeeded",
+          "url": "https://bridge-222-receiver-probe-20261002.menaje.chatgpt.site",
+          "has_mcp": true,
+          "screenshot_asset_pointer": null,
+          "provider_deployment_id": "site---6abf89d2d04c8191a617d5193ef5471a",
+          "failure_message": null,
+          "env_set_revision": 0,
+          "updated_at": "2026-10-02T23:37:24.809480+00:00"
+        },
+        "isError": false
+      }
+    },
+    {
+      "tool": "mcp__codex_apps__sites_get_site",
+      "args": {
+        "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+        "include_mcp_connection": true
+      },
+      "observedAt": "2026-10-02T23:38:23.029Z",
+      "response": {
+        "id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+        "current_user_role": "owner",
+        "access_mode": "custom",
+        "latest_version_number": 2,
+        "current_live_url": "https://bridge-222-receiver-probe-20261002.menaje.chatgpt.site",
+        "mcp_connection": {
+          "mcp_url": "https://bridge-222-receiver-probe-20261002.menaje.chatgpt.site/mcp",
+          "oauth_resource": "https://bridge-222-receiver-probe-20261002.menaje.chatgpt.site/mcp",
+          "plugin_id": "plugin_asdk_app_sites_7f70e9571a3081918772e5e96d81268d"
+        },
+        "automations": [],
+        "allowed_user_count": 1,
+        "external_visitor_count": 0
+      }
+    },
+    {
+      "tool": "mcp__codex_apps__sites_read_database_overview",
+      "observedAt": "2026-10-02T23:38:23.030Z",
+      "response": {
+        "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+        "bindings": [
+          "DB"
+        ],
+        "selected_binding_name": "DB",
+        "tables": [
+          "issue_222_fixtures"
+        ],
+        "model_projection": {
+          "truncated": false,
+          "omitted_project_id": false,
+          "omitted_selected_binding": false,
+          "omitted_bindings": 0,
+          "omitted_tables": 0
+        }
+      }
+    },
+    {
+      "tool": "mcp__codex_apps__sites_get_site_version",
+      "observedAt": "2026-10-02T23:38:23.030Z",
+      "response": {
+        "id": "appgprj_6abf89d2d04c8191a617d5193ef5471a~appgver_2b2c83c586188191bf94acb1145b82f7",
+        "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+        "version_number": 2,
+        "source": {
+          "commit_sha": "99a9f88391876416666b26c18b500039f77c5303"
+        },
+        "archive_storage": {
+          "archive_format": "tar",
+          "sediment_file_id": "file_00000000e57c8206b129ab7d0e9113ea",
+          "content_hash": "sha256:0c0e4527cdb4c997198cc537980146667e64e344e95fc18e7c3cc3ce0a76268b",
+          "size_bytes": 20480,
+          "file_count": 5
+        },
+        "deployment_id": "appgdep_6ac0402a4d3881918caaf9ab124ebfb0"
+      }
+    }
+  ],
+  "recordedAt": "2026-10-02T23:39:15.815Z",
+  "secretsOmitted": true
+}

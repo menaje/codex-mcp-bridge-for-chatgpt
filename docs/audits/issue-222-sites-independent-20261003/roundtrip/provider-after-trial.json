@@ -1,0 +1,215 @@
+{
+  "recordedAt": "2026-10-03T00:30:55.624Z",
+  "secretsOmitted": true,
+  "deploymentStatusCalls": [
+    {
+      "observedAt": "2026-10-03T00:28:24.449Z",
+      "response": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Action completed."
+          }
+        ],
+        "structuredContent": {
+          "id": "appgdep_6ac04c20c7d8819189be9303b6a24a55",
+          "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+          "title": "#222 무해한 Receiver 시험",
+          "version_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a~appgver_2ad493d0916081919080d70be5bc126f",
+          "type": "publish",
+          "status": "publishing",
+          "url": null,
+          "has_mcp": true,
+          "screenshot_asset_pointer": null,
+          "provider_deployment_id": "site---6abf89d2d04c8191a617d5193ef5471a",
+          "failure_message": null,
+          "env_set_revision": 0,
+          "updated_at": "2026-10-03T00:28:20.654638+00:00"
+        },
+        "isError": false
+      }
+    },
+    {
+      "observedAt": "2026-10-03T00:28:46.548Z",
+      "response": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Action completed."
+          }
+        ],
+        "structuredContent": {
+          "id": "appgdep_6ac04c20c7d8819189be9303b6a24a55",
+          "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+          "title": "#222 무해한 Receiver 시험",
+          "version_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a~appgver_2ad493d0916081919080d70be5bc126f",
+          "type": "publish",
+          "status": "succeeded",
+          "url": "https://bridge-222-receiver-probe-20261002.menaje.chatgpt.site",
+          "has_mcp": true,
+          "screenshot_asset_pointer": null,
+          "provider_deployment_id": "site---6abf89d2d04c8191a617d5193ef5471a",
+          "failure_message": null,
+          "env_set_revision": 0,
+          "updated_at": "2026-10-03T00:28:25.472330+00:00"
+        },
+        "isError": false
+      }
+    }
+  ],
+  "site": {
+    "observedAt": "2026-10-03T00:29:03.808Z",
+    "response": {
+      "id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+      "status": "active",
+      "current_user_role": "owner",
+      "access_mode": "custom",
+      "latest_version_number": 3,
+      "current_live_url": "https://bridge-222-receiver-probe-20261002.menaje.chatgpt.site",
+      "mcp_connection": {
+        "mcp_url": "https://bridge-222-receiver-probe-20261002.menaje.chatgpt.site/mcp",
+        "oauth_resource": "https://bridge-222-receiver-probe-20261002.menaje.chatgpt.site/mcp",
+        "plugin_id": "plugin_asdk_app_sites_7f70e9571a3081918772e5e96d81268d"
+      },
+      "automations": [],
+      "allowed_user_count": 1,
+      "editor_count": 0,
+      "external_visitor_count": 0
+    }
+  },
+  "databaseOverview": {
+    "observedAt": "2026-10-03T00:29:03.809Z",
+    "response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"project_id\":\"appgprj_6abf89d2d04c8191a617d5193ef5471a\",\"bindings\":[\"DB\"],\"selected_binding_name\":\"DB\",\"tables\":[\"issue_222_fixtures\",\"issue_222_roundtrips\"],\"model_projection\":{\"truncated\":false,\"omitted_project_id\":false,\"omitted_selected_binding\":false,\"omitted_bindings\":0,\"omitted_tables\":0}}"
+        }
+      ],
+      "structuredContent": {
+        "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+        "bindings": [
+          "DB"
+        ],
+        "selected_binding_name": "DB",
+        "tables": [
+          "issue_222_fixtures",
+          "issue_222_roundtrips"
+        ],
+        "model_projection": {
+          "truncated": false,
+          "omitted_project_id": false,
+          "omitted_selected_binding": false,
+          "omitted_bindings": 0,
+          "omitted_tables": 0
+        }
+      },
+      "isError": false
+    }
+  },
+  "nativeReads": [
+    {
+      "tool": "mcp__codex_apps__sites_read_database_table_rows",
+      "observedAt": "2026-10-03T00:29:53.022Z",
+      "response": {
+        "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+        "binding_name": "DB",
+        "table_name": "issue_222_fixtures",
+        "columns": [
+          "fixture_key",
+          "payload_json",
+          "payload_sha256",
+          "created_at"
+        ],
+        "rows": [
+          {
+            "fixture_key": "issue-222-independent-20261003",
+            "payload_json": "{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222}",
+            "payload_sha256": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+            "created_at": "2026-10-02T23:38:53.750Z"
+          }
+        ],
+        "limit": 2,
+        "offset": 0,
+        "has_more": false,
+        "model_projection": {
+          "truncated": false,
+          "truncated_values": 0,
+          "omitted_columns": 0,
+          "omitted_rows": 0,
+          "next_offset": null
+        }
+      },
+      "isError": false
+    },
+    {
+      "tool": "mcp__codex_apps__sites_read_database_table_rows",
+      "observedAt": "2026-10-03T00:29:53.022Z",
+      "response": {
+        "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+        "binding_name": "DB",
+        "table_name": "issue_222_roundtrips",
+        "columns": [
+          "trial_key",
+          "state",
+          "command_json",
+          "command_sha256",
+          "created_at",
+          "claimed_at",
+          "acked_at",
+          "response_json",
+          "response_sha256"
+        ],
+        "rows": [
+          {
+            "trial_key": "issue-222-pull-roundtrip-20261003",
+            "state": "acked",
+            "command_json": "{\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"operation\":\"read_fixture\",\"fixtureKey\":\"issue-222-independent-20261003\",\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\"}",
+            "command_sha256": "e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820",
+            "created_at": "2026-10-03T00:29:14.286Z",
+            "claimed_at": "2026-10-03T00:29:19.747Z",
+            "acked_at": "2026-10-03T00:29:23.477Z",
+            "response_json": "{\"trialKey\":\"issue-222-pull-roundtrip-20261003\",\"operation\":\"read_fixture\",\"fixtureKey\":\"issue-222-independent-20261003\",\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\",\"commandSha256\":\"e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820\",\"localExecutionCount\":1}",
+            "response_sha256": "647a4c380af69927a3b47155cb936dba7939f493bb5dac2a3f7eeefbca73cbf7"
+          }
+        ],
+        "limit": 2,
+        "offset": 0,
+        "has_more": false,
+        "model_projection": {
+          "truncated": false,
+          "truncated_values": 0,
+          "omitted_columns": 0,
+          "omitted_rows": 0,
+          "next_offset": null
+        }
+      },
+      "isError": false
+    },
+    {
+      "tool": "mcp__codex_apps__sites_get_site_version",
+      "observedAt": "2026-10-03T00:29:53.022Z",
+      "response": {
+        "id": "appgprj_6abf89d2d04c8191a617d5193ef5471a~appgver_2ad493d0916081919080d70be5bc126f",
+        "project_id": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+        "version_number": 3,
+        "source": {
+          "commit_sha": "7755827919c042166cf5e2a7cfe3e0f5f76df577"
+        },
+        "archive_storage": {
+          "archive_format": "tar",
+          "sediment_file_id": "file_0000000048f48206a39e90673f9025b5",
+          "content_hash": "sha256:41d2e2c299cb73e5714017ea0aeaec7205dbc09e41c81ab4533f13c40dbd5a0c",
+          "size_bytes": 30720,
+          "file_count": 7
+        },
+        "deployment_id": "appgdep_6ac04c20c7d8819189be9303b6a24a55"
+      },
+      "isError": false
+    }
+  ],
+  "oneShotProcess": {
+    "terminalExitCodeObserved": 0,
+    "source": "actual write_stdin terminal result; task-owned loopback server closed before exit"
+  }
+}

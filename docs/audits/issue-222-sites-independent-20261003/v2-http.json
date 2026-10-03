@@ -1,0 +1,114 @@
+{
+  "startedAt": "2026-10-02T23:38:47.383Z",
+  "projectId": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+  "versionNumber": 2,
+  "sourceCommit": "99a9f88391876416666b26c18b500039f77c5303",
+  "payload": {
+    "probe": "issue-222",
+    "phase": "A",
+    "value": 222
+  },
+  "payloadSha256": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+  "requests": [
+    {
+      "label": "baseline_metadata",
+      "path": "/metadata",
+      "method": "GET",
+      "beganAt": "2026-10-02T23:38:47.391Z",
+      "completedAt": "2026-10-02T23:38:50.516Z",
+      "status": 200,
+      "responseDate": "Fri, 02 Oct 2026 23:38:50 GMT",
+      "contentType": "application/json",
+      "payloadSha256": null,
+      "responseSha256": "cb0a30eb410cbbc20ebb9fa7eb16fe1ecead0c7d7ce43690243e07c85e132d47",
+      "responseBody": "{\"key\":\"issue-222-independent-20261003\",\"count\":0,\"fixture\":null,\"payloadSha256\":null,\"createdAt\":null,\"persisted\":false,\"storage\":\"D1\",\"localChannel\":false,\"workerVersion\":\"2\"}"
+    },
+    {
+      "label": "write_fixed_payload",
+      "path": "/ingest",
+      "method": "POST",
+      "beganAt": "2026-10-02T23:38:50.520Z",
+      "completedAt": "2026-10-02T23:38:54.218Z",
+      "status": 200,
+      "responseDate": "Fri, 02 Oct 2026 23:38:54 GMT",
+      "contentType": "application/json",
+      "payloadSha256": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+      "responseSha256": "64ca1c45d00eb566e8473db7ae866853e4e253110b54af9a619cbf561d9cac9c",
+      "responseBody": "{\"accepted\":true,\"persisted\":true,\"inserted\":true,\"key\":\"issue-222-independent-20261003\",\"count\":1,\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\",\"createdAt\":\"2026-10-02T23:38:53.750Z\",\"storage\":\"D1\",\"localChannel\":false,\"workerVersion\":\"2\"}"
+    },
+    {
+      "label": "independent_http_read_after_write",
+      "path": "/fixture",
+      "method": "GET",
+      "beganAt": "2026-10-02T23:38:54.219Z",
+      "completedAt": "2026-10-02T23:38:56.703Z",
+      "status": 200,
+      "responseDate": "Fri, 02 Oct 2026 23:38:56 GMT",
+      "contentType": "application/json",
+      "payloadSha256": null,
+      "responseSha256": "6f1f5be7f6b5b4a645c8710f391b486f706b662435f0f24dba20eb7cf73c781b",
+      "responseBody": "{\"key\":\"issue-222-independent-20261003\",\"count\":1,\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\",\"createdAt\":\"2026-10-02T23:38:53.750Z\",\"persisted\":true,\"storage\":\"D1\",\"localChannel\":false,\"workerVersion\":\"2\"}"
+    },
+    {
+      "label": "duplicate_fixed_payload",
+      "path": "/ingest",
+      "method": "POST",
+      "beganAt": "2026-10-02T23:38:56.704Z",
+      "completedAt": "2026-10-02T23:39:00.711Z",
+      "status": 200,
+      "responseDate": "Fri, 02 Oct 2026 23:39:00 GMT",
+      "contentType": "application/json",
+      "payloadSha256": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+      "responseSha256": "7225f46b4209a6a8fdeb6cb785aea36d6a9d9689b528f70e6088dea94d3bc0a9",
+      "responseBody": "{\"accepted\":true,\"persisted\":true,\"inserted\":false,\"key\":\"issue-222-independent-20261003\",\"count\":1,\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\",\"createdAt\":\"2026-10-02T23:38:53.750Z\",\"storage\":\"D1\",\"localChannel\":false,\"workerVersion\":\"2\"}"
+    },
+    {
+      "label": "independent_http_read_after_duplicate",
+      "path": "/fixture",
+      "method": "GET",
+      "beganAt": "2026-10-02T23:39:00.711Z",
+      "completedAt": "2026-10-02T23:39:02.722Z",
+      "status": 200,
+      "responseDate": "Fri, 02 Oct 2026 23:39:02 GMT",
+      "contentType": "application/json",
+      "payloadSha256": null,
+      "responseSha256": "6f1f5be7f6b5b4a645c8710f391b486f706b662435f0f24dba20eb7cf73c781b",
+      "responseBody": "{\"key\":\"issue-222-independent-20261003\",\"count\":1,\"fixture\":{\"probe\":\"issue-222\",\"phase\":\"A\",\"value\":222},\"payloadSha256\":\"41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf\",\"createdAt\":\"2026-10-02T23:38:53.750Z\",\"persisted\":true,\"storage\":\"D1\",\"localChannel\":false,\"workerVersion\":\"2\"}"
+    },
+    {
+      "label": "mcp_initialize",
+      "path": "/mcp",
+      "method": "POST",
+      "beganAt": "2026-10-02T23:39:02.723Z",
+      "completedAt": "2026-10-02T23:39:02.812Z",
+      "status": 401,
+      "responseDate": "Fri, 02 Oct 2026 23:39:02 GMT",
+      "contentType": "text/plain; charset=utf-8",
+      "payloadSha256": "4078de4c6922d67ab646974f5e8f08ab5266ab5766851318f4aac09af8f71321",
+      "responseSha256": "d089c8a9fc28e4e50223eb38c9409e362521be9380a37341304fbac7a4cd9e5f",
+      "responseBody": "Unauthorized"
+    }
+  ],
+  "authentication": "existing get_site credential; documented OAI-Sites-Authorization header",
+  "credentialPersisted": false,
+  "mockRequests": 0,
+  "toolsList": "not performed: initialize failed",
+  "readFixture": "not performed: initialize failed",
+  "storageChecks": {
+    "firstInsert": true,
+    "independentRead": true,
+    "duplicateIgnored": true,
+    "countRemainsOne": true,
+    "sameCreationTimestamp": true,
+    "sameKey": true
+  },
+  "storageVerdict": "PASS: actual HTTP D1 write/read/duplicate/read",
+  "mcpChecks": {
+    "initialize": false,
+    "discovery": false,
+    "toolCall": false
+  },
+  "mcpVerdict": "FAIL or blocked: MCP checks did not all pass",
+  "siteToLocal": "not performed: no supported channel exposed; no mock substituted",
+  "completedAt": "2026-10-02T23:39:02.813Z"
+}

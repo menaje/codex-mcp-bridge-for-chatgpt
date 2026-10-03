@@ -1,0 +1,194 @@
+{
+  "schemaVersion": 1,
+  "issue": 222,
+  "date": "2026-10-03",
+  "phase": "final evidence collection and documentation integration only",
+  "site": {
+    "projectId": "appgprj_6abf89d2d04c8191a617d5193ef5471a",
+    "version": 3,
+    "sourceCommit": "7755827919c042166cf5e2a7cfe3e0f5f76df577",
+    "deploymentId": "appgdep_6ac04c20c7d8819189be9303b6a24a55",
+    "audience": "owner-only per prior official deployment/access responses; no new Site query"
+  },
+  "bridgeGit": {
+    "integrationTarget": "dev",
+    "observedBaseAndRemoteBefore": "a584d34c64b7449a391b5acba4f80ca447e518e7",
+    "rootCleanBefore": true,
+    "siteSourceCommitIsNotBridgeAuditCommit": true,
+    "auditCommit": "resolve from Git history; intentionally not self-embedded",
+    "integrationAndPush": "to be reported from actual Git evidence in final handoff"
+  },
+  "supportedSiteRole": [
+    "private MCP",
+    "D1 persistence of fixed fixture",
+    "explicit authorized one-shot outbound/pull roundtrip"
+  ],
+  "sources": {
+    "originatingChatGPT": {
+      "path": "docs/audits/issue-222-sites-independent-20261003/finalization/originating-chatgpt-observations.json",
+      "type": "originating ChatGPT actual tool observations reported to writing agent",
+      "v2Reads": 1,
+      "v3Reads": 2,
+      "newAgentMcpCalls": 0
+    },
+    "reviewer": {
+      "path": "docs/audits/issue-222-sites-independent-20261003/finalization/reviewer-result.json",
+      "type": "independent stored-evidence/source review reported by upper ChatGPT",
+      "jobId": "89f45a29-49e8-4466-902a-f5e6fd2c29f8",
+      "newReviewerMcpCalls": 0
+    },
+    "runtime": {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/actual-trial.json",
+      "type": "writing runner cloud HTTP and same-runner loopback records"
+    },
+    "nativeD1": {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/provider-after-trial.json",
+      "type": "prior official provider deployment/DB read responses"
+    },
+    "historicalResearch": {
+      "path": "docs/audits/2026-10-02-issue-222-receiver-research.md",
+      "type": "historical baseline, superseded only within the final scope"
+    },
+    "scriptPreservation": {
+      "path": "docs/audits/issue-222-sites-independent-20261003/preserved-runner-source/index.json",
+      "type": "byte-identical documentation snapshots, not executed this turn"
+    }
+  },
+  "snapshotPolicy": {
+    "unchangedPaths": [
+      "docs/audits/issue-222-sites-independent-20261003/README.md",
+      "docs/audits/issue-222-sites-independent-20261003/validation.json",
+      "docs/audits/issue-222-sites-independent-20261003/roundtrip/README.md",
+      "docs/audits/issue-222-sites-independent-20261003/roundtrip/validation.json",
+      "docs/audits/issue-222-sites-independent-20261003/roundtrip/parent-mcp-observation.json",
+      "docs/audits/issue-222-sites-independent-20261003/file-digests.json",
+      "docs/audits/issue-222-sites-independent-20261003/roundtrip/file-digests.json"
+    ],
+    "pendingParentReadText": "correct for those snapshots' capture time; superseded by separately sourced final originating observations"
+  },
+  "results": {
+    "fixedFixture": {
+      "count": 1,
+      "payloadDigest": "41dc4aa8f1eee177712f07a26317117b9971f3239061a35420637e3ced89aaaf",
+      "createdAt": "2026-10-02T23:38:53.750Z"
+    },
+    "oneShotPull": {
+      "cloudHttpRequests": 8,
+      "localHttpRequests": 1,
+      "localExecutionCount": 1,
+      "cloudReceiptCount": 1,
+      "states": [
+        "queued",
+        "claimed",
+        "acked"
+      ],
+      "requestDigest": "e1f0757524bb4b7e568ab3378c8aaba461ac8b5254729f74a06bbc3f2ee6b820",
+      "responseDigest": "647a4c380af69927a3b47155cb936dba7939f493bb5dac2a3f7eeefbca73cbf7",
+      "digestsEqual": false,
+      "duplicateConditionsPerformed": [
+        "enqueue",
+        "same ACK"
+      ],
+      "offlineConditionsPerformed": [],
+      "mode": "explicit-one-shot-pull",
+      "push": false,
+      "persistentPolling": false
+    },
+    "originatingMcp": {
+      "v3Reads": 2,
+      "completeResponsesEqual": true,
+      "fixtureDigestRecomputed": true,
+      "networkObserver": "originating ChatGPT",
+      "writingAgentNetworkObservation": false
+    },
+    "readFixture": {
+      "selectOnly": true,
+      "sideEffectingActions": [],
+      "originalFixtureFieldsPreserved": true,
+      "receiptSummaryAddedReadOnly": true
+    }
+  },
+  "scope": [
+    {
+      "id": "site-mcp",
+      "status": "actual-confirmed",
+      "source": "originating ChatGPT v2 success and two identical v3 tool responses"
+    },
+    {
+      "id": "site-d1",
+      "status": "actual-tested",
+      "source": "preserved runtime HTTP/native D1 and source/manifest review"
+    },
+    {
+      "id": "one-shot-pull",
+      "status": "actual-tested",
+      "source": "cloud command claim -> real loopback fixture read -> cloud ACK; same-runner local log, corroborated by cloud saved receipt and originating MCP reads"
+    },
+    {
+      "id": "screen-exit-gpt-resume",
+      "status": "user-confirmed-actual-completed",
+      "source": "latest user/upper instruction; no retest"
+    },
+    {
+      "id": "30-and-60-minute",
+      "status": "prior-actual-reused",
+      "seconds": [
+        1800.086446041,
+        3600.075175209
+      ],
+      "source": "latest upper instruction conveys completed prior evidence"
+    },
+    {
+      "id": "a-to-b-replay",
+      "status": "prior-actual-reused",
+      "source": "latest upper instruction"
+    },
+    {
+      "id": "ui-tinyfish-scheduling-events",
+      "status": "excluded-by-user",
+      "source": "user exclusions; no new actions"
+    },
+    {
+      "id": "parent-model-reasoning-usage",
+      "status": "not-measurable",
+      "source": "not exposed in public tool responses; no success or Codex-counter inference"
+    },
+    {
+      "id": "direct-push-resident-polling-production-codex-remote-routing",
+      "status": "unverified-separate-223-design",
+      "source": "outside the one-shot fixed-fixture proof"
+    },
+    {
+      "id": "all-fault-and-concurrency-cases",
+      "status": "unverified",
+      "source": "only recorded duplicate enqueue/ACK conditions performed"
+    }
+  ],
+  "operationalPolicy": {
+    "default": "direct-wait unchanged",
+    "originalAuthority": "unchanged",
+    "productionCodeChangesThisTurn": 0,
+    "operationalDbAndGlobalSettingsDirectlyAudited": false,
+    "unchangedOperationalScope": "performed-scope/report claim, not a direct DB/settings audit"
+  },
+  "finalizationActions": {
+    "newSiteCalls": 0,
+    "newRemoteTrials": 0,
+    "redeployments": 0,
+    "newCredentialsOrConnections": 0,
+    "oldRuntimeScriptsExecuted": 0,
+    "githubIssueChanges": 0,
+    "allowedGitActions": "selective docs-only commit, normal dev integration and non-force push"
+  },
+  "privacy": {
+    "historicalSignedScreenshotOutputIncident": "preserved in earlier audit; actual signed URL not included in durable evidence",
+    "newSecretOrSignedUrlCopying": false,
+    "patternValidation": "docs/audits/issue-222-sites-independent-20261003/finalization/validation.json"
+  },
+  "validation": {
+    "report": "docs/audits/issue-222-sites-independent-20261003/finalization/validation.json",
+    "affectedLog": "docs/audits/issue-222-sites-independent-20261003/finalization/affected-validation.txt",
+    "manifest": "docs/audits/issue-222-sites-independent-20261003/finalization/file-digests.json",
+    "status": "PASS: docs-only affected validation and local evidence/document checks; see report"
+  }
+}

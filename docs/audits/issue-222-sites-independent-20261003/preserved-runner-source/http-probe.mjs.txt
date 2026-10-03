@@ -1,0 +1,117 @@
+import { createHash } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
+
+// Only the exact provider-returned Site URL and supported existing credential
+// arrive via hidden stdin. Neither credentials nor response auth headers persist.
+process.stdin.setRawMode(true);
+process.stderr.write('Ready for probe JSON on stdin (input is hidden).\n');
+const input = await new Promise((resolve, reject) => {
+  let value = '';
+  const onData = chunk => {
+    value += chunk;
+    if (value.includes('\u0003')) reject(new Error('Cancelled'));
+    if (value.includes('\n')) {
+      process.stdin.off('data', onData);
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      resolve(JSON.parse(value));
+    }
+  };
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', onData);
+  process.stdin.resume();
+});
+const digest = value => createHash('sha256').update(value).digest('hex');
+const fixture = { probe: 'issue-222', phase: 'A', value: 222 };
+const fixtureBytes = JSON.stringify(fixture);
+const report = {
+  startedAt: new Date().toISOString(), projectId: input.projectId,
+  versionNumber: input.versionNumber ?? 1, sourceCommit: input.sourceCommit,
+  payload: fixture, payloadSha256: digest(fixtureBytes), requests: [],
+  authentication: 'existing get_site credential; documented OAI-Sites-Authorization header',
+  credentialPersisted: false, mockRequests: 0,
+};
+async function request(label, path, body) {
+  const beganAt = new Date().toISOString();
+  const bytes = body === undefined ? undefined : JSON.stringify(body);
+  try {
+    const response = await fetch(new URL(path, input.origin), {
+      method: bytes === undefined ? 'GET' : 'POST', redirect: 'manual',
+      headers: {
+        'OAI-Sites-Authorization': `Bearer ${input.token}`,
+        'Accept': 'application/json, text/event-stream',
+        'Cache-Control': 'no-store', 'Connection': 'close',
+        ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }),
+      }, body: bytes, signal: AbortSignal.timeout(20000),
+    });
+    const raw = (await response.text()).split(input.token).join('[REDACTED]');
+    const record = {
+      label, path, method: bytes === undefined ? 'GET' : 'POST', beganAt,
+      completedAt: new Date().toISOString(), status: response.status,
+      responseDate: response.headers.get('date'), contentType: response.headers.get('content-type'),
+      payloadSha256: bytes === undefined ? null : digest(bytes),
+      responseSha256: digest(raw), responseBody: raw,
+    };
+    report.requests.push(record);
+    console.log(JSON.stringify({ label, status: response.status, completedAt: record.completedAt }));
+    return record;
+  } catch {
+    const record = { label, path, beganAt, completedAt: new Date().toISOString(), status: null, error: 'HTTP request failed or timed out' };
+    report.requests.push(record);
+    console.log(JSON.stringify(record));
+    return record;
+  }
+}
+await request('baseline_metadata', '/metadata');
+await request('write_fixed_payload', '/ingest', fixture);
+await request('independent_http_read_after_write', input.versionNumber === 2 ? '/fixture' : '/metadata');
+await request('duplicate_fixed_payload', '/ingest', fixture);
+await request('independent_http_read_after_duplicate', input.versionNumber === 2 ? '/fixture' : '/metadata');
+const initialize = await request('mcp_initialize', '/mcp', {
+  jsonrpc: '2.0', id: 1, method: 'initialize',
+  params: { protocolVersion: input.versionNumber === 2 ? '2025-03-26' : '2026-07-28', capabilities: {}, clientInfo: { name: 'issue-222-independent-probe', version: '1' } },
+});
+let initialized;
+try { initialized = JSON.parse(initialize.responseBody); } catch {}
+if (initialize.status === 200 && initialized?.result?.serverInfo) {
+  await request('mcp_initialized_notification', '/mcp', { jsonrpc: '2.0', method: 'notifications/initialized' });
+  const listed = await request('mcp_tools_list', '/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+  let tools;
+  try { tools = JSON.parse(listed.responseBody)?.result?.tools; } catch {}
+  if (tools?.some(tool => tool.name === 'read_fixture')) {
+    await request('mcp_read_fixture', '/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'read_fixture', arguments: {} } });
+  } else report.readFixture = 'not performed: discovery did not expose read_fixture';
+} else {
+  report.toolsList = 'not performed: initialize failed';
+  report.readFixture = 'not performed: initialize failed';
+}
+const parsed = label => {
+  try { return JSON.parse(report.requests.find(record => record.label === label)?.responseBody); } catch { return null; }
+};
+if (input.versionNumber === 2) {
+  const firstWrite = parsed('write_fixed_payload');
+  const firstRead = parsed('independent_http_read_after_write');
+  const duplicate = parsed('duplicate_fixed_payload');
+  const finalRead = parsed('independent_http_read_after_duplicate');
+  const validStored = value => value?.persisted === true && value?.count === 1 && value?.payloadSha256 === report.payloadSha256 && JSON.stringify(value?.fixture) === fixtureBytes;
+  report.storageChecks = {
+    firstInsert: firstWrite?.inserted === true,
+    independentRead: validStored(firstRead),
+    duplicateIgnored: duplicate?.inserted === false,
+    countRemainsOne: validStored(finalRead),
+    sameCreationTimestamp: Boolean(firstRead?.createdAt) && firstRead?.createdAt === finalRead?.createdAt,
+    sameKey: firstRead?.key === 'issue-222-independent-20261003' && finalRead?.key === firstRead?.key,
+  };
+  report.storageVerdict = Object.values(report.storageChecks).every(Boolean) ? 'PASS: actual HTTP D1 write/read/duplicate/read' : 'FAIL or blocked: actual storage checks did not all pass';
+  const called = parsed('mcp_read_fixture');
+  report.mcpChecks = {
+    initialize: initialize.status === 200 && initialized?.result?.protocolVersion === '2025-03-26',
+    discovery: parsed('mcp_tools_list')?.result?.tools?.some(tool => tool.name === 'read_fixture') === true,
+    toolCall: validStored(called?.result?.structuredContent),
+  };
+  report.mcpVerdict = Object.values(report.mcpChecks).every(Boolean) ? 'PASS: actual remote initialize/tools-list/read-fixture over supported service authentication; plugin installation/OAuth not tested' : 'FAIL or blocked: MCP checks did not all pass';
+} else report.storageVerdict = 'No PASS: existing metadata is not an HTTP lookup of stored records; no key/count lookup contract exists in v1';
+report.siteToLocal = 'not performed: no supported channel exposed; no mock substituted';
+report.completedAt = new Date().toISOString();
+writeFileSync(input.outputPath, JSON.stringify(report, null, 2) + '\n');
+console.log(JSON.stringify({ requests: report.requests.length, completedAt: report.completedAt, outputPath: input.outputPath }));

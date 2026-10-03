@@ -1,0 +1,271 @@
+{
+  "schemaVersion": 1,
+  "selfExcluded": true,
+  "files": [
+    {
+      "path": "docs/audits/2026-10-03-issue-222-final-evidence.json",
+      "bytes": 7521,
+      "sha256": "8e23f9a6c5c6dc0a144d37e238036c07440561e0ed88327b75ad6447583b8bdf"
+    },
+    {
+      "path": "docs/audits/2026-10-03-issue-222-final-evidence.md",
+      "bytes": 9041,
+      "sha256": "8b9f366880d142c64a6baae344c3023daddb99b14a624ffa2b08ed0bfde55e8f"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/README.md",
+      "bytes": 6698,
+      "sha256": "6f0928b0f39c49324afc414894ec1583f1e4955459c8ac23599c3d350ced5dee"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/file-digests.json",
+      "bytes": 4392,
+      "sha256": "9d9556803649f0096ec893fec09e91f69c703a97de5c2c9979134c9a516bf319"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/finalization/affected-validation.txt",
+      "bytes": 950,
+      "sha256": "bc3236a34d21d3cf3eaaacd812400f75d899e7f72aa37a99be00994d07d182e2"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/finalization/originating-chatgpt-observations.json",
+      "bytes": 4423,
+      "sha256": "1408f806dca524bfe8b0d397130ebf23ca36309e455464dff15bd3d92ce03afb"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/finalization/reviewer-result.json",
+      "bytes": 1254,
+      "sha256": "1bcd73f0eaff6f11468c870a70a3eba2de456f41c5a290afbecb4a922dcfa2e9"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/finalization/validation.json",
+      "bytes": 1361,
+      "sha256": "805bba2b8f61d7790e2af8b45873ed2bafe50117269f239053d1cae358592e2e"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/post-deploy-observations.json",
+      "bytes": 3531,
+      "sha256": "b40c18c7197d4026a5909a2229f0e6cb9bd983b55e4dc4d55b758da3c6a4fa96"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/preserved-runner-source/http-probe.mjs.txt",
+      "bytes": 6780,
+      "sha256": "fdc773feda82774b519af7acb7a0a7b65094244c0162b885826017a2d415645e"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/preserved-runner-source/index.json",
+      "bytes": 1692,
+      "sha256": "bea3fde098153129848946deedbb1e5f0797ddf61e9e54ad89d06fff555a5508"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/preserved-runner-source/roundtrip.mjs.txt",
+      "bytes": 10165,
+      "sha256": "e7e4c8b1e45e2d8d97ce3da9420186bdb6a5bb20f92b3e7892c543957da2261b"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/preserved-runner-source/validate-roundtrip.mjs.txt",
+      "bytes": 7751,
+      "sha256": "1e78c1a29367b3bd19b8d26ebb3157ca11f6af99f14cb8cf313aadf9c963f253"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/preserved-runner-source/validate.mjs.txt",
+      "bytes": 4335,
+      "sha256": "ed6c9557dde8dd563d7d5bb0cda9fbb5cd75c13e8ecc0782e046df42c64804e4"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/provider-observations.json",
+      "bytes": 7424,
+      "sha256": "859a26e7224ac6e9229c153fa3fd9adebcbe8cfeea82889c6b14c7d612741ed1"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/README.md",
+      "bytes": 8232,
+      "sha256": "292635c46f802fcbb2cac6b7f33b7e4ea2e2880207fdf64874802a79a91234bc"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/actual-trial.json",
+      "bytes": 15209,
+      "sha256": "636cb6e1b45275daa94da5dc5b13de94c86ae7b665a6f742fb2d9d64cf1d9423"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/current-contracts.json",
+      "bytes": 19155,
+      "sha256": "26a21f0915c265be8a3bf261b5fa262044998a35c72a09bdc4996e62565939c1"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/file-digests.json",
+      "bytes": 5078,
+      "sha256": "ec57d67f2cf01dc9023f4571247806bc7b5b93e3fb3f439870d1d2095ed803c2"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/local-fixture.json",
+      "bytes": 97,
+      "sha256": "c8eeb25ee5e44d810719a01580de597750389c1b37fd455aefaa5ccb5f366e46"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/parent-mcp-observation.json",
+      "bytes": 990,
+      "sha256": "7d077c382e822a7ed4144bdaeabaf2b0944a1e7b02242d0b1322fd93fe397121"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/provider-after-trial.json",
+      "bytes": 7960,
+      "sha256": "f208f194c2ecb0226cb0a5c5d75bd449699b1c323093a42230199ae74b9e47ad"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/provider-before-trial.json",
+      "bytes": 4194,
+      "sha256": "934b4cb4ec8cc72e2d6049d4dd783d6385527220d1c2b1204ce2692a253a8a7b"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/source-v3/.openai/hosting.json",
+      "bytes": 118,
+      "sha256": "ff5ab58d67407ae8b3eea17bd443b5eb6ac9aff257e08dee886af97a133ddab9"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/source-v3/ROUNDTRIP.md",
+      "bytes": 1342,
+      "sha256": "6282535cc567d4b5f953d0611c82b38dfb0e9ebfe62979c195708ae15fb29872"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/source-v3/build.mjs",
+      "bytes": 150,
+      "sha256": "52f8f9538482395732a39298916ad2eb04a5aebef90bf97ef6fb28eb57092536"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/source-v3/db/schema.ts",
+      "bytes": 825,
+      "sha256": "7b5dc6cf5b4390067661f74781a0cd6750d04d3dc621f5ed6d0d79677f5c8878"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/source-v3/drizzle/0000_brainy_robin_chapel.sql",
+      "bytes": 173,
+      "sha256": "afba3c878d864cf177e2557d61d592139278a87f44facd5099fa7398ca3d6411"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/source-v3/drizzle/0001_cloudy_mach_iv.sql",
+      "bytes": 283,
+      "sha256": "3a88b53e4a1c5da37320544b3e16d2743d59b59c8e31913e95673e9d3ff4d9f1"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/source-v3/drizzle/meta/0000_snapshot.json",
+      "bytes": 1290,
+      "sha256": "84260bb526d8133da05f0e6bfcac03f764b529c0e0286a2c187b889ba0e4d4f4"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/source-v3/drizzle/meta/0001_snapshot.json",
+      "bytes": 3203,
+      "sha256": "857c3f43769f77665afcee26eebb287e19050585f9845dc0aa8a9bece3e33292"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/source-v3/drizzle/meta/_journal.json",
+      "bytes": 351,
+      "sha256": "153766a3bd77e50cd8f4dfcf71d065eb7fa9b6dfa568df8b9509b50ad5ec0be6"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/source-v3/drizzle.config.ts",
+      "bytes": 140,
+      "sha256": "1b23f85e803c4445cef92769769b1e6dd34ad9e9f1ce25fb83ac9db101d00259"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/source-v3/package-lock.json",
+      "bytes": 50422,
+      "sha256": "58d09409644e662dbe2e82724b2a5084549b730c86cb9394c03967ab86084a07"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/source-v3/package.json",
+      "bytes": 270,
+      "sha256": "5c6df47f48234a9a8a43a990e87713ad7593799cfd6295bce74e5f9b853a17fa"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/source-v3/worker.mjs",
+      "bytes": 9067,
+      "sha256": "8c85a830271cebc0588a9403f2290e5ec8783e7c5401567340baaaa9cb6e2945"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/roundtrip/validation.json",
+      "bytes": 906,
+      "sha256": "02e63aff2d96e3d8a39db2b9786244c85514be7dbfffd409cb7448b0c17fcb13"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/source/v1-hosting.json",
+      "bytes": 63,
+      "sha256": "0013a23ec4598e685d49d5c8db3391d87656d8bf43ec987eafcf062abd6b318b"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/source/v1-worker.mjs",
+      "bytes": 2967,
+      "sha256": "91d012efd539e2cbf82cdeabe17c654fd0aef1c52ba7bebd5faed144aa0bb006"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/source/v2/.openai/hosting.json",
+      "bytes": 118,
+      "sha256": "ff5ab58d67407ae8b3eea17bd443b5eb6ac9aff257e08dee886af97a133ddab9"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/source/v2/build.mjs",
+      "bytes": 150,
+      "sha256": "52f8f9538482395732a39298916ad2eb04a5aebef90bf97ef6fb28eb57092536"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/source/v2/db/schema.ts",
+      "bytes": 314,
+      "sha256": "8e86731214dbfe57ce3c8364cb0100805b0a1af03d88c93e0ee491ce89086b54"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/source/v2/drizzle/0000_brainy_robin_chapel.sql",
+      "bytes": 173,
+      "sha256": "afba3c878d864cf177e2557d61d592139278a87f44facd5099fa7398ca3d6411"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/source/v2/drizzle/meta/0000_snapshot.json",
+      "bytes": 1290,
+      "sha256": "84260bb526d8133da05f0e6bfcac03f764b529c0e0286a2c187b889ba0e4d4f4"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/source/v2/drizzle/meta/_journal.json",
+      "bytes": 209,
+      "sha256": "d3d84d53ba71e971a029c4364efe05091f315e459d26c1ea914e4cac241cfbed"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/source/v2/drizzle.config.ts",
+      "bytes": 140,
+      "sha256": "1b23f85e803c4445cef92769769b1e6dd34ad9e9f1ce25fb83ac9db101d00259"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/source/v2/package-lock.json",
+      "bytes": 50422,
+      "sha256": "58d09409644e662dbe2e82724b2a5084549b730c86cb9394c03967ab86084a07"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/source/v2/package.json",
+      "bytes": 270,
+      "sha256": "5c6df47f48234a9a8a43a990e87713ad7593799cfd6295bce74e5f9b853a17fa"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/source/v2/worker.mjs",
+      "bytes": 4023,
+      "sha256": "8755c05037697977222c69940dc819f3693e1f65eb7a5b2e8849df0333f861b8"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/tool-contracts.json",
+      "bytes": 19841,
+      "sha256": "57c26e1053cf4590a9fe7949826d7e2b08461a97da4863712536640dae081cdf"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/v1-http.json",
+      "bytes": 4460,
+      "sha256": "0b546c209ceb33a05fbeeb51c979232a23aca31e39def25828526545107dbf0a"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/v2-http.json",
+      "bytes": 5786,
+      "sha256": "37326712c645c616f8f6be6576e9a64528984bd172f48069229bce4c8240a5ff"
+    },
+    {
+      "path": "docs/audits/issue-222-sites-independent-20261003/validation.json",
+      "bytes": 574,
+      "sha256": "f923b04a2613cbf227916da3163ee5611fdfa2f56483b7c979ce6f175289ec96"
+    }
+  ]
+}
