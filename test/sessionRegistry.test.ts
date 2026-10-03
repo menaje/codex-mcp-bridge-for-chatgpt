@@ -9,81 +9,75 @@ const SCOPE_A = "11111111-1111-4111-8111-111111111111";
 const SCOPE_B = "22222222-2222-4222-8222-222222222222";
 
 describe("SessionRegistry", () => {
-  it("keeps a previous authentication connection's thread in storage without allowing a new connection to resume it", () => {
+  it("keeps legacy and A/B sessions visible across account changes without relabeling creation provenance", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-auth-boundary-"));
-    const databaseFile = path.join(root, "state.sqlite");
-    const firstKey = "a".repeat(64), secondKey = "b".repeat(64);
-    const store = new BridgeStateStore({ file: databaseFile });
-    const legacy = new SessionRegistry({ stateStore: store });
-    legacy.record(session("legacy-shared", root, "read-only", undefined, undefined, 90));
-    const first = new SessionRegistry({ stateStore: store,
-      authBoundary: { key: firstKey, allowLegacyShared: true } });
-    expect(first.get("legacy-shared")).toBeUndefined();
-    expect(first.belongsToAnotherAuthentication("legacy-shared")).toBe(true);
-    first.record(session("first-account", root, "read-only", undefined, undefined, 100));
-    expect(first.get("first-account")?.authBoundary).toBe(firstKey);
-    const reopenedSame = new SessionRegistry({ stateStore: store,
-      authBoundary: { key: firstKey, allowLegacyShared: false } });
-    expect(reopenedSame.get("first-account")?.authBoundary).toBe(firstKey);
-    const second = new SessionRegistry({ stateStore: store,
-      authBoundary: { key: secondKey, allowLegacyShared: false } });
-    expect(second.get("first-account")).toBeUndefined();
-    expect(second.belongsToAnotherAuthentication("first-account")).toBe(true);
-    expect(second.belongsToAnotherAuthentication("absent-thread")).toBe(false);
-    expect(second.list()).toEqual([]);
-    expect(() => second.record(session("first-account", root, "read-only", undefined, undefined, 200)))
-      .toThrow("CODEX_AUTH_THREAD_BOUNDARY");
-    expect(store.countSessions()).toBe(2);
+    const store = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+    const ownerA = "a".repeat(64), ownerB = "b".repeat(64);
+    new SessionRegistry({ stateStore: store }).record(session("legacy", root, "read-only", undefined, undefined, 90));
+    let key = ownerA;
+    const sessions = new SessionRegistry({ stateStore: store, authBoundary: () => ({ key, allowLegacyShared: false }) });
+    sessions.record(session("thread-a", root, "read-only", undefined, undefined, 100));
+    key = ownerB;
+    expect(sessions.get("legacy")).not.toHaveProperty("authBoundary");
+    expect(sessions.get("thread-a")?.authBoundary).toBe(ownerA);
+    sessions.recordForJob(session("thread-a", root, "read-only", undefined, undefined, 200), ownerB);
+    sessions.recordForJob(session("thread-b", root, "read-only", undefined, undefined, 300), ownerB);
+    sessions.recordForJob(session("legacy", root, "read-only", undefined, undefined, 400), undefined);
+    expect(sessions.get("thread-a")?.authBoundary).toBe(ownerA);
+    expect(sessions.get("thread-b")?.authBoundary).toBe(ownerB);
+    expect(sessions.get("legacy")).not.toHaveProperty("authBoundary");
+    expect(sessions.list().map(item => item.threadId)).toEqual(["legacy", "thread-b", "thread-a"]);
+    key = ownerA;
+    expect(sessions.list()).toHaveLength(3);
+    expect(sessions.getForJob("thread-a", ownerB)?.lastUsedAt).toBe(200);
     store.close();
   });
 
-  it("rechecks the active authentication boundary after an account observation changes", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-auth-observation-"));
-    let key = "a".repeat(64);
-    const sessions = new SessionRegistry({ authBoundary: () => ({ key, allowLegacyShared: false }) });
-    sessions.record(session("account-a", root, "read-only", undefined, undefined, 100));
-    key = "b".repeat(64);
-    expect(sessions.get("account-a")).toBeUndefined();
-    expect(() => sessions.record(session("account-a", root, "read-only", undefined, undefined, 200)))
-      .toThrow("CODEX_AUTH_THREAD_BOUNDARY");
-    sessions.record(session("account-b", root, "read-only", undefined, undefined, 200));
-    expect(sessions.list().map(item => item.threadId)).toEqual(["account-b"]);
-    key = "a".repeat(64);
-    expect(sessions.list().map(item => item.threadId)).toEqual(["account-a"]);
+  it("preserves 1,600 inherited sessions through first update, restart and scope pagination", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "bridge-auth-retention-upgrade-"));
+    const file = path.join(root, "state.sqlite");
+    const first = new BridgeStateStore({ file });
+    first.transaction(() => {
+      for (let i = 0; i < 1600; i++) first.upsertSession({
+        ...session(`thread-${i}`, root, "read-only", undefined, undefined, i + 1),
+        scopeId: i < 800 ? SCOPE_A : SCOPE_B,
+        sessionId: `original-session-${i}`,
+        authBoundary: (i < 800 ? "a" : "b").repeat(64)
+      });
+      first.upsertSession({ ...session("legacy", root, "read-only", undefined, undefined, 0), sessionId: "legacy-original" });
+    });
+    const agent = first.createAgent({ scopeId: SCOPE_A, agentName: "Preserved Agent" });
+    first.linkAgentThread({ agentId: agent.agentId, threadId: "thread-0", sessionId: "original-session-0",
+      backendKind: "mcp-server", cwd: root, sandbox: "read-only", contextMode: "fresh" });
+    const jobId = "33333333-3333-4333-8333-333333333333";
+    first.upsertJob({ jobId, scopeId: SCOPE_A, requestId: "inherited-result", agentId: agent.agentId,
+      threadId: "thread-0", status: "completed", updatedAt: 2000,
+      result: { content: [{ type: "text", text: "Original retained result." }] } });
+    first.close();
+    for (let pass = 0; pass < 2; pass++) {
+      const store = new BridgeStateStore({ file });
+      const sessions = new SessionRegistry({ stateStore: store, maxSessions: 1000 });
+      expect(sessions.size()).toBe(1601);
+      expect(sessions.get("thread-0")?.sessionId).toBe("original-session-0");
+      expect(sessions.get("thread-1599")?.sessionId).toBe("original-session-1599");
+      const current = sessions.get("thread-0")!;
+      sessions.recordForJob({ ...current, lastUsedAt: 2000 }, "b".repeat(64));
+      const ids = new Set<string>();
+      for (let offset = 0; offset < 801; offset += 100) {
+        for (const entry of sessions.listForScope(SCOPE_A, 100, offset)) ids.add(entry.threadId);
+      }
+      expect(ids.size).toBe(801);
+      expect(ids.has("legacy")).toBe(true);
+      expect(store.countSessions()).toBe(1601);
+      expect(sessions.get("thread-0")?.authBoundary).toBe("a".repeat(64));
+      expect(store.getAgent(agent.agentId)?.currentThreadId).toBe("thread-0");
+      expect(store.listJobs()).toContainEqual(expect.objectContaining({ jobId, agentId: agent.agentId,
+        threadId: "thread-0", result: { content: [{ type: "text", text: "Original retained result." }] } }));
+      store.close();
+    }
   });
 
-  it("records an original Job result under its admitted owner after the current login changes", () => {
-    const root = mkdtempSync(path.join(tmpdir(), "bridge-job-session-owner-"));
-    const store = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
-    const ownerA = "a".repeat(64), ownerB = "b".repeat(64);
-    let currentOwner = ownerA;
-    const sessions = new SessionRegistry({ stateStore: store,
-      authBoundary: () => ({ key: currentOwner, allowLegacyShared: false }) });
-    try {
-      sessions.record(session("existing-a", root, "read-only", undefined, undefined, 100));
-      currentOwner = ownerB;
-      expect(sessions.get("existing-a")).toBeUndefined();
-      expect(sessions.getForJob("existing-a", ownerA)?.authBoundary).toBe(ownerA);
-      sessions.recordForJob(session("existing-a", root, "read-only", undefined, undefined, 200), ownerA);
-      sessions.recordForJob(session("new-a", root, "read-only", undefined, undefined, 200), ownerA);
-      expect(sessions.list()).toEqual([]);
-      expect(store.listSessions()).toEqual(expect.arrayContaining([
-        expect.objectContaining({ threadId: "existing-a", authBoundary: ownerA, lastUsedAt: 200 }),
-        expect.objectContaining({ threadId: "new-a", authBoundary: ownerA })
-      ]));
-
-      sessions.record(session("existing-b", root, "read-only", undefined, undefined, 300));
-      expect(() => sessions.recordForJob(session("existing-b", root, "read-only", undefined, undefined, 400), ownerA))
-        .toThrow("CODEX_AUTH_THREAD_BOUNDARY");
-      expect(() => sessions.recordForJob(session("unowned", root, "read-only", undefined, undefined, 400), undefined))
-        .toThrow("CODEX_AUTH_THREAD_BOUNDARY");
-      expect(sessions.get("existing-b")?.authBoundary).toBe(ownerB);
-      currentOwner = ownerA;
-      expect(sessions.list().map(item => item.threadId)).toEqual(["new-a", "existing-a"]);
-    } finally { store.close(); }
-  });
-
-  it("applies retention to the Job owner and restores every in-memory session after a failed commit", () => {
+  it("keeps historical retention cohorts and restores every in-memory session after a failed commit", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-job-session-rollback-"));
     const store = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
     const ownerA = "a".repeat(64), ownerB = "b".repeat(64);
@@ -260,7 +254,7 @@ describe("SessionRegistry", () => {
     restoredStore.close();
   });
 
-  it("still enforces the global SQLite session retention limit", () => {
+  it("separates page limits from inherited SQLite retention capacity", () => {
     const root = mkdtempSync(path.join(tmpdir(), "bridge-root-"));
     const databaseFile = path.join(mkdtempSync(path.join(tmpdir(), "bridge-state-")), "state.sqlite");
     const firstStore = new BridgeStateStore({ file: databaseFile });
@@ -273,7 +267,10 @@ describe("SessionRegistry", () => {
     const limitedStore = new BridgeStateStore({ file: databaseFile });
     const limited = new SessionRegistry({ stateStore: limitedStore, maxSessions: 2 });
     expect(limited.list().map((entry) => entry.threadId)).toEqual(["newest", "middle"]);
-    expect(limitedStore.countSessions()).toBe(2);
+    expect(limitedStore.countSessions()).toBe(3);
+    expect(limited.get("oldest")).toBeDefined();
+    limited.record(session("new", root, "read-only", undefined, undefined, 400));
+    expect(limitedStore.countSessions()).toBe(3);
     limitedStore.close();
   });
 

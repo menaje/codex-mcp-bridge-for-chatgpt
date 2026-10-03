@@ -232,7 +232,7 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
     const requestId = randomUUID();
     let authBoundary: CodexSessionAuthBoundaryEvidence | null;
     try { authBoundary = this.authBoundary(); }
-    catch { return Promise.reject(new Error("STATE_READ_AUTH_BOUNDARY_UNAVAILABLE: Ownership evidence could not be read.")); }
+    catch { authBoundary = null; }
     const message: RequestMessage = {
       type: "request",
       generation: this.generation,
@@ -431,7 +431,6 @@ class ProjectionUpstream implements CodexUpstream {
 async function runChild(file: string): Promise<void> {
   const generation = randomUUID();
   const codexService = new CodexService(process.env);
-  const unverifiedReadBoundary = randomUUID();
   let closing = false;
   let inFlight = 0;
   let tail: Promise<void> = Promise.resolve();
@@ -484,13 +483,8 @@ async function runChild(file: string): Promise<void> {
       observe(inFlight > 1 ? "queue-wait" : "read-snapshot");
       const run = tail.then(async () => {
         observe("read-snapshot");
-        const evidence = value.authBoundary;
-        // A last-confirmed Keyring owner can label historical read-only rows.
-        // Admission independently checks the live account before any execution.
-        const boundaryIsCurrent = evidence && evidence.ownerStatus !== "unverified" &&
-          evidence.snapshotAt <= Date.now() && Date.now() - evidence.snapshotAt <= REQUEST_DEADLINE_MS;
-        const result = await executeProjection(file, value.method, value.args, codexService,
-          boundaryIsCurrent ? evidence.key : unverifiedReadBoundary);
+        // Bridge read permissions do not depend on an execution login snapshot.
+        const result = await executeProjection(file, value.method, value.args, codexService);
         observe("serializing");
         const encoded = JSON.stringify(result === undefined ? null : result);
         if (Buffer.byteLength(encoded, "utf8") > MAX_MESSAGE_BYTES) {
@@ -527,8 +521,7 @@ async function executeProjection(
   file: string,
   method: ReadMethod,
   args: unknown[],
-  codexService: CodexService,
-  authBoundaryKey: string
+  codexService: CodexService
 ): Promise<unknown> {
   const config = loadConfig({
     ...process.env,
@@ -544,7 +537,6 @@ async function executeProjection(
     allowedRoots: config.allowedRoots,
     maxSessions: 1_000_000,
     projectionOnly: true,
-    authBoundary: { key: authBoundaryKey, allowLegacyShared: false }
   });
   const jobs = new CodexJobRegistry({
     maxConcurrentJobs: config.maxConcurrentJobs,

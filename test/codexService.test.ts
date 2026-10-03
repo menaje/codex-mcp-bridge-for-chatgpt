@@ -282,7 +282,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "a", id_token: syntheticIdToken("fixture-user", "a"), access_token: "secret-two" } }));
     expect(f.service.cacheRevision()).not.toBe(before); await expect(guard()).resolves.toBeUndefined();
     await writeFile(auth, JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "b", id_token: syntheticIdToken("fixture-user", "b") } }));
-    await expect(guard()).rejects.toThrow("CODEX_AUTH_CHANGED");
+    await expect(guard()).resolves.toBeUndefined();
     expect(await readFile(auth, "utf8")).toContain('"b"');
   });
 
@@ -340,10 +340,10 @@ createInterface({ input: process.stdin }).on("line", line => {
     await expect(guard()).resolves.toBeUndefined();
     expect(service.sessionAuthBoundary().key).toBe(boundary);
     environment.OPENAI_API_KEY = "sk-synthetic-api-two";
-    await expect(guard()).rejects.toThrow("CODEX_AUTH_CHANGED");
+    await expect(guard()).resolves.toBeUndefined();
   });
 
-  it("does not identify a managed Keyring API login using an unrelated ambient key", async () => {
+  it("does not label a managed Keyring API login using an unrelated ambient key", async () => {
     const f = await fixture();
     const service = new CodexService({ ...f.environment, OPENAI_API_KEY: "sk-unrelated-ambient" });
     service.setAuthPolicyReader(async () => ({
@@ -351,16 +351,16 @@ createInterface({ input: process.stdin }).on("line", line => {
     }));
     vi.spyOn(service, "readCliAccount").mockResolvedValue(
       projectCodexAccount({ account: { type: "apiKey" } }, null));
-    await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_IDENTITY_UNAVAILABLE");
+    await expect(service.assertCurrentAdmission()).resolves.toBeUndefined();
   });
 
-  it.each(["keyring", "auto", "ephemeral"])("does not use an ambient API key with local %s credential storage", async store => {
+  it.each(["keyring", "auto", "ephemeral"])("does not attribute native %s storage to an ambient API key", async store => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
     await writeFile(path.join(home, "config.toml"), `cli_auth_credentials_store = "${store}"\n`);
     const service = new CodexService({ ...f.environment, OPENAI_API_KEY: "sk-unrelated-ambient" });
     vi.spyOn(service, "readCliAccount").mockResolvedValue(projectCodexAccount({ account: { type: "apiKey" } }, null));
-    await expect(service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_IDENTITY_UNAVAILABLE");
-    expect(service.currentExecutionAuthBoundary()).toBeNull();
+    await expect(service.assertCurrentAdmission()).resolves.toBeUndefined();
+    expect(service.currentExecutionAuthBoundary()).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("does not pin an unavailable first observation and recovers without a worker restart", async () => {
@@ -372,21 +372,21 @@ createInterface({ input: process.stdin }).on("line", line => {
     await expect(guard()).resolves.toBeUndefined();
   });
 
-  it("requires file ownership before admitting an observed ChatGPT account and recovers without restart", async () => {
+  it("admits the current official ChatGPT account without requiring a local user claim", async () => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
     vi.spyOn(f.service, "readCliAccount").mockResolvedValue(projectCodexAccount(
       { account: { type: "chatgpt", email: "same@example.invalid" },
         workspaceRouting: { chatgptAccountId: "account-a" } }, { accountId: "account-a" }));
     const guard = f.service.admissionGuard();
-    await expect(guard()).rejects.toThrow("CODEX_AUTH_IDENTITY_UNAVAILABLE");
-    expect(f.service.currentExecutionAuthBoundary()).toBeNull();
+    await expect(guard()).resolves.toBeUndefined();
+    expect(f.service.currentExecutionAuthBoundary()).toMatch(/^[a-f0-9]{64}$/);
     await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "account-a", id_token: syntheticIdToken("fixture-user", "account-a") } }));
     await expect(guard()).resolves.toBeUndefined();
     const recoveredOwner = f.service.sessionAuthBoundary().key;
     await expect(guard()).resolves.toBeUndefined();
     expect(f.service.sessionAuthBoundary().key).toBe(recoveredOwner);
     await writeFile(path.join(home, "auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { account_id: "account-b", id_token: syntheticIdToken("fixture-user", "account-b") } }));
-    await expect(guard()).rejects.toThrow("CODEX_AUTH_CHANGED");
+    await expect(guard()).resolves.toBeUndefined();
   });
 
   it("parses inline TOML comments in credential storage and workspace restrictions", async () => {
@@ -416,7 +416,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     await expect(guard()).resolves.toBeUndefined();
   });
 
-  it("keeps a file owner through token refresh but rejects another user in the same workspace", async () => {
+  it("keeps creation provenance through refresh and admits a current different user in the same workspace", async () => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
     const auth = path.join(home, "auth.json"), workspace = "workspace-w";
     const writeAuth = (userId: string, tokenSuffix: string) => writeFile(auth, JSON.stringify({
@@ -434,10 +434,10 @@ createInterface({ input: process.stdin }).on("line", line => {
     await writeAuth("user-b", "other-user");
     expect(f.service.currentExecutionAuthBoundary()).toBeNull();
     expect(f.service.sessionAuthBoundary().key).not.toBe(ownerA);
-    await expect(guard()).rejects.toThrow("CODEX_AUTH_CHANGED");
+    await expect(guard()).resolves.toBeUndefined();
   });
 
-  it("keeps a selected workspace visible but does not admit Keyring without a user ID", async () => {
+  it("admits a verified current workspace without a separate Bridge user ID", async () => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
     await writeFile(path.join(home, "config.toml"), 'cli_auth_credentials_store = "keyring"\n');
     const account = { account: { type: "chatgpt", email: "same@example.invalid" },
@@ -446,15 +446,15 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(projected.workspaceKey).toBe(codexChatgptOwnerKey("workspace-w"));
     expect(projected.ownershipKey).toBeNull();
     vi.spyOn(f.service, "readCliAccount").mockResolvedValue(projected);
-    await expect(f.service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_IDENTITY_UNAVAILABLE");
+    await expect(f.service.assertCurrentAdmission()).resolves.toBeUndefined();
   });
 
-  it("does not use an email-only keyring response to authorize execution", async () => {
+  it("uses official authentication without treating the optional email as a Bridge principal", async () => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
     await writeFile(path.join(home, "config.toml"), 'cli_auth_credentials_store = "keyring" # OS store\n');
     vi.spyOn(f.service, "readCliAccount").mockResolvedValue(projectCodexAccount(
       { account: { type: "chatgpt", email: "same@example.invalid" } }, null));
-    await expect(f.service.admissionGuard()()).rejects.toThrow("CODEX_AUTH_IDENTITY_UNAVAILABLE");
+    await expect(f.service.admissionGuard()()).resolves.toBeUndefined();
   });
 
   it("treats a local login restriction change as an admission boundary", async () => {
@@ -504,7 +504,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     policy = { ...policy, requirements: { requirements: { allowedLoginMethods: ["chatgpt"] } } };
     await expect(guard()).resolves.toBeUndefined();
     policy = { ...policy, requirements: { requirements: { allowedLoginMethods: ["chatgpt", "api"] } } };
-    await expect(guard()).rejects.toThrow("CODEX_AUTH_CHANGED");
+    await expect(guard()).resolves.toBeUndefined();
     expect(reader).toHaveBeenCalledTimes(5);
   });
 
@@ -516,7 +516,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     await expect(f.service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_POLICY_UNAVAILABLE");
   });
 
-  it("rejects effective Keyring storage despite stale file credentials and account routing", async () => {
+  it("uses current native storage without attributing stale file credentials", async () => {
     const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
     const authFile = path.join(home, "auth.json");
     await writeFile(authFile, JSON.stringify({ auth_mode: "chatgpt", tokens: {
@@ -532,13 +532,13 @@ createInterface({ input: process.stdin }).on("line", line => {
         workspaceRouting: { chatgptAccountId: "live-keyring-b" } }, { accountId: "live-keyring-b" }));
     const guard = f.service.admissionGuard();
     expect(f.service.admissionGuard()).toBe(guard);
-    await expect(f.service.assertCurrentAdmission()).rejects.toThrow("CODEX_AUTH_IDENTITY_UNAVAILABLE");
-    expect(f.service.currentExecutionAuthBoundary()).toBeNull();
+    await expect(f.service.assertCurrentAdmission()).resolves.toBeUndefined();
+    expect(f.service.currentExecutionAuthBoundary()).toMatch(/^[a-f0-9]{64}$/);
     expect(f.service.sessionAuthBoundary().ownerStatus).toBe("unverified");
     await writeFile(authFile, JSON.stringify({ auth_mode: "chatgpt", tokens: {
       account_id: "stale-file-c", id_token: syntheticIdToken("fixture-user", "stale-file-c") } }));
-    await expect(guard()).rejects.toThrow("CODEX_AUTH_IDENTITY_UNAVAILABLE");
-    expect(f.service.currentExecutionAuthBoundary()).toBeNull();
+    await expect(guard()).resolves.toBeUndefined();
+    expect(f.service.currentExecutionAuthBoundary()).toMatch(/^[a-f0-9]{64}$/);
     expect(f.service.accountDisplayContext()).toBeNull();
   });
 

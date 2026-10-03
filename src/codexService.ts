@@ -145,7 +145,7 @@ export class CodexService {
   private confirmedSessionOwnerKey: string | null = null;
   private confirmedSessionOwnerAt: number | null = null;
   private confirmedSessionLocalPolicyKey: string | null = null;
-  private confirmedSessionSource: "file" | "environment" | null = null;
+  private confirmedSessionSource: "file" | "environment" | "codex" | null = null;
   private confirmedEffectiveCredentialStore: string | null = null;
   private effectivePolicyConfirmed = false;
   private currentOwnerConfirmed = false;
@@ -272,25 +272,21 @@ export class CodexService {
       const evidence = this.sessionAuthBoundary();
       if (policyKey === this.currentExecutionPolicyKey &&
           this.cli.appliedContextFingerprint() === this.currentExecutionCliFingerprint &&
-          evidence.ownerStatus !== "unverified" && evidence.key === this.currentExecutionBoundaryKey) {
+          evidence.key === this.currentExecutionBoundaryKey) {
         return evidence.key;
       }
     } catch { /* A changed or unreadable local policy cannot authorize new execution. */ }
     this.currentOwnerConfirmed = false;
     return null;
   }
-  /** Confirm the owner before resolving any saved Agent or persisting a new Job. */
+  /** Validate current execution conditions; stored work access is independent. */
   assertCurrentAdmission(): Promise<void> {
     return this.admissionGuard()();
   }
   admissionGuard(home?: string): () => Promise<void> {
     if (!home && this.executionAdmissionGuard) return this.executionAdmissionGuard;
-    let identity: string | undefined;
-    let source: "file" | "environment" | undefined;
-    let ownerKey: string | undefined;
-    let policyKey: string | undefined;
-    let managedPolicyKey: string | undefined;
     let cliFingerprint: string | undefined;
+    let previousCredentialContext: string | undefined;
     let pending: Promise<void> = Promise.resolve();
     const check = async () => {
       this.currentOwnerConfirmed = false;
@@ -319,9 +315,9 @@ export class CodexService {
       const fileEvidence = ["keyring", "auto", "ephemeral"].includes(String(managedStore))
         ? null : credentialEvidence(directory, this.environment, policy);
       let current: string;
-      let currentOwnerKey: string;
+      let currentOwnerKey: string | null;
       let currentWorkspaceKey: string | null;
-      let currentSource: "file" | "environment";
+      let currentSource: "file" | "environment" | "codex";
       let currentMode: "chatgpt" | "api-key";
       if (fileEvidence) {
         current = fileEvidence.identity;
@@ -330,26 +326,23 @@ export class CodexService {
         currentSource = "file";
         currentMode = fileEvidence.authMode;
       } else {
-        // The public account API cannot prove a ChatGPT login user. Only an
-        // explicitly supplied API key can establish an owner without a file.
+        // The selected Codex authenticates execution. Optional user claims are
+        // not another Bridge principal or a permanent local-work ACL.
         let account: CodexAccountSnapshot | null;
         try { account = await this.readCliAccount(); }
         catch { throw new Error("CODEX_AUTH_UNAVAILABLE: Codex account status cannot currently be verified. Retry after the account check recovers."); }
         if (!account?.authenticated) throw new Error("CODEX_AUTH_REQUIRED: Sign in to Codex before starting new work.");
-        if (account.ownershipConflict) {
-          throw new Error("CODEX_AUTH_IDENTITY_CONFLICT: Codex account and usage replies identify different workspaces.");
+        if (account.authMode !== "chatgpt" && account.authMode !== "api-key") {
+          throw new Error("CODEX_AUTH_UNAVAILABLE: The current Codex authentication method cannot be verified.");
         }
-        // An ambient key cannot identify a credential that managed storage
-        // selected independently (including auto/keyring fallback).
         const environmentApiKey = ["keyring", "auto", "ephemeral"].includes(String(managedStore ?? policy.credentialStore))
           ? undefined : this.environment.OPENAI_API_KEY || this.environment.CODEX_API_KEY;
-        if (account.authMode !== "api-key" || !environmentApiKey) {
-          throw new Error("CODEX_AUTH_IDENTITY_UNAVAILABLE: This connection cannot be used by the Bridge. Choose a separate Bridge login or a verified file-backed connection.");
-        }
-        currentOwnerKey = digest(JSON.stringify(["api-key", environmentApiKey]));
-        currentWorkspaceKey = account.workspaceKey;
-        current = digest(JSON.stringify([account.authMode, currentOwnerKey, currentPolicyKey]));
-        currentSource = "environment";
+        currentOwnerKey = account.authMode === "api-key" && environmentApiKey
+          ? digest(JSON.stringify(["api-key", environmentApiKey])) : null;
+        // A conflicting optional usage reply is not workspace authorization.
+        currentWorkspaceKey = account.ownershipConflict ? null : account.workspaceKey;
+        current = digest(JSON.stringify([account.authMode, currentOwnerKey, currentWorkspaceKey, currentPolicyKey]));
+        currentSource = currentOwnerKey ? "environment" : "codex";
         currentMode = account.authMode;
       }
       if (policy.forcedMethod && policy.forcedMethod !== (currentMode === "api-key" ? "api" : "chatgpt") ||
@@ -362,21 +355,17 @@ export class CodexService {
         this.environment.CODEX_MCP_BRIDGE_AUTH_SOURCE === "bridge-api");
       const currentManagedPolicyKey = effectivePolicy
         ? digest(effectiveCodexAuthPolicyIdentity(effectivePolicy)) : "none";
-      if (identity !== undefined && (ownerKey !== currentOwnerKey || policyKey !== currentPolicyKey ||
-          managedPolicyKey !== currentManagedPolicyKey)) {
-        throw new Error("CODEX_AUTH_CHANGED: Codex authentication or policy changed. Review the current account before starting another turn.");
-      }
-      if (identity !== undefined && cliFingerprint !== currentCliFingerprint) {
+      if (cliFingerprint !== undefined && cliFingerprint !== currentCliFingerprint) {
         throw new Error("CODEX_CLI_CHANGED: The selected Codex CLI changed. Restart the Bridge to verify the new runtime before starting another turn.");
       }
-      if (identity !== undefined && source === currentSource && current !== identity) {
-        throw new Error("CODEX_AUTH_CHANGED: Codex authentication changed. Review the current account before starting another turn.");
+      const credentialContext = digest(JSON.stringify([current, currentSource, currentPolicyKey, currentManagedPolicyKey]));
+      if (previousCredentialContext !== undefined && previousCredentialContext !== credentialContext) {
+        this.accounts.clear();
+        this.accountFailures.clear();
+        this.displayedAccounts.clear();
+        this.accountIdentities.clear();
       }
-      identity = current;
-      source = currentSource;
-      ownerKey = currentOwnerKey;
-      policyKey = currentPolicyKey;
-      managedPolicyKey = currentManagedPolicyKey;
+      previousCredentialContext = credentialContext;
       cliFingerprint = currentCliFingerprint;
       this.confirmedSessionOwnerKey = currentOwnerKey;
       this.confirmedSessionOwnerAt = Date.now();
@@ -544,7 +533,7 @@ export class CodexService {
         this.observeAccountOwner(account);
         return account;
       } catch (error) {
-        if (this.confirmedSessionSource === "environment") this.currentOwnerConfirmed = false;
+        if (this.confirmedSessionSource === "environment" || this.confirmedSessionSource === "codex") this.currentOwnerConfirmed = false;
         throw error;
       }
     }
@@ -563,13 +552,14 @@ export class CodexService {
       this.observeAccountOwner(snapshot);
       return snapshot;
     } catch (error) {
-      if (this.confirmedSessionSource === "environment") this.currentOwnerConfirmed = false;
+      if (this.confirmedSessionSource === "environment" || this.confirmedSessionSource === "codex") this.currentOwnerConfirmed = false;
       throw error;
     } finally { try { await rpc.close(); } finally { await context.release(); } }
   }
   private observeAccountOwner(account: CodexAccountSnapshot): void {
-    if (this.confirmedSessionSource === "environment" && this.confirmedSessionOwnerKey &&
-        (!account.authenticated || account.authMode !== "api-key" || account.ownershipConflict)) {
+    if ((this.confirmedSessionSource === "environment" || this.confirmedSessionSource === "codex") &&
+        (!account.authenticated || account.authMode === "unknown" ||
+          this.confirmedSessionSource === "environment" && account.authMode !== "api-key")) {
       this.currentOwnerConfirmed = false;
     }
   }

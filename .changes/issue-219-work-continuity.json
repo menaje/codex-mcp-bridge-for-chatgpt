@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Preserve Bridge work access, canonical replay and original result recovery across execution account changes without deleting inherited session references.",
+  "breaking": false,
+  "migration": null
+}

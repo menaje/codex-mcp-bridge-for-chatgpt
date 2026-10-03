@@ -34,7 +34,7 @@ async function waitFor(
 }
 
 describe("isolated state read projection", () => {
-  it("shows a last-confirmed file session through IPC and hides it when ownership is unavailable or changes", async () => {
+  it("keeps a session visible through IPC during account loss, change and reader restart", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "bridge-state-read-owner-"));
     roots.push(root);
     const home = path.join(root, "codex-home");
@@ -88,13 +88,17 @@ describe("isolated state read projection", () => {
       createdAt: now, lastUsedAt: now });
     expect(sessions.list()).toHaveLength(1);
     let evidence: CodexSessionAuthBoundaryEvidence | null = firstOwner.sessionAuthBoundary();
+    let evidenceUnavailable = false;
     expect(evidence.ownerStatus).toBe("last-confirmed");
     const readOnlyStore = new BridgeStateStore({ file, readOnly: true });
     expect(new SessionRegistry({ stateStore: readOnlyStore, allowedRoots: config.allowedRoots,
       projectionOnly: true, authBoundary: { key: evidence.key, allowLegacyShared: false } }).list()).toHaveLength(1);
     readOnlyStore.close();
     const service = await ChildProcessStateReadService.start(file, environment,
-      { authBoundary: () => evidence });
+      { authBoundary: () => {
+        if (evidenceUnavailable) throw new Error("synthetic account lookup unavailable");
+        return evidence;
+      } });
     try {
       expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(1);
       const previousProcess = service.processId;
@@ -102,9 +106,12 @@ describe("isolated state read projection", () => {
       await waitFor(() => service.health().ready && service.processId !== previousProcess);
       expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(1);
       evidence = null;
-      expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(0);
+      expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(1);
+      evidenceUnavailable = true;
+      expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(1);
+      evidenceUnavailable = false;
       evidence = secondOwner.sessionAuthBoundary();
-      expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(0);
+      expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(1);
       evidence = firstOwner.sessionAuthBoundary();
       expect((await service.dashboardSnapshot()).counts.trackedConversations).toBe(1);
     } finally {
