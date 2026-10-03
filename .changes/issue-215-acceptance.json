@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Document bounded CLI lifecycle and usage regression acceptance, separating development evidence from unverified installed and real-account combinations.",
+  "breaking": false,
+  "migration": null
+}

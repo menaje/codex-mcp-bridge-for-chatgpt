@@ -51,6 +51,18 @@ const AUTOMATIC_POLICY: ModelPolicy = {
 };
 
 describe("model policy resolver", () => {
+  it("accepts a dynamically advertised GPT-6.1 Sol while preserving old fixed choices and exact automatic admission", () => {
+    const latest = { model: "gpt-6.1-sol", reasoningEffort: "medium" };
+    const previous = catalog();
+    const expanded = catalog({ models: [...previous.models.map(model => ({ ...model, isDefault: false })),
+      { ...previous.models[0]!, id: latest.model, displayName: "GPT-6.1 Sol", isDefault: true,
+        defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ effort: "medium" }],
+        defaultServiceTier: undefined, serviceTiers: [{ id: "fast", name: "Fast" }] }] });
+    expect(decide({ policy: FIXED_POLICY, catalog: expanded }).effectiveSelection).toEqual(SOL_MAX);
+    expect(decide({ policy: AUTOMATIC_POLICY, catalog: expanded, requestedSelection: latest }).effectiveSelection).toEqual(latest);
+    expectPolicyError(() => decide({ policy: AUTOMATIC_POLICY, catalog: expanded }), "MODEL_SELECTION_REQUIRED");
+    expect(FIXED_POLICY.selection).toEqual(SOL_MAX);
+  });
   it("retains saved Ultra choices while filtering and rejecting disabled execution, including inheritance", () => {
     const ultra = { model: SOL_MAX.model, reasoningEffort: "ultra" };
     const policy = validateModelPolicy({
