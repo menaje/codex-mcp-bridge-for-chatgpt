@@ -10345,6 +10345,13 @@ function eventDeliveryFailureGuidance(subscription: EventSubscriptionState | und
   return `Events delivery has permanently failed (${delivery.failureReason}${delivery.lastHttpStatus === null ? "" : `; HTTP ${delivery.lastHttpStatus}`}). Automatic webhook retries have stopped. Report this delivery failure separately from Codex execution; preserve the original Job and result for manual exact reads. Do not automatically reissue monitoring, rerun the Job, mount Dashboard, send ui/message, schedule tasks or repeatedly poll.`;
 }
 
+function jobStateErrorCode(status: string | undefined, message?: string): string {
+  if (message?.startsWith("BRIDGE_TERMINAL_COMMIT_FAILED:")) return "BRIDGE_TERMINAL_COMMIT_FAILED";
+  if (status === "cancelled") return "JOB_CANCELLED";
+  if (status === "interrupted") return "JOB_INTERRUPTED";
+  return "JOB_FAILED";
+}
+
 function formatJobStatus(
   job: CodexJob,
   staleAfterMs: number,
@@ -10379,13 +10386,7 @@ function formatJobStatus(
   const error = job.status === "failed" || job.status === "interrupted" || job.status === "cancelled"
     ? normalizeStructuredError(
         retainedError || {
-          code: job.error?.startsWith("BRIDGE_TERMINAL_COMMIT_FAILED:")
-            ? "BRIDGE_TERMINAL_COMMIT_FAILED"
-            : job.status === "cancelled"
-              ? "JOB_CANCELLED"
-              : job.status === "interrupted"
-                ? "JOB_INTERRUPTED"
-                : "JOB_FAILED",
+          code: jobStateErrorCode(job.status, job.error),
           message:
             job.error ||
             (job.status === "interrupted"
@@ -15648,7 +15649,7 @@ function statusItemProjection(
   const error = isRecord(input.error)
     ? normalizeStructuredError(input.error)
     : typeof input.error === "string" && input.error
-      ? normalizeStructuredError({ code: "JOB_FAILED", message: input.error })
+      ? normalizeStructuredError({ code: type === "job" ? jobStateErrorCode(state, input.error) : "JOB_FAILED", message: input.error })
       : undefined;
   const wait = jobWaitOutputSchema.safeParse(input.wait);
   return statusItemOutputSchema.parse({

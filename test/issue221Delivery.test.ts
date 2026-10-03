@@ -369,6 +369,38 @@ describe("#221 delivery transition", () => {
       expect(JSON.stringify(summary.structuredContent)).not.toContain("Completed fixture work.");
     }
   });
+  it.each([
+    ["cancelled", "Cancelled at the user's request.", "JOB_CANCELLED"],
+    ["interrupted", "Execution was interrupted.", "JOB_INTERRUPTED"],
+    ["failed", "Execution failed.", "JOB_FAILED"],
+    ["failed", "BRIDGE_TERMINAL_COMMIT_FAILED: Durable terminal commit failed.", "BRIDGE_TERMINAL_COMMIT_FAILED"]
+  ] as const)("keeps %s error semantics consistent across exact and summary reads: %s", async (status, error, code) => {
+    const a = await admit();
+    const parent = (await exact((a.structuredContent as any).jobId)).items[0];
+    // Historical terminal records are seeded only in this disposable fixture.
+    // Both the live registry and persisted summary path must describe the same
+    // execution outcome without treating a missing result as completed work.
+    const retained = state.listJobs().find(job => job.jobId === parent.id)!;
+    const terminalOrigin = status === "cancelled" ? "explicit-cancellation" as const
+      : status === "interrupted" ? "app-server-interrupted" as const : "upstream-failure" as const;
+    const cancellationIntentId = status === "cancelled" ? state.beginCancellationOperation({
+      scopeId: retained.scopeId, requestId: randomUUID(), actionHash: "e".repeat(64),
+      source: "model-tool", toolName: "codex_cancel", actionName: "cancel-job",
+      target: { kind: "job", jobId: retained.jobId, activityId: retained.activityId! },
+      expectedVersion: retained.version!, reasonCode: "summary-cancel-fixture", reason: error
+    }).intent.intentId : undefined;
+    Object.assign(registry.get(parent.id)!, { status, error, result: undefined, terminalOrigin, cancellationIntentId });
+    state.upsertJob({ ...retained, status, error, result: undefined, terminalOrigin, cancellationIntentId });
+    for (const query of [{ kind: "job", id: parent.id }, undefined,
+      { kind: "page", collection: "jobs" }, { kind: "activity", id: parent.activityId },
+      { kind: "thread", id: parent.threadId }]) {
+      const result = await client.callTool({ name: "codex_status", _meta: metadata, arguments: { query } });
+      expect(result.isError, JSON.stringify(result)).not.toBe(true);
+      const item = (result.structuredContent as any).items.find((item: any) => item.type === "job" && item.id === parent.id);
+      expect(item).toMatchObject({ state: status, error: { code }, result: { availability: "unavailable" } });
+      expect(item).not.toHaveProperty("answer");
+    }
+  });
   it("continues bounded reads of the same historical active live-card Job", async () => {
     const held = upstream.holdNextCall();
     const a = await admit(); const id = (a.structuredContent as any).jobId;

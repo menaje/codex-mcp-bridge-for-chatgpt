@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "releaseUnitId": "codex-mcp-bridge",
   "bump": "patch",
-  "summary": "Fix completed Job summaries by validating exact result retrieval actions structurally.",
+  "summary": "Fix completed Job summaries by validating exact result retrieval actions structurally, and preserve cancellation, interruption and terminal commit errors across exact and summary reads.",
   "breaking": false,
   "migration": null
 }
