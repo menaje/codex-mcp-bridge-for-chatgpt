@@ -1,0 +1,1359 @@
+{
+  "schemaVersion": 1,
+  "issue": 221,
+  "capturedAt": "2026-10-03T03:54:07.486911+00:00",
+  "integrationTarget": "dev",
+  "baselineCommit": "4fc1619b07a50c4454daa6c079cbd495ba7d02b4",
+  "productCodeCommit": "1d9ea4a51615bbe60d73339116296e84be888725",
+  "auditCommitRelationship": "docs-only descendant; deployed producer is not rewritten",
+  "release": {
+    "version": "0.4.1",
+    "stage": "development",
+    "publicReleaseCreated": false
+  },
+  "deployed": {
+    "capturedAt": "2026-10-03T03:36:30.002Z",
+    "app": {
+      "version": "0.4.1",
+      "commit": "1d9ea4a51615bbe60d73339116296e84be888725",
+      "dirty": false,
+      "sourceHash": "b1705b4fc77657e72b017831619ee61f0be1d23d36136ff0a01e27a52705cd8d",
+      "builtAt": "2026-10-03T03:32:32.705Z",
+      "id": "1d9ea4a51615:b1705b4fc776"
+    },
+    "helper": {
+      "buildId": "1d9ea4a51615:b1705b4fc776",
+      "phase": "running",
+      "bridgeConnected": true,
+      "tunnelConnected": true
+    },
+    "bridge": {
+      "name": "codex-mcp-bridge",
+      "title": "Codex MCP Bridge for ChatGPT",
+      "version": "0.4.1",
+      "buildId": "1d9ea4a51615:b1705b4fc776"
+    },
+    "allBuildIdsMatch": true,
+    "preservation": {
+      "previousJobs": 1051,
+      "jobsPayloadUnchanged": true,
+      "previousReceipts": 2,
+      "receiptsUnchanged": true,
+      "envUnchanged": true,
+      "integrity": true,
+      "foreignKeys": true
+    },
+    "ready": true
+  },
+  "cfBundleVersion": "2026100302",
+  "served": {
+    "capturedAt": "2026-10-03T03:38:00.087Z",
+    "producer": {
+      "version": "0.4.1",
+      "commit": "1d9ea4a51615bbe60d73339116296e84be888725",
+      "dirty": false,
+      "sourceHash": "b1705b4fc77657e72b017831619ee61f0be1d23d36136ff0a01e27a52705cd8d",
+      "builtAt": "2026-10-03T03:32:32.705Z",
+      "id": "1d9ea4a51615:b1705b4fc776"
+    },
+    "capabilities": {
+      "resources": {
+        "listChanged": true
+      },
+      "tools": {
+        "listChanged": true
+      }
+    },
+    "tools": [
+      "codex_answer",
+      "bridge_skill",
+      "bridge_skill_manage",
+      "codex_dashboard",
+      "codex_status",
+      "codex_agent",
+      "codex_cancel",
+      "codex_interaction_respond",
+      "codex_steer",
+      "codex_activity_update",
+      "codex_models",
+      "codex_settings",
+      "codex_update_settings",
+      "codex_task",
+      "codex_ui_read",
+      "codex_ui_problem"
+    ],
+    "toolsCount": 16,
+    "retiredTaskFields": [],
+    "commonApprovalInstructions": true,
+    "eventsInstructions": false,
+    "cards": [
+      {
+        "uri": "ui://codex-mcp-bridge/dashboard/v4.html",
+        "generation": 38,
+        "sha256": "69e2fedcfa9f7aa13a925b98937e8c7506ac9a56c6c547ae78225fe85d7ccfff",
+        "matchesPackagedHtml": true,
+        "hasSender": false
+      },
+      {
+        "uri": "ui://codex-mcp-bridge/settings/v4.html",
+        "generation": 25,
+        "sha256": "38b7034832995013bc249ad2222289b21c8339528ccd90c43207ffa31d3d1cda",
+        "matchesPackagedHtml": true,
+        "hasSender": false
+      }
+    ],
+    "catalogSha256": "f5ceac2b092e876a40cd4850caf26d77cc90015e0c822c912c9cde034a501836",
+    "expectedCatalogSha256": "f5ceac2b092e876a40cd4850caf26d77cc90015e0c822c912c9cde034a501836",
+    "retiredCalls": [
+      {
+        "operation": "wait",
+        "isError": true,
+        "code": "CARD_DELIVERY_RETIRED"
+      },
+      {
+        "operation": "accepted",
+        "isError": true,
+        "code": "CARD_DELIVERY_RETIRED"
+      },
+      {
+        "operation": "rejected",
+        "isError": true,
+        "code": "CARD_DELIVERY_RETIRED"
+      },
+      {
+        "operation": "uncertain",
+        "isError": true,
+        "code": "CARD_DELIVERY_RETIRED"
+      },
+      {
+        "operation": "release",
+        "isError": true,
+        "code": "CARD_DELIVERY_RETIRED"
+      }
+    ],
+    "beforeJobs": 1051,
+    "afterJobs": 1051,
+    "retiredCallsCreateNoJobs": true
+  },
+  "verification": {
+    "localNode": {
+      "producer": "1d9ea4a51615bbe60d73339116296e84be888725",
+      "filesPassed": 120,
+      "testsPassed": 1303,
+      "testsFailed": 0,
+      "durationSeconds": 187.1,
+      "artifact": "final-summary-semantics-check.log"
+    },
+    "swift": {
+      "executed": 218,
+      "skipped": 2,
+      "failed": 0,
+      "artifact": "app-build-final.log"
+    },
+    "installedNativeCompanion": {
+      "testsPassed": 1,
+      "artifact": "native-live-final.log"
+    },
+    "mcpConformance": {
+      "protocol": "2026-07-28",
+      "passed": 29,
+      "failed": 0,
+      "warnings": 0,
+      "artifact": "mcp-conformance-final-producer.log"
+    },
+    "appServerSchemas": {
+      "cli": "0.153.3",
+      "jsonFiles": 416,
+      "typeScriptFiles": 827,
+      "artifact": "app-server-compat-final.log"
+    },
+    "summaryRed": {
+      "validFixtureTests": 15,
+      "failed": 5,
+      "passed": 10,
+      "artifact": "baseline/summary-red.log"
+    },
+    "terminalSemanticsRed": {
+      "validFixtureTests": 4,
+      "failed": 3,
+      "passed": 1,
+      "artifact": "summary-terminal-semantics-red-valid.log"
+    },
+    "terminalSemanticsGreen": {
+      "passed": 48,
+      "artifact": "summary-terminal-semantics-green.log"
+    },
+    "browser": {
+      "kind": "synthetic-host-real-Chromium",
+      "conditionsPassed": 6,
+      "artifact": "browser/card-retirement/results.json"
+    },
+    "independentCI": {
+      "status": "not-run",
+      "basis": "No GitHub Actions run for the exact dev producer; release workflow does not trigger on dev."
+    },
+    "docsAffected": {
+      "status": "passed",
+      "paths": 2,
+      "nodeSelected": false,
+      "macosSelected": false,
+      "base": "1d9ea4a51615bbe60d73339116296e84be888725",
+      "artifact": "audit-affected-validation.log",
+      "cli": "pinned 0.153.3"
+    }
+  },
+  "legacyInstalledCard": {
+    "generation": 37,
+    "uri": "ui://codex-mcp-bridge/dashboard/v3.html",
+    "scripts": [
+      {
+        "sha256": "8577930e81331f8e91c5bc1e4deec3a82c58fc3d8e1c3ab5c580dcaa93a03d75",
+        "bytes": 200148
+      }
+    ],
+    "fixtureSha256": "8577930e81331f8e91c5bc1e4deec3a82c58fc3d8e1c3ab5c580dcaa93a03d75",
+    "fixtureMatchesPreviouslyInstalledScript": true
+  },
+  "legacyBrowserConditions": [
+    {
+      "scenario": "current",
+      "hostMessageAttempts": 0,
+      "afterAttempts": 0,
+      "teardownCalls": 1,
+      "expectedConditionPassed": true
+    },
+    {
+      "scenario": "current-old-metadata",
+      "hostMessageAttempts": 0,
+      "afterAttempts": 0,
+      "teardownCalls": 1,
+      "expectedConditionPassed": true
+    },
+    {
+      "scenario": "current-duplicates",
+      "hostMessageAttempts": 0,
+      "afterAttempts": 0,
+      "teardownCalls": 2,
+      "expectedConditionPassed": true
+    },
+    {
+      "scenario": "old-wait-blocked",
+      "hostMessageAttempts": 0,
+      "afterAttempts": 0,
+      "teardownCalls": 1,
+      "expectedConditionPassed": true
+    },
+    {
+      "scenario": "old-result-inflight",
+      "hostMessageAttempts": 1,
+      "afterAttempts": 1,
+      "teardownCalls": 1,
+      "expectedConditionPassed": true
+    },
+    {
+      "scenario": "old-retry-blocked",
+      "hostMessageAttempts": 1,
+      "afterAttempts": 1,
+      "teardownCalls": 1,
+      "expectedConditionPassed": true
+    }
+  ],
+  "legacyCardLimitation": {
+    "alreadyReceivedResultMaySendToHost": true,
+    "serverRefusalDoesNotRevokeExistingHostCalls": true,
+    "oldWaitRetryServerDependentPathBlocked": true,
+    "procedure": [
+      "Unload old card document with full-page reload/close.",
+      "Refresh connector tool discovery.",
+      "Use a fresh ordinary Chat and explicitly request current v4 only when needed.",
+      "Recover historical exact Jobs in their original authorized conversation."
+    ]
+  },
+  "actualChatGPT": {
+    "kind": "observed actual web Chat UI and installed Bridge",
+    "cardlessFinal": {
+      "aJobId": "3e9405b1-391b-4b02-b16c-889998361c06",
+      "bJobId": "a270c9d2-339c-45b9-b74b-950a61ab589e",
+      "activityId": "6d165d12-5ace-4eed-908a-c2fe1428d0d1",
+      "agentId": "152a89cd-812f-4e32-baa6-f2ad2c30bf32",
+      "threadId": "01a0ffdc-e6b8-7f63-82ac-5c8110c277b1",
+      "canonicalRequestId": "33d3b5c5-26e0-52ef-b90a-a031f81cc573",
+      "reviewedVersion": 19,
+      "replay": true,
+      "sameBVersion": 17,
+      "iframeCountBeforeExplicitCard": 0,
+      "originalResultsReviewed": true,
+      "allFourSummarySurfacesPassed": true,
+      "summaryContainsOriginalAnswer": false,
+      "artifact": "actual-final-a-b.ax.txt",
+      "domCountQualification": "iframe zero observed; unsupported author-role selector zero matches are not a conversation message count"
+    },
+    "upgradeReplay": {
+      "originalBJobId": "32974224-bb71-4f65-8b67-a3ca8fdaf3bc",
+      "reviewedVersion": 18,
+      "replay": true,
+      "sameJob": true,
+      "firstFourJobCountUnchanged": true,
+      "artifact": "actual-upgrade-replay.ax.txt",
+      "policy": "direct-wait",
+      "legacySelectorCompatibilityEvidence": "separate synthetic/OAuth integration, not this actual trial"
+    },
+    "cancellation": {
+      "jobId": "dc67583d-ff0b-499a-a1d5-ad1789b5e1fb",
+      "hostResponseStopDidNotCancelJob": true,
+      "separateExplicitUserCancel": true,
+      "terminalStatus": "cancelled",
+      "terminalOrigin": "explicit-cancellation",
+      "finalExactAndAllSummariesError": "JOB_CANCELLED",
+      "availability": "unavailable",
+      "artifact": "actual-upgrade-replay.ax.txt"
+    },
+    "cardOpenCompletion": {
+      "jobId": "af1d791d-976a-4464-b7fc-52cbafbf328c",
+      "status": "completed",
+      "noAutomaticMessageOrFollowup": true,
+      "producer": "9f4a3da63bf9f3dc27a41aac1d6d4719e2b65078",
+      "sameCardScriptAsFinalProducer": true,
+      "artifact": "actual-d-completion.ax.txt"
+    },
+    "explicitFinalCard": {
+      "script": {
+        "bytes": 191869,
+        "sha256": "07dd1f5df94005bbd00f22dbc8da610f437f0a136052355e36a6c50e4d446400",
+        "containsSender": false
+      },
+      "matchesInstalledBundle": true,
+      "historyFilterExpanded": true,
+      "historyRowExpanded": true,
+      "displayRefreshed": true,
+      "noAdditionalLoadedParentMessage": true,
+      "countEvidence": {
+        "producer": "1d9ea4a51615bbe60d73339116296e84be888725",
+        "countBasis": "currently loaded parent DOM h4 user/assistant headings; initial long user prompt not rendered in this view",
+        "before": {
+          "assistantReplies": 2,
+          "capturedAt": "2026-10-03T03:47:14.001Z",
+          "iframes": 1,
+          "userMessages": 1
+        },
+        "afterRefreshAndHistory": {
+          "assistantReplies": 2,
+          "capturedAt": "2026-10-03T03:48:57.430Z",
+          "iframes": 1,
+          "userMessages": 1
+        }
+      },
+      "teardownEvidence": {
+        "producer": "1d9ea4a51615bbe60d73339116296e84be888725",
+        "spaHomeImmediateIframes": 1,
+        "fullNavigationHomeSettledIframes": 0,
+        "initialRemount": {
+          "assistantReplies": 2,
+          "iframes": 1,
+          "userMessages": 2
+        },
+        "note": "Immediate SPA home transition retained one iframe at capture; full document navigation after settled home had zero. Remount counts reflect loaded messages."
+      },
+      "artifacts": [
+        "actual-final-mounted-card.json",
+        "actual-final-card.ax.txt",
+        "actual-final-card.jpg",
+        "actual-final-remount.ax.txt",
+        "actual-final-remount-identity.json"
+      ],
+      "remountIdentity": {
+        "scripts": [
+          {
+            "bytes": 191869,
+            "sha256": "07dd1f5df94005bbd00f22dbc8da610f437f0a136052355e36a6c50e4d446400"
+          }
+        ],
+        "counts": {
+          "assistantReplies": 2,
+          "iframes": 1,
+          "userMessages": 2
+        },
+        "expectedScriptSha256": "07dd1f5df94005bbd00f22dbc8da610f437f0a136052355e36a6c50e4d446400"
+      }
+    },
+    "parentChatGPTModelReasoningUsage": "not publicly measured; not inferred from Codex execution fields",
+    "codexModel": "gpt-6-luna",
+    "codexReasoning": "low",
+    "codexServiceTier": "priority",
+    "newActualQuestionApprovalBoundary": "not triggered; coverage is local integration/fixture evidence"
+  },
+  "preservation": {
+    "capturedAt": "2026-10-03T03:49:46.138Z",
+    "original": {
+      "previousJobs": 1047,
+      "rawPayloadsUnchanged": false,
+      "changedPayloadCount": 7,
+      "changedFields": [
+        "execution",
+        "archivedAt",
+        "historyExpired",
+        "operation",
+        "projectRequest",
+        "requestHash",
+        "requestHashVersion",
+        "completionDeliveryPolicy",
+        "selectionKey",
+        "executionDecision",
+        "exclusiveKeys",
+        "sessionDecision",
+        "authBoundary",
+        "trackingState",
+        "executionReceipt",
+        "workerPid",
+        "threadPersistence",
+        "processGroupId",
+        "result",
+        "resultBytes",
+        "resultOmitted",
+        "approvedFollowups",
+        "followup"
+      ],
+      "previousReceipts": 1,
+      "receiptsUnchanged": true,
+      "allIdentityColumnsPreserved": true,
+      "identityMismatchCount": 0,
+      "unchangedRawPayloadCount": 1040,
+      "retentionChanges": [
+        {
+          "classification": "existing-30-day-history-expiry",
+          "bodyAlreadyOmitted": true,
+          "resultOmitted": true,
+          "identityPreserved": true,
+          "previouslyArchived": true,
+          "elapsedSinceTerminalMs": 21605946,
+          "hasRetentionPrunedEvent": false
+        },
+        {
+          "classification": "existing-30-day-history-expiry",
+          "bodyAlreadyOmitted": true,
+          "resultOmitted": true,
+          "identityPreserved": true,
+          "previouslyArchived": true,
+          "elapsedSinceTerminalMs": 21605766,
+          "hasRetentionPrunedEvent": false
+        },
+        {
+          "classification": "existing-6-hour-result-archive",
+          "bodyAlreadyOmitted": false,
+          "resultOmitted": true,
+          "identityPreserved": true,
+          "previouslyArchived": false,
+          "elapsedSinceTerminalMs": 21806753,
+          "hasRetentionPrunedEvent": true
+        },
+        {
+          "classification": "existing-6-hour-result-archive",
+          "bodyAlreadyOmitted": false,
+          "resultOmitted": true,
+          "identityPreserved": true,
+          "previouslyArchived": false,
+          "elapsedSinceTerminalMs": 21833844,
+          "hasRetentionPrunedEvent": true
+        },
+        {
+          "classification": "existing-6-hour-result-archive",
+          "bodyAlreadyOmitted": false,
+          "resultOmitted": true,
+          "identityPreserved": true,
+          "previouslyArchived": false,
+          "elapsedSinceTerminalMs": 21805406,
+          "hasRetentionPrunedEvent": true
+        },
+        {
+          "classification": "existing-6-hour-result-archive",
+          "bodyAlreadyOmitted": false,
+          "resultOmitted": true,
+          "identityPreserved": true,
+          "previouslyArchived": false,
+          "elapsedSinceTerminalMs": 21961383,
+          "hasRetentionPrunedEvent": true
+        },
+        {
+          "classification": "existing-6-hour-result-archive",
+          "bodyAlreadyOmitted": false,
+          "resultOmitted": true,
+          "identityPreserved": true,
+          "previouslyArchived": false,
+          "elapsedSinceTerminalMs": 21771075,
+          "hasRetentionPrunedEvent": true
+        }
+      ],
+      "resultTtlMs": 21600000,
+      "historyRetentionDays": 30,
+      "operationalRetentionCodeUnchanged": true,
+      "historyExpiryCodeUnchanged": true
+    },
+    "preFinalUpgrade": {
+      "previousJobs": 1051,
+      "rawPayloadsUnchanged": true,
+      "changedPayloadCount": 0,
+      "changedFields": [],
+      "previousReceipts": 2,
+      "receiptsUnchanged": true
+    },
+    "totalJobs": 1053,
+    "newJobsExactlyAuthorizedSix": true,
+    "unrelatedSettingsUnchanged": true,
+    "legacySettingNormalized": true,
+    "projectsUnchanged": true,
+    "registryUnchanged": true,
+    "envUnchanged": true,
+    "deliveryTransition": {
+      "version": 2,
+      "appliedAt": "2026-10-03T03:07:54.550Z",
+      "policy": "direct-wait",
+      "cardSender": "retired",
+      "historicalAdmissions": "preserved"
+    },
+    "schemaVersion": "30",
+    "integrity": true,
+    "foreignKeys": true,
+    "jobs": [
+      {
+        "job_id": "5402c4dc-04e8-4bde-800a-0caf47e34b32",
+        "request_id": "2e30c8d7-8a5d-4bd9-8d13-0b0cd5822c01",
+        "activity_id": "452543a8-c2c0-4e1c-9a9f-726182680d71",
+        "agent_id": "6f4cc465-9e7c-4ef0-9ade-9961061755d6",
+        "thread_id": "01a0ffc3-cdb2-7a81-8af9-fc6fd920ffd4",
+        "source_thread_id": null,
+        "status": "completed",
+        "terminal_origin": "normal-completion",
+        "completionDeliveryPolicy": "direct-wait",
+        "approvedFollowups": [
+          {
+            "promptSha256": "f6d56e5b3119c62dbaca1b5cfe334177e04fff885e7679cb407569fa40ae25ca",
+            "followupId": "fup_5402c4dc04e84bde800a0caf47e34b32bb2c7e7650d9f79f6b14020cd285b8430e8e4c57fa4dc016a0a4f2f60a9a2e66"
+          }
+        ],
+        "originalText": [
+          "{\"marker\": \"221_ACCEPT_A_20261003\", \"aValue\": 221, \"head\": \"9f4a3da63bf9f3dc27a41aac1d6d4719e2b65078\", \"readmeSha256\": \"46ac6ef68529c14d21a0e87db537a5cb6f423f70c280d39d5ed7e5983f8c50dd\", \"unchanged\": true}"
+        ]
+      },
+      {
+        "job_id": "32974224-bb71-4f65-8b67-a3ca8fdaf3bc",
+        "request_id": "814ad371-f4c5-597c-9ed0-9c82bcb58a87",
+        "activity_id": "452543a8-c2c0-4e1c-9a9f-726182680d71",
+        "agent_id": "6f4cc465-9e7c-4ef0-9ade-9961061755d6",
+        "thread_id": "01a0ffc3-cdb2-7a81-8af9-fc6fd920ffd4",
+        "source_thread_id": "01a0ffc3-cdb2-7a81-8af9-fc6fd920ffd4",
+        "status": "completed",
+        "terminal_origin": "normal-completion",
+        "completionDeliveryPolicy": "direct-wait",
+        "approvedFollowups": [],
+        "originalText": [
+          "{\"marker\": \"221_ACCEPT_B_20261003\", \"reviewedA\": 221, \"bValue\": 222, \"head\": \"9f4a3da63bf9f3dc27a41aac1d6d4719e2b65078\", \"readmeSha256\": \"46ac6ef68529c14d21a0e87db537a5cb6f423f70c280d39d5ed7e5983f8c50dd\", \"unchanged\": true}"
+        ]
+      },
+      {
+        "job_id": "dc67583d-ff0b-499a-a1d5-ad1789b5e1fb",
+        "request_id": "9c8c2f5d-6c85-4b85-9a3d-8f7e2f7d3b11",
+        "activity_id": "452543a8-c2c0-4e1c-9a9f-726182680d71",
+        "agent_id": "6f4cc465-9e7c-4ef0-9ade-9961061755d6",
+        "thread_id": "01a0ffc3-cdb2-7a81-8af9-fc6fd920ffd4",
+        "source_thread_id": "01a0ffc3-cdb2-7a81-8af9-fc6fd920ffd4",
+        "status": "cancelled",
+        "terminal_origin": "explicit-cancellation",
+        "completionDeliveryPolicy": "direct-wait",
+        "approvedFollowups": [],
+        "originalText": []
+      },
+      {
+        "job_id": "af1d791d-976a-4464-b7fc-52cbafbf328c",
+        "request_id": "d7a0bf27-b92a-4d50-92de-0df274a7f624",
+        "activity_id": "452543a8-c2c0-4e1c-9a9f-726182680d71",
+        "agent_id": "6f4cc465-9e7c-4ef0-9ade-9961061755d6",
+        "thread_id": "01a0ffc3-cdb2-7a81-8af9-fc6fd920ffd4",
+        "source_thread_id": "01a0ffc3-cdb2-7a81-8af9-fc6fd920ffd4",
+        "status": "completed",
+        "terminal_origin": "normal-completion",
+        "completionDeliveryPolicy": "direct-wait",
+        "approvedFollowups": [],
+        "originalText": [
+          "{\"marker\": \"221_ACCEPT_D_CARD_OPEN_20261003\", \"dValue\": 224, \"head\": \"9f4a3da63bf9f3dc27a41aac1d6d4719e2b65078\", \"readmeSha256\": \"46ac6ef68529c14d21a0e87db537a5cb6f423f70c280d39d5ed7e5983f8c50dd\", \"unchanged\": true}"
+        ]
+      },
+      {
+        "job_id": "3e9405b1-391b-4b02-b16c-889998361c06",
+        "request_id": "5e5dd4b0-8d52-4a79-9fb4-8bbf4e26a541",
+        "activity_id": "6d165d12-5ace-4eed-908a-c2fe1428d0d1",
+        "agent_id": "152a89cd-812f-4e32-baa6-f2ad2c30bf32",
+        "thread_id": "01a0ffdc-e6b8-7f63-82ac-5c8110c277b1",
+        "source_thread_id": null,
+        "status": "completed",
+        "terminal_origin": "normal-completion",
+        "completionDeliveryPolicy": "direct-wait",
+        "approvedFollowups": [
+          {
+            "promptSha256": "5f40a7f884e18e9469397b85062d2bdd7cfd1b5f76b2e0051f88a534f4e16279",
+            "followupId": "fup_3e9405b1391b4b02b16c889998361c06bb2c7e7650d9f79f6b14020cd285b8430e8e4c57fa4dc016a0a4f2f60a9a2e66"
+          }
+        ],
+        "originalText": [
+          "{\"marker\": \"221_ACCEPT_A_FINAL_20261003\", \"aValue\": 221, \"head\": \"1d9ea4a51615bbe60d73339116296e84be888725\", \"readmeSha256\": \"46ac6ef68529c14d21a0e87db537a5cb6f423f70c280d39d5ed7e5983f8c50dd\", \"unchanged\": true}"
+        ]
+      },
+      {
+        "job_id": "a270c9d2-339c-45b9-b74b-950a61ab589e",
+        "request_id": "33d3b5c5-26e0-52ef-b90a-a031f81cc573",
+        "activity_id": "6d165d12-5ace-4eed-908a-c2fe1428d0d1",
+        "agent_id": "152a89cd-812f-4e32-baa6-f2ad2c30bf32",
+        "thread_id": "01a0ffdc-e6b8-7f63-82ac-5c8110c277b1",
+        "source_thread_id": "01a0ffdc-e6b8-7f63-82ac-5c8110c277b1",
+        "status": "completed",
+        "terminal_origin": "normal-completion",
+        "completionDeliveryPolicy": "direct-wait",
+        "approvedFollowups": [],
+        "originalText": [
+          "{\"marker\": \"221_ACCEPT_B_FINAL_20261003\", \"reviewedA\": 221, \"bValue\": 222, \"head\": \"1d9ea4a51615bbe60d73339116296e84be888725\", \"readmeSha256\": \"46ac6ef68529c14d21a0e87db537a5cb6f423f70c280d39d5ed7e5983f8c50dd\", \"unchanged\": true}"
+        ]
+      }
+    ],
+    "runtime": {
+      "activeJobs": 0,
+      "pendingAdmissions": 0,
+      "pendingInteractions": 0,
+      "backgroundProcesses": 0,
+      "backgroundProcessUnknownAgents": 0,
+      "backgroundProcessState": "confirmed"
+    }
+  },
+  "longDurationReuse": {
+    "source": "2026-10-03-issue-222-final-evidence.md / #222 actual observations",
+    "actualSeconds": [
+      1800.086446041,
+      3600.075175209
+    ],
+    "newLongDurationRun": false,
+    "ordinaryWaitTransportRetentionUnchanged": true,
+    "runtimeDifference": "retired card delivery priority reservation removed",
+    "resumeEvidence": "existing user-confirmed actual, not independently remeasured or generalized to all hosts"
+  },
+  "exclusions": [
+    "Sites",
+    "schedules",
+    "TinyFish",
+    "new monitoring",
+    "new security pairing",
+    "broad orphan/auth changes",
+    "conversation cleanup"
+  ],
+  "evidenceInventory": {
+    "root": "output/issue-221",
+    "rawFilesPublished": false,
+    "files": [
+      {
+        "path": "actual-a-b.ax.txt",
+        "bytes": 277,
+        "sha256": "009e7da4f76ec703f01172831d8315559720a9f974739c4c024c940af9130a18",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-a-b.jpg",
+        "bytes": 79839,
+        "sha256": "cd163ba928ac3b0934624cfff328beff28365f3a4a97a768b8b3176f274d6306",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-c-cancellation.ax.txt",
+        "bytes": 293,
+        "sha256": "6af425b6608c9d1553dd71c5971bbf32e097fe16cb258a9d49c751764bc078df",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-card-history.ax.txt",
+        "bytes": 263,
+        "sha256": "f60d4af61f76401f72a90fc0c5726877e1ef2b247246aaa9452fdae48b985875",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-card-history.jpg",
+        "bytes": 41925,
+        "sha256": "d3000bdaab3a329f31adf0d75a74e665e818ba29bc3570dc462dcd64e9019b4a",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-card-no-send.json",
+        "bytes": 559,
+        "sha256": "01ace71464f1a2d98e304ca9493d0e66b2f3b6cc527f27a116fa99fe8652c6e9",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-card-refreshed.jpg",
+        "bytes": 58782,
+        "sha256": "a1c47275f58bcaef376f86ea3b2f58b359360407300b7dab8e5da99a669a8e94",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-d-completion.ax.txt",
+        "bytes": 399,
+        "sha256": "bddd55a9785c1d875599eb5b9fef58f75e7d866acab188283d9b12894979bd38",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-final-a-b-dom-interpretation.json",
+        "bytes": 423,
+        "sha256": "0911ddfd972338a8d804622ab9feff6a55981a874102675be0e6cf685b449ead",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-final-a-b-dom.json",
+        "bytes": 199,
+        "sha256": "19ece85fdf435de1e7b68ed38bc1a8622d6f2acbfedaba987cb21fcac1e16e28",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-final-a-b.ax.txt",
+        "bytes": 279,
+        "sha256": "011e83570d682d0cc69ffd4bff974309ac2df541aef0820cd5b68de055479a23",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-final-a-b.jpg",
+        "bytes": 79007,
+        "sha256": "793285d3ce2b65060a40598b9e581edfbdc1333dbaa62f6485212284a9df913e",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-final-card-no-send.json",
+        "bytes": 467,
+        "sha256": "ff9cbed089673bcf31abc9f24fd5768e5084f1f0a3950d1b75f2641eb1740676",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-final-card.ax.txt",
+        "bytes": 397,
+        "sha256": "ca4e28ae44e9f456dd3e5e111d009d3ea481425193cbbfca75783e2b35d4b295",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-final-card.jpg",
+        "bytes": 54819,
+        "sha256": "a483302efd4e2bd34208ca04873003c4c24942e13fc9c5d5f19c0604180dd487",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-final-mounted-card.json",
+        "bytes": 527,
+        "sha256": "8006d90fe15b72ae061ef65b6cdea03d21f88c16865a9dec7195d658967e595d",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-final-preservation.json",
+        "bytes": 9084,
+        "sha256": "4a7c2493f092a98528aa2f31cbc197be821d0c29366bf3921417e708cfcf06ae",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-final-remount-identity.json",
+        "bytes": 321,
+        "sha256": "606d3370a07566e712f8b27ad77e0ab026e870a60d3cc0d305f55a49b36aea2e",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-final-remount.ax.txt",
+        "bytes": 254,
+        "sha256": "0f5cfd3fd77cf4c1f593f5adcabbbcd18502fd8729bdd041aa9a119dbbdc3ebf",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-final-teardown.json",
+        "bytes": 397,
+        "sha256": "42c6cc4536dd6cea312808d099afc20c0a9f15338848edc2e23455c7091fe3a4",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-jobs.json",
+        "bytes": 4640,
+        "sha256": "72b339d4adb900187a722ce57682ba1881c13a5ce1874eea0710e34a0d7bf199",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-mounted-card-scripts.json",
+        "bytes": 379,
+        "sha256": "f8f51b6443a91c55c017f2c4237fdb0fa85a074430fe1b8f2254ebc999334c93",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-summaries.ax.txt",
+        "bytes": 285,
+        "sha256": "472a18a105ca8f4d76e12ba98976ee6bfe5be3f074a49807e8e86606853d2ca6",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-upgrade-replay.ax.txt",
+        "bytes": 293,
+        "sha256": "865e26b79e6b0e853343910a7ff275931a0fd03722775f3132895041f078dcdf",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "actual-upgrade-replay.jpg",
+        "bytes": 106128,
+        "sha256": "2bc252c50df3a96d1c3302640dc9f9df19fa74558defbf2259fcb931f4f30a24",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "app-build-final.log",
+        "bytes": 70591,
+        "sha256": "a2032149e57852ae852a28553cbf0a8b9e34a00d617e7e9e5e5fd2b16539e719",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "app-build.log",
+        "bytes": 72211,
+        "sha256": "6eed237acbadaa2dc1c94149b74501172744a20fc139494e4f1e1f3e974f37b7",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "app-server-compat-final.log",
+        "bytes": 181,
+        "sha256": "af546c604aca6dd50373fdae8546e010b0259588c77170793ee6acc824764c1a",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "app-server-compat-pinned-binary.log",
+        "bytes": 181,
+        "sha256": "af546c604aca6dd50373fdae8546e010b0259588c77170793ee6acc824764c1a",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "app-server-compat-pinned.log",
+        "bytes": 307,
+        "sha256": "6bae477d339e1b51a2fcd4fc628b378d2093f52e91acfda9b8f60c82512e66b1",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "app-server-compat.log",
+        "bytes": 222,
+        "sha256": "f2a3ead31c0476990b61d335d156578ac2fb9374f7e6b070d67713bececff37b",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "audit-affected-validation.log",
+        "bytes": 949,
+        "sha256": "5991119652eb87a37b23f29e4b6265c925a8f9c0992cc989448fa32a833309df",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "baseline/environment.json",
+        "bytes": 476,
+        "sha256": "c7555278fe3b2822e30eea6318345e6822bc652fd36f2a8d0a72a2aad9bba342",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "baseline/initial-import.log",
+        "bytes": 1175,
+        "sha256": "3556a3863486d60f46a79685eb44b8658e8bebe839274e06ce0db597802dc256",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "baseline/npm-ci.log",
+        "bytes": 142,
+        "sha256": "da5d949f7d5cbe12d3684be30dc0ea990203989c4ee637d0fb5011a2862f2c58",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "baseline/product-tests.log",
+        "bytes": 236,
+        "sha256": "f6721c526a7465e7452dbbbfee33b680961e3890cbff5717e7aeaa93eee68326",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "baseline/summary-red.log",
+        "bytes": 2764,
+        "sha256": "06d90a3ac4effd804cd492b509207ebc9341db68c7bebf1cff359302583eb8b1",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/card-retirement/current-duplicates.snapshot.txt",
+        "bytes": 2846,
+        "sha256": "367ad67eb7cfb1bd7d338c03ee2cf93ae6596fd9984d065435249a9749ea81ea",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/card-retirement/current-old-metadata.snapshot.txt",
+        "bytes": 1353,
+        "sha256": "03d281f3d8a46c7af27971d392d2337b50776fe2ff967f3fafaf483393711534",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/card-retirement/current.snapshot.txt",
+        "bytes": 1351,
+        "sha256": "4cac40b4d4f948735d4f42e949da2656a98f744ce8f32d1dab5b1d42356a6dba",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/card-retirement/old-result-inflight.snapshot.txt",
+        "bytes": 1378,
+        "sha256": "e9e48ac65ba482bc2f9bb80acd5be173bd99dc6f90ae815dc52b51807497b16d",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/card-retirement/old-retry-blocked.snapshot.txt",
+        "bytes": 1379,
+        "sha256": "e6f8fb5bd21bd4d658def9021edcc5f55892985836ffe6f95488f4ec1e044b87",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/card-retirement/old-wait-blocked.snapshot.txt",
+        "bytes": 1353,
+        "sha256": "286c4e52adbe2db5a06216b5b4fa563f68d02ff66b5b6ed612524fe982d66e2d",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/card-retirement/results.json",
+        "bytes": 8680,
+        "sha256": "93ee96ae55f9fc0e53c7ede5aa1643411f88e6ae18562473d490d0302c12fb8b",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/card-stale/dashboard-initial.snapshot.txt",
+        "bytes": 1000,
+        "sha256": "88f8280af74f2108fd79f0295b277e26367b9f01537155482d5f8d23f088b0d9",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/card-stale/dashboard-stale.png",
+        "bytes": 23649,
+        "sha256": "1ed0305319a96f20ae3e968fe766dee07bf2146dc1f0747203aaef26ce9ea4e8",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/card-stale/report.json",
+        "bytes": 407,
+        "sha256": "d3f1e3022fc39b5e3fdd0794ae850b46ef56bcda31223e3d7f63643b56edcdb5",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/card-stale/settings-initial.snapshot.txt",
+        "bytes": 4728,
+        "sha256": "6d9abfef6836940a75b20aba4752367c6cb91c1661d83e4d14039ed0a19a183f",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/card-stale/settings-stale.png",
+        "bytes": 116138,
+        "sha256": "2649319788a304a842e143d38af08f60150f71ae8d2d2e7adb3bfed717711c5b",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/dashboard-scope/all-desktop.png",
+        "bytes": 26774,
+        "sha256": "4f00be5c3cfa1c6377e98ffa7bf625cf9647b696d062539ed6ed88c8f5eec9c7",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/dashboard-scope/conversation-desktop.png",
+        "bytes": 25854,
+        "sha256": "e8a29c376b7e49ba4a98a10039130fb8d6178ec86f1eede1f36e17d2f0ba26fc",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/dashboard-scope/conversation-mobile.png",
+        "bytes": 22080,
+        "sha256": "7dc16ea5224a580592598021493ea9f0155a85906d916714919d1c0ac9423243",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/dashboard-scope/initial.snapshot.txt",
+        "bytes": 1230,
+        "sha256": "7d9c186071adb9d883494debe3868195e04abf7fc645e6a6dd89785655b438e5",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "browser/dashboard-scope/report.json",
+        "bytes": 605,
+        "sha256": "464782e57aa1688106f8f6f21962462edf761a4ccc81aced3e084bf3e5d8fe40",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "card-browser-final.log",
+        "bytes": 203,
+        "sha256": "c2400b395cb9b5aceda48afc7640366d0e1fff490629be0c652954a0d683a949",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "card-browser-first.log",
+        "bytes": 203,
+        "sha256": "c2400b395cb9b5aceda48afc7640366d0e1fff490629be0c652954a0d683a949",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "check-first.log",
+        "bytes": 767,
+        "sha256": "d5f4a7cba335476c78ec8a71118d9c8e6a27645c09f3f283eadfdfa29317eaa7",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "check-fourth.log",
+        "bytes": 215636,
+        "sha256": "72ee143d4177feca8a4d38e992f210a51575874e11a5ed66c17051f7769c9c51",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "check-second.log",
+        "bytes": 21705,
+        "sha256": "6f270d203fc529fe14ed6c671d532bfe4923c6b5ddab60bf2192920f2d0d8d1d",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "conformance-final-producer/server-server-stateless-2026-10-03T03-31-44-576Z/checks.json",
+        "bytes": 635582,
+        "sha256": "76e5d404a071de3da4950cc9ebac6f44f0a05f72a02f043dcdeb797fd381a096",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "dashboard-scope-browser-corrected.log",
+        "bytes": 832,
+        "sha256": "efca6d530aa5bd9e9bac75724489058341a3696eafd8af4e67d82321924ec20d",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "dashboard-scope-browser.log",
+        "bytes": 5788,
+        "sha256": "7053f7914f47d93a2c71c3902c73d4dd598ebe6d1fff368e034d9e3dcdf4e5bb",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "dashboard-stale-browser.log",
+        "bytes": 530,
+        "sha256": "01b4642da89280e4141e803397697bf60404a0d9cf20159084194b28be626ed7",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "delivery-focused.log",
+        "bytes": 1534,
+        "sha256": "36146bf1315b88b018357e21942b3549190485c107f4d4a1abda8800298b7ea2",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "delivery-typecheck.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "deploy-final.mjs",
+        "bytes": 5262,
+        "sha256": "9f0dc081dd197aaee9b3a44ef4a5605b5b55f57bb8cc9cb37f9412025d7b5f26",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "deployed-final-identity.json",
+        "bytes": 900,
+        "sha256": "59ed8541f180d7fc2cec789c69bc1af3ada2380359e4df981c1f01430b5e36e4",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "deployed-identity.json",
+        "bytes": 713,
+        "sha256": "f3a7c61bc2f724ff9c1e3e281091a8cff26f6dc1860fb27bfb684dd03ca84a23",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "deployment-final-progress.json",
+        "bytes": 428,
+        "sha256": "570f27b3d92ea166ae43b7472e902a35c54b19e03bf51251765fda4c526708e2",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "deployment-progress.json",
+        "bytes": 323,
+        "sha256": "1e87a4bb6c2253467ba0fd57cfba8c8bcf4c34e07477a491f3a985fdee4424f7",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "events-tests-corrected.log",
+        "bytes": 1239,
+        "sha256": "74fa7a5fc18634156cbc28fea5a244bd9660dd1d006518ebc8b4cbc1a909d509",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "events-tests.log",
+        "bytes": 5494,
+        "sha256": "e4a505fab8410455910478638183b346c28d43dee192119ccc4ff5da9bc8d614",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "events-typecheck.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "execution-recovery-auth-fixture.log",
+        "bytes": 1497,
+        "sha256": "c1af455588bb6ed1961215f4cc4ccb943345f3d46fd1f574f5a41204b96e482a",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "execution-recovery.log",
+        "bytes": 4272,
+        "sha256": "6d71b3665e852d69d8ccd201017605866a1cc0860d3c6b7fd23732d087feccac",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "final-check-after-guidance.log",
+        "bytes": 2771,
+        "sha256": "826d7fcb8a739d035afc908cc70bc6a452a380961a2aede0addc482eb53407f3",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "final-check.log",
+        "bytes": 3921,
+        "sha256": "56b7996001558b65b1dfbe79a5335668d0b7eb6c1e66a7b6da455579ef0f860b",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "final-deployment-preflight.json",
+        "bytes": 675,
+        "sha256": "0b6d94b0e8bbd41d21d4d406f5bf9f19e5e47aa8c9c9aae7df3ffd2b7bd950f8",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "final-exact-head-check.log",
+        "bytes": 2771,
+        "sha256": "e857d13d5157e66e008c6f7063c4b3a4ddca5ec98f53d75365435a2947fd04cc",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "final-summary-semantics-check.log",
+        "bytes": 2771,
+        "sha256": "3c2f6c8af8850c2ea620676bf2a8e7f97cfb8cb20746771e260f90611d4ebeb8",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "focused-third.log",
+        "bytes": 1280,
+        "sha256": "d99ef60df58c41ecf785f9cfa803e8f14a661676675e370d92e2703b3ef490c0",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "independent-ci-runs.json",
+        "bytes": 3,
+        "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "issue-before-close.json",
+        "bytes": 18315,
+        "sha256": "8f0c6bf109f3cedbfb780c95665381a98064d8cf583e3c8ec56146914c5f225d",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "legacy-deployed-card-identity.json",
+        "bytes": 351,
+        "sha256": "c5e9a7d5c588baa78040df953498e7ece1dc7d40ce6aa1dff5c0789b631db96e",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "legacy-selector-green.log",
+        "bytes": 233,
+        "sha256": "4cbeace2e83185c395b4e082a17acba26a367d5d634ee1f8971416732d0064ea",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "legacy-selector-oauth.log",
+        "bytes": 243,
+        "sha256": "516b469f2557135d4f699c014956478f8f0aabd374921e9e0b8a4e27e00a7714",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "legacy-selector-red.log",
+        "bytes": 2537,
+        "sha256": "f0aad6fbdac712b7a55ac54e8ad2a5a51855dc010deefcaeb8a43ba8645ec51a",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "localization-generate.log",
+        "bytes": 137,
+        "sha256": "e4d60d87cdd4e637cf9d2e7d98a7ee33e4f4624bfa4275accea4522db1a60d82",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "mcp-conformance-final-producer.log",
+        "bytes": 7792,
+        "sha256": "cf509975595f87cf540d6938a41f66a46060f9e738a818f2ac74886704119d76",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "mcp-conformance-final.log",
+        "bytes": 8631,
+        "sha256": "9708c90e1d3be5e84b60a3309087b4ca68674f8ca2cbb8fbd58121d5fa10760a",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "mcp-conformance.log",
+        "bytes": 8637,
+        "sha256": "c06e0aa3266229386e264eb2bda4d1061aff581585a44a078d762ff9f0a88968",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "native-companion.log",
+        "bytes": 5537,
+        "sha256": "3d9ca669ff7ee3eb35f4eb11fff4c4e317e7e494463af6098eb53099922e650a",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "native-live-final.log",
+        "bytes": 1180,
+        "sha256": "b32412ae552cdc87bd6ea421b9cdeaa44048a6371f0c4b73f925847be7cfc6f2",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "observation.log",
+        "bytes": 955,
+        "sha256": "f16ed7306e75ac7eacc1be05189a09a4b322826d8bf5cca2f7eda8dfa6b62f37",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "release-sync-final.log",
+        "bytes": 162,
+        "sha256": "9983d05de4217bf61281ea8853d737f715df4e0f2d67184898067a83d33e02d1",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "release-sync-fourth.log",
+        "bytes": 162,
+        "sha256": "9983d05de4217bf61281ea8853d737f715df4e0f2d67184898067a83d33e02d1",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "release-sync-localization.log",
+        "bytes": 162,
+        "sha256": "9983d05de4217bf61281ea8853d737f715df4e0f2d67184898067a83d33e02d1",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "release-sync-scope-fix.log",
+        "bytes": 162,
+        "sha256": "9983d05de4217bf61281ea8853d737f715df4e0f2d67184898067a83d33e02d1",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "release-sync-third.log",
+        "bytes": 162,
+        "sha256": "9983d05de4217bf61281ea8853d737f715df4e0f2d67184898067a83d33e02d1",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "release-sync.log",
+        "bytes": 162,
+        "sha256": "9983d05de4217bf61281ea8853d737f715df4e0f2d67184898067a83d33e02d1",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "replay-build.log",
+        "bytes": 650,
+        "sha256": "8caf29cadc009ff67051856db14f20c18383d687bf4c3ecdd6ddfa2f0d7f4027",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "replay-final-focused.log",
+        "bytes": 233,
+        "sha256": "2f434321e75cd03eb80f95775502f896b8b1a906feaac626a0a383186db4df10",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "retained-guidance.log",
+        "bytes": 231,
+        "sha256": "cd781be57968ce2d76b94d3d8dfceba32b64384f84a2f9c23ce6be2b88721dc7",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "retention.log",
+        "bytes": 1717,
+        "sha256": "cdf9a842018fc505217c7b0a6614a07551c87f8f5851126986f7359aa954e46d",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "retirement-final-focused.log",
+        "bytes": 237,
+        "sha256": "c39623df0fe215335e6a13a924888f998c14302ae238e2d4cc8a5c72a267edf8",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "served-final-resources.json",
+        "bytes": 2254,
+        "sha256": "bc505ccf68063cae83e7c4a8d0675f1cb44e3707e2ed18a0fc1c2b554f42527b",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "served-resources.json",
+        "bytes": 2960,
+        "sha256": "6d66022f71d2c36003d120c9b9090c99dbce1abb41f9659e399f4ccc0823d1e6",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "state-access.log",
+        "bytes": 2012,
+        "sha256": "5d4e7c8583f88f51878a1c2dff62f84b88b2371f89a1151e436e2eeeec1f7809",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "status-wait.log",
+        "bytes": 924,
+        "sha256": "a289d577fd6ee15fb87a987940ebd64e27431ad97adad3073e908553c5082f82",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "summary-green-corrected.log",
+        "bytes": 230,
+        "sha256": "3d58f6e42bdb4e48df90dfe0bbd96e7c1d01094e47edfea9a4bad2274469221c",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "summary-green.log",
+        "bytes": 1133,
+        "sha256": "6a3a3df844137513918170031b9622e76b5f642ffb460b2dc218dee2b058219e",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "summary-terminal-semantics-green.log",
+        "bytes": 231,
+        "sha256": "a139e0f5f8a83265f153b7ca701b42b719a6670b1e42a22d4e0c6440e3c574b0",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "summary-terminal-semantics-red-valid.log",
+        "bytes": 3820,
+        "sha256": "0b550c007384a7753f1e15d848ec4ddcffcf0cfeaca667b13119dd18b30e865e",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "summary-terminal-semantics-red.log",
+        "bytes": 3594,
+        "sha256": "2a7fc3254b5b63c0c7cccee4592af774a39aca92f5c7c62e36d9e11e5f26901f",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "swift-check.log",
+        "bytes": 71519,
+        "sha256": "a4c046d963703297f91b4deba4b9f46370a603adcdf1d1e947995533ee33fe8f",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "swift-release-build.log",
+        "bytes": 336,
+        "sha256": "b2ab4f4b404100f4b86143fbb4b23451514c4fcaff14c16de9460062ad0aad29",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "transition-red.log",
+        "bytes": 8516,
+        "sha256": "6cf839459d268503bbd78b6d7680e94d9419a9efe11ff5d437eb53f59e6d1d15",
+        "availability": "retained-local-ignored-output"
+      },
+      {
+        "path": "typecheck-third.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "availability": "retained-local-ignored-output"
+      }
+    ]
+  }
+}
