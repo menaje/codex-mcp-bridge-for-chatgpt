@@ -90,4 +90,12 @@ describe("processing speed scope", () => {
       expect(text).toContain(translations["dashboard.execution.accepted"]);
     }
   });
+  it.each(["ultrafast", "flex", "future-tier"])("preserves a historical persistent wire tier instead of labeling it cleared: %s", tier => {
+    for (const translations of Object.values(UI_TRANSLATIONS)) {
+      const text = executionSpeedText({ serviceTier: tier, requestState: "requested" }, translations);
+      expect(text).toContain(tier);
+      expect(text).not.toContain(translations["settings.processingSpeed.legacyClear"]);
+      expect(text).toContain(translations["dashboard.execution.pending"]);
+    }
+  });
 });
