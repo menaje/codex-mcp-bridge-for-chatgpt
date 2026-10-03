@@ -187,6 +187,29 @@ function presentation(f: Fixture, jobId: string) {
 }
 
 describe("card-free OAuth Events delegation", () => {
+  it("replays the original OAuth B with its legacy selector after Events is disabled", async () => {
+    const f = await start(); const token = await accessToken();
+    const a = await task(f, token, { approvedFollowups: [{ prompt: "Approved historical B" }] });
+    const parent = (await completed(f, a.jobId, token)).items[0];
+    const reference = parent.approvedFollowups[0];
+    const step = { requestId: reference.requestId, prompt: "Approved historical B", project: undefined, selection: undefined,
+      followup: { followupId: reference.followupId, reviewedVersion: parent.versions.job } };
+    const b = await task(f, token, { ...step, completionDelivery: undefined });
+    await completed(f, b.jobId, token);
+    const receipts = f.state.listMeta("task_followup_v1/", 100);
+    await close(f.server); await close(f.provider); f.state.close();
+    const ordinary = await start({ root: f.root, eventsEnabled: false });
+    const input = { ...(await taskInput(ordinary, token)), ...step, completionDelivery: "events" };
+    const replay = await call(ordinary, "codex_task", input, await accessToken());
+    expect(replay.result.structuredContent).toMatchObject({ jobId: b.jobId, replay: true, completionDeliveryPolicy: "events" });
+    expect(replay.result.structuredContent).not.toHaveProperty("eventSubscription");
+    const foreign = await call(ordinary, "codex_task", input, await accessToken(), { "openai/session": "foreign-conversation" });
+    expect(foreign.error || foreign.result.isError).toBeTruthy();
+    expect(ordinary.upstream.calls).toBe(0);
+    expect(ordinary.state.listMeta("task_followup_v1/", 100)).toEqual(receipts);
+    expect(ordinary.state.listJobs()).toHaveLength(2);
+  });
+
   it.each([413, 410, 503])("exposes terminal callback failure through exact status and task replay (%s)", async statusCode => {
     const received: any[] = [];
     const callback = createServer(async (req, res) => {

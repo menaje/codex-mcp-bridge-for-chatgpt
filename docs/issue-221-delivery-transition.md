@@ -20,6 +20,14 @@ prompt digests or request hashes to implement this upgrade. No approval migratio
 framework is introduced. New explicitly reapproved work uses the ordinary task
 contract and cannot silently consume the old followup.
 
+A replay may retain its old delivery selector after response loss. A narrow
+wire compatibility rule accepts that selector only for an already-admitted B
+with the original authenticated scope, prompt digest and canonical request ID.
+The ordinary handler still verifies every context override and returns that B
+or its retention-expiry error before considering admission. No stored approval,
+policy or hash changes; pending and unrelated requests receive retired-mode
+errors. This compatibility is not advertised as a new ordinary delivery option.
+
 ## Remove and retain
 
 Remove the Dashboard completion watcher, terminal-result message construction,

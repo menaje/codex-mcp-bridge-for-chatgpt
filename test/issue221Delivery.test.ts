@@ -236,13 +236,14 @@ describe("#221 delivery transition", () => {
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
     return result.structuredContent as any;
   }
-  async function followup(reference: any, version: number, prompt = "Fixture B") {
+  async function followup(reference: any, version: number, prompt = "Fixture B",
+    extra: Record<string, unknown> = {}, callMetadata = metadata) {
     const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
     const properties = descriptor.inputSchema.properties as any;
-    return client.callTool({ name: "codex_task", _meta: metadata, arguments: {
+    return client.callTool({ name: "codex_task", _meta: callMetadata, arguments: {
       requestId: reference.requestId, taskContractVersion: properties.taskContractVersion.const,
       executionEnvelopeRef: properties.executionEnvelopeRef.const, prompt,
-      followup: { followupId: reference.followupId, reviewedVersion: version }
+      followup: { followupId: reference.followupId, reviewedVersion: version }, ...extra
     } });
   }
   // Seed historical data only in this disposable fixture. The production
@@ -293,6 +294,11 @@ describe("#221 delivery transition", () => {
     const hashes = state.listJobs().map(job => job.requestHash);
     const rejected = await followup(reference, parent.items[0].versions.job);
     expect(rejected.structuredContent).toMatchObject({ jobId: null, error: { code: "FOLLOWUP_DELIVERY_RETIRED" } });
+    const legacyRejected = await followup(reference, parent.items[0].versions.job, "Fixture B", { completionDelivery: policy });
+    expect(legacyRejected.isError).toBe(true);
+    expect(legacyRejected.structuredContent).toMatchObject({ jobId: null, error: {
+      code: policy === "events" ? "EVENTS_DELIVERY_UNAVAILABLE" : "COMPLETION_DELIVERY_RETIRED"
+    } });
     expect(state.listMeta("task_followup_v1/", 100)).toEqual(before);
     expect(state.listJobs().map(job => job.requestHash)).toEqual(hashes);
     expect(upstream.calls).toHaveLength(1);
@@ -321,6 +327,25 @@ describe("#221 delivery transition", () => {
     expect(state.listJobs().map(job => job.requestHash)).toEqual(hashes);
     const result = await exact(bId);
     expect(result.items[0].answer).toBe("Completed fixture work.");
+  });
+  it.each(["live-card", "events"] as const)("preserves an admitted %s B replay carrying its original delivery selector", async policy => {
+    const a = await admit({ approvedFollowups: [{ prompt: "Fixture B" }] });
+    const parent = (await exact((a.structuredContent as any).jobId)).items[0];
+    const reference = parent.approvedFollowups[0];
+    const b = await followup(reference, parent.versions.job);
+    const bId = (b.structuredContent as any).jobId;
+    await exact(bId); historical(policy);
+    const before = state.listMeta("task_followup_v1/", 100);
+    const legacy = { completionDelivery: policy };
+    const replay = await followup(reference, parent.versions.job, "Fixture B", legacy);
+    expect(replay.structuredContent).toMatchObject({ jobId: bId, replay: true });
+    const foreign = await followup(reference, parent.versions.job, "Fixture B", legacy,
+      { "openai/session": "other-delivery-transition-conversation" });
+    expect(foreign.isError).toBe(true);
+    const changed = await followup(reference, parent.versions.job, "Different prompt", legacy);
+    expect(changed.isError).toBe(true);
+    expect(upstream.calls).toHaveLength(2);
+    expect(state.listMeta("task_followup_v1/", 100)).toEqual(before);
   });
   it.each(["unsupported", "transient"] as const)("reports probe reason %s without orphaning or replacing the Agent", async reason => {
     const a = await admit(); const parent = (await exact((a.structuredContent as any).jobId)).items[0];

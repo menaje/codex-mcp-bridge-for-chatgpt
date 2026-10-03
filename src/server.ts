@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import { timingSafeEqual } from "node:crypto";
 import { McpEventsController } from "./mcpEvents.js";
 import { mcpBearerPrincipal, authenticatedMcpPrincipal } from "./mcpPrincipal.js";
+import { promptDigest } from "./taskFollowups.js";
 import { McpOAuthVerifier, MCP_OAUTH_SCOPES, mcpOAuthPrincipal, oauthChallenge, oauthRequiredResult } from "./mcpOAuth.js";
 import type { WebhookSender } from "./mcpWebhook.js";
 import { promisify as promisifyCatalog } from "node:util";
@@ -234,7 +235,24 @@ export function createBridgeMcpServer(
   const events = sharedEvents || (config.experimentalProfile === "events" && config.eventsEnabled && !jobRegistry.admissionStateStore.readOnly
     ? new McpEventsController(config, jobRegistry, effectiveScopeResolver)
     : undefined);
-  installMcpToolTextIntegrityGuard(server, onOperationFailure, config);
+  installMcpToolTextIntegrityGuard(server, onOperationFailure, config, (request, context) => {
+    // A retired selector can survive response loss. This compatibility path
+    // only reaches an already-admitted canonical B; it changes no receipt,
+    // policy or request hash. The normal handler still validates every scope
+    // override and returns the retained B (or its expiry error) before admission.
+    const args = request.params?.arguments;
+    if (!args?.followup || typeof args.prompt !== "string") return false;
+    try {
+      const receipt = jobRegistry.admissionStateStore.taskFollowups.get(args.followup.followupId);
+      const selectors = [args.completionDelivery, args.completionDeliveryPolicy, args.completionDeliveryMode]
+        .filter(value => value !== undefined);
+      return Boolean(receipt?.admittedJobId && args.requestId === receipt.requestId && selectors.length &&
+        selectors.every(value => value === receipt.completionDeliveryPolicy) &&
+        receipt.promptSha256 === promptDigest(args.prompt) &&
+        receipt.mcpPrincipal === authenticatedMcpPrincipal(context) &&
+        receipt.scopeId === effectiveScopeResolver.resolve(request.params?._meta, args.scopeId)?.scopeId);
+    } catch { return false; }
+  });
   events?.install(server);
   const toolRegistration = registerBridgeTools(
     server,
@@ -696,7 +714,8 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
 function installMcpToolTextIntegrityGuard(
   server: McpServer,
   onOperationFailure?: (error: unknown) => void,
-  bridgeConfig?: BridgeConfig
+  bridgeConfig?: BridgeConfig,
+  retainedFollowupReplay?: (request: any, context: any) => boolean
 ): void {
   // Tombstones run before the SDK's tool lookup/input validation. They are not
   // registered or advertised tools and work for both HTTP and stdio transports.
@@ -708,7 +727,18 @@ function installMcpToolTextIntegrityGuard(
       const handler = handlerArgs[index];
       handlerArgs[index] = async (request: any, context: any) => {
         const name = request.params?.name;
-        const args = request.params?.arguments || {};
+        let args = request.params?.arguments || {};
+        if (name === "codex_task" &&
+            [args.completionDelivery, args.completionDeliveryPolicy, args.completionDeliveryMode]
+              .some(value => value === "live-card" || value === "events" &&
+                (bridgeConfig?.experimentalProfile !== "events" || !bridgeConfig.eventsEnabled)) &&
+            retainedFollowupReplay?.(request, context)) {
+          args = { ...args };
+          delete args.completionDelivery;
+          delete args.completionDeliveryPolicy;
+          delete args.completionDeliveryMode;
+          request = { ...request, params: { ...request.params, arguments: args } };
+        }
         let code: string | undefined;
         let message: string | undefined;
         if (name === "codex_ui_completion" || name === "codex_status" && args.query?.kind === "completion" ||
