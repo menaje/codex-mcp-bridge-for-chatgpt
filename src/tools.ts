@@ -10352,6 +10352,17 @@ function jobStateErrorCode(status: string | undefined, message?: string): string
   return "JOB_FAILED";
 }
 
+function normalizeJobError(status: string | undefined, message: string | undefined, retainedError: unknown) {
+  return normalizeStructuredError(isRecord(retainedError) ? retainedError : {
+    code: jobStateErrorCode(status, message),
+    message: message || (status === "interrupted"
+      ? "The Codex job was interrupted before completion."
+      : status === "cancelled"
+        ? "The Codex job was cancelled. Partial filesystem changes may remain."
+        : "Codex job failed.")
+  });
+}
+
 function formatJobStatus(
   job: CodexJob,
   staleAfterMs: number,
@@ -10384,18 +10395,7 @@ function formatJobStatus(
         : "none";
   const retainedError = retainedStructuredError(job.result);
   const error = job.status === "failed" || job.status === "interrupted" || job.status === "cancelled"
-    ? normalizeStructuredError(
-        retainedError || {
-          code: jobStateErrorCode(job.status, job.error),
-          message:
-            job.error ||
-            (job.status === "interrupted"
-              ? "The Codex job was interrupted before completion."
-              : job.status === "cancelled"
-                ? "The Codex job was cancelled. Partial filesystem changes may remain."
-                : "Codex job failed.")
-        }
-      )
+    ? normalizeJobError(job.status, job.error, retainedError)
     : undefined;
   const warnings = [
     ...(job.executionDecision?.fallbackWarning
@@ -15646,11 +15646,17 @@ function statusItemProjection(
         omitted: input.resultOmitted === true
       }
     : undefined;
-  const error = isRecord(input.error)
-    ? normalizeStructuredError(input.error)
-    : typeof input.error === "string" && input.error
-      ? normalizeStructuredError({ code: type === "job" ? jobStateErrorCode(state, input.error) : "JOB_FAILED", message: input.error })
-      : undefined;
+  const retainedError = isRecord(input.upstreamError) ? input.upstreamError : input.error;
+  const errorMessage = typeof input.error === "string" && input.error ? input.error : undefined;
+  const error = type === "job"
+    ? isRecord(retainedError) || errorMessage || state === "failed" || state === "interrupted" || state === "cancelled"
+      ? normalizeJobError(state, errorMessage, retainedError)
+      : undefined
+    : isRecord(input.error)
+      ? normalizeStructuredError(input.error)
+      : errorMessage
+        ? normalizeStructuredError({ code: "JOB_FAILED", message: errorMessage })
+        : undefined;
   const wait = jobWaitOutputSchema.safeParse(input.wait);
   return statusItemOutputSchema.parse({
     ...(Array.isArray(input.approvedFollowups) ? { approvedFollowups: input.approvedFollowups } : {}),

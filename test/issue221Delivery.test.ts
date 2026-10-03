@@ -285,6 +285,27 @@ describe("#221 delivery transition", () => {
     expect(replay.structuredContent).toMatchObject({ jobId: bId, replay: true });
     expect(upstream.calls).toHaveLength(2);
   });
+  it("requires current review for new B but returns admitted B when replay has an older reviewedVersion", async () => {
+    const a = await admit({ approvedFollowups: [{ prompt: "Fixture B" }] });
+    const parent = (await exact((a.structuredContent as any).jobId)).items[0];
+    const reference = parent.approvedFollowups[0];
+    const olderVersion = parent.versions.job - 1;
+    expect(olderVersion).toBeGreaterThan(0);
+    const before = state.listMeta("task_followup_v1/", 100);
+    const rejected = await followup(reference, olderVersion);
+    expect(rejected.structuredContent).toMatchObject({ jobId: null, error: { code: "FOLLOWUP_REVIEW_REQUIRED" } });
+    expect(state.listMeta("task_followup_v1/", 100)).toEqual(before);
+    expect(upstream.calls).toHaveLength(1);
+    const b = await followup(reference, parent.versions.job);
+    const bId = (b.structuredContent as any).jobId;
+    await exact(bId);
+    const admittedReceipts = state.listMeta("task_followup_v1/", 100);
+    const replay = await followup(reference, olderVersion);
+    expect(replay.structuredContent).toMatchObject({ jobId: bId, replay: true });
+    expect(state.listMeta("task_followup_v1/", 100)).toEqual(admittedReceipts);
+    expect(state.listJobs()).toHaveLength(2);
+    expect(upstream.calls).toHaveLength(2);
+  });
   it.each(["live-card", "events"] as const)("rejects an unadmitted historical %s followup without modifying approval", async policy => {
     const a = await admit({ approvedFollowups: [{ prompt: "Fixture B" }] });
     const parent = await exact((a.structuredContent as any).jobId);
@@ -367,6 +388,35 @@ describe("#221 delivery transition", () => {
       const summary = await client.callTool({ name: "codex_status", _meta: metadata, arguments: { query } });
       expect(summary.isError, JSON.stringify(summary)).not.toBe(true);
       expect(JSON.stringify(summary.structuredContent)).not.toContain("Completed fixture work.");
+    }
+  });
+  it.each([
+    { code: "CONTEXT_WINDOW_EXCEEDED", retryable: true },
+    { code: "UPSTREAM_TURN_FAILED", retryable: false, missingFields: ["handoffSummary"], contextContinuity: "not-migrated" },
+    { code: "UPSTREAM_TURN_FAILED" }
+  ])("preserves retained structured error $code/$retryable on all five MCP read surfaces", async publicError => {
+    const held = upstream.holdNextCall();
+    const a = await admit();
+    const id = (a.structuredContent as any).jobId;
+    await held.started;
+    held.assign(fixtureThreadId);
+    const error = { ...publicError, message: "The upstream turn failed with an actionable cause.",
+      upstreamKind: "contextWindowExceeded", privateDiagnostic: "Private fixture diagnostic" };
+    held.release({ isError: true,
+      structuredContent: { threadId: fixtureThreadId, turnId: fixtureTurnId, turnStatus: "failed", error },
+      content: [{ type: "text", text: "Raw upstream failure body" }] });
+    await vi.waitFor(() => expect(registry.get(id)?.status).toBe("failed"));
+    expect(state.listJobs().find(job => job.jobId === id)?.result?.structuredContent).toMatchObject({ error });
+    const job = registry.get(id)!;
+    for (const query of [{ kind: "job", id }, undefined, { kind: "page", collection: "jobs" },
+      { kind: "activity", id: job.activityId }, { kind: "thread", id: job.threadId }]) {
+      const result = await client.callTool({ name: "codex_status", _meta: metadata, arguments: { query } });
+      expect(result.isError, JSON.stringify(result)).not.toBe(true);
+      const item = (result.structuredContent as any).items.find((item: any) => item.type === "job" && item.id === id);
+      expect(item).toMatchObject({ state: "failed", result: { availability: "unavailable" } });
+      expect(item.error).toEqual({ ...publicError, message: error.message });
+      expect(item).not.toHaveProperty("answer");
+      expect(JSON.stringify(result.structuredContent)).not.toMatch(/Raw upstream failure body|Private fixture diagnostic|upstreamKind/);
     }
   });
   it.each([

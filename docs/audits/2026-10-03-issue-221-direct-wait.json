@@ -159,7 +159,9 @@
       "passed": 29,
       "failed": 0,
       "warnings": 0,
-      "artifact": "mcp-conformance-final-producer.log"
+      "artifact": "mcp-conformance-final-producer.log",
+      "skipped": 1,
+      "stdoutDenominator": "29 applicable checks; the detailed report additionally records one skipped check"
     },
     "appServerSchemas": {
       "cli": "0.153.3",
@@ -1355,5 +1357,11 @@
         "availability": "retained-local-ignored-output"
       }
     ]
+  },
+  "independentReviewCorrections": {
+    "date": "2026-10-03",
+    "admittedReplay": "Original identity, scope, prompt and context are checked; reviewedVersion equality is not revalidated when returning an existing B. First admission still requires the current reviewedVersion.",
+    "actualQuestionApprovalBoundary": "Not triggered in actual ChatGPT; local integration/fixture coverage only.",
+    "historicalEvidence": "Original producer identities, logs and 118 evidence checksums are preserved. Structured-error P2 remediation has separate evidence."
   }
 }

@@ -22,7 +22,7 @@
 
 [구현 전 확정한 전환표](../issue-221-delivery-transition.md)를 유지한다. 새 일반 Job은 기존 설정 true/false/누락과 무관하게 direct-wait다. 완료·실행 중인 기존 live-card Job은 같은 exact Job을 조회/대기하며 취소·재접수하지 않는다. 미실행 구형 followup은 `FOLLOWUP_DELIVERY_RETIRED`로 거부하고, 원래 Activity/Agent에서 새 논리 요청과 fresh requestId로 명시적 재승인하도록 안내한다. 기존 승인 영수증을 변조하거나 자동 이전하지 않는다.
 
-이미 접수한 B는 원래 principal/scope·prompt digest·canonical requestId·reviewedVersion 및 context를 검증한 뒤 폐기 모드의 신규 접수 거부 **전에** 같은 B를 반환한다. 구형 delivery selector의 재전송도 원 승인과 완전히 일치하는 admitted B에 한해서 인정한다. 결과 만료는 만료 오류이며 다른 B를 만들지 않는다. 과거 Events 기록은 읽기/보존하되 새 일반 실행 권한으로 소비하지 않는다.
+새 B의 최초 접수에서는 현재 부모의 reviewedVersion과 승인 조건을 검증한다. 이미 접수한 B의 replay는 원래 principal/scope·prompt digest·canonical requestId와 context를 확인한 뒤 폐기 모드의 신규 접수 거부 **전에** 같은 B를 반환하며, reviewedVersion 일치를 다시 검사하지 않는다. 구형 delivery selector의 재전송도 동일한 admitted B에 한해서 인정한다. 결과 만료는 만료 오류이며 다른 B를 만들지 않는다. 과거 Events 기록은 읽기/보존하되 새 일반 실행 권한으로 소비하지 않는다.
 
 요약의 동작은 `kind=tool`, `tool=codex_status`, `query.kind=job`, exact Job ID로 검증한다. 새 객체/JSON roundtrip을 인정하며 다른 도구·조회 종류·Job ID·누락·다른 Job의 동작을 거부한다. overview/page/activity/thread에는 원문을 넣지 않고 exact 조회에서만 제공한다. 취소·중단·terminal commit 실패의 error code도 exact와 요약에서 일치한다.
 
@@ -39,7 +39,7 @@
 | 최종 `npm run check` | producer 1d9ea4a, 120개 파일 **1,303/1,303 통과**, 187.10초 |
 | strict macOS bundle | Swift **218개 실행, 선택 시험 2개 skipped, 실패 0**; 서명·9개 언어 1,394개 문자열 검증 |
 | 설치된 Native Companion | 최종 실제 bridge.sock의 dashboard/settings 계약 **1개 통과**. 추가 remote pairing 없이 수행 |
-| MCP 2026-07-28 적합성 | 최종 producer **29/29, failed 0, warnings 0**; 로컬 적합성 runner |
+| MCP 2026-07-28 적합성 | 상세 결과 **29개 통과, 1개 skipped, failed 0, warnings 0**; 로컬 적합성 runner의 stdout 29/29는 skipped 항목을 분모에 포함하지 않음 |
 | App Server 계약 | pin된 Codex 0.153.3의 JSON 416개/TypeScript 827개 일치. ambient alpha CLI 불일치는 환경 실패로 분리 |
 | Chromium 카드 | 합성 호스트+실제 브라우저 6/6 조건 통과. 구형 in-flight 메시지 1회는 아래 한계의 재현이며 무송신 성공 아님 |
 | 영향 회귀 | Dashboard scope 7/7, stale card, Native DTO, #137 bounded wait, #138 read-only state access, #185 recovery, #186 observation, #189 retention 통과 |
@@ -79,6 +79,8 @@
 catalog/manifest digest `f5ceac2b092e876a40cd4850caf26d77cc90015e0c822c912c9cde034a501836`도 일치한다. 최종 설치 서버의 retired wait/accepted/rejected/uncertain/release 5개 요청은 식별 가능한 오류이고 Job count를 바꾸지 않았다. status completion 및 자동 카드의 구형 요청도 앞선 실제 설치 서버 시험에서 거부됐다.
 
 ## 실제 ChatGPT 수락
+
+이 절의 실제 수락 범위는 A→B/replay·명시적 취소·카드 표시/관리와 무송신 관측이다. 새 질문·승인 대기 경계를 실제 ChatGPT 대화에서 발생시키지는 않았으며, 해당 경계의 근거는 로컬 integration/fixture다. 실제 수락 완료를 모든 입력·승인 상황의 실사용 확인으로 확대하지 않는다.
 
 시험은 로그인된 웹 ChatGPT의 일반 Chat과 기존 연결된 Bridge에서 UI를 통해 수행했다. 부모 ChatGPT 모델/추론/usage는 공개 계측값이 없어 확인 불가이며 Codex 실행값으로 대체하지 않는다. Codex 작업은 등록된 기존 실행 정책에서 gpt-6-luna/low/priority로 실행한 읽기 전용 시험 프롬프트다. OS sandbox를 새로 read-only로 설정했다는 뜻이 아니다.
 
@@ -126,3 +128,7 @@ SPA Home 클릭 직후에는 iframe1이 남아 있는 순간이 관측됐다. **
 최종 diff는 일반 bounded wait 수명·HTTP 연결/대기 transport·결과 retention을 바꾸지 않았다. runtime 변경은 폐기한 카드 송신을 위한 priority reservation 제거다. 관련 timeout·연결·보존 회귀가 통과했고 #222의 actual 30분/60분 **1800.086446041초 / 3600.075175209초**를 재사용했다. 장시간 시험을 다시 실행하거나 새 성공으로 집계하지 않았다. 화면 이탈/앱 종료 뒤 GPT 재개는 기존 user-confirmed actual 출처를 그대로 유지한다. 모든 host의 자동 wake 보장이나 불가능으로 바꾸지 않는다.
 
 Sites/예약/TinyFish/새 monitoring/remote routing 및 광범위 auth/orphan 수정은 추가하지 않았다. #222/#223의 코드·이슈는 변경하지 않았다. 다른 기존 worktree와 모든 Codex/ChatGPT 대화는 정리 대상이 아니다. 코드 통합과 이슈 종료 후 수동 task worktree/branch만 clean·통합·사용 프로세스 여부를 확인하여 강제 삭제 없이 정리한다. 로컬 증거는 주 checkout의 ignored output에 보존한다.
+
+## 독립 검토 후 정정
+
+위 reviewedVersion replay 설명, MCP 생략 수치 및 실제 질문·승인 범위를 2026-10-03 독립 검토에 따라 정정했다. 기존 producer·원로그·118개 증거 목록은 당시 검증 기록이며 새 검증 결과로 소급 변경하지 않는다. 독립 검토에서 발견한 보존된 구조화 오류의 요약 축소 P2와 후속 배포 근거는 별도 보완 감사에 기록한다.

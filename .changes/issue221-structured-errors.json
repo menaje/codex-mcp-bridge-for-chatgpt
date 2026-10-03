@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Preserve retained structured Job error codes and retryability consistently across exact, overview, list, Activity and thread reads without exposing result bodies.",
+  "breaking": false,
+  "migration": null
+}

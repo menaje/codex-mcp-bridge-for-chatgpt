@@ -11,7 +11,7 @@ deployment identity, and real ChatGPT acceptance are separate gates.
 | Completed historical Job | Preserve admission policy, request hash, exact identity, result and authorization; recover through ordinary exact reads. |
 | Running historical live-card Job | Keep the execution and identity. Disable card sending, supply same-Job bounded waits and input reads; never cancel or replace because of delivery retirement. |
 | Unadmitted historical live-card followup | Return `FOLLOWUP_DELIVERY_RETIRED` after checking original scope and prompt. Do not rewrite the receipt or reserve a replacement. Explain explicit reapproval as new logical work with a fresh requestId and the original Activity/Agent context. |
-| Already admitted B replay | Authenticate and validate the original approval first, then return the original canonical B before checking whether its historical delivery policy may admit new work. Retention expiry returns a receipt/expiry error, never another B. |
+| Already admitted B replay | Authenticate the original scope and validate the prompt, canonical request identity and context, then return the original B before rejecting new work under its historical delivery policy. Do not revalidate reviewedVersion equality for this idempotent return. Retention expiry returns a receipt/expiry error, never another B. |
 | Historical Events Job/receipt | Preserve exact authorized reads and history. Ordinary mode cannot admit a new Events followup or create monitoring grants. Already admitted B remains replayable. |
 
 The current source stores policy on Jobs and followup receipts and compares them
@@ -19,6 +19,12 @@ at atomic admission. It must not regenerate followupIds, canonical requestIds,
 prompt digests or request hashes to implement this upgrade. No approval migration
 framework is introduced. New explicitly reapproved work uses the ordinary task
 contract and cannot silently consume the old followup.
+
+First admission of an approved B requires the current completed predecessor's
+reviewedVersion and a recorded exact result offer. An older version is rejected
+without admitting B or modifying its receipt. After admission, replay returns
+the existing B even with an older reviewedVersion; it creates no execution and
+does not change the recorded review. These are separate validation boundaries.
 
 A replay may retain its old delivery selector after response loss. A narrow
 wire compatibility rule accepts that selector only for an already-admitted B
