@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Record independent Bridge storage acceptance, direct-wait regression and the user-confirmed existing Bridge/Dot concurrency baseline, with unperformed account checks kept explicit.",
+  "breaking": false,
+  "migration": null
+}

@@ -10,6 +10,10 @@ outside the current implementation.
   were integrated through [PR #226](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/226),
   commit `f6da4704b0ffc7966303d9577d8f267b7e833f5c`, merge
   `d7eb60799a4ef3ad7e911e7a82cc7a5666fbce2d` on `dev`.
+- The independent-storage implementation was integrated through
+  [PR #227](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/227), commit
+  `8eda683660e848bfb7dab80b8904894cf0ab219b`, merge
+  `148e55acafdf6ea93e245b82efeee522e7ad0ca7` on `dev`.
 - New installation discovery recommends the managed CLI; saved/explicit choices
   remain authoritative. Installation and switching require explicit actions.
 - New login profiles share owned rollout/archive directories and SQLite state.
@@ -34,6 +38,20 @@ outside the current implementation.
 | Real login cancellation/refresh and app update during Bridge work | No operating authentication or app process changed | NOT RUN |
 | Private store discovered/opened by desktop app | No supported opening route demonstrated | UNVERIFIED |
 
+The [sanitized evidence record](issue-225-independent-execution.evidence.json)
+binds these observations to implementation commits, source file SHA-256 values,
+native binary/log hashes and the native thread/fork identities. The raw temporary
+probe outputs stay outside the release payload. The record includes no operating
+credential, user conversation content or production storage path.
+
+The complete Node run includes `issue221Delivery`, `issue221Profiles`,
+`issue221Summary`, `stdioServer` and the tools tests. Ordinary result delivery
+remains `direct-wait`; canonical replay returns the admitted Job. Retired card
+delivery remains rejected, and a status card does not relay completion or execute
+a follow-up. The new authentication and persistence defaults do not restore that
+retired route. The archive also includes the new storage modules, verified by
+importing the environment helper from an unpacked npm package.
+
 The native provider is synthetic even though the binaries and native storage
 operations are real. No OpenAI model request, credentials, account refresh,
 production transcript, installed application replacement or operating Bridge
@@ -46,7 +64,8 @@ On 2026-10-03 the user clarified that concurrent Bridge/Dot work had already
 been exercised successfully in the existing Bridge CLI environment and asked
 not to repeat that live experiment merely to verify its new default. This
 report reuses that user-provided evidence. It does not claim that Codex ran an
-additional Dot task or reproduced the previous disconnect. Read-only inspection
+additional Dot task, verified each start order or reproduced the previous
+disconnect. Read-only inspection
 confirmed that the operating installation already selected managed CLI 0.160.0
 and a distinct Bridge login home, from installed source
 `a16cc51f20af396ba05d83b8d165240b52d528b5`. Its legacy profile has not been moved
@@ -68,19 +87,16 @@ follow-up. Record the Bridge/CLI/app versions, integration commit, storage roots
 with credentials redacted, canonical request ID, original thread/turn, worker
 and generation, terminal result and committed result/ACK evidence.
 
-1. Start Bridge work first, then a distinct Dot task. Complete both and record
-   that neither authenticates, cancels, resumes or changes the other's writer.
-2. Start Dot first, then Bridge work. Complete both with the same evidence.
-3. Change the applied test login A → B → A through candidate verification and
+1. Change the applied test login A → B → A through candidate verification and
    safe apply. Read existing Activity/Agent/Job/results at each step; replay the
    same canonical request and verify one original Job. Continue/fork the same
    durable thread only when its original store and current CLI support it.
-4. Fail/cancel a separate candidate login and confirm the applied Bridge and
+2. Fail/cancel a separate candidate login and confirm the applied Bridge and
    desktop logins remain usable. Exercise native refresh separately.
-5. Cancel and restart test work, recover the exact original executor result,
+3. Cancel and restart test work, recover the exact original executor result,
    and verify that replay does not submit another turn or acknowledge a foreign
    worker receipt. Distinguish graceful restart from simulated worker loss.
-6. Keep the app visibility preference off and confirm durable Bridge context
+4. Keep the app visibility preference off and confirm durable Bridge context
    survives restart. Any app discovery/opening result is a separate observation;
    do not infer it from persistent storage or a successful app launch.
 
