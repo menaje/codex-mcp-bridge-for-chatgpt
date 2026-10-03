@@ -1484,6 +1484,30 @@ final class AppPresentationTests: XCTestCase {
         }
     }
 
+    func testTurnSpeedRequestsStayDistinctFromConfirmationAndConversationScope() throws {
+        let accepted = try dashboardExecution(model: "gpt-5.6-sol", displayName: "Sol", effort: "medium",
+            reroutedModel: "gpt-6-astra", isCurrent: false, serviceTier: "fast",
+            processingSpeed: "fast", serviceTierScope: "turn", requestState: "accepted")
+        let text = DashboardExecutionPresentation.text(accepted, locale: Locale(identifier: "en"))
+        XCTAssertTrue(text.contains("requested"))
+        XCTAssertTrue(text.contains("accepted"))
+        XCTAssertTrue(text.contains("unconfirmed"))
+        XCTAssertTrue(text.contains("gpt-6-astra"))
+        let persistent = try dashboardExecution(model: "gpt-5.6-sol", displayName: "Sol", effort: "medium",
+            reroutedModel: "gpt-6-astra", isCurrent: true, serviceTier: "fast")
+        XCTAssertFalse(DashboardExecutionPresentation.matches(accepted, persistent))
+    }
+
+    func testSettingsDraftPreservesUnknownSpeedWhenRebased() throws {
+        let snapshot = try settingsSnapshot(policy: ["mode": "fixed", "selection": choiceObject(ModelChoice(model: "sol", reasoningEffort: "medium")),
+            "constraints": ["allowDelegation": true]], catalogModels: [], processingSpeed: "future-tier")
+        let draft = SettingsDraft(snapshot: snapshot)
+        XCTAssertEqual(draft.processingSpeed, "future-tier")
+        XCTAssertTrue(draft.hasSameEditableValues(as: SettingsDraft(snapshot: snapshot)))
+        XCTAssertEqual(draft.rebased(on: snapshot).processingSpeed, "future-tier")
+        XCTAssertTrue(processingSpeedLabel("future-tier", legacyFast: false, locale: Locale(identifier: "en")).contains("future-tier"))
+    }
+
     func testDashboardHistoryDeduplicatesOnlyActivityHeadingsAndKeepsTurnExecution() throws {
         let firstExecution = try dashboardExecution(
             model: "gpt-5.6-sol",
@@ -2226,7 +2250,8 @@ private func settingsSnapshot(
     modelDescriptionOverrides: [String: String]? = nil,
     modelDescriptionHistoryModelIds: [String]? = nil,
     catalogModels: [[String: Any]],
-    operatorCeiling: [ModelChoice]? = nil
+    operatorCeiling: [ModelChoice]? = nil,
+    processingSpeed: String? = nil
 ) throws -> SettingsSnapshot {
     var settings: [String: Any] = [
         "schemaVersion": 1,
@@ -2248,6 +2273,7 @@ private func settingsSnapshot(
     if let modelDescriptionOverrides {
         settings["modelDescriptionOverrides"] = modelDescriptionOverrides
     }
+    if let processingSpeed { settings["processingSpeed"] = processingSpeed }
     var capabilities: [String: Any] = [
         "availableAccessStrategies": ["read-only", "adaptive"],
         "availableUiLocalePreferences": ["auto", "ko", "en"],
@@ -2315,7 +2341,10 @@ private func dashboardExecution(
     effort: String,
     reroutedModel: String?,
     isCurrent: Bool,
-    serviceTier: String? = nil
+    serviceTier: String? = nil,
+    processingSpeed: String? = nil,
+    serviceTierScope: String? = nil,
+    requestState: String? = nil
 ) throws -> DashboardExecution {
     var object: [String: Any] = [
         "model": model,
@@ -2324,6 +2353,9 @@ private func dashboardExecution(
     ]
     if let displayName { object["modelDisplayName"] = displayName }
     if let serviceTier { object["serviceTier"] = serviceTier }
+    if let processingSpeed { object["processingSpeed"] = processingSpeed }
+    if let serviceTierScope { object["serviceTierScope"] = serviceTierScope }
+    if let requestState { object["requestState"] = requestState }
     if let reroutedModel { object["reroutedModel"] = reroutedModel }
     return try JSONDecoder().decode(
         DashboardExecution.self,

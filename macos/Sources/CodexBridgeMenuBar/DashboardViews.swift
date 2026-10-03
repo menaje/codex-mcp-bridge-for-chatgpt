@@ -1291,8 +1291,8 @@ private struct DashboardExecutionLabel: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(text)
-                .lineLimit(2)
-            if DashboardExecutionPresentation.usesFastProcessing(execution) {
+                .lineLimit(execution?.requestState == nil ? 2 : 4)
+            if execution?.requestState == nil, DashboardExecutionPresentation.usesFastProcessing(execution) {
                 Label("dashboard.execution.fast", systemImage: "bolt.fill")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.primary)
@@ -1816,6 +1816,7 @@ enum DashboardExecutionPresentation {
             normalized(left.reasoningEffort) == normalized(right.reasoningEffort) &&
             !normalized(left.reasoningEffort).isEmpty &&
             normalizedServiceTier(left.serviceTier) == normalizedServiceTier(right.serviceTier) &&
+            (left.serviceTierScope ?? "conversation") == (right.serviceTierScope ?? "conversation") &&
             normalized(left.reroutedModel ?? "") == normalized(right.reroutedModel ?? "")
     }
 
@@ -1838,9 +1839,21 @@ enum DashboardExecutionPresentation {
             execution.reasoningEffort,
             locale: locale
         )
-        let actualModel = (execution.reroutedModelDisplayName ?? execution.reroutedModel)
-            .map { "\(model) → \($0)" } ?? model
-        return "\(actualModel) · \(effort)"
+        let selected = "\(model) · \(effort)"
+        guard let state = execution.requestState else {
+            let routed = (execution.reroutedModelDisplayName ?? execution.reroutedModel).map { " → " + $0 } ?? ""
+            return model + routed + " · " + effort
+        }
+        let requested = BridgeAppLocalization.string("dashboard.execution.requested", locale: locale).replacingOccurrences(of: "{execution}", with: selected)
+        let confirmed = (execution.reroutedModelDisplayName ?? execution.reroutedModel).map {
+            " · " + BridgeAppLocalization.string("dashboard.execution.modelConfirmed", locale: locale).replacingOccurrences(of: "{model}", with: $0)
+        } ?? ""
+        let mode = execution.processingSpeed ?? (execution.serviceTierScope == "turn" ? execution.serviceTier == "default" ? "standard" : execution.serviceTier ?? "inherit" : "legacy")
+        let speed = processingSpeedLabel(mode, legacyFast: usesFastProcessing(execution), locale: locale)
+        let speedText = BridgeAppLocalization.string("dashboard.execution.speed", locale: locale)
+            .replacingOccurrences(of: "{speed}", with: speed)
+            .replacingOccurrences(of: "{state}", with: BridgeAppLocalization.string(state == "accepted" ? "dashboard.execution.accepted" : "dashboard.execution.pending", locale: locale))
+        return requested + confirmed + "\n" + speedText
     }
 
     static func turnText(

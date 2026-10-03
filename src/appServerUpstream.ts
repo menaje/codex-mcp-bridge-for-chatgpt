@@ -1,4 +1,5 @@
 import { validateInitializeResponse } from "./runtimeCompatibility.js";
+import { selectionSpeedArguments, wireSpeedArguments } from "./processingSpeed.js";
 import type { ThreadPersistence, ThreadReleaseEvidence, ThreadReleaseOptions, ThreadReleaseResult } from "./threadConnections.js";
 import { elicitationResponse, readElicitationInput } from "./mcpElicitation.js";
 import { inspectCliProtocol, requireCliProtocol, requireCliCapability, UNVERIFIED_APP_SERVER_CAPABILITIES, type CliProtocolSupport } from "./cliProtocol.js";
@@ -392,6 +393,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     try {
       const connection = await this.connectionFor(worker);
       requireCliProtocol(await this.inspectProtocol(), "fork");
+      requireTurnSpeed(this.protocolSupport!, input.selection ? selectionSpeedArguments(input.selection) : {});
       const result = await connection.forkThreadAndTurn(
         input.threadId,
         requestArguments(input.prompt, input.selection, {
@@ -662,6 +664,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     try {
       const connection = await this.connectionFor(worker);
       requireCliProtocol(await this.inspectProtocol(), name === "codex" ? "fresh" : "continue");
+      requireTurnSpeed(this.protocolSupport!, args);
       const assigned = (assignment: UpstreamWorkerAssignment) => {
         if (assignment.threadId) {
           this.threadWorkers.set(assignment.threadId, worker.index);
@@ -1139,7 +1142,7 @@ class AppServerConnection {
       {
         ...threadAccessParams(expectedAccess, isRecord(args.config) ? args.config : undefined),
         model: optionalString(args.model) || null,
-        serviceTier: optionalString(args.serviceTier) || null,
+        ...wireSpeedArguments(args, "thread"),
         experimentalRawEvents: false,
         ephemeral: args.ephemeral === true
       },
@@ -1697,18 +1700,17 @@ class AppServerConnection {
     if (!executionAccess) throw new Error("EXECUTION_ACCESS_REQUIRED: The thread policy has not been verified.");
     const inputRoutingVerified = await this.verifyInputRouting(threadId);
     const usage = new TurnUsageMeter(this.threadTokenTotals.get(threadId));
+    const sent = {
+      threadId,
+      ...turnAccessParams(executionAccess),
+      input: [{ type: "text", text: prompt, text_elements: [] }],
+      model: optionalString(args.model) || null,
+      effort: modelReasoningEffort(args.config) || null,
+      ...wireSpeedArguments(args, "turn")
+    };
     const response = await this.rpc.request<Record<string, unknown>>(
       "turn/start",
-      {
-        threadId,
-        ...turnAccessParams(executionAccess),
-        input: [
-          { type: "text", text: prompt, text_elements: [] }
-        ],
-        model: optionalString(args.model) || null,
-        effort: modelReasoningEffort(args.config) || null,
-        serviceTier: optionalString(args.serviceTier) || null
-      },
+      sent,
       {
         timeoutMs: this.protocolOptions.requestTimeoutMs,
         lateResponseContext: { threadId }
@@ -1779,6 +1781,9 @@ class AppServerConnection {
         turnId,
         executionAccess: executionAccessEvidence(executionAccess),
         questionRouting: inputRoutingVerified ? "verified-mcp-elicitation" : "unverified",
+        evidenceVersion: 1,
+        sent: { model: sent.model, reasoningEffort: sent.effort, ...wireSpeedArguments(args, "turn") },
+        serviceTierScope: args.serviceTierScope === "turn" ? "turn" : "conversation",
         selection: {
           model: optionalString(args.model) || null,
           reasoningEffort: modelReasoningEffort(args.config) || null,
@@ -1867,6 +1872,7 @@ class AppServerConnection {
       (isRecord(params.turn) ? optionalString(params.turn.id) : undefined) ||
       (threadId ? this.threadTurns.get(threadId) : undefined);
     const context = turnId ? this.activeTurns.get(turnId) : undefined;
+    if (context && threadId && context.threadId !== threadId) return;
     const protocolEvent = publicNotificationEvent(method, params);
     if (method === "thread/tokenUsage/updated" && threadId && isRecord(params.tokenUsage)) {
       const total = tokenCounts(params.tokenUsage.total);
@@ -2191,6 +2197,7 @@ class AppServerConnection {
   }
 
   private emit(context: TurnContext, publicEvent: CodexPublicEvent): void {
+    publicEvent.details = { ...publicEvent.details, threadId: context.threadId, turnId: context.turnId };
     context.eventSequence += 1;
     context.onProgress?.({
       progress: context.eventSequence,
@@ -2205,10 +2212,18 @@ export const APP_SERVER_CAPABILITIES: BackendCapabilities = {
   supportsModelOverrideOnContinue: true,
   supportsEffortOverrideOnContinue: true,
   supportsServiceTierOverrideOnContinue: true,
+  supportsPerTurnServiceTier: true, supportedPerTurnServiceTiers: ["default", "fast", "priority", "ultrafast"],
   supportsFork: true,
   supportsSteering: true, supportsPreciseCancellation: true, supportsEphemeralThreads: true,
   supportsThreadInspection: true, supportsBackgroundTerminals: true
 };
+
+function requireTurnSpeed(support: CliProtocolSupport, args: Record<string, unknown>): void {
+  if (args.serviceTierScope !== "turn") return;
+  requireCliCapability(support, "supportsPerTurnServiceTier");
+  const tier = optionalString(args.serviceTier);
+  if (tier && !support.capabilities.supportedPerTurnServiceTiers?.includes(tier)) throw new Error(`PROCESSING_SPEED_UNSUPPORTED: Per-turn tier '${tier}' is not supported by the selected CLI. No turn was started.`);
+}
 
 function metricAggregate(values: number[]): {
   samples: number;
@@ -2383,7 +2398,7 @@ function requestArguments(
       ? {
           model: selection.model,
           config: { model_reasoning_effort: selection.reasoningEffort },
-          ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {})
+          ...selectionSpeedArguments(selection)
         }
       : {})
   };
@@ -2495,6 +2510,7 @@ function publicNotificationEvent(
     const reason = optionalString(params.reason)?.slice(0, 200) || "unspecified";
     return event("model", "updated", `Model rerouted from ${fromModel} to ${toModel}.`, {
       kind: "rerouted",
+      serverCorrelation: optionalString(params.threadId) && optionalString(params.turnId) && optionalString(params.toModel) ? "explicit" : "unconfirmed",
       fromModel,
       toModel,
       reason

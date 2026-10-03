@@ -35,6 +35,7 @@ const archivedThreads = new Set();
 const knownThreads = new Set();
 const threadLineages = new Map();
 const threadEphemeral = new Map();
+const threadTiers = new Map();
 const loadedThreads = new Set();
 const systemErrorThreads = new Set();
 const backgroundTerminals = new Map();
@@ -231,6 +232,7 @@ lines.on("line", (line) => {
       forkedFromId: null
     });
     threadEphemeral.set(id, message.params.ephemeral === true);
+    threadTiers.set(id, Object.hasOwn(message.params, "serviceTier") ? message.params.serviceTier : process.env.CODEX_TEST_DEFAULT_TIER || null);
     loadedThreads.add(id);
     response(message.id, { ...threadPolicyResponse(message.method, message.params, id), thread: { id, ephemeral: threadEphemeral.get(id), ...threadLineages.get(id) } });
     return;
@@ -347,6 +349,14 @@ lines.on("line", (line) => {
       return;
     }
     const turnId = `fake-turn-${++turnSequence}`;
+    if (Object.hasOwn(message.params, "serviceTier")) threadTiers.set(message.params.threadId, message.params.serviceTier);
+    if (process.env.CODEX_TEST_SPEED_LOG) {
+      const perTurn = message.params.serviceTierForTurn;
+      appendFileSync(process.env.CODEX_TEST_SPEED_LOG, JSON.stringify({ model: message.params.model, effort: message.params.effort,
+        ...Object.hasOwn(message.params, "serviceTier") ? { serviceTier: message.params.serviceTier } : {},
+        ...Object.hasOwn(message.params, "serviceTierForTurn") ? { serviceTierForTurn: perTurn } : {},
+        persistentTier: threadTiers.get(message.params.threadId), processingTier: perTurn === "default" ? null : perTurn ?? threadTiers.get(message.params.threadId) }) + "\n");
+    }
     if (process.env.CODEX_TEST_TURN_OBSERVATION) appendFileSync(process.env.CODEX_TEST_TURN_OBSERVATION,
       JSON.stringify({ pid: process.pid, threadId: message.params.threadId, turnId }) + "\n");
     const prompt = message.params.input?.[0]?.text || "";

@@ -683,3 +683,9 @@ enum BridgeAppLocalization {
             .replacingOccurrences(of: "_", with: "-")
     }
 }
+
+func processingSpeedLabel(_ mode: String, legacyFast: Bool, locale: Locale) -> String {
+    let key = mode == "legacy" ? "settings.processingSpeed.\(legacyFast ? "legacyFast" : "legacyClear")" :
+        ["inherit", "standard", "fast", "ultrafast"].contains(mode) ? "settings.processingSpeed.\(mode)" : "settings.processingSpeed.unknown"
+    return BridgeAppLocalization.string(key, locale: locale).replacingOccurrences(of: "{value}", with: mode)
+}

@@ -154,7 +154,7 @@ enum SettingsSearchTarget: String, CaseIterable, Identifiable {
         case .modelSelection: return "settings.model"
         case .modelReasoning: return "macos.reasoningeffort"
         case .modelDelegation: return "settings.allowDelegation"
-        case .modelFastMode: return "settings.usePriority"
+        case .modelFastMode: return "settings.processingSpeed"
         case .modelConcurrency: return "macos.concurrentagenttasks"
         case .modelHistory: return "history.title"
         case .projects: return "settings.projects"
@@ -189,7 +189,7 @@ enum SettingsSearchTarget: String, CaseIterable, Identifiable {
         case .modelDelegation:
             return ["settings.ultraHint"]
         case .modelFastMode:
-            return ["settings.usePriorityHint"]
+            return ["settings.processingSpeedHint", "settings.processingSpeed.standard", "settings.processingSpeed.fast", "settings.processingSpeed.ultrafast", "settings.processingSpeed.inherit"]
         case .modelConcurrency:
             return ["macos.settings.execution"]
         case .modelHistory:
@@ -1951,8 +1951,12 @@ private struct ModelExecutionSettingsPane: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
-                Toggle("settings.usePriority", isOn: $draft.usePriorityServiceTier)
-                Text("settings.usePriorityHint")
+                Picker("settings.processingSpeed", selection: $draft.processingSpeed) {
+                    ForEach(Array(Set([draft.processingSpeed] + (snapshot.capabilities.availableProcessingSpeeds ?? ["legacy"]))).sorted(), id: \.self) { speed in
+                        Text(processingSpeedLabel(speed, legacyFast: draft.usePriorityServiceTier, locale: model.interfaceLocale)).tag(speed)
+                    }
+                }
+                Text("settings.processingSpeedHint")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if snapshot.catalog.stale {

@@ -106,7 +106,7 @@ describe("release manifest", () => {
       stateProfilePolicy: "release-stage-isolated-v1",
       rollbackPolicy: "verified-original-before-service-open-v1",
       persistentContracts: {
-        userSettingsSchema: 7,
+        userSettingsSchema: 8,
         taskInputContract: 6,
         macosHelperProtocol: 2,
         localCompanionProtocol: 12,
@@ -246,8 +246,8 @@ describe("release manifest", () => {
     writeFileSync(
       modelPolicy,
       readFileSync(modelPolicy, "utf8").replace(
-        "MODEL_POLICY_SCHEMA_VERSION = 7",
-        "MODEL_POLICY_SCHEMA_VERSION = 8"
+        "MODEL_POLICY_SCHEMA_VERSION = 8",
+        "MODEL_POLICY_SCHEMA_VERSION = 9"
       )
     );
     expect(() => checkReleaseMetadata(root)).toThrow(

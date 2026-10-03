@@ -228,6 +228,14 @@ final class BridgeModelsTests: XCTestCase {
         let operation = try XCTUnwrap(object["operation"] as? [String: Any])
         let settings = try XCTUnwrap(operation["settings"] as? [String: Any])
         XCTAssertFalse(settings.keys.contains("modelPolicy"))
+        XCTAssertFalse(settings.keys.contains("processingSpeed"))
+    }
+
+    func testSettingsPatchSendsAnExplicitTurnSpeedAlongsideLegacyCompatibility() throws {
+        let patch = SettingsPatch(usePriorityServiceTier: false, processingSpeed: "ultrafast")
+        let encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(patch)) as? [String: Any])
+        XCTAssertEqual(encoded["processingSpeed"] as? String, "ultrafast")
+        XCTAssertEqual(encoded["usePriorityServiceTier"] as? Bool, false)
     }
 
     func testNativeCompletionNotificationDecodesOnlyItsOpaqueReceipt() throws {

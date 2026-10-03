@@ -546,7 +546,21 @@
         "settings.projectDeleteStillPinned": "This project still has resumable work or active jobs. Keep it archived, or finish and release those contexts before deleting its registration.",
         "settings.threadStorage": "Conversation storage",
         "settings.threadStorage.persistent": "Save across restarts",
-        "settings.threadStorage.ephemeral": "Memory only"
+        "settings.threadStorage.ephemeral": "Memory only",
+        "settings.processingSpeed": "Processing speed",
+        "settings.processingSpeed.legacyClear": "Keep existing behavior (clear conversation speed)",
+        "settings.processingSpeed.legacyFast": "Keep existing Fast (conversation)",
+        "settings.processingSpeed.inherit": "Inherit conversation speed",
+        "settings.processingSpeed.standard": "Standard (this Job)",
+        "settings.processingSpeed.fast": "Fast (this Job)",
+        "settings.processingSpeed.ultrafast": "Ultrafast (this Job)",
+        "settings.processingSpeed.unknown": "Unrecognized saved speed: {value}",
+        "settings.processingSpeedHint": "New choices apply only to each Job. Inheritance uses the conversation setting, or Codex defaults for a new conversation. Catalog support does not confirm account access; pricing varies by account.",
+        "dashboard.execution.requested": "{execution} requested",
+        "dashboard.execution.speed": "{speed} requested · {state} · actual speed unconfirmed",
+        "dashboard.execution.accepted": "request accepted",
+        "dashboard.execution.pending": "acceptance pending",
+        "dashboard.execution.modelConfirmed": "model confirmed: {model}"
       },
       "ko": {
         "problem.history": "실패 기록",
@@ -1043,7 +1057,21 @@
         "settings.projectDeleteStillPinned": "이 프로젝트에 재개 가능한 작업이나 실행 중인 작업이 남아 있습니다. 보관 상태로 유지하거나 해당 작업과 연결을 종료한 뒤 등록을 삭제하세요.",
         "settings.threadStorage": "대화 저장",
         "settings.threadStorage.persistent": "재시작 후에도 저장",
-        "settings.threadStorage.ephemeral": "메모리에만 저장"
+        "settings.threadStorage.ephemeral": "메모리에만 저장",
+        "settings.processingSpeed": "처리 속도",
+        "settings.processingSpeed.legacyClear": "기존 동작 유지 (대화 속도 해제)",
+        "settings.processingSpeed.legacyFast": "기존 Fast 유지 (대화 설정)",
+        "settings.processingSpeed.inherit": "대화 속도 상속",
+        "settings.processingSpeed.standard": "Standard (이번 작업)",
+        "settings.processingSpeed.fast": "Fast (이번 작업)",
+        "settings.processingSpeed.ultrafast": "Ultrafast (이번 작업)",
+        "settings.processingSpeed.unknown": "알 수 없는 저장 속도: {value}",
+        "settings.processingSpeedHint": "새 선택은 작업마다 적용합니다. 상속은 대화 설정을 유지하며 새 대화에서는 Codex 기본 설정을 따릅니다. 카탈로그 지원과 계정 사용 권한은 별개이며 요금은 계정별로 다릅니다.",
+        "dashboard.execution.requested": "{execution} 요청",
+        "dashboard.execution.speed": "{speed} 요청 · {state} · 실제 속도 미확인",
+        "dashboard.execution.accepted": "요청 수락됨",
+        "dashboard.execution.pending": "수락 확인 대기",
+        "dashboard.execution.modelConfirmed": "모델 확인: {model}"
       },
       "ja": {
         "problem.history": "失敗の履歴",
@@ -1540,7 +1568,21 @@
         "settings.projectDeleteStillPinned": "このプロジェクトには再開可能な作業または実行中のジョブが残っています。アーカイブしたままにするか、作業と接続を終了してから登録を削除してください。",
         "settings.threadStorage": "会話の保存",
         "settings.threadStorage.persistent": "再起動後も保存",
-        "settings.threadStorage.ephemeral": "メモリのみ"
+        "settings.threadStorage.ephemeral": "メモリのみ",
+        "settings.processingSpeed": "処理速度",
+        "settings.processingSpeed.legacyClear": "従来の動作を維持（会話の速度指定を解除）",
+        "settings.processingSpeed.legacyFast": "従来のFastを維持（会話設定）",
+        "settings.processingSpeed.inherit": "会話の速度を継承",
+        "settings.processingSpeed.standard": "Standard（今回の作業）",
+        "settings.processingSpeed.fast": "Fast（今回の作業）",
+        "settings.processingSpeed.ultrafast": "Ultrafast（今回の作業）",
+        "settings.processingSpeed.unknown": "未認識の保存済み速度: {value}",
+        "settings.processingSpeedHint": "新しい選択は各作業にのみ適用されます。継承は会話設定を維持し、新しい会話ではCodexの既定設定に従います。カタログの対応とアカウントの利用権限は別で、料金はアカウントによって異なります。",
+        "dashboard.execution.requested": "{execution}を要求",
+        "dashboard.execution.speed": "{speed}を要求 · {state} · 実際の速度は未確認",
+        "dashboard.execution.accepted": "要求を受け付け済み",
+        "dashboard.execution.pending": "受付確認待ち",
+        "dashboard.execution.modelConfirmed": "確認済みモデル: {model}"
       },
       "zh-Hans": {
         "problem.history": "失败记录",
@@ -2037,7 +2079,21 @@
         "settings.projectDeleteStillPinned": "此项目仍有可恢复的工作或正在运行的任务。请保持归档状态，或先结束工作并释放连接，再删除注册。",
         "settings.threadStorage": "对话存储",
         "settings.threadStorage.persistent": "重启后保留",
-        "settings.threadStorage.ephemeral": "仅内存"
+        "settings.threadStorage.ephemeral": "仅内存",
+        "settings.processingSpeed": "处理速度",
+        "settings.processingSpeed.legacyClear": "保留原有行为（清除对话速度）",
+        "settings.processingSpeed.legacyFast": "保留原有Fast（对话设置）",
+        "settings.processingSpeed.inherit": "继承对话速度",
+        "settings.processingSpeed.standard": "Standard（本次任务）",
+        "settings.processingSpeed.fast": "Fast（本次任务）",
+        "settings.processingSpeed.ultrafast": "Ultrafast（本次任务）",
+        "settings.processingSpeed.unknown": "无法识别的已存速度：{value}",
+        "settings.processingSpeedHint": "新选择仅适用于每次任务。继承保留对话设置，新对话则使用Codex默认设置。目录支持不代表账户有使用权限，费用因账户而异。",
+        "dashboard.execution.requested": "已请求{execution}",
+        "dashboard.execution.speed": "已请求{speed} · {state} · 实际速度未确认",
+        "dashboard.execution.accepted": "请求已接受",
+        "dashboard.execution.pending": "等待接受确认",
+        "dashboard.execution.modelConfirmed": "已确认模型：{model}"
       },
       "zh-Hant": {
         "problem.history": "失敗記錄",
@@ -2534,7 +2590,21 @@
         "settings.projectDeleteStillPinned": "此專案仍有可繼續的工作或執行中的任務。請維持封存狀態，或先結束工作並釋放連線，再刪除註冊。",
         "settings.threadStorage": "對話儲存",
         "settings.threadStorage.persistent": "重新啟動後保留",
-        "settings.threadStorage.ephemeral": "僅記憶體"
+        "settings.threadStorage.ephemeral": "僅記憶體",
+        "settings.processingSpeed": "處理速度",
+        "settings.processingSpeed.legacyClear": "保留原有行為（清除對話速度）",
+        "settings.processingSpeed.legacyFast": "保留原有Fast（對話設定）",
+        "settings.processingSpeed.inherit": "繼承對話速度",
+        "settings.processingSpeed.standard": "Standard（本次工作）",
+        "settings.processingSpeed.fast": "Fast（本次工作）",
+        "settings.processingSpeed.ultrafast": "Ultrafast（本次工作）",
+        "settings.processingSpeed.unknown": "無法識別的已儲存速度：{value}",
+        "settings.processingSpeedHint": "新選擇僅適用於每次工作。繼承保留對話設定，新對話則使用Codex預設設定。目錄支援不代表帳戶有使用權限，費用因帳戶而異。",
+        "dashboard.execution.requested": "已請求{execution}",
+        "dashboard.execution.speed": "已請求{speed} · {state} · 實際速度未確認",
+        "dashboard.execution.accepted": "請求已接受",
+        "dashboard.execution.pending": "等待接受確認",
+        "dashboard.execution.modelConfirmed": "已確認模型：{model}"
       },
       "es": {
         "problem.history": "Historial de fallos",
@@ -3031,7 +3101,21 @@
         "settings.projectDeleteStillPinned": "Este proyecto conserva trabajo que puede reanudarse o tareas activas. Mantenlo archivado o finaliza el trabajo y libera sus conexiones antes de eliminar el registro.",
         "settings.threadStorage": "Almacenamiento de conversaciones",
         "settings.threadStorage.persistent": "Conservar tras reiniciar",
-        "settings.threadStorage.ephemeral": "Solo en memoria"
+        "settings.threadStorage.ephemeral": "Solo en memoria",
+        "settings.processingSpeed": "Velocidad de procesamiento",
+        "settings.processingSpeed.legacyClear": "Mantener el comportamiento anterior (borrar velocidad de conversación)",
+        "settings.processingSpeed.legacyFast": "Mantener Fast anterior (conversación)",
+        "settings.processingSpeed.inherit": "Heredar velocidad de conversación",
+        "settings.processingSpeed.standard": "Standard (este trabajo)",
+        "settings.processingSpeed.fast": "Fast (este trabajo)",
+        "settings.processingSpeed.ultrafast": "Ultrafast (este trabajo)",
+        "settings.processingSpeed.unknown": "Velocidad guardada desconocida: {value}",
+        "settings.processingSpeedHint": "Las nuevas opciones se aplican a cada trabajo. La herencia conserva la conversación o usa los valores de Codex en una nueva. El catálogo no confirma acceso de la cuenta; el precio varía según la cuenta.",
+        "dashboard.execution.requested": "{execution} solicitado",
+        "dashboard.execution.speed": "{speed} solicitado · {state} · velocidad real sin confirmar",
+        "dashboard.execution.accepted": "solicitud aceptada",
+        "dashboard.execution.pending": "aceptación pendiente",
+        "dashboard.execution.modelConfirmed": "modelo confirmado: {model}"
       },
       "fr": {
         "problem.history": "Historique des échecs",
@@ -3528,7 +3612,21 @@
         "settings.projectDeleteStillPinned": "Ce projet conserve du travail pouvant être repris ou des tâches actives. Gardez-le archivé ou terminez le travail et libérez ses connexions avant de supprimer son inscription.",
         "settings.threadStorage": "Stockage des conversations",
         "settings.threadStorage.persistent": "Conserver après redémarrage",
-        "settings.threadStorage.ephemeral": "En mémoire uniquement"
+        "settings.threadStorage.ephemeral": "En mémoire uniquement",
+        "settings.processingSpeed": "Vitesse de traitement",
+        "settings.processingSpeed.legacyClear": "Conserver le comportement précédent (effacer la vitesse de conversation)",
+        "settings.processingSpeed.legacyFast": "Conserver Fast précédent (conversation)",
+        "settings.processingSpeed.inherit": "Hériter de la vitesse de conversation",
+        "settings.processingSpeed.standard": "Standard (ce travail)",
+        "settings.processingSpeed.fast": "Fast (ce travail)",
+        "settings.processingSpeed.ultrafast": "Ultrafast (ce travail)",
+        "settings.processingSpeed.unknown": "Vitesse enregistrée inconnue : {value}",
+        "settings.processingSpeedHint": "Les nouveaux choix s’appliquent à chaque travail. L’héritage conserve la conversation ou utilise les valeurs Codex pour une nouvelle. Le catalogue ne confirme pas l’accès du compte ; les tarifs varient selon le compte.",
+        "dashboard.execution.requested": "{execution} demandé",
+        "dashboard.execution.speed": "{speed} demandé · {state} · vitesse réelle non confirmée",
+        "dashboard.execution.accepted": "demande acceptée",
+        "dashboard.execution.pending": "acceptation en attente",
+        "dashboard.execution.modelConfirmed": "modèle confirmé : {model}"
       },
       "de": {
         "problem.history": "Fehlerverlauf",
@@ -4025,7 +4123,21 @@
         "settings.projectDeleteStillPinned": "Dieses Projekt enthält fortsetzbare Arbeit oder aktive Aufträge. Lassen Sie es archiviert oder beenden Sie die Arbeit und geben Sie die Verbindungen frei, bevor Sie die Registrierung löschen.",
         "settings.threadStorage": "Gesprächsspeicherung",
         "settings.threadStorage.persistent": "Nach Neustart behalten",
-        "settings.threadStorage.ephemeral": "Nur im Speicher"
+        "settings.threadStorage.ephemeral": "Nur im Speicher",
+        "settings.processingSpeed": "Verarbeitungsgeschwindigkeit",
+        "settings.processingSpeed.legacyClear": "Bisheriges Verhalten beibehalten (Gesprächsgeschwindigkeit löschen)",
+        "settings.processingSpeed.legacyFast": "Bisheriges Fast beibehalten (Gespräch)",
+        "settings.processingSpeed.inherit": "Gesprächsgeschwindigkeit übernehmen",
+        "settings.processingSpeed.standard": "Standard (dieser Auftrag)",
+        "settings.processingSpeed.fast": "Fast (dieser Auftrag)",
+        "settings.processingSpeed.ultrafast": "Ultrafast (dieser Auftrag)",
+        "settings.processingSpeed.unknown": "Unbekannte gespeicherte Geschwindigkeit: {value}",
+        "settings.processingSpeedHint": "Neue Auswahlen gelten für jeden Auftrag. Vererbung behält die Gesprächseinstellung bei oder verwendet Codex-Vorgaben für ein neues Gespräch. Der Katalog bestätigt keinen Kontozugriff; Preise hängen vom Konto ab.",
+        "dashboard.execution.requested": "{execution} angefordert",
+        "dashboard.execution.speed": "{speed} angefordert · {state} · tatsächliche Geschwindigkeit unbestätigt",
+        "dashboard.execution.accepted": "Anfrage angenommen",
+        "dashboard.execution.pending": "Annahme ausstehend",
+        "dashboard.execution.modelConfirmed": "Modell bestätigt: {model}"
       },
       "pt": {
         "problem.history": "Histórico de falhas",
@@ -4522,7 +4634,21 @@
         "settings.projectDeleteStillPinned": "Este projeto mantém trabalho que pode ser retomado ou tarefas ativas. Mantenha-o arquivado ou conclua o trabalho e liberte as ligações antes de eliminar o registo.",
         "settings.threadStorage": "Armazenamento de conversas",
         "settings.threadStorage.persistent": "Manter após reiniciar",
-        "settings.threadStorage.ephemeral": "Somente na memória"
+        "settings.threadStorage.ephemeral": "Somente na memória",
+        "settings.processingSpeed": "Velocidade de processamento",
+        "settings.processingSpeed.legacyClear": "Manter comportamento anterior (limpar velocidade da conversa)",
+        "settings.processingSpeed.legacyFast": "Manter Fast anterior (conversa)",
+        "settings.processingSpeed.inherit": "Herdar velocidade da conversa",
+        "settings.processingSpeed.standard": "Standard (este trabalho)",
+        "settings.processingSpeed.fast": "Fast (este trabalho)",
+        "settings.processingSpeed.ultrafast": "Ultrafast (este trabalho)",
+        "settings.processingSpeed.unknown": "Velocidade salva desconhecida: {value}",
+        "settings.processingSpeedHint": "Novas escolhas valem para cada trabalho. A herança mantém a conversa ou usa os padrões do Codex em uma nova. O catálogo não confirma o acesso da conta; os preços variam por conta.",
+        "dashboard.execution.requested": "{execution} solicitado",
+        "dashboard.execution.speed": "{speed} solicitado · {state} · velocidade real não confirmada",
+        "dashboard.execution.accepted": "solicitação aceita",
+        "dashboard.execution.pending": "aceitação pendente",
+        "dashboard.execution.modelConfirmed": "modelo confirmado: {model}"
       }
     },
     "parameters": {
@@ -4709,6 +4835,19 @@
       },
       "stale.body": {
         "card": "string-or-number"
+      },
+      "settings.processingSpeed.unknown": {
+        "value": "string-or-number"
+      },
+      "dashboard.execution.requested": {
+        "execution": "string-or-number"
+      },
+      "dashboard.execution.speed": {
+        "speed": "string-or-number",
+        "state": "string-or-number"
+      },
+      "dashboard.execution.modelConfirmed": {
+        "model": "string-or-number"
       }
     }
   },

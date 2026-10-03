@@ -43,6 +43,7 @@ struct SettingsDraft: Equatable {
     var explicitSelectionKeys: Set<String>
     var allowDelegation: Bool
     var usePriorityServiceTier: Bool
+    var processingSpeed: String
     var uiLocalePreference: String
     var maxConcurrentJobs: Int
     var historyRetentionDays: Int
@@ -71,6 +72,7 @@ struct SettingsDraft: Equatable {
         )
         allowDelegation = settings.modelPolicy.constraints.allowDelegation
         usePriorityServiceTier = settings.usePriorityServiceTier
+        processingSpeed = settings.processingSpeed ?? "legacy"
         uiLocalePreference = settings.uiLocalePreference
         maxConcurrentJobs = settings.maxConcurrentJobs
         historyRetentionDays = settings.historyRetentionDays ?? 30
@@ -109,6 +111,7 @@ struct SettingsDraft: Equatable {
         rebased.explicitSelectionKeys = explicitSelectionKeys
         rebased.allowDelegation = allowDelegation
         rebased.usePriorityServiceTier = usePriorityServiceTier
+        rebased.processingSpeed = processingSpeed
         rebased.uiLocalePreference = uiLocalePreference
         rebased.maxConcurrentJobs = maxConcurrentJobs
         rebased.historyRetentionDays = historyRetentionDays
@@ -126,6 +129,7 @@ struct SettingsDraft: Equatable {
             explicitSelectionKeys == other.explicitSelectionKeys &&
             allowDelegation == other.allowDelegation &&
             usePriorityServiceTier == other.usePriorityServiceTier &&
+            processingSpeed == other.processingSpeed &&
             uiLocalePreference == other.uiLocalePreference &&
             maxConcurrentJobs == other.maxConcurrentJobs &&
             historyRetentionDays == other.historyRetentionDays &&
@@ -2647,7 +2651,8 @@ final class AppModel: ObservableObject {
             operation: .patch(SettingsPatch(
                 accessStrategy: draft.accessStrategy,
                 modelPolicy: policy,
-                usePriorityServiceTier: draft.usePriorityServiceTier,
+                usePriorityServiceTier: draft.processingSpeed == "legacy" ? draft.usePriorityServiceTier : nil,
+                processingSpeed: settings?.settings.processingSpeed != nil && ["legacy", "inherit", "standard", "fast", "ultrafast"].contains(draft.processingSpeed) ? draft.processingSpeed : nil,
                 uiLocalePreference: draft.uiLocalePreference,
                 maxConcurrentJobs: draft.maxConcurrentJobs,
                 historyRetentionDays: settings?.settings.historyRetentionDays == nil ? nil : draft.historyRetentionDays,

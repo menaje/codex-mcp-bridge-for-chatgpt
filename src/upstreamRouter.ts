@@ -395,7 +395,8 @@ function selectionArguments(
   return {
     model: selection.model,
     config: { model_reasoning_effort: selection.reasoningEffort },
-    ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {})
+    ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {}),
+    ...(selection.serviceTierScope ? { serviceTierScope: selection.serviceTierScope } : {})
   };
 }
 

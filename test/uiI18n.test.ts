@@ -382,7 +382,7 @@ describe("human-facing UI localization", () => {
     expect(SETTINGS_CARD_HTML).toContain(
       serializedUiTranslations(["common", "settings", "effort", "history", "problem.historyNotice", "problem.automaticHistoryNotice"], true)
     );
-    const dashboardBundles = JSON.parse(DASHBOARD_CARD_HTML.match(/const BUNDLES=(.*);/)![1]);
+    const dashboardBundles = runInNewContext(DASHBOARD_CARD_HTML.match(/const BUNDLES=(.*);/)![1]);
     const dashboardKeys = [...DASHBOARD_CARD_HTML.matchAll(/t\["([a-zA-Z0-9.-]+)"\]/g)].map(match => match[1]);
     for (const bundle of Object.values(dashboardBundles) as Record<string, string>[]) {
       for (const key of dashboardKeys) expect(bundle[key], key).toBeTruthy();

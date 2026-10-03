@@ -78,6 +78,8 @@ import type {
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { resolveExecutionPolicy, resolveTaskSandbox } from "./executionPolicy.js";
 import { executionAccessArguments } from "./executionAccess.js";
+import { executionAudit, readExecutionEvidence, retainExecutionEvidence, type ExecutionEvidence } from "./executionAudit.js";
+import { PROCESSING_SPEED_MODES, isProcessingSpeedMode, resolveTurnSpeed, selectionSpeedArguments, speedTierForModel } from "./processingSpeed.js";
 import {
   HARD_MAX_CONCURRENT_JOBS,
   formatSensitiveFileFindings,
@@ -393,9 +395,17 @@ const modelChoiceOutputSchema = z.strictObject({
   serviceTier: z.string().optional()
 });
 
+const executionFieldEvidenceOutputSchema = z.strictObject({
+  value: z.string().nullable(), confirmed: z.boolean(), reason: z.enum(["server-does-not-report-applied-value", "no-correlated-server-evidence"]).nullable(),
+  evidence: z.literal("model/rerouted").nullable(), eventId: z.string().nullable(), threadId: z.string().nullable(), turnId: z.string().nullable()
+});
 const compactExecutionAuditOutputSchema = z.strictObject({
   requested: modelChoiceOutputSchema.omit({ serviceTier: true }).nullable(),
-  actual: modelChoiceOutputSchema,
+  actual: z.strictObject({ model: z.string().nullable(), reasoningEffort: z.string().nullable(), serviceTier: z.string().nullable() }),
+  intent: z.strictObject({ modelSource: z.string(), processingSpeed: z.string(), scope: z.enum(["turn", "conversation"]) }),
+  sent: opaqueJsonObjectOutputSchema.nullable(),
+  acceptance: z.strictObject({ threadId: z.string(), turnId: z.string(), eventId: z.string() }).nullable(),
+  confirmed: z.strictObject({ model: executionFieldEvidenceOutputSchema, reasoningEffort: executionFieldEvidenceOutputSchema, serviceTier: executionFieldEvidenceOutputSchema }),
   source: z.enum([
     "fixed",
     "configured-fallback",
@@ -512,6 +522,11 @@ const codexTaskOutputBase = z.strictObject({
   requestedReasoningEffort: z.string().nullable(),
   actualModel: z.string().nullable(),
   actualReasoningEffort: z.string().nullable(),
+  processingSpeed: z.string().nullable().optional(),
+  requestedServiceTier: z.string().nullable().optional(),
+  actualServiceTier: z.string().nullable().optional(),
+  serviceTierScope: z.enum(["turn", "conversation"]).nullable().optional(),
+  executionConfirmation: z.strictObject({ accepted: z.boolean(), model: z.boolean(), reasoningEffort: z.boolean(), serviceTier: z.boolean() }).optional(),
   rerouted: z.boolean(),
   rerouteReason: z.string().nullable(),
   resultAvailability: z.enum(["pending", "delivered", "omitted", "unavailable"]),
@@ -612,7 +627,10 @@ const dashboardExecutionOutputSchema = z.strictObject({
   serviceTier: z.string().optional(),
   reroutedModel: z.string().optional(),
   reroutedModelDisplayName: z.string().optional(),
-  isCurrent: z.boolean()
+  isCurrent: z.boolean(),
+  processingSpeed: z.string().optional(),
+  serviceTierScope: z.literal("turn").optional(),
+  requestState: z.enum(["requested", "accepted"]).optional(),
 });
 
 const cancellationDisplayOutputSchema = z.strictObject({
@@ -867,6 +885,8 @@ const bridgeUserSettingsOutputSchema = z.strictObject({
   modelPolicy: modelPolicyZod(),
   modelDescriptionOverrides: z.record(z.string(), z.string()),
   usePriorityServiceTier: z.boolean(),
+  processingSpeed: z.string(),
+  retainedServiceTiers: z.array(z.strictObject({ path: z.string(), selection: opaqueJsonObjectOutputSchema })),
   historyRetentionDays: z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(0)]),
   projects: z.array(z.strictObject({
     id: z.string(),
@@ -924,6 +944,8 @@ const settingsViewOutputSchema = z.strictObject({
   settings: bridgeUserSettingsOutputSchema,
   operatorDefaults: bridgeUserSettingsOutputSchema,
   capabilities: z.strictObject({
+    availableProcessingSpeeds: z.array(z.enum(PROCESSING_SPEED_MODES)).optional(),
+    processingSpeedSupport: z.strictObject({ protocol: z.enum(["supported", "unverified"]), account: z.literal("unverified"), workspace: z.literal("unverified") }).optional(),
     availableAccessStrategies: z.array(z.enum(["read-only", "adaptive", "always-full"])),
     availableUiLocalePreferences: z.array(z.enum(UI_LOCALE_PREFERENCES)),
     projectAvailability: z.array(z.strictObject({
@@ -1274,6 +1296,7 @@ const compactCatalogModelOutputSchema = z.strictObject({
 const codexModelsOutputSchema = z.strictObject({
   contractVersion: z.literal("2"),
   selectionMode: z.enum(["fixed", "automatic"]),
+  processingSpeed: z.strictObject({ selected: z.string(), scope: z.enum(["turn", "conversation"]).nullable(), protocol: z.enum(["supported", "unverified"]), account: z.literal("unverified"), workspace: z.literal("unverified") }).optional(),
   source: z.string(),
   stale: z.boolean(),
   warning: z.string().nullable(),
@@ -1914,11 +1937,14 @@ type CodexJob = {
   requestId: string;
   requestHash: string;
   requestHashVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
+  /** Exact public request identity, independent of later settings/catalog changes. */
+  requestEnvelopeHash?: string;
   /** Immutable admission-time snapshot; later Settings changes affect only new Jobs. */
   completionDeliveryPolicy: CompletionDeliveryPolicy;
   sourceThreadId?: string;
   selectionKey?: string;
   executionDecision?: ExecutionDecision;
+  executionEvidence?: ExecutionEvidence;
   exclusiveKeys: string[];
   sessionDecision: SessionDecision;
   status: CodexJobStatus;
@@ -3875,6 +3901,8 @@ export class CodexJobRegistry {
     let resolvedInteractionId: string | undefined;
     let interaction: CodexPendingInteraction | undefined;
     if (publicEvent && job.publicEvents.some(event => event.eventId === publicEvent.eventId)) return;
+    const previousEvidence = job.executionEvidence;
+    if (publicEvent) job.executionEvidence = retainExecutionEvidence(job, publicEvent);
     if (publicEvent) {
       if (isCodexInputEvent(publicEvent)) job.inputEvents = [...(job.inputEvents || []), publicEvent].slice(-40);
       job.publicEvents = [...job.publicEvents, publicEvent].slice(-200);
@@ -3900,6 +3928,7 @@ export class CodexJobRegistry {
     job.lastProgressAt = now;
     job.updatedAt = now;
     job.version += 1;
+    if (job.executionEvidence !== previousEvidence) this.persistJobBestEffort(job);
     this.notify(job.jobId, "progress");
     const snapshot = this.progressSnapshot(job, publicEvent);
     if (publicEvent) {
@@ -5455,7 +5484,8 @@ export function registerBridgeTools(
         config,
         userSettings,
         modelCatalog,
-        options.refreshModels || false
+        options.refreshModels || false, false, false,
+        () => backendCapabilities(upstream, config.defaultBackend)
       );
       view.historyPolicy = jobs.admissionStateStore.workHistory.policy(userSettings.current.historyRetentionDays);
       const projectionStatus = publishTaskProjection(
@@ -7481,7 +7511,8 @@ export function registerBridgeTools(
         effectiveModelCeiling(
           catalog,
           config.operatorModelCeiling,
-          preferences.usePriorityServiceTier
+          preferences.usePriorityServiceTier,
+          preferences.processingSpeed
         )
       );
       const allowedEffortsByModel = new Map<string, Set<string>>();
@@ -7520,12 +7551,14 @@ export function registerBridgeTools(
       const structured = {
         contractVersion: "2" as const,
         selectionMode: preferences.modelPolicy.mode,
+        processingSpeed: { selected: preferences.processingSpeed, scope: preferences.processingSpeed === "legacy" ? "conversation" : isProcessingSpeedMode(preferences.processingSpeed) ? "turn" : null, protocol: backendCapabilities(upstream, config.defaultBackend).supportsPerTurnServiceTier ? "supported" : "unverified", account: "unverified", workspace: "unverified" },
         source: catalog.source,
         stale: catalog.stale,
         warning: [
           catalog.warning,
+          processingSpeedWarning(preferences, catalog, config.operatorModelCeiling, backendCapabilities(upstream, config.defaultBackend)),
           isModelPolicySuspended(preferences.modelPolicy, catalog,
-            effectiveModelCeiling(catalog, config.operatorModelCeiling, preferences.usePriorityServiceTier))
+            config.operatorModelCeiling)
             ? ULTRA_DISABLED_NO_SELECTION_WARNING : undefined
         ].filter(Boolean).join(" ") || null,
         models
@@ -7659,6 +7692,7 @@ export function registerBridgeTools(
     modelPolicy: editableModelPolicyZod().optional(),
     modelDescriptionOverrides: z.record(z.string().min(1).max(200), z.string().max(MAX_MODEL_DESCRIPTION_LENGTH)).optional(),
     usePriorityServiceTier: z.boolean().optional(),
+    processingSpeed: z.enum(PROCESSING_SPEED_MODES).optional(),
     historyRetentionDays: z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(0)]).optional(),
     uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES).optional(),
     maxConcurrentJobs: z.number().int().min(1).max(config.maxConcurrentJobs).optional(),
@@ -7706,6 +7740,7 @@ export function registerBridgeTools(
         "modelPolicy",
         "modelDescriptionOverrides",
         "usePriorityServiceTier",
+        "processingSpeed",
         "historyRetentionDays",
         "uiLocalePreference",
         "maxConcurrentJobs",
@@ -7722,6 +7757,7 @@ export function registerBridgeTools(
         "modelPolicy",
         "modelDescriptionOverrides",
         "usePriorityServiceTier",
+        "processingSpeed",
         "historyRetentionDays",
         "uiLocalePreference",
         "maxConcurrentJobs",
@@ -7798,10 +7834,12 @@ export function registerBridgeTools(
       );
       userSettings.reset(args.expectedSettingsRevision as number, resetPolicy);
     } else {
-      if (patch.modelPolicy !== undefined || patch.usePriorityServiceTier !== undefined) {
+      if (patch.processingSpeed === undefined && current.processingSpeed !== "legacy") delete patch.usePriorityServiceTier;
+      if (patch.modelPolicy !== undefined || patch.usePriorityServiceTier !== undefined || patch.processingSpeed !== undefined) {
         const policy = validateModelPolicy(patch.modelPolicy || current.modelPolicy);
         if (
           !sameModelPolicy(policy, current.modelPolicy) ||
+          (patch.processingSpeed !== undefined && patch.processingSpeed !== current.processingSpeed) ||
           (
             patch.usePriorityServiceTier !== undefined &&
             patch.usePriorityServiceTier !== current.usePriorityServiceTier
@@ -7819,13 +7857,19 @@ export function registerBridgeTools(
             config.operatorModelCeiling,
             nextRevision
           );
-          assertPriorityCompatibility(
+          const nextSpeed = patch.processingSpeed ?? current.processingSpeed;
+          if (nextSpeed === "legacy") assertPriorityCompatibility(
             policy,
             catalog,
             config.operatorModelCeiling,
             patch.usePriorityServiceTier ?? current.usePriorityServiceTier,
             nextRevision
           );
+          else if (isProcessingSpeedMode(nextSpeed)) {
+            const eligible = listAllowedModelSelections(policy, catalog, effectiveModelCeiling(catalog, config.operatorModelCeiling, false, nextSpeed));
+            if (!eligible.length) throw new Error(`PROCESSING_SPEED_UNAVAILABLE: No allowed model supports '${nextSpeed}'. Choose a supported model and speed.`);
+            resolveTurnSpeed(eligible[0]!, nextSpeed, catalog, backendCapabilities(upstream, config.defaultBackend));
+          }
         }
         if (patch.modelPolicy !== undefined) patch.modelPolicy = policy;
       }
@@ -7847,7 +7891,8 @@ export function registerBridgeTools(
       modelCatalog,
       false,
       projectionStatus.descriptorProjectionUpdated,
-      projectionStatus.developerModeRefreshRequired
+      projectionStatus.developerModeRefreshRequired,
+      () => backendCapabilities(upstream, config.defaultBackend)
     );
   }
 
@@ -7966,6 +8011,17 @@ export function registerBridgeTools(
             "TASK_REPLAY_VERSION_UNSUPPORTED: This requestId belongs to a retired task contract. Read the existing Job with codex_status query kind='request' before considering a new logical turn."
           );
         }
+        const requestEnvelopeHash = taskRequestEnvelopeHash(args, scope.scopeId);
+        if (existingRequest?.requestEnvelopeHash) {
+          if (existingRequest.requestEnvelopeHash !== requestEnvelopeHash) {
+            throw new Error("requestId was already used for a different Codex task in this scope.");
+          }
+          // Preserve the existing v6 stale-project-selector contract. Historical
+          // work remains readable by Job/status handles without re-execution.
+          if (args.project) userSettings.resolveProject(args.project);
+          return resultForJob(existingRequest, config.jobStaleAfterMs, preferences, jobs);
+        }
+        args.admittedRequestEnvelopeHash = requestEnvelopeHash;
         admitTaskContractForNewCall({
           args,
           executionEnvelopeRef: taskExecutionEnvelopeRef(),
@@ -8214,6 +8270,7 @@ export function registerBridgeTools(
             routing,
             config,
             upstream,
+            modelCatalog,
             sessions,
             jobs,
             preferences,
@@ -8226,6 +8283,7 @@ export function registerBridgeTools(
             executionPolicyRef: taskAdmissionPolicyRef(args),
             executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
             projectRequest: args.project,
+            requestEnvelopeHash: args.admittedRequestEnvelopeHash,
             onAdmitted: onTaskAdmitted
           });
         }
@@ -8237,6 +8295,7 @@ export function registerBridgeTools(
           routing,
           config,
           upstream,
+          modelCatalog,
           sessions,
           jobs,
           preferences,
@@ -8250,6 +8309,7 @@ export function registerBridgeTools(
           executionPolicyRef: taskAdmissionPolicyRef(args),
           executionPolicyCatalogFingerprint: executionDescriptorCatalogFingerprint,
           projectRequest: args.project,
+          requestEnvelopeHash: args.admittedRequestEnvelopeHash,
           onAdmitted: onTaskAdmitted
         });
       } catch (error) {
@@ -8558,6 +8618,7 @@ type CodexTaskArgs = {
   executionEnvelopeRef: string;
   /** Private admission snapshot; never part of the MCP input contract. */
   admittedExecutionPolicyRef?: string;
+  admittedRequestEnvelopeHash?: string;
   prompt: string;
   project?: ProjectSelection;
   activity?: CodexTaskActivityInput;
@@ -9403,6 +9464,8 @@ async function startNewSession(input: {
   };
   return runCodex({
     jobs: input.jobs,
+    modelCatalog: input.modelCatalog,
+    requestEnvelopeHash: input.args.admittedRequestEnvelopeHash,
     userSettings: input.userSettings,
     config: input.config,
     preferences: input.preferences,
@@ -9531,6 +9594,7 @@ async function continueTrackedSession(input: {
   routing: CodexRouting;
   config: BridgeConfig;
   upstream: CodexUpstream;
+  modelCatalog: CodexModelCatalogProvider;
   sessions: SessionRegistry;
   jobs: CodexJobRegistry;
   preferences: BridgeUserSettings;
@@ -9547,6 +9611,7 @@ async function continueTrackedSession(input: {
   executionPolicyRef?: string;
   executionPolicyCatalogFingerprint: string | null;
   projectRequest?: RuntimeProjectSelection;
+  requestEnvelopeHash?: string;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
   const access = resolveExecutionPolicy(input.config, input.preferences, input.session.cwd, input.session.sandbox);
@@ -9564,6 +9629,8 @@ async function continueTrackedSession(input: {
   let executionStateApplied = false;
   return runCodex({
     jobs: input.jobs,
+    modelCatalog: input.modelCatalog,
+    requestEnvelopeHash: input.requestEnvelopeHash,
     config: input.config,
     preferences: input.preferences,
     operation: "continue",
@@ -9688,6 +9755,7 @@ async function forkTrackedSession(input: {
   routing: CodexRouting;
   config: BridgeConfig;
   upstream: CodexUpstream;
+  modelCatalog: CodexModelCatalogProvider;
   sessions: SessionRegistry;
   jobs: CodexJobRegistry;
   preferences: BridgeUserSettings;
@@ -9700,6 +9768,7 @@ async function forkTrackedSession(input: {
   executionPolicyRef?: string;
   executionPolicyCatalogFingerprint: string | null;
   projectRequest?: RuntimeProjectSelection;
+  requestEnvelopeHash?: string;
   onAdmitted?: () => void;
 }): Promise<ToolResult> {
   const access = resolveExecutionPolicy(input.config, input.preferences, input.session.cwd, input.session.sandbox);
@@ -9720,6 +9789,8 @@ async function forkTrackedSession(input: {
   };
   return runCodex({
     jobs: input.jobs,
+    modelCatalog: input.modelCatalog,
+    requestEnvelopeHash: input.requestEnvelopeHash,
     config: input.config,
     preferences: input.preferences,
     operation: "start",
@@ -9816,6 +9887,7 @@ async function forkTrackedSession(input: {
 
 async function runCodex(input: {
   jobs: CodexJobRegistry;
+  modelCatalog: CodexModelCatalogProvider;
   userSettings?: UserSettingsStore;
   config: BridgeConfig;
   preferences: BridgeUserSettings;
@@ -9837,6 +9909,7 @@ async function runCodex(input: {
   sourceThreadId?: string;
   selectionKey: string;
   executionDecision: ExecutionDecision;
+  requestEnvelopeHash?: string;
   rejectIfSelectionActive?: boolean;
   onAdmitted?: () => void;
   exclusiveKeys?: string[];
@@ -9924,6 +9997,7 @@ async function runCodex(input: {
         requestId: input.routing.requestId,
         requestHash: input.routing.requestHash,
         requestHashVersion: input.routing.requestHashVersion,
+        requestEnvelopeHash: input.requestEnvelopeHash,
         mcpPrincipal: input.routing.mcpPrincipal,
         approvedFollowups: input.routing.approvedFollowups,
         followup: input.routing.followup,
@@ -9937,7 +10011,7 @@ async function runCodex(input: {
         ],
         sessionDecision: input.sessionDecision
       },
-      (onProgress, onAssigned) => {
+      async (onProgress, onAssigned) => {
         let canonicalCwd: string;
         try {
           canonicalCwd = resolveAllowedCwd(input.cwd, input.config.allowedRoots);
@@ -9951,6 +10025,10 @@ async function runCodex(input: {
             `${PROJECT_UNAVAILABLE}: The admitted project folder changed canonical identity before Codex started.`
           );
         }
+        // Recheck support for the admitted choice without reading newer user
+        // settings or selecting a replacement. Running Jobs never enter here again.
+        const catalog = await input.modelCatalog.getCatalog({ backendKind: input.backendKind });
+        assertAdmittedSelectionSupported(input.executionDecision.effectiveSelection, catalog);
         return input.run(onProgress, onAssigned);
       },
       input.onComplete
@@ -10689,61 +10767,8 @@ function formatActivitySummary(activity: BridgeActivity): Record<string, unknown
   };
 }
 
-function formatExecutionAudit(job: CodexJob): Record<string, unknown> | null {
-  const decision = job.executionDecision;
-  if (!decision) return null;
-  const acceptedTurn = [...job.publicEvents].reverse().find((event) =>
-    event.type === "turn" &&
-    event.phase === "started" &&
-    event.details?.evidence === "turn/start-accepted"
-  );
-  const reroute = [...job.publicEvents].reverse().find((event) =>
-    event.type === "model" &&
-    event.details?.kind === "rerouted" &&
-    typeof event.details.toModel === "string"
-  );
-  const reroutedModel = typeof reroute?.details?.toModel === "string"
-    ? reroute.details.toModel
-    : undefined;
-  const acceptedSelection = isRecord(acceptedTurn?.details?.selection)
-    ? acceptedTurn.details.selection
-    : undefined;
-  const acceptedModel = typeof acceptedSelection?.model === "string"
-    ? acceptedSelection.model
-    : decision.effectiveSelection.model;
-  const acceptedEffort = typeof acceptedSelection?.reasoningEffort === "string"
-    ? acceptedSelection.reasoningEffort
-    : decision.effectiveSelection.reasoningEffort;
-  const acceptedServiceTier = typeof acceptedSelection?.serviceTier === "string"
-    ? acceptedSelection.serviceTier
-    : decision.effectiveSelection.serviceTier;
-  return {
-    requested: decision.requestedSelection || null,
-    actual: {
-      model: reroutedModel || acceptedModel,
-      reasoningEffort: acceptedEffort,
-      ...(acceptedServiceTier ? { serviceTier: acceptedServiceTier } : {})
-    },
-    source: decision.source,
-    evidence: reroutedModel
-      ? "model/rerouted"
-      : acceptedTurn
-        ? "turn/start-accepted"
-        : "bridge-dispatch",
-    ...(reroute
-      ? {
-          reroute: {
-            fromModel: typeof reroute.details?.fromModel === "string"
-              ? reroute.details.fromModel
-              : acceptedModel,
-            toModel: reroutedModel,
-            reason: typeof reroute.details?.reason === "string"
-              ? reroute.details.reason
-              : "unspecified"
-          }
-        }
-      : {})
-  };
+function formatExecutionAudit(job: CodexJob) {
+  return executionAudit(job);
 }
 
 function formatSessionSummary(session: TrackedCodexSession): Record<string, unknown> {
@@ -10839,6 +10864,7 @@ export type BridgeSettingsPatchInput = {
   modelPolicy?: ModelPolicy;
   modelDescriptionOverrides?: ModelDescriptionOverrides;
   usePriorityServiceTier?: boolean;
+  processingSpeed?: string;
   historyRetentionDays?: HistoryRetentionDays;
   uiLocalePreference?: UiLocalePreference;
   maxConcurrentJobs?: number;
@@ -12140,9 +12166,7 @@ function buildDashboardHistoryDetail(
     };
   };
   const turnForArchivedJob = (job: DashboardRetainedJobSummary): DashboardTurn => {
-    const execution = job.execution
-      ? dashboardExecutionForSelection(job.execution, job.backendKind, catalog, false, job.execution.reroutedModel)
-      : undefined;
+    const execution = dashboardExecutionForRetainedJob(job, catalog);
     const cancellation = cancellations.get(job.jobId);
     return {
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
@@ -12619,15 +12643,7 @@ async function buildDashboardView(
   };
 
   const turnForArchivedJob = (job: DashboardRetainedJobSummary): DashboardTurn => {
-    const execution = job.execution
-      ? dashboardExecutionForSelection(
-          job.execution,
-          job.backendKind,
-          modelCatalog,
-          false,
-          job.execution.reroutedModel
-        )
-      : undefined;
+    const execution = dashboardExecutionForRetainedJob(job, modelCatalog);
     const cancellation = cancellationForDashboardJob(job.jobId);
     return {
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
@@ -12650,21 +12666,17 @@ async function buildDashboardView(
   ): DashboardExecution | undefined => {
     const session = currentSessionFor(agentId);
     if (!session?.selection) return undefined;
-    let selection = session.selection;
-    if (backendCapabilities(upstream, session.backendKind).supportsServiceTierOverrideOnContinue) {
-      const catalog = modelCatalog.getCachedCatalog?.({ backendKind: session.backendKind });
-      const serviceTier = preferences.usePriorityServiceTier && catalog
-        ? priorityServiceTierForModel(catalog, selection.model)
-        : undefined;
-      // Only preview a supported next-run override; retained turns keep their
-      // admission-time selection even when the saved preference changes.
-      if (preferences.usePriorityServiceTier && !serviceTier) return undefined;
-      selection = {
-        model: selection.model,
-        reasoningEffort: selection.reasoningEffort,
-        ...(serviceTier ? { serviceTier } : {})
-      };
-    }
+    const catalog = modelCatalog.getCachedCatalog?.({ backendKind: session.backendKind });
+    if (!catalog) return undefined;
+    let selection: ModelSelection;
+    try {
+      const capabilities = backendCapabilities(upstream, session.backendKind);
+      selection = resolveModelPolicy({ policyRevision: preferences.revision, policy: preferences.modelPolicy, catalog,
+        operatorCeiling: config.operatorModelCeiling, backendKind: session.backendKind, backendCapabilities: capabilities,
+        operation: "continue", currentSelection: session.selection }).effectiveSelection;
+      selection = preferences.processingSpeed === "legacy" ? internalServiceTierSelection(selection, catalog, preferences.usePriorityServiceTier,
+        "continue", capabilities, session.selection, preferences.revision) : resolveTurnSpeed(selection, preferences.processingSpeed, catalog, capabilities);
+    } catch { return undefined; }
     return dashboardExecutionForSelection(
       selection,
       session.backendKind,
@@ -13355,6 +13367,9 @@ type DashboardExecution = {
   reroutedModel?: string;
   reroutedModelDisplayName?: string;
   isCurrent: boolean;
+  processingSpeed?: string;
+  serviceTierScope?: "turn";
+  requestState?: "requested" | "accepted";
 };
 
 function dashboardExecutionForJob(
@@ -13363,23 +13378,21 @@ function dashboardExecutionForJob(
 ): DashboardExecution | undefined {
   const selection = job?.executionDecision?.effectiveSelection;
   if (!job || !selection) return undefined;
-  const reroutedModel = [...job.publicEvents].reverse().find((event) =>
-    event.type === "model" &&
-    event.details?.kind === "rerouted" &&
-    typeof event.details.toModel === "string" &&
-    event.details.toModel.trim()
-  )?.details?.toModel;
-  return dashboardExecutionForSelection(
-    selection,
-    job.backendKind,
-    modelCatalog,
-    isActiveActivityJobStatus(job.status),
-    typeof reroutedModel === "string" ? reroutedModel : undefined
-  );
+  const audit = executionAudit(job)!;
+  return { ...dashboardExecutionForSelection(selection, job.backendKind, modelCatalog, isActiveActivityJobStatus(job.status), audit.actual.model || undefined),
+    requestState: audit.acceptance ? "accepted" : "requested", processingSpeed: audit.intent.processingSpeed };
+
+}
+
+function dashboardExecutionForRetainedJob(job: DashboardRetainedJobSummary, modelCatalog: CodexModelCatalogProvider): DashboardExecution | undefined {
+  if (!job.execution) return undefined;
+  return { ...dashboardExecutionForSelection(job.execution, job.backendKind, modelCatalog, false, job.execution.reroutedModel),
+    requestState: job.execution.requestState || "requested",
+    ...(job.execution.processingSpeed ? { processingSpeed: job.execution.processingSpeed } : {}) };
 }
 
 function dashboardExecutionForSelection(
-  selection: Pick<ModelSelection, "model" | "reasoningEffort" | "serviceTier">,
+  selection: ModelSelection,
   backendKind: string | undefined,
   modelCatalog: CodexModelCatalogProvider,
   isCurrent: boolean,
@@ -13404,6 +13417,7 @@ function dashboardExecutionForSelection(
     ...(modelDisplayName !== selection.model ? { modelDisplayName } : {}),
     reasoningEffort,
     ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {}),
+    ...(selection.serviceTierScope ? { serviceTierScope: selection.serviceTierScope } : {}),
     ...(normalizedReroutedModel ? { reroutedModel: normalizedReroutedModel } : {}),
     ...(reroutedModelDisplayName && reroutedModelDisplayName !== normalizedReroutedModel
       ? { reroutedModelDisplayName }
@@ -13517,7 +13531,8 @@ function selectionKeyFor(
         sandbox,
         model: selection.model || null,
         reasoningEffort: selection.reasoningEffort || null,
-        serviceTier: selection.serviceTier || null
+        serviceTier: selection.serviceTier || null,
+        ...selection.serviceTierScope ? { serviceTierScope: selection.serviceTierScope } : {}
       })
     )
     .digest("hex");
@@ -13757,6 +13772,17 @@ type TaskRequestHashInput = {
   backendHandoff?: BackendHandoff | BackendHandoffAudit;
 };
 
+function taskRequestEnvelopeHash(args: CodexTaskArgs, scopeId: string): string {
+  return createHash("sha256").update(canonicalJson({
+    version: 1, scopeId, prompt: args.prompt, taskContractVersion: args.taskContractVersion,
+    executionEnvelopeRef: args.executionEnvelopeRef,
+    project: args.project ? currentProjectSelectionForRequestHash(args.project) : null,
+    activity: args.activity || null, agent: args.agent || null, selection: args.selection || null,
+    handoffSummary: args.handoffSummary || null, completionDelivery: args.completionDelivery || null,
+    approvedFollowups: approvedFollowupDigests(args.approvedFollowups) || null
+  })).digest("hex");
+}
+
 /** Current request identity commits the public task envelope and admission-time
  * execution semantics. It deliberately excludes independent Bridge skill
  * library state, card presentation, and other mutable UI state. */
@@ -13826,7 +13852,8 @@ function resolveTaskRouting(input: TaskRequestHashInput): CodexRouting {
           modelSelection: {
             model: input.effectiveSelection.model,
             reasoningEffort: input.effectiveSelection.reasoningEffort,
-            serviceTier: input.effectiveSelection.serviceTier || null
+            serviceTier: input.effectiveSelection.serviceTier || null,
+            ...input.effectiveSelection.serviceTierScope ? { serviceTierScope: input.effectiveSelection.serviceTierScope } : {}
           }
         },
         creation: {
@@ -13921,7 +13948,8 @@ async function buildSettingsView(
   modelCatalog: CodexModelCatalogProvider,
   refreshModels = false,
   descriptorProjectionUpdated = false,
-  developerModeRefreshRequired = false
+  developerModeRefreshRequired = false,
+  getCapabilities?: () => BackendCapabilities
 ): Promise<SettingsView> {
   let catalog: CodexModelCatalogSnapshot | undefined;
   let catalogError: string | undefined;
@@ -13942,15 +13970,15 @@ async function buildSettingsView(
         config.operatorModelCeiling,
         userSettings.current.revision
       );
-      assertPriorityCompatibility(
+      if (userSettings.current.processingSpeed === "legacy") assertPriorityCompatibility(
         userSettings.current.modelPolicy,
         catalog,
         config.operatorModelCeiling,
         userSettings.current.usePriorityServiceTier,
         userSettings.current.revision
       );
-      if (isModelPolicySuspended(userSettings.current.modelPolicy, catalog,
-        effectiveModelCeiling(catalog, config.operatorModelCeiling, userSettings.current.usePriorityServiceTier))) {
+      modelPolicyWarning = processingSpeedWarning(userSettings.current, catalog, config.operatorModelCeiling, getCapabilities?.());
+      if (isModelPolicySuspended(userSettings.current.modelPolicy, catalog, config.operatorModelCeiling)) {
         modelPolicyWarning = ULTRA_DISABLED_NO_SELECTION_WARNING;
       }
     } catch (error) {
@@ -13973,6 +14001,12 @@ async function buildSettingsView(
     settings: userSettings.current,
     operatorDefaults: userSettings.defaults,
     capabilities: {
+      availableProcessingSpeeds: ["legacy", ...(getCapabilities?.().supportsPerTurnServiceTier ? ["inherit", "standard", ...["fast", "ultrafast"].filter(mode => catalog &&
+        listAllowedModelSelections(userSettings.current.modelPolicy, catalog, config.operatorModelCeiling).some(selection => {
+          const tier = speedTierForModel(catalog!, selection.model, mode as "fast" | "ultrafast");
+          return tier && getCapabilities?.().supportedPerTurnServiceTiers?.includes(tier);
+        }))] : [])] as typeof PROCESSING_SPEED_MODES[number][],
+      processingSpeedSupport: { protocol: getCapabilities?.().supportsPerTurnServiceTier ? "supported" : "unverified", account: "unverified", workspace: "unverified" },
       availableAccessStrategies,
       availableUiLocalePreferences: [...UI_LOCALE_PREFERENCES],
       recoverableProjects: userSettings.recoverableProjects,
@@ -14117,6 +14151,32 @@ type ResolvedExecutionDecision = {
   admissionCatalogFingerprint: string;
 };
 
+function assertAdmittedSelectionSupported(selection: ModelSelection, catalog: CodexModelCatalogSnapshot): void {
+  const model = catalog.models.find(entry => entry.id === selection.model && !entry.hidden);
+  if (!model?.supportedReasoningEfforts.some(entry => entry.effort === selection.reasoningEffort)) {
+    throw new Error("MODEL_UNAVAILABLE: The admitted model or reasoning effort is no longer supported. The Job was not executed or replaced; review the saved choice before admitting new work.");
+  }
+  const tier = selection.serviceTier;
+  if (tier && !(selection.serviceTierScope === "turn" && tier === "default") &&
+      model.defaultServiceTier !== tier && !model.serviceTiers.some(entry => entry.id === tier)) {
+    throw new Error("PROCESSING_SPEED_UNAVAILABLE: The admitted speed is no longer advertised for this model. The Job was not executed with another speed.");
+  }
+}
+
+function processingSpeedWarning(preferences: BridgeUserSettings, catalog: CodexModelCatalogSnapshot,
+  operatorCeiling: ModelChoice[] | undefined, capabilities?: BackendCapabilities): string | undefined {
+  const mode = preferences.processingSpeed;
+  if (mode === "legacy") return undefined;
+  if (!isProcessingSpeedMode(mode)) return `PROCESSING_SPEED_UNRECOGNIZED: Saved speed '${mode}' is preserved. Choose a supported speed before starting new work.`;
+  if (capabilities?.supportsPerTurnServiceTier !== true) return "PROCESSING_SPEED_UNSUPPORTED: Per-turn speed support is unverified for the selected CLI.";
+  const choices = listAllowedModelSelections(preferences.modelPolicy, catalog, operatorCeiling);
+  const available = choices.some(choice => {
+    try { resolveTurnSpeed(choice, mode, catalog, capabilities); return true; }
+    catch { return false; }
+  });
+  return choices.length && !available ? `PROCESSING_SPEED_UNAVAILABLE: No allowed model supports '${mode}' with the selected CLI.` : undefined;
+}
+
 async function resolveExecutionDecision(input: {
   config: BridgeConfig;
   upstream: CodexUpstream;
@@ -14140,7 +14200,8 @@ async function resolveExecutionDecision(input: {
   // this resolved catalog fingerprint privately, and rechecks the saved policy
   // against that same fingerprint before admission.
   input.onCatalog?.(catalog);
-  assertPriorityCompatibility(
+  if (!isProcessingSpeedMode(input.preferences.processingSpeed)) throw new Error(`PROCESSING_SPEED_UNRECOGNIZED: Saved speed '${input.preferences.processingSpeed}' is preserved. Choose a supported speed before starting new work.`);
+  if (input.preferences.processingSpeed === "legacy") assertPriorityCompatibility(
     input.preferences.modelPolicy,
     catalog,
     input.config.operatorModelCeiling,
@@ -14153,10 +14214,11 @@ async function resolveExecutionDecision(input: {
     policyRevision: input.preferences.revision,
     policy: input.preferences.modelPolicy,
     catalog,
-    operatorCeiling: effectiveModelCeiling(
+    operatorCeiling: input.preferences.processingSpeed !== "legacy" ? input.config.operatorModelCeiling : effectiveModelCeiling(
       catalog,
       input.config.operatorModelCeiling,
-      input.preferences.usePriorityServiceTier
+      input.preferences.usePriorityServiceTier,
+      input.preferences.processingSpeed
     ),
     backendKind: input.backendKind,
     backendCapabilities: capabilities,
@@ -14165,7 +14227,7 @@ async function resolveExecutionDecision(input: {
     requestedPolicyRevision: input.requestedPolicyRevision,
     currentSelection: input.currentSelection
   });
-  const effectiveSelection = internalServiceTierSelection(
+  const effectiveSelection = input.preferences.processingSpeed === "legacy" ? internalServiceTierSelection(
     decision.effectiveSelection,
     catalog,
     input.preferences.usePriorityServiceTier,
@@ -14173,15 +14235,15 @@ async function resolveExecutionDecision(input: {
     capabilities,
     input.currentSelection,
     input.preferences.revision
-  );
+  ) : resolveTurnSpeed(decision.effectiveSelection, input.preferences.processingSpeed, catalog, capabilities);
   return {
     admissionCatalogFingerprint: modelCatalogAdmissionFingerprint(catalog.models),
     decision: {
       ...decision,
+      processingSpeed: input.preferences.processingSpeed,
       effectiveSelection,
-      reason: `${decision.reason} ${effectiveSelection.serviceTier
-        ? `The bridge privately applied service tier '${effectiveSelection.serviceTier}'.`
-        : "No service-tier override was requested."}`
+      reason: `${decision.reason} ${effectiveSelection.serviceTierScope === "turn" ? "This Job requests a turn-only speed override; the conversation setting is retained." :
+        effectiveSelection.serviceTier ? `This Job requests persistent tier '${effectiveSelection.serviceTier}', retaining the legacy scope.` : "This Job clears the persistent conversation tier, retaining the legacy wire behavior."}`
     }
   };
 }
@@ -14226,8 +14288,15 @@ function priorityUnavailable(policyRevision: number, model?: string): ModelPolic
 function effectiveModelCeiling(
   catalog: CodexModelCatalogSnapshot,
   operatorCeiling: ModelChoice[] | undefined,
-  usePriorityServiceTier: boolean
+  usePriorityServiceTier: boolean,
+  processingSpeed = "legacy"
 ): ModelChoice[] | undefined {
+  if (processingSpeed !== "legacy") {
+    if (!isProcessingSpeedMode(processingSpeed)) return [];
+    if (processingSpeed === "fast" || processingSpeed === "ultrafast") return catalog.models.filter(model => speedTierForModel(catalog, model.id, processingSpeed)).flatMap(model =>
+      model.supportedReasoningEfforts.map(({ effort }) => ({ model: model.id, reasoningEffort: effort })).filter(choice => !operatorCeiling || operatorCeiling.some(ceiling => modelChoiceKey(ceiling) === modelChoiceKey(choice))));
+    return operatorCeiling;
+  }
   if (!usePriorityServiceTier) return operatorCeiling;
   const operatorKeys = operatorCeiling
     ? new Set(operatorCeiling.map(modelChoiceKey))
@@ -14322,9 +14391,7 @@ function applyModelSelection(
   payload.config = {
     model_reasoning_effort: selection.reasoningEffort,
   };
-  if (backendSupports(backendKind, "supportsTurnSelection") && selection.serviceTier) {
-    payload.serviceTier = selection.serviceTier;
-  }
+  if (backendSupports(backendKind, "supportsTurnSelection")) Object.assign(payload, selectionSpeedArguments(selection));
 }
 
 async function enforceSensitiveFilePreflight(
@@ -14713,6 +14780,7 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
         .slice(-20)
     : [];
   const executionDecision = readExecutionDecision(value.executionDecision);
+  const executionEvidence = readExecutionEvidence(value.executionEvidence);
   let project: { projectId: string; projectName: string } | undefined;
   let projectRequest: RuntimeProjectSelection | undefined;
   try {
@@ -14818,6 +14886,8 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     (value.authBoundary !== undefined &&
       (typeof value.authBoundary !== "string" || !/^[a-f0-9]{64}$/.test(value.authBoundary))) ||
     !isOptionalString(value.sourceThreadId) ||
+    (value.requestEnvelopeHash !== undefined &&
+      (typeof value.requestEnvelopeHash !== "string" || !/^[a-f0-9]{64}$/.test(value.requestEnvelopeHash))) ||
     (value.contextMode !== undefined && !AGENT_CONTEXT_MODES.includes(value.contextMode as AgentContextMode)) ||
     (value.result !== undefined && !isRecord(value.result)) ||
     (value.lastProgress !== undefined && !lastProgress) ||
@@ -14857,6 +14927,7 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     requestId,
     requestHash,
     requestHashVersion,
+    requestEnvelopeHash: value.requestEnvelopeHash as string | undefined,
     completionDeliveryPolicy,
     sourceThreadId: value.sourceThreadId,
     ...(typeof value.mcpPrincipal === "string" ? { mcpPrincipal: value.mcpPrincipal } : {}),
@@ -14864,6 +14935,7 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     ...(value.followup ? { followup: readFollowupReference(value.followup as FollowupReference) } : {}),
     selectionKey: value.selectionKey,
     ...(executionDecision ? { executionDecision } : {}),
+    ...(executionEvidence ? { executionEvidence } : {}),
     exclusiveKeys: [...value.exclusiveKeys],
     sessionDecision,
     status,
@@ -14981,6 +15053,7 @@ function readExecutionDecision(value: unknown): ExecutionDecision | undefined {
       catalogValidation,
       backendKind,
       ...(requestedSelection ? { requestedSelection } : {}),
+      ...(typeof value.processingSpeed === "string" ? { processingSpeed: value.processingSpeed } : {}),
       effectiveSelection,
       effectiveReasoningEffort:
         typeof value.effectiveReasoningEffort === "string"
@@ -15391,6 +15464,12 @@ function taskProjectionForJob(
     requestedReasoningEffort: semantic.executionAudit?.requested?.reasoningEffort ?? null,
     actualModel: semantic.executionAudit?.actual.model ?? null,
     actualReasoningEffort: semantic.executionAudit?.actual.reasoningEffort ?? null,
+    processingSpeed: job.executionDecision?.processingSpeed || (job.executionDecision ? "legacy" : null),
+    requestedServiceTier: job.executionDecision?.effectiveSelection.serviceTier || null,
+    actualServiceTier: semantic.executionAudit?.actual.serviceTier ?? null,
+    serviceTierScope: job.executionDecision ? job.executionDecision.effectiveSelection.serviceTierScope || "conversation" : null,
+    executionConfirmation: { accepted: Boolean(semantic.executionAudit?.acceptance), model: semantic.executionAudit?.confirmed.model.confirmed === true,
+      reasoningEffort: semantic.executionAudit?.confirmed.reasoningEffort.confirmed === true, serviceTier: semantic.executionAudit?.confirmed.serviceTier.confirmed === true },
     rerouted: Boolean(semantic.executionAudit?.reroute),
     rerouteReason: semantic.executionAudit?.reroute?.reason ?? null,
     resultAvailability: semantic.result.availability,

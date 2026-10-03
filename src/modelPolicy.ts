@@ -4,7 +4,7 @@ import type {
   CodexModelDescriptor
 } from "./modelCatalog.js";
 
-export const MODEL_POLICY_SCHEMA_VERSION = 7 as const;
+export const MODEL_POLICY_SCHEMA_VERSION = 8 as const;
 
 export type ModelChoice = {
   model: string;
@@ -13,6 +13,7 @@ export type ModelChoice = {
 
 export type ModelSelection = ModelChoice & {
   serviceTier?: string;
+  serviceTierScope?: "turn";
 };
 
 export type ModelPolicyConstraints = {
@@ -47,6 +48,7 @@ export type BackendCapabilities = {
   supportsEffortOverrideOnContinue: boolean;
   supportsServiceTierOverrideOnContinue: boolean;
   supportsPerTurnServiceTier?: boolean;
+  supportedPerTurnServiceTiers?: string[];
   supportsThreadArchive?: boolean;
   supportsThreadUnarchive?: boolean;
   supportsFork: boolean;
@@ -87,6 +89,7 @@ export type ExecutionDecision = {
   catalogValidation: CatalogValidationState;
   backendKind: CodexBackendKind;
   requestedSelection?: ModelChoice;
+  processingSpeed?: string;
   effectiveSelection: ModelSelection;
   effectiveReasoningEffort: string;
   savedSelectionSupported: boolean;
@@ -417,7 +420,8 @@ export function modelSelectionKey(selection: ModelSelection): string {
   return JSON.stringify([
     selection.model,
     selection.reasoningEffort,
-    selection.serviceTier || null
+    selection.serviceTier || null,
+    selection.serviceTierScope || "conversation"
   ]);
 }
 
@@ -432,7 +436,7 @@ function assertSelectionAllowed(
   operatorCeiling: ModelChoice[] | undefined,
   policyRevision: number
 ): void {
-  if (!catalogSupportsSelection(catalog, selection)) {
+  if (!catalogSupportsSelection(catalog, { model: selection.model, reasoningEffort: selection.reasoningEffort })) {
     throw unavailable(
       policyRevision,
       `Selection ${selectionLabel(selection)} is not available in catalog ${catalog.fingerprint}.`
@@ -515,10 +519,11 @@ function readSelection(value: unknown, label: string): ModelSelection {
     ? undefined
     : identifier(value.serviceTier, `${label} service tier`, 100);
   const keys = Object.keys(value);
-  if (keys.some((key) => key !== "model" && key !== "reasoningEffort" && key !== "serviceTier")) {
+  if (value.serviceTierScope !== undefined && value.serviceTierScope !== "turn") throw new Error(`Invalid ${label} speed scope.`);
+  if (keys.some((key) => !["model", "reasoningEffort", "serviceTier", "serviceTierScope"].includes(key))) {
     throw new Error(`Invalid ${label}: unknown fields are not allowed.`);
   }
-  return { model, reasoningEffort, ...(serviceTier ? { serviceTier } : {}) };
+  return { model, reasoningEffort, ...(serviceTier ? { serviceTier } : {}), ...(value.serviceTierScope === "turn" ? { serviceTierScope: "turn" as const } : {}) };
 }
 
 function readModelChoice(value: unknown, label: string): ModelChoice {
@@ -560,7 +565,8 @@ function cloneSelection(selection: ModelSelection): ModelSelection {
   return {
     model: selection.model,
     reasoningEffort: selection.reasoningEffort,
-    ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {})
+    ...(selection.serviceTier ? { serviceTier: selection.serviceTier } : {}),
+    ...(selection.serviceTierScope ? { serviceTierScope: selection.serviceTierScope } : {})
   };
 }
 

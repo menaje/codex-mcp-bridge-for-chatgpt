@@ -98,7 +98,7 @@
     ],
     "compatibilityResources": [],
     "releaseCatalog": "ui-release-catalog.json",
-    "releaseCatalogSha256": "f5ceac2b092e876a40cd4850caf26d77cc90015e0c822c912c9cde034a501836"
+    "releaseCatalogSha256": "824bde4f06c90b4d7ee5a6b7f0c4a00dc0fbc77c44d802da688301e41d2967bc"
   },
   "stateCompatibility": {
     "currentSchema": 30,
@@ -145,7 +145,7 @@
     "stateProfilePolicy": "release-stage-isolated-v1",
     "rollbackPolicy": "verified-original-before-service-open-v1",
     "persistentContracts": {
-      "userSettingsSchema": 7,
+      "userSettingsSchema": 8,
       "taskInputContract": 6,
       "macosHelperProtocol": 2,
       "localCompanionProtocol": 12,
