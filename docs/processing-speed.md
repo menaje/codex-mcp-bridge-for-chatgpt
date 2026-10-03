@@ -86,3 +86,52 @@ discovery remain required. Management failure is never reported as success.
 This work keeps the managed CLI, dedicated durable storage and existing official
 Codex authentication boundaries. SIWC introduction in #214 is excluded. The
 paused observation and remaining operational validation in #218 stay unchanged.
+
+## Saved modes and compatible clients
+
+Settings schema 8 stores `processingSpeed` independently of the retired boolean:
+
+| Saved mode | Transmission and scope |
+| --- | --- |
+| `legacy`, boolean false | `serviceTier: null`, retaining the persistent clear. |
+| `legacy`, boolean true | Catalog `priority`/`fast` via persistent `serviceTier`. |
+| `inherit` | Omit persistent tier; send `serviceTierForTurn: null`. A retained conversation keeps its own tier; a new conversation uses its CLI configuration. |
+| `standard` | Omit persistent tier; send `serviceTierForTurn: "default"`. |
+| `fast` / `ultrafast` | Omit persistent tier; send the eligible catalog tier through `serviceTierForTurn`. Protocol and catalog must both support that exact value. |
+| Unknown string | Preserve it and refuse new execution until the user deliberately selects a supported mode. |
+
+Migration retains the boolean and `legacy` mode instead of asserting that false
+means CLI default. Surviving policy tier records are copied into
+`retainedServiceTiers` before the existing policy migration strips the tier.
+Unknown surviving semantics produce `unrecognized-legacy-tier`. An already
+removed original tier is never recreated. Loading and restarting the migrated
+settings is idempotent.
+
+An old client may still send `usePriorityServiceTier` with unrelated changes. Once
+a modern mode is saved, that boolean alone cannot overwrite the canonical mode.
+New clients send the explicit mode only when appropriate; unknown modes remain
+visible and unrelated saves omit them. Dashboard and Settings use resource
+contract v5. The stable task execution envelope remains v6. Execution policy
+signature v6 includes the canonical mode, separately from that stable envelope.
+
+New Jobs retain both their execution decision and an exact public request digest.
+An identical retry retrieves the same Job after settings or catalog
+changes without reconsidering execution. A changed prompt/choice/routing with the
+same request ID is rejected. The existing stale-project-selector guard remains
+in force; read the original Job/status handle after project registry changes. Historical Jobs without this new digest retain their
+existing replay validation and can always be read through their original status
+handles; the missing digest is not reconstructed from current settings.
+
+The accepted adapter receipt stores exactly the `turn/start` model, effort and
+speed fields that were sent, including null versus absence. Server-confirmed
+values remain null unless a correlated server event actually confirms that field.
+Historical echo-only events do not become transmission receipts. Current official
+turn events do not confirm the applied reasoning effort or processing tier;
+`model/rerouted` confirms the model only when the event explicitly identifies the
+Job's thread and turn. A late or uncorrelated event cannot rewrite another Job.
+The first acceptance receipt and latest correlated model reroute are stored
+separately from the 200-event progress ring, so eviction and Bridge restart
+preserve those proofs without deriving them from current settings.
+They are persisted when observed, independently of completion. Expired-result
+Dashboard summaries retain request scope and confirmation status, and do not
+upgrade old or unrelated routing observations into confirmed model changes.

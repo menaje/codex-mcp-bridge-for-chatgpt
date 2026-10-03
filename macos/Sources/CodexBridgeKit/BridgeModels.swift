@@ -253,6 +253,9 @@ public struct DashboardExecution: Codable, Sendable {
     public let reroutedModel: String?
     public let reroutedModelDisplayName: String?
     public let isCurrent: Bool
+    public let processingSpeed: String?
+    public let serviceTierScope: String?
+    public let requestState: String?
 }
 
 public struct CancellationDisplay: Codable, Sendable {
@@ -372,6 +375,7 @@ public struct BridgeSettings: Codable, Sendable {
     /// Missing on older servers; official catalog descriptions are never copied here.
     public let modelDescriptionOverrides: [String: String]?
     public let usePriorityServiceTier: Bool
+    public let processingSpeed: String?
     public let projects: [BridgeProject]
     public let uiLocalePreference: String
     public let maxConcurrentJobs: Int
@@ -457,6 +461,7 @@ public struct ModelPolicy: Codable, Sendable {
 }
 
 public struct SettingsCapabilities: Codable, Sendable {
+    public let availableProcessingSpeeds: [String]?
     public let availableAccessStrategies: [String]
     public let availableUiLocalePreferences: [String]
     public let projectAvailability: [ProjectAvailability]
@@ -633,6 +638,7 @@ public struct SettingsPatch: Encodable, Sendable {
     public var modelPolicy: ModelPolicy?
     public var modelDescriptionOverrides: [String: String]?
     public var usePriorityServiceTier: Bool?
+    public var processingSpeed: String?
     public var uiLocalePreference: String?
     public var maxConcurrentJobs: Int?
     public var historyRetentionDays: Int?
@@ -646,6 +652,7 @@ public struct SettingsPatch: Encodable, Sendable {
         modelPolicy: ModelPolicy? = nil,
         modelDescriptionOverrides: [String: String]? = nil,
         usePriorityServiceTier: Bool? = nil,
+        processingSpeed: String? = nil,
         uiLocalePreference: String? = nil,
         maxConcurrentJobs: Int? = nil,
         historyRetentionDays: Int? = nil,
@@ -658,6 +665,7 @@ public struct SettingsPatch: Encodable, Sendable {
         self.modelPolicy = modelPolicy
         self.modelDescriptionOverrides = modelDescriptionOverrides
         self.usePriorityServiceTier = usePriorityServiceTier
+        self.processingSpeed = processingSpeed
         self.uiLocalePreference = uiLocalePreference
         self.maxConcurrentJobs = maxConcurrentJobs
         self.historyRetentionDays = historyRetentionDays

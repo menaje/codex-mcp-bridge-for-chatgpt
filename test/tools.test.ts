@@ -8,6 +8,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import Database from "better-sqlite3";
 import { loadConfig } from "../src/config.js";
 import { CodexService } from "../src/codexService.js";
+import { APP_SERVER_CAPABILITIES } from "../src/appServerUpstream.js";
 import { projectCodexAccount } from "../src/codexAccount.js";
 import { CodexRuntimeManager } from "../src/codexRuntime.js";
 import { createExecutionRuntime } from "../src/executionRuntime.js";
@@ -211,6 +212,105 @@ describe("current bridge tool contracts", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     state.close();
     await rm(root, { recursive: true, force: true });
+  });
+
+  it.each([false, true])("preserves an admitted speed through a settings change and handles later support loss explicitly: %s", async removed => {
+    Object.assign(upstream, { capabilities: () => APP_SERVER_CAPABILITIES });
+    const current = await server.applicationService.settingsSnapshot();
+    const saved = await server.applicationService.updateSettings({ expectedSettingsRevision: current.settings.settingsRevision,
+      operation: { kind: "patch", settings: { processingSpeed: "standard" } } });
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = saved.settings.projects[0]!;
+    let validating!: () => void, releaseValidation!: () => void;
+    const validatingPromise = new Promise<void>(resolve => { validating = resolve; });
+    const validationGate = new Promise<void>(resolve => { releaseValidation = resolve; });
+    let reads = 0;
+    const original = FixtureCatalog.prototype.getCatalog;
+    const spy = vi.spyOn(FixtureCatalog.prototype, "getCatalog").mockImplementation(async function(this: FixtureCatalog) {
+      const snapshot = await original.call(this);
+      if (++reads !== 2) return snapshot;
+      validating(); await validationGate;
+      return removed ? { ...snapshot, models: [] } : snapshot;
+    });
+    const hold = upstream.holdNextCall();
+    const arguments_ = { scopeId: randomUUID(), requestId: randomUUID(), prompt: "Keep the admitted Standard choice.",
+      taskContractVersion: properties.taskContractVersion?.const, executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision }, selection };
+    try {
+      const admitted = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
+      expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+      const jobId = (admitted.structuredContent as { jobId: string }).jobId;
+      await validatingPromise;
+      expect(upstream.calls).toHaveLength(0);
+      const next = await server.applicationService.updateSettings({ expectedSettingsRevision: saved.settings.settingsRevision,
+        operation: { kind: "patch", settings: { processingSpeed: "inherit" } } });
+      expect(next.settings.processingSpeed).toBe("inherit");
+      releaseValidation();
+      if (removed) {
+        await eventually(() => state.listJobs().some(job => job.jobId === jobId && job.status === "failed"));
+        expect(JSON.stringify(state.listJobs().find(job => job.jobId === jobId))).toContain("MODEL_UNAVAILABLE");
+        expect(upstream.calls).toHaveLength(0);
+      } else {
+        await hold.started;
+        expect(upstream.calls[0]?.args).toMatchObject({ model: selection.model, serviceTier: "default", serviceTierScope: "turn" });
+        hold.assign(fixtureThreadId);
+        hold.progress({ progress: 0, event: { eventId: "accepted-speed", type: "turn", phase: "started", createdAt: Date.now(),
+          summary: "Request accepted", details: { evidence: "turn/start-accepted", evidenceVersion: 1,
+            threadId: fixtureThreadId, turnId: fixtureTurnId, sent: { model: selection.model, reasoningEffort: "medium", serviceTierForTurn: "default" } } } });
+        expect(state.listJobs().find(job => job.jobId === jobId)?.executionEvidence).toMatchObject({ accepted: { eventId: "accepted-speed" } });
+        for (let index = 0; index < 205; index++) hold.progress({ progress: index, event: {
+          eventId: `later-progress-${index}`, type: "agent-message", phase: "completed", createdAt: Date.now(), summary: "Still working", details: { itemId: `item-${index}` }
+        } });
+        hold.release({ structuredContent: { threadId: fixtureThreadId, content: "Completed once." }, content: [{ type: "text", text: "Completed once." }] });
+        await eventually(() => state.listJobs().some(job => job.jobId === jobId && job.status === "completed"));
+        const stored = state.listJobs().find(job => job.jobId === jobId)!;
+        expect(stored.publicEvents.slice(-200).some(event => event.eventId === "accepted-speed")).toBe(false);
+        expect(stored.executionEvidence).toMatchObject({ accepted: { eventId: "accepted-speed", details: { sent: { serviceTierForTurn: "default" } } } });
+        await client.close(); await new Promise<void>(resolve => server.close(resolve));
+        state.close(); state = new BridgeStateStore({ file: path.join(root, "state.sqlite") });
+        server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+        client = new Client({ name: "speed-evidence-restart", version: "1" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+        await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+        await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`)));
+      }
+      const persisted = state.listJobs().find(job => job.jobId === jobId)!;
+      expect(persisted.executionDecision).toMatchObject({ processingSpeed: "standard", effectiveSelection: { ...selection, serviceTier: "default", serviceTierScope: "turn" } });
+      const replay = await client.callTool({ name: "codex_task", arguments: arguments_, _meta: metadata });
+      expect(replay.isError === true, JSON.stringify(replay)).toBe(removed);
+      expect(replay.structuredContent).toMatchObject({ jobId, replay: true, processingSpeed: "standard", actualModel: null,
+        actualReasoningEffort: null, actualServiceTier: null, executionConfirmation: { accepted: !removed, model: false, reasoningEffort: false, serviceTier: false } });
+      expect(upstream.calls).toHaveLength(removed ? 0 : 1);
+      const changed = await client.callTool({ name: "codex_task", arguments: { ...arguments_, prompt: "Different work with the same requestId." }, _meta: metadata });
+      expect(changed.isError).toBe(true);
+      expect(JSON.stringify(changed)).toContain("requestId was already used");
+    } finally { releaseValidation(); hold.release(); spy.mockRestore(); }
+  });
+
+  it("preserves unknown saved speeds through old-client saves and refuses new execution", async () => {
+    settings.update({ processingSpeed: "future-tier" }, settings.current.settingsRevision);
+    await client.close(); await new Promise<void>(resolve => server.close(resolve));
+    server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+    client = new Client({ name: "old-speed-save-test", version: "1" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`)));
+    const view = await server.applicationService.settingsSnapshot();
+    const updated = await server.applicationService.updateSettings({ expectedSettingsRevision: view.settings.settingsRevision,
+      operation: { kind: "patch", settings: { usePriorityServiceTier: false, uiLocalePreference: "ko" } } });
+    expect(updated.settings.processingSpeed).toBe("future-tier");
+    const models = await client.callTool({ name: "codex_models", arguments: {} });
+    expect(models.isError, JSON.stringify(models)).not.toBe(true);
+    expect(models.structuredContent).toMatchObject({ processingSpeed: { selected: "future-tier", scope: null },
+      warning: expect.stringContaining("PROCESSING_SPEED_UNRECOGNIZED") });
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = updated.settings.projects[0]!;
+    const result = await client.callTool({ name: "codex_task", _meta: metadata, arguments: {
+      scopeId: randomUUID(), requestId: randomUUID(), prompt: "Do not infer the meaning of future-tier.", selection,
+      taskContractVersion: properties.taskContractVersion?.const, executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision } } });
+    expect(result.isError).toBe(true); expect(JSON.stringify(result)).toContain("PROCESSING_SPEED_UNRECOGNIZED");
+    expect(upstream.calls).toHaveLength(0); expect(state.listJobs()).toHaveLength(0);
   });
 
   it.each([

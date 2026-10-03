@@ -403,7 +403,7 @@ export function validateReleaseManifest(value) {
     "stateCompatibility.persistentContracts"
   );
   const requiredContracts = {
-    userSettingsSchema: 7,
+    userSettingsSchema: 8,
     taskInputContract: 6,
     macosHelperProtocol: 2,
     localCompanionProtocol: 12,

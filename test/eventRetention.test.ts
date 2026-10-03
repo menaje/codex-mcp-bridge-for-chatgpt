@@ -10,6 +10,28 @@ const job=(id="job")=>({jobId:id,requestId:`request-${id}`,scopeId,status:"runni
 const progress=(itemId:string, output="text")=>({type:"command",phase:"completed",summary:"command complete",details:{itemId,outputTail:output}});
 
 describe("bounded diagnostic retention",()=>{
+  it("retains scoped request evidence through result expiry and rejects unrelated routing observations",()=>{
+    const store=new BridgeStateStore({file:":memory:"});
+    const threadId="99999999-9999-4999-8999-999999999999", turnId="turn-proof";
+    const input={...job("speed-proof"),threadId,upstreamRequestId:turnId,
+      executionDecision:{processingSpeed:"standard",effectiveSelection:{model:"sol",reasoningEffort:"medium",serviceTier:"default",serviceTierScope:"turn"}},
+      executionEvidence:{accepted:{eventId:"receipt",type:"turn",phase:"started",details:{evidence:"turn/start-accepted",threadId,turnId}}}};
+    store.upsertJob(input);
+    for(const details of [{kind:"rerouted",toModel:"unconfirmed"},{kind:"rerouted",toModel:"late",serverCorrelation:"explicit",threadId,turnId:"previous"}])
+      store.recordJobTelemetryEvent(input.jobId,"app-model-updated",{type:"model",phase:"updated",details});
+    expect(store.eventRetention.summary(input.jobId).execution).not.toHaveProperty("reroutedModel");
+    const reroutedModel={eventId:"routing",type:"model",phase:"updated",details:{kind:"rerouted",serverCorrelation:"explicit",threadId,turnId,toModel:"astra"}};
+    store.upsertJob({...input,status:"completed",executionEvidence:{...input.executionEvidence,reroutedModel}});
+    store.deleteJob(input.jobId);
+    expect(store.listDashboardRetainedJobs()[0]?.execution).toEqual({model:"sol",reasoningEffort:"medium",serviceTier:"default",
+      serviceTierScope:"turn",processingSpeed:"standard",requestState:"accepted",reroutedModel:"astra"});
+    const historical={...job("historical"),status:"completed",executionDecision:input.executionDecision,
+      publicEvents:[{type:"model",details:{kind:"rerouted",toModel:"old-echo"}}]};
+    store.upsertJob(historical);store.deleteJob(historical.jobId);
+    expect(store.listDashboardRetainedJobs().find(row=>row.jobId===historical.jobId)?.execution).toMatchObject({requestState:"requested"});
+    expect(store.listDashboardRetainedJobs().find(row=>row.jobId===historical.jobId)?.execution).not.toHaveProperty("reroutedModel");
+    store.close();
+  });
   it("records progress without rewriting the full Job document",()=>{
     const file=path.join(mkdtempSync(path.join(tmpdir(),"event-write-path-")),"state.sqlite");
     const store=new BridgeStateStore({file});

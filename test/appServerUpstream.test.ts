@@ -35,6 +35,31 @@ const protocolFixture = (name: string): string => path.join(
 );
 
 describe("CodexAppServerUpstreamPool", () => {
+  it.each(["fast", "unset"])("retains legacy scope and distinguishes per-turn Standard/inheritance with CLI default %s", async defaultTier => {
+    const root = await mkdtemp(path.join(tmpdir(), "bridge-215-wire-")), log = path.join(root, "speed.jsonl");
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, { environment: { ...process.env, CODEX_TEST_SPEED_LOG: log,
+      ...(defaultTier === "fast" ? { CODEX_TEST_DEFAULT_TIER: "fast" } : {}) } });
+    const events: CodexPublicEvent[] = [];
+    const base = { backendKind: "app-server" as const, prompt: "report selection", cwd: root, sandbox: "read-only" as const,
+      approvalPolicy: "on-request" as const, selection: { model: "gpt-5.6-sol", reasoningEffort: "max" } };
+    try {
+      const newInherited = await pool.startThread({ ...base, selection: { ...base.selection, serviceTierScope: "turn" } }, p => { if (p.event) events.push(p.event); });
+      const threadId = newInherited.structuredContent!.threadId as string;
+      await pool.continueThread({ ...base, threadId, selection: { ...base.selection, serviceTier: "priority" } });
+      await pool.continueThread({ ...base, threadId, selection: { ...base.selection, serviceTier: "default", serviceTierScope: "turn" } });
+      await pool.continueThread({ ...base, threadId, selection: { ...base.selection, serviceTierScope: "turn" } });
+      await pool.continueThread({ ...base, threadId });
+      await pool.startThread(base);
+      const rows = (await readFile(log, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+      expect(rows.map(row => [row.persistentTier, row.processingTier])).toEqual([[defaultTier === "fast" ? "fast" : null, defaultTier === "fast" ? "fast" : null],
+        ["priority", "priority"], ["priority", null], ["priority", "priority"], [null, null], [null, null]]);
+      expect(rows.every(row => row.model === base.selection.model && row.effort === base.selection.reasoningEffort)).toBe(true);
+      expect(rows[2]).not.toHaveProperty("serviceTier");
+      expect(rows[2]).toHaveProperty("serviceTierForTurn", "default");
+      expect(rows[4]).toHaveProperty("serviceTier", null);
+      expect(events.find(event => event.details?.evidence === "turn/start-accepted")?.details).toMatchObject({ evidenceVersion: 1, sent: { serviceTierForTurn: null }, serviceTierScope: "turn" });
+    } finally { await pool.close(); await rm(root, { recursive: true, force: true }); }
+  }, 15_000);
   it("uses stable release client identity for every App Server handshake", () => {
     expect(APP_SERVER_CLIENT_INFO).toEqual({
       name: PRODUCT_INFO.runtimeName,
@@ -1008,10 +1033,10 @@ describe("CodexAppServerUpstreamPool", () => {
         expect.objectContaining({
           type: "input-required",
           phase: "completed",
-          details: {
+          details: expect.objectContaining({
             resolvedInteractionId: input.interactionId,
             resolution: "server-resolved"
-          }
+          })
         })
       ]));
       await expect(

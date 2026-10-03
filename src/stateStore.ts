@@ -33,6 +33,7 @@ import {
 } from "./operationalCommandReceipt.js";
 import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { PRODUCT_INFO } from "./productInfo.js";
+import { retainedExecutionSummary } from "./executionAudit.js";
 import {
   STATE_MIGRATION_CATALOG_VERSION,
   SUPPORTED_STATE_SCHEMA_VERSIONS,
@@ -289,6 +290,9 @@ export type DashboardRetainedJobSummary = {
     reasoningEffort: string;
     serviceTier?: string;
     reroutedModel?: string;
+    processingSpeed?: string;
+    serviceTierScope?: "turn";
+    requestState?: "requested" | "accepted";
   };
 };
 
@@ -7698,31 +7702,23 @@ function readDashboardRetainedExecution(
   payload: Record<string, unknown>
 ): DashboardRetainedJobSummary["execution"] | undefined {
   const retainedExecution = isRecord(payload.execution) ? payload.execution : undefined;
-  const decision = isRecord(payload.executionDecision) ? payload.executionDecision : undefined;
-  const selection = decision && isRecord(decision.effectiveSelection)
-    ? decision.effectiveSelection
-    : retainedExecution;
+  const selection = retainedExecutionSummary(payload) || retainedExecution;
   const model = selection && normalizeOptionalString(selection.model);
   const reasoningEffort = selection && normalizeOptionalString(selection.reasoningEffort);
   if (!model || !reasoningEffort) return undefined;
   const serviceTier = selection && normalizeOptionalString(selection.serviceTier);
 
-  let reroutedModel = retainedExecution && normalizeOptionalString(retainedExecution.reroutedModel);
-  if (!reroutedModel && Array.isArray(payload.publicEvents)) {
-    for (let index = payload.publicEvents.length - 1; index >= 0; index -= 1) {
-      const event = payload.publicEvents[index];
-      if (!isRecord(event) || event.type !== "model" || !isRecord(event.details)) continue;
-      if (event.details.kind !== "rerouted") continue;
-      reroutedModel = normalizeOptionalString(event.details.toModel);
-      if (reroutedModel) break;
-    }
-  }
+  const hasEvidenceContract = selection?.requestState === "accepted" || selection?.requestState === "requested";
+  let reroutedModel = hasEvidenceContract ? normalizeOptionalString(selection?.reroutedModel) : undefined;
   if (reroutedModel === model) reroutedModel = undefined;
   return {
     model,
     reasoningEffort,
     ...(serviceTier ? { serviceTier } : {}),
-    ...(reroutedModel ? { reroutedModel } : {})
+    ...(reroutedModel ? { reroutedModel } : {}),
+    ...(selection?.serviceTierScope === "turn" ? { serviceTierScope: "turn" as const } : {}),
+    ...(typeof selection?.processingSpeed === "string" ? { processingSpeed: selection.processingSpeed } : {}),
+    requestState: selection?.requestState === "accepted" ? "accepted" : "requested"
   };
 }
 

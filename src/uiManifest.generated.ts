@@ -12,7 +12,7 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "releaseInventory": {
     "catalog": "ui-release-catalog.json",
-    "catalogSha256": "f5ceac2b092e876a40cd4850caf26d77cc90015e0c822c912c9cde034a501836",
+    "catalogSha256": "824bde4f06c90b4d7ee5a6b7f0c4a00dc0fbc77c44d802da688301e41d2967bc",
     "activeResources": [
       "settings",
       "dashboard"
@@ -48,9 +48,9 @@ export const UI_RESOURCE_MANIFEST = {
     "selected": [
       {
         "name": "settings",
-        "uriVersion": 4,
-        "digest": "9a3ed4b720c50b0a574ecf765a4bde014ec10f14f7348e346657b26d44d0e45d",
-        "uri": "ui://codex-mcp-bridge/settings/v4.html",
+        "uriVersion": 5,
+        "digest": "d4cb29cc643959c16732644213f5baa0a6e2c936c0b4554a26cbd372d8865cc2",
+        "uri": "ui://codex-mcp-bridge/settings/v5.html",
         "inventories": [
           "development-current"
         ],
@@ -66,9 +66,9 @@ export const UI_RESOURCE_MANIFEST = {
       },
       {
         "name": "dashboard",
-        "uriVersion": 4,
-        "digest": "02c43e7a3565adfcb611b3168702a007cac6edaa37b7365570e75c1bd8136161",
-        "uri": "ui://codex-mcp-bridge/dashboard/v4.html",
+        "uriVersion": 5,
+        "digest": "76893aa693bd1d210d139b0c7745b83c80b4bc093d395c1f38b1308fbdffd799",
+        "uri": "ui://codex-mcp-bridge/dashboard/v5.html",
         "inventories": [
           "development-current"
         ],
@@ -87,9 +87,9 @@ export const UI_RESOURCE_MANIFEST = {
   },
   "resources": {
     "settings": {
-      "uriVersion": 4,
-      "digest": "9a3ed4b720c50b0a574ecf765a4bde014ec10f14f7348e346657b26d44d0e45d",
-      "uri": "ui://codex-mcp-bridge/settings/v4.html",
+      "uriVersion": 5,
+      "digest": "d4cb29cc643959c16732644213f5baa0a6e2c936c0b4554a26cbd372d8865cc2",
+      "uri": "ui://codex-mcp-bridge/settings/v5.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Settings",
@@ -131,9 +131,9 @@ export const UI_RESOURCE_MANIFEST = {
       }
     },
     "dashboard": {
-      "uriVersion": 4,
-      "digest": "02c43e7a3565adfcb611b3168702a007cac6edaa37b7365570e75c1bd8136161",
-      "uri": "ui://codex-mcp-bridge/dashboard/v4.html",
+      "uriVersion": 5,
+      "digest": "76893aa693bd1d210d139b0c7745b83c80b4bc093d395c1f38b1308fbdffd799",
+      "uri": "ui://codex-mcp-bridge/dashboard/v5.html",
       "metadata": {
         "descriptor": {
           "title": "Codex MCP Bridge for ChatGPT Codex Status",

@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { performance } from "node:perf_hooks";
 import { tokenCounts } from "./tokenUsage.js";
 import { parseJsonTextStrict } from "./textIntegrity.js";
+import { retainedExecutionSummary } from "./executionAudit.js";
 
 export const EVENT_RETENTION_LIMITS = { perJob: 256, rows: 50_000, bytes: 64 * 1024 * 1024, payloadBytes: 8192, metadataMs: 7 * 86400_000, batch: 64 };
 /** Upgrade-only schema introduced at v14. Current databases use stateSchema.ts. */
@@ -58,13 +59,8 @@ export class EventRetention {
 
   summarizeJob(job: Record<string, unknown>): void {
     const previous = this.summary(String(job.jobId));
-    const execution = record(record(job.executionDecision).effectiveSelection);
-    const reroute = (Array.isArray(job.publicEvents) ? [...job.publicEvents].reverse() : [])
-      .map(record).find(event => event.type === "model" && record(event.details).kind === "rerouted");
-    const reroutedModel = record(reroute?.details).toModel;
-    const next = { ...previous,
-      ...(execution.model ? { execution: { ...record(previous.execution), model: execution.model, reasoningEffort: execution.reasoningEffort, serviceTier: execution.serviceTier,
-        ...(typeof reroutedModel === "string" ? {reroutedModel:reroutedModel.slice(0,120)} : {}) } } : {}) };
+    const execution = retainedExecutionSummary(job);
+    const next = { ...previous, ...(execution ? { execution } : {}) };
     this.save(String(job.jobId), next);
   }
 
@@ -81,10 +77,13 @@ export class EventRetention {
           lastRequestTokens: tokenCounts(details.last), threadCounterTokens: tokenCounts(details.total) };
       if (coalesce || !summary.usage) { summary.usage = observed; this.save(input.jobId, summary); }
     }
-    if (payload.type === "model" && details.kind === "rerouted" && typeof details.toModel === "string") {
+    if (payload.type === "model" && details.kind === "rerouted" && details.serverCorrelation === "explicit" && typeof details.toModel === "string") {
+      const origin = this.db.prepare("SELECT thread_id,upstream_request_id FROM jobs WHERE job_id=?").get(input.jobId) as { thread_id: string | null; upstream_request_id: string | null } | undefined;
       const summary = this.summary(input.jobId);
-      summary.execution = { ...record(summary.execution), reroutedModel: details.toModel.slice(0, 120) };
-      this.save(input.jobId, summary);
+      if (origin?.thread_id && origin.upstream_request_id && details.threadId === origin.thread_id && details.turnId === origin.upstream_request_id) {
+        summary.execution = { ...record(summary.execution), reroutedModel: details.toModel.slice(0, 120) };
+        this.save(input.jobId, summary);
+      }
     }
     if (archived) return JSON.stringify({ metadataOnly: true, type: input.eventType });
     if (coalesce && input.eventType.startsWith("app-")) {

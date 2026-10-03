@@ -16,7 +16,7 @@ export type CliProtocolSupport = {
 export const UNVERIFIED_APP_SERVER_CAPABILITIES: BackendCapabilities = Object.freeze({
   selectionScope: "turn", supportsModelOverrideOnContinue: false,
   supportsEffortOverrideOnContinue: false, supportsServiceTierOverrideOnContinue: false,
-  supportsPerTurnServiceTier: false, supportsThreadArchive: false, supportsThreadUnarchive: false,
+  supportsPerTurnServiceTier: false, supportedPerTurnServiceTiers: [], supportsThreadArchive: false, supportsThreadUnarchive: false,
   supportsFork: false, supportsSteering: false, supportsPreciseCancellation: false,
   supportsEphemeralThreads: false, supportsThreadInspection: false, supportsBackgroundTerminals: false
 });
@@ -126,6 +126,10 @@ export function inspectClientRequestContract(schema: Schema, configSchema?: Sche
       })
     ])),
     supportsThreadArchive: supports("supportsThreadArchive", check("thread/archive", [{ threadId: "bridge-contract-check" }])),
+    supportedPerTurnServiceTiers: ["default", "fast", "priority", "ultrafast"].filter(serviceTierForTurn => {
+      const { serviceTier: _persistentTier, ...inherited } = turn;
+      return check("turn/start", [{ ...inherited, permissions: ":read-only", serviceTierForTurn }]).length === 0;
+    }),
     supportsThreadUnarchive: supports("supportsThreadUnarchive", check("thread/unarchive", [{ threadId: "bridge-contract-check" }])),
     supportsFork: supports("supportsFork", check("thread/fork", policies.map(policy => ({ ...policy, threadId: "bridge-contract-check", ephemeral: false })))),
     supportsSteering: supports("supportsSteering", check("turn/steer", [{ threadId: "bridge-contract-check", expectedTurnId: "turn", input: turn.input }])),

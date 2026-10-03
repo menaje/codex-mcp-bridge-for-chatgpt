@@ -4,6 +4,7 @@ import type { AccessStrategy, BridgeConfig, SandboxMode } from "./config.js";
 import { DEFAULT_USER_MAX_CONCURRENT_JOBS } from "./config.js";
 import { EXECUTION_POLICY_VERSION, resolveTaskSandbox } from "./executionPolicy.js";
 import { BridgeStateStore } from "./stateStore.js";
+import { migratedProcessingSpeed, retainedPolicyServiceTiers, type RetainedServiceTier } from "./processingSpeed.js";
 import {
   MODEL_POLICY_SCHEMA_VERSION,
   automaticModelPolicy,
@@ -31,7 +32,7 @@ export type { ProjectRegistryOperation } from "./projectRegistry.js";
 
 export const SETTINGS_REVISION_CONFLICT = "SETTINGS_REVISION_CONFLICT";
 const EXECUTION_POLICY_HMAC_SECRET_META_KEY = "execution_policy_hmac_secret_v1";
-const EXECUTION_POLICY_REF_CONTRACT_VERSION = 5;
+const EXECUTION_POLICY_REF_CONTRACT_VERSION = 6;
 const TASK_EXECUTION_ENVELOPE_REF_CONTRACT_VERSION = 6;
 
 export type BridgeUserSettings = {
@@ -45,6 +46,9 @@ export type BridgeUserSettings = {
   modelPolicy: ModelPolicy;
   modelDescriptionOverrides: ModelDescriptionOverrides;
   usePriorityServiceTier: boolean;
+  /** Unknown future values remain stored but cannot execute. Legacy retains the old wire scope. */
+  processingSpeed: string;
+  retainedServiceTiers: RetainedServiceTier[];
   /** App-private composed registry view. UUID/cwd are stripped from public results. */
   projects: ProjectTarget[];
   uiLocalePreference: UiLocalePreference;
@@ -113,6 +117,8 @@ export class UserSettingsStore {
       modelPolicy: automaticModelPolicy(),
       modelDescriptionOverrides: {},
       usePriorityServiceTier: false,
+      processingSpeed: "legacy",
+      retainedServiceTiers: [],
       uiLocalePreference: "auto",
       maxConcurrentJobs: Math.min(DEFAULT_USER_MAX_CONCURRENT_JOBS, config.maxConcurrentJobs),
       // Durable context is the default for a new installation. Loaded legacy
@@ -200,6 +206,7 @@ export class UserSettingsStore {
         accessStrategy: settings.accessStrategy,
         modelPolicy: canonicalExecutionModelPolicy(settings.modelPolicy),
         usePriorityServiceTier: settings.usePriorityServiceTier,
+        processingSpeed: settings.processingSpeed,
         // Bind only catalog fields that can alter admission or dispatch.
         // GPT-facing names and guidance may refresh Settings/UI catalog data,
         // but do not make an otherwise equivalent admission snapshot stale.
@@ -293,6 +300,7 @@ export class UserSettingsStore {
       modelPolicy,
       modelDescriptionOverrides: {},
       usePriorityServiceTier: this.initial.usePriorityServiceTier,
+      processingSpeed: this.initial.processingSpeed,
       uiLocalePreference: this.initial.uiLocalePreference,
       maxConcurrentJobs: this.initial.maxConcurrentJobs,
       showBridgeThreadsInCodexApp: this.initial.showBridgeThreadsInCodexApp,
@@ -331,9 +339,13 @@ export class UserSettingsStore {
       throw new Error("PROJECT_REGISTRY_REVISION_CONFLICT: expectedRegistryRevision is required.");
     }
 
+    const speedPatch = { ...patch };
+    // Old clients send this boolean even when changing unrelated settings.
+    // Once a new speed mode exists, only an explicit new-field edit can change it.
+    if (speedPatch.processingSpeed === undefined && this.settings.processingSpeed !== "legacy") delete speedPatch.usePriorityServiceTier;
     const merged = {
       ...this.settings,
-      ...patch,
+      ...speedPatch,
       settingsRevision: this.settings.settingsRevision,
       updatedAt: this.settings.updatedAt
     } as GeneralSettings;
@@ -421,6 +433,8 @@ export class UserSettingsStore {
     if (typeof candidate.usePriorityServiceTier !== "boolean") {
       throw new Error("Invalid Priority service-tier preference.");
     }
+    if (typeof candidate.processingSpeed !== "string" || !candidate.processingSpeed || candidate.processingSpeed.length > 100) throw new Error("Invalid processing speed preference.");
+    if (!Array.isArray(candidate.retainedServiceTiers)) throw new Error("Invalid retained service-tier records.");
     if (!isUiLocalePreference(candidate.uiLocalePreference)) {
       throw new Error(`Invalid interface language preference: ${String(candidate.uiLocalePreference)}`);
     }
@@ -550,7 +564,8 @@ function cloneGeneralSettings(settings: GeneralSettings): GeneralSettings {
   return {
     ...settings,
     modelPolicy: validateModelPolicy(settings.modelPolicy),
-    modelDescriptionOverrides: { ...settings.modelDescriptionOverrides }
+    modelDescriptionOverrides: { ...settings.modelDescriptionOverrides },
+    retainedServiceTiers: structuredClone(settings.retainedServiceTiers)
   };
 }
 
@@ -657,6 +672,8 @@ function needsGeneralSettingsRewrite(value: Record<string, unknown>): boolean {
     "accessStrategy",
     "modelPolicy",
     "usePriorityServiceTier",
+    "processingSpeed",
+    "retainedServiceTiers",
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
@@ -699,11 +716,13 @@ function readGeneralSettings(
   settingsRevision: number
 ): GeneralSettings {
   if (!isRecord(value)) throw new Error(`Invalid bridge settings at ${source}.`);
+  if (typeof value.schemaVersion === "number" && value.schemaVersion > MODEL_POLICY_SCHEMA_VERSION) throw new Error("SETTINGS_SCHEMA_UNSUPPORTED: Newer settings are preserved. Use a compatible Bridge before admitting work.");
   const accessStrategy = value.accessStrategy as AccessStrategy;
   const migratedPolicy = migrateModelPolicyServiceTiers(value.modelPolicy);
   const hasMigratablePolicy =
     (
       value.schemaVersion === MODEL_POLICY_SCHEMA_VERSION ||
+      value.schemaVersion === 7 ||
       value.schemaVersion === 6 ||
       value.schemaVersion === 5 ||
       value.schemaVersion === 4 ||
@@ -730,6 +749,11 @@ function readGeneralSettings(
     usePriorityServiceTier: typeof value.usePriorityServiceTier === "boolean"
       ? value.usePriorityServiceTier
       : migratedPolicy.usedFastTier,
+    processingSpeed: migratedProcessingSpeed(value, retainedPolicyServiceTiers(value.modelPolicy)),
+    retainedServiceTiers: [...new Map([
+      ...(Array.isArray(value.retainedServiceTiers) ? structuredClone(value.retainedServiceTiers) as RetainedServiceTier[] : []),
+      ...retainedPolicyServiceTiers(value.modelPolicy)
+    ].map(entry => [JSON.stringify(entry), entry])).values()],
     uiLocalePreference: isUiLocalePreference(value.uiLocalePreference)
       ? value.uiLocalePreference
       : "auto",
@@ -807,6 +831,7 @@ function assertSettingsPatchKeys(patch: BridgeUserSettingsPatch): void {
     "modelPolicy",
     "modelDescriptionOverrides",
     "usePriorityServiceTier",
+    "processingSpeed",
     "uiLocalePreference",
     "maxConcurrentJobs",
     "showBridgeThreadsInCodexApp",
