@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "issue": 225,
+  "recordedAt": "2026-10-03T07:42:31Z",
+  "scope": "full local development-source regression after PR #229",
+  "testedSource": {
+    "commit": "7bebd8fb0dfc73674adfdb0ab0f97cadfc15145d",
+    "tree": "dafad48c89b0999f3c5eda3064226cd0b9ef3491",
+    "clean": true,
+    "gitObjects": {
+      "src": "739e56b81114c1c4a1ecf8587c6c2f74de62d0ca",
+      "scripts": "2de3e5784e57f6354df2e6faa4a0a20f2632661b",
+      "test": "4b3a0b2b4f22412a1fff7c586ff2d4a3ed671506",
+      "macos": "b568a48dc4b78a3d44816f1e224c180963a9f234",
+      "protocol": "9b8ec39538c5fa5378988156dae9f8ce048b2770",
+      "locales": "4ed54eabe0e0426b142c69d293b8b52e99204f6f",
+      "ui-resources": "d4a19c83d71d3c0f248c9351743dfe1c7e36b4af",
+      "package.json": "1c8ed057d7fc59d27c9d5e464d95f7e06baf0b0a",
+      "package-lock.json": "627d3e413eaed7cab632b94196117c821f97fa01",
+      "tsconfig.json": "72bc4f1f6896661b786d2a71e8ad4a3f7fff7dd9",
+      "vitest.config.ts": "a6df1c7a563a4e9fc67b5abca6a973774c938472",
+      "app-server-schema.lock.json": "cbb6ac877137459c8c14d8126986632b2fdb94e5",
+      "release-manifest.json": "2b2ffe0c68c34809957b870e367e3db9a1fbccac",
+      "release-manifest.schema.json": "191fff83163532946a4c6d0ccb3214b6214c5c10",
+      "state-migrations.json": "47d6949fdaef9c9215fb9e441ecddba5e69f5e48",
+      "ui-manifest.lock.json": "f5b9f56bd42abf3860c65201d638a7f373e1039e",
+      "ui-release-catalog.json": "84bc954bf05ad0c57002fba47e8baf060f9669ec",
+      ".app.json": "13b25a563ed6a231f5bf9b087c5b4c0fa050ad60",
+      ".codex-plugin": "a325bbda0b248424d0e38c3b70ef71cbc6c195de"
+    },
+    "sha256": {
+      "package-lock.json": "30e505c06fc6776c96068943d85907afb4bfd959b976bf1df38f220278d9646c",
+      "scripts/execution-storage.mjs": "5751671591915bfbcd77158c186162f1d142a6060d77a065738b3dd14f894945",
+      "test/executionStorage.test.ts": "f081dfc2bcfb9eeabe2a2d668d0ca3d2ef208c0ea42cbb8c5a05a4b5ed6fc3b0"
+    }
+  },
+  "environment": {
+    "node": "v22.16.0",
+    "nodeAbi": "127",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "npm": "10.9.3",
+    "sqlite": "3.53.4",
+    "betterSqlite3": "13.0.3",
+    "vitest": "4.1.11",
+    "macOS": "26.6.2",
+    "swift": "Apple Swift 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)",
+    "swiftDriver": "1.148.6"
+  },
+  "isolation": {
+    "freshTemporaryWorktree": true,
+    "dependencyInstall": "npm ci",
+    "independentNodeModules": true,
+    "temporaryNodeAndNpm": true,
+    "operatingCredentialsUsed": false,
+    "operatingInstallationChanged": false,
+    "additionalDotExperiment": false
+  },
+  "fullInvocation": {
+    "command": "npm run validate:full",
+    "attempts": 1,
+    "exitCode": 0,
+    "releaseMetadata": "PASS",
+    "localization": "PASS",
+    "nodeBuild": "PASS",
+    "node": {
+      "command": "vitest run --maxWorkers=4",
+      "files": 121,
+      "filesPassed": 121,
+      "total": 1323,
+      "passed": 1323,
+      "failed": 0,
+      "durationSeconds": 207.28
+    },
+    "appServerSchemas": {
+      "status": "PASS",
+      "codexCLI": "0.153.3",
+      "jsonFiles": 416,
+      "typeScriptFiles": 827
+    },
+    "swift": {
+      "command": "swift test --package-path macos -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors",
+      "total": 218,
+      "passed": 216,
+      "skipped": 2,
+      "failed": 0
+    },
+    "productOrTestChanges": false,
+    "testTimeoutChanges": false,
+    "nodeWorkerLimitChanged": false
+  },
+  "buildInfo": {
+    "version": "0.4.1",
+    "commit": "7bebd8fb0dfc73674adfdb0ab0f97cadfc15145d",
+    "dirty": false,
+    "sourceHash": "db4468ade2648464ede71d6a070c171d95612f780f43931728f8e67a8e251715",
+    "builtAt": "2026-10-03T07:36:49.115Z",
+    "id": "7bebd8fb0dfc:db4468ade264"
+  },
+  "logs": [
+    {
+      "file": "validate-full.log",
+      "scope": "complete passing invocation on Node 22.16.0",
+      "sha256": "7f540117d5dbedd2738b959fd846c50689ff4bf0937ca9305a0726f8b7343bcd",
+      "retention": "local temporary evidence; excluded from release payload"
+    },
+    {
+      "file": "validate-affected.log",
+      "scope": "earlier failed full Node invocation recorded by PR #229",
+      "sha256": "47cbd3dda769efe6d4eb248afefddaba39d956b2e772fb0324b6535a1740d276",
+      "retention": "local temporary evidence; excluded from release payload"
+    },
+    {
+      "file": "retry-timed-processes.log",
+      "scope": "overlapping isolated retry recorded by PR #229",
+      "sha256": "205a608cb103e024650ebeef666f82203e48d6246cb98262cc379201ca2e9bd3",
+      "retention": "local temporary evidence; excluded from release payload"
+    }
+  ],
+  "priorValidation": {
+    "recordedBy": "https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/229",
+    "node": "24.11.1",
+    "fullNodeAttempt": {
+      "status": "FAIL",
+      "passed": 1313,
+      "failed": 10,
+      "filesFailed": 5
+    },
+    "isolatedRetry": {
+      "status": "PASS",
+      "passed": 119,
+      "files": 5,
+      "maxWorkers": 1,
+      "overlapsFullAttempt": true
+    },
+    "failureCause": "UNCONFIRMED",
+    "countsAddedToNewRun": false
+  },
+  "limits": [
+    "Local validation; not a GitHub CI result.",
+    "One complete pass in the recorded environment does not establish repeated-run stability or the cause of the earlier Node 24 failures.",
+    "Documentation and its release change fragment are added after the tested commit; product and test inputs remain unchanged.",
+    "The next release candidate must satisfy exact-commit and artifact-bound release gates; no release candidate was created.",
+    "No operating account switch, refresh, login cancellation, installed app update or new Dot concurrency observation is added."
+  ]
+}

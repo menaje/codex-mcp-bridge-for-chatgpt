@@ -133,3 +133,42 @@ invocation remains a failed run, rather than being reported as a clean PASS.
 The JSON record above remains historical evidence for #227's implementation
 commit. This follow-up has separate local validation; it adds no real-account,
 Dot concurrency or installed-runtime observation to the earlier evidence.
+
+## Full regression confirmation after #229
+
+After [PR #229](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/229)
+merged, the unchanged `dev` commit
+`7bebd8fb0dfc73674adfdb0ab0f97cadfc15145d` passed one complete local
+`npm run validate:full` invocation on 2026-10-03. A fresh temporary worktree
+used its own locked `npm ci` dependencies, temporary Node 22.16.0/npm 10.9.3,
+macOS 26.6.2 arm64 and Apple Swift 6.3.3. Native schema validation used the
+repository's pinned Codex CLI 0.153.3. Product code, test assertions, timeouts
+and the existing four-worker Node test command were unchanged.
+
+| Check | Result in this single invocation |
+| --- | --- |
+| Release metadata, localization and Node build | PASS |
+| Full Node regression | 1,323 passed, 0 failed across all 121 files |
+| App Server schema compatibility | PASS; CLI 0.153.3, 416 JSON and 827 TypeScript files |
+| Full Swift regression, strict concurrency and warnings as errors | 218 tests, 2 skipped, 0 failures |
+| Complete command | Exit 0 |
+
+The [full regression evidence](issue-225-full-regression.evidence.json) records
+the exact tested commit/tree, runtime and dependency versions, source hashes,
+build identity and local log hashes. Subsequent changes in this documentation
+follow-up are confined to evidence and a release change fragment; they do not
+change the tested product, dependency lock, test configuration or assertions.
+
+The earlier Node 24 full attempt remains a failed run with 1,313 passes and
+10 failures. Its 119-test isolated retry overlaps that attempt and is never
+added to either full-run total. The new run confirms a complete pass in its
+recorded environment; it does not establish the cause of the earlier failures,
+prove repeated-run stability or constitute a GitHub CI pass. If a parallel
+failure recurs, preserve that run and investigate it separately from the
+accepted storage fix.
+
+This is development-source integration evidence. The next release candidate
+still requires validation at its exact final commit and artifact inputs under
+the release governance. No candidate, tag, release, installation update,
+operating account switch or additional Dot concurrency experiment was performed.
+Previously unperformed operating acceptance items remain unperformed.
