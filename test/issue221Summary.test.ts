@@ -27,7 +27,7 @@ describe("#221 exact result actions in summaries", () => {
     [statusAction({ query: { kind: "activity", id: jobId } })],
     [{ kind: "tool", tool: "codex_models", arguments: {} }],
     [{ kind: "guidance", message: "Retrieve the answer." }]
-  ])("rejects missing or unrelated retrieval actions: %j", actions => {
+  ].map(actions => [actions]))("rejects missing or unrelated retrieval actions: %j", actions => {
     expect(() => validate(summary("overview", actions))).toThrow();
   });
   it("requires each delivered Job's own action", () => {
