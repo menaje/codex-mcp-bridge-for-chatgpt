@@ -213,6 +213,32 @@ describe("current bridge tool contracts", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it.each([
+    { model: "removed-model", reasoningEffort: selection.reasoningEffort },
+    { model: selection.model, reasoningEffort: "removed-effort" }
+  ])("refuses an unavailable fixed choice before admitting work: $model/$reasoningEffort", async saved => {
+    settings.update({ modelPolicy: { mode: "fixed", selection: saved, constraints: { allowDelegation: true } } }, settings.current.settingsRevision);
+    await client.close();
+    await new Promise<void>(resolve => server.close(resolve));
+    server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+    client = new Client({ name: "fixed-choice-test", version: "1.0.0" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`)));
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const result = await client.callTool({ name: "codex_task", arguments: {
+      requestId: randomUUID(), scopeId: randomUUID(), prompt: "Retain the explicit fixed choice.",
+      taskContractVersion: properties.taskContractVersion?.const, executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision }
+    }, _meta: metadata });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain("MODEL_UNAVAILABLE");
+    expect(upstream.calls).toEqual([]);
+    expect(state.listJobs()).toEqual([]);
+    expect(settings.current.modelPolicy).toHaveProperty("selection", saved);
+  });
+
   it.each(["persistent", "ephemeral"] as const)("starts a hidden %s conversation using the independent storage preference", async persistence => {
     settings.update({ showBridgeThreadsInCodexApp: false, bridgeThreadPersistence: persistence }, settings.current.settingsRevision);
     await client.close();

@@ -408,6 +408,24 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   }, 15_000);
 
+  it.each(["thread/archive", "thread/unarchive"])("keeps execution available without optional %s", async method => {
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, { environment: {
+      ...process.env, CODEX_TEST_MISSING_METHOD: method
+    } });
+    try {
+      await pool.listModels();
+      const tools = await pool.listTools() as { tools: Array<{ name: string }> };
+      expect(tools.tools.some(tool => tool.name === method)).toBe(false);
+      const management = method === "thread/archive" ? pool.archiveThread("fixture") : pool.restoreThread("fixture");
+      await expect(management).rejects.toThrow("CODEX_FEATURE_UNSUPPORTED");
+      const result = await pool.startThread({ backendKind: "app-server", prompt: "report selection",
+        cwd: process.cwd(), sandbox: "read-only", approvalPolicy: "on-request",
+        selection: { model: "gpt-5.6-sol", reasoningEffort: "max" } });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toHaveProperty("threadId");
+    } finally { await pool.close(); }
+  });
+
   it("creates hidden App Server starts and forks as ephemeral threads", async () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     try {

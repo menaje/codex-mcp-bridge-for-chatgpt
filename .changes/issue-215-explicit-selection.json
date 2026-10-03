@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Preserve unavailable fixed model choices and isolate unsupported optional CLI management features.",
+  "breaking": false,
+  "migration": null
+}
