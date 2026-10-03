@@ -14,7 +14,10 @@ integrated contract/fixed-selection protection at
 [PR 232](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/232)
 integrated scoped speed, migration, evidence and UI at
 `b2da376ce1191fa7b657f384da9797cb37457e47`.
-Final integration evidence is recorded separately after the bounded checks.
+[PR 233](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/pull/233)
+contains the final bounded validation below. Its merge receipt identifies the
+integration revision; development validation does not establish installed-product
+or real-account acceptance.
 
 The product remains development 0.4.1. CI reproduction remains CLI 0.153.3;
 schema compatibility and actual selected runtime admission remain capability
@@ -50,6 +53,10 @@ The observed configured-Fast new inheritance sends a provider tier; legacy false
 sends none. A Standard override sends none, and later inheritance restores the
 persistent Fast tier. This confirms that migrating false to inheritance would
 change behavior. Wire receipts preserve null versus omission and turn scope.
+The [sanitized lifecycle report](issue-215-cli-lifecycle-20261003.json) preserves
+all 32 accepted/responded/completed turns, exact CLI identities and synthetic
+thread/turn references. The final run recorded zero blocked external attempts;
+processing grades and commercial account entitlement remain unconfirmed.
 
 Primary contracts: official [0.153.3 TurnStartParams](https://github.com/openai/codex/blob/rust-v0.153.3/codex-rs/app-server-protocol/src/protocol/v2/turn.rs),
 [0.160.0 TurnStartParams](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/app-server-protocol/src/protocol/v2/turn.rs),
@@ -99,6 +106,36 @@ the scripts do not install/select a runtime. The latter supports
 For the repository schema-lock check, put the baseline executable on PATH instead
 of setting an ambient `CODEX_MCP_BRIDGE_CODEX`, which would override fixtures.
 
-The final integration run and sanitized lifecycle/build evidence will be appended
-after their completion. Earlier partial full runs are not represented as a single
-clean full-suite result.
+The final clean Node source was
+`1abf569fa0cc3ce4ca1e7a8e3f5ee42a41324aa0`, built with Node 22.20.0 / ABI 127
+on Darwin arm64. The build fingerprint was
+`3086b1864baf9411d44cc07d57af856fc55652597597deb45feae074976b51d9`.
+The [validation report](issue-215-validation-20261003.json) records Git source
+objects, build identity, compiled-file hashes, report/log hashes and acceptance
+boundaries.
+
+| Check | Final result |
+| --- | --- |
+| Build, release metadata and nine-language localization synchronization | Passed. Product 0.4.1 and development release stage preserved. |
+| Node full suite (`vitest run --maxWorkers=2`) | **123 files, 1,362 tests passed, zero failed**, in one clean run (380.32 seconds). |
+| Baseline App Server schema lock | Passed against CLI 0.153.3: 416 JSON / 827 TypeScript files. |
+| Native localization / strict concurrency / warnings as errors | **222 executed, two skipped, zero failures**. |
+| Real CLI / synthetic local provider | **32 turns** accepted, responded and completed across baseline/latest and configured-Fast/unset samples. |
+| Real-browser Settings and Dashboard | **Nine checks**; unknown tier preserved; no inference or operational settings changes. |
+| Existing #212 usage browser regression | Passed retained value, timestamp and missing-data behavior. |
+
+Earlier focused runs passed 78 model/usage tests and 36 historical-label/UI tests.
+One earlier full run had 1,361 passes and an obsolete activity-history expectation
+for an uncorrelated model reroute. After correcting that expectation, its 11 tests
+and the final full suite above passed. Interrupted and partial runs are not counted
+as a clean full-suite result.
+
+The CLI lifecycle was executed at
+`6c7fbe2904c8734695e0fb3f7a196334cad7dbf0`; its build fingerprint and runtime,
+script, UI, localization and package source objects are identical at the final
+Node source. Native source tree
+`1219de86b6d94645ef1b281363c4a9c9432aa45c` is also identical. The intervening
+commit changes only the activity-history test expectation. The later evidence
+commit adds audit documents and a release note; source identity is checked again
+when rebuilding it. These identities bind the development results without
+claiming a candidate package, DMG, installed-product or real-account test.
