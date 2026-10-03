@@ -405,12 +405,13 @@ describe("Activity SQLite state", () => {
           model: "gpt-test",
           reasoningEffort: "high",
           serviceTier: "priority",
-          reroutedModel: "gpt-rerouted"
+          requestState: "requested"
         }
       })
     ]);
     expect(JSON.stringify(store.listDashboardRetainedJobs()))
       .not.toContain("must-not-survive-pruning");
+    expect(store.listDashboardRetainedJobs()[0]?.execution).not.toHaveProperty("reroutedModel");
     expect(store.getActivity(ACTIVITY_A)).toMatchObject({
       counts: { total: 1, completed: 1, terminal: 1 }
     });
