@@ -24,7 +24,7 @@
 
 이미 접수한 B는 원래 principal/scope·prompt digest·canonical requestId·reviewedVersion 및 context를 검증한 뒤 폐기 모드의 신규 접수 거부 **전에** 같은 B를 반환한다. 구형 delivery selector의 재전송도 원 승인과 완전히 일치하는 admitted B에 한해서 인정한다. 결과 만료는 만료 오류이며 다른 B를 만들지 않는다. 과거 Events 기록은 읽기/보존하되 새 일반 실행 권한으로 소비하지 않는다.
 
-요약의 동작은 kind=tool-call, tool, query kind, exact Job ID로 검증한다. 새 객체/JSON roundtrip을 인정하며 다른 도구·조회 종류·Job ID·누락·다른 Job의 동작을 거부한다. overview/page/activity/thread에는 원문을 넣지 않고 exact 조회에서만 제공한다. 취소·중단·terminal commit 실패의 error code도 exact와 요약에서 일치한다.
+요약의 동작은 `kind=tool`, `tool=codex_status`, `query.kind=job`, exact Job ID로 검증한다. 새 객체/JSON roundtrip을 인정하며 다른 도구·조회 종류·Job ID·누락·다른 Job의 동작을 거부한다. overview/page/activity/thread에는 원문을 넣지 않고 exact 조회에서만 제공한다. 취소·중단·terminal commit 실패의 error code도 exact와 요약에서 일치한다.
 
 일반 초기화는 McpEventsController 및 Events 전용 issuer/verifier/services를 만들지 않는다. 실험은 `EXPERIMENTAL_PROFILE=events`와 enable flag를 함께 지정해야 한다. 공통 원본 검토·사전 승인·canonical followup/dedup·질문/승인/취소 지침은 일반 프로필에 남겼다. 동일 principal hash prefix, Tunnel과 기본 인증, native notification outbox/ACK, 보존 로직과 역사적 parser/receipt는 유지했다.
 
