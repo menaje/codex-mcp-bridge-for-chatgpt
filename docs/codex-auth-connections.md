@@ -109,7 +109,11 @@ observation, not proof that the original thread was deleted.
 Ownership markers bind new profiles to this one store. Only new empty profiles
 can join it. A missing or changed marker, replaced rollout directory link, or
 changed SQLite binding blocks execution; reads never migrate, repair, copy or
-silently replace the store. Back up the owned store and retained profile
+silently replace the store. Preparing another profile also requires all three
+existing storage directories. Only the first creation of the storage root may
+initialize them. Missing directories, including an interrupted initial setup,
+are not automatically recreated as empty replacements; restore the original
+location before retrying. Back up the owned store and retained profile
 directories together. Moving only SQLite or deleting an inactive profile's
 rollout links can break native continuation.
 

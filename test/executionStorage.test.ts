@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -37,6 +37,41 @@ it("shares native rollout and SQLite locations across new profiles while retaini
   await f.manager.cancelCandidate(second.id, 3);
   expect(authProfileEnvironment(f.root, f.candidate.id).CODEX_SQLITE_HOME).toBe(first.CODEX_SQLITE_HOME);
   expect(await readFile(path.join(f.home, "auth.json"), "utf8")).toBe("synthetic-first-credential");
+});
+
+it.each(["sessions", "archived_sessions", "sqlite"])("keeps a missing shared %s directory unavailable when preparing another profile", async name => {
+  const f = await fixture();
+  const originalEnvironment = authProfileEnvironment(f.root, f.candidate.id);
+  const directory = path.join(f.store, name), moved = path.join(f.store, `${name}-moved`);
+  await writeFile(path.join(directory, "original-data"), "retained-storage-data");
+  await writeFile(path.join(f.home, "auth.json"), "retained-private-credential");
+  await f.manager.cancelCandidate(f.candidate.id, 1);
+  const stateFile = path.join(f.root, "auth-selection.json");
+  const originalState = await readFile(stateFile, "utf8");
+  const markerFile = path.join(f.store, "bridge-storage.json");
+  const originalMarker = await readFile(markerFile, "utf8");
+  await rename(directory, moved);
+  expect(() => authProfileEnvironment(f.root, f.candidate.id)).toThrow("CODEX_STORAGE_UNAVAILABLE");
+
+  const helperHome = path.join(f.root, "auth-profiles", randomUUID());
+  await mkdir(helperHome);
+  await expect(createIndependentProfileStorage(f.root, helperHome)).rejects.toThrow("CODEX_STORAGE_UNAVAILABLE");
+  expect(await readdir(helperHome)).toEqual([]);
+  await expect(lstat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(f.manager.prepare("bridge-api", 2, f.environment)).rejects.toThrow("CODEX_STORAGE_UNAVAILABLE");
+  await expect(lstat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(stateFile, "utf8")).toBe(originalState);
+  expect(await readFile(markerFile, "utf8")).toBe(originalMarker);
+  expect(await readFile(path.join(moved, "original-data"), "utf8")).toBe("retained-storage-data");
+  expect(await readFile(path.join(f.home, "auth.json"), "utf8")).toBe("retained-private-credential");
+  expect(() => authProfileEnvironment(f.root, f.candidate.id)).toThrow("CODEX_STORAGE_UNAVAILABLE");
+
+  // Restoring the actual directory makes the same store usable again.
+  await rename(moved, directory);
+  expect(authProfileEnvironment(f.root, f.candidate.id)).toEqual(originalEnvironment);
+  const second = (await f.manager.prepare("bridge-api", 2, f.environment)).candidate!;
+  expect(authProfileEnvironment(f.root, second.id).CODEX_SQLITE_HOME).toBe(originalEnvironment.CODEX_SQLITE_HOME);
+  expect(await readFile(path.join(directory, "original-data"), "utf8")).toBe("retained-storage-data");
 });
 
 it("preserves an existing unbound profile and explicit external home without adopting their data", async () => {

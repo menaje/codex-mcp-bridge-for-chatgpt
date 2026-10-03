@@ -105,3 +105,31 @@ existing concurrency baseline is accepted from the user; any additional native
 account/application assertions require their own actual evidence. Storage/account access
 failures should preserve history and explain the blocked condition, not select
 another installation, replay work or create a replacement conversation.
+
+## Follow-up: missing shared storage directories
+
+Review found that preparing another profile could recreate a missing `sessions`,
+`archived_sessions` or `sqlite` directory in an existing owned store. This could
+make an older profile's binding validate against an empty directory while the
+original data remained elsewhere. First creation now initializes those
+directories; reuse requires all three to exist and never fills missing paths.
+An interrupted existing initialization also stays unavailable until restored.
+
+The local isolated regression in
+[executionStorage.test.ts](../../test/executionStorage.test.ts) covers each
+directory through both the helper and `CodexAuthSelectionManager.prepare()`:
+preparation is rejected, no empty replacement is created, data/credentials and
+saved selection remain intact, and the older profile still reports
+`CODEX_STORAGE_UNAVAILABLE`. Restoring the original directory permits reuse of
+the same store. These three cases failed before the fix and pass afterwards;
+all 11 storage tests pass on macOS with Node 24.11.1.
+
+Release metadata, schema compatibility and the Node build passed locally. The
+full Node attempt recorded 1,313 passes and 10 process/socket/time-limit failures
+across five suites; rerunning those suites alone with one worker passed all
+119 tests without changing code, assertions or timeouts. The initial full
+invocation remains a failed run, rather than being reported as a clean PASS.
+
+The JSON record above remains historical evidence for #227's implementation
+commit. This follow-up has separate local validation; it adds no real-account,
+Dot concurrency or installed-runtime observation to the earlier evidence.

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Reject new login profile preparation when an existing Bridge conversation storage directory is missing, preserving its unavailable state and original data.",
+  "breaking": false,
+  "migration": null
+}
