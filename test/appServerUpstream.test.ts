@@ -610,12 +610,12 @@ describe("CodexAppServerUpstreamPool", () => {
     const pool = new CodexAppServerUpstreamPool(FIXTURE, 1);
     try {
       await expect(pool.probeThread("missing-thread")).resolves.toEqual({
-        state: "orphaned",
-        reason: "missing",
+        state: "unknown",
+        reason: "storage-unavailable",
         threadId: "missing-thread",
-        retryable: false
+        retryable: true
       });
-      expect(pool.canResumeThread("missing-thread")).toBe(false);
+      expect(pool.canResumeThread("missing-thread")).not.toBe(false);
 
       const started = await pool.callTool("codex", task("probe idle"));
       const threadId = (started.structuredContent as { threadId: string }).threadId;

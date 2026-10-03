@@ -30,9 +30,29 @@ Returning from the Codex app requires the app to relinquish its writer. The brid
 
 ## Persistence and app visibility
 
-Persistence provenance is retained separately from visibility. New installations default to persistent conversations with Codex app visibility enabled. Saved visibility preferences, including historical settings without that field, keep their previous behavior. Existing conversation records keep their original evidence: the old explicit visible flag implied persistent creation; explicit hidden implied ephemeral creation; absent evidence remains unknown. Actual start/resume/fork responses record the runtime's `ephemeral` value. Existing persistence is immutable.
+`bridgeThreadPersistence` independently selects `persistent` (the default for
+new conversations) or `ephemeral`. `showBridgeThreadsInCodexApp` controls the
+app-opening preference. Turning app visibility off no longer implies
+memory-only storage or rejects persistent creation. Explicit memory-only mode
+requires app visibility off. Existing conversations retain their actual runtime
+persistence, even if the preference changes for the next new/forked thread.
 
-Codex 0.153.3 exposes no verified option for creating a durable conversation while guaranteeing that it is hidden from the app list. Choose app visibility for conversations that must survive worker restart, or explicitly keep a memory-only conversation. The bridge preserves existing visibility preferences and does not silently convert or discard existing ephemeral context. A new thread made from a summary would be a separate conversation, not restoration of the original context.
+Saved visibility preferences, including older settings without that field,
+remain intact. Older settings without a storage preference default new threads
+to persistent. This changes future creation only: existing ephemeral context is
+not silently converted, copied or recovered after worker loss. Legacy records
+keep their original persistence evidence; missing evidence remains unknown.
+Actual start/resume/fork replies retain the runtime's `ephemeral` value.
+
+Codex 0.153.3 exposes no verified durable-hidden flag for a shared app home.
+Consequently, disabling the preference is not a promise that an independently
+launched app cannot discover a conversation in shared storage. The Bridge's
+independent store saves conversations across restarts without automatically
+sharing that store with the desktop app. Direct app visibility is reported only
+for persistent conversations using the default app home; other app discovery,
+opening and handoff routes remain unverified and are checked separately from
+storage and native resumption. Opening a private-store thread in the app is not
+claimed as supported. See [new profile storage](codex-auth-connections.md#independent-conversation-storage-for-new-profiles).
 
 ## Database retention and recovery
 

@@ -234,7 +234,7 @@ struct CodexRuntimeSettingsPane: View {
         }
         if runtime.actions.install {
             HStack {
-                Text("macos.bridgecli")
+                Text("macos.bridgecliRecommended")
                 Spacer()
                 Button("macos.install") { action("install") }
             }

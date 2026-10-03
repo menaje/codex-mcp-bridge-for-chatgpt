@@ -54,8 +54,9 @@ it("runs the built launcher and MCP model path against the private-file runtime 
   fixtureCli(selectedCli, "selected", log);
   fixtureCli(otherCli, "default", log);
   const seed = async (runtime: string, command: string) => {
-    await new CodexRuntimeManager({ root: runtime, environment: { PATH: "" }, appPaths: [command],
-      probe: async () => "0.153.3", protocolProbe: async () => inspectClientRequestContract(protocolContract) }).snapshot();
+    const manager = new CodexRuntimeManager({ root: runtime, environment: { PATH: "" }, appPaths: [command],
+      probe: async () => "0.153.3", protocolProbe: async () => inspectClientRequestContract(protocolContract) });
+    await manager.select((await manager.discover()).find(candidate => candidate.command === command)!.id);
   };
   await seed(runtimeHome, selectedCli);
   await seed(defaultHome, otherCli);

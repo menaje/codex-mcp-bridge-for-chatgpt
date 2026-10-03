@@ -1598,10 +1598,18 @@ private struct AppGeneralSettingsPane: View {
                     Text("macos.withautomaticthemacosappfollowsyourmac")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Picker("macos.threadStorage", selection: draft.bridgeThreadPersistence) {
+                        Text("macos.threadStorage.persistent").tag("persistent")
+                        Text("macos.threadStorage.ephemeral").tag("ephemeral")
+                    }
+                    .onChange(of: draft.wrappedValue.bridgeThreadPersistence) { value in
+                        if value == "ephemeral" { draft.wrappedValue.showBridgeThreadsInCodexApp = false }
+                    }
                     Toggle(
                         "macos.keepnewagenttasksinthecodexapp",
                         isOn: draft.showBridgeThreadsInCodexApp
                     )
+                    .disabled(draft.wrappedValue.bridgeThreadPersistence == "ephemeral")
                     Text("macos.whenenablednewtasksandfreshcontextsare")
                         .font(.caption)
                         .foregroundStyle(.secondary)

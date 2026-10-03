@@ -62,7 +62,7 @@ The native client-only mode is currently available on macOS. Windows and Linux u
    - **Run Server on This Mac** to run Codex locally.
    - **Connect to Existing Server** to use this Mac only as a client.
 
-Server mode requires macOS 13 or later, Node.js 22 or later, and `tunnel-client`. In **Settings → Codex Account & Installation**, use an existing app/terminal Codex or install a bridge-managed CLI. A single existing installation is selected automatically; saved choices and manual update preferences are preserved. The first-run assistant checks supported existing connection settings before asking for a Tunnel runtime key and Tunnel ID, then guides you through Codex browser login and the first project.
+Server mode requires macOS 13 or later, Node.js 22 or later, and `tunnel-client`. In **Settings → Codex Account & Installation**, use an existing app/terminal Codex or install a bridge-managed CLI. New setups recommend a bridge-managed CLI and require an explicit installation or external selection; saved choices and manual update preferences are preserved. The first-run assistant checks supported existing connection settings before asking for a Tunnel runtime key and Tunnel ID, then guides you through Codex browser login and the first project.
 
 The bridge connects directly to the selected Codex through App Server. See [Codex installation and updates](docs/codex-runtimes.md) for ownership, compatibility, authentication and recovery.
 

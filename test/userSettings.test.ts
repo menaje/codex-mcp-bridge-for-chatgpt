@@ -55,19 +55,28 @@ describe("user settings and project registry", () => {
     const config = configFor();
     const first = persistentSettings(config, databaseFile);
     expect(first.settings.current.showBridgeThreadsInCodexApp).toBe(true);
+    expect(first.settings.current.bridgeThreadPersistence).toBe("persistent");
     first.settings.update({ showBridgeThreadsInCodexApp: false }, 0);
     first.stateStore.close();
 
     const second = persistentSettings(config, databaseFile);
     expect(second.settings.current.showBridgeThreadsInCodexApp).toBe(false);
+    expect(second.settings.current.bridgeThreadPersistence).toBe("persistent");
     const legacy = second.stateStore.getSettingsRecord()!.payload as Record<string, unknown>;
     delete legacy.showBridgeThreadsInCodexApp;
+    delete legacy.bridgeThreadPersistence;
     second.stateStore.close();
     replaceStoredSettingsPayloadForTest(databaseFile, legacy);
 
     const restored = persistentSettings(config, databaseFile);
     expect(restored.settings.current.showBridgeThreadsInCodexApp).toBe(false);
+    expect(restored.settings.current.bridgeThreadPersistence).toBe("persistent");
+    restored.settings.update({ bridgeThreadPersistence: "ephemeral" }, restored.settings.current.settingsRevision);
     restored.stateStore.close();
+    const memory = persistentSettings(config, databaseFile);
+    expect(memory.settings.current.bridgeThreadPersistence).toBe("ephemeral");
+    expect(() => memory.settings.update({ showBridgeThreadsInCodexApp: true }, memory.settings.current.settingsRevision)).toThrow("EPHEMERAL_NOT_VISIBLE");
+    memory.stateStore.close();
   });
 
   it.each([true, false, undefined])("normalizes retired direct-result preference %s once without changing other settings", legacyValue => {

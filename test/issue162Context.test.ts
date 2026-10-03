@@ -25,13 +25,14 @@ afterEach(() => {
 });
 
 async function savedChoice(root: string, command: string): Promise<void> {
-  await new CodexRuntimeManager({
+  const manager = new CodexRuntimeManager({
     root,
     environment: { PATH: "" },
     appPaths: [command],
     probe: async () => "0.153.3",
     protocolProbe: async () => inspectClientRequestContract(protocolContract)
-  }).snapshot();
+  });
+  await manager.select((await manager.discover()).find(candidate => candidate.command === command)!.id);
 }
 
 describe("issue 162 product context", () => {

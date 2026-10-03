@@ -213,6 +213,28 @@ describe("current bridge tool contracts", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it.each(["persistent", "ephemeral"] as const)("starts a hidden %s conversation using the independent storage preference", async persistence => {
+    settings.update({ showBridgeThreadsInCodexApp: false, bridgeThreadPersistence: persistence }, settings.current.settingsRevision);
+    await client.close();
+    await new Promise<void>(resolve => server.close(resolve));
+    server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
+    client = new Client({ name: "storage-preference-test", version: "1.0.0" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`)));
+    const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
+    const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
+    const project = settings.current.projects[0]!;
+    const result = await client.callTool({ name: "codex_task", arguments: {
+      requestId: randomUUID(), scopeId: randomUUID(), prompt: "Exercise explicit conversation storage.",
+      taskContractVersion: properties.taskContractVersion?.const, executionEnvelopeRef: properties.executionEnvelopeRef?.const,
+      project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision }, selection
+    }, _meta: metadata });
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    await eventually(() => state.listJobs().some(job => job.status === "completed"));
+    expect(upstream.calls[0]?.args.ephemeral).toBe(persistence === "ephemeral");
+    expect(state.listSessions()).toContainEqual(expect.objectContaining({ persistence, visibleInCodexApp: false }));
+  });
+
   it("continues, replaces and forks the same Agent across accounts while keeping Bridge scope and logout admission checks", async () => {
     const home = path.join(root, "codex-home");
     await mkdir(home);

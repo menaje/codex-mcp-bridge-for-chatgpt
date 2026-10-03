@@ -13230,55 +13230,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Applies to new and forked App Server threads. Turning this off keeps them in memory only: they will not appear in the Codex app and cannot be resumed after the App Server worker or bridge restarts. Existing threads are unchanged."
+            "value": "Saving a conversation and opening it in the Codex app are separate. Opening requires access to its original storage and release of the current writer. Independent Bridge storage is not automatically shared with the app."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "새로 만들거나 포크하는 App Server 스레드에 적용됩니다. 끄면 메모리에만 유지되어 Codex 앱 목록에 나타나지 않으며, App Server worker 또는 브리지를 재시작한 뒤에는 이어갈 수 없습니다. 기존 스레드는 바뀌지 않습니다."
+            "value": "대화 저장과 Codex 앱에서 열기는 별개입니다. 앱에서 열려면 원본 저장소에 접근하고 현재 실행 연결을 해제해야 합니다. Bridge 전용 저장소는 앱에 자동 공유되지 않습니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "新規およびフォークした App Server スレッドに適用されます。オフにするとメモリ内だけに保持され、Codex アプリには表示されず、App Server ワーカーまたはブリッジの再起動後は再開できません。既存のスレッドは変わりません。"
+            "value": "会話の保存とCodexアプリで開く操作は別です。元の保存先へのアクセスと現在の書き込み接続の解放が必要です。Bridge専用の保存先はアプリに自動共有されません。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "适用于新建和分叉的 App Server 线程。关闭后，线程只保留在内存中，不会出现在 Codex 应用里，并且在 App Server 工作进程或桥接重启后无法继续。现有线程不会改变。"
+            "value": "保存对话与在Codex应用中打开是独立功能。打开需要访问原始存储并释放当前写入连接。Bridge专用存储不会自动与应用共享。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "適用於新建與分支的 App Server 執行緒。關閉後，執行緒只保留在記憶體中，不會出現在 Codex 應用程式，且 App Server 工作程序或橋接重新啟動後無法繼續。現有執行緒不會改變。"
+            "value": "儲存對話與在Codex應用程式中開啟是獨立功能。開啟需要存取原始儲存位置並釋放目前的寫入連線。Bridge專用儲存空間不會自動與應用程式共用。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Se aplica a los hilos nuevos y bifurcados de App Server. Al desactivarlo, solo se conservan en memoria: no aparecen en la app Codex y no pueden reanudarse tras reiniciar el worker de App Server o el puente. Los hilos existentes no cambian."
+            "value": "Guardar una conversación y abrirla en la aplicación Codex son funciones independientes. Abrirla requiere acceso al almacenamiento original y liberar la conexión que escribe. El almacenamiento de Bridge no se comparte automáticamente con la aplicación."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "S’applique aux fils App Server nouveaux et dérivés. Si cette option est désactivée, ils restent uniquement en mémoire : ils n’apparaissent pas dans l’app Codex et ne peuvent pas être repris après le redémarrage du worker App Server ou du pont. Les fils existants ne changent pas."
+            "value": "Enregistrer une conversation et l’ouvrir dans l’application Codex sont deux fonctions distinctes. L’ouverture exige l’accès au stockage d’origine et la libération de la connexion d’écriture. Le stockage Bridge n’est pas partagé automatiquement avec l’application."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Gilt für neue und geforkte App-Server-Threads. Wenn dies deaktiviert ist, bleiben sie nur im Arbeitsspeicher: Sie erscheinen nicht in der Codex-App und können nach einem Neustart des App-Server-Workers oder der Bridge nicht fortgesetzt werden. Bestehende Threads bleiben unverändert."
+            "value": "Das Speichern und Öffnen eines Gesprächs in der Codex-App sind getrennte Funktionen. Zum Öffnen sind der ursprüngliche Speicher und die Freigabe der Schreibverbindung erforderlich. Bridge-Speicher wird nicht automatisch mit der App geteilt."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Aplica-se a threads novos e bifurcados do App Server. Ao desativar, eles ficam apenas na memória: não aparecem no app Codex e não podem ser retomados após reiniciar o worker do App Server ou a ponte. Threads existentes não mudam."
+            "value": "Salvar uma conversa e abri-la no aplicativo Codex são funções separadas. Abrir exige acesso ao armazenamento original e liberar a conexão de escrita. O armazenamento do Bridge não é compartilhado automaticamente com o aplicativo."
           }
         }
       }
@@ -28533,6 +28533,180 @@
           "stringUnit": {
             "state": "translated",
             "value": "Este projeto mantém trabalho que pode ser retomado ou tarefas ativas. Mantenha-o arquivado ou conclua o trabalho e liberte as ligações antes de eliminar o registo."
+          }
+        }
+      }
+    },
+    "settings.threadStorage": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conversation storage"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대화 저장"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会話の保存"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对话存储"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "對話儲存"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Almacenamiento de conversaciones"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stockage des conversations"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gesprächsspeicherung"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Armazenamento de conversas"
+          }
+        }
+      }
+    },
+    "settings.threadStorage.persistent": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save across restarts"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "재시작 후에도 저장"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再起動後も保存"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重启后保留"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新啟動後保留"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conservar tras reiniciar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conserver après redémarrage"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nach Neustart behalten"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manter após reiniciar"
+          }
+        }
+      }
+    },
+    "settings.threadStorage.ephemeral": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Memory only"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "메모리에만 저장"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メモリのみ"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅内存"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "僅記憶體"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solo en memoria"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En mémoire uniquement"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nur im Speicher"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Somente na memória"
           }
         }
       }
@@ -74353,55 +74527,55 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Wenn diese Option aktiviert ist, werden neue Aufgaben und Kontexte als dauerhafte Threads gespeichert und ihre Codex-Unterhaltungen können aus der Übersicht geöffnet werden. Bestehende temporäre Aufgaben bleiben unverändert. Bei deaktivierter Option werden temporäre Threads verwendet, die nach einem Serverneustart nicht fortgesetzt werden können."
+            "value": "Das Speichern und Öffnen eines Gesprächs in der Codex-App sind getrennte Funktionen. Zum Öffnen sind der ursprüngliche Speicher und die Freigabe der Schreibverbindung erforderlich. Bridge-Speicher wird nicht automatisch mit der App geteilt."
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "When enabled, new tasks and fresh contexts are saved as persistent threads, and their Codex conversations can be opened from the overview. Existing ephemeral tasks are unchanged. When disabled, threads are ephemeral and cannot continue after the server restarts."
+            "value": "Saving a conversation and opening it in the Codex app are separate. Opening requires access to its original storage and release of the current writer. Independent Bridge storage is not automatically shared with the app."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Al activarlo, las tareas y los contextos nuevos se guardan como hilos persistentes y sus conversaciones de Codex se pueden abrir desde el resumen. No se aplica a las tareas temporales existentes. Al desactivarlo, se usan hilos temporales que no pueden continuar después de reiniciar el servidor."
+            "value": "Guardar una conversación y abrirla en la aplicación Codex son funciones independientes. Abrirla requiere acceso al almacenamiento original y liberar la conexión que escribe. El almacenamiento de Bridge no se comparte automáticamente con la aplicación."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Lorsque cette option est activée, les nouvelles tâches et les nouveaux contextes sont enregistrés sous forme de threads persistants et leurs conversations Codex peuvent être ouvertes depuis l’aperçu. Les tâches temporaires existantes ne sont pas modifiées. Lorsque l’option est désactivée, des threads temporaires sont utilisés et ne peuvent pas reprendre après le redémarrage du serveur."
+            "value": "Enregistrer une conversation et l’ouvrir dans l’application Codex sont deux fonctions distinctes. L’ouverture exige l’accès au stockage d’origine et la libération de la connexion d’écriture. Le stockage Bridge n’est pas partagé automatiquement avec l’application."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "有効にすると、以降の新規タスクと新規コンテキストを永続スレッドとして保存し、概要からCodex会話を開けるようにします。既存の一時タスクには適用されません。無効にすると一時スレッドとして実行され、サーバー再起動後は続行できません。"
+            "value": "会話の保存とCodexアプリで開く操作は別です。元の保存先へのアクセスと現在の書き込み接続の解放が必要です。Bridge専用の保存先はアプリに自動共有されません。"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Quando ativado, novas tarefas e novos contextos são salvos como threads permanentes e suas conversas do Codex podem ser abertas pela visão geral. As tarefas temporárias existentes não são alteradas. Quando desativado, as threads são temporárias e não podem continuar após a reinicialização do servidor."
+            "value": "Salvar uma conversa e abri-la no aplicativo Codex são funções separadas. Abrir exige acesso ao armazenamento original e liberar a conexão de escrita. O armazenamento do Bridge não é compartilhado automaticamente com o aplicativo."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "启用后，后续新任务和新上下文将保存为持久线程，并可从概览打开对应的 Codex 对话。此设置不追溯应用于现有临时任务。关闭后，任务将在线程中临时运行，服务器重启后无法继续。"
+            "value": "保存对话与在Codex应用中打开是独立功能。打开需要访问原始存储并释放当前写入连接。Bridge专用存储不会自动与应用共享。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "啟用後，後續新任務和新上下文將儲存為持久執行緒，並可從概覽開啟對應的 Codex 對話。此設定不追溯應用於現有臨時任務。關閉後，任務將以暫時執行緒執行，伺服器重新啟動後無法繼續。"
+            "value": "儲存對話與在Codex應用程式中開啟是獨立功能。開啟需要存取原始儲存位置並釋放目前的寫入連線。Bridge專用儲存空間不會自動與應用程式共用。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "켜면 이후 새 작업과 새 컨텍스트를 영구 스레드로 저장하고 현황에서 Codex 대화를 열 수 있습니다. 기존 임시 작업에는 소급 적용되지 않습니다. 끄면 임시 스레드로 실행되어 서버 재시작 뒤 이어갈 수 없습니다."
+            "value": "대화 저장과 Codex 앱에서 열기는 별개입니다. 앱에서 열려면 원본 저장소에 접근하고 현재 실행 연결을 해제해야 합니다. Bridge 전용 저장소는 앱에 자동 공유되지 않습니다."
           }
         }
       }
@@ -81094,6 +81268,242 @@
           "stringUnit": {
             "state": "translated",
             "value": "O acesso ao serviço local foi negado. Verifique as permissões de ligação."
+          }
+        }
+      }
+    },
+    "macos.threadStorage": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conversation storage"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대화 저장"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会話の保存"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "对话存储"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "對話儲存"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Almacenamiento de conversaciones"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stockage des conversations"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gesprächsspeicherung"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Armazenamento de conversas"
+          }
+        }
+      }
+    },
+    "macos.threadStorage.persistent": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save across restarts"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "재시작 후에도 저장"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "再起動後も保存"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重启后保留"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新啟動後保留"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conservar tras reiniciar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conserver après redémarrage"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nach Neustart behalten"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manter após reiniciar"
+          }
+        }
+      }
+    },
+    "macos.threadStorage.ephemeral": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Memory only"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "메모리에만 저장"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "メモリのみ"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅内存"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "僅記憶體"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solo en memoria"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En mémoire uniquement"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nur im Speicher"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Somente na memória"
+          }
+        }
+      }
+    },
+    "macos.bridgecliRecommended": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge CLI (Recommended)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge CLI (권장)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge CLI（推奨）"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge CLI（推荐）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge CLI（建議）"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge CLI (Recomendado)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge CLI (Recommandé)"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge CLI (Empfohlen)"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bridge CLI (Recomendado)"
           }
         }
       }
