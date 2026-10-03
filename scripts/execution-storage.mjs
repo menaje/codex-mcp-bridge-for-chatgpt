@@ -38,9 +38,17 @@ export async function createIndependentProfileStorage(runtimeHome, profileHome) 
   catch { throw new Error("CODEX_STORAGE_UNOWNED: The execution storage is not a verified Bridge-owned directory."); }
   for (const name of ["sessions", "archived_sessions", "sqlite"]) {
     const directory = path.join(root, name);
-    try { await mkdir(directory, { mode: 0o700 }); }
-    catch (error) { if (error?.code !== "EEXIST") throw error; }
-    const metadata = await lstat(directory);
+    // Only this call's first initialization may create storage directories.
+    // Reusing an existing root must not turn missing history into an empty store.
+    if (created) {
+      try { await mkdir(directory, { mode: 0o700 }); }
+      catch (error) { if (error?.code !== "EEXIST") throw error; }
+    }
+    let metadata;
+    try { metadata = await lstat(directory); }
+    catch {
+      throw new Error("CODEX_STORAGE_UNAVAILABLE: The original Bridge execution storage directory is unavailable. Restore its location before preparing another profile.");
+    }
     if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
       throw new Error("CODEX_STORAGE_CHANGED: The execution storage directory was replaced.");
     }
