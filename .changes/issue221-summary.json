@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "patch",
+  "summary": "Fix completed Job summaries by validating exact result retrieval actions structurally.",
+  "breaking": false,
+  "migration": null
+}

@@ -1779,7 +1779,10 @@ function validateStatusOutput(value: unknown): z.infer<typeof codexStatusOutputS
     }
     if (
       job.result?.availability === "delivered" &&
-      !job.nextActions?.includes(exactJobAnswerRetrievalAction(job.id))
+      !job.nextActions?.some(action =>
+        action.kind === "tool" && action.tool === "codex_status" &&
+        action.arguments.query?.kind === "job" && action.arguments.query.id === job.id
+      )
     ) {
       throw new Error(
         "A summary with a delivered Job must include its exact-Job answer retrieval action."
