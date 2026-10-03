@@ -1498,6 +1498,17 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertFalse(DashboardExecutionPresentation.matches(accepted, persistent))
     }
 
+    func testHistoricalUnknownPersistentSpeedIsNotLabeledCleared() throws {
+        for tier in ["ultrafast", "flex", "future-tier"] {
+            let historical = try dashboardExecution(model: "sol", displayName: nil, effort: "medium",
+                reroutedModel: nil, isCurrent: false, serviceTier: tier, requestState: "requested")
+            let text = DashboardExecutionPresentation.text(historical, locale: Locale(identifier: "en"))
+            XCTAssertTrue(text.contains(tier))
+            XCTAssertFalse(text.contains("clear conversation speed"))
+            XCTAssertTrue(text.contains("unconfirmed"))
+        }
+    }
+
     func testSettingsDraftPreservesUnknownSpeedWhenRebased() throws {
         let snapshot = try settingsSnapshot(policy: ["mode": "fixed", "selection": choiceObject(ModelChoice(model: "sol", reasoningEffort: "medium")),
             "constraints": ["allowDelegation": true]], catalogModels: [], processingSpeed: "future-tier")

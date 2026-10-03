@@ -1849,7 +1849,12 @@ enum DashboardExecutionPresentation {
             " · " + BridgeAppLocalization.string("dashboard.execution.modelConfirmed", locale: locale).replacingOccurrences(of: "{model}", with: $0)
         } ?? ""
         let mode = execution.processingSpeed ?? (execution.serviceTierScope == "turn" ? execution.serviceTier == "default" ? "standard" : execution.serviceTier ?? "inherit" : "legacy")
-        let speed = processingSpeedLabel(mode, legacyFast: usesFastProcessing(execution), locale: locale)
+        let rawPersistentTier = mode == "legacy" && execution.serviceTierScope != "turn" && !usesFastProcessing(execution)
+            ? execution.serviceTier?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        let speed = rawPersistentTier.map { tier in
+            tier.isEmpty ? processingSpeedLabel(mode, legacyFast: false, locale: locale) :
+                BridgeAppLocalization.string("settings.processingSpeed.unknown", locale: locale).replacingOccurrences(of: "{value}", with: tier)
+        } ?? processingSpeedLabel(mode, legacyFast: usesFastProcessing(execution), locale: locale)
         let speedText = BridgeAppLocalization.string("dashboard.execution.speed", locale: locale)
             .replacingOccurrences(of: "{speed}", with: speed)
             .replacingOccurrences(of: "{state}", with: BridgeAppLocalization.string(state == "accepted" ? "dashboard.execution.accepted" : "dashboard.execution.pending", locale: locale))
