@@ -107,6 +107,8 @@ cp "$repository_root/state-migrations.json" "$runtime_directory/"
 cp "$repository_root/scripts/build-fingerprint.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/auth-selection.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/auth-selection.d.mts" "$runtime_directory/scripts/"
+cp "$repository_root/scripts/execution-storage.mjs" "$runtime_directory/scripts/"
+cp "$repository_root/scripts/execution-storage.d.mts" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/child-shutdown.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/launcher-options.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/managed-file.mjs" "$runtime_directory/scripts/"
@@ -156,6 +158,10 @@ fi
     } finally {
       database.close();
     }
+  '
+  node --input-type=module -e '
+    await import("./dist/macosHelperServer.js");
+    console.log("Validated packaged macOS helper module imports.");
   '
 )
 
