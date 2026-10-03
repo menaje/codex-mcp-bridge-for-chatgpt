@@ -1,7 +1,7 @@
 import { validateInitializeResponse } from "./runtimeCompatibility.js";
 import type { ThreadPersistence, ThreadReleaseEvidence, ThreadReleaseOptions, ThreadReleaseResult } from "./threadConnections.js";
 import { elicitationResponse, readElicitationInput } from "./mcpElicitation.js";
-import { inspectCliProtocol, requireCliProtocol, UNVERIFIED_APP_SERVER_CAPABILITIES, type CliProtocolSupport } from "./cliProtocol.js";
+import { inspectCliProtocol, requireCliProtocol, requireCliCapability, UNVERIFIED_APP_SERVER_CAPABILITIES, type CliProtocolSupport } from "./cliProtocol.js";
 import {
   executionAccessArguments, executionAccessEvidence, executionAccessRequest,
   threadAccessParams, turnAccessParams, verifyExecutionAccess,
@@ -282,8 +282,8 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
         { name: "codex", description: "Start a Codex App Server thread and turn." },
         { name: "codex-reply", description: "Resume a Codex App Server thread and start a turn." },
         ...(this.capabilities().supportsFork ? [{ name: "thread/fork", description: "Fork a persisted Codex thread and start a turn." }] : []),
-        { name: "thread/archive", description: "Archive a persisted Codex thread." },
-        { name: "thread/unarchive", description: "Restore an archived Codex thread." },
+        ...(this.capabilities().supportsThreadArchive ? [{ name: "thread/archive", description: "Archive a persisted Codex thread." }] : []),
+        ...(this.capabilities().supportsThreadUnarchive ? [{ name: "thread/unarchive", description: "Restore an archived Codex thread." }] : []),
         ...(this.capabilities().supportsSteering ? [{ name: "turn/steer", description: "Steer an active Codex App Server turn." }] : []),
         ...(this.capabilities().supportsPreciseCancellation ? [{ name: "turn/interrupt", description: "Interrupt an active Codex App Server turn." }] : [])
       ],
@@ -420,12 +420,14 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   async archiveThread(threadId: string): Promise<void> {
+    requireCliCapability(await this.inspectProtocol(), "supportsThreadArchive");
     await this.withThreadWorker(threadId, (connection) => connection.archiveThread(threadId));
     this.threadWorkers.delete(threadId);
     this.threadResumeEvidence.set(threadId, false);
   }
 
   async restoreThread(threadId: string): Promise<void> {
+    requireCliCapability(await this.inspectProtocol(), "supportsThreadUnarchive");
     await this.withThreadWorker(threadId, (connection) => connection.restoreThread(threadId));
     this.threadResumeEvidence.set(threadId, true);
   }

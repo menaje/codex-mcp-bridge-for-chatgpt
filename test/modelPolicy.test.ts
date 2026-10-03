@@ -280,15 +280,22 @@ describe("model policy resolver", () => {
     })).toMatchObject({ appliedAt: "thread-start", effectiveSelection: SOL_MAX });
   });
 
-  it("uses a visible compatible fallback for saved catalog drift and distinguishes cached refresh failure", () => {
+  it("preserves fixed choices and rejects removed models or efforts without a replacement", () => {
     const removed = catalog().models.filter((model) => model.id !== SOL_MAX.model);
-    expect(decide({ policy: FIXED_POLICY, catalog: catalog({ models: removed }) })).toMatchObject({
-      source: "compatibility-fallback",
-      savedSelectionSupported: false,
-      effectiveSelection: TERRA_MEDIUM,
-      effectiveReasoningEffort: TERRA_MEDIUM.reasoningEffort,
-      fallbackWarning: expect.stringContaining("unsupported by the current catalog")
-    });
+    const removedEffort = catalog().models.map(model => ({ ...model,
+      supportedReasoningEfforts: model.supportedReasoningEfforts.filter(({ effort }) => effort !== SOL_MAX.reasoningEffort) }));
+    const before = structuredClone(FIXED_POLICY);
+    for (const operation of ["start", "continue"] as const) {
+      for (const models of [removed, removedEffort]) {
+        const error = expectPolicyError(() => decide({ policy: FIXED_POLICY,
+          operation, currentSelection: SOL_MAX, catalog: catalog({ models }) }), "MODEL_UNAVAILABLE");
+        expect(error.message).toContain("saved choice is preserved");
+        expect(FIXED_POLICY).toEqual(before);
+      }
+    }
+  });
+
+  it("keeps a supported fixed choice during a temporarily unverified catalog refresh", () => {
     const stale = catalog({
       stale: true,
       validation: "temporarily-unverified-with-last-known-good"

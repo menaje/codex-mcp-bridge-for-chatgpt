@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inspectClientRequestContract, inspectCliProtocol, requireCliProtocol } from "../src/cliProtocol.js";
+import { inspectClientRequestContract, inspectCliProtocol, requireCliProtocol, requireCliCapability } from "../src/cliProtocol.js";
 import contract from "./fixtures/app-server-request-contract.json";
 import configContract from "./fixtures/app-server-config-contract.json";
 import path from "node:path";
@@ -41,6 +41,31 @@ describe("CLI operation contracts", () => {
     expect(support.capabilities.supportsFork).toBe(false);
     expect(() => requireCliProtocol(support, "fresh")).not.toThrow();
     expect(() => requireCliProtocol(support, "fork")).toThrow("thread/fork");
+  });
+
+  it.each(["thread/archive", "thread/unarchive"])("isolates the optional %s contract", method => {
+    const changed = structuredClone(contract);
+    changed.oneOf = changed.oneOf.filter(entry => entry.properties.method.enum[0] !== method);
+    const support = inspectClientRequestContract(changed, configContract);
+    const capability = method === "thread/archive" ? "supportsThreadArchive" : "supportsThreadUnarchive";
+    expect(support.compatible).toBe(true);
+    expect(support.missingCore).toEqual([]);
+    expect(support.capabilities[capability]).toBe(false);
+    expect(() => requireCliProtocol(support, "fresh")).not.toThrow();
+    expect(() => requireCliCapability(support, capability)).toThrow("CODEX_FEATURE_UNSUPPORTED");
+  });
+
+  it("checks per-turn Standard, inheritance, and persistent omission independently", () => {
+    expect(inspectClientRequestContract(contract).capabilities.supportsPerTurnServiceTier).toBe(true);
+    const changed = structuredClone(contract) as any;
+    const turn = changed.oneOf.find((entry: any) => entry.properties.method.enum[0] === "turn/start").properties.params;
+    turn.properties.serviceTierForTurn = { enum: [null] };
+    const restricted = inspectClientRequestContract(changed);
+    expect(restricted.compatible).toBe(true);
+    expect(restricted.capabilities.supportsPerTurnServiceTier).toBe(false);
+    turn.properties.serviceTierForTurn = { type: ["string", "null"] };
+    turn.required = [...turn.required, "serviceTier"];
+    expect(inspectClientRequestContract(changed).capabilities.supportsPerTurnServiceTier).toBe(false);
   });
 
   it.each(["sandbox", "approvalPolicy", "approvalsReviewer", "config", "cwd"])("rejects a CLI missing the resume %s field", field => {

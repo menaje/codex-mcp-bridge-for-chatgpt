@@ -104,8 +104,9 @@ In fixed mode, turning Ultra off while the fixed effort is Ultra requires the
 user to select another supported effort before saving. Both editors show the
 conflict and preserve the selected value until the user resolves it. This does
 not silently lower the effort or change models. If a fixed model/effort is
-removed from the catalog, the bridge records the effective selection and
-warning in the execution audit; it does not make the removed choice executable.
+removed from the catalog, the bridge preserves the saved choice and refuses new
+admission until the user selects a supported choice. It never substitutes another
+model or effort. A catalog refresh does not cancel already admitted work.
 
 Already admitted turns keep their immutable execution decision. Changed settings
 apply to later admission and do not cancel an active turn or alter an exact
