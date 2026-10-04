@@ -27,7 +27,9 @@ Undo back to the original bytes clears dirty state.
 Each native adapter has an explicit hosting boundary. A single-line field owns
 the shared AppKit field editor only while that field is its delegate and the
 editor is the first responder in that window. A submission cannot commit another
-form's marked text. Ambiguous mounted controls block synchronization. Reopening
+form's marked text. Read-only labels are excluded from input ownership, as are
+system Find controls identified by the public `NSScrollView.findBarView` container.
+Ambiguous mounted controls block synchronization. Reopening
 or changing targets creates a new session UUID; callbacks from old bindings and
 old native notifications cannot edit it. Native buffers are replaced only for an
 explicit discard, confirmed server value or new target identity.

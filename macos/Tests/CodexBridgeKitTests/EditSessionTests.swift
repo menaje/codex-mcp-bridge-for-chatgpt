@@ -279,6 +279,57 @@ final class EditSessionTests: XCTestCase {
     }
 
     @MainActor
+    func testNativeOwnershipIgnoresReadOnlyLabelsAndKeepsTheDocumentWithFindBarOpen() async throws {
+        _ = NSApplication.shared
+        let session = BridgeEditSession(target: "A", values: [.name: "base", .content: "document"])
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.contentView = nil; window.close() }
+        let root = NSView(frame: window.contentRect(forFrameRect: window.frame))
+        let label = NSTextField(labelWithString: "Read-only label")
+        let field = NSTextField(string: "base")
+        root.addSubview(label); root.addSubview(field); window.contentView = root
+        let owner = BridgeNativeInputOwner(session: session, field: .name)
+        owner.connect(root: root, session: session)
+        let fieldRequest = try XCTUnwrap(session.prepareSubmission(), "Read-only labels are not additional inputs")
+        session.fail(fieldRequest)
+        owner.disconnect()
+
+        window.contentView = NSHostingView(rootView: BridgeTextEditor(text: session.binding(.content)).bridgeInput(session, field: .content))
+        func settle() async throws {
+            window.contentView?.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(40))
+        }
+        for _ in 0..<5 { try await settle() }
+        func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
+        let editor = try XCTUnwrap(window.contentView.map(descendants)?.compactMap { $0 as? NSTextView }.first { !$0.isFieldEditor && $0.isEditable })
+        XCTAssertTrue(window.makeFirstResponder(editor))
+        let command = NSMenuItem(); command.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+        editor.performFindPanelAction(command)
+        for _ in 0..<5 { try await settle() }
+        let scroll = try XCTUnwrap(editor.enclosingScrollView)
+        XCTAssertTrue(scroll.isFindBarVisible)
+        let findView = try XCTUnwrap(scroll.findBarView)
+        let findField = try XCTUnwrap(descendants(findView).compactMap { $0 as? NSTextField }.first { $0.isEditable })
+        XCTAssertTrue(window.makeFirstResponder(findField))
+        let findEditor = try XCTUnwrap(findField.currentEditor() as? NSTextView)
+        findEditor.setMarkedText("찾기", selectedRange: .init(location: 2, length: 0), replacementRange: .init(location: NSNotFound, length: 0))
+        let searchSession = BridgeEditSession(target: "sidebar", values: [.query: "sidebar query"])
+        let sidebar = NSSearchField(string: "sidebar query")
+        try XCTUnwrap(window.contentView).addSubview(sidebar)
+        let searchOwner = BridgeNativeInputOwner(session: searchSession, field: .query, search: true)
+        searchOwner.connect(root: try XCTUnwrap(window.contentView), session: searchSession)
+        defer { searchOwner.disconnect() }
+        let searchRequest = try XCTUnwrap(searchSession.prepareSubmission())
+        XCTAssertEqual(searchRequest.value(.query), "sidebar query")
+        searchSession.fail(searchRequest)
+        let documentRequest = try XCTUnwrap(session.prepareSubmission(), "Native Find inputs must not make the document owner ambiguous")
+        XCTAssertEqual(documentRequest.value(.content), "document")
+        XCTAssertTrue(findEditor.hasMarkedText(), "Document and sidebar saves do not commit the system Find query")
+        session.fail(documentRequest)
+    }
+
+    @MainActor
     func testNewSessionIdentityDoesNotImportThePreviousTargetsMarkedBuffer() async throws {
         _ = NSApplication.shared
         let session = BridgeEditSession(target: "A", values: [.name: ""])

@@ -452,12 +452,16 @@ final class BridgeNativeInputOwner: NSObject {
     }
     private var control: NSView? {
         guard let scope = search ? root?.window?.contentView : root else { return nil }
-        func collect(_ view: NSView) -> [NSView] {
+        func collect(_ view: NSView, excluding findBar: NSView? = nil) -> [NSView] {
+            if view === findBar { return [] }
             if search {
                 if view is NSSearchField { return [view] }
-            } else if view is NSTextField { return [view] }
-            else if let editor = view as? NSTextView, !editor.isFieldEditor { return [view] }
-            return view.subviews.flatMap(collect)
+            } else if let field = view as? NSTextField, field.isEditable { return [field] }
+            else if let editor = view as? NSTextView, !editor.isFieldEditor, editor.isEditable { return [view] }
+            // AppKit owns the Find bar's inputs. Its public container view is
+            // separate from the document and the window's sidebar search.
+            let excluded = (view as? NSScrollView)?.findBarView ?? findBar
+            return view.subviews.flatMap { collect($0, excluding: excluded) }
         }
         let found = collect(scope)
         return found.count == 1 ? found[0] : nil
