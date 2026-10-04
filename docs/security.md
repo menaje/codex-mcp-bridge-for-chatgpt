@@ -82,12 +82,12 @@ request metadata; another host may provide one persistent UUID scope. Scope is
 validated on reads and mutations, but it does not replace project or policy
 authorization.
 
-Live-card completion receipts are correlation identifiers, not bearer tokens.
-The Dashboard lease requires authenticated host scope, the exact retained Job,
-and its presentation reference. The follow-up `codex_status` completion query
-requires current ChatGPT conversation metadata and ignores explicit scope IDs
-as an authorization substitute. Host acceptance uncertainty suppresses replay
-so a lost acknowledgement cannot create an automatic duplicate.
+Historical live-card completion receipts are correlation identifiers, not
+bearer tokens. Their sender, lease, and completion-query paths are retired;
+current Dashboard cards display and manage work without sending results into
+chat. Ordinary exact Job/status reads require the originating principal and
+conversation scope. A caller-provided scope ID or old presentation receipt
+cannot substitute for current host metadata or authorize another execution.
 
 Historical Decision Card IDs, presentation references, submission IDs, and
 receipts remain inert legacy data. Their tools no longer read, submit, or

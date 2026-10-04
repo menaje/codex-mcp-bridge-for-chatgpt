@@ -62,13 +62,14 @@ replacement for a logical `requestId`.
 
 ## Cards
 
-The release catalog contains exactly two active resources, each backed by one
-current HTML file:
+The current development release catalog contains exactly two active resources,
+each backed by one current HTML file. Their URI versions have advanced since
+the original protocol migration:
 
 | Card | Current resource |
 | --- | --- |
-| Settings | `ui://codex-mcp-bridge/settings/v3.html` |
-| Dashboard | `ui://codex-mcp-bridge/dashboard/v3.html` |
+| Settings | `ui://codex-mcp-bridge/settings/v5.html` |
+| Dashboard | `ui://codex-mcp-bridge/dashboard/v5.html` |
 
 `ui-release-catalog.json` has no published-baseline or temporary compatibility
 entries. The package selector emits only these resources. Earlier files may

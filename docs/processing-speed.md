@@ -5,6 +5,33 @@ Ultrafast processing. Subscription plans, model catalogs, protocol support and
 observed execution each provide different evidence; none substitutes for the
 others.
 
+## Choose a speed
+
+Open **Settings → Models & Execution** in the native app, or **Processing
+speed** in the ChatGPT Settings card. Native changes save automatically;
+the card uses **Save settings**. The choice is captured when a new Job is
+admitted, so changing it does not alter work already running or queued.
+
+| Choice | What it requests |
+| --- | --- |
+| Inherit conversation speed | A new conversation follows its CLI configuration; a retained conversation keeps its own processing tier. |
+| Standard | Standard processing for this new Job only. |
+| Fast | The eligible faster tier for this new Job only. |
+| Ultrafast | The eligible Ultrafast tier for this new Job only. |
+| Legacy | Preserves the older Fast checkbox behavior, including its persistent conversation scope, until you deliberately choose a new mode. |
+
+Availability depends on the selected CLI's protocol, the current model catalog,
+and policy. A faster choice can affect usage or charges; selecting it is not
+proof of account entitlement or of the tier actually applied. Unsupported or
+unknown choices block new execution instead of silently falling back.
+
+The Dashboard separates the requested model, reasoning effort, and speed from
+request acceptance and server confirmation. A completed Job can still have
+unconfirmed actual effort or speed. **Allow Ultra reasoning** controls reasoning
+effort; it does not select Ultrafast processing or enable all delegation.
+See [model selection](model-selection.md) for fixed/automatic model choice,
+custom descriptions, and description history.
+
 ## App Server wire contract
 
 The generated schemas and Rust `TurnStartParams` for 0.153.3, 0.159.1 and 0.160.0

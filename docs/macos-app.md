@@ -1,10 +1,10 @@
 # Native macOS menu bar app
 
-The issue #44 implementation is a native SwiftUI/AppKit companion for Codex MCP
-Bridge for ChatGPT. It intentionally does not embed the Settings or Dashboard
-cards in a WebView. The existing ChatGPT cards and MCP tools remain the primary
-remote interface and keep their current descriptors, schemas, resource URIs,
-and cache contracts.
+The macOS app is a native SwiftUI/AppKit companion for Codex MCP Bridge for
+ChatGPT, with a menu-bar Dashboard, Settings, and a separate Skill Library.
+The ChatGPT cards and MCP tools use the same application services. Follow the
+[setup guide](setup.md) for installation and the [first-skill walkthrough](skills.md#create-and-use-your-first-skill)
+for reusable procedures.
 
 Fixed UI copy, supported languages, and locale fallback rules come from the
 shared generated localization catalog. Native String Catalog files are derived
@@ -12,11 +12,11 @@ from `locales/catalog.json`; see [Localization source and generation](localizati
 before editing copy or running localization checks.
 
 The menu bar opens as a compact status and usage summary with **Running**,
-**Response required**, and **Problems** counts. Selecting a count expands only
+**Response needed**, and **Issues** counts. Selecting a count expands only
 that view below the summary; selecting it again collapses it, and another count
 replaces the detail view. **Work & Run History** in the footer expands current
 work followed by retained runs, including their failed/interrupted status. The
-problem review section appears only under **Problems**. Closing and reopening
+problem review section appears only under **Issues**. Closing and reopening
 the menu resets the selection. Reopening performs a fresh Dashboard read;
 leaving the menu open does not poll or reactively reread display data.
 
@@ -48,7 +48,8 @@ Swift never reads or writes the bridge SQLite database. The Settings card and
 native Settings window both use the same revisioned service, including separate
 `settingsRevision` and `registryRevision` compare-and-swap checks. Project
 changes remain explicit add, rename, relocate, archive, restore, and delete
-operations. The Dashboard remains read-only.
+operations. Dashboard snapshot reads do not change execution; separately
+authorized management actions use their own service operations.
 
 The same binary can instead run as a remote-only client:
 
@@ -121,10 +122,11 @@ rules. When a status or history view is selected, its Activity-first rows contai
 one or more Agents; an idle history heading is explicitly the Agent's latest
 Activity, not a current assignment. Project/conversation context appears once
 on the Activity. Agent state, background processes, work time, and the latest
-actual model/reasoning effort remain on every Agent even when sibling values
-match. Rows present status, actual execution, time, then older history. A
-separately labelled next-run setting appears only when the current model, effort,
-effective Fast tier, or reroute differs from the latest actual turn. Active
+recorded execution evidence remain on every Agent even when sibling values
+match. Rows present status, execution evidence, time, then older history. Current
+Jobs label requested settings and acceptance separately from correlated server
+confirmation. A separately labelled next-run setting appears only when it
+differs from the latest recorded execution. Active
 work shows only the duration captured by the last explicit snapshot. Past work
 adds relative age and omits absolute start, update, and end timestamps. The
 native UI never prints the private
@@ -135,12 +137,13 @@ of the row. Same-Activity history omits the already visible Activity title;
 distinct same-title Activities retain a neutral previous-Activity boundary, and
 every historical turn keeps its own model/reasoning line or an unavailable label.
 
-**Fast mode** uses the localized name **빠른 처리 (Fast)** in Korean Settings.
-The menu bar and Dashboard card show a localized lightning badge beside
-the model and reasoning level when that execution captured `priority` or `fast`.
-Changing the preference updates supported next-run settings without relabelling
-running or historical work. Settings explains that the model and reasoning level
-stay the same while usage or costs may increase. Effort values themselves use
+**Processing speed** supports Inherit conversation speed, Standard, Fast, and
+Ultrafast, with Legacy preserving the earlier persistent Fast preference.
+New choices apply to newly admitted Jobs; they do not relabel running or
+historical work. Rows distinguish requested settings, request acceptance, and
+server-confirmed execution. Acceptance alone does not confirm actual speed or
+effort. See [speed choices and scope](processing-speed.md#choose-a-speed).
+Effort values themselves use
 the catalog's canonical lowercase English text (`low`, `medium`, `high`,
 `xhigh`, and other supported values) in the native menu, Dashboard card and both
 Settings surfaces. The effort field name and description remain localized.
@@ -162,7 +165,7 @@ Installation**, **Connection**, and **Server** when each destination applies to
 the current role and connection state. A pinned card at the bottom identifies the
 currently managed Mac or remote server and its health, and opens Connection when
 selected. General contains language, operational/security notifications,
-launch behavior and app display behavior. New ordinary Jobs always use direct-wait; the retired delivery switch is absent. Shared access, model, Fast,
+launch behavior, conversation storage, and separate app visibility. New ordinary Jobs always use direct-wait; the retired delivery switch is absent. Shared access, model, processing speed,
 concurrency, and retention controls live under Models & Execution. Projects uses
 a list-oriented manager, while the Server destination retains an explicit
 apply-and-restart confirmation because those values are stored in the private
@@ -179,7 +182,7 @@ the request still carries the exact skill id, expected version, and idempotent
 request id. Legacy `document` and `document.md` records remain readable.
 
 <p align="center">
-  <img src="images/macos-settings-sidebar-light-ko.png" alt="Korean native Settings window with a macOS sidebar and grouped General detail" width="820">
+  <img src="images/macos-settings-sidebar-light-en.png" alt="English native Settings window showing the six sidebar destinations and General storage, language, and app preferences" width="820">
 </p>
 
 The General destination also contains one native-only **Mac app** control for launching
@@ -423,8 +426,11 @@ the home used by the Codex desktop app can revoke and remove that app's current
 authentication before the new browser login completes. For a new Bridge login,
 the user prepares a separate persistent ChatGPT profile in Codex settings;
 the selected CLI logs in with that profile's own `CODEX_HOME`. A missing ChatGPT login
-never causes an API-key fallback. Explicit execution API-key selection remains
-deferred to issue #29. In app-managed mode, `OPENAI_API_KEY` and `CODEX_API_KEY`
+never causes an API-key fallback. **API key for the bridge** prepares a different
+persistent profile and requires API billing confirmation, account/model
+verification, and explicit application. A running server applies a pending
+connection only through a safe restart. See [authentication connections](codex-auth-connections.md).
+In app-managed mode, `OPENAI_API_KEY` and `CODEX_API_KEY`
 from an older dotenv or ambient process are not inherited by Codex children;
 the existing CLI/dotenv launcher behavior outside app-managed mode remains
 compatible.
