@@ -608,12 +608,9 @@ struct SkillsLibraryWindowView: View {
                 .padding(12)
                 Divider()
             }
-            TextEditor(text: $draftContent)
-                .font(.system(.body, design: .monospaced))
-                .scrollContentBackground(.hidden)
+            BridgeTextEditor(text: $draftContent, font: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
                 .padding(10)
                 .background(Color(nsColor: .textBackgroundColor))
-                .textSelection(.enabled)
                 .accessibilityLabel("macos.skills.fullMarkdownSourceOfSelectedFile")
         }
     }
@@ -998,6 +995,8 @@ struct SkillsLibraryWindowView: View {
     }
 
     private func saveCurrentDocument() {
+        BridgeTextInput.commitPendingComposition()
+        updateDirtyState()
         guard let document = model.selectedBridgeSkill, windowState.hasUnsavedChanges else { return }
         let request: BridgeSkillUpdateRequest
         switch documentSelection {
@@ -2281,6 +2280,7 @@ private struct BridgeSkillImportReviewSheet: View {
                 Button("common.cancel", role: .cancel) { dismiss() }
                 Spacer()
                 Button("macos.skills.import") {
+                    BridgeTextInput.commitPendingComposition()
                     commit(.init(
                         name: name.trimmingCharacters(in: .whitespacesAndNewlines),
                         description: description.isEmpty ? nil : description,
@@ -2348,12 +2348,15 @@ private struct NewBridgeSkillSheet: View {
             TextField("macos.skills.skillName", text: $name)
             TextField("macos.skills.searchDescriptionOptional", text: $description)
             Text("macos.skills.mainMarkdownDocument").font(.caption).foregroundStyle(.secondary)
-            TextEditor(text: $document).font(.system(.body, design: .monospaced))
+            BridgeTextEditor(text: $document, font: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
                 .frame(minHeight: 320).border(Color(nsColor: .separatorColor))
             HStack {
                 Button("common.cancel", role: .cancel) { dismiss() }
                 Spacer()
-                Button("macos.skills.createSkill") { save(name, description.isEmpty ? nil : description, document) }
+                Button("macos.skills.createSkill") {
+                    BridgeTextInput.commitPendingComposition()
+                    save(name, description.isEmpty ? nil : description, document)
+                }
                     .buttonStyle(.borderedProminent)
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || document.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -2371,12 +2374,15 @@ private struct NewBridgeSkillFileSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("macos.skills.newMarkdownFile").font(.title2.weight(.semibold))
             TextField("macos.skills.relativePathMdOrMarkdown", text: $path)
-            TextEditor(text: $content).font(.system(.body, design: .monospaced))
+            BridgeTextEditor(text: $content, font: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
                 .frame(minHeight: 280).border(Color(nsColor: .separatorColor))
             HStack {
                 Button("common.cancel", role: .cancel) { dismiss() }
                 Spacer()
-                Button("macos.skills.addFile") { save(path, content) }.buttonStyle(.borderedProminent)
+                Button("macos.skills.addFile") {
+                    BridgeTextInput.commitPendingComposition()
+                    save(path, content)
+                }.buttonStyle(.borderedProminent)
                     .disabled(path.isEmpty)
             }
         }.padding(22).frame(width: 580, height: 450)
@@ -2400,7 +2406,10 @@ private struct RenameBridgeSkillFileSheet: View {
             HStack {
                 Button("common.cancel", role: .cancel) { dismiss() }
                 Spacer()
-                Button("macos.skills.renameAction") { save(path) }.buttonStyle(.borderedProminent)
+                Button("macos.skills.renameAction") {
+                    BridgeTextInput.commitPendingComposition()
+                    save(path)
+                }.buttonStyle(.borderedProminent)
                     .disabled(path == oldPath || path.isEmpty)
             }
         }.padding(20).frame(width: 480)

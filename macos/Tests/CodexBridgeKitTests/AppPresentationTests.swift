@@ -1070,6 +1070,19 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(custom.valueToSave(officialDescription: "User text"), "User text")
     }
 
+    func testModelDescriptionLimitCountsCanonicalUnicodeScalarsWithoutRewritingTheDraft() {
+        var edit = ModelDescriptionEdit(officialDescription: nil, override: nil)
+        edit.text = String(repeating: "한", count: 2_000)
+        XCTAssertFalse(edit.isTooLong)
+        XCTAssertEqual(edit.text.utf8.count, 18_000)
+        edit.text += "글"
+        XCTAssertTrue(edit.isTooLong)
+        edit.text = String(repeating: "😀", count: 2_000)
+        XCTAssertFalse(edit.isTooLong)
+        edit.text += "😀"
+        XCTAssertTrue(edit.isTooLong)
+    }
+
     @MainActor
     func testModelDescriptionHistoryDecodesAndLoadsThroughRemoteClient() async throws {
         let policy: [String: Any] = [

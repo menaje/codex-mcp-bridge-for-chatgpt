@@ -240,6 +240,7 @@ struct CodexAuthSelectionControls: View {
                 SecureField("macos.auth.apiKey", text: $apiKey)
                     .textContentType(.password)
                 Button("macos.auth.saveCandidateKey") {
+                    BridgeTextInput.commitPendingComposition()
                     let submitted = apiKey
                     apiKey = ""
                     Task { await model.manageCodex(.init(action: "auth-api-key", authCandidateId: candidate.id,

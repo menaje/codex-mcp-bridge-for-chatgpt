@@ -84,6 +84,7 @@ struct CodexAccountUsageView: View {
                         TextField("macos.organizationid", text: $organizationId)
                         TextField("macos.projectidoptional", text: $projectId)
                         Button("macos.connectcostreporting") {
+                            BridgeTextInput.commitPendingComposition()
                             let input = CodexBillingInput(adminKey: adminKey, organizationId: organizationId.trimmingCharacters(in: .whitespacesAndNewlines),
                                 projectId: projectId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : projectId.trimmingCharacters(in: .whitespacesAndNewlines))
                             adminKey = ""

@@ -1,4 +1,5 @@
 import CodexBridgeKit
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -16,7 +17,10 @@ struct ModelDescriptionEdit: Equatable {
         expectedOverride = override
     }
 
-    var isTooLong: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count > Self.maximumLength }
+    var isTooLong: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping.unicodeScalars.count > Self.maximumLength
+    }
 
     func valueToSave(officialDescription: String?) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -116,8 +120,7 @@ private struct ModelDescriptionSettingsRow: View {
                         .font(.caption)
                         .textSelection(.enabled)
                 }
-                TextEditor(text: Binding(get: { edit?.text ?? "" }, set: { edit?.text = $0 }))
-                    .font(.body)
+                BridgeTextEditor(text: Binding(get: { edit?.text ?? "" }, set: { edit?.text = $0 }))
                     .frame(minHeight: 90, maxHeight: 180)
                     .padding(5)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
@@ -133,11 +136,13 @@ private struct ModelDescriptionSettingsRow: View {
                 }
                 HStack {
                     Button("settings.modelDescriptions.save") {
+                        BridgeTextInput.commitPendingComposition()
+                        guard let submitted = edit else { return }
                         Task {
                             let saved = await model.saveModelDescription(
                                 modelID: modelID,
-                                description: currentEdit.valueToSave(officialDescription: catalogModel?.description),
-                                expectedOverride: currentEdit.expectedOverride
+                                description: submitted.valueToSave(officialDescription: catalogModel?.description),
+                                expectedOverride: submitted.expectedOverride
                             )
                             if saved {
                                 edit = nil; failed = false

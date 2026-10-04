@@ -642,13 +642,13 @@ struct ConnectionSetupFlowView: View {
                 Text("macos.ontheservermacclickcreateandcopy")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextEditor(text: $invitation)
-                    .font(.caption.monospaced())
+                BridgeTextEditor(text: $invitation, font: .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular))
                     .frame(minHeight: 86)
                     .padding(5)
                     .overlay(RoundedRectangle(cornerRadius: 7).stroke(.quaternary))
                     .accessibilityLabel("macos.thepairinginvitationcopiedfromtheserververifies")
                 Button("macos.pastefromclipboard") {
+                    BridgeTextInput.commitPendingComposition()
                     if let copied = NSPasteboard.general.string(forType: .string) {
                         invitation = copied.trimmingCharacters(in: .whitespacesAndNewlines)
                     }
@@ -834,6 +834,7 @@ struct ConnectionSetupFlowView: View {
     }
 
     private func performPrimaryAction() {
+        BridgeTextInput.commitPendingComposition()
         switch step {
         case .role:
             Task { await continueFromRole() }
@@ -961,6 +962,7 @@ struct ConnectionSetupFlowView: View {
     }
 
     private func importSetupFromPasteboard() {
+        BridgeTextInput.commitPendingComposition()
         guard let contents = NSPasteboard.general.string(forType: .string) else {
             pasteMessage = BridgeAppLocalization.string(
                 "macos.noconnectioninformationwasfoundontheclipboard",

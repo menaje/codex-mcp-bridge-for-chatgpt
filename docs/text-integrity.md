@@ -40,6 +40,75 @@ endings, is what is forwarded and hashed.
 `macos/Tests/CodexBridgeKitTests/TextIntegrityTests.swift` run the same invalid
 UTF-8, NFC, verbatim, and search-key examples.
 
+## Native macOS input audit (2026-10-04)
+
+The native source has 32 explicit input declarations: 20 single-line text
+fields, 6 multiline editors, 3 secure fields, 2 sidebar searches, and one numeric
+field. Shared sheets account for add/rename/relocate/restore and main/attached
+document variations. This inventory covers the Dashboard's setup entry points
+as well as the Settings, Connection Assistant, and Skill Library windows.
+
+| Surface | Inputs | Count |
+| --- | --- | --- |
+| Settings sidebar | Settings search | 1 |
+| Skill Library sidebar | Skill search | 1 |
+| Project sheet | Project name; local or remote folder path | 2 |
+| Connection settings | Saved server name; hosted server name; HTTPS endpoint | 3 |
+| Remote pairing sheet | Invitation; device name; optional saved server name | 3 |
+| Connection Assistant credentials | Runtime API key; tunnel ID | 2 |
+| Connection Assistant pairing | Invitation; device name; optional saved server name | 3 |
+| Model descriptions | Description editor, repeated for each model | 1 |
+| Codex authentication | Candidate API key | 1 |
+| API cost connection | Admin key; organization ID; optional project ID | 3 |
+| Current skill | Name; search description; main or attached Markdown | 3 |
+| Skill import review | Name; search description | 2 |
+| New skill | Name; search description; main Markdown | 3 |
+| New attachment | Relative path; Markdown | 2 |
+| Rename attachment | New relative path | 1 |
+| Models & Execution | Concurrent task count, constrained to the configured numeric range | 1 |
+
+Native Open/Save panels and the editor's Find bar also accept text. AppKit owns
+those controls; the bridge does not replace their buffers or intercept their
+keystrokes. Secure fields are tested with synthetic Unicode insertion; actual
+secure-field keyboard/input-source behavior is owned by macOS. Numeric input
+intentionally does not store arbitrary Korean text.
+
+Three defects were found and corrected:
+
+- With the original SwiftUI `TextEditor`, composing `한글 입력` across view updates
+  lost marked text on the first `ㄱ`, `ㅇ`, and `ㄹ` following a committed syllable.
+  The single-line and sidebar search controls passed the same sequence. All six
+  multiline declarations now use `BridgeTextEditor`, which leaves the AppKit
+  buffer intact during composition, keeps dirty/validation state aware of the
+  visible marked text, publishes the final syllable on focus loss,
+  and preserves UTF-8 bytes, selection, undo/redo, and native Find support.
+- Hosted server status refreshes previously assigned both editable connection
+  fields unconditionally. Per-field draft reconciliation now protects both
+  committed edits and focused, unpublished IME composition. Untouched fields
+  follow server changes, and successful saves acknowledge only the submitted
+  draft so newer edits are retained.
+- Model description length validation counted UTF-16 code units before NFC,
+  rejecting valid decomposed Hangul and supplementary characters. It now uses
+  the server's trimmed, NFC Unicode-scalar count without rewriting the draft.
+  Explicit save, pairing, import, authentication, and custom paste actions commit
+  pending composition before reading or replacing a draft, including Command-S
+  without a focus change. Description saving reads that latest edit rather than
+  the value captured during the previous view render.
+
+`macos/Tests/CodexBridgeKitTests/NativeTextInputTests.swift` drives AppKit's
+[`NSTextInputClient` composition methods](https://developer.apple.com/documentation/appkit/nstextinputclient)
+against mounted SwiftUI views. It checks successive Hangul syllables, UTF-16
+replacement ranges after emoji, in-composition refreshes, focus changes,
+composition backspace, NFC/NFD bytes, CRLF, punctuation, synthetic secure input,
+undo/redo, scrolling, and hosted drafts. A source inventory assertion guards all
+six multiline declarations. `AppPresentationTests` checks the description limit
+against decomposed Hangul and emoji.
+
+These are native composition-protocol and source-audit checks. The Mac was locked
+when interactive inspection was attempted, so physical Korean-keyboard testing
+of the installed app remains pending. The source fix does not replace the
+installed application or publish a release.
+
 ## Non-goals
 
 This policy does not use NFKC compatibility folding, detect Unicode

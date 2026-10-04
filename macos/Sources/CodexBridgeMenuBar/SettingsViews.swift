@@ -939,8 +939,11 @@ private struct ConnectionSettingsPane: View {
     @State private var profileDeletionTarget: RemoteServerProfile?
     @State private var deviceRevocationTarget: RemoteManagementDevice?
     @State private var activeProfileName = ""
-    @State private var hostedEndpoint = detectedRemoteManagementEndpoint()
-    @State private var hostedDisplayName = Host.current().localizedName ?? "Codex MCP Bridge"
+    @State private var hostedDraft = HostedConnectionDraft(
+        endpoint: detectedRemoteManagementEndpoint(),
+        displayName: Host.current().localizedName ?? "Codex MCP Bridge"
+    )
+    @FocusState private var focusedHostedField: HostedConnectionDraft.Field?
     @State private var pairingInvitationCopied = false
     @State private var advancedConnectionSettingsExpanded = false
 
@@ -1003,6 +1006,9 @@ private struct ConnectionSettingsPane: View {
         .onChange(of: model.remoteManagementStatus) { _ in
             synchronizeHostedFields()
         }
+        .onChange(of: focusedHostedField) { _ in
+            synchronizeHostedFields()
+        }
         .onChange(of: model.remotePairingInvitation) { invitation in
             if invitation == nil { pairingInvitationCopied = false }
         }
@@ -1046,8 +1052,8 @@ private struct ConnectionSettingsPane: View {
                 Task {
                     await model.configureRemoteManagement(
                         enabled: false,
-                        endpoint: hostedEndpoint,
-                        displayName: hostedDisplayName
+                        endpoint: hostedDraft.endpoint,
+                        displayName: hostedDraft.displayName
                     )
                 }
             }
@@ -1162,6 +1168,7 @@ private struct ConnectionSettingsPane: View {
                 HStack {
                     TextField("macos.activeserverdisplayname", text: $activeProfileName)
                     Button("macos.savename") {
+                        BridgeTextInput.commitPendingComposition()
                         _ = model.renameRemoteServer(profile.serverId, name: activeProfileName)
                     }
                     .disabled(activeProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1201,7 +1208,8 @@ private struct ConnectionSettingsPane: View {
             Text("macos.thismacsnameandconnectionaddressare")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            TextField("macos.servernameshownonotherdevices", text: $hostedDisplayName)
+            TextField("macos.servernameshownonotherdevices", text: $hostedDraft.displayName)
+                .focused($focusedHostedField, equals: .displayName)
             HStack {
                 if let status = model.remoteManagementStatus {
                     Label(
@@ -1212,24 +1220,30 @@ private struct ConnectionSettingsPane: View {
                 }
                 Spacer()
                 Button {
+                    BridgeTextInput.commitPendingComposition()
+                    let submitted = hostedDraft
                     Task {
-                        await model.configureRemoteManagement(
+                        if await model.configureRemoteManagement(
                             enabled: true,
-                            endpoint: hostedEndpoint,
-                            displayName: hostedDisplayName
-                        )
+                            endpoint: submitted.endpoint,
+                            displayName: submitted.displayName
+                        ) {
+                            hostedDraft.acknowledge(endpoint: submitted.endpoint, displayName: submitted.displayName)
+                            synchronizeHostedFields()
+                        }
                     }
                 } label: {
                     Text(remoteManagementActionTitle)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(
-                    hostedEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                        hostedDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    hostedDraft.endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                        hostedDraft.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                         model.isBusy
                 )
                 if model.remoteManagementStatus?.enabled == true {
                     Button("macos.turnoffconnections", role: .destructive) {
+                        BridgeTextInput.commitPendingComposition()
                         showDisableRemoteConnectionConfirmation = true
                     }
                     .disabled(model.isBusy)
@@ -1248,9 +1262,10 @@ private struct ConnectionSettingsPane: View {
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
                             .frame(width: 76, alignment: .leading)
-                        TextField(text: $hostedEndpoint) {
+                        TextField(text: $hostedDraft.endpoint) {
                             EmptyView()
                         }
+                        .focused($focusedHostedField, equals: .endpoint)
                         .textFieldStyle(.roundedBorder)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity)
@@ -1389,12 +1404,13 @@ private struct ConnectionSettingsPane: View {
     private func synchronizeHostedFields() {
         let detectedEndpoint = detectedRemoteManagementEndpoint()
         if let status = model.remoteManagementStatus {
-            hostedEndpoint = status.endpoint ?? detectedEndpoint
-            if status.endpoint != nil || status.enabled {
-                hostedDisplayName = status.displayName
-            }
-        } else if hostedEndpoint.isEmpty {
-            hostedEndpoint = detectedEndpoint
+            hostedDraft.synchronize(
+                endpoint: status.endpoint ?? detectedEndpoint,
+                displayName: status.endpoint != nil || status.enabled ? status.displayName : nil,
+                editing: focusedHostedField
+            )
+        } else {
+            hostedDraft.synchronize(endpoint: detectedEndpoint, displayName: nil, editing: focusedHostedField)
         }
     }
 
@@ -1454,12 +1470,12 @@ private struct RemoteServerConnectionSheet: View {
                     Text("macos.ontheservermacclickcreateandcopy")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    TextEditor(text: $invitation)
-                        .font(.caption.monospaced())
+                    BridgeTextEditor(text: $invitation, font: .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular))
                         .frame(minHeight: 76)
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
                     HStack {
                         Button("macos.pastefromclipboard") {
+                            BridgeTextInput.commitPendingComposition()
                             if let copied = NSPasteboard.general.string(forType: .string) {
                                 invitation = copied.trimmingCharacters(in: .whitespacesAndNewlines)
                             }
@@ -1473,6 +1489,7 @@ private struct RemoteServerConnectionSheet: View {
                     HStack {
                         Spacer()
                         Button(model.isRemoteClient ? "macos.pairandactivate" : "macos.verifyandregisterserver") {
+                            BridgeTextInput.commitPendingComposition()
                             let shouldSwitchMode = !model.isRemoteClient
                             Task {
                                 if await model.pairRemoteServer(
@@ -2653,6 +2670,7 @@ private struct ProjectEditorSheet: View {
                 Spacer()
                 if isSaving { ProgressView().controlSize(.small) }
                 Button("macos.save") {
+                    BridgeTextInput.commitPendingComposition()
                     isSaving = true
                     Task {
                         if await save(operation) { dismiss() }
