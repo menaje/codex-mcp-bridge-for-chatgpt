@@ -1,0 +1,202 @@
+# Native input and edit-session contract
+
+Issue [#236](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/236)
+centralizes protection of user drafts. Field normalization remains governed by
+[Text integrity](text-integrity.md) (#115). Controls retain their native behavior:
+SwiftUI single-line fields, secure fields and search, plus the AppKit-backed
+`BridgeTextEditor` for documents. An edit session belongs to one form or editing
+target; a window scope only coordinates navigation and exit decisions.
+
+## Ownership and change observation
+
+`BridgeEditSession` in `macos/Sources/CodexBridgeMenuBar/EditSession.swift` owns the
+baseline, current draft, UUID, target ID, change revision, server baseline version,
+pending external values, conflicts and one in-flight submission. Each control
+uses `session.binding(.field)` and `.bridgeInput(session, field: .field)`. Search
+uses `.bridgeSearchInput(session)` and reads `session.searchValue`.
+
+The binding setter records UTF-8 changes directly. Native editing notifications
+also observe visible preedit, including text not delivered to SwiftUI yet. Those
+notifications are coalesced after AppKit finishes installing the marked range.
+Preedit updates the draft without echoing it into the binding or replacing the
+native hosting view. End-editing notifications carry the final single-line value.
+Dirty state separately compares values under the field policy: canonically
+equivalent human names can be clean while byte-distinct Markdown remains dirty.
+Undo back to the original bytes clears dirty state.
+
+Each native adapter has an explicit hosting boundary. A single-line field owns
+the shared AppKit field editor only while that field is its delegate and the
+editor is the first responder in that window. A submission cannot commit another
+form's marked text. Ambiguous mounted controls block synchronization. Reopening
+or changing targets creates a new session UUID; callbacks from old bindings and
+old native notifications cannot edit it. Native buffers are replaced only for an
+explicit discard, confirmed server value or new target identity.
+
+## Submission and response handling
+
+Every save intent enters before final dirty and validity checks:
+
+1. Confirm composition and synchronize the submitting session's native controls.
+2. Stop and keep the draft if synchronization or conflict review is incomplete.
+3. Read the latest values, apply each field policy, and validate the request.
+4. Pin submission ID, session UUID, target ID, draft revision, raw/prepared values
+   and expected server version in `BridgeEditSubmission`.
+5. Send the feature API request using that snapshot.
+6. Apply its `BridgeEditReceipt` only to the matching in-flight request.
+
+Save buttons admit marked text even when previously published dirty/validity
+state is stale. Button, menu and Command-S routes use the same preparation.
+Candidate-selection Enter is guarded by marked state and the input event that
+ended composition. Search only exposes a committed query; it does not use a
+document-save lifecycle.
+
+A successful response advances the baseline to the submitted values and the
+actual returned version. Additional input, including Undo back to the old baseline,
+stays in the draft and is compared against what was actually saved. Failed requests
+also protect that newer Undo from subsequent external snapshots.
+Closing a sheet, switching to preview or navigating after a save is allowed only
+for a clean matching revision. Feature reloads check the guard again after their
+asynchronous read. A response for A cannot select or clear B, nor acknowledge a
+reopened A. Creation receipts adopt the actual new resource ID so later input
+updates the created resource instead of creating it again. File-renaming receipts
+also advance the source path used by the next rename.
+
+Boolean APIs use `submit`; APIs with version/identity receipts use `submitReceipt`
+or the same `prepareSubmission`/`acknowledge` primitives. API business rules stay
+in `AppModel` and the server. Session, submission and receipt diagnostics redact
+payloads. Secrets have no edit history and are cleared on success only when the
+submitted secret is still current; a newer secret remains until explicit discard
+or its own successful submission.
+
+## External updates, failure and exit
+
+External snapshots update untouched fields independently. Focused fields and
+in-flight requests defer reconciliation; local edits are preserved. Overlapping
+server changes become conflicts. A server-version conflict requires a fresh
+snapshot followed by an explicit **Reload** or **Keep edits** choice. Reload
+discards the affected draft fields; Keep edits adopts the displayed baseline for
+the next guarded request. Neither choice submits automatically. A refresh during
+submission cannot silently advance the acknowledged version. Failed requests,
+failed validation and failed composition synchronization retain drafts.
+
+Hosted server settings pin the complete previous configuration. The optional
+`remote.configure.expectedConfiguration` comparison runs inside the server's
+serialized lifecycle before stopping its listener or changing pairing state.
+Stale requests fail with `REMOTE_CONFIGURATION_CONFLICT`; legacy callers can
+omit the optional guard. The new native settings UI always supplies it. Skill
+versions, settings revisions, project registry revisions and model-description
+expected overrides retain their existing server checks.
+
+Navigation and window close observe the latest draft without submitting or
+committing candidates. Cancelling the discard dialog keeps preedit. An explicit
+discard invalidates receipts and restores the baseline without an API write.
+Window scopes include visible controls and form anchors for wizard steps and
+sheets. Quit stages approval by session UUID/revision, rechecks after asynchronous
+shutdown work, and discards only after all exit checks succeed. Failed or
+cancelled shutdown retains drafts. Settings locale changes update the environment
+without destroying the editing pane.
+
+## Input inventory
+
+The structural guard covers **32 production declarations**, including repeated
+model-description rows. The machine-readable inventory is
+[`macos/input-contract.json`](../macos/input-contract.json). `H` means trimmed NFC
+human text; descriptions permit multiple lines. `V` means verbatim UTF-8. `S`
+means opaque secret with redacted diagnostics. `N` parses Unicode decimal digits
+at commit and retains empty/partial/invalid text while editing. `Q` is a raw draft
+whose committed query feeds existing derived search behavior.
+
+| View | Field | Control | Policy | Intent |
+| --- | --- | --- | --- | --- |
+| CodexAccountUsageView | adminKey | SecureField | S | Configure billing |
+| CodexAccountUsageView | organizationID | TextField | V | Configure billing |
+| CodexAccountUsageView | projectID | TextField | V | Configure billing |
+| CodexAuthSelectionControls | apiKey | SecureField | S | Save candidate key |
+| ConnectionSetupFlowView | apiKey | SecureField | S | Save credentials |
+| ConnectionSetupFlowView | tunnelID | TextField | V | Save credentials |
+| ConnectionSetupFlowView | invitation | BridgeTextEditor | S | Pair server |
+| ConnectionSetupFlowView | deviceName | TextField | H | Pair server |
+| ConnectionSetupFlowView | profileName | TextField | H | Pair server |
+| ModelDescriptionDraftEditor | description | BridgeTextEditor | H, 2,000 scalars | Save override |
+| NativeSettingsView | query | Search | Q | Filter settings |
+| ConnectionSettingsPane | name | TextField | H | Rename saved profile |
+| ConnectionSettingsPane | displayName | TextField | H | Configure hosted server |
+| ConnectionSettingsPane | endpoint | TextField | V | Configure hosted server |
+| RemoteServerConnectionSheet | invitation | BridgeTextEditor | S | Pair server |
+| RemoteServerConnectionSheet | deviceName | TextField | H | Pair server |
+| RemoteServerConnectionSheet | profileName | TextField | H | Pair server |
+| ModelExecutionSettingsPane | number | TextField | N, operator range | Commit on blur/Return; autosave settings |
+| ProjectEditorSheet | name | TextField | H | Add/rename/restore project |
+| ProjectEditorSheet | cwd | TextField | V | Add/relocate/restore project |
+| SkillsLibraryWindowView | query | Search | Q | Filter library |
+| SkillsLibraryWindowView | name | TextField | H | Save skill metadata |
+| SkillsLibraryWindowView | description | TextField | H | Save skill metadata |
+| SkillsLibraryWindowView | content | BridgeTextEditor | V | Save main/attached Markdown |
+| BridgeSkillImportReviewSheet | name | TextField | H | Import skill |
+| BridgeSkillImportReviewSheet | description | TextField | H | Import skill |
+| NewBridgeSkillSheet | name | TextField | H | Create/update skill |
+| NewBridgeSkillSheet | description | TextField | H | Create/update skill |
+| NewBridgeSkillSheet | content | BridgeTextEditor | V | Create/update skill |
+| NewBridgeSkillFileSheet | path | TextField | V | Add/update file |
+| NewBridgeSkillFileSheet | content | BridgeTextEditor | V | Add/update file |
+| RenameBridgeSkillFileSheet | path | TextField | V | Rename file |
+
+Feature validation still applies at submission, including URL/tunnel syntax,
+nonempty names, server-specific limits, and existing business-level treatment of
+organization/project IDs. Native numeric formatting is replaced with a string
+draft, while the stepper still enforces the operator's range. Import checkboxes
+and main-file selection also record a revision so changing them during a request
+cannot close the review over a newer selection.
+
+System-owned exceptions are `NSOpenPanel` (confirm the owning draft before
+applying a selected path), `NSSavePanel` (export a pinned document), and the native
+`NSTextView` Find bar (replacement changes still enter the document binding).
+Do not reimplement their internal input controls.
+
+## Regression and physical acceptance
+
+The implementation starts from local `6bd8692`, which includes the native-editor
+and byte-preservation fixes `089e7b7` and `6bd8692`. The issue review's remote
+`37839d1` was a different baseline; its findings do not prove those local fixes
+were still broken. Automated regressions and physical input-source tests are
+separate evidence:
+
+| Suite | Evidence |
+| --- | --- |
+| EditSessionTests | Pinned revisions/versions/creation targets; late/reopened targets; stale native binding/buffer; per-field conflicts; version-only refresh; explicit review; failed synchronization; numeric partials; redacted secrets; shared field editor; discard/cancel |
+| NativeTextInputTests | Mounted native fields/search/editor; Hangul/Japanese/Chinese and combining scripts via NSTextInputClient; refresh during composition; UTF-16 selection/reconversion; focus loss; exact bytes; secure insertion; undo/redo and Find |
+| SkillsLibraryTextInputTests | Production window and isolated RPC socket; byte-distinct save/readback; marked save; additional marked input during delayed response; A-to-B response isolation; conflict review; guard recheck after delayed feature read |
+| Remote companion tests | Strict optional guard encoding, endpoint null, stale queued configuration without listener/pairing mutation, and legacy callers |
+| nativeInputContract.test.ts / macos:input:check | Missing owner, mismatched field/session, direct state binding, raw editor/native constructor, global commit and inventory changes are rejected; source traversal includes new subdirectories |
+
+Run `npm run macos:check`, `npm run check`, and `npm run validate:fast` with the
+repository's pinned Codex CLI for the App Server compatibility check. The source
+guard only checks declarations and ownership connections; it cannot establish
+candidate-window or physical keyboard behavior.
+
+Build the synthetic physical fixture with
+`npm run macos:input:acceptance:build -- '/tmp/Bridge Input Acceptance.app'`.
+It compiles the production session/adapters, refreshes unrelated UI every 250 ms,
+and shows a local submitted-value receipt with an 800 ms acknowledgement delay.
+It sends no bridge/API request, stores no credentials, and includes baseline
+native controls for comparison. Use disposable strings in the secure field.
+
+For each installed input source, record its actual identifier, expected text,
+visible draft, submitted text, candidate behavior and pass/fail/blocked status.
+Cover single-line/default/rounded controls, document editor, search, focus change,
+candidate Enter, Command-S while the final syllable is marked, undo/redo, and new
+input before acknowledgement. Include Korean two-set, Japanese Romaji,
+simplified Chinese Pinyin, traditional Chinese Zhuyin, an accent/dead-key layout,
+emoji and mixed RTL text. Secure-field keyboard restrictions belong to macOS;
+Unicode paste/insertion and redaction are separate checks. Restore the original
+input-source list, active source and any automatically added dictation languages
+after temporarily adding test sources.
+
+On 2026-10-04, computer-use key synthesis failed to retain composition even in
+baseline controls. It is not physical-IME proof. A human tried arbitrary strings
+in several fields; those strings were not a specified expected result and cannot
+be classified as corruption. Exact-text/Command-S human acceptance and the
+Japanese/Chinese candidate matrix remain pending until recorded. The temporary
+fixture also does not validate the installed product build. Keep #236 open while
+that physical acceptance is incomplete; local source integration is not a release
+or installation of the fix.

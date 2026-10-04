@@ -431,6 +431,9 @@ enum BridgeAppLocalization {
     }
 
     private static func localizedErrorDetail(_ message: String, locale: Locale) -> String {
+        if message.contains("REMOTE_CONFIGURATION_CONFLICT") {
+            return string("macos.input.externalChange", locale: locale)
+        }
         let projectErrors = [
             ("PROJECT_CWD_STILL_PINNED", "settings.projectCwdStillPinned"),
             ("PROJECT_DELETE_STILL_PINNED", "settings.projectDeleteStillPinned"),

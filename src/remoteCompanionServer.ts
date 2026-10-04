@@ -156,6 +156,7 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
     enabled: boolean;
     endpoint: string;
     displayName: string;
+    expectedConfiguration?: { serverId: string; enabled: boolean; endpoint: string | null; displayName: string };
   }): Promise<RemoteCompanionStatus> {
     const displayName = input.displayName.trim();
     if (!displayName || displayName.length > 120) {
@@ -164,6 +165,15 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
     const endpoint = normalizeEndpoint(input.endpoint);
     const enabled = input.enabled;
     return this.enqueueLifecycle(async () => {
+      // Compare inside the serialized lifecycle, before stopping a listener or
+      // modifying state. Queued writes cannot both accept the same baseline.
+      const expected = input.expectedConfiguration;
+      const current = this.state.configuration;
+      if (expected && (expected.serverId !== this.state.serverId ||
+          expected.enabled !== current.enabled || expected.endpoint !== current.endpoint ||
+          expected.displayName !== current.displayName)) {
+        throw new Error("REMOTE_CONFIGURATION_CONFLICT");
+      }
       await this.stopListener();
       this.pairing = undefined;
       this.state = {

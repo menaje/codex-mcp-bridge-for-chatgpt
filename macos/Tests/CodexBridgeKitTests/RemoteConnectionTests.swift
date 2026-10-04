@@ -3,6 +3,17 @@ import XCTest
 @testable import CodexBridgeKit
 
 final class RemoteConnectionTests: XCTestCase {
+    func testConfigurationGuardEncodesUnconfiguredEndpointAsNullAndLegacyRequestsOmitTheGuard() throws {
+        let expected = try JSONDecoder().decode(RemoteManagementConfiguration.self, from: Data(#"{"serverId":"11111111-1111-4111-8111-111111111111","enabled":false,"endpoint":null,"displayName":"fixture"}"#.utf8))
+        let guarded = RemoteManagementConfigureParameters(enabled: true, endpoint: "https://fixture.example", displayName: "draft", expectedConfiguration: expected)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(guarded)) as? [String: Any])
+        let guardObject = try XCTUnwrap(object["expectedConfiguration"] as? [String: Any])
+        XCTAssertTrue(guardObject["endpoint"] is NSNull)
+        let legacy = RemoteManagementConfigureParameters(enabled: true, endpoint: "https://fixture.example", displayName: "draft")
+        let legacyObject = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+        XCTAssertNil(legacyObject["expectedConfiguration"])
+    }
+
     func testRemoteTransportUsesTheBridgeSkillEnvelopeLimit() {
         XCTAssertEqual(remoteCompanionMaximumResponseBytes, bridgeSkillTransportEnvelopeMaxBytes)
     }

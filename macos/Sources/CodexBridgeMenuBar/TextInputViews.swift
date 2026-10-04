@@ -1,19 +1,6 @@
 import AppKit
 import SwiftUI
 
-@MainActor
-enum BridgeTextInput {
-    /// Explicit actions (including Command-S) can run without moving focus.
-    /// Publish the visible final syllable before the action reads its draft.
-    static func commitPendingComposition(in window: NSWindow? = NSApp.keyWindow) {
-        guard let editor = window?.firstResponder as? NSTextView,
-              editor.hasMarkedText() else { return }
-        editor.unmarkText()
-        editor.inputContext?.discardMarkedText()
-        editor.didChangeText()
-    }
-}
-
 /// Keep AppKit's live buffer authoritative while an input method is composing.
 /// SwiftUI may deliver a previous binding value just after a syllable commits;
 /// writing that value back would erase the next syllable's marked text.
@@ -167,39 +154,5 @@ private final class BridgeEditableTextView: NSTextView {
         }
         onTextChange?()
         return true
-    }
-}
-
-/// A refreshed server snapshot updates untouched fields, never a local draft.
-/// Focus also protects marked text that a SwiftUI TextField has not published yet.
-struct HostedConnectionDraft {
-    enum Field: Hashable { case endpoint, displayName }
-
-    var endpoint: String
-    var displayName: String
-    private var synchronizedEndpoint: String
-    private var synchronizedDisplayName: String
-
-    init(endpoint: String, displayName: String) {
-        self.endpoint = endpoint
-        self.displayName = displayName
-        synchronizedEndpoint = endpoint
-        synchronizedDisplayName = displayName
-    }
-
-    mutating func synchronize(endpoint: String, displayName: String?, editing: Field?) {
-        if editing != .endpoint {
-            if self.endpoint.utf8.elementsEqual(synchronizedEndpoint.utf8) { self.endpoint = endpoint }
-            synchronizedEndpoint = endpoint
-        }
-        if editing != .displayName, let displayName {
-            if self.displayName.utf8.elementsEqual(synchronizedDisplayName.utf8) { self.displayName = displayName }
-            synchronizedDisplayName = displayName
-        }
-    }
-
-    mutating func acknowledge(endpoint: String, displayName: String) {
-        synchronizedEndpoint = endpoint
-        synchronizedDisplayName = displayName
     }
 }

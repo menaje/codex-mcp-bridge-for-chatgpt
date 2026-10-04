@@ -1145,8 +1145,10 @@ final class AppPresentationTests: XCTestCase {
                 remoteClientFactory: { _, _ in client }
             )
             await model.start()
-            let saved = await model.saveModelDescription(modelID: "gpt-current", description: restoring ? nil : "  User text  ", expectedOverride: initial["gpt-current"])
-            XCTAssertTrue(saved)
+            let result = await model.submitModelDescription(modelID: "gpt-current", description: restoring ? nil : "  User text  ", expectedOverride: initial["gpt-current"], expectedSettingsRevision: 4)
+            let receipt = try XCTUnwrap(result)
+            XCTAssertEqual(receipt.settings.settingsRevision, 5)
+            XCTAssertEqual(receipt.settings.modelDescriptionOverrides, expected)
             XCTAssertEqual(client.settingsUpdateCallCount, 1)
             let mutation = try XCTUnwrap(client.lastSettingsMutation)
             XCTAssertEqual(mutation.expectedSettingsRevision, 4)

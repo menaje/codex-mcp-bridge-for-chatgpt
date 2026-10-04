@@ -324,14 +324,25 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard SettingsWindowController.shared.confirmDiscardBeforeApplicationShutdown() else { return .terminateCancel }
+        guard ConnectionAssistantWindowController.shared.confirmDiscardBeforeApplicationShutdown() else {
+            SettingsWindowController.shared.cancelApplicationShutdownDiscard()
+            return .terminateCancel
+        }
         guard SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown() else {
+            SettingsWindowController.shared.cancelApplicationShutdownDiscard()
+            ConnectionAssistantWindowController.shared.cancelApplicationShutdownDiscard()
             return .terminateCancel
         }
         guard let model = Self.model else {
+            SettingsWindowController.shared.completeApplicationShutdownDiscard()
+            ConnectionAssistantWindowController.shared.completeApplicationShutdownDiscard()
             SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
             return .terminateNow
         }
         if model.applicationShutdownCompleted {
+            SettingsWindowController.shared.completeApplicationShutdownDiscard()
+            ConnectionAssistantWindowController.shared.completeApplicationShutdownDiscard()
             SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
             return .terminateNow
         }
@@ -348,12 +359,18 @@ final class BridgeAppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             if shouldTerminate,
-               !SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown() {
+               (!SettingsWindowController.shared.confirmDiscardBeforeApplicationShutdown() ||
+                !ConnectionAssistantWindowController.shared.confirmDiscardBeforeApplicationShutdown() ||
+                !SkillsLibraryWindowController.shared.confirmDiscardBeforeApplicationShutdown()) {
                 shouldTerminate = false
             }
             if shouldTerminate {
+                SettingsWindowController.shared.completeApplicationShutdownDiscard()
+                ConnectionAssistantWindowController.shared.completeApplicationShutdownDiscard()
                 SkillsLibraryWindowController.shared.completeApplicationShutdownDiscard()
             } else {
+                SettingsWindowController.shared.cancelApplicationShutdownDiscard()
+                ConnectionAssistantWindowController.shared.cancelApplicationShutdownDiscard()
                 SkillsLibraryWindowController.shared.cancelApplicationShutdownDiscard()
             }
             terminationRequestInProgress = false
@@ -454,6 +471,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
     private var window: NSWindow?
     private weak var model: AppModel?
+    private let editScope = BridgeEditScope()
 
     func show(model: AppModel) {
         self.model = model
@@ -480,6 +498,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                     settingsWindow?.title = title
                 })
                     .environmentObject(model)
+                    .environment(\.bridgeEditScope, editScope)
                     .frame(minWidth: 820, minHeight: 600)
             )
             settingsWindow.contentViewController = settingsHostingController
@@ -497,6 +516,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
     }
 
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        editScope.confirmDiscardIfNeeded { BridgeDiscardAlert.confirm(locale: model?.interfaceLocale ?? .current) }
+    }
+    func confirmDiscardBeforeApplicationShutdown() -> Bool {
+        editScope.confirmDiscardForApplicationShutdown { BridgeDiscardAlert.confirm(locale: model?.interfaceLocale ?? .current) }
+    }
+    func completeApplicationShutdownDiscard() { editScope.completeApplicationShutdownDiscard() }
+    func cancelApplicationShutdownDiscard() { editScope.cancelApplicationShutdownDiscard() }
+
     func windowWillClose(_ notification: Notification) {
         if let window = notification.object as? NSWindow {
             PrimaryAppWindowPresentation.didClose(window)
@@ -511,6 +539,7 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let windowState = SkillsLibraryWindowState()
     private weak var model: AppModel?
+    private let editScope = BridgeEditScope()
 
     func show(model: AppModel) {
         self.model = model
@@ -537,6 +566,7 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
                 rootView: SkillsLibraryLocalizedRootView()
                     .environmentObject(model)
                     .environmentObject(windowState)
+                    .environment(\.bridgeEditScope, editScope)
                     .frame(minWidth: 900, minHeight: 600)
             )
             skillsWindow.titleVisibility = .hidden
@@ -567,7 +597,8 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        windowState.confirmDiscardIfNeeded {
+        guard editScope.confirmDiscardIfNeeded({ BridgeDiscardAlert.confirm(locale: model?.interfaceLocale ?? .current) }) else { return false }
+        return windowState.confirmDiscardIfNeeded {
             presentDiscardAlert(
                 message: "macos.skills.discardUnsavedChangesAndClose",
                 bringSkillsWindowForward: false
@@ -576,19 +607,18 @@ final class SkillsLibraryWindowController: NSObject, NSWindowDelegate {
     }
 
     func confirmDiscardBeforeApplicationShutdown() -> Bool {
-        windowState.confirmDiscardForApplicationShutdown {
-            presentDiscardAlert(
-                message: "macos.skills.discardUnsavedChanges",
-                bringSkillsWindowForward: true
-            )
-        }
+        guard editScope.confirmDiscardForApplicationShutdown({ BridgeDiscardAlert.confirm(locale: model?.interfaceLocale ?? .current) }) else { return false }
+        // The scope already includes the primary editor and any open sheet.
+        return true
     }
 
     func completeApplicationShutdownDiscard() {
+        editScope.completeApplicationShutdownDiscard()
         windowState.completeApplicationShutdownDiscard()
     }
 
     func cancelApplicationShutdownDiscard() {
+        editScope.cancelApplicationShutdownDiscard()
         windowState.cancelApplicationShutdownDiscard()
     }
 
@@ -616,11 +646,17 @@ final class ConnectionAssistantWindowController: NSObject, NSWindowDelegate {
     static let shared = ConnectionAssistantWindowController()
     private var window: NSWindow?
     private let windowState = ConnectionAssistantWindowState()
+    private let editScope = BridgeEditScope()
+    private weak var model: AppModel?
 
     func show(
         model: AppModel,
         presentation requestedPresentation: ConnectionAssistantPresentation? = nil
     ) {
+        self.model = model
+        if requestedPresentation != nil && window?.isVisible == true {
+            guard editScope.confirmDiscardIfNeeded({ BridgeDiscardAlert.confirm(locale: model.interfaceLocale) }) else { return }
+        }
         let presentation = requestedPresentation ?? (model.needsSetup ? .setup : .recovery)
         if window == nil || window?.isVisible != true || requestedPresentation != nil {
             windowState.begin(presentation)
@@ -647,6 +683,7 @@ final class ConnectionAssistantWindowController: NSObject, NSWindowDelegate {
                     onTitleChange: { [weak repairWindow] title in repairWindow?.title = title }
                 )
                     .environmentObject(model)
+                    .environment(\.bridgeEditScope, editScope)
                     .frame(minWidth: 620, minHeight: 520)
             )
             repairWindow.contentViewController = repairHostingController
@@ -676,6 +713,15 @@ final class ConnectionAssistantWindowController: NSObject, NSWindowDelegate {
             locale: model.interfaceLocale
         )
     }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        editScope.confirmDiscardIfNeeded { BridgeDiscardAlert.confirm(locale: model?.interfaceLocale ?? .current) }
+    }
+    func confirmDiscardBeforeApplicationShutdown() -> Bool {
+        editScope.confirmDiscardForApplicationShutdown { BridgeDiscardAlert.confirm(locale: model?.interfaceLocale ?? .current) }
+    }
+    func completeApplicationShutdownDiscard() { editScope.completeApplicationShutdownDiscard() }
+    func cancelApplicationShutdownDiscard() { editScope.cancelApplicationShutdownDiscard() }
 
     func windowWillClose(_ notification: Notification) {
         if let window = notification.object as? NSWindow {

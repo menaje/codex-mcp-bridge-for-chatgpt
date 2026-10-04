@@ -185,15 +185,38 @@ public struct RemoteManagementStatus: Codable, Sendable, Equatable {
     public let devices: [RemoteManagementDevice]
 }
 
+public struct RemoteManagementConfiguration: Codable, Sendable, Equatable {
+    public let serverId: String
+    public let enabled: Bool
+    public let endpoint: String?
+    public let displayName: String
+    public init(status: RemoteManagementStatus) {
+        serverId = status.serverId; enabled = status.enabled
+        endpoint = status.endpoint; displayName = status.displayName
+    }
+    private enum CodingKeys: String, CodingKey { case serverId, enabled, endpoint, displayName }
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(serverId, forKey: .serverId)
+        try container.encode(enabled, forKey: .enabled)
+        // null is the expected unconfigured endpoint; omission is not a CAS value.
+        try container.encode(endpoint, forKey: .endpoint)
+        try container.encode(displayName, forKey: .displayName)
+    }
+}
+
 public struct RemoteManagementConfigureParameters: Codable, Sendable {
     public let enabled: Bool
     public let endpoint: String
     public let displayName: String
 
-    public init(enabled: Bool, endpoint: String, displayName: String) {
+    public let expectedConfiguration: RemoteManagementConfiguration?
+
+    public init(enabled: Bool, endpoint: String, displayName: String, expectedConfiguration: RemoteManagementConfiguration? = nil) {
         self.enabled = enabled
         self.endpoint = endpoint
         self.displayName = displayName
+        self.expectedConfiguration = expectedConfiguration
     }
 }
 
@@ -233,14 +256,16 @@ public extension BridgeCompanionClient {
     func configureRemoteManagement(
         enabled: Bool,
         endpoint: String,
-        displayName: String
+        displayName: String,
+        expectedConfiguration: RemoteManagementConfiguration? = nil
     ) async throws -> RemoteManagementStatus {
         try await rpc.call(
             "remote.configure",
             params: RemoteManagementConfigureParameters(
                 enabled: enabled,
                 endpoint: endpoint,
-                displayName: displayName
+                displayName: displayName,
+                expectedConfiguration: expectedConfiguration
             ),
             timeout: 45
         )

@@ -102,7 +102,7 @@ final class NativeTextInputTests: XCTestCase {
             XCTAssertEqual(editor.markedRange(), NSRange(location: 3, length: length))
             XCTAssertEqual(editor.string, "😀 \(stage) / العربية")
         }
-        BridgeTextInput.commitPendingComposition(in: fixture.window)
+        commitFixtureComposition(in: fixture.window)
         XCTAssertEqual(fixture.state.editor, "😀 日本語 / العربية")
         XCTAssertFalse(editor.hasMarkedText())
 
@@ -259,7 +259,7 @@ final class NativeTextInputTests: XCTestCase {
         fixture.window.makeFirstResponder(field)
         let fieldEditor = try XCTUnwrap(field.currentEditor() as? NSTextView)
         fieldEditor.setMarkedText("한", selectedRange: NSRange(location: 1, length: 0), replacementRange: unspecifiedRange)
-        BridgeTextInput.commitPendingComposition(in: fixture.window)
+        commitFixtureComposition(in: fixture.window)
         XCTAssertEqual(fixture.state.field, "한", "A save action must read the complete field immediately")
         XCTAssertFalse(fieldEditor.hasMarkedText())
 
@@ -268,7 +268,7 @@ final class NativeTextInputTests: XCTestCase {
         editor.setMarkedText("글", selectedRange: NSRange(location: 1, length: 0), replacementRange: unspecifiedRange)
         XCTAssertEqual(fixture.state.editor, "글")
         XCTAssertTrue(editor.hasMarkedText())
-        BridgeTextInput.commitPendingComposition(in: fixture.window)
+        commitFixtureComposition(in: fixture.window)
         XCTAssertEqual(fixture.state.editor, "글")
         XCTAssertFalse(editor.hasMarkedText())
         XCTAssertTrue(fixture.window.firstResponder === editor)
@@ -327,39 +327,46 @@ final class NativeTextInputTests: XCTestCase {
         XCTAssertEqual(protectedInputs, 6, "Review the native input inventory when adding an editor")
     }
 
-    func testServerRefreshPreservesEachEditedDraftAndUpdatesUntouchedFields() {
-        var draft = HostedConnectionDraft(endpoint: "https://initial.local", displayName: "초기 서버")
-        draft.synchronize(endpoint: "https://server.local", displayName: "서버", editing: nil)
-        XCTAssertEqual(draft.endpoint, "https://server.local")
-        XCTAssertEqual(draft.displayName, "서버")
-        draft.displayName = "한글로 바꾸는 중"
-        draft.synchronize(endpoint: "https://new.local", displayName: "다른 이름", editing: nil)
-        XCTAssertEqual(draft.endpoint, "https://new.local")
-        XCTAssertEqual(draft.displayName, "한글로 바꾸는 중")
-        draft.endpoint = "https://my-draft.local"
-        draft.synchronize(endpoint: "https://remote.local", displayName: "주기적 갱신", editing: nil)
-        XCTAssertEqual(draft.endpoint, "https://my-draft.local")
-        XCTAssertEqual(draft.displayName, "한글로 바꾸는 중")
-
-        draft.acknowledge(endpoint: draft.endpoint, displayName: draft.displayName)
-        draft.synchronize(endpoint: "https://saved.local", displayName: "저장된 이름", editing: nil)
-        XCTAssertEqual(draft.endpoint, "https://saved.local")
-        XCTAssertEqual(draft.displayName, "저장된 이름")
+    @MainActor
+    func testServerRefreshPreservesEachEditedDraftAndUpdatesUntouchedFields() throws {
+        let draft = BridgeEditSession(target: "hosted", values: [.endpoint: "https://initial.local", .displayName: "초기 서버"])
+        draft.receive([.endpoint: "https://server.local", .displayName: "서버"])
+        XCTAssertEqual(draft.value(.endpoint), "https://server.local")
+        draft.edit(.displayName, "한글로 바꾸는 중")
+        draft.receive([.endpoint: "https://new.local", .displayName: "다른 이름"])
+        XCTAssertEqual(draft.value(.endpoint), "https://new.local")
+        XCTAssertEqual(draft.value(.displayName), "한글로 바꾸는 중")
+        XCTAssertTrue(draft.hasConflicts)
+        draft.resolveConflicts(keepingDraft: true)
+        let submitted = try XCTUnwrap(draft.prepareSubmission())
+        XCTAssertTrue(draft.acknowledge(submitted))
+        draft.receive([.endpoint: "https://saved.local", .displayName: "저장된 이름"])
+        XCTAssertEqual(draft.value(.displayName), "저장된 이름")
     }
 
-    func testFocusedFieldIsProtectedBeforeTheIMEPublishesItsDraft() {
-        var draft = HostedConnectionDraft(endpoint: "https://initial.local", displayName: "초기 서버")
-        draft.synchronize(endpoint: "https://new.local", displayName: "외부 변경", editing: .displayName)
-        XCTAssertEqual(draft.displayName, "초기 서버")
-        draft.displayName = "한글 조합 완료"
-        draft.synchronize(endpoint: "https://new.local", displayName: "외부 변경", editing: nil)
-        XCTAssertEqual(draft.displayName, "한글 조합 완료")
-
-        var untouched = HostedConnectionDraft(endpoint: "https://initial.local", displayName: "초기 서버")
-        untouched.synchronize(endpoint: "https://updated.local", displayName: nil, editing: .endpoint)
-        XCTAssertEqual(untouched.endpoint, "https://initial.local")
-        untouched.synchronize(endpoint: "https://updated.local", displayName: nil, editing: nil)
-        XCTAssertEqual(untouched.endpoint, "https://updated.local")
+    @MainActor
+    func testFocusedFieldIsProtectedBeforeTheIMEPublishesItsDraft() async throws {
+        let fixture = try await InputFixture()
+        defer { fixture.close() }
+        let draft = fixture.state.inputs
+        draft.edit(.displayName, "초기 서버")
+        let initial = try XCTUnwrap(draft.prepareSubmission())
+        XCTAssertTrue(draft.acknowledge(initial))
+        try await fixture.refresh()
+        let field = try XCTUnwrap(fixture.descendants.compactMap { $0 as? NSTextField }.first { $0.placeholderString == "Rounded field" })
+        XCTAssertTrue(fixture.window.makeFirstResponder(field))
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        draft.receive([.displayName: "외부 변경", .endpoint: "https://new.local"])
+        XCTAssertEqual(draft.value(.displayName), "초기 서버")
+        XCTAssertEqual(draft.value(.endpoint), "https://new.local")
+        editor.setSelectedRange(NSRange(location: 0, length: (editor.string as NSString).length))
+        editor.setMarkedText("한글", selectedRange: NSRange(location: 2, length: 0), replacementRange: unspecifiedRange)
+        try await fixture.refresh()
+        XCTAssertEqual(draft.value(.displayName), "한글")
+        XCTAssertTrue(editor.hasMarkedText())
+        XCTAssertNil(draft.prepareSubmission(), "Pending external value becomes an explicit conflict after confirmation")
+        XCTAssertEqual(draft.value(.displayName), "한글")
+        XCTAssertTrue(draft.hasConflicts)
     }
 
     @MainActor
@@ -421,11 +428,13 @@ private final class InputFixture {
 
 @MainActor
 private final class TextInputTestState: ObservableObject {
-    @Published var field = ""
-    @Published var roundedField = ""
-    @Published var editor = ""
-    @Published var search = ""
-    @Published var secret = ""
+    let inputs = BridgeEditSession(target: "native-fixture", values: [.name: "", .displayName: "", .content: "", .apiKey: ""])
+    let searchInput = BridgeEditSession(target: "native-search", values: [.query: ""])
+    var field: String { get { inputs.value(.name) } set { inputs.edit(.name, newValue) } }
+    var roundedField: String { get { inputs.value(.displayName) } set { inputs.edit(.displayName, newValue) } }
+    var editor: String { get { inputs.value(.content) } set { inputs.edit(.content, newValue) } }
+    var search: String { get { searchInput.value(.query) } set { searchInput.edit(.query, newValue) } }
+    var secret: String { get { inputs.value(.apiKey) } set { inputs.edit(.apiKey, newValue) } }
     @Published var tick = 0
 }
 
@@ -436,12 +445,18 @@ private struct TextInputTestView: View {
             List { Text(state.search) }
         } detail: {
             VStack {
-                TextField("Default field", text: $state.field)
-                TextField("Rounded field", text: $state.roundedField).textFieldStyle(.roundedBorder)
-                SecureField("Synthetic secret", text: $state.secret)
-                BridgeTextEditor(text: $state.editor)
+                TextField("Default field", text: state.inputs.binding(.name)).bridgeInput(state.inputs, field: .name)
+                TextField("Rounded field", text: state.inputs.binding(.displayName)).textFieldStyle(.roundedBorder).bridgeInput(state.inputs, field: .displayName)
+                SecureField("Synthetic secret", text: state.inputs.binding(.apiKey)).bridgeInput(state.inputs, field: .apiKey)
+                BridgeTextEditor(text: state.inputs.binding(.content)).bridgeInput(state.inputs, field: .content)
                 Text("\(state.tick)")
             }.padding()
-        }.searchable(text: $state.search, placement: .sidebar)
+        }.searchable(text: state.searchInput.binding(.query), placement: .sidebar).bridgeSearchInput(state.searchInput)
     }
+}
+
+@MainActor
+private func commitFixtureComposition(in window: NSWindow) {
+    guard let editor = window.firstResponder as? NSTextView, editor.hasMarkedText() else { return }
+    editor.unmarkText(); editor.inputContext?.discardMarkedText(); editor.didChangeText()
 }

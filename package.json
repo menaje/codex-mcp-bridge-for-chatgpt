@@ -59,7 +59,7 @@
     "build": "npm run release:check && node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.json && node scripts/write-build-info.mjs",
     "macos:localizations:check": "npm run localization:check && ./macos/check-localizations.sh",
     "macos:localizations:sync": "npm run localization:generate && ./macos/sync-localizations.sh",
-    "macos:check": "npm run macos:localizations:check && swift test --package-path macos -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors",
+    "macos:check": "npm run macos:localizations:check && npm run macos:input:check && swift test --package-path macos -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors",
     "macos:settings-visual:check": "tsx scripts/native-settings-connection-visual-acceptance.ts",
     "macos:skills-visual:check": "tsx scripts/native-skill-library-visual-acceptance.ts",
     "macos:bundle": "./macos/build-app.sh",
@@ -102,7 +102,9 @@
     "test:continuity": "node scripts/check-thread-continuity.mjs",
     "test:launchd-lifecycle": "tsx scripts/check-launchd-lifecycle.ts --run-isolated",
     "test:issue-221-card": "tsx scripts/issue-221-card-retirement-regression.ts",
-    "test:issue-221": "vitest run test/issue221Summary.test.ts test/issue221Delivery.test.ts test/issue221Profiles.test.ts test/stdioServer.test.ts --maxWorkers=2 && npm run test:issue-221-card"
+    "test:issue-221": "vitest run test/issue221Summary.test.ts test/issue221Delivery.test.ts test/issue221Profiles.test.ts test/stdioServer.test.ts --maxWorkers=2 && npm run test:issue-221-card",
+    "macos:input:check": "node scripts/native-input-contract.mjs",
+    "macos:input:acceptance:build": "node scripts/build-native-input-acceptance.mjs"
   },
   "keywords": [
     "codex",

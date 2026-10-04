@@ -1,5 +1,10 @@
 # Text integrity policy
 
+Native draft ownership, composition, submission receipts and exit handling are
+specified separately in [Native input and edit-session contract](native-edit-sessions.md).
+The dated audits below describe their original baselines; #236 builds on those
+fixes while retaining the field policies in this document.
+
 The bridge does not use one global text normalizer. Each field selects one of
 the policies in `src/textIntegrity.ts` before it is persisted, hashed, compared,
 or forwarded:

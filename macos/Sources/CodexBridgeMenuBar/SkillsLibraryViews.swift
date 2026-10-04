@@ -13,15 +13,24 @@ final class SkillsLibraryWindowState: ObservableObject {
         }
     }
     private(set) var applicationShutdownDiscardApproved = false
+    weak var editSession: BridgeEditSession?
+
+    private func observeDraft() {
+        guard let editSession else { return }
+        hasUnsavedChanges = !editSession.observeInputs() || editSession.hasUnsavedChanges
+    }
 
     func confirmDiscardIfNeeded(_ decision: () -> Bool) -> Bool {
+        observeDraft()
         guard hasUnsavedChanges else { return true }
         guard decision() else { return false }
+        editSession?.discard()
         hasUnsavedChanges = false
         return true
     }
 
     func confirmDiscardForApplicationShutdown(_ decision: () -> Bool) -> Bool {
+        observeDraft()
         guard hasUnsavedChanges else { return true }
         guard !applicationShutdownDiscardApproved else { return true }
         guard decision() else { return false }
@@ -32,6 +41,7 @@ final class SkillsLibraryWindowState: ObservableObject {
     func completeApplicationShutdownDiscard() {
         guard applicationShutdownDiscardApproved else { return }
         applicationShutdownDiscardApproved = false
+        editSession?.discard()
         hasUnsavedChanges = false
     }
 
@@ -169,7 +179,7 @@ private enum SkillLibrarySheet: Identifiable {
     case newFile
     case renameFile(String)
     case deleteSkill(BridgeSkill)
-    case importReview(BridgeSkillImportReview)
+    case importReview(BridgeSkillImportReview, target: BridgeSkill?)
 
     var id: String {
         switch self {
@@ -177,7 +187,7 @@ private enum SkillLibrarySheet: Identifiable {
         case .newFile: "new-file"
         case .renameFile(let path): "rename-\(path)"
         case .deleteSkill(let document): "delete-\(document.id)"
-        case .importReview(let review): "import-\(review.id)"
+        case .importReview(let review, _): "import-\(review.id)"
         }
     }
 }
@@ -187,16 +197,17 @@ struct SkillsLibraryWindowView: View {
     @EnvironmentObject private var windowState: SkillsLibraryWindowState
     @Environment(\.locale) private var locale
     @State private var scope: SkillLibraryScope = .all
-    @State private var searchText = ""
+    @StateObject private var searchSession = BridgeEditSession(target: "skills-search", values: [.query: ""])
+    private var searchText: String { searchSession.searchValue }
     @State private var documentSelection: SkillDocumentSelection = .main
     @State private var editorMode: SkillEditorMode = .preview
-    @State private var draftContent = ""
-    @State private var draftName = ""
-    @State private var draftDescription = ""
+    @StateObject private var editSession = BridgeEditSession(target: "unselected", values: [:])
+    private var draftContent: String { editSession.value(.content) }
+    private var draftName: String { editSession.value(.name) }
+    private var draftDescription: String { editSession.value(.description) }
     @State private var pendingSkillID: String?
     @State private var pendingDocumentSelection: SkillDocumentSelection?
     @State private var pendingVersionReference: BridgeSkillReference?
-    @State private var postMutationDocumentSelection: SkillDocumentSelection?
     @State private var showsDiscardConfirmation = false
     @State private var showsRestoreConfirmation = false
     @State private var restoreTarget: BridgeSkillVersionSummary?
@@ -215,7 +226,8 @@ struct SkillsLibraryWindowView: View {
                 .navigationSplitViewColumnWidth(min: 610, ideal: 820)
         }
         .navigationSplitViewStyle(.balanced)
-        .searchable(text: $searchText, placement: .sidebar, prompt: "macos.skills.searchBridgeSkills")
+        .searchable(text: searchSession.binding(.query), placement: .sidebar, prompt: "macos.skills.searchBridgeSkills")
+        .bridgeSearchInput(searchSession)
         .modifier(SkillsDefaultSidebarToolbarRemovalModifier())
         .background(SkillsTitlebarSanitizerView())
         .toolbar { libraryToolbar }
@@ -260,13 +272,20 @@ struct SkillsLibraryWindowView: View {
             if mode != .preview, !isEditingCurrentSource { synchronizeDraftFromModel() }
             updateDirtyState()
         }
-        .onChange(of: draftName) { _ in updateDirtyState() }
-        .onChange(of: draftDescription) { _ in updateDirtyState() }
+        .onReceive(editSession.$change) { _ in updateDirtyState() }
+        .bridgeEditForm(editSession)
+        .onAppear { windowState.editSession = editSession }
+        .onDisappear {
+            editSession.discard()
+            if windowState.editSession === editSession { windowState.editSession = nil }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .bridgeSkillCommandNew)) { _ in
+            _ = editSession.observeInputs(); updateDirtyState()
             guard !windowState.hasUnsavedChanges else { NSSound.beep(); return }
             sheet = .newSkill
         }
         .onReceive(NotificationCenter.default.publisher(for: .bridgeSkillCommandImport)) { _ in
+            _ = editSession.observeInputs(); updateDirtyState()
             guard !windowState.hasUnsavedChanges else { NSSound.beep(); return }
             presentImportPanel(intoCurrentSkill: false)
         }
@@ -280,6 +299,7 @@ struct SkillsLibraryWindowView: View {
             toggleEditingMode()
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
+            _ = editSession.observeInputs(); updateDirtyState()
             guard !windowState.hasUnsavedChanges else { NSSound.beep(); return false }
             loadDroppedURLs(providers)
             return true
@@ -503,7 +523,7 @@ struct SkillsLibraryWindowView: View {
                 .labelStyle(.iconOnly)
                 .help("macos.save")
                 .disabled(
-                    !windowState.hasUnsavedChanges ||
+                    !editSession.canSubmit ||
                     model.skillMutationInProgress ||
                     !isCurrentVersion(document)
                 )
@@ -598,21 +618,20 @@ struct SkillsLibraryWindowView: View {
         VStack(spacing: 0) {
             if documentSelection == .main {
                 VStack(spacing: 8) {
-                    TextField("macos.skills.skillName", text: $draftName)
+                    TextField("macos.skills.skillName", text: editSession.binding(.name))
+                        .bridgeInput(editSession, field: .name)
                         .font(.headline)
-                    TextField("macos.skills.searchDescriptionOptional", text: $draftDescription)
+                    TextField("macos.skills.searchDescriptionOptional", text: editSession.binding(.description))
+                        .bridgeInput(editSession, field: .description)
                         .font(.callout)
                 }
                 .textFieldStyle(.roundedBorder)
                 .padding(12)
                 Divider()
             }
-            // SwiftUI's String change detection treats NFC/NFD as equal. Publish
-            // the byte-based dirty state directly at the editor's write boundary.
-            BridgeTextEditor(text: Binding(
-                get: { draftContent },
-                set: { draftContent = $0; updateDirtyState() }
-            ), font: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
+            BridgeEditStatus(session: editSession, reloadLatest: { Task { await refreshConflictedDocument() } }).padding(.horizontal, 12)
+            BridgeTextEditor(text: editSession.binding(.content), font: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
+                .bridgeInput(editSession, field: .content)
                 .padding(10)
                 .background(Color(nsColor: .textBackgroundColor))
                 .accessibilityLabel("macos.skills.fullMarkdownSourceOfSelectedFile")
@@ -773,28 +792,32 @@ struct SkillsLibraryWindowView: View {
     private func presentedSheet(_ item: SkillLibrarySheet) -> some View {
         switch item {
         case .newSkill:
-            NewBridgeSkillSheet { name, description, content in
-                Task { @MainActor in
-                    if await model.createBridgeSkill(.init(name: name, description: description, content: content)) {
-                        sheet = nil
-                    }
+            NewBridgeSkillSheet { submitted, isCurrent in
+                let result: BridgeSkillSummary?
+                if let version = submitted.expectedVersion {
+                    result = await model.submitBridgeSkillUpdate(.init(skillId: submitted.targetID, expectedVersion: version,
+                        name: submitted.value(.name), description: submitted.value(.description), content: submitted.value(.content)), shouldSelect: isCurrent)
+                } else {
+                    result = await model.submitBridgeSkillCreation(.init(name: submitted.value(.name),
+                        description: submitted.value(.description).isEmpty ? nil : submitted.value(.description), content: submitted.value(.content)), shouldSelect: isCurrent)
                 }
+                return result.map { BridgeEditReceipt(skill: $0) }
             }
         case .newFile:
-            NewBridgeSkillFileSheet { path, content in
-                guard let document = model.selectedBridgeSkill else { return }
-                Task { @MainActor in
-                    postMutationDocumentSelection = .file(path)
-                    if await model.updateBridgeSkill(.init(
-                        skillId: document.skill.skillId,
-                        expectedVersion: currentExpectedVersion(document),
-                        files: .init(upsert: [.init(path: path, content: content)])
-                    )) { sheet = nil }
-                    else { postMutationDocumentSelection = nil }
+            if let document = model.selectedBridgeSkill {
+                NewBridgeSkillFileSheet(target: document.skill.reference, onSaved: { requestDocumentSelection(.file($0)) }) { submitted, isCurrent in
+                    let result = await model.submitBridgeSkillUpdate(.init(skillId: submitted.targetID,
+                        expectedVersion: submitted.expectedVersion ?? document.skill.version,
+                        files: .init(upsert: [.init(path: submitted.value(.path), content: submitted.value(.content))])), shouldSelect: isCurrent)
+                    return result.map { BridgeEditReceipt(skill: $0) }
                 }
             }
         case .renameFile(let oldPath):
-            RenameBridgeSkillFileSheet(oldPath: oldPath) { newPath in renameFile(oldPath, to: newPath) }
+            if let document = model.selectedBridgeSkill {
+                RenameBridgeSkillFileSheet(oldPath: oldPath, target: document.skill.reference, onSaved: { requestDocumentSelection(.file($0)) }) { submitted, isCurrent in
+                    await renameFile(oldPath, submission: submitted, isCurrent: isCurrent)
+                }
+            }
         case .deleteSkill(let document):
             BridgeSkillDeleteSheet(skillName: currentSkillName(for: document), isDeleting: model.skillMutationInProgress) {
                 Task { @MainActor in
@@ -804,9 +827,9 @@ struct SkillsLibraryWindowView: View {
                     )) { sheet = nil }
                 }
             }
-        case .importReview(let review):
-            BridgeSkillImportReviewSheet(review: review, currentSkill: importTargetSkill) { commit in
-                commitImport(review, commit: commit)
+        case .importReview(let review, let target):
+            BridgeSkillImportReviewSheet(review: review, currentSkill: target) { commit, submitted, isCurrent in
+                await commitImport(review, commit: commit, target: target?.skill.reference, submission: submitted, isCurrent: isCurrent)
             }
         }
     }
@@ -890,7 +913,9 @@ struct SkillsLibraryWindowView: View {
 
     private func requestSkillSelection(_ skillID: String?) {
         guard skillID != model.selectedBridgeSkill?.skill.skillId else { return }
-        if windowState.hasUnsavedChanges {
+        _ = editSession.observeInputs()
+        updateDirtyState()
+        if windowState.hasUnsavedChanges || editSession.isSubmitting {
             pendingSkillID = skillID
             showsDiscardConfirmation = true
             return
@@ -901,6 +926,7 @@ struct SkillsLibraryWindowView: View {
     private func applySkillSelection(_ skillID: String?) {
         guard let skillID,
               let skill = model.skillLibrary?.skills.first(where: { $0.skillId == skillID }) else { return }
+        editSession.discard()
         documentSelection = .main
         editorMode = .preview
         Task { await model.loadBridgeSkill(skill) }
@@ -908,7 +934,9 @@ struct SkillsLibraryWindowView: View {
 
     private func requestDocumentSelection(_ requested: SkillDocumentSelection) {
         guard requested != documentSelection else { return }
-        if windowState.hasUnsavedChanges {
+        _ = editSession.observeInputs()
+        updateDirtyState()
+        if windowState.hasUnsavedChanges || editSession.isSubmitting {
             pendingDocumentSelection = requested
             showsDiscardConfirmation = true
             return
@@ -917,6 +945,7 @@ struct SkillsLibraryWindowView: View {
     }
 
     private func applyDocumentSelection(_ requested: SkillDocumentSelection) {
+        editSession.discard()
         documentSelection = requested
         editorMode = .preview
         switch requested {
@@ -938,6 +967,7 @@ struct SkillsLibraryWindowView: View {
     }
 
     private func discardAndApplyPendingSelection() {
+        editSession.discard()
         windowState.hasUnsavedChanges = false
         if let skillID = pendingSkillID {
             pendingSkillID = nil
@@ -947,47 +977,48 @@ struct SkillsLibraryWindowView: View {
             applyDocumentSelection(selection)
         } else if let reference = pendingVersionReference {
             pendingVersionReference = nil
-            Task { await model.loadBridgeSkill(reference) }
+            applyVersionSelection(reference)
         }
     }
 
     private func synchronizeSelectionFromModel() {
-        if let requested = postMutationDocumentSelection,
-           case .file(let path) = requested,
-           model.selectedBridgeSkill?.files.contains(where: { $0.path == path }) == true {
-            postMutationDocumentSelection = nil
-            documentSelection = requested
-            expandFolders(containing: path)
-            editorMode = .preview
-            Task { await model.loadBridgeSkillFile(path: path) }
+        if let document = model.selectedBridgeSkill, editSession.targetID == editTarget(document) {
+            synchronizeDraftFromModel()
             return
         }
-        postMutationDocumentSelection = nil
         documentSelection = .main
         editorMode = .preview
         synchronizeDraftFromModel()
     }
 
-    private func synchronizeDraftFromModel() {
-        guard let document = model.selectedBridgeSkill else {
-            draftContent = ""; draftName = ""; draftDescription = ""; windowState.hasUnsavedChanges = false
-            return
-        }
-        draftName = document.skill.name
-        draftDescription = document.skill.description
-        draftContent = currentSource(document)
-        windowState.hasUnsavedChanges = false
+    private func editTarget(_ document: BridgeSkill) -> String {
+        let path: String
+        switch documentSelection { case .main: path = "main"; case .file(let file): path = "file:\(file)" }
+        return "\(document.skill.skillId):\(path)"
     }
 
-    private func updateDirtyState() {
+    private func synchronizeDraftFromModel() {
         guard let document = model.selectedBridgeSkill else {
-            windowState.hasUnsavedChanges = false
+            if !editSession.hasUnsavedChanges { editSession.reset(target: "unselected", values: [:]) }
+            updateDirtyState()
             return
         }
-        let metadataChanged = documentSelection == .main &&
-            (draftName != document.skill.name || draftDescription != document.skill.description)
-        windowState.hasUnsavedChanges = !draftContent.utf8.elementsEqual(currentSource(document).utf8) || metadataChanged
+        if case .file = documentSelection, model.selectedBridgeSkillFile == nil { return }
+        var values: [BridgeEditField: String] = [.content: currentSource(document)]
+        if documentSelection == .main {
+            values[.name] = document.skill.name
+            values[.description] = document.skill.description
+        }
+        let target = editTarget(document)
+        if editSession.targetID == target {
+            editSession.receive(values, version: document.skill.version)
+        } else {
+            editSession.reset(target: target, values: values, version: currentExpectedVersion(document))
+        }
+        updateDirtyState()
     }
+
+    private func updateDirtyState() { windowState.hasUnsavedChanges = editSession.hasUnsavedChanges }
 
     private var isEditingCurrentSource: Bool { windowState.hasUnsavedChanges || !draftContent.isEmpty }
 
@@ -998,33 +1029,55 @@ struct SkillsLibraryWindowView: View {
         }
     }
 
+    private func refreshConflictedDocument() async {
+        let identity = editSession.id
+        guard let document = model.selectedBridgeSkill else { return }
+        // Fetch only the still-owned target. Loading updates the view's external
+        // baseline through receive, never replacing this session's local draft.
+        guard let fetched = await model.readLatestBridgeSkill(skillID: document.skill.skillId), editSession.id == identity else { return }
+        let summary = fetched.skill
+        let path: String?
+        switch documentSelection { case .main: path = nil; case .file(let value): path = value }
+        await model.refreshSubmittedBridgeSkill(summary, replacing: document.skill.reference,
+            path: path) { editSession.id == identity }
+        if editSession.id == identity { synchronizeDraftFromModel() }
+    }
+
     private func saveCurrentDocument() {
-        BridgeTextInput.commitPendingComposition()
-        updateDirtyState()
-        guard let document = model.selectedBridgeSkill, windowState.hasUnsavedChanges else { return }
+        guard let document = model.selectedBridgeSkill, isCurrentVersion(document) else { return }
+        let selection = documentSelection
+        guard let submitted = editSession.prepareSubmission(requireChanges: true, validate: { snapshot in
+            if selection == .main && snapshot.value(.name).isEmpty { throw BridgeEditError.invalidValue }
+        }) else { updateDirtyState(); return }
         let request: BridgeSkillUpdateRequest
-        switch documentSelection {
+        let path: String?
+        switch selection {
         case .main:
-            request = .init(
-                skillId: document.skill.skillId,
-                expectedVersion: currentExpectedVersion(document),
-                name: draftName,
-                description: draftDescription,
-                content: draftContent
-            )
-        case .file(let path):
-            request = .init(
-                skillId: document.skill.skillId,
-                expectedVersion: currentExpectedVersion(document),
-                files: .init(upsert: [.init(path: path, content: draftContent)])
-            )
+            path = nil
+            request = .init(skillId: document.skill.skillId, expectedVersion: submitted.expectedVersion ?? currentExpectedVersion(document),
+                            name: submitted.value(.name), description: submitted.value(.description), content: submitted.value(.content))
+        case .file(let file):
+            path = file
+            request = .init(skillId: document.skill.skillId, expectedVersion: submitted.expectedVersion ?? currentExpectedVersion(document),
+                            files: .init(upsert: [.init(path: file, content: submitted.value(.content))]))
         }
         Task { @MainActor in
-            if case .file = documentSelection { postMutationDocumentSelection = documentSelection }
-            if await model.updateBridgeSkill(request) {
-                windowState.hasUnsavedChanges = false
+            guard let updated = await model.submitBridgeSkillUpdate(request) else {
+                editSession.fail(submitted, conflict: model.skillMutationHadConflict)
+                if model.skillMutationHadConflict, editSession.matches(submitted) { await refreshConflictedDocument() }
+                updateDirtyState(); return
+            }
+            guard editSession.accepts(submitted) else { return }
+            await model.refreshSubmittedBridgeSkill(updated, replacing: document.skill.reference, path: path) {
+                editSession.accepts(submitted)
+            }
+            guard editSession.accepts(submitted) else { return }
+            let clean = editSession.acknowledge(submitted, version: updated.version,
+                confirmed: [.name: updated.name, .description: updated.description])
+            updateDirtyState()
+            if clean && editSession.revision == submitted.revision && !editSession.hasUnsavedChanges && !editSession.hasConflicts {
                 editorMode = .preview
-            } else { postMutationDocumentSelection = nil }
+            }
         }
     }
 
@@ -1045,12 +1098,20 @@ struct SkillsLibraryWindowView: View {
     }
 
     private func requestVersion(_ version: BridgeSkillVersionSummary) {
-        guard !windowState.hasUnsavedChanges else {
+        _ = editSession.observeInputs()
+        updateDirtyState()
+        guard !windowState.hasUnsavedChanges && !editSession.isSubmitting else {
             pendingVersionReference = version.reference
             showsDiscardConfirmation = true
             return
         }
-        Task { await model.loadBridgeSkill(version.reference) }
+        applyVersionSelection(version.reference)
+    }
+
+    private func applyVersionSelection(_ reference: BridgeSkillReference) {
+        editSession.discard()
+        editSession.reset(target: "loading-version:\(reference.skillId):\(reference.version)", values: [:])
+        Task { await model.loadBridgeSkill(reference) }
     }
 
     private func restoreSelectedVersion() {
@@ -1089,6 +1150,7 @@ struct SkillsLibraryWindowView: View {
     }
 
     private func toggleEditingMode() {
+        _ = editSession.observeInputs(); updateDirtyState()
         guard let document = model.selectedBridgeSkill, isCurrentVersion(document) else { return }
         if editorMode == .preview {
             synchronizeDraftFromModel()
@@ -1149,22 +1211,17 @@ struct SkillsLibraryWindowView: View {
             .disabled(!isCurrentVersion(document) || windowState.hasUnsavedChanges)
     }
 
-    private func renameFile(_ oldPath: String, to newPath: String) {
-        guard let document = model.selectedBridgeSkill else { return }
-        Task { @MainActor in
-            await model.loadBridgeSkillFile(path: oldPath)
-            guard let content = model.selectedBridgeSkillFile?.content else { return }
-            postMutationDocumentSelection = .file(newPath)
-            if await model.updateBridgeSkill(.init(
-                skillId: document.skill.skillId,
-                expectedVersion: currentExpectedVersion(document),
-                files: .init(upsert: [.init(path: newPath, content: content)], remove: [oldPath])
-            )) {
-                sheet = nil
-                documentSelection = .file(newPath)
-                await model.loadBridgeSkillFile(path: newPath)
-            } else { postMutationDocumentSelection = nil }
-        }
+    private func renameFile(_ initialPath: String, submission: BridgeEditSubmission,
+                            isCurrent: @escaping @MainActor () -> Bool) async -> BridgeEditReceipt? {
+        guard let version = submission.expectedVersion else { return nil }
+        let oldPath = submission.value(.cwd).isEmpty ? initialPath : submission.value(.cwd)
+        do {
+            let content = try await model.readBridgeSkillAttachment(.init(skillId: submission.targetID, version: version), path: oldPath)
+            // A later draft must survive, while the pinned request can still finish.
+            let updated = await model.submitBridgeSkillUpdate(.init(skillId: submission.targetID, expectedVersion: version,
+                files: .init(upsert: [.init(path: submission.value(.path), content: content)], remove: [oldPath])), shouldSelect: isCurrent)
+            return updated.map { BridgeEditReceipt(version: $0.version, confirmed: [.cwd: submission.value(.path)]) }
+        } catch { return nil }
     }
 
     private func deleteFile(_ path: String, from document: BridgeSkill) {
@@ -1188,6 +1245,8 @@ struct SkillsLibraryWindowView: View {
     }
 
     private func presentImportPanel(intoCurrentSkill: Bool) {
+        _ = editSession.observeInputs(); updateDirtyState()
+        guard !windowState.hasUnsavedChanges && !editSession.isSubmitting else { NSSound.beep(); return }
         importTargetSkillID = intoCurrentSkill ? model.selectedBridgeSkill?.skill.skillId : nil
         let panel = NSOpenPanel()
         panel.title = BridgeAppLocalization.string("macos.skills.importMarkdownFilesAFolderOrAZip", locale: locale)
@@ -1218,12 +1277,13 @@ struct SkillsLibraryWindowView: View {
     private func beginImport(_ urls: [URL], intoCurrentSkill: Bool) {
         guard !urls.isEmpty else { return }
         importTargetSkillID = intoCurrentSkill ? model.selectedBridgeSkill?.skill.skillId : nil
+        let target = importTargetSkill
         switch BridgeSkillImportRouter.route(urls: urls) {
         case .package(let url):
             Task { @MainActor in
                 if let inspection = await model.inspectBridgeSkillPackage(at: url) {
                     sheet = .importReview(.package(sourceName: url.deletingPathExtension().lastPathComponent,
-                                                   inspection: inspection))
+                                                   inspection: inspection), target: target)
                 }
             }
         case .direct(let directURLs):
@@ -1231,62 +1291,49 @@ struct SkillsLibraryWindowView: View {
                 let review = await Task.detached(priority: .userInitiated) {
                     BridgeSkillImportCollector.collect(urls: directURLs)
                 }.value
-                sheet = .importReview(review)
+                sheet = .importReview(review, target: target)
             }
         }
     }
 
-    private func commitImport(_ review: BridgeSkillImportReview, commit: BridgeSkillImportCommit) {
-        guard let current = importTargetSkill else {
-            commitNewImport(review, commit: commit)
-            return
-        }
+    private func commitImport(_ review: BridgeSkillImportReview, commit: BridgeSkillImportCommit,
+                              target: BridgeSkillReference?, submission: BridgeEditSubmission,
+                              isCurrent: @escaping @MainActor () -> Bool) async -> BridgeEditReceipt? {
+        let originalTarget = target
+        let target = target ?? submission.expectedVersion.map { BridgeSkillReference(skillId: submission.targetID, version: $0) }
+        guard let target else { return await commitNewImport(review, commit: commit, isCurrent: isCurrent) }
+        guard submission.targetID == target.skillId, let version = submission.expectedVersion else { return nil }
         switch review.payload {
         case .direct(let files):
-            guard let selected = selectedImportFiles(files, commit: commit) else { return }
+            guard let selected = selectedImportFiles(files, commit: commit) else { return nil }
             let main = commit.mainPath.flatMap { path in selected.first(where: { $0.path == path }) }
             let attachments = selected.filter { $0.path != main?.path }.map { BridgeSkillFileInput(path: $0.path, content: $0.content) }
-            Task { @MainActor in
-                if await model.updateBridgeSkill(.init(
-                    skillId: current.skill.skillId,
-                    expectedVersion: currentExpectedVersion(current),
-                    content: main?.content,
-                    files: attachments.isEmpty ? nil : .init(upsert: attachments)
-                )) { sheet = nil }
-            }
+            let result = await model.submitBridgeSkillUpdate(.init(skillId: target.skillId, expectedVersion: version,
+                name: originalTarget == nil ? commit.name : nil, description: originalTarget == nil ? commit.description : nil,
+                content: main?.content, files: attachments.isEmpty ? nil : .init(upsert: attachments)), shouldSelect: isCurrent)
+            return result.map { BridgeEditReceipt(skill: $0) }
         case .package(let inspection):
-            Task { @MainActor in
-                if await model.updateBridgeSkillPackage(.init(
-                    skillId: current.skill.skillId,
-                    expectedVersion: currentExpectedVersion(current),
-                    uploadId: inspection.uploadId,
-                    mainPath: commit.mainPath,
-                    includePaths: Array(commit.selectedPaths).sorted()
-                )) { sheet = nil }
-            }
+            let result = await model.submitBridgeSkillPackageUpdate(.init(skillId: target.skillId, expectedVersion: version,
+                uploadId: inspection.uploadId, mainPath: commit.mainPath, includePaths: Array(commit.selectedPaths).sorted()), shouldSelect: isCurrent)
+            return result.map { BridgeEditReceipt(skill: $0) }
         }
     }
 
-    private func commitNewImport(_ review: BridgeSkillImportReview, commit: BridgeSkillImportCommit) {
-        guard let mainPath = commit.mainPath, !commit.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    private func commitNewImport(_ review: BridgeSkillImportReview, commit: BridgeSkillImportCommit,
+                                 isCurrent: @escaping @MainActor () -> Bool) async -> BridgeEditReceipt? {
+        guard let mainPath = commit.mainPath, !commit.name.isEmpty else { return nil }
         switch review.payload {
         case .direct(let files):
             guard let selected = selectedImportFiles(files, commit: commit),
-                  let main = selected.first(where: { $0.path == mainPath }) else { return }
+                  let main = selected.first(where: { $0.path == mainPath }) else { return nil }
             let attachments = selected.filter { $0.path != mainPath }.map { BridgeSkillFileInput(path: $0.path, content: $0.content) }
-            Task { @MainActor in
-                if await model.createBridgeSkill(.init(
-                    name: commit.name, description: commit.description, content: main.content, files: attachments
-                )) { sheet = nil }
-            }
+            let result = await model.submitBridgeSkillCreation(.init(name: commit.name, description: commit.description,
+                                                       content: main.content, files: attachments), shouldSelect: isCurrent)
+            return result.map { BridgeEditReceipt(skill: $0) }
         case .package(let inspection):
-            Task { @MainActor in
-                if await model.createBridgeSkillPackage(.init(
-                    name: commit.name, description: commit.description,
-                    uploadId: inspection.uploadId, mainPath: mainPath,
-                    includePaths: Array(commit.selectedPaths).sorted()
-                )) { sheet = nil }
-            }
+            let result = await model.submitBridgeSkillPackageCreation(.init(name: commit.name, description: commit.description,
+                uploadId: inspection.uploadId, mainPath: mainPath, includePaths: Array(commit.selectedPaths).sorted()), shouldSelect: isCurrent)
+            return result.map { BridgeEditReceipt(skill: $0) }
         }
     }
 
@@ -2174,22 +2221,26 @@ private func resolvedFilesystemURL(_ url: URL) -> URL {
 }
 
 private struct BridgeSkillImportReviewSheet: View {
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.locale) private var locale
     let review: BridgeSkillImportReview
     let currentSkill: BridgeSkill?
-    let commit: (BridgeSkillImportCommit) -> Void
-    @State private var name: String
-    @State private var description = ""
+    let commit: @MainActor (BridgeSkillImportCommit, BridgeEditSubmission, @escaping @MainActor () -> Bool) async -> BridgeEditReceipt?
+    @StateObject private var inputSession: BridgeEditSession
+    private var name: String { inputSession.value(.name) }
+    private var description: String { inputSession.value(.description) }
     @State private var mainPath: String?
     @State private var selectedPaths: Set<String>
 
-    init(review: BridgeSkillImportReview, currentSkill: BridgeSkill?, commit: @escaping (BridgeSkillImportCommit) -> Void) {
+    init(review: BridgeSkillImportReview, currentSkill: BridgeSkill?, commit: @escaping @MainActor (BridgeSkillImportCommit, BridgeEditSubmission, @escaping @MainActor () -> Bool) async -> BridgeEditReceipt?) {
         self.review = review
         self.currentSkill = currentSkill
         self.commit = commit
-        _name = State(initialValue: review.suggestedName)
-        _description = State(initialValue: review.suggestedDescription ?? "")
+        _inputSession = StateObject(wrappedValue: BridgeEditSession(target: currentSkill?.skill.skillId ?? "new-import",
+            values: [.name: review.suggestedName, .description: review.suggestedDescription ?? "",
+                     .cwd: encodedImportSelection(main: currentSkill == nil ? review.suggestedMainPath : nil,
+                        paths: review.initiallySelectedPaths(intoCurrentSkill: currentSkill != nil))], version: currentSkill?.skill.version))
         _mainPath = State(initialValue: currentSkill == nil ? review.suggestedMainPath : nil)
         _selectedPaths = State(initialValue: review.initiallySelectedPaths(intoCurrentSkill: currentSkill != nil))
     }
@@ -2206,8 +2257,10 @@ private struct BridgeSkillImportReviewSheet: View {
                 .font(.callout).foregroundStyle(.secondary)
             if currentSkill == nil {
                 Form {
-                    TextField("macos.skills.skillName", text: $name)
-                    TextField("macos.skills.searchDescriptionOptional", text: $description)
+                    TextField("macos.skills.skillName", text: inputSession.binding(.name))
+                        .bridgeInput(inputSession, field: .name)
+                    TextField("macos.skills.searchDescriptionOptional", text: inputSession.binding(.description))
+                        .bridgeInput(inputSession, field: .description)
                 }.formStyle(.grouped).frame(height: 120)
             }
             Picker("macos.skills.mainDocument", selection: mainPathSelection) {
@@ -2220,6 +2273,7 @@ private struct BridgeSkillImportReviewSheet: View {
                     set: { enabled in
                         if enabled { selectedPaths.insert(path) }
                         else { selectedPaths.remove(path) }
+                        inputSession.edit(.cwd, encodedImportSelection(main: mainPath, paths: selectedPaths))
                     }
                 )) {
                     HStack {
@@ -2280,30 +2334,41 @@ private struct BridgeSkillImportReviewSheet: View {
                 .font(.caption)
                 .foregroundStyle(.orange)
             }
+            BridgeEditStatus(session: inputSession, reloadLatest: {
+                let identity = inputSession.id
+                Task { @MainActor in
+                    if let latest = await model.readLatestBridgeSkill(skillID: inputSession.targetID), inputSession.id == identity {
+                        inputSession.receive([:], version: latest.skill.version)
+                    }
+                }
+            })
             HStack {
-                Button("common.cancel", role: .cancel) { dismiss() }
+                Button("common.cancel", role: .cancel) { inputSession.discard(); dismiss() }
                 Spacer()
                 Button("macos.skills.import") {
-                    BridgeTextInput.commitPendingComposition()
-                    commit(.init(
-                        name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                        description: description.isEmpty ? nil : description,
-                        mainPath: mainPath,
-                        selectedPaths: selectedPaths
-                    ))
+                    let selectedMain = mainPath, selected = selectedPaths
+                    inputSession.submitReceipt(validate: {
+                        if currentSkill == nil && $0.value(.name).isEmpty { throw BridgeEditError.invalidValue }
+                    }, isConflict: { model.skillMutationHadConflict }, operation: { submitted, isCurrent in
+                        await commit(.init(name: submitted.value(.name), description: submitted.value(.description).isEmpty ? nil : submitted.value(.description),
+                                           mainPath: selectedMain, selectedPaths: selected), submitted, isCurrent)
+                    }, onClean: { dismiss() })
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(
-                    selectedPaths.isEmpty ||
+                    inputSession.isSubmitting || selectedPaths.isEmpty ||
                     (mainPath.map { !selectedPaths.contains($0) } ?? false) ||
                     selectedMainDocumentConflicts ||
                     selectionExceedsLimits ||
-                    (currentSkill == nil && (mainPath == nil || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                    (currentSkill == nil && (mainPath == nil || (name.isEmpty && !inputSession.hasMarkedText)))
                 )
             }
         }
         .padding(22)
         .frame(minWidth: 620, minHeight: 600)
+        .bridgeEditForm(inputSession)
+        .interactiveDismissDisabled(inputSession.hasUnsavedChanges || inputSession.isSubmitting)
+        .onDisappear { inputSession.discard() }
     }
 
     private var mainPathSelection: Binding<String?> {
@@ -2311,12 +2376,15 @@ private struct BridgeSkillImportReviewSheet: View {
             get: { mainPath },
             set: { newValue in
                 mainPath = newValue
-                guard let newValue else { return }
+                guard let newValue else {
+                    inputSession.edit(.cwd, encodedImportSelection(main: mainPath, paths: selectedPaths)); return
+                }
                 let newKey = bridgeSkillPathComparisonKey(newValue)
                 selectedPaths = Set(selectedPaths.filter { path in
                     !isBridgeSkillMainDocumentPath(path) || bridgeSkillPathComparisonKey(path) == newKey
                 })
                 selectedPaths.insert(newValue)
+                inputSession.edit(.cwd, encodedImportSelection(main: mainPath, paths: selectedPaths))
             }
         )
     }
@@ -2340,83 +2408,125 @@ private struct BridgeSkillImportReviewSheet: View {
 }
 
 private struct NewBridgeSkillSheet: View {
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    let save: (String, String?, String) -> Void
-    @State private var name = ""
-    @State private var description = ""
-    @State private var document = "# "
-
+    let save: @MainActor (BridgeEditSubmission, @escaping @MainActor () -> Bool) async -> BridgeEditReceipt?
+    @StateObject private var inputSession = BridgeEditSession(target: "new-skill", values: [.name: "", .description: "", .content: "# "])
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("macos.newbridgeskill").font(.title2.weight(.semibold))
-            TextField("macos.skills.skillName", text: $name)
-            TextField("macos.skills.searchDescriptionOptional", text: $description)
+            TextField("macos.skills.skillName", text: inputSession.binding(.name)).bridgeInput(inputSession, field: .name)
+            TextField("macos.skills.searchDescriptionOptional", text: inputSession.binding(.description)).bridgeInput(inputSession, field: .description)
             Text("macos.skills.mainMarkdownDocument").font(.caption).foregroundStyle(.secondary)
-            BridgeTextEditor(text: $document, font: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
+            BridgeTextEditor(text: inputSession.binding(.content), font: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
+                .bridgeInput(inputSession, field: .content)
                 .frame(minHeight: 320).border(Color(nsColor: .separatorColor))
+            BridgeEditStatus(session: inputSession, reloadLatest: {
+                let identity = inputSession.id
+                Task { @MainActor in
+                    if let latest = await model.readLatestBridgeSkill(skillID: inputSession.targetID), inputSession.id == identity {
+                        inputSession.receive([:], version: latest.skill.version)
+                    }
+                }
+            })
             HStack {
-                Button("common.cancel", role: .cancel) { dismiss() }
+                Button("common.cancel", role: .cancel) { inputSession.discard(); dismiss() }
                 Spacer()
                 Button("macos.skills.createSkill") {
-                    BridgeTextInput.commitPendingComposition()
-                    save(name, description.isEmpty ? nil : description, document)
+                    inputSession.submitReceipt(validate: {
+                        if $0.value(.name).isEmpty || $0.value(.content).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw BridgeEditError.invalidValue }
+                    }, isConflict: { model.skillMutationHadConflict }, operation: save, onClean: { dismiss() })
                 }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || document.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .buttonStyle(.borderedProminent)
+                .disabled(inputSession.isSubmitting || (!inputSession.hasMarkedText && (inputSession.value(.name).isEmpty || inputSession.value(.content).isEmpty)))
             }
         }.padding(22).frame(width: 620, height: 520)
+        .bridgeEditForm(inputSession)
+        .interactiveDismissDisabled(inputSession.hasUnsavedChanges || inputSession.isSubmitting)
+        .onDisappear { inputSession.discard() }
     }
 }
 
 private struct NewBridgeSkillFileSheet: View {
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    let save: (String, String) -> Void
-    @State private var path = "references/new.md"
-    @State private var content = "# "
-
+    let save: @MainActor (BridgeEditSubmission, @escaping @MainActor () -> Bool) async -> BridgeEditReceipt?
+    let onSaved: (String) -> Void
+    @StateObject private var inputSession: BridgeEditSession
+    init(target: BridgeSkillReference, onSaved: @escaping (String) -> Void,
+         save: @escaping @MainActor (BridgeEditSubmission, @escaping @MainActor () -> Bool) async -> BridgeEditReceipt?) {
+        self.save = save; self.onSaved = onSaved
+        _inputSession = StateObject(wrappedValue: BridgeEditSession(target: target.skillId,
+            values: [.path: "references/new.md", .content: "# "], version: target.version))
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("macos.skills.newMarkdownFile").font(.title2.weight(.semibold))
-            TextField("macos.skills.relativePathMdOrMarkdown", text: $path)
-            BridgeTextEditor(text: $content, font: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
+            TextField("macos.skills.relativePathMdOrMarkdown", text: inputSession.binding(.path)).bridgeInput(inputSession, field: .path)
+            BridgeTextEditor(text: inputSession.binding(.content), font: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
+                .bridgeInput(inputSession, field: .content)
                 .frame(minHeight: 280).border(Color(nsColor: .separatorColor))
+            BridgeEditStatus(session: inputSession, reloadLatest: {
+                let identity = inputSession.id
+                Task { @MainActor in
+                    if let latest = await model.readLatestBridgeSkill(skillID: inputSession.targetID), inputSession.id == identity {
+                        inputSession.receive([:], version: latest.skill.version)
+                    }
+                }
+            })
             HStack {
-                Button("common.cancel", role: .cancel) { dismiss() }
+                Button("common.cancel", role: .cancel) { inputSession.discard(); dismiss() }
                 Spacer()
                 Button("macos.skills.addFile") {
-                    BridgeTextInput.commitPendingComposition()
-                    save(path, content)
+                    inputSession.submitReceipt(validate: { if $0.value(.path).isEmpty { throw BridgeEditError.invalidValue } }, isConflict: { model.skillMutationHadConflict },
+                                        operation: save, onClean: { onSaved(inputSession.value(.path)); dismiss() })
                 }.buttonStyle(.borderedProminent)
-                    .disabled(path.isEmpty)
+                    .disabled(inputSession.isSubmitting || (inputSession.value(.path).isEmpty && !inputSession.hasMarkedText))
             }
         }.padding(22).frame(width: 580, height: 450)
+        .bridgeEditForm(inputSession)
+        .interactiveDismissDisabled(inputSession.hasUnsavedChanges || inputSession.isSubmitting)
+        .onDisappear { inputSession.discard() }
     }
 }
 
 private struct RenameBridgeSkillFileSheet: View {
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let oldPath: String
-    let save: (String) -> Void
-    @State private var path: String
-
-    init(oldPath: String, save: @escaping (String) -> Void) {
-        self.oldPath = oldPath; self.save = save; _path = State(initialValue: oldPath)
+    let save: @MainActor (BridgeEditSubmission, @escaping @MainActor () -> Bool) async -> BridgeEditReceipt?
+    let onSaved: (String) -> Void
+    @StateObject private var inputSession: BridgeEditSession
+    init(oldPath: String, target: BridgeSkillReference, onSaved: @escaping (String) -> Void,
+         save: @escaping @MainActor (BridgeEditSubmission, @escaping @MainActor () -> Bool) async -> BridgeEditReceipt?) {
+        self.oldPath = oldPath; self.save = save; self.onSaved = onSaved
+        _inputSession = StateObject(wrappedValue: BridgeEditSession(target: target.skillId, values: [.path: oldPath, .cwd: oldPath], version: target.version))
     }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("macos.skills.renameMarkdownFile").font(.headline)
-            TextField("macos.skills.newRelativePath", text: $path)
+            TextField("macos.skills.newRelativePath", text: inputSession.binding(.path)).bridgeInput(inputSession, field: .path)
+            BridgeEditStatus(session: inputSession, reloadLatest: {
+                let identity = inputSession.id
+                Task { @MainActor in
+                    if let latest = await model.readLatestBridgeSkill(skillID: inputSession.targetID), inputSession.id == identity {
+                        inputSession.receive([:], version: latest.skill.version)
+                    }
+                }
+            })
             HStack {
-                Button("common.cancel", role: .cancel) { dismiss() }
+                Button("common.cancel", role: .cancel) { inputSession.discard(); dismiss() }
                 Spacer()
                 Button("macos.skills.renameAction") {
-                    BridgeTextInput.commitPendingComposition()
-                    save(path)
+                    inputSession.submitReceipt(validate: { if $0.value(.path).isEmpty { throw BridgeEditError.invalidValue } }, isConflict: { model.skillMutationHadConflict },
+                                        operation: save, onClean: { onSaved(inputSession.value(.path)); dismiss() })
                 }.buttonStyle(.borderedProminent)
-                    .disabled(path == oldPath || path.isEmpty)
+                    .disabled(inputSession.isSubmitting || (!inputSession.hasMarkedText && (!inputSession.isDirty || inputSession.value(.path).isEmpty)))
             }
         }.padding(20).frame(width: 480)
+        .bridgeEditForm(inputSession)
+        .interactiveDismissDisabled(inputSession.hasUnsavedChanges || inputSession.isSubmitting)
+        .onDisappear { inputSession.discard() }
     }
 }
 
@@ -2443,4 +2553,15 @@ private struct BridgeSkillDeleteSheet: View {
             }
         }.padding(20).frame(width: 430)
     }
+}
+
+private extension BridgeEditReceipt {
+    init(skill: BridgeSkillSummary) {
+        self.init(version: skill.version, target: skill.skillId, confirmed: [.name: skill.name, .description: skill.description])
+    }
+}
+
+private func encodedImportSelection(main: String?, paths: Set<String>) -> String {
+    let value: [String: Any] = ["main": main.map { $0 as Any } ?? NSNull(), "paths": paths.sorted()]
+    return String(decoding: (try? JSONSerialization.data(withJSONObject: value, options: .sortedKeys)) ?? Data(), as: UTF8.self)
 }

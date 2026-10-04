@@ -254,16 +254,24 @@ struct ConnectionSetupFlowView: View {
     @State private var step: ConnectionSetupStep = .role
     @State private var didInitialize = false
     @State private var selectedCandidateID: String?
-    @State private var apiKey = ""
-    @State private var tunnelID = ""
+    @StateObject private var credentialsSession = BridgeEditSession(target: "connection-credentials", values: [.apiKey: "", .tunnelID: ""])
+    private var apiKey: String {
+        get { credentialsSession.value(.apiKey) }
+        nonmutating set { credentialsSession.edit(.apiKey, newValue) }
+    }
+    private var tunnelID: String {
+        get { credentialsSession.value(.tunnelID) }
+        nonmutating set { credentialsSession.edit(.tunnelID, newValue) }
+    }
     @State private var pasteMessage: String?
     @State private var attemptedConnection = false
     @State private var attemptedCodexAction = false
     @State private var remoteMethod: RemoteMethod = .invitation
     @State private var selectedServerID = ""
-    @State private var invitation = ""
-    @State private var profileName = ""
-    @State private var deviceName = Host.current().localizedName ?? "Mac"
+    @StateObject private var remoteSession = BridgeEditSession(target: "connect-server", values: [
+        .invitation: "", .profileName: "", .deviceName: Host.current().localizedName ?? "Mac"
+    ])
+    private var invitation: String { remoteSession.value(.invitation) }
 
     init(
         onClose: @escaping () -> Void,
@@ -293,6 +301,12 @@ struct ConnectionSetupFlowView: View {
         }
         .frame(minWidth: 620, minHeight: 520)
         .onAppear(perform: initialize)
+        .onChange(of: selectedServerID) { remoteSession.edit(.endpoint, $0) }
+        .onChange(of: remoteMethod) { remoteSession.edit(.path, $0.rawValue) }
+        .bridgeEditForm(credentialsSession)
+        .bridgeEditForm(remoteSession)
+        .interactiveDismissDisabled(credentialsSession.hasUnsavedChanges || remoteSession.hasUnsavedChanges || credentialsSession.isSubmitting || remoteSession.isSubmitting)
+        .onDisappear { credentialsSession.discard(); remoteSession.discard() }
         .task(id: step) {
             guard automaticRefresh else { return }
             switch step {
@@ -532,9 +546,12 @@ struct ConnectionSetupFlowView: View {
                             : "macos.runtimeapikey",
                         locale: model.interfaceLocale
                     ),
-                    text: $apiKey
+                    text: credentialsSession.binding(.apiKey)
                 )
-                TextField("macos.tunnel", text: $tunnelID)
+                .bridgeInput(credentialsSession, field: .apiKey)
+                TextField("macos.tunnel", text: credentialsSession.binding(.tunnelID))
+                    .bridgeInput(credentialsSession, field: .tunnelID)
+                BridgeEditStatus(session: credentialsSession)
                 HStack(spacing: 12) {
                     Button("macos.importbothvaluesfromclipboard") {
                         importSetupFromPasteboard()
@@ -642,19 +659,23 @@ struct ConnectionSetupFlowView: View {
                 Text("macos.ontheservermacclickcreateandcopy")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                BridgeTextEditor(text: $invitation, font: .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular))
+                BridgeTextEditor(text: remoteSession.binding(.invitation), font: .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular))
+                    .bridgeInput(remoteSession, field: .invitation)
                     .frame(minHeight: 86)
                     .padding(5)
                     .overlay(RoundedRectangle(cornerRadius: 7).stroke(.quaternary))
                     .accessibilityLabel("macos.thepairinginvitationcopiedfromtheserververifies")
                 Button("macos.pastefromclipboard") {
-                    BridgeTextInput.commitPendingComposition()
+                    guard remoteSession.confirmInput() else { return }
                     if let copied = NSPasteboard.general.string(forType: .string) {
-                        invitation = copied.trimmingCharacters(in: .whitespacesAndNewlines)
+                        remoteSession.edit(.invitation, copied.trimmingCharacters(in: .whitespacesAndNewlines))
                     }
                 }
-                TextField("macos.nameofthisdeviceshownontheserver", text: $deviceName)
-                TextField("macos.servernametosaveoptional", text: $profileName)
+                TextField("macos.nameofthisdeviceshownontheserver", text: remoteSession.binding(.deviceName))
+                    .bridgeInput(remoteSession, field: .deviceName)
+                TextField("macos.servernametosaveoptional", text: remoteSession.binding(.profileName))
+                    .bridgeInput(remoteSession, field: .profileName)
+                BridgeEditStatus(session: remoteSession)
                 Text("macos.devicecredentialsarestoredonlyinthemacos")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -764,10 +785,11 @@ struct ConnectionSetupFlowView: View {
 
     private var setupFooter: some View {
         HStack(spacing: 10) {
-            Button("common.cancel", action: onClose)
+            Button("common.cancel") { credentialsSession.discard(); remoteSession.discard(); onClose() }
                 .keyboardShortcut(.cancelAction)
             if let previous = ConnectionSetupJourney.previous(from: step, role: role) {
                 Button("problem.previous") {
+                    _ = credentialsSession.observeInputs(); _ = remoteSession.observeInputs()
                     withAnimation(.easeInOut(duration: 0.15)) { step = previous }
                 }
                 .disabled(model.isBusy)
@@ -816,16 +838,15 @@ struct ConnectionSetupFlowView: View {
     }
 
     private var primaryActionDisabled: Bool {
-        if model.isBusy { return true }
+        if model.isBusy || credentialsSession.isSubmitting || remoteSession.isSubmitting { return true }
         switch step {
         case .credentials:
-            return !canSaveCredentials
+            return !canSaveCredentials && !credentialsSession.hasMarkedText
         case .remoteConnection:
             if remoteMethod == .saved, !model.connectionPreferences.profiles.isEmpty {
                 return selectedServerID.isEmpty
             }
-            return invitation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return !remoteSession.hasMarkedText && (invitation.isEmpty || remoteSession.value(.deviceName).isEmpty)
         case .codexLogin:
             return codexAction == .waitForStatus
         default:
@@ -834,16 +855,15 @@ struct ConnectionSetupFlowView: View {
     }
 
     private func performPrimaryAction() {
-        BridgeTextInput.commitPendingComposition()
         switch step {
         case .role:
             Task { await continueFromRole() }
         case .discovery:
             Task { await continueFromDiscovery() }
         case .credentials:
-            Task { await saveCredentials() }
+            saveCredentials()
         case .remoteConnection:
-            Task { await connectRemoteServer() }
+            connectRemoteServer()
         case .codexLogin:
             Task { await continueFromCodexLogin() }
         case .complete:
@@ -890,37 +910,48 @@ struct ConnectionSetupFlowView: View {
         }
     }
 
-    private func saveCredentials() async {
+    private func saveCredentials() {
         attemptedConnection = true
-        if await model.saveSetup(apiKey: apiKey, tunnelId: tunnelID) {
-            apiKey = ""
-            tunnelID = ""
+        let savedKeyAvailable = model.helperStatus?.configuration.hasApiKey == true
+        let savedTunnelAvailable = model.helperStatus?.configuration.hasTunnelId == true
+        credentialsSession.submit(validate: {
+            let tunnel = $0.value(.tunnelID).trimmingCharacters(in: .whitespacesAndNewlines)
+            let validTunnel = tunnel.isEmpty ? savedTunnelAvailable : tunnel.range(of: #"^tunnel_[a-z0-9]{32}$"#, options: .regularExpression) != nil
+            if (!savedKeyAvailable && $0.value(.apiKey).isEmpty) || !validTunnel { throw BridgeEditError.invalidValue }
+        }, operation: { submitted, _ in
+            let saved = await model.saveSetup(apiKey: submitted.value(.apiKey), tunnelId: submitted.value(.tunnelID))
+            if saved { await model.refreshAuthStatus() }
+            return saved
+        }, onClean: {
+            credentialsSession.reset(target: credentialsSession.targetID, values: [.apiKey: "", .tunnelID: ""])
             pasteMessage = nil
-            await model.refreshAuthStatus()
+            guard step == .credentials else { return }
             withAnimation(.easeInOut(duration: 0.15)) { step = .codexLogin }
-        }
+        })
     }
 
-    private func connectRemoteServer() async {
+    private func connectRemoteServer() {
         attemptedConnection = true
-        let prepared: Bool
-        if remoteMethod == .saved, !model.connectionPreferences.profiles.isEmpty {
-            prepared = model.isRemoteClient
-                ? await model.activateRemoteServer(selectedServerID)
-                : model.prepareRemoteServerForModeSwitch(selectedServerID)
-        } else {
-            prepared = await model.pairRemoteServer(
-                invitation: invitation,
-                profileName: profileName,
-                deviceName: deviceName
-            )
-        }
-        guard prepared else { return }
-        if !model.isRemoteClient {
-            guard await model.setConnectionMode(.remoteClient) else { return }
-        }
-        invitation = ""
-        withAnimation(.easeInOut(duration: 0.15)) { step = .complete }
+        let method = remoteMethod, serverID = selectedServerID
+        let fromSaved = method == .saved && !model.connectionPreferences.profiles.isEmpty
+        remoteSession.submit(validate: {
+            if fromSaved { if serverID.isEmpty { throw BridgeEditError.invalidValue } }
+            else if $0.value(.invitation).isEmpty || $0.value(.deviceName).isEmpty { throw BridgeEditError.invalidValue }
+        }, operation: { submitted, isCurrent in
+            let prepared: Bool
+            if fromSaved {
+                prepared = model.isRemoteClient ? await model.activateRemoteServer(serverID) : model.prepareRemoteServerForModeSwitch(serverID)
+            } else {
+                prepared = await model.pairRemoteServer(invitation: submitted.value(.invitation),
+                    profileName: submitted.value(.profileName), deviceName: submitted.value(.deviceName))
+            }
+            guard prepared, isCurrent(), step == .remoteConnection else { return false }
+            if !model.isRemoteClient { return await model.setConnectionMode(.remoteClient) }
+            return true
+        }, onClean: {
+            guard step == .remoteConnection else { return }
+            withAnimation(.easeInOut(duration: 0.15)) { step = .complete }
+        })
     }
 
     private func continueFromCodexLogin() async {
@@ -962,7 +993,7 @@ struct ConnectionSetupFlowView: View {
     }
 
     private func importSetupFromPasteboard() {
-        BridgeTextInput.commitPendingComposition()
+        guard credentialsSession.confirmInput() else { return }
         guard let contents = NSPasteboard.general.string(forType: .string) else {
             pasteMessage = BridgeAppLocalization.string(
                 "macos.noconnectioninformationwasfoundontheclipboard",
