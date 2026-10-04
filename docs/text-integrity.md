@@ -109,6 +109,49 @@ when interactive inspection was attempted, so physical Korean-keyboard testing
 of the installed app remains pending. The source fix does not replace the
 installed application or publish a release.
 
+### Multilingual follow-up (2026-10-04)
+
+The composition defect was not specific to Hangul. On macOS 26.6.2, an
+unmodified SwiftUI `TextEditor` also lost marked text on `ご` after committing
+`日本`, on `h` and `y` in a simulated simplified-Chinese conversion sequence,
+and on `ㄏ` and `ㄩ` in a simulated traditional-Chinese sequence. These checks
+drive `NSTextInputClient` directly in a mounted view; they do not select or
+exercise a particular installed input source.
+
+With the corrected editor, the native tests cover:
+
+| Scripts or text | Checks |
+| --- | --- |
+| Japanese, simplified and traditional Chinese | Successive preedit/candidate changes and commits across view refreshes in default/rounded fields, sidebar search, and the multiline editor |
+| Japanese and Chinese conversion next to emoji and Arabic | Candidate selection, explicit UTF-16 replacement, restoring text after reconversion, and immediate save while composition is active |
+| Decomposed Latin accents, Japanese dakuten, Devanagari, Thai, Arabic vowel marks | Variable-length marked text and exact UTF-8 after commit |
+| Japanese, Chinese, Latin, Vietnamese, Cyrillic, Greek, Arabic, Hebrew, Devanagari, Thai, supplementary CJK, emoji | Exact insertion and binding bytes in single-line/search/secure controls; editor insertion, external updates, BOM and CRLF |
+| The same multilingual corpus on Swift and Node | Strict UTF-8, field-specific NFC, verbatim bytes, JSON encode/decode, and derived search keys using the shared vectors |
+
+The follow-up also found a separate save defect in the Skill Library. Replacing
+`# café が Й ά 각` with its canonically equivalent decomposed representation did
+not mark the document dirty, and Command-S sent no update. Markdown draft
+observation and change detection now compare UTF-8 bytes for both main and
+attached documents. `SkillsLibraryTextInputTests` mounts the production window
+against an isolated companion socket and verifies dirty/discard protection,
+reverting to the original bytes, and byte-exact content in the save request and
+subsequent read. The regression fails against the previous comparison.
+
+The Swift vector assertions compare UTF-8 bytes because Swift `String` equality
+alone accepts canonically equivalent text with different byte representations.
+Canonical human fields deliberately apply NFC; verbatim documents and opaque
+values preserve their original representation. NFC is not a promise that every
+visible character becomes one scalar, and the bridge retains its existing
+Unicode-scalar field limits. Search tests verify the declared derived key, not
+language-specific transliteration or accent-insensitive matching.
+
+All added protocol and text-integrity cases pass. Physical input-source
+candidate windows, keyboard layouts, dead keys, bidirectional visual layout,
+font shaping, and the installed application still require interactive checks.
+Secure fields have synthetic Unicode-insertion coverage rather than keyboard
+IME coverage. These results establish the tested buffer and transport behavior,
+not a guarantee for every language or every macOS input source.
+
 ## Non-goals
 
 This policy does not use NFKC compatibility folding, detect Unicode

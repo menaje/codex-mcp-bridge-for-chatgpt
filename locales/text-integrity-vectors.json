@@ -33,6 +33,78 @@
       "name": "UTF-8 encoded surrogate",
       "hex": "eda080",
       "valid": false
+    },
+    {
+      "name": "Japanese including decomposed dakuten",
+      "hex": "e697a5e69cace8aa9e20e3818be38299",
+      "valid": true,
+      "text": "日本語 が"
+    },
+    {
+      "name": "Simplified Chinese",
+      "hex": "e7ae80e4bd93e4b8ade6968720e6b189e8afad",
+      "valid": true,
+      "text": "简体中文 汉语"
+    },
+    {
+      "name": "Traditional Chinese",
+      "hex": "e7b981e9ab94e4b8ade6968720e6bca2e8aa9e",
+      "valid": true,
+      "text": "繁體中文 漢語"
+    },
+    {
+      "name": "Decomposed Latin accents",
+      "hex": "63616665cc81206672616ec3a7616973",
+      "valid": true,
+      "text": "café français"
+    },
+    {
+      "name": "Vietnamese",
+      "hex": "5469e1babf6e67205669e1bb8774",
+      "valid": true,
+      "text": "Tiếng Việt"
+    },
+    {
+      "name": "Cyrillic including decomposed breve",
+      "hex": "d09ad0b8d180d0b8d0bbd0bbd0b8d186d0b020d098cc86",
+      "valid": true,
+      "text": "Кириллица Й"
+    },
+    {
+      "name": "Greek including decomposed tonos",
+      "hex": "ce95cebbcebbceb7cebdceb9cebaceac20ceb1cc81",
+      "valid": true,
+      "text": "Ελληνικά ά"
+    },
+    {
+      "name": "Arabic with vowel marks",
+      "hex": "d8a7d984d8b9d98ed8b1d98ed8a8d990d98ad98ed991d8a9",
+      "valid": true,
+      "text": "العَرَبِيَّة"
+    },
+    {
+      "name": "Hebrew with vowel marks",
+      "hex": "d7a2d6b4d791d6b0d7a8d6b4d799d7aa",
+      "valid": true,
+      "text": "עִבְרִית"
+    },
+    {
+      "name": "Devanagari with joiner and non-joiner",
+      "hex": "e0a4b9e0a4bfe0a4a8e0a58de0a4a6e0a58020e0a495e0a58de2808de0a4b720e0a495e0a58de2808ce0a4b7",
+      "valid": true,
+      "text": "हिन्दी क्‍ष क्‌ष"
+    },
+    {
+      "name": "Thai with combining marks",
+      "hex": "e0b8a0e0b8b2e0b8a9e0b8b2e0b984e0b897e0b8a220e0b881e0b8b5e0b988",
+      "valid": true,
+      "text": "ภาษาไทย กี่"
+    },
+    {
+      "name": "Supplementary CJK and emoji sequences",
+      "hex": "f0a0aeb720f09f91a9f09f8fbde2808df09f92bb20e29c88efb88f",
+      "valid": true,
+      "text": "𠮷 👩🏽‍💻 ✈️"
     }
   ],
   "canonicalHumanText": [
@@ -49,12 +121,96 @@
       "expected": "Project Name",
       "collapseWhitespace": true,
       "trim": true
+    },
+    {
+      "input": "が ぱ",
+      "expected": "が ぱ"
+    },
+    {
+      "input": "Tiếng Việt",
+      "expected": "Tiếng Việt"
+    },
+    {
+      "input": "Й",
+      "expected": "Й"
+    },
+    {
+      "input": "ά",
+      "expected": "ά"
+    },
+    {
+      "input": "أ",
+      "expected": "أ"
+    },
+    {
+      "input": "क़",
+      "expected": "क़"
+    },
+    {
+      "input": "קָלוֹם שׁ",
+      "expected": "קָלוֹם שׁ"
+    },
+    {
+      "input": "क्‍ष क्‌ष กี่",
+      "expected": "क्‍ष क्‌ष กี่"
+    },
+    {
+      "input": "漢語 汉语 Ａ ① 𠮷 👩🏽‍💻",
+      "expected": "漢語 汉语 Ａ ① 𠮷 👩🏽‍💻"
     }
   ],
   "verbatimText": [
     {
       "input": "Café\r\n`./각`",
       "expected": "Café\r\n`./각`"
+    },
+    {
+      "input": "日本語 が\r\n`./日本語 が`\n",
+      "expected": "日本語 が\r\n`./日本語 が`\n"
+    },
+    {
+      "input": "简体中文 汉语\r\n`./简体中文 汉语`\n",
+      "expected": "简体中文 汉语\r\n`./简体中文 汉语`\n"
+    },
+    {
+      "input": "繁體中文 漢語\r\n`./繁體中文 漢語`\n",
+      "expected": "繁體中文 漢語\r\n`./繁體中文 漢語`\n"
+    },
+    {
+      "input": "café français\r\n`./café français`\n",
+      "expected": "café français\r\n`./café français`\n"
+    },
+    {
+      "input": "Tiếng Việt\r\n`./Tiếng Việt`\n",
+      "expected": "Tiếng Việt\r\n`./Tiếng Việt`\n"
+    },
+    {
+      "input": "Кириллица Й\r\n`./Кириллица Й`\n",
+      "expected": "Кириллица Й\r\n`./Кириллица Й`\n"
+    },
+    {
+      "input": "Ελληνικά ά\r\n`./Ελληνικά ά`\n",
+      "expected": "Ελληνικά ά\r\n`./Ελληνικά ά`\n"
+    },
+    {
+      "input": "العَرَبِيَّة\r\n`./العَرَبِيَّة`\n",
+      "expected": "العَرَبِيَّة\r\n`./العَرَبِيَّة`\n"
+    },
+    {
+      "input": "עִבְרִית\r\n`./עִבְרִית`\n",
+      "expected": "עִבְרִית\r\n`./עִבְרִית`\n"
+    },
+    {
+      "input": "हिन्दी क्‍ष क्‌ष\r\n`./हिन्दी क्‍ष क्‌ष`\n",
+      "expected": "हिन्दी क्‍ष क्‌ष\r\n`./हिन्दी क्‍ष क्‌ष`\n"
+    },
+    {
+      "input": "ภาษาไทย กี่\r\n`./ภาษาไทย กี่`\n",
+      "expected": "ภาษาไทย กี่\r\n`./ภาษาไทย กี่`\n"
+    },
+    {
+      "input": "𠮷 👩🏽‍💻 ✈️\r\n`./𠮷 👩🏽‍💻 ✈️`\n",
+      "expected": "𠮷 👩🏽‍💻 ✈️\r\n`./𠮷 👩🏽‍💻 ✈️`\n"
     }
   ],
   "searchKey": [
@@ -65,6 +221,30 @@
     {
       "input": "Ａ",
       "expected": "ａ"
+    },
+    {
+      "input": "が",
+      "expected": "が"
+    },
+    {
+      "input": "汉语 漢語",
+      "expected": "汉语 漢語"
+    },
+    {
+      "input": "МОСКВА",
+      "expected": "москва"
+    },
+    {
+      "input": "ΑΘΉΝΑ",
+      "expected": "αθήνα"
+    },
+    {
+      "input": "İSTANBUL",
+      "expected": "i̇stanbul"
+    },
+    {
+      "input": "العَرَبِيَّة עִבְרִית हिन्दी กี่",
+      "expected": "العَرَبِيَّة עִבְרִית हिन्दी กี่"
     }
   ]
 }

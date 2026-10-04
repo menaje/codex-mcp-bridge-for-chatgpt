@@ -53,6 +53,9 @@ describe("text integrity policy", () => {
     }
     for (const vector of vectors.verbatimText) {
       expect(verbatimText(vector.input)).toBe(vector.expected);
+      const encoded = Buffer.from(JSON.stringify(vector.input), "utf8");
+      expect(parseJsonUtf8Strict<string>(encoded)).toBe(vector.expected);
+      expect(parseRuntimeScriptJsonUtf8Strict(encoded)).toBe(vector.expected);
     }
     for (const vector of vectors.searchKey) {
       expect(searchKey(vector.input)).toBe(vector.expected);

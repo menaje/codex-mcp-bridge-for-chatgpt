@@ -28,28 +28,33 @@ final class TextIntegrityTests: XCTestCase {
         for vector in vectors.utf8 {
             let data = try XCTUnwrap(Data(hex: vector.hex), vector.name)
             if vector.valid {
-                XCTAssertEqual(try BridgeTextIntegrity.decodeUTF8Strict(data), vector.text, vector.name)
+                let expected = try XCTUnwrap(vector.text, vector.name)
+                XCTAssertEqual(Data(try BridgeTextIntegrity.decodeUTF8Strict(data).utf8), Data(expected.utf8), vector.name)
             } else {
                 XCTAssertThrowsError(try BridgeTextIntegrity.decodeUTF8Strict(data), vector.name)
             }
         }
         for vector in vectors.canonicalHumanText {
             XCTAssertEqual(
-                try BridgeTextIntegrity.canonicalHumanText(
+                Data(try BridgeTextIntegrity.canonicalHumanText(
                     vector.input,
                     options: .init(
                         trim: vector.trim ?? false,
                         collapseWhitespace: vector.collapseWhitespace ?? false
                     )
-                ),
-                vector.expected
+                ).utf8),
+                Data(vector.expected.utf8)
             )
         }
         for vector in vectors.verbatimText {
-            XCTAssertEqual(try BridgeTextIntegrity.verbatimText(vector.input), vector.expected)
+            XCTAssertEqual(Data(try BridgeTextIntegrity.verbatimText(vector.input).utf8), Data(vector.expected.utf8))
+            let encoded = try JSONEncoder().encode(vector.input)
+            try BridgeTextIntegrity.validateJSONUTF8(encoded)
+            let decoded = try JSONDecoder().decode(String.self, from: encoded)
+            XCTAssertEqual(Data(decoded.utf8), Data(vector.expected.utf8))
         }
         for vector in vectors.searchKey {
-            XCTAssertEqual(try BridgeTextIntegrity.searchKey(vector.input), vector.expected)
+            XCTAssertEqual(Data(try BridgeTextIntegrity.searchKey(vector.input).utf8), Data(vector.expected.utf8))
         }
     }
 

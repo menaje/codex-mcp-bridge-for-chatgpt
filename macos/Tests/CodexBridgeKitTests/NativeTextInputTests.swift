@@ -33,6 +33,135 @@ final class NativeTextInputTests: XCTestCase {
         XCTAssertEqual(fixture.state.editor, "한글 입력")
     }
 
+    /// Protocol simulation, not a claim about any particular installed IME.
+    @MainActor
+    func testJapaneseAndChineseCandidateConversionSurvivesViewUpdates() async throws {
+        let fixture = try await InputFixture()
+        defer { fixture.close() }
+        let fields = fixture.descendants.compactMap { $0 as? NSTextField }
+            .filter { $0.isEditable && !($0 is NSSecureTextField) }
+        XCTAssertEqual(fields.count, 3)
+        let conversions: [(name: String, groups: [[String]], expected: String)] = [
+            ("Japanese", [["に", "にほ", "にほん", "日本"], ["ご", "語"]], "日本語"),
+            ("Simplified Chinese", [["h", "han", "汉"], ["y", "yu", "语"]], "汉语"),
+            ("Traditional Chinese", [["ㄏ", "ㄏㄢ", "漢"], ["ㄩ", "語"]], "漢語")
+        ]
+        for conversion in conversions {
+            for field in fields {
+                XCTAssertTrue(fixture.window.makeFirstResponder(field))
+                let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+                try await compose(conversion.groups, in: editor, fixture: fixture)
+                XCTAssertEqual(field.stringValue, conversion.expected, conversion.name)
+                fixture.window.makeFirstResponder(nil)
+            }
+            XCTAssertEqual(fixture.state.field, conversion.expected, conversion.name)
+            XCTAssertEqual(fixture.state.roundedField, conversion.expected, conversion.name)
+            XCTAssertEqual(fixture.state.search, conversion.expected, conversion.name)
+            let editor = try fixture.editor()
+            XCTAssertTrue(fixture.window.makeFirstResponder(editor))
+            try await compose(conversion.groups, in: editor, fixture: fixture)
+            XCTAssertEqual(editor.string, conversion.expected, conversion.name)
+            XCTAssertEqual(fixture.state.editor, conversion.expected, conversion.name)
+        }
+    }
+
+    @MainActor
+    func testCombiningAndIndicCompositionPreservesExactBytes() async throws {
+        let fixture = try await InputFixture()
+        defer { fixture.close() }
+        let editor = try fixture.editor()
+        fixture.window.makeFirstResponder(editor)
+        let compositions = [
+            ["e", "e\u{301}"],
+            ["か", "か\u{3099}"],
+            ["क", "क्", "क्\u{200d}", "क्\u{200d}ष"],
+            ["ก", "กิ", "กี่"],
+            ["م", "مر", "مَرْحَبًا"]
+        ]
+        for stages in compositions {
+            try await compose([stages], in: editor, fixture: fixture)
+            let expected = try XCTUnwrap(stages.last)
+            XCTAssertEqual(Data(editor.string.utf8), Data(expected.utf8))
+            XCTAssertEqual(Data(fixture.state.editor.utf8), Data(expected.utf8))
+        }
+    }
+
+    @MainActor
+    func testCandidateSelectionReplacementAndSaveAfterEmojiAndBeforeRTLText() async throws {
+        let fixture = try await InputFixture(initialText: "😀 placeholder / العربية")
+        defer { fixture.close() }
+        let editor = try fixture.editor()
+        fixture.window.makeFirstResponder(editor)
+        editor.setSelectedRange(NSRange(location: 3, length: 11))
+        for stage in ["にほんご", "日本語"] {
+            let length = (stage as NSString).length
+            editor.setMarkedText(stage, selectedRange: NSRange(location: 0, length: length), replacementRange: unspecifiedRange)
+            fixture.state.editor = "external update"
+            try await fixture.refresh()
+            XCTAssertTrue(editor.hasMarkedText())
+            XCTAssertEqual(editor.markedRange(), NSRange(location: 3, length: length))
+            XCTAssertEqual(editor.string, "😀 \(stage) / العربية")
+        }
+        BridgeTextInput.commitPendingComposition(in: fixture.window)
+        XCTAssertEqual(fixture.state.editor, "😀 日本語 / العربية")
+        XCTAssertFalse(editor.hasMarkedText())
+
+        // Reconversion replaces an explicit UTF-16 range, not a Swift Character index.
+        editor.setMarkedText("hanzi", selectedRange: NSRange(location: 5, length: 0), replacementRange: NSRange(location: 3, length: 3))
+        try await fixture.refresh()
+        XCTAssertEqual(editor.string, "😀 hanzi / العربية")
+        editor.insertText("漢字", replacementRange: unspecifiedRange)
+        try await fixture.refresh()
+        XCTAssertEqual(fixture.state.editor, "😀 漢字 / العربية")
+
+        // An input source can cancel reconversion by restoring its original text.
+        editor.setMarkedText("hanzi", selectedRange: NSRange(location: 5, length: 0), replacementRange: NSRange(location: 3, length: 2))
+        try await fixture.refresh()
+        editor.insertText("漢字", replacementRange: unspecifiedRange)
+        try await fixture.refresh()
+        XCTAssertEqual(fixture.state.editor, "😀 漢字 / العربية")
+        XCTAssertFalse(editor.hasMarkedText())
+    }
+
+    @MainActor
+    func testMultilingualInsertionPreservesBytesInFieldsSearchSecureFieldAndEditor() async throws {
+        let fixture = try await InputFixture()
+        defer { fixture.close() }
+        let samples = [
+            "日本語 か\u{3099}", "简体中文 汉语", "繁體中文 漢語", "cafe\u{301} français",
+            "Tiếng Việt", "Кириллица И\u{306}", "Ελληνικά α\u{301}", "العَرَبِيَّة",
+            "עִבְרִית", "हिन्दी क्\u{200d}ष क्\u{200c}ष", "ภาษาไทย กี่", "𠮷 👩🏽‍💻 ✈️"
+        ]
+        let singleLine = samples.joined(separator: " | ")
+        let fields = fixture.descendants.compactMap { $0 as? NSTextField }.filter { $0.isEditable }
+        XCTAssertEqual(fields.count, 4)
+        for field in fields {
+            fixture.window.makeFirstResponder(field)
+            let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+            editor.setSelectedRange(NSRange(location: 0, length: (editor.string as NSString).length))
+            editor.insertText(singleLine, replacementRange: unspecifiedRange)
+            try await fixture.refresh()
+            fixture.window.makeFirstResponder(nil)
+            XCTAssertEqual(Data(field.stringValue.utf8), Data(singleLine.utf8))
+        }
+        for stored in [fixture.state.field, fixture.state.roundedField, fixture.state.search, fixture.state.secret] {
+            XCTAssertEqual(Data(stored.utf8), Data(singleLine.utf8))
+        }
+
+        let multiline = "\u{feff}" + samples.joined(separator: "\r\n") + "\r\n"
+        let editor = try fixture.editor()
+        fixture.window.makeFirstResponder(editor)
+        editor.insertText(multiline, replacementRange: unspecifiedRange)
+        try await fixture.refresh()
+        XCTAssertEqual(Data(editor.string.utf8), Data(multiline.utf8))
+        XCTAssertEqual(Data(fixture.state.editor.utf8), Data(multiline.utf8))
+        for sample in samples {
+            fixture.state.editor = sample
+            try await fixture.refresh()
+            XCTAssertEqual(Data(editor.string.utf8), Data(sample.utf8))
+        }
+    }
+
     @MainActor
     func testCompositionReplacementUsesUTF16RangesAndSurvivesAnExternalRefresh() async throws {
         let fixture = try await InputFixture(initialText: "😀 처음 끝")
@@ -235,16 +364,21 @@ final class NativeTextInputTests: XCTestCase {
 
     @MainActor
     private func composeHangul(in editor: NSTextView, fixture: InputFixture) async throws {
+        try await compose([["ㅎ", "하", "한"], ["ㄱ", "그", "글"], [" "], ["ㅇ", "이", "입"], ["ㄹ", "려", "력"]], in: editor, fixture: fixture)
+    }
+
+    @MainActor
+    private func compose(_ groups: [[String]], in editor: NSTextView, fixture: InputFixture) async throws {
         editor.setSelectedRange(NSRange(location: 0, length: (editor.string as NSString).length))
-        for syllable in [["ㅎ", "하", "한"], ["ㄱ", "그", "글"], [" "], ["ㅇ", "이", "입"], ["ㄹ", "려", "력"]] {
-            if syllable == [" "] { editor.insertText(" ", replacementRange: unspecifiedRange); continue }
-            for stage in syllable {
+        for group in groups {
+            if group == [" "] { editor.insertText(" ", replacementRange: unspecifiedRange); continue }
+            for stage in group {
                 editor.setMarkedText(stage, selectedRange: NSRange(location: (stage as NSString).length, length: 0), replacementRange: unspecifiedRange)
                 try await fixture.refresh()
                 XCTAssertTrue(editor.hasMarkedText(), "Composition lost after \(stage)")
             }
-            editor.insertText(syllable.last!, replacementRange: unspecifiedRange)
-            // Start the next syllable immediately, before SwiftUI's pending update.
+            editor.insertText(try XCTUnwrap(group.last), replacementRange: unspecifiedRange)
+            // Start the next group immediately, before SwiftUI's pending update.
         }
         try await fixture.refresh()
     }

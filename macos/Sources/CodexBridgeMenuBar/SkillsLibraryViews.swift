@@ -260,7 +260,6 @@ struct SkillsLibraryWindowView: View {
             if mode != .preview, !isEditingCurrentSource { synchronizeDraftFromModel() }
             updateDirtyState()
         }
-        .onChange(of: draftContent) { _ in updateDirtyState() }
         .onChange(of: draftName) { _ in updateDirtyState() }
         .onChange(of: draftDescription) { _ in updateDirtyState() }
         .onReceive(NotificationCenter.default.publisher(for: .bridgeSkillCommandNew)) { _ in
@@ -608,7 +607,12 @@ struct SkillsLibraryWindowView: View {
                 .padding(12)
                 Divider()
             }
-            BridgeTextEditor(text: $draftContent, font: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
+            // SwiftUI's String change detection treats NFC/NFD as equal. Publish
+            // the byte-based dirty state directly at the editor's write boundary.
+            BridgeTextEditor(text: Binding(
+                get: { draftContent },
+                set: { draftContent = $0; updateDirtyState() }
+            ), font: .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular))
                 .padding(10)
                 .background(Color(nsColor: .textBackgroundColor))
                 .accessibilityLabel("macos.skills.fullMarkdownSourceOfSelectedFile")
@@ -982,7 +986,7 @@ struct SkillsLibraryWindowView: View {
         }
         let metadataChanged = documentSelection == .main &&
             (draftName != document.skill.name || draftDescription != document.skill.description)
-        windowState.hasUnsavedChanges = draftContent != currentSource(document) || metadataChanged
+        windowState.hasUnsavedChanges = !draftContent.utf8.elementsEqual(currentSource(document).utf8) || metadataChanged
     }
 
     private var isEditingCurrentSource: Bool { windowState.hasUnsavedChanges || !draftContent.isEmpty }
