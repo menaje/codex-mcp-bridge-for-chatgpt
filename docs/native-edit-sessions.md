@@ -195,10 +195,35 @@ input-source list, active source and any automatically added dictation languages
 after temporarily adding test sources.
 
 On 2026-10-04, computer-use key synthesis failed to retain composition even in
-baseline controls. It is not physical-IME proof. A human tried arbitrary strings
-in several fields; those strings were not a specified expected result and cannot
-be classified as corruption. Exact-text/Command-S human acceptance and the
-Japanese/Chinese candidate matrix remain pending until recorded. The temporary
-fixture also does not validate the installed product build. Keep #236 open while
-that physical acceptance is incomplete; local source integration is not a release
-or installation of the fix.
+baseline controls: two-set `g k s` produced separate `ㅎㅏㄴ` with no marked range.
+It is not physical-IME proof. The system accessibility keyboard was also tried,
+but its key controls were not exposed by the enabled computer-use surface. Its
+original off state was restored, along with ABC as the active source, the original
+ABC/two-set source list and Korean-only, disabled dictation. A human tried
+arbitrary strings in several fields; those strings were not a specified expected
+result and cannot be classified as corruption.
+
+Computer-use Unicode paste and Command-S on the final fixture (source SHA-256
+`2634b2ba93217ace532c6fcfa4ae835860bb90c16c0fd30136735c45f3f39dc5`)
+verified Korean, Japanese, Chinese, Arabic, Hebrew, combining accents and emoji.
+Names submitted NFC while the verbatim single-line field kept NFD. Document
+CRLF, combining characters and surrounding spaces survived submission and
+Undo/Redo through the 250 ms refresh. Search exposed the committed query; a
+synthetic secret remained masked and was cleared after acknowledgement. Empty
+numeric input blocked submission without dropping drafts, while full-width
+`１２` submitted as `12`. Submitting name `10` then entering `11` before the
+800 ms receipt retained `11` as dirty. Explicit discard restored `10` without
+another submission. These are native UI tests, not physical candidate tests.
+
+Leading BOM cannot be certified by this paste route: a separate, uniquely named
+pasteboard probe showed `NSPasteboard.string(forType: .string)` consuming the
+leading UTF-8 BOM before the bridge reads an input draft, while the pasteboard
+data still contained `EF BB BF`. An embedded BOM survived the UI test. Existing
+document load/save tests verify a BOM already present in the draft separately;
+the clipboard conversion result does not establish loss on that storage path.
+
+Physical exact-text/Command-S acceptance and the Japanese/Chinese candidate
+matrix remain pending until recorded. The temporary fixture also does not
+validate the installed product build. Keep #236 open while physical acceptance
+is incomplete; local source integration is not a release or installation of the
+fix. The fixture was closed after these tests.
