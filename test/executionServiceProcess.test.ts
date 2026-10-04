@@ -228,16 +228,11 @@ describe("isolated Codex execution process", () => {
       controlRequestBytesReserve: 10 * 1024
     });
     let firstAssignment: UpstreamWorkerAssignment | undefined;
-    let firstTurnStarted = false;
     const largePrompt = `hold ${"x".repeat(9_000)}`;
     const first = service.callTool(
       "codex",
       task(largePrompt),
-      progress => {
-        if (progress.event?.type === "turn" && progress.event.phase === "started") {
-          firstTurnStarted = true;
-        }
-      },
+      undefined,
       value => { firstAssignment = value; }
     );
     const firstSettled = first.then(
@@ -247,7 +242,8 @@ describe("isolated Codex execution process", () => {
     const second = service.callTool("codex", task(largePrompt));
     const secondSettled = second.catch(error => error);
     try {
-      await eventually(() => Boolean(firstAssignment) && firstTurnStarted && service.health().inFlight === 2);
+      // Progress snapshots can be coalesced; a turn assignment confirms control readiness.
+      await eventually(() => Boolean(firstAssignment?.upstreamRequestId) && service.health().inFlight === 2);
       expect(service.health().ordinaryBytesInFlight).toBeGreaterThan(18_000);
       await expect(service.callTool(
         "codex",

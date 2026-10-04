@@ -25,8 +25,8 @@ describe("documentation naming", () => {
     const currentDocs = ["README.md", ...markdownFiles("docs")];
     for (const file of currentDocs) {
       const text = read(file);
-      expect(text, file).not.toMatch(/Codex MCP Bridge(?! for ChatGPT)/);
-      expect(text, file).not.toMatch(/Codex Bridge(?! for ChatGPT)/);
+      expect(text, file).not.toMatch(/Codex\s+MCP\s+Bridge(?!\s+for\s+ChatGPT)/);
+      expect(text, file).not.toMatch(/Codex\s+Bridge(?!\s+for\s+ChatGPT)/);
       expect(text, file).not.toContain("MacBook Air");
       expect(text, file).not.toMatch(/github\.com\/menaje\/codex-mcp-bridge(?!-for-chatgpt)/);
     }
@@ -42,9 +42,9 @@ describe("documentation naming", () => {
     const setup = read("docs/setup.md");
 
     expect(readme.split(/\r?\n/).length).toBeLessThanOrEqual(180);
-    expect(readme).toContain("[Detailed setup guide](docs/setup.md)");
-    expect(readme).toContain("## What it gives you");
-    expect(readme).toContain("## Quick start");
+    expect(readme).toContain("[Setup guide](docs/setup.md)");
+    expect(readme).toContain("## What you can do");
+    expect(readme).toContain("## Get started");
 
     for (const image of [
       "macos-menubar-usage-light-en.png",
