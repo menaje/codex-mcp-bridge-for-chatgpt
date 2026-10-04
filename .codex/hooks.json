@@ -1,5 +1,5 @@
 {
-  "description": "Check repository integration before a task ends and guard common branch/worktree deletion commands.",
+  "description": "Check repository integration before a task ends and guard branch/worktree deletion and explicitly authorized archival experiment retirement.",
   "hooks": {
     "Stop": [
       {

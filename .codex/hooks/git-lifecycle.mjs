@@ -1,6 +1,8 @@
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { retireExperiment, verifyExperimentRetirement } from "./experiment-retirement.mjs";
 
 function git(cwd, ...args) {
   return spawnSync("git", args, { cwd, encoding: "utf8", timeout: 5_000 });
@@ -157,7 +159,7 @@ function shellWords(command) {
 }
 
 function looksLikeCleanup(command) {
-  return /\bgit\b/.test(command) && (
+  return /\bretire-experiment\b/.test(command) || /\bgit\b/.test(command) && (
     /\bworktree\b[\s\S]*\bremove\b/.test(command) ||
     /\bbranch\b[\s\S]*(?:-d\b|-D\b|--delete\b)/.test(command) ||
     /\bpush\b[\s\S]*--delete\b/.test(command)
@@ -221,6 +223,16 @@ function preToolUse(input) {
   const command = input.tool_input?.command;
   if (input.tool_name !== "Bash" || typeof command !== "string" || !looksLikeCleanup(command)) return {};
   const words = shellWords(command);
+  if (words && /(?:^|\/)node$/.test(words[0]) && words.length === 4 &&
+      samePath(resolve(input.cwd || process.cwd(), words[1]), fileURLToPath(import.meta.url)) &&
+      words[2] === "retire-experiment") {
+    try {
+      verifyExperimentRetirement(input.cwd || process.cwd(), resolve(input.cwd || process.cwd(), words[3]));
+      return {};
+    } catch (error) {
+      return deny(error.message);
+    }
+  }
   const parts = words && commandParts(words, input.cwd || process.cwd());
   if (!parts) return deny("Run branch/worktree cleanup as one simple literal Git command after verifying integration.");
   const sessionRoot = root(input.cwd || process.cwd());
@@ -247,7 +259,19 @@ function preToolUse(input) {
   return reason ? deny(reason) : {};
 }
 
-if (process.argv[2] === "set-target") {
+if (["retire-experiment", "verify-retirement"].includes(process.argv[2])) {
+  try {
+    if (process.argv.length !== 4) throw new Error("Provide one absolute retirement record path.");
+    const result = process.argv[2] === "retire-experiment"
+      ? retireExperiment(process.cwd(), resolve(process.argv[3]))
+      : verifyExperimentRetirement(process.cwd(), resolve(process.argv[3]));
+    process.stdout.write(`${JSON.stringify(process.argv[2] === "retire-experiment" ? result :
+      { branch: result.record.branch, head: result.record.head, verified: true })}\n`);
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  }
+} else if (process.argv[2] === "set-target") {
   try {
     setTarget(process.cwd(), process.argv[3]);
   } catch (error) {
