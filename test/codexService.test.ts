@@ -656,6 +656,69 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(absent).toMatchObject({ usageStatus: "none", windows: [], usageObservedAt: null });
     expect(read).toHaveBeenCalledTimes(5);
   });
+  it("keeps an in-flight model catalog valid when Codex adds project trust metadata", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    const config = path.join(home, "config.toml");
+    await writeFile(config, 'cli_auth_credentials_store = "file"\nmodel_provider = "openai"\n[projects."/old/ideas"]\ntrust_level = "trusted"\n');
+    const before = f.service.cacheRevision();
+    const snapshot = { fingerprint: "same-account", models: [] } as unknown as CodexModelCatalogSnapshot;
+    const catalog = new ContextualModelCatalog("app-server", () => f.service.modelRevision(), () => ({
+      getCatalog: async () => {
+        await writeFile(config, `# Codex rewrites TOML when trusting a new project
+model_provider = 'openai'
+cli_auth_credentials_store = "file"
+
+[projects."/old/ideas"]
+trust_level = "trusted"
+[projects."/Volumes/Ex-Dev/Dev/월간.report"]
+trust_level = "trusted"
+`);
+        return snapshot;
+      },
+      getCachedCatalog: () => snapshot
+    }));
+    await expect(catalog.getCatalog()).resolves.toBe(snapshot);
+    expect(catalog.getCachedCatalog()).toBe(snapshot);
+    // Account reads and execution admission still observe the complete file.
+    expect(f.service.cacheRevision()).not.toBe(before);
+  });
+
+  it.each([
+    ['cli_auth_credentials_store = "file"', 'cli_auth_credentials_store = "keyring"'],
+    ['forced_login_method = "chatgpt"', 'forced_login_method = "api"'],
+    ['forced_chatgpt_workspace_id = "11111111-1111-4111-8111-111111111111"', 'forced_chatgpt_workspace_id = "22222222-2222-4222-8222-222222222222"'],
+    ['model_provider = "openai"', 'model_provider = "custom"'],
+    ['[model_providers.custom]\nbase_url = "https://first.invalid"', '[model_providers.custom]\nbase_url = "https://second.invalid"'],
+    ['[projects."/workspace"]\ntrust_level = "trusted"\nfuture_policy = "first"', '[projects."/workspace"]\ntrust_level = "trusted"\nfuture_policy = "second"'],
+    ['notes = """\n[projects.fake]\ntrust_level = "trusted"\n"""', 'notes = """\n[projects.fake]\ntrust_level = "untrusted"\n"""'],
+    ['invalid = [', 'invalid = [1'],
+    ['limit = 9223372036854775806', 'limit = 9223372036854775807'],
+    ['value = nan', 'value = inf']
+  ])("invalidates model choices for non-trust configuration changes (%s)", async (before, after) => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    const config = path.join(home, "config.toml");
+    await writeFile(config, before);
+    const revision = f.service.modelRevision();
+    await writeFile(config, after);
+    expect(f.service.modelRevision()).not.toBe(revision);
+  });
+
+  it("invalidates model choices when credentials or the observed account change", async () => {
+    const f = await fixture(), home = path.join(f.root, ".codex"); await mkdir(home);
+    const auth = path.join(home, "auth.json");
+    await writeFile(auth, JSON.stringify({ auth_mode: "apiKey", OPENAI_API_KEY: "synthetic-first" }));
+    const revision = f.service.modelRevision();
+    await writeFile(auth, JSON.stringify({ auth_mode: "apiKey", OPENAI_API_KEY: "synthetic-second" }));
+    expect(f.service.modelRevision()).not.toBe(revision);
+    vi.spyOn(f.service, "readCliAccount")
+      .mockResolvedValueOnce(projectCodexAccount({ account: { type: "chatgpt", email: "first@example.invalid", planType: "plus" } }, null))
+      .mockResolvedValueOnce(projectCodexAccount({ account: { type: "chatgpt", email: "second@example.invalid", planType: "pro" } }, null));
+    await f.service.readAccount("app-server", false, true);
+    const observed = f.service.modelRevision();
+    await f.service.readAccount("app-server", false, true);
+    expect(f.service.modelRevision()).not.toBe(observed);
+  });
+
   it("drops another account's model cache even if the next account's refresh fails", async () => {
     let revision = "a", loads = 0;
     const snapshot = { fingerprint: "a", models: [] } as unknown as CodexModelCatalogSnapshot;

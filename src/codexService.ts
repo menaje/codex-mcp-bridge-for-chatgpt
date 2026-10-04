@@ -15,6 +15,7 @@ import { validateInitializeResponse } from "./runtimeCompatibility.js";
 import { decodeUtf8Strict, parseJsonUtf8Strict } from "./textIntegrity.js";
 import { codexProcessEnvironment } from "../scripts/runtime-env.mjs";
 import { assertAuthProfileStorageEnvironment } from "../scripts/auth-selection.mjs";
+import { codexModelConfigInput } from "./codexModelConfig.js";
 
 export type CodexSessionPolicy = { contextId?: string; visibleInCodexApp: boolean; persistent: boolean; persistence: "persistent" | "ephemeral"; constraint?: "app-visibility-unverified" };
 /** Non-secret ownership evidence for read-only projections; never grants execution. */
@@ -207,7 +208,7 @@ export class CodexService {
   }
   private appVisibility(): boolean { return this.visibility?.() ?? this.readRecord("policy", "visibility")?.visible === true; }
   modelRevision(contextFingerprint?: string): string {
-    return digest(this.cacheRevision(contextFingerprint) + JSON.stringify([...this.accountIdentities]));
+    return digest(this.runtimeInputRevision(contextFingerprint, true) + JSON.stringify([...this.accountIdentities]));
   }
   authenticationIdentity(home?: string): string | null {
     const directory = home || this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
@@ -389,10 +390,16 @@ export class CodexService {
     return guard;
   }
   cacheRevision(contextFingerprint?: string): string {
+    return this.runtimeInputRevision(contextFingerprint);
+  }
+  private runtimeInputRevision(contextFingerprint?: string, modelCatalog = false): string {
     const shared = this.environment.CODEX_HOME || path.join(this.environment.HOME || homedir(), ".codex");
     const files = ["auth.json", "config.toml"].map(name => path.join(shared, name));
     const values = files.map(file => {
-      try { return decodeUtf8Strict(readFileSync(file), `runtime input ${path.basename(file)}`); }
+      try {
+        const value = decodeUtf8Strict(readFileSync(file), `runtime input ${path.basename(file)}`);
+        return modelCatalog && path.basename(file) === "config.toml" ? codexModelConfigInput(value) : value;
+      }
       catch { return "unavailable"; }
     });
     // Cache inputs follow the manager's effective command and native binary,

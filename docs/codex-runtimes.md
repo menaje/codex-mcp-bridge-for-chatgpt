@@ -27,6 +27,18 @@ Only the allowlisted Codex child settings are copied into helper login and accou
 
 The isolated execution process receives the chosen executable through its private parent envelope. It strips Bridge-only configuration variables, including runtime home and executable override, before starting a CLI worker. The worker still receives the Codex home, SQLite location and allowed proxy/certificate settings; it does not need access to Bridge state files.
 
+Thread creation, fork and resume have a separate initialization deadline of at
+least sixty seconds, allowing Codex's shell snapshot setup to finish or reach
+its own deadline. Ordinary control requests retain their thirty-second deadline.
+An initialization timeout does not retry the request or start a turn from a late
+response; the existing late-response journal records the returned identifiers.
+
+When Codex adds project trust records to its configuration, the bridge keeps the
+current model choices valid. Authentication policy, credentials, provider
+configuration and observed account changes still invalidate those choices.
+Account refresh and execution admission continue to observe the complete
+configuration file.
+
 ## Central execution policy
 
 Execution permissions are resolved once in `src/executionPolicy.ts`, independently

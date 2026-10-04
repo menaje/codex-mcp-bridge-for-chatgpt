@@ -2,7 +2,7 @@ import path from "node:path";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ACCOUNT_RATE_LIMITS_CACHE_TTL_MS,
   APP_SERVER_CLIENT_INFO,
@@ -14,7 +14,7 @@ import {
 import { CODEX_CLI_TEST_VERSION } from "../src/appServerCompatibility.js";
 import { BRIDGE_BUILD_INFO } from "../src/buildInfo.js";
 import { stableCodexWorkingDirectory } from "../src/codexService.js";
-import type { JsonRpcProcessIdentity } from "../src/jsonRpcProcess.js";
+import { JsonRpcProcess, type JsonRpcProcessIdentity } from "../src/jsonRpcProcess.js";
 import { PRODUCT_INFO } from "../src/productInfo.js";
 import type {
   CodexPendingInteraction,
@@ -382,10 +382,66 @@ describe("CodexAppServerUpstreamPool", () => {
     }
   });
 
+  it.each([undefined, 1_000])("waits for delayed thread initialization with deadline %s while keeping controls bounded", async threadInitializationTimeoutMs => {
+    const request = vi.spyOn(JsonRpcProcess.prototype, "request");
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {
+      environment: { ...process.env, CODEX_TEST_THREAD_INITIALIZATION_DELAY_MS: "300", CODEX_TEST_UNSUBSCRIBE_UNLOAD: "1" },
+      requestTimeoutMs: 100,
+      initializeTimeoutMs: 2_000,
+      ...(threadInitializationTimeoutMs === undefined ? {} : { threadInitializationTimeoutMs })
+    });
+    const input = { backendKind: "app-server" as const, prompt: "report selection", cwd: process.cwd(),
+      sandbox: "read-only" as const, approvalPolicy: "on-request" as const };
+    try {
+      const started = await pool.startThread(input);
+      const threadId = started.structuredContent!.threadId as string;
+      await pool.forkThread({ ...input, threadId });
+      expect(await pool.releaseThreadConnection(threadId, { canRelease: async () => true }))
+        .toMatchObject({ phase: "released" });
+      await pool.continueThread({ ...input, threadId });
+      const threadCalls = request.mock.calls.filter(([method]) => ["thread/start", "thread/fork", "thread/resume"].includes(method));
+      expect(threadCalls.map(([method]) => method)).toEqual(["thread/start", "thread/fork", "thread/resume"]);
+      expect(threadCalls.every(([, , options]) => options?.timeoutMs === (threadInitializationTimeoutMs ?? 60_000))).toBe(true);
+      const turnCalls = request.mock.calls.filter(([method]) => method === "turn/start");
+      expect(turnCalls).toHaveLength(3);
+      expect(turnCalls.every(([, , options]) => options?.timeoutMs === 100)).toBe(true);
+    } finally {
+      await pool.close();
+      request.mockRestore();
+    }
+  });
+
+  it("bounds thread initialization and records its late response without starting a turn", async () => {
+    const lateResponses: CodexAppServerLateResponse[] = [];
+    const request = vi.spyOn(JsonRpcProcess.prototype, "request");
+    const pool = new CodexAppServerUpstreamPool(FIXTURE, 1, {
+      environment: { ...process.env, CODEX_TEST_THREAD_INITIALIZATION_DELAY_MS: "300" },
+      requestTimeoutMs: 100,
+      initializeTimeoutMs: 2_000,
+      threadInitializationTimeoutMs: 150,
+      onLateResponse: response => lateResponses.push(response)
+    });
+    try {
+      await expect(pool.startThread({ backendKind: "app-server", prompt: "report selection", cwd: process.cwd(),
+        sandbox: "read-only", approvalPolicy: "on-request" })).rejects.toMatchObject({
+        method: "thread/start", timeoutMs: 150
+      });
+      await eventually(() => lateResponses.some(response => response.method === "thread/start"));
+      expect(request.mock.calls.filter(([method]) => method === "thread/start")).toHaveLength(1);
+      expect(request.mock.calls.some(([method]) => method === "turn/start")).toBe(false);
+    } finally {
+      await pool.close();
+      request.mockRestore();
+    }
+  });
+
   it("rejects invalid protocol timeouts before starting a worker", () => {
     expect(
       () => new CodexAppServerUpstreamPool(FIXTURE, 1, { requestTimeoutMs: 0 })
     ).toThrow("requestTimeoutMs must be an integer between 1");
+    expect(
+      () => new CodexAppServerUpstreamPool(FIXTURE, 1, { threadInitializationTimeoutMs: 0 })
+    ).toThrow("threadInitializationTimeoutMs must be an integer between 1");
   });
 
   it("exposes the backend model catalog and applies exact turn-level continuation overrides", async () => {

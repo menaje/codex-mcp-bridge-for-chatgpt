@@ -29,6 +29,22 @@ afterEach(async () => {
 });
 
 describe("isolated Codex execution process", () => {
+  it("passes the dedicated thread initialization deadline to the isolated executor", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "execution-thread-timeout-"));
+    roots.push(home);
+    const service = await ChildProcessCodexExecutionService.start({
+      command: fixture,
+      poolSize: 1,
+      environment: { ...process.env, HOME: home, CODEX_HOME: path.join(home, ".codex"),
+        CODEX_TEST_THREAD_INITIALIZATION_DELAY_MS: "300" },
+      protocolOptions: { initializeTimeoutMs: 2_000, requestTimeoutMs: 100, threadInitializationTimeoutMs: 150 }
+    });
+    try {
+      await expect(service.callTool("codex", task("report selection")))
+        .rejects.toThrow("thread/start timed out after 150ms");
+    } finally { await service.close(); }
+  });
+
   it("binds existing controls and terminal ACK to the original IPC request and worker turn", async () => {
     const service = await createService();
     const jobId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
