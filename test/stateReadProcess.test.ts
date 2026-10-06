@@ -237,8 +237,9 @@ describe("isolated state read projection", () => {
     try {
       process.kill(processId!, "SIGSTOP");
       stopped = true;
+      // Exercise the shared IPC limit without coupling it to CLI inspection.
       const timedOut = Array.from({ length: 16 }, () =>
-        service.settingsSnapshot().then(
+        service.dashboardSnapshot({ enrich: false }).then(
           () => "resolved",
           error => error instanceof Error ? error.message : String(error)
         )
@@ -256,22 +257,20 @@ describe("isolated state read projection", () => {
       process.kill(processId!, "SIGCONT");
       stopped = false;
       await waitFor(() => service.health().inFlight === 0);
-      // A 50 ms test-only deadline can still expire after SIGCONT when other
-      // workers are scheduled. Verify eventual reuse without changing that
-      // per-request deadline or accepting a leaked abandoned request.
-      let snapshot: Awaited<ReturnType<typeof service.settingsSnapshot>> | undefined;
+      // Verify reuse with a database-only projection. Settings also inspects
+      // the selected CLI; its latency is separate from the IPC capacity contract.
+      // Keep the same 50 ms deadline and do not accept leaked abandoned reads.
+      let snapshot: Awaited<ReturnType<typeof service.dashboardSnapshot>> | undefined;
       const recoveryDeadline = Date.now() + 5_000;
       while (Date.now() < recoveryDeadline && !snapshot) {
         await waitFor(() => service.health().inFlight === 0);
         try {
-          snapshot = await service.settingsSnapshot();
+          snapshot = await service.dashboardSnapshot({ enrich: false });
         } catch (error) {
           if (!(error instanceof Error) || !error.message.includes("STATE_READ_STALE")) throw error;
         }
       }
-      expect(snapshot).toMatchObject({
-        settings: { settingsRevision: 1, uiLocalePreference: "ko" }
-      });
+      expect(snapshot).toMatchObject({ uiLocalePreference: "ko" });
       await waitFor(() => service.health().inFlight === 0);
     } finally {
       if (stopped) {
