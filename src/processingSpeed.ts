@@ -5,6 +5,14 @@ export const PROCESSING_SPEED_MODES = ["legacy", "inherit", "standard", "fast", 
 export type ProcessingSpeedMode = typeof PROCESSING_SPEED_MODES[number];
 export type RetainedServiceTier = { path: string; selection: Record<string, unknown> };
 
+export const ULTRAFAST_ACCESS_UNVERIFIED = "PROCESSING_SPEED_ACCESS_UNVERIFIED: Ultrafast account and workspace access cannot be verified by the selected CLI. The saved choice is preserved; choose another speed before starting new work.";
+
+/** Current public account/read contracts expose plan names, not Ultrafast entitlement,
+ * per-user workspace permission or inference residency. Catalogs do not supply that proof. */
+export function requireProcessingSpeedAccess(mode: string): void {
+  if (mode === "ultrafast") throw new Error(ULTRAFAST_ACCESS_UNVERIFIED);
+}
+
 export function isProcessingSpeedMode(value: unknown): value is ProcessingSpeedMode {
   return typeof value === "string" && PROCESSING_SPEED_MODES.includes(value as ProcessingSpeedMode);
 }

@@ -5,6 +5,11 @@ Ultrafast processing. Subscription plans, model catalogs, protocol support and
 observed execution each provide different evidence; none substitutes for the
 others.
 
+The native Settings window and web Settings card offer Standard and inheritance
+from the selected installation's verified schema, including before the first
+Job. The isolated settings reader reuses the existing CLI validation; it does
+not depend on an execution worker or start a trial turn.
+
 ## Choose a speed
 
 Open **Settings → Models & Execution** in the native app, or **Processing
@@ -25,8 +30,8 @@ and policy. A faster choice can affect usage or charges; selecting it is not
 proof of account entitlement or of the tier actually applied. Unsupported or
 unknown choices block new execution instead of silently falling back.
 
-The Dashboard separates the requested model, reasoning effort, and speed from
-request acceptance and server confirmation. A completed Job can still have
+The execution record separates the requested model, reasoning effort, and speed
+from request acceptance and server confirmation. A completed Job can still have
 unconfirmed actual effort or speed. **Allow Ultra reasoning** controls reasoning
 effort; it does not select Ultrafast processing or enable all delegation.
 See [model selection](model-selection.md) for fixed/automatic model choice,
@@ -86,8 +91,28 @@ the model change. Acceptance does not confirm speed, effort or inference routing
 
 Missing confirmation is independent of Job outcome. Do not rerun normal work to
 obtain it or fill historical actual values using saved/requested/current settings.
-UI text can remain compact, for example “Fast requested · accepted · actual tier
-unconfirmed.”
+The menu bar and Dashboard show **⚡ Fast** or **🚀 Ultrafast** beside the
+recorded model. Legacy Fast uses the same Fast badge. Standard, inheritance and
+unknown modes have no speed badge. The tooltip identifies a selected speed,
+not a confirmed processing grade. Request acceptance and missing speed
+confirmation remain in the execution record without routine row text.
+
+### Ultrafast access boundary
+
+As checked on 2026-10-06, the [official speed documentation](https://learn.chatgpt.com/docs/agent-configuration/speed)
+requires Pro $500 or an eligible Enterprise/Edu plan, workspace permission and
+eligible inference residency. API-key availability has separate
+[API requirements](https://developers.openai.com/api/docs/guides/ultrafast-mode).
+Neither a generic `pro` plan name nor a model's advertised tier proves access.
+
+The 0.160.0 public `account/read` schema reports an account type and plan name,
+but no Ultrafast entitlement or per-user workspace permission. There is no
+public entitlement-read method in that schema. Until an authoritative access
+contract is available, Bridge omits Ultrafast from new selectable choices and
+rejects new Ultrafast configuration/admission with
+`PROCESSING_SPEED_ACCESS_UNVERIFIED`. It does not infer permission from usage
+limits, credentials or a paid trial. Existing saved choices and history remain
+readable; unrelated edits preserve them. Already active work is not cancelled.
 
 ## Support and validation scope
 
@@ -126,6 +151,10 @@ Settings schema 8 stores `processingSpeed` independently of the retired boolean:
 | `standard` | Omit persistent tier; send `serviceTierForTurn: "default"`. |
 | `fast` / `ultrafast` | Omit persistent tier; send the eligible catalog tier through `serviceTierForTurn`. Protocol and catalog must both support that exact value. |
 | Unknown string | Preserve it and refuse new execution until the user deliberately selects a supported mode. |
+
+The Ultrafast wire mapping is retained for contract tests and historical data;
+new execution additionally requires confirmed account/workspace access as
+described above. Current CLI contracts cannot supply that confirmation.
 
 Migration retains the boolean and `legacy` mode instead of asserting that false
 means CLI default. Surviving policy tier records are copied into

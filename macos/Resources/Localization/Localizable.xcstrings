@@ -29180,55 +29180,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "New choices apply only to each Job. Inheritance uses the conversation setting, or Codex defaults for a new conversation. Catalog support does not confirm account access; pricing varies by account."
+            "value": "New choices apply to each Job. Inheritance keeps the conversation speed. Ultrafast appears only after account and workspace access is confirmed; pricing varies by account."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "새 선택은 작업마다 적용합니다. 상속은 대화 설정을 유지하며 새 대화에서는 Codex 기본 설정을 따릅니다. 카탈로그 지원과 계정 사용 권한은 별개이며 요금은 계정별로 다릅니다."
+            "value": "새 선택은 작업마다 적용합니다. 상속은 대화의 속도 설정을 유지합니다. Ultrafast는 계정과 워크스페이스 사용 권한이 확인된 경우에만 표시되며 요금은 계정별로 다릅니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "新しい選択は各作業にのみ適用されます。継承は会話設定を維持し、新しい会話ではCodexの既定設定に従います。カタログの対応とアカウントの利用権限は別で、料金はアカウントによって異なります。"
+            "value": "新しい選択は各作業に適用されます。継承は会話の速度設定を保持します。Ultrafastはアカウントとワークスペースの利用権限が確認された場合にのみ表示されます。料金はアカウントによって異なります。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "新选择仅适用于每次任务。继承保留对话设置，新对话则使用Codex默认设置。目录支持不代表账户有使用权限，费用因账户而异。"
+            "value": "新选择适用于每个任务。继承会保留对话的速度设置。只有确认账户和工作区使用权限后才会显示Ultrafast；费用因账户而异。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "新選擇僅適用於每次工作。繼承保留對話設定，新對話則使用Codex預設設定。目錄支援不代表帳戶有使用權限，費用因帳戶而異。"
+            "value": "新選擇適用於每個工作。繼承會保留對話的速度設定。只有確認帳戶和工作區使用權限後才會顯示Ultrafast；費用依帳戶而異。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Las nuevas opciones se aplican a cada trabajo. La herencia conserva la conversación o usa los valores de Codex en una nueva. El catálogo no confirma acceso de la cuenta; el precio varía según la cuenta."
+            "value": "Las nuevas opciones se aplican a cada trabajo. Heredar conserva la velocidad de la conversación. Ultrafast solo aparece cuando se confirma el acceso de la cuenta y del espacio de trabajo; los precios varían según la cuenta."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Les nouveaux choix s’appliquent à chaque travail. L’héritage conserve la conversation ou utilise les valeurs Codex pour une nouvelle. Le catalogue ne confirme pas l’accès du compte ; les tarifs varient selon le compte."
+            "value": "Les nouveaux choix s’appliquent à chaque travail. L’héritage conserve la vitesse de la conversation. Ultrafast apparaît uniquement après confirmation de l’accès du compte et de l’espace de travail ; les tarifs varient selon le compte."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Neue Auswahlen gelten für jeden Auftrag. Vererbung behält die Gesprächseinstellung bei oder verwendet Codex-Vorgaben für ein neues Gespräch. Der Katalog bestätigt keinen Kontozugriff; Preise hängen vom Konto ab."
+            "value": "Neue Optionen gelten für jede Aufgabe. Vererben behält die Gesprächsgeschwindigkeit bei. Ultrafast erscheint erst, wenn der Zugriff für Konto und Arbeitsbereich bestätigt ist; Preise variieren je nach Konto."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Novas escolhas valem para cada trabalho. A herança mantém a conversa ou usa os padrões do Codex em uma nova. O catálogo não confirma o acesso da conta; os preços variam por conta."
+            "value": "As novas opções se aplicam a cada trabalho. Herdar mantém a velocidade da conversa. Ultrafast só aparece após a confirmação do acesso da conta e do espaço de trabalho; os preços variam conforme a conta."
           }
         }
       }
@@ -29519,6 +29519,180 @@
           "stringUnit": {
             "state": "translated",
             "value": "modelo confirmado: {model}"
+          }
+        }
+      }
+    },
+    "dashboard.execution.speedBadgeHint": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selected processing speed: {speed}"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "선택한 처리 속도: {speed}"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選択した処理速度: {speed}"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所选处理速度：{speed}"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所選處理速度：{speed}"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Velocidad de procesamiento seleccionada: {speed}"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vitesse de traitement sélectionnée : {speed}"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gewählte Verarbeitungsgeschwindigkeit: {speed}"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Velocidade de processamento selecionada: {speed}"
+          }
+        }
+      }
+    },
+    "settings.warning.speedProtocolUnverified": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a compatible Codex installation to enable Standard and other speed choices."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Standard 등 속도를 선택하려면 호환되는 Codex 설치를 선택하세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Standardなどの速度を選択するには、互換性のあるCodexを選択してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请选择兼容的Codex安装版本，以启用Standard等速度选项。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請選擇相容的Codex安裝版本，以啟用Standard等速度選項。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elige una instalación compatible de Codex para habilitar Standard y las demás velocidades."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choisissez une installation Codex compatible pour activer Standard et les autres vitesses."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wähle eine kompatible Codex-Installation, um Standard und weitere Geschwindigkeiten zu aktivieren."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Escolha uma instalação compatível do Codex para ativar Standard e outras velocidades."
+          }
+        }
+      }
+    },
+    "settings.warning.ultrafastAccessUnverified": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ultrafast access cannot currently be confirmed. Your saved choice is retained; select another speed to start new work."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ultrafast 사용 권한을 현재 확인할 수 없습니다. 저장된 선택은 유지됩니다. 새 작업을 시작하려면 다른 속도를 선택하세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ultrafastの利用権限は現在確認できません。保存済みの選択は保持されます。新しい作業には別の速度を選択してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前无法确认Ultrafast使用权限。已保存的选择会保留；开始新任务前请选择其他速度。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前無法確認Ultrafast使用權限。已儲存的選擇會保留；開始新工作前請選擇其他速度。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede confirmar el acceso a Ultrafast. Se conserva tu selección; elige otra velocidad para iniciar un trabajo nuevo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’accès à Ultrafast ne peut pas être confirmé actuellement. Votre choix est conservé ; choisissez une autre vitesse pour démarrer un nouveau travail."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Ultrafast-Zugriff kann derzeit nicht bestätigt werden. Deine gespeicherte Auswahl bleibt erhalten; wähle für neue Aufgaben eine andere Geschwindigkeit."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não é possível confirmar o acesso ao Ultrafast no momento. A escolha salva é mantida; selecione outra velocidade para iniciar um novo trabalho."
           }
         }
       }

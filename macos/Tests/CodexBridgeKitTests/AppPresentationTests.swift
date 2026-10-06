@@ -1504,23 +1504,30 @@ final class AppPresentationTests: XCTestCase {
             reroutedModel: "gpt-6-astra", isCurrent: false, serviceTier: "fast",
             processingSpeed: "fast", serviceTierScope: "turn", requestState: "accepted")
         let text = DashboardExecutionPresentation.text(accepted, locale: Locale(identifier: "en"))
-        XCTAssertTrue(text.contains("requested"))
-        XCTAssertTrue(text.contains("accepted"))
-        XCTAssertTrue(text.contains("unconfirmed"))
-        XCTAssertTrue(text.contains("gpt-6-astra"))
+        XCTAssertEqual(text, "Sol ⚡ Fast → gpt-6-astra · medium")
+        XCTAssertFalse(text.contains("requested"))
+        XCTAssertFalse(text.contains("accepted"))
+        XCTAssertFalse(text.contains("unconfirmed"))
+        XCTAssertEqual(DashboardExecutionPresentation.speedBadgeHelp(accepted, locale: Locale(identifier: "en")), "Selected processing speed: ⚡ Fast")
         let persistent = try dashboardExecution(model: "gpt-5.6-sol", displayName: "Sol", effort: "medium",
             reroutedModel: "gpt-6-astra", isCurrent: true, serviceTier: "fast")
         XCTAssertFalse(DashboardExecutionPresentation.matches(accepted, persistent))
     }
 
-    func testHistoricalUnknownPersistentSpeedIsNotLabeledCleared() throws {
+    func testHistoricalSpeedBadgesUseOnlyRecognizedRecordedValues() throws {
         for tier in ["ultrafast", "flex", "future-tier"] {
             let historical = try dashboardExecution(model: "sol", displayName: nil, effort: "medium",
                 reroutedModel: nil, isCurrent: false, serviceTier: tier, requestState: "requested")
             let text = DashboardExecutionPresentation.text(historical, locale: Locale(identifier: "en"))
-            XCTAssertTrue(text.contains(tier))
+            XCTAssertEqual(text, tier == "ultrafast" ? "sol 🚀 Ultrafast · medium" : "sol · medium")
             XCTAssertFalse(text.contains("clear conversation speed"))
-            XCTAssertTrue(text.contains("unconfirmed"))
+            XCTAssertFalse(text.contains("unconfirmed"))
+            XCTAssertEqual(historical.serviceTier, tier)
+        }
+        for mode in ["standard", "inherit", "future-tier"] {
+            let execution = try dashboardExecution(model: "sol", displayName: nil, effort: "medium",
+                reroutedModel: nil, isCurrent: false, serviceTier: nil, processingSpeed: mode)
+            XCTAssertEqual(DashboardExecutionPresentation.text(execution), "sol · medium")
         }
     }
 

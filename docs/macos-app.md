@@ -122,11 +122,10 @@ rules. When a status or history view is selected, its Activity-first rows contai
 one or more Agents; an idle history heading is explicitly the Agent's latest
 Activity, not a current assignment. Project/conversation context appears once
 on the Activity. Agent state, background processes, work time, and the latest
-recorded execution evidence remain on every Agent even when sibling values
-match. Rows present status, execution evidence, time, then older history. Current
-Jobs label requested settings and acceptance separately from correlated server
-confirmation. A separately labelled next-run setting appears only when it
-differs from the latest recorded execution. Active
+recorded model/reasoning effort remain on every Agent even when sibling values
+match. Rows present status, recorded selection, time, then older history. A
+separately labelled next-run setting appears only when the current model, effort,
+effective Fast tier, or reroute differs from the latest recorded turn. Active
 work shows only the duration captured by the last explicit snapshot. Past work
 adds relative age and omits absolute start, update, and end timestamps. The
 native UI never prints the private
@@ -137,13 +136,17 @@ of the row. Same-Activity history omits the already visible Activity title;
 distinct same-title Activities retain a neutral previous-Activity boundary, and
 every historical turn keeps its own model/reasoning line or an unavailable label.
 
-**Processing speed** supports Inherit conversation speed, Standard, Fast, and
-Ultrafast, with Legacy preserving the earlier persistent Fast preference.
-New choices apply to newly admitted Jobs; they do not relabel running or
-historical work. Rows distinguish requested settings, request acceptance, and
-server-confirmed execution. Acceptance alone does not confirm actual speed or
-effort. See [speed choices and scope](processing-speed.md#choose-a-speed).
-Effort values themselves use
+**Processing speed** preserves Legacy settings and offers Standard, inheritance
+and supported Fast choices. The menu bar and Dashboard show **⚡ Fast** or
+**🚀 Ultrafast** beside the recorded model, with no Standard badge. The tooltip
+identifies a selected speed; routine rows omit acceptance and missing-speed
+confirmation messages while the execution record keeps that evidence.
+Ultrafast is hidden for new selection until account/workspace access can be
+confirmed by an authoritative CLI contract; existing saved choices remain
+readable. See [speed choices and scope](processing-speed.md#choose-a-speed).
+Changing the preference updates supported next-run settings without relabelling
+running or historical work. Settings explains that the model and reasoning level
+stay the same while usage or costs may increase. Effort values themselves use
 the catalog's canonical lowercase English text (`low`, `medium`, `high`,
 `xhigh`, and other supported values) in the native menu, Dashboard card and both
 Settings surfaces. The effort field name and description remain localized.

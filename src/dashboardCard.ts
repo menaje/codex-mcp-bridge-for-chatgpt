@@ -2,7 +2,7 @@ import { PROBLEM_REVIEW_CSS, PROBLEM_REVIEW_MARKUP, PROBLEM_REVIEW_SCRIPT } from
 import { DASHBOARD_CONTROL_SCRIPT } from "./dashboardControls.js";
 import { CARD_FORM_SCRIPT } from "./cardForms.js";
 import type { McpServer } from "@modelcontextprotocol/server";
-import { usesFastProcessing, processingSpeedLabelKey, executionSpeedText } from "./executionPresentation.js";
+import { executionSpeedBadge } from "./executionPresentation.js";
 import {
   resolveHostUiLocaleTag,
   serializedUiTranslations,
@@ -482,11 +482,9 @@ ${PROBLEM_REVIEW_MARKUP.trimStart()}
     function openConversation(event,url){dispatchDashboardExternalUrl(event,url,window.openai,openConversationFallback)}
     function appendRowContext(parent,row,mode="row"){const context=node("div","row-context"),conversationUrl=safeConversationUrl(row.conversationUrl);if(mode!=="agent")context.appendChild(node("span","project-label",row.projectName||t["dashboard.unknownProject"]));if(mode!=="agent"&&conversationUrl){const link=node("a","conversation-link",t["dashboard.openConversation"]+" ↗");link.href=conversationUrl;link.target="_blank";link.rel="noopener noreferrer";link.addEventListener("click",(event)=>openConversation(event,conversationUrl));context.appendChild(link)}if(context.childElementCount)parent.appendChild(context)}
     function rowMeta(row){const values=[];if(Number(row.backgroundProcessCount)>0)values.push(t["dashboard.backgroundProcessCount"].replace("{count}",formatNumber(row.backgroundProcessCount)));return values.join(" · ")}
-    ${serializeUiFunction(usesFastProcessing)}
-    ${serializeUiFunction(processingSpeedLabelKey)}
-    ${serializeUiFunction(executionSpeedText)}
-    function executionText(execution){const selected=execution.modelDisplayName||execution.model,rerouted=execution.reroutedModelDisplayName||execution.reroutedModel,effort=String(execution.reasoningEffort||"").trim().toLowerCase(),value=selected+" · "+effort;return (execution.requestState?t["dashboard.execution.requested"].replace("{execution}",value):value)+(rerouted?" · "+t["dashboard.execution.modelConfirmed"].replace("{model}",rerouted):"")}
-    function appendExecution(parent,execution,required=false,templateKey=null){if(!execution&&!required)return;const value=execution?executionText(execution):t["dashboard.execution.unavailable"],text=templateKey?t[templateKey].replace("{execution}",value):value,badge=node("div","execution",text);badge.title=text;if(execution?.requestState)badge.appendChild(node("div","hint",executionSpeedText(execution,t)));else if(usesFastProcessing(execution))badge.appendChild(node("span","fast-mode","⚡ "+t["dashboard.execution.fast"]));parent.appendChild(badge)}
+    ${serializeUiFunction(executionSpeedBadge)}
+    function executionText(execution){const selected=execution.modelDisplayName||execution.model,rerouted=execution.reroutedModelDisplayName||execution.reroutedModel,effort=String(execution.reasoningEffort||"").trim().toLowerCase(),speed=executionSpeedBadge(execution);return selected+(speed?" "+speed:"")+(rerouted?" → "+rerouted:"")+" · "+effort}
+    function appendExecution(parent,execution,required=false,templateKey=null){if(!execution&&!required)return;const value=execution?executionText(execution):t["dashboard.execution.unavailable"],text=templateKey?t[templateKey].replace("{execution}",value):value,badge=node("div","execution",text),speed=executionSpeedBadge(execution);badge.title=speed?t["dashboard.execution.speedBadgeHint"].replace("{speed}",speed):text;parent.appendChild(badge)}
     function cancellationHeading(cancellation){if(cancellation.status==="requested")return t["cancellation.requestReason"];if(cancellation.status==="failed")return t["cancellation.attemptReason"];return t["cancellation.reason"]}
     function appendCancellation(parent,cancellation){if(!cancellation||typeof cancellation.reason!=="string"||!cancellation.reason.trim())return;const block=node("div","cancellation"),meta=[t["cancellation.target."+cancellation.targetKind]||String(cancellation.targetKind||"")],requestedAt=new Date(cancellation.requestedAt);if(Number.isFinite(requestedAt.getTime()))meta.push(new Intl.DateTimeFormat(localeTag,{dateStyle:"short",timeStyle:"short"}).format(requestedAt));block.append(node("div","cancellation-heading",cancellationHeading(cancellation)),node("div","cancellation-meta",meta.filter(Boolean).join(" · ")),node("div","cancellation-reason",cancellation.reason));parent.appendChild(block)}
     function historyKey(row){return String(row.rowKey||[row.conversationKey||row.sessionAlias,row.projectKey||row.projectName,row.agentName].join("\u0000"))}

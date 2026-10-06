@@ -8,6 +8,7 @@ import { SETTINGS_CARD_HTML, uiBridgeErrorMessage } from "../src/settingsCard.js
 import { UI_RESOURCE_MANIFEST } from "../src/uiManifest.generated.js";
 import { serializeUiFunction } from "../src/uiFunctionSerialization.js";
 import { uiJsonTextIsWellFormed } from "../src/uiHostToolResult.js";
+import { executionSpeedBadge } from "../src/executionPresentation.js";
 import {
   currentUiResourceRevision,
   currentUiResourceUri,
@@ -36,6 +37,19 @@ describe("serialized card runtime compatibility", () => {
     const circular: Record<string, unknown> = {};
     circular.error = circular;
     expect(format(circular, "fallback")).toBe("fallback");
+  });
+
+  it("serializes emoji speed badges identically in source and compiled cards", () => {
+    const source = readFileSync(fileURLToPath(new URL("../src/executionPresentation.ts", import.meta.url)), "utf8");
+    const compiled: Record<string, Function> = {};
+    const { outputText } = transpileModule(source, {
+      compilerOptions: { target: ScriptTarget.ES2022, module: ModuleKind.CommonJS }
+    });
+    runInNewContext(outputText, { exports: compiled });
+    expect(serializeUiFunction(compiled.executionSpeedBadge!)).toBe(serializeUiFunction(executionSpeedBadge));
+    const badge = runInNewContext(`(${serializeUiFunction(compiled.executionSpeedBadge!)})`);
+    expect(badge({ processingSpeed: "fast" })).toBe("⚡ Fast");
+    expect(badge({ processingSpeed: "ultrafast" })).toBe("🚀 Ultrafast");
   });
 
   for (const [name, currentHtml] of Object.entries({

@@ -21,6 +21,40 @@ afterEach(async () => {
   }
 });
 
+describe("settings speed support in the isolated read process", () => {
+  it.each([undefined, "turn/start"])("uses the selected CLI schema before any Job, missing method %s", async missingMethod => {
+    const root = await mkdtemp(path.join(tmpdir(), "bridge-speed-read-")); roots.push(root);
+    const file = path.join(root, "state.sqlite"), turnLog = path.join(root, "turns.jsonl");
+    const command = path.join(root, "codex-speed.mjs");
+    const models = { models: [{ slug: "sol", display_name: "Sol", visibility: "list",
+      supported_reasoning_levels: [{ effort: "medium" }], service_tiers: [{ id: "priority", name: "Fast" }] }] };
+    await writeFile(command, `#!/usr/bin/env node\nif(process.argv[2]==='debug'&&process.argv[3]==='models'){console.log(${JSON.stringify(JSON.stringify(models))});process.exit(0)}\nawait import(${JSON.stringify(new URL("./fixtures/fake-codex-app-server.mjs", import.meta.url).href)});\n`, { mode: 0o700 });
+    const environment = { ...process.env, HOME: root, CODEX_HOME: path.join(root, "codex"),
+      CODEX_MCP_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_CODEX: command,
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime"), CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: file,
+      CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: path.join(root, "models.json"), CODEX_MCP_BRIDGE_SKILLS_DIRECTORY: path.join(root, "skills"),
+      CODEX_TEST_MISSING_METHOD: missingMethod, CODEX_TEST_SPEED_LOG: turnLog };
+    const store = new BridgeStateStore({ file });
+    new UserSettingsStore(loadConfig(environment), { stateStore: store }); new ScopeResolver({ stateStore: store });
+    const writers = bridgeInstanceCount(file);
+    const service = await ChildProcessStateReadService.start(file, environment);
+    try {
+      const view = await service.settingsSnapshot();
+      if (missingMethod) {
+        expect(view.capabilities.availableProcessingSpeeds).toEqual(["legacy"]);
+        expect(view.capabilities.processingSpeedSupport?.protocol).toBe("unverified");
+        expect(view.warnings.some(warning => warning.startsWith("PROCESSING_SPEED_UNSUPPORTED:"))).toBe(true);
+      } else {
+        expect(view.capabilities.availableProcessingSpeeds).toEqual(expect.arrayContaining(["inherit", "standard", "fast"]));
+        expect(view.capabilities.processingSpeedSupport?.protocol).toBe("supported");
+      }
+      expect(view.capabilities.availableProcessingSpeeds).not.toContain("ultrafast");
+      expect(bridgeInstanceCount(file)).toBe(writers);
+      await expect(import("node:fs/promises").then(fs => fs.readFile(turnLog))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await service.close(); store.close(); }
+  }, 20_000);
+});
+
 async function waitFor(
   predicate: () => boolean,
   timeoutMs = 5_000

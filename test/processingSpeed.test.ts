@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { PROCESSING_SPEED_MODES, migratedProcessingSpeed, retainedPolicyServiceTiers, resolveTurnSpeed, wireSpeedArguments } from "../src/processingSpeed.js";
+import { migratedProcessingSpeed, retainedPolicyServiceTiers, resolveTurnSpeed, wireSpeedArguments, requireProcessingSpeedAccess } from "../src/processingSpeed.js";
 import { UNVERIFIED_APP_SERVER_CAPABILITIES } from "../src/cliProtocol.js";
 import { loadConfig } from "../src/config.js";
 import { UserSettingsStore } from "../src/userSettings.js";
 import type { CodexModelCatalogSnapshot } from "../src/modelCatalog.js";
-import { executionSpeedText } from "../src/executionPresentation.js";
+import { executionSpeedBadge } from "../src/executionPresentation.js";
 import { UI_TRANSLATIONS } from "../src/generated/localization.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -83,19 +83,31 @@ describe("processing speed scope", () => {
     expect(admitted.serviceTier).toBe("fast");
     expect(wireSpeedArguments(admitted, "turn")).toEqual({ serviceTierForTurn: "fast" });
   });
-  it("labels speed as requested, accepted and unconfirmed in every supported locale", () => {
-    for (const translations of Object.values(UI_TRANSLATIONS)) for (const mode of PROCESSING_SPEED_MODES) {
-      const text = executionSpeedText({ processingSpeed: mode, requestState: "accepted", serviceTier: mode === "fast" ? "fast" : undefined }, translations);
-      expect(text).not.toMatch(/undefined|\{(?:speed|state)\}/);
-      expect(text).toContain(translations["dashboard.execution.accepted"]);
+  it.each([
+    [{ processingSpeed: "fast", serviceTier: "fast" }, "⚡ Fast"],
+    [{ processingSpeed: "legacy", serviceTier: "priority" }, "⚡ Fast"],
+    [{ serviceTier: " PRIORITY " }, "⚡ Fast"],
+    [{ processingSpeed: "ultrafast", serviceTier: "ultrafast" }, "🚀 Ultrafast"],
+    [{ serviceTier: "ultrafast" }, "🚀 Ultrafast"],
+    [{ processingSpeed: "standard", serviceTier: "default" }, ""],
+    [{ processingSpeed: "inherit" }, ""],
+    [{ processingSpeed: "legacy" }, ""],
+    [{ processingSpeed: "future-tier", serviceTier: "fast" }, ""],
+    [{ serviceTier: "flex" }, ""]
+  ])("shows only recognized recorded faster selections: %j", (execution, badge) => {
+    expect(executionSpeedBadge(execution)).toBe(badge);
+  });
+  it("explains selected speed in every locale without acceptance or confirmation boilerplate", () => {
+    for (const translations of Object.values(UI_TRANSLATIONS)) {
+      const hint = translations["dashboard.execution.speedBadgeHint"].replace("{speed}", "⚡ Fast");
+      expect(hint).toContain("⚡ Fast");
+      expect(hint).not.toMatch(/undefined|\{speed\}/);
+      expect(hint).not.toContain(translations["dashboard.execution.accepted"]);
     }
   });
-  it.each(["ultrafast", "flex", "future-tier"])("preserves a historical persistent wire tier instead of labeling it cleared: %s", tier => {
-    for (const translations of Object.values(UI_TRANSLATIONS)) {
-      const text = executionSpeedText({ serviceTier: tier, requestState: "requested" }, translations);
-      expect(text).toContain(tier);
-      expect(text).not.toContain(translations["settings.processingSpeed.legacyClear"]);
-      expect(text).toContain(translations["dashboard.execution.pending"]);
-    }
+  it("keeps catalog-supported Ultrafast separate from account access without a trial turn", () => {
+    expect(resolveTurnSpeed({ model: "astra", reasoningEffort: "medium" }, "ultrafast", catalog, capabilities).serviceTier).toBe("ultrafast");
+    expect(() => requireProcessingSpeedAccess("ultrafast")).toThrow("PROCESSING_SPEED_ACCESS_UNVERIFIED");
+    for (const speed of ["legacy", "inherit", "standard", "fast"]) expect(() => requireProcessingSpeedAccess(speed)).not.toThrow();
   });
 });
