@@ -39,13 +39,17 @@ export function inspectInputs(source, file = "Fixture.swift") {
         input[index + 1]?.value === "(" && file !== "TextInputViews.swift") {
       throw new Error(`${file}:${owner}: direct native input constructor requires an explicit adapter review`);
     }
-    const kind = value === "searchable" && input[index - 1]?.value === "." ? "search" : value;
+    if (value === "searchable" && input[index - 1]?.value === ".") {
+      throw new Error(`${file}:${owner}: use BridgeSearchField for composition-safe native search`);
+    }
+    const kind = value === "BridgeSearchField" ? "search" : value;
     if (!["TextField", "SecureField", "BridgeTextEditor", "TextEditor", "search"].includes(kind) || input[index + 1]?.value !== "(") continue;
     if (kind === "TextEditor") throw new Error(`${file}: use BridgeTextEditor for multiline input`);
     const end = endGroup(input, index + 1);
     const args = input.slice(index + 2, end).map((token) => token.value).join("");
     const binding = args.match(/(?:^|[:,])([A-Za-z_][A-Za-z_0-9]*)\.binding\(\.([A-Za-z_][A-Za-z_0-9]*)\)/);
     if (!binding) throw new Error(`${file}:${owner}: input must use an edit-session binding`);
+    if (kind === "search" && binding[2] !== "query") throw new Error(`${file}:${owner}: search must bind the query field`);
     let next = end + 1;
     // TextField(text: ...) { label } and modifiers with trailing content.
     if (input[next]?.value === "{") next = endGroup(input, next) + 1;

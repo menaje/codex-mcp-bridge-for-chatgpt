@@ -26,6 +26,9 @@ private struct AcceptanceView: View {
 
     var body: some View {
         NavigationSplitView {
+            BridgeSearchField(text: search.binding(.query), prompt: "Search")
+                .bridgeSearchInput(search)
+                .padding(10)
             VStack(alignment: .leading) {
                 Text("Committed search: \(search.searchValue)")
                 Text("Synthetic drafts only")
@@ -52,7 +55,6 @@ private struct AcceptanceView: View {
                 Text(receipt).textSelection(.enabled).font(.system(.body, design: .monospaced))
             }.padding()
         }
-        .searchable(text: search.binding(.query), placement: .sidebar).bridgeSearchInput(search)
         .onReceive(refresh) { _ in
             tick += 1
             let editor = NSApp.keyWindow?.firstResponder as? NSTextView

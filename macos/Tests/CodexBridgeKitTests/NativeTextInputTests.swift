@@ -4,6 +4,58 @@ import XCTest
 @testable import CodexBridgeMenuBar
 
 final class NativeTextInputTests: XCTestCase {
+    @MainActor
+    func testSearchCompositionDoesNotCreateAnUnsavedForm() async throws {
+        let scope = BridgeEditScope()
+        let fixture = try await InputFixture(scope: scope)
+        defer { fixture.close() }
+        let field = try XCTUnwrap(fixture.descendants.compactMap { $0 as? NSSearchField }.first)
+        XCTAssertTrue(fixture.window.makeFirstResponder(field))
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        editor.setMarkedText("한글", selectedRange: NSRange(location: 2, length: 0), replacementRange: unspecifiedRange)
+        try await fixture.refresh()
+        XCTAssertTrue(fixture.state.searchInput.hasMarkedText)
+        XCTAssertFalse(scope.hasPendingDrafts)
+
+        editor.insertText("한글", replacementRange: unspecifiedRange)
+        editor.didChangeText()
+        try await fixture.refresh()
+        XCTAssertEqual(fixture.state.searchInput.searchValue, "한글")
+        XCTAssertFalse(scope.hasPendingDrafts)
+        var askedToDiscard = false
+        XCTAssertTrue(scope.confirmDiscardIfNeeded { askedToDiscard = true; return false })
+        XCTAssertFalse(askedToDiscard)
+        XCTAssertEqual(fixture.state.searchInput.searchValue, "한글")
+
+        fixture.state.inputs.edit(.name, "Unsaved name")
+        XCTAssertTrue(scope.hasPendingDrafts, "Document fields still participate in the exit guard")
+    }
+
+    @MainActor
+    func testSearchKeepsCompositionWhenAnOlderBindingValueArrives() async throws {
+        let fixture = try await InputFixture()
+        defer { fixture.close() }
+        let field = try XCTUnwrap(fixture.descendants.compactMap { $0 as? NSSearchField }.first)
+        XCTAssertTrue(fixture.window.makeFirstResponder(field))
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        let binding = fixture.state.searchInput.binding(.query)
+
+        editor.setMarkedText("한글", selectedRange: NSRange(location: 2, length: 0), replacementRange: unspecifiedRange)
+        // A queued SwiftUI value must not replace the field editor's newer
+        // candidate, even when the containing navigation view refreshes.
+        binding.wrappedValue = "하"
+        try await fixture.refresh()
+        XCTAssertTrue(editor.hasMarkedText())
+        XCTAssertEqual(editor.string, "한글")
+        XCTAssertEqual(fixture.state.searchInput.searchValue, "", "Search must wait for composition to commit")
+        editor.insertText("한글", replacementRange: unspecifiedRange)
+        editor.didChangeText()
+        try await fixture.refresh()
+        XCTAssertFalse(editor.hasMarkedText())
+        XCTAssertEqual(binding.wrappedValue, "한글")
+        XCTAssertEqual(fixture.state.searchInput.searchValue, "한글")
+    }
+
     /// Drives the same NSTextInputClient calls as an IME. Before the fix, the
     /// multiline editor lost marked text at ㄱ, ㅇ and ㄹ after a previous commit.
     @MainActor
@@ -140,6 +192,7 @@ final class NativeTextInputTests: XCTestCase {
             let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
             editor.setSelectedRange(NSRange(location: 0, length: (editor.string as NSString).length))
             editor.insertText(singleLine, replacementRange: unspecifiedRange)
+            editor.didChangeText()
             try await fixture.refresh()
             fixture.window.makeFirstResponder(nil)
             XCTAssertEqual(Data(field.stringValue.utf8), Data(singleLine.utf8))
@@ -378,13 +431,18 @@ final class NativeTextInputTests: XCTestCase {
     private func compose(_ groups: [[String]], in editor: NSTextView, fixture: InputFixture) async throws {
         editor.setSelectedRange(NSRange(location: 0, length: (editor.string as NSString).length))
         for group in groups {
-            if group == [" "] { editor.insertText(" ", replacementRange: unspecifiedRange); continue }
+            if group == [" "] {
+                editor.insertText(" ", replacementRange: unspecifiedRange)
+                editor.didChangeText()
+                continue
+            }
             for stage in group {
                 editor.setMarkedText(stage, selectedRange: NSRange(location: (stage as NSString).length, length: 0), replacementRange: unspecifiedRange)
                 try await fixture.refresh()
                 XCTAssertTrue(editor.hasMarkedText(), "Composition lost after \(stage)")
             }
             editor.insertText(try XCTUnwrap(group.last), replacementRange: unspecifiedRange)
+            editor.didChangeText()
             // Start the next group immediately, before SwiftUI's pending update.
         }
         try await fixture.refresh()
@@ -398,13 +456,13 @@ private final class InputFixture {
     let state = TextInputTestState()
     let window: NSWindow
 
-    init(initialText: String = "") async throws {
+    init(initialText: String = "", scope: BridgeEditScope? = nil) async throws {
         _ = NSApplication.shared
         state.editor = initialText
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 740, height: 480),
                           styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: TextInputTestView(state: state))
+        window.contentView = NSHostingView(rootView: TextInputTestView(state: state).environment(\.bridgeEditScope, scope))
         for _ in 0..<8 { try await refresh() }
     }
 
@@ -440,8 +498,16 @@ private final class TextInputTestState: ObservableObject {
 
 private struct TextInputTestView: View {
     @ObservedObject var state: TextInputTestState
+    @ObservedObject var searchInput: BridgeEditSession
+
+    init(state: TextInputTestState) {
+        self.state = state
+        searchInput = state.searchInput
+    }
+
     var body: some View {
         NavigationSplitView {
+            BridgeSearchField(text: searchInput.binding(.query), prompt: "Search").bridgeSearchInput(searchInput)
             List { Text(state.search) }
         } detail: {
             VStack {
@@ -451,7 +517,7 @@ private struct TextInputTestView: View {
                 BridgeTextEditor(text: state.inputs.binding(.content)).bridgeInput(state.inputs, field: .content)
                 Text("\(state.tick)")
             }.padding()
-        }.searchable(text: state.searchInput.binding(.query), placement: .sidebar).bridgeSearchInput(state.searchInput)
+        }
     }
 }
 

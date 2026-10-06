@@ -576,16 +576,6 @@ private struct BridgeOwnedInput<Content: View>: NSViewRepresentable {
     static func dismantleNSView(_ view: NSHostingView<AnyView>, coordinator: BridgeNativeInputOwner) { coordinator.disconnect() }
 }
 
-private struct BridgeSearchOwner: NSViewRepresentable {
-    let session: BridgeEditSession
-    func makeCoordinator() -> BridgeNativeInputOwner { BridgeNativeInputOwner(session: session, field: .query, search: true) }
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView(); context.coordinator.connect(root: view, session: session); return view
-    }
-    func updateNSView(_ view: NSView, context: Context) { context.coordinator.connect(root: view, session: session) }
-    static func dismantleNSView(_ view: NSView, coordinator: BridgeNativeInputOwner) { coordinator.disconnect() }
-}
-
 private struct BridgeFormOwner: NSViewRepresentable {
     let session: BridgeEditSession
     @Environment(\.bridgeEditScope) private var scope
@@ -608,7 +598,12 @@ extension View {
     func bridgeInput(_ session: BridgeEditSession, field: BridgeEditField, onCommit: (() -> Void)? = nil) -> some View {
         BridgeOwnedInput(content: self, session: session, field: field, onCommit: onCommit)
     }
-    func bridgeSearchInput(_ session: BridgeEditSession) -> some View { background(BridgeSearchOwner(session: session)) }
+    func bridgeSearchInput(_ session: BridgeEditSession) -> some View {
+        // Search owns composition but does not create a document to save or
+        // discard when the user navigates away or closes the window.
+        BridgeOwnedInput(content: self, session: session, field: .query)
+            .environment(\.bridgeEditScope, nil)
+    }
 }
 
 struct BridgeEditStatus: View {

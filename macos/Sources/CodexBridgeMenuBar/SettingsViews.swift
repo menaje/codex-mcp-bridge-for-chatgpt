@@ -378,9 +378,13 @@ struct NativeSettingsView: View {
 
     private var settingsNavigation: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            settingsSidebar
-                .id(settingsSidebarIdentity)
-                .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 270)
+            VStack(spacing: 0) {
+                BridgeSearchField(text: searchSession.binding(.query), prompt: BridgeAppLocalization.string("macos.settings.searchPrompt", locale: model.interfaceLocale))
+                    .bridgeSearchInput(searchSession)
+                    .padding(10)
+                settingsSidebar.id(settingsSidebarIdentity)
+            }
+            .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 270)
         } detail: {
             GeometryReader { detailGeometry in
                 settingsDetail
@@ -395,12 +399,6 @@ struct NativeSettingsView: View {
         .navigationSplitViewStyle(.balanced)
         .modifier(SettingsDefaultSidebarToolbarRemovalModifier())
         .background(SettingsTitlebarSanitizerView())
-        .searchable(
-            text: searchSession.binding(.query),
-            placement: .sidebar,
-            prompt: Text("macos.settings.searchPrompt")
-        )
-        .bridgeSearchInput(searchSession)
         .background(Color(nsColor: .windowBackgroundColor))
         .environment(\.locale, model.interfaceLocale)
         .onAppear {

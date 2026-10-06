@@ -10,7 +10,7 @@ describe("native input structural guard", () => {
       BridgeTextEditor(text: input.binding(.content), font: .systemFont(ofSize: size))
         .bridgeInput(input, field: .content)
       SecureField("Synthetic", text: input.binding(.apiKey)).bridgeInput(input, field: .apiKey)
-      NavigationSplitView {} detail: {}.searchable(text: search.binding(.query))
+      BridgeSearchField(text: search.binding(.query), prompt: "Search")
         .bridgeSearchInput(search)
     }`);
     expect(entries.map((entry) => entry.field)).toEqual(["name", "content", "apiKey", "query"]);
@@ -28,7 +28,13 @@ describe("native input structural guard", () => {
   it("rejects raw state bindings, raw editors and global composition commits", () => {
     expect(() => inspectInputs('SecureField("A", text: $secret)')).toThrow("session binding");
     expect(() => inspectInputs('TextEditor(text: input.binding(.content))')).toThrow("BridgeTextEditor");
+    expect(() => inspectInputs('NavigationSplitView {} detail: {}.searchable(text: search.binding(.query)).bridgeSearchInput(search)')).toThrow("BridgeSearchField");
     expect(() => inspectInputs("BridgeTextInput.commitPendingComposition()")).toThrow("global");
+  });
+  it("requires a scoped query owner for native search", () => {
+    expect(() => inspectInputs('BridgeSearchField(text: search.binding(.query), prompt: "Search")')).toThrow("native owner");
+    expect(() => inspectInputs('BridgeSearchField(text: search.binding(.query), prompt: "Search").bridgeSearchInput(other)')).toThrow("native owner");
+    expect(() => inspectInputs('BridgeSearchField(text: search.binding(.name), prompt: "Search").bridgeSearchInput(search)')).toThrow("query field");
   });
   it("ignores quoted examples and comments", () => {
     expect(inspectInputs('// TextField("A", text: $raw)\nlet label = "TextEditor(text:) BridgeTextInput.commitPendingComposition()"')).toEqual([]);

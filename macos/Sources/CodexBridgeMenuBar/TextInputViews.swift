@@ -1,6 +1,80 @@
 import AppKit
 import SwiftUI
 
+/// Native search keeps its own field editor while the surrounding navigation
+/// view refreshes. SwiftUI's searchable can replace preedit with an older value.
+struct BridgeSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let prompt: String
+    @Environment(\.isEnabled) private var isEnabled
+    private let sourceUTF8: Data
+
+    init(text: Binding<String>, prompt: String) {
+        _text = text
+        self.prompt = prompt
+        sourceUTF8 = Data(text.wrappedValue.utf8)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let field = NSSearchField(frame: .zero)
+        field.placeholderString = prompt
+        field.stringValue = text
+        field.sendsSearchStringImmediately = true
+        field.delegate = context.coordinator
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.searchChanged(_:))
+        return field
+    }
+
+    func updateNSView(_ field: NSSearchField, context: Context) {
+        context.coordinator.text = $text
+        field.isEnabled = isEnabled
+        field.placeholderString = prompt
+        // A committed syllable can precede the queued binding notification.
+        // Never echo that older binding into the live shared field editor.
+        // Explicit session discard/reset already replaces its native buffer.
+        guard field.currentEditor() == nil, !context.coordinator.hasPendingNativeChange else { return }
+        guard !field.stringValue.utf8.elementsEqual(text.utf8) else { return }
+        field.stringValue = text
+    }
+
+    static func dismantleNSView(_ field: NSSearchField, coordinator: Coordinator) {
+        field.delegate = nil
+        field.target = nil
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var text: Binding<String>
+        private(set) var hasPendingNativeChange = false
+        init(text: Binding<String>) { self.text = text }
+
+        func controlTextDidChange(_ notification: Notification) {
+            if let field = notification.object as? NSSearchField { schedule(field) }
+        }
+        func controlTextDidEndEditing(_ notification: Notification) {
+            if let field = notification.object as? NSSearchField { schedule(field) }
+        }
+        @objc func searchChanged(_ field: NSSearchField) { schedule(field) }
+
+        private func schedule(_ field: NSSearchField) {
+            guard !hasPendingNativeChange else { return }
+            hasPendingNativeChange = true
+            Task { @MainActor [weak self, weak field] in
+                guard let self else { return }
+                hasPendingNativeChange = false
+                guard let field, field.delegate === self else { return }
+                let editor = field.currentEditor() as? NSTextView
+                guard editor?.hasMarkedText() != true else { return }
+                let value = editor?.string ?? field.stringValue
+                if !text.wrappedValue.utf8.elementsEqual(value.utf8) { text.wrappedValue = value }
+            }
+        }
+    }
+}
+
 /// Keep AppKit's live buffer authoritative while an input method is composing.
 /// SwiftUI may deliver a previous binding value just after a syllable commits;
 /// writing that value back would erase the next syllable's marked text.

@@ -3,7 +3,7 @@
 Issue [#236](https://github.com/menaje/codex-mcp-bridge-for-chatgpt/issues/236)
 centralizes protection of user drafts. Field normalization remains governed by
 [Text integrity](text-integrity.md) (#115). Controls retain their native behavior:
-SwiftUI single-line fields, secure fields and search, plus the AppKit-backed
+SwiftUI single-line and secure fields, native AppKit search, plus the AppKit-backed
 `BridgeTextEditor` for documents. An edit session belongs to one form or editing
 target; a window scope only coordinates navigation and exit decisions.
 
@@ -13,13 +13,21 @@ target; a window scope only coordinates navigation and exit decisions.
 baseline, current draft, UUID, target ID, change revision, server baseline version,
 pending external values, conflicts and one in-flight submission. Each control
 uses `session.binding(.field)` and `.bridgeInput(session, field: .field)`. Search
-uses `.bridgeSearchInput(session)` and reads `session.searchValue`.
+uses `BridgeSearchField(...).bridgeSearchInput(session)` and reads `session.searchValue`.
 
 The binding setter records UTF-8 changes directly. Native editing notifications
 also observe visible preedit, including text not delivered to SwiftUI yet. Those
 notifications are coalesced after AppKit finishes installing the marked range.
 Preedit updates the draft without echoing it into the binding or replacing the
 native hosting view. End-editing notifications carry the final single-line value.
+`BridgeSearchField` uses `NSSearchField` with a scoped hosting boundary and keeps
+its editing buffer through parent refreshes, including the gap immediately after
+composition ends. Pending native notifications also block stale view writes.
+Its adapter publishes committed changes after AppKit has installed the marked
+range; the native observer still
+records visible preedit. Search results continue using only the committed query.
+Search ownership is excluded from the form exit guard: changing a query does not
+create a save/discard prompt when navigating away or closing a window.
 Dirty state separately compares values under the field policy: canonically
 equivalent human names can be clean while byte-distinct Markdown remains dirty.
 Undo back to the original bytes clears dirty state.
@@ -222,8 +230,20 @@ data still contained `EF BB BF`. An embedded BOM survived the UI test. Existing
 document load/save tests verify a BOM already present in the draft separately;
 the clipboard conversion result does not establish loss on that storage path.
 
-Physical exact-text/Command-S acceptance and the Japanese/Chinese candidate
-matrix remain pending until recorded. The temporary fixture also does not
+On 2026-10-06, specified human keyboard tests submitted `한글 입력` from the
+name field and `첫째 줄\n둘째 줄` from the document with Command-S. The document
+stayed exact across unrelated refreshes; native Undo/Redo restored its original
+bytes and dirty state without another submission. The held document observations
+reported no marked range, so these results do not certify saving an observed
+marked candidate. Sidebar search failed: the human typed `한글 검색`, but both
+the visible field and committed query became `한ㅡ 검ㅐ`. This is distinct from
+the unspecified earlier trial. The search regression delivers an older binding
+value while a native candidate is marked, then refreshes the navigation host.
+Before the search adapter fix this lost composition and replaced the candidate;
+physical search reacceptance on the changed source is still required.
+
+The Japanese/Chinese candidate matrix remains pending until recorded.
+The temporary fixture also does not
 validate the installed product build. Keep #236 open while physical acceptance
 is incomplete; local source integration is not a release or installation of the
-fix. The fixture was closed after these tests.
+fix. The 2026-10-04 fixture was closed after those tests.

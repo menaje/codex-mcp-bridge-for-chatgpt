@@ -226,8 +226,6 @@ struct SkillsLibraryWindowView: View {
                 .navigationSplitViewColumnWidth(min: 610, ideal: 820)
         }
         .navigationSplitViewStyle(.balanced)
-        .searchable(text: searchSession.binding(.query), placement: .sidebar, prompt: "macos.skills.searchBridgeSkills")
-        .bridgeSearchInput(searchSession)
         .modifier(SkillsDefaultSidebarToolbarRemovalModifier())
         .background(SkillsTitlebarSanitizerView())
         .toolbar { libraryToolbar }
@@ -369,6 +367,10 @@ struct SkillsLibraryWindowView: View {
 
     private var skillSidebar: some View {
         VStack(spacing: 0) {
+            BridgeSearchField(text: searchSession.binding(.query), prompt: BridgeAppLocalization.string("macos.skills.searchBridgeSkills", locale: model.interfaceLocale))
+                .bridgeSearchInput(searchSession)
+                .padding(.horizontal, 10)
+                .padding(.top, 10)
             Picker("macos.skills.displayScope", selection: $scope) {
                 ForEach(SkillLibraryScope.allCases) { option in Text(option.title).tag(option) }
             }
