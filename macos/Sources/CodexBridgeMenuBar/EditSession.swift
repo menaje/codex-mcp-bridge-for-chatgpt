@@ -603,6 +603,9 @@ extension View {
         // discard when the user navigates away or closes the window.
         BridgeOwnedInput(content: self, session: session, field: .query)
             .environment(\.bridgeEditScope, nil)
+            // Search is a single row. Let the sidebar list take spare height;
+            // a tall hosting boundary would center the field and push menus down.
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

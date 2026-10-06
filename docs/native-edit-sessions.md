@@ -28,6 +28,9 @@ range; the native observer still
 records visible preedit. Search results continue using only the committed query.
 Search ownership is excluded from the form exit guard: changing a query does not
 create a save/discard prompt when navigating away or closing a window.
+Its hosting boundary takes the search row's intrinsic height, while the sidebar
+list takes remaining vertical space. It must not center the search field inside
+an expanded boundary or push the Settings menus and Skills scope selector down.
 Dirty state separately compares values under the field policy: canonically
 equivalent human names can be clean while byte-distinct Markdown remains dirty.
 Undo back to the original bytes clears dirty state.
@@ -311,3 +314,22 @@ retry with unchanged timeout limits. It was not a single clean full-suite run.
 localization checks succeeded, and all 416 JSON / 827 TypeScript App Server schema
 files matched. The closure comment separates local `dev` integration from remote
 rollout.
+
+### Sidebar layout follow-up — 2026-10-06
+
+The user reported that search and menus had moved toward the center of both
+sidebars after the search adapter change. Mounted production Settings and Skills
+Library windows reproduced it: in a 600-point content area the search started
+136/130 points below the top, and at 900 points it moved to 211/205 points.
+The shared owner accepted the sidebar's spare vertical height, centering the
+native search field and pushing the menu area down. Search ownership now keeps
+the row's intrinsic vertical size while retaining flexible width and all
+composition/draft protection. `SidebarLayoutTests` measures actual native search
+and menu frames in both production windows at both heights; its two tests failed
+with ten assertions before the fix and passed afterward. The UI contract is
+search at the top, menus immediately below, and window growth extending the
+content area beneath them.
+The full `macos:check` passed with 264 tests, 262 passes, two optional integration
+skips and zero failures, including the 16 native input tests and both new layout
+tests. All eight Node input-contract tests and release/localization checks also
+passed. The layout fix is a source change, not an installed-app update.
