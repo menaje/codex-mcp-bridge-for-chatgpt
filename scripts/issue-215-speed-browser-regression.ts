@@ -121,7 +121,7 @@ try {
     check(current.settings.processingSpeed==='future-tier','Unrelated screen save preserves unknown mode');
     const last=await page.evaluate(()=>window.__speedCalls.filter(x=>x.name==='codex_update_settings').at(-1));
     check(last.args.operation.settings.processingSpeed===undefined&&last.args.operation.settings.usePriorityServiceTier===undefined,'Unknown mode is not resent or collapsed to a boolean');
-    await page.screenshot({path:${JSON.stringify(path.join(output, "settings-unknown.png"))}});
+    await page.screenshot({path:${JSON.stringify(path.join(output, "settings-unknown.png"))},fullPage:true});
     await page.evaluate(async()=>await fetch('/scenario',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({processingSpeed:'inherit'})}));
     await page.reload();await page.locator('#settings-form').waitFor({state:'visible'});
     check(await speed.inputValue()===''&&!(await choices()).includes('inherit'),'Inheritance is retained without an ordinary picker option');
@@ -129,7 +129,7 @@ try {
     check((await read()).settings.processingSpeed==='inherit','Unrelated save preserves inheritance');
     await speed.selectOption('standard');await save();current=await read();
     check(current.settings.processingSpeed==='standard','An explicit available grade replaces inheritance');
-    await page.screenshot({path:${JSON.stringify(path.join(output, "settings-simple.png"))}});
+    await page.screenshot({path:${JSON.stringify(path.join(output, "settings-simple.png"))},fullPage:true});
     return {checks,savedMode:current.settings.processingSpeed};
   }`);
   await cli("goto", `${origin}/dashboard`);
