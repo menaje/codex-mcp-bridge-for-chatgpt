@@ -22,6 +22,31 @@ async function fixture() {
 }
 
 describe("Codex execution context", () => {
+  it("coalesces failed capability reads and invalidates them when the selected installation changes", async () => {
+    const f = await fixture();
+    const fingerprint = vi.spyOn(f.service.cli, "appliedContextFingerprint").mockReturnValue("installation-a");
+    const acquire = vi.spyOn(f.service, "acquireContext").mockRejectedValue(new Error("CODEX_PROTOCOL_UNVERIFIED"));
+    expect(await Promise.all(Array.from({ length: 16 }, () => f.service.readCapabilities()))).toEqual(Array(16).fill(undefined));
+    expect(await f.service.readCapabilities()).toBeUndefined();
+    expect(acquire).toHaveBeenCalledTimes(1);
+    fingerprint.mockReturnValue("installation-b");
+    expect(await f.service.readCapabilities()).toBeUndefined();
+    expect(acquire).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not display capabilities from an installation changed during the probe and releases the lease", async () => {
+    const f = await fixture();
+    const fingerprint = vi.spyOn(f.service.cli, "appliedContextFingerprint").mockReturnValue("installation-a");
+    const release = vi.fn(async () => {});
+    vi.spyOn(f.service.cli, "acquire").mockImplementation(async () => {
+      fingerprint.mockReturnValue("installation-b");
+      return { selection: { id: "fixture", source: "terminal", command: "/fixture/codex", physicalPath: "/fixture/codex", version: "99.0.0" },
+        fingerprint: "installation-a", protocol: { compatible: true, missingCore: [], capabilities: APP_SERVER_CAPABILITIES, unsupported: {} }, release };
+    });
+    expect(await f.service.readCapabilities()).toBeUndefined();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   async function accountFixture() {
     const f = await fixture();
     const command = fileURLToPath(new URL("./fixtures/fake-codex-app-server-init-incompatible.mjs", import.meta.url));
