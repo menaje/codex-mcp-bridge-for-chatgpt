@@ -135,8 +135,8 @@ of the row. Same-Activity history omits the already visible Activity title;
 distinct same-title Activities retain a neutral previous-Activity boundary, and
 every historical turn keeps its own model/reasoning line or an unavailable label.
 
-**Processing speed** preserves Legacy settings and offers Standard, inheritance
-and supported Fast choices. The menu bar and Dashboard show **⚡ Fast** or
+**Processing speed** offers Standard, Fast and eligible Ultrafast. Older speed
+settings remain internal; other settings saves preserve their behavior. The menu bar and Dashboard show **⚡ Fast** or
 **🚀 Ultrafast** beside the recorded model, with no Standard badge. The tooltip
 identifies a selected speed; routine rows omit acceptance and missing-speed
 confirmation messages while the execution record keeps that evidence.

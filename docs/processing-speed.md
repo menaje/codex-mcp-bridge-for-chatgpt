@@ -5,10 +5,19 @@ Ultrafast processing. Subscription plans, model catalogs, protocol support and
 observed execution each provide different evidence; none substitutes for the
 others.
 
-The native Settings window and web Settings card offer Standard and inheritance
-from the selected installation's verified schema, including before the first
-Job. The isolated settings reader reuses the existing CLI validation; it does
-not depend on an execution worker or start a trial turn.
+The native Settings window and web Settings card offer Standard and Fast
+from the selected installation's verified schema and catalog, including before
+the first Job. Ultrafast appears only when its access is confirmed. The isolated
+settings reader reuses the existing CLI validation; it does not depend on an
+execution worker or start a trial turn.
+
+The picker offers speed grades only: **Standard**, **Fast** and eligible
+**Ultrafast**. Legacy scope and inheritance remain internal compatibility states.
+Existing Fast is displayed as Fast and an existing cleared tier as Standard
+without changing either saved behavior. An inherited, unknown or unavailable
+saved choice has no guessed grade: the picker asks for a speed while retaining
+its original setting. Unrelated saves do not change speed. Only deliberately
+choosing an available speed moves to the new per-Job setting.
 
 ## App Server wire contract
 
