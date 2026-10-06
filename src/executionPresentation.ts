@@ -17,7 +17,8 @@ export function executionSpeedBadge(execution: { processingSpeed?: string; servi
   const mode = execution.processingSpeed?.trim().toLowerCase();
   if (mode && !["legacy", "fast", "ultrafast"].includes(mode)) return "";
   const tier = execution.serviceTier?.trim().toLowerCase();
-  if (tier === "ultrafast" || mode === "ultrafast") return "🚀 Ultrafast";
-  if (tier === "fast" || tier === "priority" || mode === "fast") return "⚡ Fast";
+  // ASCII source keeps the serialized function identical in esbuild and tsc.
+  if (tier === "ultrafast" || mode === "ultrafast") return String.fromCodePoint(128640) + " Ultrafast";
+  if (tier === "fast" || tier === "priority" || mode === "fast") return String.fromCodePoint(9889) + " Fast";
   return "";
 }
