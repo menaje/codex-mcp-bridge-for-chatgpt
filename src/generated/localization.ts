@@ -235,6 +235,9 @@ export const UI_TRANSLATION_PARAMETERS = {
   },
   "dashboard.execution.modelConfirmed": {
     "model": "string-or-number"
+  },
+  "dashboard.execution.speedBadgeHint": {
+    "speed": "string-or-number"
   }
 } as const;
 
@@ -743,12 +746,15 @@ const translations = {
     "settings.processingSpeed.fast": "Fast (this Job)",
     "settings.processingSpeed.ultrafast": "Ultrafast (this Job)",
     "settings.processingSpeed.unknown": "Unrecognized saved speed: {value}",
-    "settings.processingSpeedHint": "New choices apply only to each Job. Inheritance uses the conversation setting, or Codex defaults for a new conversation. Catalog support does not confirm account access; pricing varies by account.",
+    "settings.processingSpeedHint": "New choices apply to each Job. Inheritance keeps the conversation speed. Ultrafast appears only after account and workspace access is confirmed; pricing varies by account.",
     "dashboard.execution.requested": "{execution} requested",
     "dashboard.execution.speed": "{speed} requested · {state} · actual speed unconfirmed",
     "dashboard.execution.accepted": "request accepted",
     "dashboard.execution.pending": "acceptance pending",
-    "dashboard.execution.modelConfirmed": "model confirmed: {model}"
+    "dashboard.execution.modelConfirmed": "model confirmed: {model}",
+    "dashboard.execution.speedBadgeHint": "Selected processing speed: {speed}",
+    "settings.warning.speedProtocolUnverified": "Choose a compatible Codex installation to enable Standard and other speed choices.",
+    "settings.warning.ultrafastAccessUnverified": "Ultrafast access cannot currently be confirmed. Your saved choice is retained; select another speed to start new work."
   },
   "ko": {
     "problem.history": "실패 기록",
@@ -1254,12 +1260,15 @@ const translations = {
     "settings.processingSpeed.fast": "Fast (이번 작업)",
     "settings.processingSpeed.ultrafast": "Ultrafast (이번 작업)",
     "settings.processingSpeed.unknown": "알 수 없는 저장 속도: {value}",
-    "settings.processingSpeedHint": "새 선택은 작업마다 적용합니다. 상속은 대화 설정을 유지하며 새 대화에서는 Codex 기본 설정을 따릅니다. 카탈로그 지원과 계정 사용 권한은 별개이며 요금은 계정별로 다릅니다.",
+    "settings.processingSpeedHint": "새 선택은 작업마다 적용합니다. 상속은 대화의 속도 설정을 유지합니다. Ultrafast는 계정과 워크스페이스 사용 권한이 확인된 경우에만 표시되며 요금은 계정별로 다릅니다.",
     "dashboard.execution.requested": "{execution} 요청",
     "dashboard.execution.speed": "{speed} 요청 · {state} · 실제 속도 미확인",
     "dashboard.execution.accepted": "요청 수락됨",
     "dashboard.execution.pending": "수락 확인 대기",
-    "dashboard.execution.modelConfirmed": "모델 확인: {model}"
+    "dashboard.execution.modelConfirmed": "모델 확인: {model}",
+    "dashboard.execution.speedBadgeHint": "선택한 처리 속도: {speed}",
+    "settings.warning.speedProtocolUnverified": "Standard 등 속도를 선택하려면 호환되는 Codex 설치를 선택하세요.",
+    "settings.warning.ultrafastAccessUnverified": "Ultrafast 사용 권한을 현재 확인할 수 없습니다. 저장된 선택은 유지됩니다. 새 작업을 시작하려면 다른 속도를 선택하세요."
   },
   "ja": {
     "problem.history": "失敗の履歴",
@@ -1765,12 +1774,15 @@ const translations = {
     "settings.processingSpeed.fast": "Fast（今回の作業）",
     "settings.processingSpeed.ultrafast": "Ultrafast（今回の作業）",
     "settings.processingSpeed.unknown": "未認識の保存済み速度: {value}",
-    "settings.processingSpeedHint": "新しい選択は各作業にのみ適用されます。継承は会話設定を維持し、新しい会話ではCodexの既定設定に従います。カタログの対応とアカウントの利用権限は別で、料金はアカウントによって異なります。",
+    "settings.processingSpeedHint": "新しい選択は各作業に適用されます。継承は会話の速度設定を保持します。Ultrafastはアカウントとワークスペースの利用権限が確認された場合にのみ表示されます。料金はアカウントによって異なります。",
     "dashboard.execution.requested": "{execution}を要求",
     "dashboard.execution.speed": "{speed}を要求 · {state} · 実際の速度は未確認",
     "dashboard.execution.accepted": "要求を受け付け済み",
     "dashboard.execution.pending": "受付確認待ち",
-    "dashboard.execution.modelConfirmed": "確認済みモデル: {model}"
+    "dashboard.execution.modelConfirmed": "確認済みモデル: {model}",
+    "dashboard.execution.speedBadgeHint": "選択した処理速度: {speed}",
+    "settings.warning.speedProtocolUnverified": "Standardなどの速度を選択するには、互換性のあるCodexを選択してください。",
+    "settings.warning.ultrafastAccessUnverified": "Ultrafastの利用権限は現在確認できません。保存済みの選択は保持されます。新しい作業には別の速度を選択してください。"
   },
   "zh-Hans": {
     "problem.history": "失败记录",
@@ -2276,12 +2288,15 @@ const translations = {
     "settings.processingSpeed.fast": "Fast（本次任务）",
     "settings.processingSpeed.ultrafast": "Ultrafast（本次任务）",
     "settings.processingSpeed.unknown": "无法识别的已存速度：{value}",
-    "settings.processingSpeedHint": "新选择仅适用于每次任务。继承保留对话设置，新对话则使用Codex默认设置。目录支持不代表账户有使用权限，费用因账户而异。",
+    "settings.processingSpeedHint": "新选择适用于每个任务。继承会保留对话的速度设置。只有确认账户和工作区使用权限后才会显示Ultrafast；费用因账户而异。",
     "dashboard.execution.requested": "已请求{execution}",
     "dashboard.execution.speed": "已请求{speed} · {state} · 实际速度未确认",
     "dashboard.execution.accepted": "请求已接受",
     "dashboard.execution.pending": "等待接受确认",
-    "dashboard.execution.modelConfirmed": "已确认模型：{model}"
+    "dashboard.execution.modelConfirmed": "已确认模型：{model}",
+    "dashboard.execution.speedBadgeHint": "所选处理速度：{speed}",
+    "settings.warning.speedProtocolUnverified": "请选择兼容的Codex安装版本，以启用Standard等速度选项。",
+    "settings.warning.ultrafastAccessUnverified": "目前无法确认Ultrafast使用权限。已保存的选择会保留；开始新任务前请选择其他速度。"
   },
   "zh-Hant": {
     "problem.history": "失敗記錄",
@@ -2787,12 +2802,15 @@ const translations = {
     "settings.processingSpeed.fast": "Fast（本次工作）",
     "settings.processingSpeed.ultrafast": "Ultrafast（本次工作）",
     "settings.processingSpeed.unknown": "無法識別的已儲存速度：{value}",
-    "settings.processingSpeedHint": "新選擇僅適用於每次工作。繼承保留對話設定，新對話則使用Codex預設設定。目錄支援不代表帳戶有使用權限，費用因帳戶而異。",
+    "settings.processingSpeedHint": "新選擇適用於每個工作。繼承會保留對話的速度設定。只有確認帳戶和工作區使用權限後才會顯示Ultrafast；費用依帳戶而異。",
     "dashboard.execution.requested": "已請求{execution}",
     "dashboard.execution.speed": "已請求{speed} · {state} · 實際速度未確認",
     "dashboard.execution.accepted": "請求已接受",
     "dashboard.execution.pending": "等待接受確認",
-    "dashboard.execution.modelConfirmed": "已確認模型：{model}"
+    "dashboard.execution.modelConfirmed": "已確認模型：{model}",
+    "dashboard.execution.speedBadgeHint": "所選處理速度：{speed}",
+    "settings.warning.speedProtocolUnverified": "請選擇相容的Codex安裝版本，以啟用Standard等速度選項。",
+    "settings.warning.ultrafastAccessUnverified": "目前無法確認Ultrafast使用權限。已儲存的選擇會保留；開始新工作前請選擇其他速度。"
   },
   "es": {
     "problem.history": "Historial de fallos",
@@ -3298,12 +3316,15 @@ const translations = {
     "settings.processingSpeed.fast": "Fast (este trabajo)",
     "settings.processingSpeed.ultrafast": "Ultrafast (este trabajo)",
     "settings.processingSpeed.unknown": "Velocidad guardada desconocida: {value}",
-    "settings.processingSpeedHint": "Las nuevas opciones se aplican a cada trabajo. La herencia conserva la conversación o usa los valores de Codex en una nueva. El catálogo no confirma acceso de la cuenta; el precio varía según la cuenta.",
+    "settings.processingSpeedHint": "Las nuevas opciones se aplican a cada trabajo. Heredar conserva la velocidad de la conversación. Ultrafast solo aparece cuando se confirma el acceso de la cuenta y del espacio de trabajo; los precios varían según la cuenta.",
     "dashboard.execution.requested": "{execution} solicitado",
     "dashboard.execution.speed": "{speed} solicitado · {state} · velocidad real sin confirmar",
     "dashboard.execution.accepted": "solicitud aceptada",
     "dashboard.execution.pending": "aceptación pendiente",
-    "dashboard.execution.modelConfirmed": "modelo confirmado: {model}"
+    "dashboard.execution.modelConfirmed": "modelo confirmado: {model}",
+    "dashboard.execution.speedBadgeHint": "Velocidad de procesamiento seleccionada: {speed}",
+    "settings.warning.speedProtocolUnverified": "Elige una instalación compatible de Codex para habilitar Standard y las demás velocidades.",
+    "settings.warning.ultrafastAccessUnverified": "No se puede confirmar el acceso a Ultrafast. Se conserva tu selección; elige otra velocidad para iniciar un trabajo nuevo."
   },
   "fr": {
     "problem.history": "Historique des échecs",
@@ -3809,12 +3830,15 @@ const translations = {
     "settings.processingSpeed.fast": "Fast (ce travail)",
     "settings.processingSpeed.ultrafast": "Ultrafast (ce travail)",
     "settings.processingSpeed.unknown": "Vitesse enregistrée inconnue : {value}",
-    "settings.processingSpeedHint": "Les nouveaux choix s’appliquent à chaque travail. L’héritage conserve la conversation ou utilise les valeurs Codex pour une nouvelle. Le catalogue ne confirme pas l’accès du compte ; les tarifs varient selon le compte.",
+    "settings.processingSpeedHint": "Les nouveaux choix s’appliquent à chaque travail. L’héritage conserve la vitesse de la conversation. Ultrafast apparaît uniquement après confirmation de l’accès du compte et de l’espace de travail ; les tarifs varient selon le compte.",
     "dashboard.execution.requested": "{execution} demandé",
     "dashboard.execution.speed": "{speed} demandé · {state} · vitesse réelle non confirmée",
     "dashboard.execution.accepted": "demande acceptée",
     "dashboard.execution.pending": "acceptation en attente",
-    "dashboard.execution.modelConfirmed": "modèle confirmé : {model}"
+    "dashboard.execution.modelConfirmed": "modèle confirmé : {model}",
+    "dashboard.execution.speedBadgeHint": "Vitesse de traitement sélectionnée : {speed}",
+    "settings.warning.speedProtocolUnverified": "Choisissez une installation Codex compatible pour activer Standard et les autres vitesses.",
+    "settings.warning.ultrafastAccessUnverified": "L’accès à Ultrafast ne peut pas être confirmé actuellement. Votre choix est conservé ; choisissez une autre vitesse pour démarrer un nouveau travail."
   },
   "de": {
     "problem.history": "Fehlerverlauf",
@@ -4320,12 +4344,15 @@ const translations = {
     "settings.processingSpeed.fast": "Fast (dieser Auftrag)",
     "settings.processingSpeed.ultrafast": "Ultrafast (dieser Auftrag)",
     "settings.processingSpeed.unknown": "Unbekannte gespeicherte Geschwindigkeit: {value}",
-    "settings.processingSpeedHint": "Neue Auswahlen gelten für jeden Auftrag. Vererbung behält die Gesprächseinstellung bei oder verwendet Codex-Vorgaben für ein neues Gespräch. Der Katalog bestätigt keinen Kontozugriff; Preise hängen vom Konto ab.",
+    "settings.processingSpeedHint": "Neue Optionen gelten für jede Aufgabe. Vererben behält die Gesprächsgeschwindigkeit bei. Ultrafast erscheint erst, wenn der Zugriff für Konto und Arbeitsbereich bestätigt ist; Preise variieren je nach Konto.",
     "dashboard.execution.requested": "{execution} angefordert",
     "dashboard.execution.speed": "{speed} angefordert · {state} · tatsächliche Geschwindigkeit unbestätigt",
     "dashboard.execution.accepted": "Anfrage angenommen",
     "dashboard.execution.pending": "Annahme ausstehend",
-    "dashboard.execution.modelConfirmed": "Modell bestätigt: {model}"
+    "dashboard.execution.modelConfirmed": "Modell bestätigt: {model}",
+    "dashboard.execution.speedBadgeHint": "Gewählte Verarbeitungsgeschwindigkeit: {speed}",
+    "settings.warning.speedProtocolUnverified": "Wähle eine kompatible Codex-Installation, um Standard und weitere Geschwindigkeiten zu aktivieren.",
+    "settings.warning.ultrafastAccessUnverified": "Der Ultrafast-Zugriff kann derzeit nicht bestätigt werden. Deine gespeicherte Auswahl bleibt erhalten; wähle für neue Aufgaben eine andere Geschwindigkeit."
   },
   "pt": {
     "problem.history": "Histórico de falhas",
@@ -4831,12 +4858,15 @@ const translations = {
     "settings.processingSpeed.fast": "Fast (este trabalho)",
     "settings.processingSpeed.ultrafast": "Ultrafast (este trabalho)",
     "settings.processingSpeed.unknown": "Velocidade salva desconhecida: {value}",
-    "settings.processingSpeedHint": "Novas escolhas valem para cada trabalho. A herança mantém a conversa ou usa os padrões do Codex em uma nova. O catálogo não confirma o acesso da conta; os preços variam por conta.",
+    "settings.processingSpeedHint": "As novas opções se aplicam a cada trabalho. Herdar mantém a velocidade da conversa. Ultrafast só aparece após a confirmação do acesso da conta e do espaço de trabalho; os preços variam conforme a conta.",
     "dashboard.execution.requested": "{execution} solicitado",
     "dashboard.execution.speed": "{speed} solicitado · {state} · velocidade real não confirmada",
     "dashboard.execution.accepted": "solicitação aceita",
     "dashboard.execution.pending": "aceitação pendente",
-    "dashboard.execution.modelConfirmed": "modelo confirmado: {model}"
+    "dashboard.execution.modelConfirmed": "modelo confirmado: {model}",
+    "dashboard.execution.speedBadgeHint": "Velocidade de processamento selecionada: {speed}",
+    "settings.warning.speedProtocolUnverified": "Escolha uma instalação compatível do Codex para ativar Standard e outras velocidades.",
+    "settings.warning.ultrafastAccessUnverified": "Não é possível confirmar o acesso ao Ultrafast no momento. A escolha salva é mantida; selecione outra velocidade para iniciar um novo trabalho."
   }
 } as const;
 

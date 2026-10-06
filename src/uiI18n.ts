@@ -82,6 +82,13 @@ export function settingsWarningPresentation(
     return settingsMessage(context.stale ? "settings.warning.catalogStale" : "settings.warning.catalogUnavailable");
   }
 
+  if (warning.startsWith("PROCESSING_SPEED_ACCESS_UNVERIFIED:")) {
+    return settingsMessage("settings.warning.ultrafastAccessUnverified");
+  }
+  if (warning.startsWith("PROCESSING_SPEED_UNSUPPORTED:")) {
+    return settingsMessage("settings.warning.speedProtocolUnverified");
+  }
+
   if (warning.startsWith("CODEX_MCP_BRIDGE_ROOTS ")) {
     return settingsMessage("settings.warning.legacyRoots");
   }

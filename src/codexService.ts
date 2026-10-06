@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { CodexRuntimeManager, type CliSelection } from "./codexRuntime.js";
 import type { CliProtocolSupport } from "./cliProtocol.js";
+import type { BackendCapabilities } from "./modelPolicy.js";
 import type { CodexBackendKind } from "./config.js";
 import { JsonRpcProcess } from "./jsonRpcProcess.js";
 import { codexChatgptOwnerKey, codexChatgptPrincipalKey, projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
@@ -175,6 +176,13 @@ export class CodexService {
       await release();
       throw error;
     }
+  }
+  /** Reuse the selected installation's schema check, including before the first Job.
+   * Settings projections have no execution upstream and must not invent its capabilities. */
+  async readCapabilities(): Promise<BackendCapabilities | undefined> {
+    const context = await this.acquireContext();
+    try { return context.protocol?.capabilities; }
+    finally { await context.release(); }
   }
   setVisibilityProvider(provider: () => boolean): void { this.visibility = provider; this.setAppVisibility(provider()); }
   /**

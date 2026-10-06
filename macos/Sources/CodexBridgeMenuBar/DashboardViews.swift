@@ -1287,21 +1287,12 @@ private struct CancellationReason: View {
 private struct DashboardExecutionLabel: View {
     let text: String
     let execution: DashboardExecution?
+    @Environment(\.locale) private var locale
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(text)
-                .lineLimit(execution?.requestState == nil ? 2 : 4)
-            if execution?.requestState == nil, DashboardExecutionPresentation.usesFastProcessing(execution) {
-                Label("dashboard.execution.fast", systemImage: "bolt.fill")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
-                    .fixedSize()
-            }
-        }
+        Text(text)
+            .lineLimit(2)
+            .help(DashboardExecutionPresentation.speedBadgeHelp(execution, locale: locale))
         .accessibilityElement(children: .combine)
     }
 }
@@ -1824,6 +1815,23 @@ enum DashboardExecutionPresentation {
         normalizedServiceTier(execution?.serviceTier) == "fast"
     }
 
+    static func speedBadge(_ execution: DashboardExecution?) -> String {
+        guard let execution else { return "" }
+        let mode = normalized(execution.processingSpeed ?? "")
+        guard mode.isEmpty || ["legacy", "fast", "ultrafast"].contains(mode) else { return "" }
+        let tier = normalized(execution.serviceTier ?? "")
+        if tier == "ultrafast" || mode == "ultrafast" { return "🚀 Ultrafast" }
+        if ["fast", "priority"].contains(tier) || mode == "fast" { return "⚡ Fast" }
+        return ""
+    }
+
+    static func speedBadgeHelp(_ execution: DashboardExecution?, locale: Locale) -> String {
+        let speed = speedBadge(execution)
+        return speed.isEmpty ? "" : BridgeAppLocalization.string(
+            "dashboard.execution.speedBadgeHint", locale: locale)
+            .replacingOccurrences(of: "{speed}", with: speed)
+    }
+
     private static func normalizedServiceTier(_ value: String?) -> String {
         let tier = normalized(value ?? "")
         if tier == "priority" { return "fast" }
@@ -1839,26 +1847,9 @@ enum DashboardExecutionPresentation {
             execution.reasoningEffort,
             locale: locale
         )
-        let selected = "\(model) · \(effort)"
-        guard let state = execution.requestState else {
-            let routed = (execution.reroutedModelDisplayName ?? execution.reroutedModel).map { " → " + $0 } ?? ""
-            return model + routed + " · " + effort
-        }
-        let requested = BridgeAppLocalization.string("dashboard.execution.requested", locale: locale).replacingOccurrences(of: "{execution}", with: selected)
-        let confirmed = (execution.reroutedModelDisplayName ?? execution.reroutedModel).map {
-            " · " + BridgeAppLocalization.string("dashboard.execution.modelConfirmed", locale: locale).replacingOccurrences(of: "{model}", with: $0)
-        } ?? ""
-        let mode = execution.processingSpeed ?? (execution.serviceTierScope == "turn" ? execution.serviceTier == "default" ? "standard" : execution.serviceTier ?? "inherit" : "legacy")
-        let rawPersistentTier = mode == "legacy" && execution.serviceTierScope != "turn" && !usesFastProcessing(execution)
-            ? execution.serviceTier?.trimmingCharacters(in: .whitespacesAndNewlines) : nil
-        let speed = rawPersistentTier.map { tier in
-            tier.isEmpty ? processingSpeedLabel(mode, legacyFast: false, locale: locale) :
-                BridgeAppLocalization.string("settings.processingSpeed.unknown", locale: locale).replacingOccurrences(of: "{value}", with: tier)
-        } ?? processingSpeedLabel(mode, legacyFast: usesFastProcessing(execution), locale: locale)
-        let speedText = BridgeAppLocalization.string("dashboard.execution.speed", locale: locale)
-            .replacingOccurrences(of: "{speed}", with: speed)
-            .replacingOccurrences(of: "{state}", with: BridgeAppLocalization.string(state == "accepted" ? "dashboard.execution.accepted" : "dashboard.execution.pending", locale: locale))
-        return requested + confirmed + "\n" + speedText
+        let speed = speedBadge(execution)
+        let routed = (execution.reroutedModelDisplayName ?? execution.reroutedModel).map { " → " + $0 } ?? ""
+        return model + (speed.isEmpty ? "" : " " + speed) + routed + " · " + effort
     }
 
     static func turnText(

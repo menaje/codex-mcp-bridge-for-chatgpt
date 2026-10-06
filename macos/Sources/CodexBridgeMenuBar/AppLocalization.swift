@@ -431,6 +431,12 @@ enum BridgeAppLocalization {
     }
 
     private static func localizedErrorDetail(_ message: String, locale: Locale) -> String {
+        if message.contains("PROCESSING_SPEED_ACCESS_UNVERIFIED:") {
+            return string("settings.warning.ultrafastAccessUnverified", locale: locale)
+        }
+        if message.contains("PROCESSING_SPEED_UNSUPPORTED:") {
+            return string("settings.warning.speedProtocolUnverified", locale: locale)
+        }
         let projectErrors = [
             ("PROJECT_CWD_STILL_PINNED", "settings.projectCwdStillPinned"),
             ("PROJECT_DELETE_STILL_PINNED", "settings.projectDeleteStillPinned"),

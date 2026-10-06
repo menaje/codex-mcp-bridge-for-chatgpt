@@ -11,12 +11,13 @@ export function processingSpeedLabelKey(mode: string, legacyFast = false): strin
     ["inherit", "standard", "fast", "ultrafast"].includes(mode) ? "settings.processingSpeed." + mode : "settings.processingSpeed.unknown";
 }
 
-export function executionSpeedText(execution: { processingSpeed?: string; serviceTier?: string; serviceTierScope?: string; requestState?: string }, translations: Record<string, string>): string {
-  if (!execution.requestState) return "";
-  const mode = execution.processingSpeed || (execution.serviceTierScope === "turn" ? execution.serviceTier === "default" ? "standard" : execution.serviceTier || "inherit" : "legacy");
-  const fast = usesFastProcessing(execution);
-  const rawPersistentTier = mode === "legacy" && execution.serviceTierScope !== "turn" && !fast ? execution.serviceTier?.trim() : undefined;
-  const key = rawPersistentTier ? "settings.processingSpeed.unknown" : processingSpeedLabelKey(mode, fast);
-  const speed = (translations[key] || execution.serviceTier || mode).replace("{value}", rawPersistentTier || mode);
-  return translations["dashboard.execution.speed"].replace("{speed}", speed).replace("{state}", translations[execution.requestState === "accepted" ? "dashboard.execution.accepted" : "dashboard.execution.pending"]);
+/** Labels the recorded selection, never a server-confirmed processing grade. */
+export function executionSpeedBadge(execution: { processingSpeed?: string; serviceTier?: string } | null | undefined): string {
+  if (!execution) return "";
+  const mode = execution.processingSpeed?.trim().toLowerCase();
+  if (mode && !["legacy", "fast", "ultrafast"].includes(mode)) return "";
+  const tier = execution.serviceTier?.trim().toLowerCase();
+  if (tier === "ultrafast" || mode === "ultrafast") return "🚀 Ultrafast";
+  if (tier === "fast" || tier === "priority" || mode === "fast") return "⚡ Fast";
+  return "";
 }
