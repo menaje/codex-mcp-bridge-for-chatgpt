@@ -240,7 +240,12 @@ the visible field and committed query became `한ㅡ 검ㅐ`. This is distinct f
 the unspecified earlier trial. The search regression delivers an older binding
 value while a native candidate is marked, then refreshes the navigation host.
 Before the search adapter fix this lost composition and replaced the candidate;
-physical search reacceptance on the changed source is still required.
+the human's physical reacceptance on the changed search adapter preserved the
+exact `한글 검색` in both the visible field and committed query after a 20-second
+hold and Enter, with no form submission. That fixture's source SHA-256 is
+`1a50944d1300f2f030063d20b5b169a112cceb03419c0bbb00780158b8f3cea2`;
+it precedes the separate search exit-guard exclusion and the latest localization
+updates. The final exit-guard behavior is covered by a mounted native test.
 
 The Japanese/Chinese candidate matrix remains pending until recorded.
 The temporary fixture also does not
