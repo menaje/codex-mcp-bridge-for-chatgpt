@@ -166,12 +166,12 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             try await settle(settingsWindow, iterations: 16)
             clearSettingsCaptureErrors()
             try await capture(settingsWindow, named: "settings-model-selection-ko-light.png", in: artifacts,
-                expecting: ["사용할 모델", "사용할 추론 수준", "모델별 세부 설정"])
+                expecting: ["사용할 모델", "사용할 추론 수준", "Ultra 추론을 지원하지 않아"])
             model.previewInterfaceLocale("en")
             try await settle(settingsWindow, iterations: 16)
             clearSettingsCaptureErrors()
             try await capture(settingsWindow, named: "settings-model-selection-en-light.png", in: artifacts,
-                expecting: ["Models to use", "Reasoning levels to use", "Model-specific settings"])
+                expecting: ["Models to use", "Reasoning levels to use", "does not support Ultra"])
             settingsWindow.setContentSize(NSSize(width: 820, height: 600))
             model.previewInterfaceLocale("de")
             try await settle(settingsWindow, iterations: 16)
@@ -800,6 +800,8 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             settings["modelPolicy"] = ["mode": "automatic", "allowedSelections": ["kind": "explicit", "selections": [
                 ["model": "gpt-6.1-sol", "reasoningEffort": "high"],
                 ["model": "gpt-6.1-sol", "reasoningEffort": "ultra"],
+                ["model": "gpt-6.1-sol", "reasoningEffort": "max"],
+                ["model": "gpt-6-luna", "reasoningEffort": "high"],
                 ["model": "gpt-6-luna", "reasoningEffort": "max"]
             ]], "constraints": ["allowDelegation": true]] as [String: Any]
         }

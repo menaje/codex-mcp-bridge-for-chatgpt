@@ -49,7 +49,7 @@ export const UI_RESOURCE_MANIFEST = {
       {
         "name": "settings",
         "uriVersion": 5,
-        "digest": "f0f36aea72f5ecbe6c174b447b7d37a73b547858df2bd67908473d0dcaaef3d6",
+        "digest": "ea9eeb1efdd8fc74f2473de97e0a3679ed26e6aed92512b387098ef2fc81019a",
         "uri": "ui://codex-mcp-bridge/settings/v5.html",
         "inventories": [
           "development-current"
@@ -88,7 +88,7 @@ export const UI_RESOURCE_MANIFEST = {
   "resources": {
     "settings": {
       "uriVersion": 5,
-      "digest": "f0f36aea72f5ecbe6c174b447b7d37a73b547858df2bd67908473d0dcaaef3d6",
+      "digest": "ea9eeb1efdd8fc74f2473de97e0a3679ed26e6aed92512b387098ef2fc81019a",
       "uri": "ui://codex-mcp-bridge/settings/v5.html",
       "metadata": {
         "descriptor": {

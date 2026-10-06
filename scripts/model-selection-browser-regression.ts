@@ -26,9 +26,9 @@ const initial = [{ model: "gpt-6.1-sol", reasoningEffort: "high" }, { model: "gp
 settings.update({ uiLocalePreference: "ko", modelPolicy: { mode: "automatic", allowedSelections: { kind: "explicit", selections: initial },
   constraints: { allowDelegation: true } }, modelDescriptionOverrides: { "retired-model": "Retained guidance" } }, 0);
 const catalog = new BackendAwareModelCatalog("app-server", { async getCatalog() { throw new Error("No fallback"); } }, async () => ({
-  data: ["gpt-6.1-sol", "gpt-6-luna", "gpt-5.6-sol", "ultra-only"].map((model, index) => ({
+  data: ["gpt-6.1-sol", "gpt-6-luna", "gpt-5.6-sol", "ultra-only", "rare-only"].map((model, index) => ({
     id: model, model, displayName: model.toUpperCase(), description: "Official model description.", hidden: false, isDefault: index === 0,
-    defaultReasoningEffort: index === 3 ? "ultra" : "high", supportedReasoningEfforts: (index === 3 ? ["ultra"] : index === 0 ? ["low", "high", "ultra"] : ["low", "high"]).map(reasoningEffort => ({ reasoningEffort })), serviceTiers: []
+    defaultReasoningEffort: index === 4 ? "minimal" : index === 3 ? "ultra" : "high", supportedReasoningEfforts: (index === 4 ? ["minimal"] : index === 3 ? ["ultra"] : index === 0 ? ["low", "high", "ultra"] : ["low", "high"]).map(reasoningEffort => ({ reasoningEffort })), serviceTiers: []
   }))
 }));
 const bridge = createBridgeMcpServer(config, { async listTools() { return { tools: [] }; },
@@ -47,7 +47,12 @@ const server = createServer(async (request, response) => {
       window.__selectionSaves=[];
       window.openai.callTool=async(name,args)=>{
         if(name==='codex_update_settings')window.__selectionSaves.push(structuredClone(args));
-        return await(await fetch('/tool',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name,args})})).json();
+        const result=await(await fetch('/tool',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name,args})})).json();
+        if(name==='codex_ui_read'&&new URL(location.href).searchParams.has('empty')){
+          result.structuredContent.catalog.models=[];
+          if(result._meta&&result._meta['codex/settingsView'])result._meta['codex/settingsView'].catalog.models=[];
+        }
+        return result;
       };
     </script>`;
     response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
@@ -78,40 +83,57 @@ try {
     const ids=()=>page.locator('.model-description-row').evaluateAll(rows=>rows.map(row=>row.dataset.model));
     const policy=()=>read().then(view=>view.settings.modelPolicy);
     const pairs=async()=>JSON.stringify((await policy()).allowedSelections.selections.map(c=>c.model+'/'+c.reasoningEffort).sort());
+    await page.goto(${JSON.stringify(origin + '/?empty=1')});
     await page.locator('#settings-form').waitFor({state:'visible'});
-    check(await common('high').evaluate(input=>input.indeterminate),'Existing model-specific selection must be partial');
-    check(!await page.locator('#model-specific-settings').evaluate(element=>element.open),'Details start collapsed');
+    await page.locator('#concurrency').fill('5');await save();
+    check(!await page.evaluate(()=>window.__selectionSaves[0].operation.settings.modelPolicy),'An empty catalog must not rewrite policy while saving unrelated preferences');
+    await page.goto(${JSON.stringify(origin)});
+    await page.locator('#settings-form').waitFor({state:'visible'});
+    check(await common('high').isChecked()&&await common('low').isChecked(),'Old per-model efforts become one checked common list');
+    check(await page.locator('#model-specific-settings').count()===0,'Per-model controls are removed');
+    check(await page.locator('#common-efforts input').evaluateAll(inputs=>inputs.every(input=>!input.indeterminate)),'No partial selection state remains');
+    check(await common('minimal').count()===0,'An effort supported only by an unselected model is hidden');
     check(JSON.stringify(await ids())===JSON.stringify(['gpt-6.1-sol','gpt-6-luna']),'Default descriptions are allowed models in catalog order');
     await page.locator('#show-all-model-descriptions').check();
-    check(JSON.stringify(await ids())===JSON.stringify(['gpt-6.1-sol','gpt-6-luna','gpt-5.6-sol','ultra-only','retired-model']),'Full list follows catalog order and appends retained descriptions');
+    check(JSON.stringify(await ids())===JSON.stringify(['gpt-6.1-sol','gpt-6-luna','gpt-5.6-sol','ultra-only','rare-only','retired-model']),'Full descriptions retain catalog order');
     await page.locator('#show-all-model-descriptions').uncheck();
+    check((await policy()).allowedSelections.selections.length===2,'Reading the card does not silently write settings');
     await page.locator('#concurrency').fill('5');await save();
-    check((await policy()).allowedSelections.selections.length===2,'Unrelated save must not flatten mixed choices');
-    await model('gpt-6-luna').uncheck();await model('gpt-5.6-sol').check();
-    check(await common('high').isChecked(),'New model inherits the common effort displayed after removing an exception');
-    await model('gpt-6-luna').check();
-    check(await common('high').evaluate(input=>input.indeterminate),'Re-selecting an existing model restores its exact saved exception');
-    await common('high').check();await common('low').check();await common('low').uncheck();await model('gpt-5.6-sol').check();await save();
-    check(await pairs()===JSON.stringify(['gpt-5.6-sol/high','gpt-6-luna/high','gpt-6.1-sol/high'].sort()),'One common effort applies to all selected supported models');
-    await model('ultra-only').check();await page.locator('#allow-delegation').uncheck();
-    check(await model('ultra-only').isVisible()&&await model('ultra-only').isChecked(),'A model without a pending pair stays removable when Ultra is disabled');
-    await model('ultra-only').click();check(await model('ultra-only').count()===0,'Unselecting removes the inactive pending model');
-    await page.locator('#allow-delegation').check();
+    check((await policy()).allowedSelections.selections.length===4,'Saving converts old model-specific choices to supported common pairs');
+    await common('low').uncheck();await model('gpt-6-luna').uncheck();await model('gpt-5.6-sol').check();await model('gpt-6-luna').check();
+    check(!await common('low').isChecked(),'Re-selecting a model must not restore its old per-model effort');
+    await save();
+    check(await pairs()===JSON.stringify(['gpt-5.6-sol/high','gpt-6-luna/high','gpt-6.1-sol/high'].sort()),'Common reasoning applies after model changes');
+    await common('ultra').check();await save();
+    const exclusions=()=>page.locator('#unsupported-model-efforts');
+    check((await exclusions().textContent()).includes('GPT-6-LUNA 모델은 Ultra 추론을 지원하지 않아 적용되지 않습니다.'),'Luna Ultra exclusion is explained');
+    const models=(await tool('codex_models')).models;
+    check(models.find(model=>model.id==='gpt-6-luna').efforts.every(effort=>effort.id!=='ultra'),'Unsupported Luna Ultra is absent from execution choices');
+    check(models.find(model=>model.id==='gpt-6.1-sol').efforts.some(effort=>effort.id==='ultra'),'Supported Ultra remains executable');
+    await model('gpt-6.1-sol').uncheck();
+    check(await common('ultra').count()===0,'Ultra disappears when no selected model supports it');
+    check(await exclusions().isHidden(),'A hidden unsupported effort is removed from the common selection');
+    await model('gpt-6.1-sol').check();check(!await common('ultra').isChecked(),'Hidden effort does not return as a per-model saved exception');
     await common('ultra').check();await page.locator('#allow-delegation').uncheck();await save();
-    check((await policy()).allowedSelections.selections.length===4,'Ultra off retains exact saved choices');
-    check((await tool('codex_models')).models.every(model=>model.efforts.every(effort=>effort.id!=='ultra')),'Execution discovery excludes disabled Ultra');
-    check(await common('ultra').isChecked()&&await common('ultra').isDisabled(),'Saved Ultra remains checked and inactive');
+    check((await policy()).allowedSelections.selections.length===4,'The separate Ultra eligibility gate retains supported saved choices');
+    check((await tool('codex_models')).models.every(model=>model.efforts.every(effort=>effort.id!=='ultra')),'Ultra gate excludes Ultra from execution');
+    check(await common('ultra').isChecked()&&await common('ultra').isDisabled(),'Saved gated Ultra is checked and inactive');
     check((await page.locator('#selection-count').textContent()).includes('조합 3개'),'Summary counts executable pairs');
-    await page.locator('#allow-delegation').check();await common('high').uncheck();
-    check(await page.locator('#model-effort-warning').isVisible(),'Selected models without any reasoning choice get a warning');
+    await page.locator('#allow-delegation').check();await common('ultra').uncheck();await model('ultra-only').check();
+    check(await page.locator('#model-effort-warning').isVisible(),'A model with no supported selected effort explains how to resolve it');
     const before=await page.evaluate(()=>window.__selectionSaves.length);await save();
-    check(await page.evaluate(()=>window.__selectionSaves.length)===before,'Invalid per-model empty selection must not be sent');
-    await common('high').check();
-    await page.locator('#model-specific-settings > summary').click();
-    await page.locator('#effort-groups input[data-action="effort"][data-model="gpt-6.1-sol"][data-effort="high"]').uncheck();
-    await save();const preserved=await pairs();await page.reload();await page.locator('#settings-form').waitFor({state:'visible'});
-    check(await common('high').evaluate(input=>input.indeterminate),'Reload preserves model-specific overrides');
-    check(await pairs()===preserved,'Reload does not invent cross-model pairs');
+    check(await page.evaluate(()=>window.__selectionSaves.length)===before,'A policy omitting a selected model is not posted');
+    await page.locator('#allow-delegation').uncheck();
+    check(await model('ultra-only').isVisible(),'Inactive selected models stay removable');
+    await model('ultra-only').click();await page.locator('#allow-delegation').check();
+    await model('rare-only').check();check(await common('minimal').isVisible(),'Selecting a supporting model exposes its effort');
+    await common('minimal').check();await save();
+    check((await policy()).allowedSelections.selections.some(choice=>choice.model==='rare-only'&&choice.reasoningEffort==='minimal'),'New effort projects only onto its supporting model');
+    await model('rare-only').uncheck();check(await common('minimal').count()===0,'Removing its last supporting model hides the effort again');
+    await common('ultra').check();await save();await page.reload();await page.locator('#settings-form').waitFor({state:'visible'});
+    check(await common('high').isChecked()&&await common('ultra').isChecked(),'Reload retains common reasoning choices');
+    await page.locator('#model-policy-mode').selectOption('fixed');await page.locator('#model-policy-mode').selectOption('automatic');
+    check(await common('high').isEnabled(),'Returning to automatic mode re-enables common controls');
     await page.locator('.model-description-row[data-model="gpt-6-luna"] [data-description-action="edit"]').click();
     await page.locator('.model-description-row[data-model="gpt-6-luna"] textarea').fill('Keep this pending description.');
     await model('gpt-6-luna').uncheck();
@@ -123,12 +145,14 @@ try {
     for(const [locale,copy] of Object.entries(${JSON.stringify(UI_TRANSLATIONS)})){
       await page.setViewportSize({width:390,height:980});await page.locator('#ui-language').selectOption(locale);
       check((await page.locator('[data-i18n="settings.commonEfforts"]').textContent())===copy['settings.commonEfforts'],'Common controls translate: '+locale);
+      const notice=copy['settings.unsupportedModelEfforts'].replace('{model}','GPT-6-LUNA').replace('{efforts}','Ultra');
+      check((await page.locator('#unsupported-model-efforts').textContent()).includes(notice),'Unsupported notice translates: '+locale);
       const state=await page.evaluate(()=>({overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth,errors:window.__cardErrors}));
       check(!state.overflow&&!state.errors.length,'Card fits narrow view without script errors: '+locale);locales.push(locale);
     }
     await page.locator('#ui-language').selectOption('ko');await page.setViewportSize({width:720,height:1050});
     await page.locator('#automatic-policy-panel').screenshot({path:${JSON.stringify(path.join(output, "model-selection-ko.png"))}});
-    return {mixedChoicesPreserved:true,supportedProjection:true,displayedCommonEffortInherited:true,pendingModelRemovable:true,ultraPreserved:true,emptyModelBlocked:true,descriptionOrder:true,descriptionFilter:true,openEditPreserved:true,locales};
+    return {legacyCommonConversion:true,emptyCatalogPolicyPreserved:true,supportedProjection:true,noPerModelExceptions:true,unsupportedEffortsHidden:true,unsupportedNotice:true,pendingModelRemovable:true,ultraGatePreserved:true,emptyModelBlocked:true,descriptionOrder:true,descriptionFilter:true,openEditPreserved:true,locales};
   }`);
   writeFileSync(path.join(output, "report.txt"), result); console.log(result);
 } catch (error) {

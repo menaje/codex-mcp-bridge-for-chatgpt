@@ -11,54 +11,48 @@ final class ModelAllowlistDraftTests: XCTestCase {
         ModelChoice(model: "older", reasoningEffort: "high")
     ]
 
-    func testExistingMixedChoicesArePreservedUntilAnExplicitCommonSelection() {
+    func testExistingModelSpecificChoicesBecomeOneCommonEffortList() {
         let saved = [choices[1], choices[3]]
-        var draft = ModelAllowlistDraft(selections: saved, choices: choices)
-        XCTAssertEqual(draft.selections, Set(saved))
-        XCTAssertTrue(draft.hasModelSpecificChoices(choices: choices))
-        XCTAssertTrue(draft.effortState("high", choices: choices).mixed)
-        XCTAssertFalse(draft.effortState("high", choices: choices).checked)
-        draft.setEffort("high", selected: true, choices: choices)
-        XCTAssertEqual(draft.selections, Set(saved + [choices[4]]))
-        XCTAssertTrue(draft.effortState("high", choices: choices).checked)
-        draft.setEffort("low", selected: false, choices: choices)
-        XCTAssertEqual(draft.selections, Set([choices[1], choices[4]]))
-        XCTAssertFalse(draft.hasModelSpecificChoices(choices: choices))
+        let draft = ModelAllowlistDraft(selections: saved)
+        XCTAssertEqual(draft.commonEfforts, ["low", "high"])
+        XCTAssertEqual(draft.selections(choices: choices), Set([choices[0], choices[1], choices[3], choices[4]]))
+        XCTAssertEqual(draft.availableEfforts(choices: choices), ["low", "high", "ultra"])
     }
 
-    func testNewModelUsesCommonEffortsAndOnlySupportedPairs() {
-        var draft = ModelAllowlistDraft(selections: [choices[1], choices[2]], choices: choices)
+    func testModelChangesNeverRestoreAPerModelEffortException() {
+        var draft = ModelAllowlistDraft(selections: [choices[1], choices[3]])
+        draft.setEffort("low", selected: false)
+        draft.setModel("older", selected: false, choices: choices)
         draft.setModel("older", selected: true, choices: choices)
-        XCTAssertEqual(draft.selections, Set([choices[1], choices[2], choices[4]]))
-        XCTAssertEqual(draft.effortState("ultra", choices: choices).supportedModels, 1)
-        draft.setModel("new", selected: false, choices: choices)
-        XCTAssertEqual(draft.selections, Set([choices[4]]))
-        draft.setModel("new", selected: true, choices: choices)
-        XCTAssertEqual(draft.selections, Set([choices[1], choices[2], choices[4]]))
-    }
-
-    func testRemovedChoicesRemainAvailableForDeliberateRemoval() {
-        let removed = ModelChoice(model: "removed", reasoningEffort: "retired")
-        var draft = ModelAllowlistDraft(selections: [choices[1], removed], choices: choices)
-        XCTAssertEqual(draft.selections, Set([choices[1], removed]))
-        XCTAssertTrue(draft.effortState("retired", choices: choices).checked)
-        XCTAssertTrue(draft.hasModelSpecificChoices(choices: choices))
-        draft.setModel("removed", selected: false, choices: choices)
-        XCTAssertEqual(draft.selections, Set([choices[1]]))
-        XCTAssertEqual(ModelSettingsOrder.efforts(["ultra", "high", "low", "future"]), ["low", "high", "ultra", "future"])
-    }
-
-    func testNewModelUsesTheCurrentlyDisplayedCommonEffortAfterRemovingAnException() {
+        XCTAssertEqual(draft.commonEfforts, ["high"])
+        XCTAssertEqual(draft.selections(choices: choices), Set([choices[1], choices[4]]))
         let added = ModelChoice(model: "added", reasoningEffort: "high")
-        let supported = choices + [added]
-        var draft = ModelAllowlistDraft(selections: [choices[1], choices[3]], choices: supported)
-        draft.setModel("older", selected: false, choices: supported)
-        XCTAssertTrue(draft.effortState("high", choices: supported).checked)
-        draft.setModel("added", selected: true, choices: supported)
-        XCTAssertEqual(draft.selections, Set([choices[1], added]))
-        draft.setModel("older", selected: true, choices: supported)
-        XCTAssertEqual(draft.selections, Set([choices[1], choices[3], added]))
-        XCTAssertTrue(draft.effortState("high", choices: supported).mixed)
+        draft.setModel("added", selected: true, choices: choices + [added])
+        XCTAssertEqual(draft.selections(choices: choices + [added]), Set([choices[1], choices[4], added]))
+    }
+
+    func testUnsupportedEffortsAreHiddenAndExplainedWithoutCreatingInvalidPairs() {
+        var draft = ModelAllowlistDraft(selections: [choices[2]])
+        draft.setModel("older", selected: true, choices: choices)
+        XCTAssertEqual(draft.selections(choices: choices), [choices[2]])
+        XCTAssertEqual(draft.unsupportedEfforts(for: "older", catalogChoices: choices), ["ultra"])
+        draft.setModel("new", selected: false, choices: choices)
+        XCTAssertEqual(draft.availableEfforts(choices: choices), ["low", "high"])
+        XCTAssertTrue(draft.selections(choices: choices).isEmpty)
+        XCTAssertFalse(draft.commonEfforts.contains("ultra"))
+        draft.setModel("new", selected: true, choices: choices)
+        draft.setEffort("ultra", selected: true)
+        draft.setEffort("high", selected: true)
+        XCTAssertEqual(draft.selections(choices: choices), Set([choices[1], choices[2], choices[4]]))
+    }
+
+    func testRemovedCatalogChoicesAreNeverProjectedIntoThePolicy() {
+        let removed = ModelChoice(model: "removed", reasoningEffort: "retired")
+        var draft = ModelAllowlistDraft(selections: [choices[1], removed])
+        XCTAssertEqual(draft.selections(choices: choices), [choices[1]])
+        XCTAssertEqual(draft.unsupportedEfforts(for: "removed", catalogChoices: choices), ["high", "retired"])
+        draft.setModel("removed", selected: false, choices: choices)
+        XCTAssertEqual(draft.selections(choices: choices), [choices[1]])
     }
 
     func testDescriptionOrderingUsesCatalogAndAppendsRemovedModels() throws {

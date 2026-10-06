@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "releaseUnitId": "codex-mcp-bridge",
+  "bump": "minor",
+  "summary": "Apply one common reasoning list to all selected models, hide unsupported reasoning options, and explain per-model exclusions in both Settings editors.",
+  "breaking": false,
+  "migration": null
+}

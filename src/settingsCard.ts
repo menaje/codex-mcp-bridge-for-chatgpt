@@ -16,7 +16,7 @@ import { withUiToolCallTimeout } from "./uiToolCallFallback.js";
 import { serializeUiFunction } from "./uiFunctionSerialization.js";
 import { settingsSpeedChoices, settingsSpeedSelection } from "./processingSpeedPresentation.js";
 import { MODEL_DESCRIPTION_EDITOR_SCRIPT } from "./modelDescriptionCard.js";
-import { commonEffortState, orderedModelIDs, projectModelChoices } from "./modelSelectionPresentation.js";
+import { availableCommonEfforts, orderedModelIDs, projectModelChoices, unsupportedModelEfforts } from "./modelSelectionPresentation.js";
 import {
   currentUiResourceUri,
   currentUiResourceRevision,
@@ -166,16 +166,9 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     .explicit-layout { display:grid; grid-template-columns:minmax(180px,.7fr) minmax(260px,1.3fr); gap:10px; margin-top:8px; }
     .choice-group { min-width:0; margin:0; padding:0; border:0; }
     .choice-group > legend { margin-bottom:6px; padding:0; }
-    .effort-groups { display:grid; gap:8px; }
-    #model-specific-settings { margin:10px 0; }
-    #model-specific-settings > summary { cursor:pointer; font-size:12px; }
-    #model-specific-settings[open] .effort-groups { margin-top:8px; }
+    .effort-exclusions { margin-top:8px; }
+    .effort-exclusions p { margin:4px 0; }
     .policy-panel > .notice { margin-top:10px; font-size:11px; line-height:1.5; color:var(--muted); }
-    .effort-card { display:grid; min-width:0; margin:0; gap:8px; padding:10px; border:1px solid var(--border); border-radius:8px; }
-    .effort-card-header { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
-    .effort-card-title { min-width:0; font:650 12px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap:anywhere; }
-    .effort-options { display:flex; flex-wrap:wrap; gap:7px 12px; }
-    .effort-options .checkline { font-size:11px; }
     .selection-count { margin-top:8px; text-align:right; }
     .projects-panel { border:1px solid var(--border); border-radius:10px; padding:12px; }
     .projects-header { display:flex; align-items:start; justify-content:space-between; gap:12px; }
@@ -257,8 +250,8 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
                 <fieldset class="choice-group"><legend class="hint" data-i18n="settings.commonEfforts"></legend><div class="selection-list" id="common-efforts"></div></fieldset>
               </div>
               <div class="hint selection-count" id="selection-count" aria-live="polite"></div>
+              <div class="hint effort-exclusions" id="unsupported-model-efforts" role="status" aria-live="polite" hidden></div>
               <p class="warning" id="model-effort-warning" role="status" hidden></p>
-              <details id="model-specific-settings"><summary data-i18n="settings.modelSpecific"></summary><div class="effort-groups" id="effort-groups"></div></details>
             </div>
           </div>
           <div class="notice" data-i18n="settings.automaticNotice"></div>
@@ -302,7 +295,8 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     ${serializeUiFunction(withUiToolCallTimeout)}
     ${serializeUiFunction(settingsSpeedChoices)}
     ${serializeUiFunction(settingsSpeedSelection)}
-    ${serializeUiFunction(commonEffortState)}
+    ${serializeUiFunction(availableCommonEfforts)}
+    ${serializeUiFunction(unsupportedModelEfforts)}
     ${serializeUiFunction(orderedModelIDs)}
     ${serializeUiFunction(projectModelChoices)}
     const pendingRequests = new Map();
@@ -316,7 +310,6 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     let modelPolicyDirty = false;
     let processingSpeedDirty = false;
     const explicitSelectedModels = new Set();
-    const explicitSelectionMemory = new Map();
     const explicitCommonEfforts = new Set();
     const LOCALE_RESOLUTION = ${JSON.stringify(UI_LOCALE_RESOLUTION)};
     const initialMetadata = window.openai && window.openai.toolResponseMetadata || {};
@@ -326,7 +319,7 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     let locale = resolveLocale(localeTag);
     let t = BUNDLES[locale] || BUNDLES.en;
     const byId = (id) => document.getElementById(id);
-    const elements = { history:byId("history-settings"),historyRetention:byId("history-retention"),historyPolicy:byId("history-settings-policy"),form:byId("settings-form"),loading:byId("settings-loading"),retryLoad:byId("retry-load"),access:byId("access-strategy"),accessHint:byId("access-hint"),mode:byId("model-policy-mode"),delegation:byId("allow-delegation"),ultraWarning:byId("ultra-policy-warning"),priority:byId("use-priority-service-tier"),speedRetained:byId("processing-speed-retained"),fixedPanel:byId("fixed-policy-panel"),automaticPanel:byId("automatic-policy-panel"),model:byId("policy-model"),effort:byId("policy-effort"),effortDescription:byId("effort-description"),effortCompatibility:byId("effort-compatibility"),allowedScope:byId("allowed-scope"),explicitPanel:byId("explicit-selection-panel"),allowedModels:byId("allowed-models"),effortGroups:byId("effort-groups"),commonEfforts:byId("common-efforts"),modelEffortWarning:byId("model-effort-warning"),selectionCount:byId("selection-count"),addProject:byId("add-project"),projectList:byId("project-list"),projectRecovery:byId("project-recovery"),projectRecoveryList:byId("project-recovery-list"),noProjects:byId("no-projects"),projectError:byId("project-error"),codexAppThreads:byId("show-bridge-threads-in-codex-app"),threadPersistence:byId("bridge-thread-persistence"),codexAppThreadsHint:byId("codex-app-threads-hint"),language:byId("ui-language"),concurrency:byId("concurrency"),save:byId("save"),retryModels:byId("retry-models"),reset:byId("reset"),status:byId("status"),fullWarning:byId("full-warning"),catalogStatus:byId("catalog-status"),catalogStatusLabel:byId("catalog-status-label"),catalogWarning:byId("catalog-warning"),catalogWarningText:byId("catalog-warning-text") };
+    const elements = { history:byId("history-settings"),historyRetention:byId("history-retention"),historyPolicy:byId("history-settings-policy"),form:byId("settings-form"),loading:byId("settings-loading"),retryLoad:byId("retry-load"),access:byId("access-strategy"),accessHint:byId("access-hint"),mode:byId("model-policy-mode"),delegation:byId("allow-delegation"),ultraWarning:byId("ultra-policy-warning"),priority:byId("use-priority-service-tier"),speedRetained:byId("processing-speed-retained"),fixedPanel:byId("fixed-policy-panel"),automaticPanel:byId("automatic-policy-panel"),model:byId("policy-model"),effort:byId("policy-effort"),effortDescription:byId("effort-description"),effortCompatibility:byId("effort-compatibility"),allowedScope:byId("allowed-scope"),explicitPanel:byId("explicit-selection-panel"),allowedModels:byId("allowed-models"),exclusions:byId("unsupported-model-efforts"),commonEfforts:byId("common-efforts"),modelEffortWarning:byId("model-effort-warning"),selectionCount:byId("selection-count"),addProject:byId("add-project"),projectList:byId("project-list"),projectRecovery:byId("project-recovery"),projectRecoveryList:byId("project-recovery-list"),noProjects:byId("no-projects"),projectError:byId("project-error"),codexAppThreads:byId("show-bridge-threads-in-codex-app"),threadPersistence:byId("bridge-thread-persistence"),codexAppThreadsHint:byId("codex-app-threads-hint"),language:byId("ui-language"),concurrency:byId("concurrency"),save:byId("save"),retryModels:byId("retry-models"),reset:byId("reset"),status:byId("status"),fullWarning:byId("full-warning"),catalogStatus:byId("catalog-status"),catalogStatusLabel:byId("catalog-status-label"),catalogWarning:byId("catalog-warning"),catalogWarningText:byId("catalog-warning-text") };
     const LANGUAGE_LABELS = ${JSON.stringify(UI_LANGUAGE_LABELS)};
     const KNOWN_EFFORTS = new Set(["minimal","low","medium","high","xhigh","max","ultra"]);
     ${MODEL_DESCRIPTION_EDITOR_SCRIPT.replace(/\n\s+/g, "")}
@@ -389,7 +382,6 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     function modelFor(id) { return view&&view.catalog.models.find((entry)=>entry.id===id); }
     function defaultSelectionForModel(id) { const model=modelFor(id);if(!model)return null;const effort=model.defaultReasoningEffort||(model.supportedReasoningEfforts&&model.supportedReasoningEfforts[0]&&model.supportedReasoningEfforts[0].effort);return effort?{model:model.id,reasoningEffort:effort}:null; }
     function selectionKey(selection) { return JSON.stringify([selection.model,selection.reasoningEffort]); }
-    function selectionFromKey(value) { if(!value)return null;const parts=parseUiJsonTextStrict(value);if(!Array.isArray(parts)||typeof parts[0]!=="string"||typeof parts[1]!=="string")return null;return{model:parts[0],reasoningEffort:parts[1]}; }
     function modelDisplayName(id) { const model=modelFor(id);return model&&model.displayName||id; }
     function effortPresentationFor(modelId,effort) { const canonical=String(effort||"").trim().toLowerCase(),model=modelFor(modelId),entry=model&&(model.supportedReasoningEfforts||[]).find((item)=>item.effort===canonical),known=KNOWN_EFFORTS.has(canonical),label=canonical;if(locale==="en"&&entry&&entry.description)return{label,description:entry.description,source:"upstream"};if(known)return{label,description:t["effort."+canonical+".description"],source:"localized"};return{label,description:t["settings.effortFallbackDescription"],source:"fallback"}; }
     function effortPresentation(effort) { return effortPresentationFor(elements.model.value,effort); }
@@ -411,62 +403,49 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
       elements.effort.setCustomValidity(fixed?t["settings.ultraFixedConflict"]:"");
     }
     function currentFixedSelection() { if(!elements.model.value||!elements.effort.value)return null;return{model:elements.model.value,reasoningEffort:elements.effort.value}; }
-    function checkedExplicitSelections() { return [...explicitSelectionMemory.values()].filter((selection)=>explicitSelectedModels.has(selection.model)); }
-    function modelSelections(modelId,selections) { return selections.filter((selection)=>selection.model===modelId); }
-    function exactSelectionsForEffort(modelId,effort) { return [...explicitSelectionMemory.values()].filter((selection)=>selection.model===modelId&&selection.reasoningEffort===effort); }
-    function primarySelectionForEffort(modelId,effort,candidates) { const availableKeys=new Set(availableSelections().map(selectionKey)),allowed=candidates.filter((selection)=>availableKeys.has(selectionKey(selection)));return allowed[0]||candidates[0]||null; }
-    function seedExplicitModel(modelId) {
-      if(explicitSelectedModels.size){
-        const selected=checkedExplicitSelections(),efforts=new Set([...selected.map(choice=>choice.reasoningEffort),...explicitCommonEfforts]),next=[];
-        for(const effort of efforts){const state=commonEffortState([...explicitSelectedModels],effort,supportedSelections(),selected);if(state.checked||(state.supportedModels===0&&(explicitCommonEfforts.has(effort)||selected.some(choice=>choice.reasoningEffort===effort))))next.push(effort);}
-        explicitCommonEfforts.clear();for(const effort of next)explicitCommonEfforts.add(effort);
-      }
-      if([...explicitSelectionMemory.values()].some(selection=>selection.model===modelId))return;
-      for(const choice of projectModelChoices([modelId],[...explicitCommonEfforts],supportedSelections()))explicitSelectionMemory.set(selectionKey(choice),choice);
-    }
-    function syncCommonEfforts() {
-      explicitCommonEfforts.clear();
-      const models=[...explicitSelectedModels],selected=checkedExplicitSelections();
-      for(const effort of new Set(selected.map(choice=>choice.reasoningEffort)))if(commonEffortState(models,effort,supportedSelections(),selected).checked)explicitCommonEfforts.add(effort);
-    }
+    function checkedExplicitSelections() { return projectModelChoices([...explicitSelectedModels],[...explicitCommonEfforts],supportedSelections()); }
     function renderCommonEfforts() {
-      const models=[...explicitSelectedModels],supported=supportedSelections(),selected=checkedExplicitSelections();
-      const known=["none","minimal","low","medium","high","xhigh","max","ultra"],values=new Set([...supported.map(choice=>choice.reasoningEffort),...selected.map(choice=>choice.reasoningEffort),...explicitCommonEfforts]);
-      const efforts=[...known.filter(effort=>values.has(effort)),...[...values].filter(effort=>!known.includes(effort)).sort()];
+      const efforts=availableCommonEfforts([...explicitSelectedModels],supportedSelections());
       elements.commonEfforts.replaceChildren();
+      if(!efforts.length){const hint=document.createElement("p");hint.className="hint";hint.textContent=t["settings.chooseModelsForEfforts"];elements.commonEfforts.append(hint);}
       for(const effort of efforts){
-        const state=commonEffortState(models,effort,supported,selected),label=document.createElement("label"),input=document.createElement("input");
-        const blocked=isUltraDisabled({reasoningEffort:effort}),retained=selected.some(choice=>choice.reasoningEffort===effort);
+        const label=document.createElement("label"),input=document.createElement("input"),blocked=isUltraDisabled({reasoningEffort:effort});
         label.className="checkline";input.type="checkbox";input.dataset.action="common-effort";input.dataset.effort=effort;input.dataset.ultraDisabled=String(blocked);
-        input.checked=state.checked||(state.supportedModels===0&&(explicitCommonEfforts.has(effort)||retained));input.indeterminate=state.mixed;input.setAttribute("aria-checked",state.mixed?"mixed":String(input.checked));
-        input.disabled=blocked||(!supported.some(choice=>choice.reasoningEffort===effort)&&!retained);
-        const suffix=blocked?" ("+t["settings.ultraDisabled"]+")":state.mixed?" ("+t["settings.partialSelection"]+")":state.supportedModels>0&&state.supportedModels<models.length?" ("+t["settings.someModelsOnly"]+")":"";
-        label.append(input,document.createTextNode(effort+suffix));elements.commonEfforts.append(label);
+        input.checked=explicitCommonEfforts.has(effort);input.disabled=blocked;
+        label.append(input,document.createTextNode(effort+(blocked?" ("+t["settings.ultraDisabled"]+")":"")));elements.commonEfforts.append(label);
       }
     }
-    function groupedModelSelections(modelId) { const unique=new Map();for(const selection of [...modelSelections(modelId,availableSelections()),...modelSelections(modelId,[...explicitSelectionMemory.values()])])unique.set(selectionKey(selection),selection);const groups=new Map();for(const selection of unique.values()){const entries=groups.get(selection.reasoningEffort)||[];entries.push(selection);groups.set(selection.reasoningEffort,entries);}return groups; }
     function renderExplicitPolicy() {
-      const available=availableSelections(),availableKeys=new Set(available.map(selectionKey)),retained=[...available.map(choice=>choice.model),...[...explicitSelectionMemory.values()].map(choice=>choice.model),...explicitSelectedModels],modelSet=new Set(retained),modelIds=orderedModelIDs((view.catalog.models||[]).filter(model=>!model.hidden).map(model=>model.id),retained).filter(id=>modelSet.has(id));
+      const available=availableSelections(),availableKeys=new Set(available.map(selectionKey)),retained=[...available.map(choice=>choice.model),...explicitSelectedModels],modelSet=new Set(retained),modelIds=orderedModelIDs((view.catalog.models||[]).filter(model=>!model.hidden).map(model=>model.id),retained).filter(id=>modelSet.has(id));
       elements.allowedModels.replaceChildren();
-      for(const id of modelIds){const label=document.createElement("label"),checkbox=document.createElement("input"),missing=!available.some((selection)=>selection.model===id);label.className="checkline";checkbox.type="checkbox";checkbox.dataset.action="model";checkbox.dataset.model=id;checkbox.checked=explicitSelectedModels.has(id);label.append(checkbox,document.createTextNode(modelDisplayName(id)+(missing?" ("+t["settings.savedModel"]+")":"")));elements.allowedModels.appendChild(label);}
-      elements.effortGroups.replaceChildren();
-      for(const modelId of modelIds.filter((id)=>explicitSelectedModels.has(id))){
-        const groups=groupedModelSelections(modelId),card=document.createElement("fieldset"),header=document.createElement("div"),title=document.createElement("legend"),allLabel=document.createElement("label"),all=document.createElement("input"),options=document.createElement("div");
-        card.className="effort-card";header.className="effort-card-header";title.className="effort-card-title";title.textContent=modelDisplayName(modelId);allLabel.className="checkline";all.type="checkbox";all.dataset.action="all-efforts";all.dataset.model=modelId;
-        const allowedEfforts=[...groups].filter(([,entries])=>entries.some((selection)=>availableKeys.has(selectionKey(selection))));const selectedEfforts=[...groups].filter(([effort])=>exactSelectionsForEffort(modelId,effort).length>0);all.checked=allowedEfforts.length>0&&allowedEfforts.every(([effort])=>exactSelectionsForEffort(modelId,effort).length>0);all.indeterminate=!all.checked&&selectedEfforts.length>0;all.setAttribute("aria-checked",all.indeterminate?"mixed":String(all.checked));allLabel.title=all.indeterminate?t["settings.partialEffortsSelected"]:"";allLabel.append(all,document.createTextNode(t["settings.selectAllEfforts"]));header.append(allLabel);options.className="effort-options";
-        for(const [effort,candidates] of groups){const primary=primarySelectionForEffort(modelId,effort,candidates);if(!primary)continue;const label=document.createElement("label"),checkbox=document.createElement("input"),effortAllowed=candidates.some((selection)=>availableKeys.has(selectionKey(selection)));label.className="checkline";checkbox.type="checkbox";checkbox.dataset.action="effort";checkbox.dataset.model=modelId;checkbox.dataset.effort=effort;checkbox.value=selectionKey(primary);checkbox.checked=exactSelectionsForEffort(modelId,effort).length>0;const blocked=isUltraDisabled(primary);checkbox.dataset.ultraDisabled=String(blocked);checkbox.disabled=blocked;label.append(checkbox,document.createTextNode(effortPresentationFor(modelId,effort).label+(blocked?" ("+t["settings.ultraDisabled"]+")":effortAllowed?"":" ("+t["settings.savedModel"]+")")));options.appendChild(label);}
-        card.append(title,header,options);
-        elements.effortGroups.appendChild(card);
-      }
+      for(const id of modelIds){const label=document.createElement("label"),checkbox=document.createElement("input"),missing=!available.some(choice=>choice.model===id);label.className="checkline";checkbox.type="checkbox";checkbox.dataset.action="model";checkbox.dataset.model=id;checkbox.checked=explicitSelectedModels.has(id);checkbox.dataset.unavailable=String(missing&&!checkbox.checked);checkbox.disabled=missing&&!checkbox.checked;label.append(checkbox,document.createTextNode(modelDisplayName(id)+(missing?" ("+t["settings.savedModel"]+")":"")));elements.allowedModels.appendChild(label);}
       renderCommonEfforts();
+      elements.exclusions.replaceChildren();
+      for(const item of unsupportedModelEfforts(modelIds.filter(id=>explicitSelectedModels.has(id)),[...explicitCommonEfforts].sort(),allCatalogSelections())){
+        const notice=document.createElement("p");notice.dataset.model=item.model;
+        notice.textContent=t["settings.unsupportedModelEfforts"].replace("{model}",modelDisplayName(item.model)).replace("{efforts}",item.efforts.map(effort=>effort==="ultra"?"Ultra":effort).join(", "));elements.exclusions.append(notice);
+      }
+      elements.exclusions.hidden=!elements.exclusions.childElementCount;
       const selected=checkedExplicitSelections(),active=selected.filter(choice=>availableKeys.has(selectionKey(choice))),missing=[...explicitSelectedModels].find(id=>!selected.some(choice=>choice.model===id));
       elements.selectionCount.textContent=t["settings.selectionSummary"].replace("{models}",String(explicitSelectedModels.size)).replace("{count}",String(active.length));
       elements.modelEffortWarning.textContent=missing?t["settings.modelEffortRequired"].replace("{model}",modelDisplayName(missing)):"";
       elements.modelEffortWarning.hidden=!missing;elements.modelEffortWarning.classList.toggle("show",Boolean(missing));
       updateUltraPolicyNotice();descriptionEditor.refresh();
     }
-    function updatePolicyControls() { const fixed=elements.mode.value==="fixed",explicit=!fixed&&elements.allowedScope.value==="explicit";elements.fixedPanel.hidden=!fixed;elements.automaticPanel.hidden=fixed;elements.explicitPanel.hidden=!explicit;elements.model.disabled=!fixed;elements.effort.disabled=!fixed;elements.allowedScope.disabled=fixed;for(const checkbox of[...elements.allowedModels.querySelectorAll('input[type="checkbox"]'),...elements.effortGroups.querySelectorAll('input[type="checkbox"]'),...elements.commonEfforts.querySelectorAll('input[type="checkbox"]')])checkbox.disabled=checkbox.disabled||!explicit||checkbox.dataset.ultraDisabled==="true";updateUltraPolicyNotice(); }
-    function renderModelPolicy(policy) { elements.delegation.checked=policy.constraints&&policy.constraints.allowDelegation!==false;elements.mode.value=policy.mode;const seed=policy.mode==="fixed"?policy.selection:availableSelections()[0];renderFixedSelection(seed);elements.allowedScope.value=policy.mode==="automatic"?policy.allowedSelections.kind:"catalog-visible";const selected=policy.mode==="automatic"&&policy.allowedSelections.kind==="explicit"?policy.allowedSelections.selections:(policy.mode==="fixed"?[policy.selection]:[]);explicitSelectedModels.clear();explicitSelectionMemory.clear();for(const selection of selected){explicitSelectionMemory.set(selectionKey(selection),selection);if(policy.mode==="automatic"&&policy.allowedSelections.kind==="explicit")explicitSelectedModels.add(selection.model);}syncCommonEfforts();renderExplicitPolicy();updatePolicyControls(); }
+    function updatePolicyControls() { const fixed=elements.mode.value==="fixed",explicit=!fixed&&elements.allowedScope.value==="explicit";elements.fixedPanel.hidden=!fixed;elements.automaticPanel.hidden=fixed;elements.explicitPanel.hidden=!explicit;elements.model.disabled=!fixed;elements.effort.disabled=!fixed;elements.allowedScope.disabled=fixed;for(const checkbox of[...elements.allowedModels.querySelectorAll('input[type="checkbox"]'),...elements.commonEfforts.querySelectorAll('input[type="checkbox"]')])checkbox.disabled=!explicit||checkbox.dataset.unavailable==="true"||checkbox.dataset.ultraDisabled==="true";updateUltraPolicyNotice(); }
+    function renderModelPolicy(policy) {
+      elements.delegation.checked=policy.constraints&&policy.constraints.allowDelegation!==false;elements.mode.value=policy.mode;
+      const seed=policy.mode==="fixed"?policy.selection:availableSelections()[0];renderFixedSelection(seed);
+      elements.allowedScope.value=policy.mode==="automatic"?policy.allowedSelections.kind:"catalog-visible";
+      const selected=policy.mode==="automatic"&&policy.allowedSelections.kind==="explicit"?policy.allowedSelections.selections:(policy.mode==="fixed"?[policy.selection]:[]);
+      explicitSelectedModels.clear();explicitCommonEfforts.clear();
+      for(const choice of selected){explicitCommonEfforts.add(choice.reasoningEffort);if(policy.mode==="automatic"&&policy.allowedSelections.kind==="explicit")explicitSelectedModels.add(choice.model);}
+      if(policy.mode==="automatic"&&policy.allowedSelections.kind==="explicit"&&view.catalog.models.length){
+        const savedKeys=new Set(selected.map(selectionKey)),projected=checkedExplicitSelections();
+        if(savedKeys.size!==projected.length||projected.some(choice=>!savedKeys.has(selectionKey(choice))))modelPolicyDirty=true;
+      }
+      renderExplicitPolicy();updatePolicyControls();
+    }
     function buildModelPolicy() { const constraints={allowDelegation:elements.delegation.checked};if(elements.mode.value==="fixed"){const selection=currentFixedSelection();if(!selection)throw new Error(t["settings.selectionRequired"]);if(isUltraDisabled(selection))throw new Error(t["settings.ultraFixedConflict"]);return{mode:"fixed",selection,constraints};}const explicit=elements.allowedScope.value==="explicit",selections=checkedExplicitSelections();if(explicit&&selections.length===0)throw new Error(t["settings.explicitRequired"]);if(explicit)for(const modelId of explicitSelectedModels)if(!selections.some((selection)=>selection.model===modelId))throw new Error(t["settings.modelEffortRequired"].replace("{model}",modelDisplayName(modelId)));return{mode:"automatic",allowedSelections:explicit?{kind:"explicit",selections}:{kind:"catalog-visible"},constraints}; }
     function projectRows() { return [...elements.projectList.querySelectorAll(".project-row")]; }
     function normalizeProjectName(value) { const raw=String(value||"");if(/[\p{Cc}\p{Cs}\p{Bidi_Control}\p{Default_Ignorable_Code_Point}]/u.test(raw))throw new Error(t["settings.projectInvalidLabel"]);const normalized=raw.normalize("NFC").replace(/\p{White_Space}+/gu," ").trim();if(!normalized||[...normalized].length>120)throw new Error(t["settings.projectInvalidLabel"]);return normalized; }
@@ -540,16 +519,14 @@ export const SETTINGS_CARD_HTML = String.raw`<!doctype html>
     elements.model.addEventListener("change",()=>{modelPolicyDirty=true;renderFixedEfforts(null);updateUltraPolicyNotice();});
     elements.effort.addEventListener("change",()=>{modelPolicyDirty=true;updateEffortHelper();elements.effortCompatibility.textContent="";updateUltraPolicyNotice();});
     elements.allowedScope.addEventListener("change",()=>{modelPolicyDirty=true;updatePolicyControls();renderExplicitPolicy();});
-    elements.allowedModels.addEventListener("change",(event)=>{const target=event.target;if(!(target instanceof HTMLInputElement)||target.dataset.action!=="model")return;modelPolicyDirty=true;const modelId=target.dataset.model;if(!modelId)return;if(target.checked){seedExplicitModel(modelId);explicitSelectedModels.add(modelId);}else explicitSelectedModels.delete(modelId);renderExplicitPolicy();});
+    elements.allowedModels.addEventListener("change",(event)=>{const target=event.target;if(!(target instanceof HTMLInputElement)||target.dataset.action!=="model")return;modelPolicyDirty=true;const modelId=target.dataset.model;if(!modelId)return;if(target.checked)explicitSelectedModels.add(modelId);else explicitSelectedModels.delete(modelId);const visible=new Set(availableCommonEfforts([...explicitSelectedModels],supportedSelections()));for(const effort of explicitCommonEfforts)if(!visible.has(effort))explicitCommonEfforts.delete(effort);renderExplicitPolicy();});
     byId("show-all-model-descriptions").addEventListener("change",()=>descriptionEditor.refresh());
     elements.commonEfforts.addEventListener("change",event=>{
       const target=event.target;if(!(target instanceof HTMLInputElement)||target.dataset.action!=="common-effort")return;
       modelPolicyDirty=true;const effort=target.dataset.effort;
-      if(target.checked){explicitCommonEfforts.add(effort);for(const choice of projectModelChoices([...explicitSelectedModels],[effort],supportedSelections()))explicitSelectionMemory.set(selectionKey(choice),choice);}
-      else{explicitCommonEfforts.delete(effort);for(const [key,choice] of explicitSelectionMemory)if(explicitSelectedModels.has(choice.model)&&choice.reasoningEffort===effort)explicitSelectionMemory.delete(key);}
+      if(target.checked)explicitCommonEfforts.add(effort);else explicitCommonEfforts.delete(effort);
       renderExplicitPolicy();
     });
-    elements.effortGroups.addEventListener("change",(event)=>{const target=event.target;if(!(target instanceof HTMLInputElement))return;modelPolicyDirty=true;const action=target.dataset.action,modelId=target.dataset.model;if(action==="all-efforts"&&modelId){if(target.checked){const availableKeys=new Set(availableSelections().map(selectionKey));for(const [effort,candidates] of groupedModelSelections(modelId)){if(!candidates.some((selection)=>availableKeys.has(selectionKey(selection)))||exactSelectionsForEffort(modelId,effort).length>0)continue;const primary=primarySelectionForEffort(modelId,effort,candidates);if(primary)explicitSelectionMemory.set(selectionKey(primary),primary);}}else for(const [key,selection] of explicitSelectionMemory)if(selection.model===modelId)explicitSelectionMemory.delete(key);}else if(action==="effort"&&modelId){const effort=target.dataset.effort;if(!effort)return;if(target.checked){if(exactSelectionsForEffort(modelId,effort).length===0){const selection=selectionFromKey(target.value);if(selection)explicitSelectionMemory.set(selectionKey(selection),selection);}}else for(const [key,selection] of explicitSelectionMemory)if(selection.model===modelId&&selection.reasoningEffort===effort)explicitSelectionMemory.delete(key);}else return;syncCommonEfforts();renderExplicitPolicy();});
     elements.threadPersistence.addEventListener("change",()=>{const memory=elements.threadPersistence.value==="ephemeral";if(memory)elements.codexAppThreads.checked=false;elements.codexAppThreads.disabled=memory;updateCodexAppThreadsHint();});
     elements.language.addEventListener("change",()=>{localePreference=elements.language.value;setLocale(effectiveLocaleTag());});
     elements.form.addEventListener("submit",async(event)=>{event.preventDefault();if(!view)return;const projectSettings=buildProjectSettings();if(!projectSettings||!elements.form.reportValidity())return;setBusy(true,t["settings.saving"]);try{const settings={accessStrategy:elements.access.value,showBridgeThreadsInCodexApp:elements.codexAppThreads.checked,bridgeThreadPersistence:elements.threadPersistence.value,uiLocalePreference:elements.language.value,maxConcurrentJobs:integerValue(elements.concurrency)},projectOperations=buildProjectOperations(projectSettings.projects);if(processingSpeedDirty&&settingsSpeedChoices(view.capabilities.availableProcessingSpeeds).includes(elements.priority.value))settings.processingSpeed=elements.priority.value;if(view.settings.historyRetentionDays!==undefined)settings.historyRetentionDays=Number(elements.historyRetention.value);if(projectOperations.length)settings.projectOperations=projectOperations;if(modelPolicyDirty)settings.modelPolicy=buildModelPolicy();const args={expectedSettingsRevision:view.settings.settingsRevision,expectedRegistryRevision:view.settings.registryRevision,operation:{kind:"patch",settings}};const result=await callTool("codex_update_settings",args),next=unwrap(result);render(next);setBusy(false,mutationStatus(next,t["settings.saved"]));}catch(error){await handleMutationError(error);}});

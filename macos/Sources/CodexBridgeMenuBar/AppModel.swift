@@ -69,13 +69,13 @@ struct SettingsDraft: Equatable {
         policyMode = settings.modelPolicy.mode
         fixedSelectionKey = settings.modelPolicy.selection?.key ?? ""
         allowedKind = settings.modelPolicy.allowedSelections?.kind ?? "catalog-visible"
-        explicitSelectionKeys = Set(
+        let savedExplicitKeys = Set(
             settings.modelPolicy.allowedSelections?.selections?.map(\ModelChoice.key) ?? []
         )
-        modelAllowlist = ModelAllowlistDraft(
-            selections: settings.modelPolicy.allowedSelections?.selections ?? [],
-            choices: Self.selectableChoices(in: snapshot, allowDelegation: true)
-        )
+        modelAllowlist = ModelAllowlistDraft(selections: settings.modelPolicy.allowedSelections?.selections ?? [])
+        explicitSelectionKeys = policyMode == "automatic" && allowedKind == "explicit" && !snapshot.catalog.models.isEmpty
+            ? Set(modelAllowlist.selections(choices: Self.selectableChoices(in: snapshot, allowDelegation: true)).map(\.key))
+            : savedExplicitKeys
         allowDelegation = settings.modelPolicy.constraints.allowDelegation
         usePriorityServiceTier = settings.usePriorityServiceTier
         processingSpeed = settings.processingSpeed ?? "legacy"
@@ -89,7 +89,7 @@ struct SettingsDraft: Equatable {
             mode: policyMode,
             fixedSelectionKey: fixedSelectionKey,
             allowedKind: allowedKind,
-            explicitSelectionKeys: explicitSelectionKeys,
+            explicitSelectionKeys: savedExplicitKeys,
             explicitModelIDs: modelAllowlist.modelIDs,
             allowDelegation: allowDelegation
         )
@@ -99,9 +99,9 @@ struct SettingsDraft: Equatable {
         policyState != originalPolicyState
     }
 
-    mutating func updateAllowlist(_ change: (inout ModelAllowlistDraft) -> Void) {
+    mutating func updateAllowlist(choices: [ModelChoice], _ change: (inout ModelAllowlistDraft) -> Void) {
         change(&modelAllowlist)
-        explicitSelectionKeys = Set(modelAllowlist.selections.map(\.key))
+        explicitSelectionKeys = Set(modelAllowlist.selections(choices: choices).map(\.key))
     }
 
     static func processingSpeedChoices(in snapshot: SettingsSnapshot) -> [String] {
@@ -135,8 +135,10 @@ struct SettingsDraft: Equatable {
         rebased.policyMode = policyMode
         rebased.fixedSelectionKey = fixedSelectionKey
         rebased.allowedKind = allowedKind
-        rebased.explicitSelectionKeys = explicitSelectionKeys
         rebased.modelAllowlist = modelAllowlist
+        rebased.explicitSelectionKeys = policyMode == "automatic" && allowedKind == "explicit" && !snapshot.catalog.models.isEmpty
+            ? Set(modelAllowlist.selections(choices: Self.selectableChoices(in: snapshot, allowDelegation: true)).map(\.key))
+            : explicitSelectionKeys
         rebased.allowDelegation = allowDelegation
         rebased.usePriorityServiceTier = usePriorityServiceTier
         rebased.processingSpeed = processingSpeed
@@ -2310,6 +2312,7 @@ final class AppModel: ObservableObject {
     func scheduleSettingsAutosave(_ draft: SettingsDraft) {
         if !settingsAutosaveInProgress,
            let snapshot = settings,
+           !draft.modelPolicyDirty,
            draft.hasSameEditableValues(as: SettingsDraft(snapshot: snapshot)) {
             settingsAutosaveDebounceTask?.cancel()
             settingsAutosaveDebounceTask = nil
@@ -2375,7 +2378,7 @@ final class AppModel: ObservableObject {
                 return
             }
             let draft = requestedDraft.rebased(on: snapshot)
-            if draft.hasSameEditableValues(as: SettingsDraft(snapshot: snapshot)) {
+            if !draft.modelPolicyDirty && draft.hasSameEditableValues(as: SettingsDraft(snapshot: snapshot)) {
                 continue
             }
             generalSettingsSaveState = .saving

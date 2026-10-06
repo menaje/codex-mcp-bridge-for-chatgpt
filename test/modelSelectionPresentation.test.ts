@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commonEffortState, orderedModelIDs, projectModelChoices } from "../src/modelSelectionPresentation.js";
+import { availableCommonEfforts, orderedModelIDs, projectModelChoices, unsupportedModelEfforts } from "../src/modelSelectionPresentation.js";
 import { serializeUiFunction } from "../src/uiFunctionSerialization.js";
 
 const choices = [
@@ -9,13 +9,23 @@ const choices = [
 ];
 
 describe("model selection presentation", () => {
-  it("expands only supported pairs and distinguishes partial saved choices without changing them", () => {
+  it("uses one common effort list and projects only supported pairs", () => {
     const saved = [choices[1]!, choices[3]!];
-    expect(commonEffortState(["new", "older"], "high", choices, saved)).toEqual({ checked: false, mixed: true, supportedModels: 2 });
-    expect(saved).toEqual([choices[1], choices[3]]);
-    const projected = projectModelChoices(["new", "older"], ["high", "ultra"], choices);
-    expect(projected).toEqual([choices[1], choices[2], choices[4]]);
-    expect(commonEffortState(["new", "older"], "ultra", choices, projected)).toEqual({ checked: true, mixed: false, supportedModels: 1 });
+    const efforts = [...new Set(saved.map(choice => choice.reasoningEffort))];
+    expect(projectModelChoices(["new", "older"], efforts, choices)).toEqual([choices[0], choices[1], choices[3], choices[4]]);
+    expect(projectModelChoices(["new", "older"], ["high", "ultra"], choices)).toEqual([choices[1], choices[2], choices[4]]);
+  });
+
+  it("hides reasoning levels unsupported by every selected model and groups exclusions by model", () => {
+    expect(availableCommonEfforts(["older"], choices)).toEqual(["low", "high"]);
+    expect(availableCommonEfforts([], choices)).toEqual([]);
+    expect(availableCommonEfforts(["new", "older"], choices)).toEqual(["low", "high", "ultra"]);
+    expect(unsupportedModelEfforts(["new", "older"], ["high", "ultra"], choices))
+      .toEqual([{ model: "older", efforts: ["ultra"] }]);
+    // Availability restrictions do not falsely describe supported efforts as absent from the catalog.
+    const operatorChoices = choices.filter(choice => choice.reasoningEffort !== "ultra");
+    expect(availableCommonEfforts(["new"], operatorChoices)).not.toContain("ultra");
+    expect(unsupportedModelEfforts(["new"], ["ultra"], choices)).toEqual([]);
   });
 
   it("keeps catalog order, de-duplicates it, and appends removed descriptions", () => {
@@ -25,10 +35,12 @@ describe("model selection presentation", () => {
 
   it("retains standalone functions when shipped inside a cached card", () => {
     const project = new Function(`${serializeUiFunction(projectModelChoices)};return projectModelChoices;`)();
-    const state = new Function(`${serializeUiFunction(commonEffortState)};return commonEffortState;`)();
+    const available = new Function(`${serializeUiFunction(availableCommonEfforts)};return availableCommonEfforts;`)();
+    const exclusions = new Function(`${serializeUiFunction(unsupportedModelEfforts)};return unsupportedModelEfforts;`)();
     const order = new Function(`${serializeUiFunction(orderedModelIDs)};return orderedModelIDs;`)();
     expect(project(["older"], ["high", "ultra"], choices)).toEqual([choices[4]]);
-    expect(state(["new", "older"], "high", choices, [choices[1]]).mixed).toBe(true);
+    expect(available(["older"], choices)).toEqual(["low", "high"]);
+    expect(exclusions(["older"], ["high", "ultra"], choices)).toEqual([{ model: "older", efforts: ["ultra"] }]);
     expect(order(["new", "older"], ["removed"])).toEqual(["new", "older", "removed"]);
   });
 });

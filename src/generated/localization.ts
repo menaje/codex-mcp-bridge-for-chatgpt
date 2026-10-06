@@ -242,6 +242,10 @@ export const UI_TRANSLATION_PARAMETERS = {
   "settings.selectionSummary": {
     "models": "string-or-number",
     "count": "string-or-number"
+  },
+  "settings.unsupportedModelEfforts": {
+    "model": "string-or-number",
+    "efforts": "string-or-number"
   }
 } as const;
 
@@ -437,7 +441,7 @@ const translations = {
     "settings.catalogStatus.invalid": "Model catalog unavailable",
     "settings.selectionRequired": "Choose an exact model and reasoning effort.",
     "settings.explicitRequired": "Select at least one allowed exact selection.",
-    "settings.modelEffortRequired": "Choose at least one reasoning effort for {model}.",
+    "settings.modelEffortRequired": "Choose a common reasoning level supported by {model}.",
     "settings.projects": "Projects",
     "settings.projectsHint": "Register the folders where Codex may start work. You can add multiple unrelated locations on this PC; internal routing IDs are managed automatically.",
     "settings.allowedRoots": "Bridge-allowed roots",
@@ -762,13 +766,12 @@ const translations = {
     "settings.processingSpeedChoose": "Choose a speed",
     "settings.processingSpeedRetainedHint": "Your current speed setting is kept until you choose a speed.",
     "settings.commonEfforts": "Reasoning levels to use",
-    "settings.commonEffortsHint": "Selected reasoning levels apply to models that support them. A partial selection means models have different settings.",
-    "settings.modelSpecific": "Model-specific settings",
-    "settings.partialSelection": "Partially selected",
-    "settings.someModelsOnly": "Available for some models only",
+    "settings.commonEffortsHint": "Selected reasoning levels apply to all selected models that support them.",
     "settings.selectionSummary": "{models} models · {count} executable combinations",
     "settings.modelDescriptions.showAll": "Show all models",
-    "settings.modelDescriptions.noAllowed": "No models are currently allowed. Show all models to view their descriptions."
+    "settings.modelDescriptions.noAllowed": "No models are currently allowed. Show all models to view their descriptions.",
+    "settings.chooseModelsForEfforts": "Select models to see the reasoning levels they support.",
+    "settings.unsupportedModelEfforts": "{model} does not support {efforts}; these reasoning levels will not be applied."
   },
   "ko": {
     "problem.history": "실패 기록",
@@ -961,7 +964,7 @@ const translations = {
     "settings.catalogStatus.invalid": "모델 카탈로그 사용 불가",
     "settings.selectionRequired": "정확한 모델과 추론 에포트를 선택하세요.",
     "settings.explicitRequired": "허용할 exact selection을 하나 이상 선택하세요.",
-    "settings.modelEffortRequired": "{model} 모델의 추론 에포트를 하나 이상 선택하세요.",
+    "settings.modelEffortRequired": "공통 추론 목록에서 {model} 모델이 지원하는 추론을 하나 이상 선택하세요.",
     "settings.projects": "프로젝트",
     "settings.projectsHint": "Codex가 작업을 시작할 폴더를 등록하세요. 이 PC의 서로 다른 위치에 있는 폴더를 여러 개 추가할 수 있으며 내부 ID는 자동으로 관리됩니다.",
     "settings.allowedRoots": "브리지 허용 루트",
@@ -1286,13 +1289,12 @@ const translations = {
     "settings.processingSpeedChoose": "속도를 선택하세요",
     "settings.processingSpeedRetainedHint": "속도를 선택하기 전까지 현재 설정을 유지합니다.",
     "settings.commonEfforts": "사용할 추론 수준",
-    "settings.commonEffortsHint": "선택한 추론을 지원하는 모델에 함께 적용합니다. 일부 선택은 모델마다 설정이 다르다는 뜻입니다.",
-    "settings.modelSpecific": "모델별 세부 설정",
-    "settings.partialSelection": "일부 선택",
-    "settings.someModelsOnly": "일부 모델에서만 사용 가능",
+    "settings.commonEffortsHint": "선택한 추론은 이를 지원하는 모든 선택 모델에 적용됩니다.",
     "settings.selectionSummary": "모델 {models}개 · 실행 가능한 조합 {count}개",
     "settings.modelDescriptions.showAll": "전체 모델 보기",
-    "settings.modelDescriptions.noAllowed": "현재 허용된 모델이 없습니다. 전체 모델 보기에서 설명을 확인할 수 있습니다."
+    "settings.modelDescriptions.noAllowed": "현재 허용된 모델이 없습니다. 전체 모델 보기에서 설명을 확인할 수 있습니다.",
+    "settings.chooseModelsForEfforts": "사용할 모델을 선택하면 지원되는 추론 수준이 표시됩니다.",
+    "settings.unsupportedModelEfforts": "{model} 모델은 {efforts} 추론을 지원하지 않아 적용되지 않습니다."
   },
   "ja": {
     "problem.history": "失敗の履歴",
@@ -1485,7 +1487,7 @@ const translations = {
     "settings.catalogStatus.invalid": "モデルカタログを利用できません",
     "settings.selectionRequired": "モデルと推論エフォートを正確に選択してください。",
     "settings.explicitRequired": "許可する選択を少なくとも 1 つ指定してください。",
-    "settings.modelEffortRequired": "{model} の推論エフォートを 1 つ以上選択してください。",
+    "settings.modelEffortRequired": "{model} が対応する推論レベルを共通リストから選択してください。",
     "settings.projects": "プロジェクト",
     "settings.projectsHint": "Codex が作業を開始するフォルダーを登録します。この PC 上の異なる場所を複数追加でき、内部 ID は自動管理されます。",
     "settings.allowedRoots": "ブリッジで許可されたルート",
@@ -1810,13 +1812,12 @@ const translations = {
     "settings.processingSpeedChoose": "速度を選択",
     "settings.processingSpeedRetainedHint": "速度を選択するまで現在の設定を保持します。",
     "settings.commonEfforts": "使用する推論レベル",
-    "settings.commonEffortsHint": "選択した推論レベルを、対応するモデルに適用します。一部選択はモデルごとに設定が異なることを示します。",
-    "settings.modelSpecific": "モデル別の詳細設定",
-    "settings.partialSelection": "一部選択",
-    "settings.someModelsOnly": "一部のモデルのみ対応",
+    "settings.commonEffortsHint": "選択した推論レベルは、対応するすべての選択モデルに適用されます。",
     "settings.selectionSummary": "モデル {models} 個 · 実行可能な組み合わせ {count} 個",
     "settings.modelDescriptions.showAll": "すべてのモデルを表示",
-    "settings.modelDescriptions.noAllowed": "現在許可されているモデルはありません。すべてのモデルを表示すると説明を確認できます。"
+    "settings.modelDescriptions.noAllowed": "現在許可されているモデルはありません。すべてのモデルを表示すると説明を確認できます。",
+    "settings.chooseModelsForEfforts": "モデルを選択すると、対応する推論レベルが表示されます。",
+    "settings.unsupportedModelEfforts": "{model} は {efforts} に対応していないため、これらの推論レベルは適用されません。"
   },
   "zh-Hans": {
     "problem.history": "失败记录",
@@ -2009,7 +2010,7 @@ const translations = {
     "settings.catalogStatus.invalid": "模型目录不可用",
     "settings.selectionRequired": "请选择确切的模型和推理强度。",
     "settings.explicitRequired": "请至少选择一个允许的确切选项。",
-    "settings.modelEffortRequired": "请为 {model} 至少选择一个推理强度。",
+    "settings.modelEffortRequired": "请从共享推理列表中选择 {model} 支持的推理级别。",
     "settings.projects": "项目",
     "settings.projectsHint": "注册 Codex 开始工作的文件夹。可添加此电脑上多个互不相关的位置；内部 ID 会自动管理。",
     "settings.allowedRoots": "桥接允许的根目录",
@@ -2334,13 +2335,12 @@ const translations = {
     "settings.processingSpeedChoose": "选择速度",
     "settings.processingSpeedRetainedHint": "选择速度之前会保留当前设置。",
     "settings.commonEfforts": "使用的推理级别",
-    "settings.commonEffortsHint": "所选推理级别适用于支持它们的模型。部分选中表示各模型的设置不同。",
-    "settings.modelSpecific": "按模型详细设置",
-    "settings.partialSelection": "部分选中",
-    "settings.someModelsOnly": "仅部分模型支持",
+    "settings.commonEffortsHint": "所选推理级别会应用于支持它们的所有选中模型。",
     "settings.selectionSummary": "{models} 个模型 · {count} 个可执行组合",
     "settings.modelDescriptions.showAll": "显示所有模型",
-    "settings.modelDescriptions.noAllowed": "目前没有允许使用的模型。显示所有模型即可查看说明。"
+    "settings.modelDescriptions.noAllowed": "目前没有允许使用的模型。显示所有模型即可查看说明。",
+    "settings.chooseModelsForEfforts": "选择模型后将显示它们支持的推理级别。",
+    "settings.unsupportedModelEfforts": "{model} 不支持 {efforts}，因此不会应用这些推理级别。"
   },
   "zh-Hant": {
     "problem.history": "失敗記錄",
@@ -2533,7 +2533,7 @@ const translations = {
     "settings.catalogStatus.invalid": "模型目錄無法使用",
     "settings.selectionRequired": "請選擇確切的模型與推理強度。",
     "settings.explicitRequired": "請至少選擇一個允許的確切選項。",
-    "settings.modelEffortRequired": "請為 {model} 至少選擇一個推理強度。",
+    "settings.modelEffortRequired": "請從共用推理清單中選擇 {model} 支援的推理層級。",
     "settings.projects": "專案",
     "settings.projectsHint": "登錄 Codex 開始工作的資料夾。可加入此電腦上多個互不相關的位置；內部 ID 會自動管理。",
     "settings.allowedRoots": "橋接允許的根目錄",
@@ -2858,13 +2858,12 @@ const translations = {
     "settings.processingSpeedChoose": "選擇速度",
     "settings.processingSpeedRetainedHint": "選擇速度之前會保留目前設定。",
     "settings.commonEfforts": "使用的推理層級",
-    "settings.commonEffortsHint": "所選推理層級適用於支援它們的模型。部分選取表示各模型的設定不同。",
-    "settings.modelSpecific": "各模型的詳細設定",
-    "settings.partialSelection": "部分選取",
-    "settings.someModelsOnly": "僅部分模型支援",
+    "settings.commonEffortsHint": "所選推理層級會套用到支援它們的所有已選模型。",
     "settings.selectionSummary": "{models} 個模型 · {count} 個可執行組合",
     "settings.modelDescriptions.showAll": "顯示所有模型",
-    "settings.modelDescriptions.noAllowed": "目前沒有允許使用的模型。顯示所有模型即可查看說明。"
+    "settings.modelDescriptions.noAllowed": "目前沒有允許使用的模型。顯示所有模型即可查看說明。",
+    "settings.chooseModelsForEfforts": "選擇模型後將顯示它們支援的推理層級。",
+    "settings.unsupportedModelEfforts": "{model} 不支援 {efforts}，因此不會套用這些推理層級。"
   },
   "es": {
     "problem.history": "Historial de fallos",
@@ -3057,7 +3056,7 @@ const translations = {
     "settings.catalogStatus.invalid": "Catálogo de modelos no disponible",
     "settings.selectionRequired": "Elige un modelo y un nivel de razonamiento exactos.",
     "settings.explicitRequired": "Selecciona al menos una combinación exacta permitida.",
-    "settings.modelEffortRequired": "Selecciona al menos un nivel de razonamiento para {model}.",
+    "settings.modelEffortRequired": "Elige un nivel de razonamiento común compatible con {model}.",
     "settings.projects": "Proyectos",
     "settings.projectsHint": "Registra las carpetas donde Codex puede empezar a trabajar. Puedes añadir varias ubicaciones independientes de este PC; los ID internos se gestionan automáticamente.",
     "settings.allowedRoots": "Raíces permitidas por el puente",
@@ -3382,13 +3381,12 @@ const translations = {
     "settings.processingSpeedChoose": "Elegir velocidad",
     "settings.processingSpeedRetainedHint": "La configuración actual se conserva hasta que elijas una velocidad.",
     "settings.commonEfforts": "Niveles de razonamiento que se usarán",
-    "settings.commonEffortsHint": "Los niveles seleccionados se aplican a los modelos compatibles. Una selección parcial indica ajustes distintos por modelo.",
-    "settings.modelSpecific": "Ajustes por modelo",
-    "settings.partialSelection": "Seleccionado parcialmente",
-    "settings.someModelsOnly": "Disponible solo en algunos modelos",
+    "settings.commonEffortsHint": "Los niveles seleccionados se aplican a todos los modelos seleccionados que los admiten.",
     "settings.selectionSummary": "{models} modelos · {count} combinaciones ejecutables",
     "settings.modelDescriptions.showAll": "Mostrar todos los modelos",
-    "settings.modelDescriptions.noAllowed": "No hay modelos permitidos. Muestra todos los modelos para ver sus descripciones."
+    "settings.modelDescriptions.noAllowed": "No hay modelos permitidos. Muestra todos los modelos para ver sus descripciones.",
+    "settings.chooseModelsForEfforts": "Selecciona modelos para ver sus niveles de razonamiento compatibles.",
+    "settings.unsupportedModelEfforts": "{model} no admite {efforts}; estos niveles de razonamiento no se aplicarán."
   },
   "fr": {
     "problem.history": "Historique des échecs",
@@ -3581,7 +3579,7 @@ const translations = {
     "settings.catalogStatus.invalid": "Catalogue de modèles indisponible",
     "settings.selectionRequired": "Choisissez un modèle et un niveau de raisonnement précis.",
     "settings.explicitRequired": "Sélectionnez au moins une combinaison exacte autorisée.",
-    "settings.modelEffortRequired": "Sélectionnez au moins un niveau de raisonnement pour {model}.",
+    "settings.modelEffortRequired": "Choisissez un niveau de raisonnement commun pris en charge par {model}.",
     "settings.projects": "Projets",
     "settings.projectsHint": "Enregistrez les dossiers où Codex peut commencer à travailler. Vous pouvez ajouter plusieurs emplacements indépendants sur ce PC ; les ID internes sont gérés automatiquement.",
     "settings.allowedRoots": "Racines autorisées par le pont",
@@ -3906,13 +3904,12 @@ const translations = {
     "settings.processingSpeedChoose": "Choisir une vitesse",
     "settings.processingSpeedRetainedHint": "Le réglage actuel est conservé jusqu’à ce que vous choisissiez une vitesse.",
     "settings.commonEfforts": "Niveaux de raisonnement à utiliser",
-    "settings.commonEffortsHint": "Les niveaux sélectionnés s’appliquent aux modèles compatibles. Une sélection partielle indique des réglages différents selon le modèle.",
-    "settings.modelSpecific": "Réglages par modèle",
-    "settings.partialSelection": "Sélection partielle",
-    "settings.someModelsOnly": "Disponible pour certains modèles seulement",
+    "settings.commonEffortsHint": "Les niveaux sélectionnés s’appliquent à tous les modèles sélectionnés qui les prennent en charge.",
     "settings.selectionSummary": "{models} modèles · {count} combinaisons exécutables",
     "settings.modelDescriptions.showAll": "Afficher tous les modèles",
-    "settings.modelDescriptions.noAllowed": "Aucun modèle n’est actuellement autorisé. Affichez tous les modèles pour consulter leurs descriptions."
+    "settings.modelDescriptions.noAllowed": "Aucun modèle n’est actuellement autorisé. Affichez tous les modèles pour consulter leurs descriptions.",
+    "settings.chooseModelsForEfforts": "Sélectionnez des modèles pour afficher leurs niveaux de raisonnement disponibles.",
+    "settings.unsupportedModelEfforts": "{model} ne prend pas en charge {efforts} ; ces niveaux de raisonnement ne seront pas appliqués."
   },
   "de": {
     "problem.history": "Fehlerverlauf",
@@ -4105,7 +4102,7 @@ const translations = {
     "settings.catalogStatus.invalid": "Modellkatalog nicht verfügbar",
     "settings.selectionRequired": "Wählen Sie ein genaues Modell und eine Denkstufe aus.",
     "settings.explicitRequired": "Wählen Sie mindestens eine erlaubte genaue Kombination aus.",
-    "settings.modelEffortRequired": "Wählen Sie mindestens eine Reasoning-Stufe für {model} aus.",
+    "settings.modelEffortRequired": "Wählen Sie eine gemeinsame Denkstufe, die {model} unterstützt.",
     "settings.projects": "Projekte",
     "settings.projectsHint": "Registrieren Sie die Ordner, in denen Codex die Arbeit beginnen darf. Sie können mehrere unabhängige Orte auf diesem PC hinzufügen; interne IDs werden automatisch verwaltet.",
     "settings.allowedRoots": "Von der Bridge erlaubte Stammordner",
@@ -4430,13 +4427,12 @@ const translations = {
     "settings.processingSpeedChoose": "Geschwindigkeit wählen",
     "settings.processingSpeedRetainedHint": "Die aktuelle Einstellung bleibt erhalten, bis Sie eine Geschwindigkeit wählen.",
     "settings.commonEfforts": "Zu verwendende Denkstufen",
-    "settings.commonEffortsHint": "Ausgewählte Denkstufen gelten für Modelle, die sie unterstützen. Eine teilweise Auswahl zeigt unterschiedliche Einstellungen je Modell.",
-    "settings.modelSpecific": "Einstellungen pro Modell",
-    "settings.partialSelection": "Teilweise ausgewählt",
-    "settings.someModelsOnly": "Nur für einige Modelle verfügbar",
+    "settings.commonEffortsHint": "Ausgewählte Denkstufen gelten für alle ausgewählten Modelle, die sie unterstützen.",
     "settings.selectionSummary": "{models} Modelle · {count} ausführbare Kombinationen",
     "settings.modelDescriptions.showAll": "Alle Modelle anzeigen",
-    "settings.modelDescriptions.noAllowed": "Derzeit sind keine Modelle erlaubt. Zeigen Sie alle Modelle an, um ihre Beschreibungen zu sehen."
+    "settings.modelDescriptions.noAllowed": "Derzeit sind keine Modelle erlaubt. Zeigen Sie alle Modelle an, um ihre Beschreibungen zu sehen.",
+    "settings.chooseModelsForEfforts": "Wählen Sie Modelle aus, um ihre verfügbaren Denkstufen zu sehen.",
+    "settings.unsupportedModelEfforts": "{model} unterstützt {efforts} nicht; diese Denkstufen werden nicht angewendet."
   },
   "pt": {
     "problem.history": "Histórico de falhas",
@@ -4629,7 +4625,7 @@ const translations = {
     "settings.catalogStatus.invalid": "Catálogo de modelos indisponível",
     "settings.selectionRequired": "Escolha um modelo e um nível de raciocínio exatos.",
     "settings.explicitRequired": "Selecione pelo menos uma combinação exata permitida.",
-    "settings.modelEffortRequired": "Selecione pelo menos um nível de raciocínio para {model}.",
+    "settings.modelEffortRequired": "Escolha um nível de raciocínio comum compatível com {model}.",
     "settings.projects": "Projetos",
     "settings.projectsHint": "Registre as pastas onde o Codex pode começar a trabalhar. Você pode adicionar vários locais independentes deste PC; os IDs internos são gerenciados automaticamente.",
     "settings.allowedRoots": "Raízes permitidas pela ponte",
@@ -4954,13 +4950,12 @@ const translations = {
     "settings.processingSpeedChoose": "Escolher velocidade",
     "settings.processingSpeedRetainedHint": "A configuração atual é mantida até você escolher uma velocidade.",
     "settings.commonEfforts": "Níveis de raciocínio a usar",
-    "settings.commonEffortsHint": "Os níveis selecionados se aplicam aos modelos compatíveis. Uma seleção parcial indica configurações diferentes por modelo.",
-    "settings.modelSpecific": "Configurações por modelo",
-    "settings.partialSelection": "Selecionado parcialmente",
-    "settings.someModelsOnly": "Disponível apenas em alguns modelos",
+    "settings.commonEffortsHint": "Os níveis selecionados se aplicam a todos os modelos selecionados que os suportam.",
     "settings.selectionSummary": "{models} modelos · {count} combinações executáveis",
     "settings.modelDescriptions.showAll": "Mostrar todos os modelos",
-    "settings.modelDescriptions.noAllowed": "Nenhum modelo está permitido no momento. Mostre todos os modelos para ver suas descrições."
+    "settings.modelDescriptions.noAllowed": "Nenhum modelo está permitido no momento. Mostre todos os modelos para ver suas descrições.",
+    "settings.chooseModelsForEfforts": "Selecione modelos para ver os níveis de raciocínio disponíveis.",
+    "settings.unsupportedModelEfforts": "{model} não suporta {efforts}; esses níveis de raciocínio não serão aplicados."
   }
 } as const;
 

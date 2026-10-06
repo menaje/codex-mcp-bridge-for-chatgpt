@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "releaseUnitId": "codex-mcp-bridge",
   "bump": "minor",
-  "summary": "Simplify model and reasoning selection in both Settings editors, preserve model-specific choices, and align filtered model descriptions with catalog order.",
+  "summary": "Simplify model and reasoning selection in both Settings editors and align filtered model descriptions with catalog order.",
   "breaking": false,
   "migration": null
 }

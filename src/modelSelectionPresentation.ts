@@ -6,12 +6,18 @@ export function projectModelChoices(models: string[], efforts: string[], choices
   return choices.filter(choice => selectedModels.has(choice.model) && selectedEfforts.has(choice.reasoningEffort));
 }
 
-export function commonEffortState(models: string[], effort: string, choices: ModelChoice[], selected: ModelChoice[]) {
-  const candidates = choices.filter(choice => models.includes(choice.model) && choice.reasoningEffort === effort);
-  const keys = new Set(selected.map(choice => JSON.stringify([choice.model, choice.reasoningEffort])));
-  const count = candidates.filter(choice => keys.has(JSON.stringify([choice.model, choice.reasoningEffort]))).length;
-  return { checked: candidates.length > 0 && count === candidates.length,
-    mixed: count > 0 && count < candidates.length, supportedModels: new Set(candidates.map(choice => choice.model)).size };
+export function availableCommonEfforts(models: string[], choices: ModelChoice[]): string[] {
+  const values = new Set(choices.filter(choice => models.includes(choice.model)).map(choice => choice.reasoningEffort));
+  const known = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+  return [...known.filter(effort => values.has(effort)), ...[...values].filter(effort => !known.includes(effort)).sort()];
+}
+
+export function unsupportedModelEfforts(models: string[], efforts: string[], catalogChoices: ModelChoice[]) {
+  return models.flatMap(model => {
+    const supported = new Set(catalogChoices.filter(choice => choice.model === model).map(choice => choice.reasoningEffort));
+    const unsupported = efforts.filter(effort => !supported.has(effort));
+    return unsupported.length ? [{ model, efforts: unsupported }] : [];
+  });
 }
 
 export function orderedModelIDs(catalog: string[], retained: string[]): string[] {

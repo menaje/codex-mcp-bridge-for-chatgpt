@@ -40,12 +40,23 @@ with no saved reasoning choice shows a warning and prevents saving that policy.
 The summary counts executable pairs, so retained disabled Ultra choices do not
 inflate it.
 
-Existing model-specific choices are loaded without expanding them. Common effort
-checkboxes show partial selections when supported models have different saved
-choices. **Model-specific settings** retains the exact per-model controls behind
-a disclosure. Changing a common effort is a deliberate apply/remove operation
-for that effort; other saved pairs are preserved. Disabled Ultra stays saved and
-inactive until re-enabled, as before.
+Both model and effort changes recompute the complete set of supported pairs from
+one common effort list. There are no per-model effort overrides or partial
+checkboxes. An effort is shown only when at least one selected model supports it
+within operator limits. Removing its last supporting model hides that effort and
+removes it from the common selection. A selected effort unsupported by another
+selected model produces a notice naming the model and its excluded efforts;
+those combinations are absent from executable discovery and policy enforcement.
+The notice uses catalog support, so operator restrictions do not falsely describe
+an effort as unsupported by a model.
+
+Existing per-model selections are converted using the union of their saved
+efforts, then projected onto supported pairs. The Settings card persists this
+conversion with its next Settings save. The native app autosaves a valid converted
+policy when loading Settings. A conversion with a selected model that has no
+supported selected effort waits for the user to choose another common effort or
+remove that model. The persisted policy remains the existing exact-pair format.
+Disabled Ultra stays saved and inactive until re-enabled, as before.
 
 ## User model descriptions
 
