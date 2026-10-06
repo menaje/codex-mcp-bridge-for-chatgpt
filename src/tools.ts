@@ -79,7 +79,8 @@ import { BRIDGE_BUILD_INFO } from "./buildInfo.js";
 import { resolveExecutionPolicy, resolveTaskSandbox } from "./executionPolicy.js";
 import { executionAccessArguments } from "./executionAccess.js";
 import { executionAudit, readExecutionEvidence, retainExecutionEvidence, type ExecutionEvidence } from "./executionAudit.js";
-import { PROCESSING_SPEED_MODES, isProcessingSpeedMode, resolveTurnSpeed, selectionSpeedArguments, speedTierForModel } from "./processingSpeed.js";
+import { PROCESSING_SPEED_MODES, isProcessingSpeedMode, resolveTurnSpeed, selectionSpeedArguments, speedTierForModel, requireProcessingSpeedAccess, ULTRAFAST_ACCESS_UNVERIFIED } from "./processingSpeed.js";
+import { UNVERIFIED_APP_SERVER_CAPABILITIES } from "./cliProtocol.js";
 import {
   HARD_MAX_CONCURRENT_JOBS,
   formatSensitiveFileFindings,
@@ -7866,9 +7867,10 @@ export function registerBridgeTools(
             nextRevision
           );
           else if (isProcessingSpeedMode(nextSpeed)) {
+            requireProcessingSpeedAccess(nextSpeed);
             const eligible = listAllowedModelSelections(policy, catalog, effectiveModelCeiling(catalog, config.operatorModelCeiling, false, nextSpeed));
             if (!eligible.length) throw new Error(`PROCESSING_SPEED_UNAVAILABLE: No allowed model supports '${nextSpeed}'. Choose a supported model and speed.`);
-            resolveTurnSpeed(eligible[0]!, nextSpeed, catalog, backendCapabilities(upstream, config.defaultBackend));
+            resolveTurnSpeed(eligible[0]!, nextSpeed, catalog, await settingsBackendCapabilities(config, () => backendCapabilities(upstream, config.defaultBackend)));
           }
         }
         if (patch.modelPolicy !== undefined) patch.modelPolicy = policy;
@@ -10028,6 +10030,8 @@ async function runCodex(input: {
         // Recheck support for the admitted choice without reading newer user
         // settings or selecting a replacement. Running Jobs never enter here again.
         const catalog = await input.modelCatalog.getCatalog({ backendKind: input.backendKind });
+        requireProcessingSpeedAccess(input.executionDecision.processingSpeed ||
+          (input.executionDecision.effectiveSelection.serviceTier === "ultrafast" ? "ultrafast" : "legacy"));
         assertAdmittedSelectionSupported(input.executionDecision.effectiveSelection, catalog);
         return input.run(onProgress, onAssigned);
       },
@@ -13951,6 +13955,7 @@ async function buildSettingsView(
   developerModeRefreshRequired = false,
   getCapabilities?: () => BackendCapabilities
 ): Promise<SettingsView> {
+  const capabilities = await settingsBackendCapabilities(config, getCapabilities);
   let catalog: CodexModelCatalogSnapshot | undefined;
   let catalogError: string | undefined;
   try {
@@ -13977,7 +13982,7 @@ async function buildSettingsView(
         userSettings.current.usePriorityServiceTier,
         userSettings.current.revision
       );
-      modelPolicyWarning = processingSpeedWarning(userSettings.current, catalog, config.operatorModelCeiling, getCapabilities?.());
+      modelPolicyWarning = processingSpeedWarning(userSettings.current, catalog, config.operatorModelCeiling, capabilities);
       if (isModelPolicySuspended(userSettings.current.modelPolicy, catalog, config.operatorModelCeiling)) {
         modelPolicyWarning = ULTRA_DISABLED_NO_SELECTION_WARNING;
       }
@@ -14001,12 +14006,12 @@ async function buildSettingsView(
     settings: userSettings.current,
     operatorDefaults: userSettings.defaults,
     capabilities: {
-      availableProcessingSpeeds: ["legacy", ...(getCapabilities?.().supportsPerTurnServiceTier ? ["inherit", "standard", ...["fast", "ultrafast"].filter(mode => catalog &&
+      availableProcessingSpeeds: ["legacy", ...(capabilities?.supportsPerTurnServiceTier ? ["inherit", "standard", ...["fast"].filter(mode => catalog &&
         listAllowedModelSelections(userSettings.current.modelPolicy, catalog, config.operatorModelCeiling).some(selection => {
           const tier = speedTierForModel(catalog!, selection.model, mode as "fast" | "ultrafast");
-          return tier && getCapabilities?.().supportedPerTurnServiceTiers?.includes(tier);
+          return tier && capabilities?.supportedPerTurnServiceTiers?.includes(tier);
         }))] : [])] as typeof PROCESSING_SPEED_MODES[number][],
-      processingSpeedSupport: { protocol: getCapabilities?.().supportsPerTurnServiceTier ? "supported" : "unverified", account: "unverified", workspace: "unverified" },
+      processingSpeedSupport: { protocol: capabilities?.supportsPerTurnServiceTier ? "supported" : "unverified", account: "unverified", workspace: "unverified" },
       availableAccessStrategies,
       availableUiLocalePreferences: [...UI_LOCALE_PREFERENCES],
       recoverableProjects: userSettings.recoverableProjects,
@@ -14047,6 +14052,7 @@ async function buildSettingsView(
     warnings: [
       ...config.startupWarnings,
       ...userSettings.loadWarnings,
+      ...(capabilities?.supportsPerTurnServiceTier ? [] : ["PROCESSING_SPEED_UNSUPPORTED: Choose a compatible Codex installation to enable per-Job speed choices."]),
       ...(modelPolicyWarning ? [modelPolicyWarning] : [])
     ],
     scopeNotice:
@@ -14167,6 +14173,7 @@ function processingSpeedWarning(preferences: BridgeUserSettings, catalog: CodexM
   operatorCeiling: ModelChoice[] | undefined, capabilities?: BackendCapabilities): string | undefined {
   const mode = preferences.processingSpeed;
   if (mode === "legacy") return undefined;
+  if (mode === "ultrafast") return ULTRAFAST_ACCESS_UNVERIFIED;
   if (!isProcessingSpeedMode(mode)) return `PROCESSING_SPEED_UNRECOGNIZED: Saved speed '${mode}' is preserved. Choose a supported speed before starting new work.`;
   if (capabilities?.supportsPerTurnServiceTier !== true) return "PROCESSING_SPEED_UNSUPPORTED: Per-turn speed support is unverified for the selected CLI.";
   const choices = listAllowedModelSelections(preferences.modelPolicy, catalog, operatorCeiling);
@@ -14201,6 +14208,7 @@ async function resolveExecutionDecision(input: {
   // against that same fingerprint before admission.
   input.onCatalog?.(catalog);
   if (!isProcessingSpeedMode(input.preferences.processingSpeed)) throw new Error(`PROCESSING_SPEED_UNRECOGNIZED: Saved speed '${input.preferences.processingSpeed}' is preserved. Choose a supported speed before starting new work.`);
+  requireProcessingSpeedAccess(input.preferences.processingSpeed);
   if (input.preferences.processingSpeed === "legacy") assertPriorityCompatibility(
     input.preferences.modelPolicy,
     catalog,
@@ -14380,6 +14388,15 @@ function backendCapabilities(
         supportsServiceTierOverrideOnContinue: false,
         supportsFork: false
       });
+}
+
+async function settingsBackendCapabilities(
+  config: BridgeConfig,
+  fallback?: () => BackendCapabilities
+): Promise<BackendCapabilities> {
+  if (!config.codexService) return fallback?.() || UNVERIFIED_APP_SERVER_CAPABILITIES;
+  try { return await config.codexService.readCapabilities() || UNVERIFIED_APP_SERVER_CAPABILITIES; }
+  catch { return UNVERIFIED_APP_SERVER_CAPABILITIES; }
 }
 
 function applyModelSelection(

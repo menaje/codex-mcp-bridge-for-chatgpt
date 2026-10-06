@@ -287,8 +287,8 @@ describe("current bridge tool contracts", () => {
     } finally { releaseValidation(); hold.release(); spy.mockRestore(); }
   });
 
-  it("preserves unknown saved speeds through old-client saves and refuses new execution", async () => {
-    settings.update({ processingSpeed: "future-tier" }, settings.current.settingsRevision);
+  it.each(["future-tier", "ultrafast"])("preserves saved %s through old-client saves and refuses unverified new execution", async speed => {
+    settings.update({ processingSpeed: speed }, settings.current.settingsRevision);
     await client.close(); await new Promise<void>(resolve => server.close(resolve));
     server = createHttpServer(config, upstream, new FixtureCatalog(), { stateStore: state });
     client = new Client({ name: "old-speed-save-test", version: "1" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
@@ -297,11 +297,12 @@ describe("current bridge tool contracts", () => {
     const view = await server.applicationService.settingsSnapshot();
     const updated = await server.applicationService.updateSettings({ expectedSettingsRevision: view.settings.settingsRevision,
       operation: { kind: "patch", settings: { usePriorityServiceTier: false, uiLocalePreference: "ko" } } });
-    expect(updated.settings.processingSpeed).toBe("future-tier");
+    expect(updated.settings.processingSpeed).toBe(speed);
+    const code = speed === "ultrafast" ? "PROCESSING_SPEED_ACCESS_UNVERIFIED" : "PROCESSING_SPEED_UNRECOGNIZED";
     const models = await client.callTool({ name: "codex_models", arguments: {} });
     expect(models.isError, JSON.stringify(models)).not.toBe(true);
-    expect(models.structuredContent).toMatchObject({ processingSpeed: { selected: "future-tier", scope: null },
-      warning: expect.stringContaining("PROCESSING_SPEED_UNRECOGNIZED") });
+    expect(models.structuredContent).toMatchObject({ processingSpeed: { selected: speed, scope: speed === "ultrafast" ? "turn" : null },
+      warning: expect.stringContaining(code) });
     const descriptor = (await client.listTools()).tools.find(tool => tool.name === "codex_task")!;
     const properties = descriptor.inputSchema.properties as Record<string, { const?: string }>;
     const project = updated.settings.projects[0]!;
@@ -309,8 +310,25 @@ describe("current bridge tool contracts", () => {
       scopeId: randomUUID(), requestId: randomUUID(), prompt: "Do not infer the meaning of future-tier.", selection,
       taskContractVersion: properties.taskContractVersion?.const, executionEnvelopeRef: properties.executionEnvelopeRef?.const,
       project: { name: project.name, projectRef: project.projectRef, projectRevision: project.projectRevision } } });
-    expect(result.isError).toBe(true); expect(JSON.stringify(result)).toContain("PROCESSING_SPEED_UNRECOGNIZED");
+    expect(result.isError).toBe(true); expect(JSON.stringify(result)).toContain(code);
     expect(upstream.calls).toHaveLength(0); expect(state.listJobs()).toHaveLength(0);
+  });
+
+  it("does not offer or save Ultrafast from protocol and catalog support alone", async () => {
+    Object.assign(upstream, { capabilities: () => APP_SERVER_CAPABILITIES });
+    const catalog = await new FixtureCatalog().getCatalog();
+    catalog.models[0]!.serviceTiers = [{ id: "ultrafast", name: "Ultrafast" }];
+    const spy = vi.spyOn(FixtureCatalog.prototype, "getCatalog").mockResolvedValue(catalog);
+    try {
+      const view = await server.applicationService.settingsSnapshot();
+      expect(view.capabilities.availableProcessingSpeeds).toContain("standard");
+      expect(view.capabilities.availableProcessingSpeeds).not.toContain("ultrafast");
+      await expect(server.applicationService.updateSettings({ expectedSettingsRevision: view.settings.settingsRevision,
+        operation: { kind: "patch", settings: { processingSpeed: "ultrafast" } }
+      })).rejects.toThrow("PROCESSING_SPEED_ACCESS_UNVERIFIED");
+      expect(settings.current.processingSpeed).toBe("legacy");
+      expect(upstream.calls).toHaveLength(0); expect(state.listJobs()).toHaveLength(0);
+    } finally { spy.mockRestore(); }
   });
 
   it.each([

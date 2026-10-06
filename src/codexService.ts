@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { CodexRuntimeManager, type CliSelection } from "./codexRuntime.js";
 import type { CliProtocolSupport } from "./cliProtocol.js";
+import type { BackendCapabilities } from "./modelPolicy.js";
 import type { CodexBackendKind } from "./config.js";
 import { JsonRpcProcess } from "./jsonRpcProcess.js";
 import { codexChatgptOwnerKey, codexChatgptPrincipalKey, projectCodexAccount, type CodexAccountSnapshot } from "./codexAccount.js";
@@ -133,6 +134,7 @@ export class CodexService {
   readonly billing: CodexBilling;
   readonly cli: CodexRuntimeManager;
   private visibility?: () => boolean;
+  private capabilityRead?: { fingerprint: string; expires: number; request: Promise<BackendCapabilities | undefined> };
   private accountIdentities = new Map<CodexBackendKind, string>();
   private accounts = new Map<CodexBackendKind, { revision: string; expires: number; pending: boolean; request: Promise<CodexAccountSnapshot | null> }>();
   private displayedAccounts = new Map<CodexBackendKind, { revision: string; context: string | null; value: CodexAccountSnapshot }>();
@@ -175,6 +177,29 @@ export class CodexService {
       await release();
       throw error;
     }
+  }
+  /** Reuse the selected installation's schema check, including before the first Job.
+   * Settings projections have no execution upstream and must not invent its capabilities. */
+  async readCapabilities(): Promise<BackendCapabilities | undefined> {
+    const fingerprint = this.cli.appliedContextFingerprint();
+    const cached = this.capabilityRead;
+    if (cached?.fingerprint === fingerprint && cached.expires > Date.now()) return cached.request;
+    // Coalesce cold reads and briefly retain failures as well as successes.
+    // The identity includes the selected executable's stamps, so selection or
+    // binary changes invalidate this display cache immediately. Execution still
+    // acquires and validates its own context before admission.
+    const entry = { fingerprint, expires: Infinity, request: Promise.resolve<BackendCapabilities | undefined>(undefined) };
+    entry.request = (async () => {
+      try {
+        const context = await this.acquireContext();
+        try {
+          return this.cli.appliedContextFingerprint() === fingerprint ? context.protocol?.capabilities : undefined;
+        } finally { await context.release(); }
+      } catch { return undefined; }
+      finally { entry.expires = Date.now() + 5_000; }
+    })();
+    this.capabilityRead = entry;
+    return entry.request;
   }
   setVisibilityProvider(provider: () => boolean): void { this.visibility = provider; this.setAppVisibility(provider()); }
   /**

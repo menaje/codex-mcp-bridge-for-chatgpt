@@ -21,6 +21,40 @@ afterEach(async () => {
   }
 });
 
+describe("settings speed support in the isolated read process", () => {
+  it.each([undefined, "turn/start"])("uses the selected CLI schema before any Job, missing method %s", async missingMethod => {
+    const root = await mkdtemp(path.join(tmpdir(), "bridge-speed-read-")); roots.push(root);
+    const file = path.join(root, "state.sqlite"), turnLog = path.join(root, "turns.jsonl");
+    const command = path.join(root, "codex-speed.mjs");
+    const models = { models: [{ slug: "sol", display_name: "Sol", visibility: "list",
+      supported_reasoning_levels: [{ effort: "medium" }], service_tiers: [{ id: "priority", name: "Fast" }] }] };
+    await writeFile(command, `#!/usr/bin/env node\nif(process.argv[2]==='debug'&&process.argv[3]==='models'){console.log(${JSON.stringify(JSON.stringify(models))});process.exit(0)}\nawait import(${JSON.stringify(new URL("./fixtures/fake-codex-app-server.mjs", import.meta.url).href)});\n`, { mode: 0o700 });
+    const environment = { ...process.env, HOME: root, CODEX_HOME: path.join(root, "codex"),
+      CODEX_MCP_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_CODEX: command,
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime"), CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: file,
+      CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: path.join(root, "models.json"), CODEX_MCP_BRIDGE_SKILLS_DIRECTORY: path.join(root, "skills"),
+      CODEX_TEST_MISSING_METHOD: missingMethod, CODEX_TEST_SPEED_LOG: turnLog };
+    const store = new BridgeStateStore({ file });
+    new UserSettingsStore(loadConfig(environment), { stateStore: store }); new ScopeResolver({ stateStore: store });
+    const writers = bridgeInstanceCount(file);
+    const service = await ChildProcessStateReadService.start(file, environment);
+    try {
+      const view = await service.settingsSnapshot();
+      if (missingMethod) {
+        expect(view.capabilities.availableProcessingSpeeds).toEqual(["legacy"]);
+        expect(view.capabilities.processingSpeedSupport?.protocol).toBe("unverified");
+        expect(view.warnings.some(warning => warning.startsWith("PROCESSING_SPEED_UNSUPPORTED:"))).toBe(true);
+      } else {
+        expect(view.capabilities.availableProcessingSpeeds).toEqual(expect.arrayContaining(["inherit", "standard", "fast"]));
+        expect(view.capabilities.processingSpeedSupport?.protocol).toBe("supported");
+      }
+      expect(view.capabilities.availableProcessingSpeeds).not.toContain("ultrafast");
+      expect(bridgeInstanceCount(file)).toBe(writers);
+      await expect(import("node:fs/promises").then(fs => fs.readFile(turnLog))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await service.close(); store.close(); }
+  }, 20_000);
+});
+
 async function waitFor(
   predicate: () => boolean,
   timeoutMs = 5_000
@@ -203,8 +237,9 @@ describe("isolated state read projection", () => {
     try {
       process.kill(processId!, "SIGSTOP");
       stopped = true;
+      // Exercise the shared IPC limit without coupling it to CLI inspection.
       const timedOut = Array.from({ length: 16 }, () =>
-        service.settingsSnapshot().then(
+        service.dashboardSnapshot({ enrich: false }).then(
           () => "resolved",
           error => error instanceof Error ? error.message : String(error)
         )
@@ -222,22 +257,20 @@ describe("isolated state read projection", () => {
       process.kill(processId!, "SIGCONT");
       stopped = false;
       await waitFor(() => service.health().inFlight === 0);
-      // A 50 ms test-only deadline can still expire after SIGCONT when other
-      // workers are scheduled. Verify eventual reuse without changing that
-      // per-request deadline or accepting a leaked abandoned request.
-      let snapshot: Awaited<ReturnType<typeof service.settingsSnapshot>> | undefined;
+      // Verify reuse with a database-only projection. Settings also inspects
+      // the selected CLI; its latency is separate from the IPC capacity contract.
+      // Keep the same 50 ms deadline and do not accept leaked abandoned reads.
+      let snapshot: Awaited<ReturnType<typeof service.dashboardSnapshot>> | undefined;
       const recoveryDeadline = Date.now() + 5_000;
       while (Date.now() < recoveryDeadline && !snapshot) {
         await waitFor(() => service.health().inFlight === 0);
         try {
-          snapshot = await service.settingsSnapshot();
+          snapshot = await service.dashboardSnapshot({ enrich: false });
         } catch (error) {
           if (!(error instanceof Error) || !error.message.includes("STATE_READ_STALE")) throw error;
         }
       }
-      expect(snapshot).toMatchObject({
-        settings: { settingsRevision: 1, uiLocalePreference: "ko" }
-      });
+      expect(snapshot).toMatchObject({ uiLocalePreference: "ko" });
       await waitFor(() => service.health().inFlight === 0);
     } finally {
       if (stopped) {
