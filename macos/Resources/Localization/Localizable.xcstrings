@@ -10098,55 +10098,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Models"
+            "value": "Models to use"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "모델"
+            "value": "사용할 모델"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "モデル"
+            "value": "使用するモデル"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "模型"
+            "value": "使用的模型"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "模型"
+            "value": "使用的模型"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modelos"
+            "value": "Modelos que se usarán"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modèles"
+            "value": "Modèles à utiliser"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modelle"
+            "value": "Zu verwendende Modelle"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modelos"
+            "value": "Modelos a usar"
           }
         }
       }
@@ -29809,6 +29809,470 @@
           "stringUnit": {
             "state": "translated",
             "value": "A configuração atual é mantida até você escolher uma velocidade."
+          }
+        }
+      }
+    },
+    "settings.commonEfforts": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reasoning levels to use"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사용할 추론 수준"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用する推論レベル"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用的推理级别"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用的推理層級"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Niveles de razonamiento que se usarán"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Niveaux de raisonnement à utiliser"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zu verwendende Denkstufen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Níveis de raciocínio a usar"
+          }
+        }
+      }
+    },
+    "settings.commonEffortsHint": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selected reasoning levels apply to models that support them. A partial selection means models have different settings."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "선택한 추론을 지원하는 모델에 함께 적용합니다. 일부 선택은 모델마다 설정이 다르다는 뜻입니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選択した推論レベルを、対応するモデルに適用します。一部選択はモデルごとに設定が異なることを示します。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所选推理级别适用于支持它们的模型。部分选中表示各模型的设置不同。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所選推理層級適用於支援它們的模型。部分選取表示各模型的設定不同。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los niveles seleccionados se aplican a los modelos compatibles. Una selección parcial indica ajustes distintos por modelo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les niveaux sélectionnés s’appliquent aux modèles compatibles. Une sélection partielle indique des réglages différents selon le modèle."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ausgewählte Denkstufen gelten für Modelle, die sie unterstützen. Eine teilweise Auswahl zeigt unterschiedliche Einstellungen je Modell."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Os níveis selecionados se aplicam aos modelos compatíveis. Uma seleção parcial indica configurações diferentes por modelo."
+          }
+        }
+      }
+    },
+    "settings.modelSpecific": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model-specific settings"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델별 세부 설정"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデル別の詳細設定"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按模型详细设置"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "各模型的詳細設定"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajustes por modelo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réglages par modèle"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Einstellungen pro Modell"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Configurações por modelo"
+          }
+        }
+      }
+    },
+    "settings.partialSelection": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Partially selected"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "일부 선택"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一部選択"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分选中"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分選取"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seleccionado parcialmente"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sélection partielle"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Teilweise ausgewählt"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selecionado parcialmente"
+          }
+        }
+      }
+    },
+    "settings.someModelsOnly": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Available for some models only"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "일부 모델에서만 사용 가능"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一部のモデルのみ対応"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅部分模型支持"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "僅部分模型支援"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disponible solo en algunos modelos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disponible pour certains modèles seulement"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nur für einige Modelle verfügbar"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disponível apenas em alguns modelos"
+          }
+        }
+      }
+    },
+    "settings.selectionSummary": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} models · {count} executable combinations"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델 {models}개 · 실행 가능한 조합 {count}개"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデル {models} 個 · 実行可能な組み合わせ {count} 個"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} 个模型 · {count} 个可执行组合"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} 個模型 · {count} 個可執行組合"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} modelos · {count} combinaciones ejecutables"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} modèles · {count} combinaisons exécutables"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} Modelle · {count} ausführbare Kombinationen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "{models} modelos · {count} combinações executáveis"
+          }
+        }
+      }
+    },
+    "settings.modelDescriptions.showAll": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show all models"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "전체 모델 보기"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "すべてのモデルを表示"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示所有模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顯示所有模型"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mostrar todos los modelos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher tous les modèles"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alle Modelle anzeigen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mostrar todos os modelos"
+          }
+        }
+      }
+    },
+    "settings.modelDescriptions.noAllowed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No models are currently allowed. Show all models to view their descriptions."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 허용된 모델이 없습니다. 전체 모델 보기에서 설명을 확인할 수 있습니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在許可されているモデルはありません。すべてのモデルを表示すると説明を確認できます。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前没有允许使用的模型。显示所有模型即可查看说明。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前沒有允許使用的模型。顯示所有模型即可查看說明。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No hay modelos permitidos. Muestra todos los modelos para ver sus descripciones."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun modèle n’est actuellement autorisé. Affichez tous les modèles pour consulter leurs descriptions."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Derzeit sind keine Modelle erlaubt. Zeigen Sie alle Modelle an, um ihre Beschreibungen zu sehen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nenhum modelo está permitido no momento. Mostre todos os modelos para ver suas descrições."
           }
         }
       }

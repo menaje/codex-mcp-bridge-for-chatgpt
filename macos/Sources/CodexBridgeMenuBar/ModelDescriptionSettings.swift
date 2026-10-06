@@ -33,7 +33,9 @@ struct ModelDescriptionEdit: Equatable {
 
 struct ModelDescriptionsSettingsSection: View {
     let snapshot: SettingsSnapshot
+    let allowedModelIDs: Set<String>
     @State private var edits: [String: BridgeEditSession] = [:]
+    @State private var showAll = false
 
     private var models: [String: CatalogModel] {
         snapshot.catalog.models.filter { $0.hidden != true }.reduce(into: [:]) { result, model in
@@ -42,11 +44,12 @@ struct ModelDescriptionsSettingsSection: View {
     }
 
     private var modelIDs: [String] {
-        Set(models.keys)
+        let retained = Set(models.keys)
             .union(snapshot.settings.modelDescriptionOverrides?.keys.map { $0 } ?? [])
             .union(snapshot.modelDescriptionHistoryModelIds ?? [])
             .union(edits.keys)
-            .sorted()
+        return ModelSettingsOrder.ids(catalog: snapshot.catalog.models, retained: retained)
+            .filter { showAll || allowedModelIDs.contains($0) || edits[$0] != nil }
     }
 
     var body: some View {
@@ -54,6 +57,10 @@ struct ModelDescriptionsSettingsSection: View {
             Text("settings.modelDescriptions.hint")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Toggle("settings.modelDescriptions.showAll", isOn: $showAll)
+            if modelIDs.isEmpty {
+                Text("settings.modelDescriptions.noAllowed").font(.caption).foregroundStyle(.secondary)
+            }
             ForEach(modelIDs, id: \.self) { id in
                 ModelDescriptionSettingsRow(
                     modelID: id,

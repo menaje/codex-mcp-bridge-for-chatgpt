@@ -226,7 +226,7 @@
         "settings.allowedScope.catalog": "All available models and efforts",
         "settings.allowedScope.explicit": "Only models and efforts I choose",
         "settings.allowedExactSelections": "Select models first, then choose the reasoning efforts allowed for each model.",
-        "settings.allowedModels": "Models",
+        "settings.allowedModels": "Models to use",
         "settings.effortsByModel": "Reasoning efforts by selected model",
         "settings.selectAllEfforts": "All",
         "settings.partialEffortsSelected": "Some efforts are selected.",
@@ -565,7 +565,15 @@
         "settings.warning.speedProtocolUnverified": "Choose a compatible Codex installation to enable Standard and other speed choices.",
         "settings.warning.ultrafastAccessUnverified": "Ultrafast access cannot currently be confirmed. Your saved choice is retained; select another speed to start new work.",
         "settings.processingSpeedChoose": "Choose a speed",
-        "settings.processingSpeedRetainedHint": "Your current speed setting is kept until you choose a speed."
+        "settings.processingSpeedRetainedHint": "Your current speed setting is kept until you choose a speed.",
+        "settings.commonEfforts": "Reasoning levels to use",
+        "settings.commonEffortsHint": "Selected reasoning levels apply to models that support them. A partial selection means models have different settings.",
+        "settings.modelSpecific": "Model-specific settings",
+        "settings.partialSelection": "Partially selected",
+        "settings.someModelsOnly": "Available for some models only",
+        "settings.selectionSummary": "{models} models · {count} executable combinations",
+        "settings.modelDescriptions.showAll": "Show all models",
+        "settings.modelDescriptions.noAllowed": "No models are currently allowed. Show all models to view their descriptions."
       },
       "ko": {
         "problem.history": "실패 기록",
@@ -742,7 +750,7 @@
         "settings.allowedScope.catalog": "사용 가능한 모든 모델·에포트",
         "settings.allowedScope.explicit": "직접 선택한 모델·에포트만",
         "settings.allowedExactSelections": "먼저 모델을 선택한 다음, 모델별로 허용할 추론 에포트를 고르세요.",
-        "settings.allowedModels": "모델",
+        "settings.allowedModels": "사용할 모델",
         "settings.effortsByModel": "선택한 모델별 추론 에포트",
         "settings.selectAllEfforts": "모두",
         "settings.partialEffortsSelected": "일부 에포트가 선택되어 있습니다.",
@@ -1081,7 +1089,15 @@
         "settings.warning.speedProtocolUnverified": "Standard 등 속도를 선택하려면 호환되는 Codex 설치를 선택하세요.",
         "settings.warning.ultrafastAccessUnverified": "Ultrafast 사용 권한을 현재 확인할 수 없습니다. 저장된 선택은 유지됩니다. 새 작업을 시작하려면 다른 속도를 선택하세요.",
         "settings.processingSpeedChoose": "속도를 선택하세요",
-        "settings.processingSpeedRetainedHint": "속도를 선택하기 전까지 현재 설정을 유지합니다."
+        "settings.processingSpeedRetainedHint": "속도를 선택하기 전까지 현재 설정을 유지합니다.",
+        "settings.commonEfforts": "사용할 추론 수준",
+        "settings.commonEffortsHint": "선택한 추론을 지원하는 모델에 함께 적용합니다. 일부 선택은 모델마다 설정이 다르다는 뜻입니다.",
+        "settings.modelSpecific": "모델별 세부 설정",
+        "settings.partialSelection": "일부 선택",
+        "settings.someModelsOnly": "일부 모델에서만 사용 가능",
+        "settings.selectionSummary": "모델 {models}개 · 실행 가능한 조합 {count}개",
+        "settings.modelDescriptions.showAll": "전체 모델 보기",
+        "settings.modelDescriptions.noAllowed": "현재 허용된 모델이 없습니다. 전체 모델 보기에서 설명을 확인할 수 있습니다."
       },
       "ja": {
         "problem.history": "失敗の履歴",
@@ -1258,7 +1274,7 @@
         "settings.allowedScope.catalog": "利用可能なすべてのモデルとエフォート",
         "settings.allowedScope.explicit": "自分で選んだモデルとエフォートのみ",
         "settings.allowedExactSelections": "最初にモデルを選び、モデルごとに許可する推論エフォートを選択してください。",
-        "settings.allowedModels": "モデル",
+        "settings.allowedModels": "使用するモデル",
         "settings.effortsByModel": "選択したモデルごとの推論エフォート",
         "settings.selectAllEfforts": "すべて",
         "settings.partialEffortsSelected": "一部のエフォートが選択されています。",
@@ -1597,7 +1613,15 @@
         "settings.warning.speedProtocolUnverified": "Standardなどの速度を選択するには、互換性のあるCodexを選択してください。",
         "settings.warning.ultrafastAccessUnverified": "Ultrafastの利用権限は現在確認できません。保存済みの選択は保持されます。新しい作業には別の速度を選択してください。",
         "settings.processingSpeedChoose": "速度を選択",
-        "settings.processingSpeedRetainedHint": "速度を選択するまで現在の設定を保持します。"
+        "settings.processingSpeedRetainedHint": "速度を選択するまで現在の設定を保持します。",
+        "settings.commonEfforts": "使用する推論レベル",
+        "settings.commonEffortsHint": "選択した推論レベルを、対応するモデルに適用します。一部選択はモデルごとに設定が異なることを示します。",
+        "settings.modelSpecific": "モデル別の詳細設定",
+        "settings.partialSelection": "一部選択",
+        "settings.someModelsOnly": "一部のモデルのみ対応",
+        "settings.selectionSummary": "モデル {models} 個 · 実行可能な組み合わせ {count} 個",
+        "settings.modelDescriptions.showAll": "すべてのモデルを表示",
+        "settings.modelDescriptions.noAllowed": "現在許可されているモデルはありません。すべてのモデルを表示すると説明を確認できます。"
       },
       "zh-Hans": {
         "problem.history": "失败记录",
@@ -1774,7 +1798,7 @@
         "settings.allowedScope.catalog": "所有可用模型和推理强度",
         "settings.allowedScope.explicit": "仅限我选择的模型和推理强度",
         "settings.allowedExactSelections": "请先选择模型，再为每个模型选择允许的推理强度。",
-        "settings.allowedModels": "模型",
+        "settings.allowedModels": "使用的模型",
         "settings.effortsByModel": "所选模型的推理强度",
         "settings.selectAllEfforts": "全部",
         "settings.partialEffortsSelected": "已选择部分推理强度。",
@@ -2113,7 +2137,15 @@
         "settings.warning.speedProtocolUnverified": "请选择兼容的Codex安装版本，以启用Standard等速度选项。",
         "settings.warning.ultrafastAccessUnverified": "目前无法确认Ultrafast使用权限。已保存的选择会保留；开始新任务前请选择其他速度。",
         "settings.processingSpeedChoose": "选择速度",
-        "settings.processingSpeedRetainedHint": "选择速度之前会保留当前设置。"
+        "settings.processingSpeedRetainedHint": "选择速度之前会保留当前设置。",
+        "settings.commonEfforts": "使用的推理级别",
+        "settings.commonEffortsHint": "所选推理级别适用于支持它们的模型。部分选中表示各模型的设置不同。",
+        "settings.modelSpecific": "按模型详细设置",
+        "settings.partialSelection": "部分选中",
+        "settings.someModelsOnly": "仅部分模型支持",
+        "settings.selectionSummary": "{models} 个模型 · {count} 个可执行组合",
+        "settings.modelDescriptions.showAll": "显示所有模型",
+        "settings.modelDescriptions.noAllowed": "目前没有允许使用的模型。显示所有模型即可查看说明。"
       },
       "zh-Hant": {
         "problem.history": "失敗記錄",
@@ -2290,7 +2322,7 @@
         "settings.allowedScope.catalog": "所有可用模型與推理強度",
         "settings.allowedScope.explicit": "僅限我選擇的模型與推理強度",
         "settings.allowedExactSelections": "請先選擇模型，再為每個模型選擇允許的推理強度。",
-        "settings.allowedModels": "模型",
+        "settings.allowedModels": "使用的模型",
         "settings.effortsByModel": "所選模型的推理強度",
         "settings.selectAllEfforts": "全部",
         "settings.partialEffortsSelected": "已選擇部分推理強度。",
@@ -2629,7 +2661,15 @@
         "settings.warning.speedProtocolUnverified": "請選擇相容的Codex安裝版本，以啟用Standard等速度選項。",
         "settings.warning.ultrafastAccessUnverified": "目前無法確認Ultrafast使用權限。已儲存的選擇會保留；開始新工作前請選擇其他速度。",
         "settings.processingSpeedChoose": "選擇速度",
-        "settings.processingSpeedRetainedHint": "選擇速度之前會保留目前設定。"
+        "settings.processingSpeedRetainedHint": "選擇速度之前會保留目前設定。",
+        "settings.commonEfforts": "使用的推理層級",
+        "settings.commonEffortsHint": "所選推理層級適用於支援它們的模型。部分選取表示各模型的設定不同。",
+        "settings.modelSpecific": "各模型的詳細設定",
+        "settings.partialSelection": "部分選取",
+        "settings.someModelsOnly": "僅部分模型支援",
+        "settings.selectionSummary": "{models} 個模型 · {count} 個可執行組合",
+        "settings.modelDescriptions.showAll": "顯示所有模型",
+        "settings.modelDescriptions.noAllowed": "目前沒有允許使用的模型。顯示所有模型即可查看說明。"
       },
       "es": {
         "problem.history": "Historial de fallos",
@@ -2806,7 +2846,7 @@
         "settings.allowedScope.catalog": "Todos los modelos y niveles disponibles",
         "settings.allowedScope.explicit": "Solo los modelos y niveles que elija",
         "settings.allowedExactSelections": "Selecciona primero los modelos y después los niveles de razonamiento permitidos para cada uno.",
-        "settings.allowedModels": "Modelos",
+        "settings.allowedModels": "Modelos que se usarán",
         "settings.effortsByModel": "Niveles de razonamiento por modelo seleccionado",
         "settings.selectAllEfforts": "Todos",
         "settings.partialEffortsSelected": "Hay algunos niveles seleccionados.",
@@ -3145,7 +3185,15 @@
         "settings.warning.speedProtocolUnverified": "Elige una instalación compatible de Codex para habilitar Standard y las demás velocidades.",
         "settings.warning.ultrafastAccessUnverified": "No se puede confirmar el acceso a Ultrafast. Se conserva tu selección; elige otra velocidad para iniciar un trabajo nuevo.",
         "settings.processingSpeedChoose": "Elegir velocidad",
-        "settings.processingSpeedRetainedHint": "La configuración actual se conserva hasta que elijas una velocidad."
+        "settings.processingSpeedRetainedHint": "La configuración actual se conserva hasta que elijas una velocidad.",
+        "settings.commonEfforts": "Niveles de razonamiento que se usarán",
+        "settings.commonEffortsHint": "Los niveles seleccionados se aplican a los modelos compatibles. Una selección parcial indica ajustes distintos por modelo.",
+        "settings.modelSpecific": "Ajustes por modelo",
+        "settings.partialSelection": "Seleccionado parcialmente",
+        "settings.someModelsOnly": "Disponible solo en algunos modelos",
+        "settings.selectionSummary": "{models} modelos · {count} combinaciones ejecutables",
+        "settings.modelDescriptions.showAll": "Mostrar todos los modelos",
+        "settings.modelDescriptions.noAllowed": "No hay modelos permitidos. Muestra todos los modelos para ver sus descripciones."
       },
       "fr": {
         "problem.history": "Historique des échecs",
@@ -3322,7 +3370,7 @@
         "settings.allowedScope.catalog": "Tous les modèles et niveaux disponibles",
         "settings.allowedScope.explicit": "Uniquement les modèles et niveaux choisis",
         "settings.allowedExactSelections": "Sélectionnez d’abord les modèles, puis les niveaux de raisonnement autorisés pour chacun.",
-        "settings.allowedModels": "Modèles",
+        "settings.allowedModels": "Modèles à utiliser",
         "settings.effortsByModel": "Niveaux de raisonnement par modèle sélectionné",
         "settings.selectAllEfforts": "Tous",
         "settings.partialEffortsSelected": "Certains niveaux sont sélectionnés.",
@@ -3661,7 +3709,15 @@
         "settings.warning.speedProtocolUnverified": "Choisissez une installation Codex compatible pour activer Standard et les autres vitesses.",
         "settings.warning.ultrafastAccessUnverified": "L’accès à Ultrafast ne peut pas être confirmé actuellement. Votre choix est conservé ; choisissez une autre vitesse pour démarrer un nouveau travail.",
         "settings.processingSpeedChoose": "Choisir une vitesse",
-        "settings.processingSpeedRetainedHint": "Le réglage actuel est conservé jusqu’à ce que vous choisissiez une vitesse."
+        "settings.processingSpeedRetainedHint": "Le réglage actuel est conservé jusqu’à ce que vous choisissiez une vitesse.",
+        "settings.commonEfforts": "Niveaux de raisonnement à utiliser",
+        "settings.commonEffortsHint": "Les niveaux sélectionnés s’appliquent aux modèles compatibles. Une sélection partielle indique des réglages différents selon le modèle.",
+        "settings.modelSpecific": "Réglages par modèle",
+        "settings.partialSelection": "Sélection partielle",
+        "settings.someModelsOnly": "Disponible pour certains modèles seulement",
+        "settings.selectionSummary": "{models} modèles · {count} combinaisons exécutables",
+        "settings.modelDescriptions.showAll": "Afficher tous les modèles",
+        "settings.modelDescriptions.noAllowed": "Aucun modèle n’est actuellement autorisé. Affichez tous les modèles pour consulter leurs descriptions."
       },
       "de": {
         "problem.history": "Fehlerverlauf",
@@ -3838,7 +3894,7 @@
         "settings.allowedScope.catalog": "Alle verfügbaren Modelle und Reasoning-Stufen",
         "settings.allowedScope.explicit": "Nur selbst gewählte Modelle und Reasoning-Stufen",
         "settings.allowedExactSelections": "Wählen Sie zuerst die Modelle und dann die zulässigen Reasoning-Stufen für jedes Modell aus.",
-        "settings.allowedModels": "Modelle",
+        "settings.allowedModels": "Zu verwendende Modelle",
         "settings.effortsByModel": "Reasoning-Stufen nach ausgewähltem Modell",
         "settings.selectAllEfforts": "Alle",
         "settings.partialEffortsSelected": "Einige Reasoning-Stufen sind ausgewählt.",
@@ -4177,7 +4233,15 @@
         "settings.warning.speedProtocolUnverified": "Wähle eine kompatible Codex-Installation, um Standard und weitere Geschwindigkeiten zu aktivieren.",
         "settings.warning.ultrafastAccessUnverified": "Der Ultrafast-Zugriff kann derzeit nicht bestätigt werden. Deine gespeicherte Auswahl bleibt erhalten; wähle für neue Aufgaben eine andere Geschwindigkeit.",
         "settings.processingSpeedChoose": "Geschwindigkeit wählen",
-        "settings.processingSpeedRetainedHint": "Die aktuelle Einstellung bleibt erhalten, bis Sie eine Geschwindigkeit wählen."
+        "settings.processingSpeedRetainedHint": "Die aktuelle Einstellung bleibt erhalten, bis Sie eine Geschwindigkeit wählen.",
+        "settings.commonEfforts": "Zu verwendende Denkstufen",
+        "settings.commonEffortsHint": "Ausgewählte Denkstufen gelten für Modelle, die sie unterstützen. Eine teilweise Auswahl zeigt unterschiedliche Einstellungen je Modell.",
+        "settings.modelSpecific": "Einstellungen pro Modell",
+        "settings.partialSelection": "Teilweise ausgewählt",
+        "settings.someModelsOnly": "Nur für einige Modelle verfügbar",
+        "settings.selectionSummary": "{models} Modelle · {count} ausführbare Kombinationen",
+        "settings.modelDescriptions.showAll": "Alle Modelle anzeigen",
+        "settings.modelDescriptions.noAllowed": "Derzeit sind keine Modelle erlaubt. Zeigen Sie alle Modelle an, um ihre Beschreibungen zu sehen."
       },
       "pt": {
         "problem.history": "Histórico de falhas",
@@ -4354,7 +4418,7 @@
         "settings.allowedScope.catalog": "Todos os modelos e níveis disponíveis",
         "settings.allowedScope.explicit": "Somente os modelos e níveis escolhidos",
         "settings.allowedExactSelections": "Selecione primeiro os modelos e depois os níveis de raciocínio permitidos para cada um.",
-        "settings.allowedModels": "Modelos",
+        "settings.allowedModels": "Modelos a usar",
         "settings.effortsByModel": "Níveis de raciocínio por modelo selecionado",
         "settings.selectAllEfforts": "Todos",
         "settings.partialEffortsSelected": "Alguns níveis estão selecionados.",
@@ -4693,7 +4757,15 @@
         "settings.warning.speedProtocolUnverified": "Escolha uma instalação compatível do Codex para ativar Standard e outras velocidades.",
         "settings.warning.ultrafastAccessUnverified": "Não é possível confirmar o acesso ao Ultrafast no momento. A escolha salva é mantida; selecione outra velocidade para iniciar um novo trabalho.",
         "settings.processingSpeedChoose": "Escolher velocidade",
-        "settings.processingSpeedRetainedHint": "A configuração atual é mantida até você escolher uma velocidade."
+        "settings.processingSpeedRetainedHint": "A configuração atual é mantida até você escolher uma velocidade.",
+        "settings.commonEfforts": "Níveis de raciocínio a usar",
+        "settings.commonEffortsHint": "Os níveis selecionados se aplicam aos modelos compatíveis. Uma seleção parcial indica configurações diferentes por modelo.",
+        "settings.modelSpecific": "Configurações por modelo",
+        "settings.partialSelection": "Selecionado parcialmente",
+        "settings.someModelsOnly": "Disponível apenas em alguns modelos",
+        "settings.selectionSummary": "{models} modelos · {count} combinações executáveis",
+        "settings.modelDescriptions.showAll": "Mostrar todos os modelos",
+        "settings.modelDescriptions.noAllowed": "Nenhum modelo está permitido no momento. Mostre todos os modelos para ver suas descrições."
       }
     },
     "parameters": {
@@ -4896,6 +4968,10 @@
       },
       "dashboard.execution.speedBadgeHint": {
         "speed": "string-or-number"
+      },
+      "settings.selectionSummary": {
+        "models": "string-or-number",
+        "count": "string-or-number"
       }
     }
   },

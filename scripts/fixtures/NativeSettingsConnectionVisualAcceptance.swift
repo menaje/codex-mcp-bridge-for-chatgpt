@@ -160,6 +160,28 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                     expecting: expectedText
                 )
             }
+            model.settings = try Self.settingsSnapshot(modelSelection: true, settingsRevision: 5)
+            model.requestedSettingsTab = SettingsNavigationPane.modelExecution.rawValue
+            model.previewInterfaceLocale("ko")
+            try await settle(settingsWindow, iterations: 16)
+            clearSettingsCaptureErrors()
+            try await capture(settingsWindow, named: "settings-model-selection-ko-light.png", in: artifacts,
+                expecting: ["사용할 모델", "사용할 추론 수준", "모델별 세부 설정"])
+            model.previewInterfaceLocale("en")
+            try await settle(settingsWindow, iterations: 16)
+            clearSettingsCaptureErrors()
+            try await capture(settingsWindow, named: "settings-model-selection-en-light.png", in: artifacts,
+                expecting: ["Models to use", "Reasoning levels to use", "Model-specific settings"])
+            settingsWindow.setContentSize(NSSize(width: 820, height: 600))
+            model.previewInterfaceLocale("de")
+            try await settle(settingsWindow, iterations: 16)
+            clearSettingsCaptureErrors()
+            try verifySettingsDetailViewport(settingsWindow, scenario: "Model selection minimum size")
+            try await capture(settingsWindow, named: "settings-model-selection-de-minimum.png", in: artifacts,
+                expecting: ["Zu verwendende Modelle", "Zu verwendende Denkstufen"])
+            settingsWindow.setContentSize(NSSize(width: 980, height: 720))
+            model.settings = try Self.settingsSnapshot(settingsRevision: 6)
+            model.previewInterfaceLocale("en")
             model.codexRuntime = try Self.codexRuntimeSnapshot(overrideActive: true)
             model.requestedSettingsTab = SettingsNavigationPane.codex.rawValue
             try await settle(settingsWindow, iterations: 16)
@@ -753,12 +775,12 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
         ])
     }
 
-    nonisolated private static func settingsSnapshot() throws -> SettingsSnapshot {
-        let settings: [String: Any] = [
+    nonisolated private static func settingsSnapshot(modelSelection: Bool = false, settingsRevision: Int = 4) throws -> SettingsSnapshot {
+        var settings: [String: Any] = [
             "schemaVersion": 5,
-            "settingsRevision": 4,
+            "settingsRevision": settingsRevision,
             "registryRevision": 2,
-            "revision": 4,
+            "revision": settingsRevision,
             "accessStrategy": "adaptive",
             "modelPolicy": [
                 "mode": "automatic",
@@ -773,6 +795,19 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
             "showBridgeThreadsInCodexApp": true,
             "experimentalDirectResultDelivery": false,
         ]
+        if modelSelection {
+            settings["modelDescriptionOverrides"] = [String: String]()
+            settings["modelPolicy"] = ["mode": "automatic", "allowedSelections": ["kind": "explicit", "selections": [
+                ["model": "gpt-6.1-sol", "reasoningEffort": "high"],
+                ["model": "gpt-6.1-sol", "reasoningEffort": "ultra"],
+                ["model": "gpt-6-luna", "reasoningEffort": "max"]
+            ]], "constraints": ["allowDelegation": true]] as [String: Any]
+        }
+        let models: [[String: Any]] = modelSelection ? ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"].map { id in
+            ["id": id, "displayName": id.uppercased(), "description": "Official model description.", "defaultReasoningEffort": "medium",
+             "supportedReasoningEfforts": (id.contains("luna") ? ["low", "medium", "high", "xhigh", "max"] : ["low", "medium", "high", "xhigh", "max", "ultra"]).map { ["effort": $0] },
+             "hidden": false, "serviceTiers": [], "inputModalities": ["text"]] as [String: Any]
+        } : []
         let object: [String: Any] = [
             "settings": settings,
             "operatorDefaults": settings,
@@ -794,12 +829,12 @@ private final class SettingsConnectionVisualAcceptance: ObservableObject {
                 "lastKnownGood": false,
                 "validation": "valid",
                 "translationCoverage": ["missingEffortIds": []],
-                "models": []
+                "models": models
             ],
             "warnings": [],
             "scopeNotice": "visual",
             "policyActivation": [
-                "policyRevision": 4,
+                "policyRevision": settingsRevision,
                 "executionPolicyActive": true,
                 "descriptorProjectionUpdated": false,
                 "developerModeRefreshRequired": false

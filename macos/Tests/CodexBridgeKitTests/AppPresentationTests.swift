@@ -1282,6 +1282,28 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testAutosaveRejectsASelectedModelWithoutAnySupportedCommonEffort() async throws {
+        let high = ModelChoice(model: "gpt-current", reasoningEffort: "high")
+        let snapshot = try settingsSnapshot(policy: [
+            "mode": "automatic", "allowedSelections": ["kind": "explicit", "selections": [choiceObject(high)]],
+            "constraints": ["allowDelegation": true]
+        ], catalogModels: [catalogModel(id: high.model, efforts: ["high"]), catalogModel(id: "ultra-only", efforts: ["ultra"])])
+        let model = AppModel()
+        model.settings = snapshot
+        var draft = SettingsDraft(snapshot: snapshot)
+        let choices = SettingsDraft.selectableChoices(in: snapshot, allowDelegation: true)
+        draft.updateAllowlist { $0.setModel("ultra-only", selected: true, choices: choices) }
+        XCTAssertTrue(draft.modelPolicyDirty)
+        XCTAssertEqual(draft.explicitSelectionKeys, [high.key])
+        model.scheduleSettingsAutosave(draft)
+        let saved = await model.flushSettingsAutosave()
+        XCTAssertFalse(saved)
+        XCTAssertTrue(model.settingsErrorMessage?.contains("ultra-only") == true)
+        XCTAssertEqual(model.settings?.settings.settingsRevision, snapshot.settings.settingsRevision)
+        model.cancelPendingSettingsAutosave()
+    }
+
+    @MainActor
     func testUltraOffAutosavePreservesAutomaticChoicesAndRequiresFixedReplacement() async throws {
         for mode in ["automatic-mixed", "automatic-ultra-only", "fixed"] {
             let ultra = ModelChoice(model: "gpt-current", reasoningEffort: "ultra")

@@ -29,7 +29,32 @@ conversation, its existing knowledge, and instructions from its host. The
 absence of a bridge recommendation table does not guarantee that GPT reasons
 only from the catalog.
 
+## Selecting models and reasoning
+
+In automatic mode, **Only models and efforts I choose** presents separate
+**Models to use** and **Reasoning levels to use** lists in both Settings editors.
+A reasoning checkbox applies to all selected models that support that effort,
+within operator limits. Only supported exact pairs are saved; the execution
+policy, wire format and fixed-mode selectors are unchanged. Selecting a model
+with no saved reasoning choice shows a warning and prevents saving that policy.
+The summary counts executable pairs, so retained disabled Ultra choices do not
+inflate it.
+
+Existing model-specific choices are loaded without expanding them. Common effort
+checkboxes show partial selections when supported models have different saved
+choices. **Model-specific settings** retains the exact per-model controls behind
+a disclosure. Changing a common effort is a deliberate apply/remove operation
+for that effort; other saved pairs are preserved. Disabled Ultra stays saved and
+inactive until re-enabled, as before.
+
 ## User model descriptions
+
+Model descriptions default to currently executable allowed models. **Show all
+models** includes the remaining catalog and retained descriptions/history.
+Descriptions follow the model chooser's catalog order, with removed model IDs
+appended in alphabetical order. An open description edit remains visible when
+its model is deselected. Display filters and disclosure state are local to the
+editor and never change saved model descriptions or execution policy.
 
 In automatic mode, the native app and Settings card show **Model descriptions**.
 Each model initially shows its official catalog description. **Edit** starts with
@@ -62,8 +87,8 @@ the comparison for modified models. Restoring uses the current catalog result,
 not a copy saved when editing began.
 
 Fixed mode retains user descriptions but ignores them. A model removed from the
-catalog keeps its saved text and history and remains visible in the editor for
-editing or restoration; that does not make the model executable. **Use official
+catalog keeps its saved text and history and remains available under **Show all
+models** for editing or restoration; that does not make the model executable. **Use official
 description** and a general Settings reset remove active overrides while retaining
 history. Those changes are also recorded as versions that reference the current
 official description without copying its text. Older saved settings without the

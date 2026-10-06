@@ -41,6 +41,7 @@ struct SettingsDraft: Equatable {
     var fixedSelectionKey: String
     var allowedKind: String
     var explicitSelectionKeys: Set<String>
+    var modelAllowlist: ModelAllowlistDraft
     var allowDelegation: Bool
     var usePriorityServiceTier: Bool
     var processingSpeed: String
@@ -57,6 +58,7 @@ struct SettingsDraft: Equatable {
         let fixedSelectionKey: String
         let allowedKind: String
         let explicitSelectionKeys: Set<String>
+        let explicitModelIDs: Set<String>
         let allowDelegation: Bool
     }
 
@@ -69,6 +71,10 @@ struct SettingsDraft: Equatable {
         allowedKind = settings.modelPolicy.allowedSelections?.kind ?? "catalog-visible"
         explicitSelectionKeys = Set(
             settings.modelPolicy.allowedSelections?.selections?.map(\ModelChoice.key) ?? []
+        )
+        modelAllowlist = ModelAllowlistDraft(
+            selections: settings.modelPolicy.allowedSelections?.selections ?? [],
+            choices: Self.selectableChoices(in: snapshot, allowDelegation: true)
         )
         allowDelegation = settings.modelPolicy.constraints.allowDelegation
         usePriorityServiceTier = settings.usePriorityServiceTier
@@ -84,12 +90,18 @@ struct SettingsDraft: Equatable {
             fixedSelectionKey: fixedSelectionKey,
             allowedKind: allowedKind,
             explicitSelectionKeys: explicitSelectionKeys,
+            explicitModelIDs: modelAllowlist.modelIDs,
             allowDelegation: allowDelegation
         )
     }
 
     var modelPolicyDirty: Bool {
         policyState != originalPolicyState
+    }
+
+    mutating func updateAllowlist(_ change: (inout ModelAllowlistDraft) -> Void) {
+        change(&modelAllowlist)
+        explicitSelectionKeys = Set(modelAllowlist.selections.map(\.key))
     }
 
     static func processingSpeedChoices(in snapshot: SettingsSnapshot) -> [String] {
@@ -124,6 +136,7 @@ struct SettingsDraft: Equatable {
         rebased.fixedSelectionKey = fixedSelectionKey
         rebased.allowedKind = allowedKind
         rebased.explicitSelectionKeys = explicitSelectionKeys
+        rebased.modelAllowlist = modelAllowlist
         rebased.allowDelegation = allowDelegation
         rebased.usePriorityServiceTier = usePriorityServiceTier
         rebased.processingSpeed = processingSpeed
@@ -142,6 +155,7 @@ struct SettingsDraft: Equatable {
             fixedSelectionKey == other.fixedSelectionKey &&
             allowedKind == other.allowedKind &&
             explicitSelectionKeys == other.explicitSelectionKeys &&
+            modelAllowlist == other.modelAllowlist &&
             allowDelegation == other.allowDelegation &&
             usePriorityServiceTier == other.usePriorityServiceTier &&
             processingSpeed == other.processingSpeed &&
@@ -159,6 +173,7 @@ struct SettingsDraft: Equatable {
             fixedSelectionKey: fixedSelectionKey,
             allowedKind: allowedKind,
             explicitSelectionKeys: explicitSelectionKeys,
+            explicitModelIDs: modelAllowlist.modelIDs,
             allowDelegation: allowDelegation
         )
     }
@@ -2695,6 +2710,13 @@ final class AppModel: ObservableObject {
                 let allowed: AllowedSelections
                 if draft.allowedKind == "explicit" {
                     let selectedKeys = draft.explicitSelectionKeys
+                    if let missing = draft.modelAllowlist.modelIDs.sorted().first(where: { id in
+                        !selectedKeys.contains { displayedChoices[$0]?.model == id }
+                    }) {
+                        settingsErrorMessage = BridgeAppLocalization.string("settings.modelEffortRequired", locale: interfaceLocale)
+                            .replacingOccurrences(of: "{model}", with: missing)
+                        return false
+                    }
                     guard selectedKeys.allSatisfy({ key in
                         guard let choice = displayedChoices[key] else { return false }
                         return draft.canRetainExplicitChoice(choice, in: snapshot)

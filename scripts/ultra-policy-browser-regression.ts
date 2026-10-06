@@ -62,7 +62,7 @@ try {
   const result = await cli("run-code", `async page => {
     const check=(value,message)=>{if(!value)throw new Error(message)};
     await page.setViewportSize({width:390,height:980});
-    const ultra=page.locator('input[data-action="effort"][data-effort="ultra"]');
+    const ultra=page.locator('input[data-action="common-effort"][data-effort="ultra"]');
     await page.locator('#allow-delegation').uncheck();
     check(await ultra.isChecked()&&await ultra.isDisabled(),'Saved Ultra must stay checked but inactive');
     check(!(await page.locator('#ultra-policy-warning').isVisible()),'Max is still executable');
@@ -74,7 +74,7 @@ try {
     await page.locator('#allow-delegation').check();
     check(await ultra.isChecked()&&await ultra.isEnabled(),'Re-enabling must restore saved Ultra');
     await page.locator('#allow-delegation').uncheck();
-    await page.locator('input[data-action="effort"][data-effort="max"]').uncheck();
+    await page.locator('input[data-action="common-effort"][data-effort="max"]').uncheck();
     check(await page.locator('#ultra-policy-warning').isVisible(),'Suspended policy must explain empty executable choices');
     await page.locator('#save').click();
     await page.waitForFunction(()=>window.__ultraSaves.length===2);
@@ -101,7 +101,7 @@ try {
     await page.goto(${JSON.stringify(origin + "/?locale=ko")});
     await page.locator('#settings-form').waitFor({state:'visible'});
     await page.locator('#allow-delegation').uncheck();
-    await page.locator('input[data-action="effort"][data-effort="max"]').uncheck();
+    await page.locator('input[data-action="common-effort"][data-effort="max"]').uncheck();
     for(const [locale,copy] of Object.entries(translations)){
       await page.locator('#ui-language').selectOption(locale);
       check((await page.locator('#ultra-hint').textContent()).trim()===copy['settings.ultraHint'],'Wrong hint: '+locale);

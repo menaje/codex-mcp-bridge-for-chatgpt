@@ -1895,6 +1895,23 @@ private struct ModelExecutionSettingsPane: View {
         var seen = Set<String>()
         return choices.map(\.model).filter { seen.insert($0).inserted }
     }
+    private var allowlistChoices: [ModelChoice] {
+        SettingsDraft.selectableChoices(in: snapshot, allowDelegation: true)
+    }
+    private var allowlistModelIDs: [String] {
+        ModelSettingsOrder.ids(catalog: snapshot.catalog.models,
+            retained: Set(modelIDs).union(draft.modelAllowlist.modelIDs))
+            .filter { id in choices.contains { $0.model == id } || draft.modelAllowlist.modelIDs.contains(id) }
+    }
+    private var commonEfforts: [String] {
+        ModelSettingsOrder.efforts(Set(allowlistChoices.map(\.reasoningEffort))
+            .union(draft.modelAllowlist.retainedEfforts))
+    }
+    private var allowedDescriptionModelIDs: Set<String> {
+        if draft.allowedKind == "catalog-visible" { return Set(SettingsDraft.selectableChoices(
+            in: snapshot, allowDelegation: draft.allowDelegation).map(\.model)) }
+        return Set(choices.filter { draft.explicitSelectionKeys.contains($0.key) && selectableChoiceKeys.contains($0.key) }.map(\.model))
+    }
 
     var body: some View {
         SettingsSearchScrollContainer(request: searchRequest, pane: .modelExecution) {
@@ -1961,12 +1978,48 @@ private struct ModelExecutionSettingsPane: View {
                         Text("macos.selectexplicitly").tag("explicit")
                     }
                     if draft.allowedKind == "explicit" {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .top, spacing: 20) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("settings.allowedModels").font(.headline)
+                                    ForEach(allowlistModelIDs, id: \.self) { id in
+                                        Toggle(modelLabel(id), isOn: Binding(
+                                            get: { draft.modelAllowlist.modelIDs.contains(id) },
+                                            set: { selected in draft.updateAllowlist {
+                                                $0.setModel(id, selected: selected, choices: allowlistChoices)
+                                            } }
+                                        ))
+                                        .toggleStyle(.checkbox)
+                                        .disabled(!choices.contains { $0.model == id && selectableChoiceKeys.contains($0.key) }
+                                            && !draft.modelAllowlist.modelIDs.contains(id))
+                                    }
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("settings.commonEfforts").font(.headline)
+                                    Text("settings.commonEffortsHint").font(.caption).foregroundStyle(.secondary)
+                                    ForEach(commonEfforts, id: \.self) { effort in
+                                        commonEffortToggle(effort)
+                                    }
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            Text(BridgeAppLocalization.string("settings.selectionSummary", locale: model.interfaceLocale)
+                                .replacingOccurrences(of: "{models}", with: String(draft.modelAllowlist.modelIDs.count))
+                                .replacingOccurrences(of: "{count}", with: String(draft.explicitSelectionKeys.intersection(selectableChoiceKeys).count)))
+                                .font(.caption).foregroundStyle(.secondary)
+                            if let id = draft.modelAllowlist.modelIDs.sorted().first(where: { id in
+                                !draft.modelAllowlist.selections.contains { $0.model == id }
+                            }) {
+                                Text(BridgeAppLocalization.string("settings.modelEffortRequired", locale: model.interfaceLocale)
+                                    .replacingOccurrences(of: "{model}", with: modelLabel(id)))
+                                    .font(.caption).foregroundStyle(.orange)
+                            }
+                        }
                         FullRowDisclosure(
-                            "macos.allowedmodelsandreasoningefforts",
+                            "settings.modelSpecific",
                             isExpanded: $allowedModelsExpanded
                         ) {
                             VStack(alignment: .leading, spacing: 6) {
-                                ForEach(modelIDs, id: \.self) { modelID in
+                                ForEach(allowlistModelIDs.filter { draft.modelAllowlist.modelIDs.contains($0) }, id: \.self) { modelID in
                                     FullRowDisclosure(
                                         isExpanded: modelExpansionBinding(modelID),
                                         label: { Text(modelLabel(modelID)) },
@@ -1990,6 +2043,9 @@ private struct ModelExecutionSettingsPane: View {
                                 }
                             }
                             .padding(.vertical, 4)
+                        }
+                        if draft.modelAllowlist.hasModelSpecificChoices(choices: allowlistChoices) {
+                            Text("settings.partialSelection").font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -2050,7 +2106,7 @@ private struct ModelExecutionSettingsPane: View {
                 .id(SettingsSearchTarget.modelSelection.anchorID)
 
             if draft.policyMode == "automatic", snapshot.settings.modelDescriptionOverrides != nil {
-                ModelDescriptionsSettingsSection(snapshot: snapshot)
+                ModelDescriptionsSettingsSection(snapshot: snapshot, allowedModelIDs: allowedDescriptionModelIDs)
                     .id(model.connectionContextID)
             }
 
@@ -2169,8 +2225,8 @@ private struct ModelExecutionSettingsPane: View {
         Binding(
             get: { draft.explicitSelectionKeys.contains(key) },
             set: { enabled in
-                if enabled { draft.explicitSelectionKeys.insert(key) }
-                else { draft.explicitSelectionKeys.remove(key) }
+                guard let choice = choices.first(where: { $0.key == key }) else { return }
+                draft.updateAllowlist { $0.setChoice(choice, selected: enabled, choices: allowlistChoices) }
             }
         )
     }
@@ -2193,6 +2249,25 @@ private struct ModelExecutionSettingsPane: View {
 
     private var selectedFixedChoice: ModelChoice? {
         choices.first { $0.key == draft.fixedSelectionKey }
+    }
+
+    private func commonEffortToggle(_ effort: String) -> some View {
+        let state = draft.modelAllowlist.effortState(effort, choices: allowlistChoices)
+        let partial = state.mixed ? " (" + BridgeAppLocalization.string("settings.partialSelection", locale: model.interfaceLocale) + ")" : ""
+        let inactive = effort == "ultra" && !draft.allowDelegation
+        let label = effort + partial + (inactive ? " (" + BridgeAppLocalization.string("settings.ultraDisabled", locale: model.interfaceLocale) + ")" : "")
+        return VStack(alignment: .leading, spacing: 2) {
+            Toggle(label, isOn: Binding(
+                get: { draft.modelAllowlist.effortState(effort, choices: allowlistChoices).checked },
+                set: { selected in draft.updateAllowlist { $0.setEffort(effort, selected: selected, choices: allowlistChoices) } }
+            ))
+            .toggleStyle(.checkbox)
+            .disabled(inactive || (!allowlistChoices.contains { $0.reasoningEffort == effort }
+                && !draft.modelAllowlist.retainedEfforts.contains(effort)))
+            if state.supportedModels > 0 && state.supportedModels < draft.modelAllowlist.modelIDs.count {
+                Text("settings.someModelsOnly").font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var choicesForFixedModel: [ModelChoice] {
