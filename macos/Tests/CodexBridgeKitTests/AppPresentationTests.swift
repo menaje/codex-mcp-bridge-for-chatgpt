@@ -1516,6 +1516,64 @@ final class AppPresentationTests: XCTestCase {
         }
     }
 
+    func testSpeedPickerKeepsCompatibilityStateOutOfItsChoices() throws {
+        for (mode, fast, expected) in [("legacy", false, "standard"), ("legacy", true, "fast"),
+                                       ("inherit", false, ""), ("future-tier", false, ""), ("ultrafast", false, "")] {
+            let snapshot = try settingsSnapshot(policy: ["mode": "automatic",
+                "allowedSelections": ["kind": "catalog-visible"], "constraints": ["allowDelegation": true]],
+                catalogModels: [], processingSpeed: mode, usePriorityServiceTier: fast,
+                availableProcessingSpeeds: ["legacy", "fast", "inherit", "standard", "future-tier", "fast"])
+            var draft = SettingsDraft(snapshot: snapshot)
+            XCTAssertEqual(SettingsDraft.processingSpeedChoices(in: snapshot), ["standard", "fast"])
+            XCTAssertEqual(draft.processingSpeedSelection(in: snapshot), expected)
+            draft.selectProcessingSpeed("inherit", in: snapshot)
+            draft.selectProcessingSpeed("ultrafast", in: snapshot)
+            XCTAssertEqual(draft.processingSpeed, mode)
+            XCTAssertEqual(draft.usePriorityServiceTier, fast)
+            XCTAssertTrue(draft.hasSameEditableValues(as: SettingsDraft(snapshot: snapshot)))
+            XCTAssertEqual(draft.rebased(on: snapshot).processingSpeed, mode)
+        }
+    }
+
+    @MainActor
+    func testSpeedPickerAutosaveOnlyChangesScopeAfterChoosingASpeed() async throws {
+        for (mode, fast) in [("legacy", false), ("legacy", true), ("inherit", false)] {
+            for changeSpeed in [false, true] {
+                let policy: [String: Any] = ["mode": "automatic", "allowedSelections": ["kind": "catalog-visible"],
+                    "constraints": ["allowDelegation": true]]
+                let catalog = [catalogModel(id: "gpt-current", efforts: ["high"])]
+                let snapshot = try settingsSnapshot(policy: policy, catalogModels: catalog, processingSpeed: mode,
+                    usePriorityServiceTier: fast, availableProcessingSpeeds: ["legacy", "inherit", "standard", "fast"])
+                let updated = try settingsSnapshot(settingsRevision: 5, accessStrategy: "read-only", policy: policy,
+                    catalogModels: catalog, processingSpeed: changeSpeed ? "standard" : mode,
+                    usePriorityServiceTier: fast, availableProcessingSpeeds: ["legacy", "inherit", "standard", "fast"])
+                let profile = remoteProfile(id: "11111111-1111-4111-8111-111111111111", name: "Speed test")
+                let client = TestRemoteClient(profile: profile, dashboard: try dashboardStatus(scope: "speed-test"),
+                    settings: snapshot, settingsAfterUpdate: updated)
+                let model = AppModel(loginItemController: TestLoginItemController(status: .notRegistered),
+                    connectionStore: TestConnectionStore(BridgeConnectionPreferences(
+                        mode: .remoteClient, activeServerId: profile.serverId, profiles: [profile])),
+                    credentialStore: TestCredentialStore([profile.serverId: "device_abcdefghijklmnopqrstuvwxyz1234567890ABCDE"]),
+                    remoteClientFactory: { _, _ in client })
+                await model.start()
+                var draft = SettingsDraft(snapshot: snapshot)
+                draft.accessStrategy = "read-only"
+                if changeSpeed { draft.selectProcessingSpeed("standard", in: snapshot) }
+                model.scheduleSettingsAutosave(draft)
+                let saved = await model.flushSettingsAutosave()
+                XCTAssertTrue(saved)
+                guard case .patch(let patch) = try XCTUnwrap(client.lastSettingsMutation).operation else {
+                    return XCTFail("Expected a settings patch")
+                }
+                XCTAssertEqual(patch.processingSpeed, changeSpeed ? "standard" : mode)
+                XCTAssertEqual(patch.usePriorityServiceTier, !changeSpeed && mode == "legacy" ? fast : nil)
+                XCTAssertNil(patch.modelPolicy)
+                let stopped = await model.shutdownApplication(force: false)
+                XCTAssertTrue(stopped)
+            }
+        }
+    }
+
     func testSettingsDraftPreservesUnknownSpeedWhenRebased() throws {
         let snapshot = try settingsSnapshot(policy: ["mode": "fixed", "selection": choiceObject(ModelChoice(model: "sol", reasoningEffort: "medium")),
             "constraints": ["allowDelegation": true]], catalogModels: [], processingSpeed: "future-tier")
@@ -2269,7 +2327,9 @@ private func settingsSnapshot(
     modelDescriptionHistoryModelIds: [String]? = nil,
     catalogModels: [[String: Any]],
     operatorCeiling: [ModelChoice]? = nil,
-    processingSpeed: String? = nil
+    processingSpeed: String? = nil,
+    usePriorityServiceTier: Bool = false,
+    availableProcessingSpeeds: [String]? = nil
 ) throws -> SettingsSnapshot {
     var settings: [String: Any] = [
         "schemaVersion": 1,
@@ -2278,7 +2338,7 @@ private func settingsSnapshot(
         "revision": settingsRevision,
         "accessStrategy": accessStrategy,
         "modelPolicy": policy,
-        "usePriorityServiceTier": false,
+        "usePriorityServiceTier": usePriorityServiceTier,
         "projects": [],
         "uiLocalePreference": "auto",
         "maxConcurrentJobs": 2,
@@ -2302,6 +2362,7 @@ private func settingsSnapshot(
         "allowDangerFullAccess": false,
         "persistent": true
     ]
+    if let availableProcessingSpeeds { capabilities["availableProcessingSpeeds"] = availableProcessingSpeeds }
     if let operatorCeiling {
         capabilities["operatorModelCeiling"] = operatorCeiling.map(choiceObject)
     }

@@ -189,7 +189,7 @@ enum SettingsSearchTarget: String, CaseIterable, Identifiable {
         case .modelDelegation:
             return ["settings.ultraHint"]
         case .modelFastMode:
-            return ["settings.processingSpeedHint", "settings.processingSpeed.standard", "settings.processingSpeed.fast", "settings.processingSpeed.ultrafast", "settings.processingSpeed.inherit"]
+            return ["settings.processingSpeedHint", "settings.processingSpeed.standard", "settings.processingSpeed.fast", "settings.processingSpeed.ultrafast"]
         case .modelConcurrency:
             return ["macos.settings.execution"]
         case .modelHistory:
@@ -1951,10 +1951,21 @@ private struct ModelExecutionSettingsPane: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
-                Picker("settings.processingSpeed", selection: $draft.processingSpeed) {
-                    ForEach(Array(Set([draft.processingSpeed] + (snapshot.capabilities.availableProcessingSpeeds ?? ["legacy"]))).sorted(), id: \.self) { speed in
+                Picker("settings.processingSpeed", selection: Binding(
+                    get: { draft.processingSpeedSelection(in: snapshot) },
+                    set: { draft.selectProcessingSpeed($0, in: snapshot) }
+                )) {
+                    if draft.processingSpeedSelection(in: snapshot).isEmpty {
+                        Text("settings.processingSpeedChoose").tag("").disabled(true)
+                    }
+                    ForEach(SettingsDraft.processingSpeedChoices(in: snapshot), id: \.self) { speed in
                         Text(processingSpeedLabel(speed, legacyFast: draft.usePriorityServiceTier, locale: model.interfaceLocale)).tag(speed)
                     }
+                }
+                if draft.processingSpeedSelection(in: snapshot).isEmpty {
+                    Text("settings.processingSpeedRetainedHint")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Text("settings.processingSpeedHint")
                     .font(.caption)

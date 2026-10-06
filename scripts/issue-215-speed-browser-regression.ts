@@ -44,7 +44,7 @@ const server = createServer(async (request, response) => {
       const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       const result = url.pathname === "/scenario"
-        ? settings.update({ processingSpeed: body.processingSpeed }, settings.current.settingsRevision)
+        ? settings.update({ processingSpeed: body.processingSpeed, ...(typeof body.usePriorityServiceTier === "boolean" ? { usePriorityServiceTier: body.usePriorityServiceTier } : {}) }, settings.current.settingsRevision)
         : await connection.client.callTool({ name: body.name, arguments: body.args });
       response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify(result)); return;
     }
@@ -80,13 +80,24 @@ try {
   await cli("open", origin);
   writeFileSync(path.join(output, "initial.snapshot.txt"), await cli("snapshot"));
   const settingsResult = await cli("run-code", `async page=>{
-    const check=(value,message)=>{if(!value)throw new Error(message)};
+    let checks=0;const check=(value,message)=>{checks++;if(!value)throw new Error(message)};
     const speed=page.locator('#use-priority-service-tier');
     const tool=async(name,args)=>page.evaluate(async({name,args})=>await window.openai.callTool(name,args),{name,args});
     const read=async()=>(await tool('codex_ui_read',{view:'settings'})).structuredContent;
     const save=async()=>{await page.locator('#save').click();await page.waitForFunction(()=>!document.querySelector('#save').disabled)};
     await page.locator('#settings-form').waitFor({state:'visible'});
-    check(await speed.inputValue()==='legacy','Legacy behavior survives loading');
+    check(await speed.inputValue()==='standard','Old cleared tier is displayed as Standard');
+    const choices=async()=>speed.locator('option:not([disabled])').evaluateAll(options=>options.map(x=>x.value));
+    check(JSON.stringify(await choices())===JSON.stringify(['standard','fast']),'Only supported public grades appear in order');
+    check(JSON.stringify(await speed.locator('option').allTextContents())===JSON.stringify(['Standard','Fast']),'No scope or compatibility labels are offered');
+    await page.locator('#concurrency').fill('3');await save();
+    check((await read()).settings.processingSpeed==='legacy'&&!(await read()).settings.usePriorityServiceTier,'Unrelated save retains old cleared scope');
+    await page.evaluate(async()=>await fetch('/scenario',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({processingSpeed:'legacy',usePriorityServiceTier:true})}));
+    await page.reload();await page.locator('#settings-form').waitFor({state:'visible'});
+    check(await speed.inputValue()==='fast','Existing Fast has the normal Fast label');
+    await page.locator('#concurrency').fill('4');await save();
+    check((await read()).settings.processingSpeed==='legacy'&&(await read()).settings.usePriorityServiceTier,'Unrelated save retains old Fast scope');
+    await speed.selectOption('standard');await speed.selectOption('fast');
     check(!(await speed.locator('option').evaluateAll(options=>options.map(x=>x.value))).includes('ultrafast'),'Sol must not expose Astra-only Ultrafast');
     await speed.selectOption('fast');await save();
     let current=await read();check(current.settings.processingSpeed==='fast','Fast saves the canonical mode');
@@ -100,18 +111,26 @@ try {
     check(refused.isError===true&&JSON.stringify(refused).includes('PROCESSING_SPEED_ACCESS_UNVERIFIED'),'Unverified Ultrafast cannot bypass the screen through a tool');
     await page.evaluate(async()=>await fetch('/scenario',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({processingSpeed:'ultrafast'})}));
     await page.reload();await page.locator('#settings-form').waitFor({state:'visible'});current=await read();
-    check(await speed.inputValue()==='ultrafast','Previously saved Ultrafast remains readable');
+    check(await speed.inputValue()===''&&!(await choices()).includes('ultrafast'),'Unverified saved Ultrafast is kept without becoming a selectable grade');
     await tool('codex_update_settings',{expectedSettingsRevision:current.settings.settingsRevision,operation:{kind:'patch',settings:{usePriorityServiceTier:false,maxConcurrentJobs:3}}});
     check((await read()).settings.processingSpeed==='ultrafast','Old screen boolean cannot overwrite Ultrafast');
     await page.evaluate(async()=>await fetch('/scenario',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({processingSpeed:'future-tier'})}));
     await page.reload();await page.locator('#settings-form').waitFor({state:'visible'});
-    check(await speed.inputValue()==='future-tier','Unknown saved mode is retained visibly');
-    await page.locator('#concurrency').fill('4');await save();current=await read();
+    check(await speed.inputValue()===''&&await page.locator('#processing-speed-retained').isVisible(),'Unknown saved mode has no invented speed grade');
+    await page.locator('#concurrency').fill('2');await save();current=await read();
     check(current.settings.processingSpeed==='future-tier','Unrelated screen save preserves unknown mode');
     const last=await page.evaluate(()=>window.__speedCalls.filter(x=>x.name==='codex_update_settings').at(-1));
     check(last.args.operation.settings.processingSpeed===undefined&&last.args.operation.settings.usePriorityServiceTier===undefined,'Unknown mode is not resent or collapsed to a boolean');
     await page.screenshot({path:${JSON.stringify(path.join(output, "settings-unknown.png"))}});
-    return {checks:10,savedMode:current.settings.processingSpeed};
+    await page.evaluate(async()=>await fetch('/scenario',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({processingSpeed:'inherit'})}));
+    await page.reload();await page.locator('#settings-form').waitFor({state:'visible'});
+    check(await speed.inputValue()===''&&!(await choices()).includes('inherit'),'Inheritance is retained without an ordinary picker option');
+    await page.locator('#concurrency').fill('3');await save();
+    check((await read()).settings.processingSpeed==='inherit','Unrelated save preserves inheritance');
+    await speed.selectOption('standard');await save();current=await read();
+    check(current.settings.processingSpeed==='standard','An explicit available grade replaces inheritance');
+    await page.screenshot({path:${JSON.stringify(path.join(output, "settings-simple.png"))}});
+    return {checks,savedMode:current.settings.processingSpeed};
   }`);
   await cli("goto", `${origin}/dashboard`);
   writeFileSync(path.join(output, "dashboard.snapshot.txt"), await cli("snapshot"));

@@ -28948,55 +28948,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Standard (this Job)"
+            "value": "Standard"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "Standard (이번 작업)"
+            "value": "Standard"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Standard（今回の作業）"
+            "value": "Standard"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Standard（本次任务）"
+            "value": "Standard"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "Standard（本次工作）"
+            "value": "Standard"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Standard (este trabajo)"
+            "value": "Standard"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Standard (ce travail)"
+            "value": "Standard"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Standard (dieser Auftrag)"
+            "value": "Standard"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Standard (este trabalho)"
+            "value": "Standard"
           }
         }
       }
@@ -29006,55 +29006,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fast (this Job)"
+            "value": "Fast"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fast (이번 작업)"
+            "value": "Fast"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fast（今回の作業）"
+            "value": "Fast"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fast（本次任务）"
+            "value": "Fast"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fast（本次工作）"
+            "value": "Fast"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fast (este trabajo)"
+            "value": "Fast"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fast (ce travail)"
+            "value": "Fast"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fast (dieser Auftrag)"
+            "value": "Fast"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fast (este trabalho)"
+            "value": "Fast"
           }
         }
       }
@@ -29064,55 +29064,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ultrafast (this Job)"
+            "value": "Ultrafast"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ultrafast (이번 작업)"
+            "value": "Ultrafast"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ultrafast（今回の作業）"
+            "value": "Ultrafast"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ultrafast（本次任务）"
+            "value": "Ultrafast"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ultrafast（本次工作）"
+            "value": "Ultrafast"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ultrafast (este trabajo)"
+            "value": "Ultrafast"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ultrafast (ce travail)"
+            "value": "Ultrafast"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ultrafast (dieser Auftrag)"
+            "value": "Ultrafast"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ultrafast (este trabalho)"
+            "value": "Ultrafast"
           }
         }
       }
@@ -29180,55 +29180,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "New choices apply to each Job. Inheritance keeps the conversation speed. Ultrafast appears only after account and workspace access is confirmed; pricing varies by account."
+            "value": "Speed changes apply to new Jobs. Faster modes can affect usage or charges. Ultrafast appears only when account and workspace access is confirmed."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "새 선택은 작업마다 적용합니다. 상속은 대화의 속도 설정을 유지합니다. Ultrafast는 계정과 워크스페이스 사용 권한이 확인된 경우에만 표시되며 요금은 계정별로 다릅니다."
+            "value": "속도 변경은 새 작업부터 적용합니다. 빠른 속도는 사용량이나 요금에 영향을 줄 수 있습니다. Ultrafast는 계정과 워크스페이스 사용 권한이 확인된 경우에만 표시합니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "新しい選択は各作業に適用されます。継承は会話の速度設定を保持します。Ultrafastはアカウントとワークスペースの利用権限が確認された場合にのみ表示されます。料金はアカウントによって異なります。"
+            "value": "速度の変更は新しい作業から適用されます。高速モードは使用量や料金に影響する場合があります。Ultrafastはアカウントとワークスペースの利用権限が確認された場合にのみ表示されます。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "新选择适用于每个任务。继承会保留对话的速度设置。只有确认账户和工作区使用权限后才会显示Ultrafast；费用因账户而异。"
+            "value": "速度更改仅应用于新任务。更快的模式可能影响用量或费用。只有确认账户和工作区访问权限后才会显示Ultrafast。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "新選擇適用於每個工作。繼承會保留對話的速度設定。只有確認帳戶和工作區使用權限後才會顯示Ultrafast；費用依帳戶而異。"
+            "value": "速度變更僅套用至新工作。較快的模式可能影響用量或費用。只有確認帳戶和工作區存取權限後才會顯示Ultrafast。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Las nuevas opciones se aplican a cada trabajo. Heredar conserva la velocidad de la conversación. Ultrafast solo aparece cuando se confirma el acceso de la cuenta y del espacio de trabajo; los precios varían según la cuenta."
+            "value": "Los cambios de velocidad se aplican a los trabajos nuevos. Los modos más rápidos pueden afectar al uso o a los cargos. Ultrafast solo aparece cuando se confirma el acceso de la cuenta y del espacio de trabajo."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Les nouveaux choix s’appliquent à chaque travail. L’héritage conserve la vitesse de la conversation. Ultrafast apparaît uniquement après confirmation de l’accès du compte et de l’espace de travail ; les tarifs varient selon le compte."
+            "value": "Les changements de vitesse s’appliquent aux nouveaux travaux. Les modes plus rapides peuvent modifier l’utilisation ou les frais. Ultrafast apparaît uniquement après confirmation de l’accès du compte et de l’espace de travail."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Neue Optionen gelten für jede Aufgabe. Vererben behält die Gesprächsgeschwindigkeit bei. Ultrafast erscheint erst, wenn der Zugriff für Konto und Arbeitsbereich bestätigt ist; Preise variieren je nach Konto."
+            "value": "Geschwindigkeitsänderungen gelten für neue Aufgaben. Schnellere Modi können Verbrauch oder Kosten beeinflussen. Ultrafast erscheint nur bei bestätigtem Zugriff für Konto und Arbeitsbereich."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "As novas opções se aplicam a cada trabalho. Herdar mantém a velocidade da conversa. Ultrafast só aparece após a confirmação do acesso da conta e do espaço de trabalho; os preços variam conforme a conta."
+            "value": "As mudanças de velocidade se aplicam aos novos trabalhos. Os modos mais rápidos podem afetar o uso ou os custos. Ultrafast só aparece quando o acesso da conta e do espaço de trabalho é confirmado."
           }
         }
       }
@@ -29693,6 +29693,122 @@
           "stringUnit": {
             "state": "translated",
             "value": "Não é possível confirmar o acesso ao Ultrafast no momento. A escolha salva é mantida; selecione outra velocidade para iniciar um novo trabalho."
+          }
+        }
+      }
+    },
+    "settings.processingSpeedChoose": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a speed"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "속도를 선택하세요"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "速度を選択"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择速度"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇速度"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elegir velocidad"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choisir une vitesse"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geschwindigkeit wählen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Escolher velocidade"
+          }
+        }
+      }
+    },
+    "settings.processingSpeedRetainedHint": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your current speed setting is kept until you choose a speed."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "속도를 선택하기 전까지 현재 설정을 유지합니다."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "速度を選択するまで現在の設定を保持します。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择速度之前会保留当前设置。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇速度之前會保留目前設定。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La configuración actual se conserva hasta que elijas una velocidad."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le réglage actuel est conservé jusqu’à ce que vous choisissiez une vitesse."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die aktuelle Einstellung bleibt erhalten, bis Sie eine Geschwindigkeit wählen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A configuração atual é mantida até você escolher uma velocidade."
           }
         }
       }
