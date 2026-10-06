@@ -5,10 +5,19 @@ Ultrafast processing. Subscription plans, model catalogs, protocol support and
 observed execution each provide different evidence; none substitutes for the
 others.
 
-The native Settings window and web Settings card offer Standard and inheritance
-from the selected installation's verified schema, including before the first
-Job. The isolated settings reader reuses the existing CLI validation; it does
-not depend on an execution worker or start a trial turn.
+The native Settings window and web Settings card offer Standard and Fast
+from the selected installation's verified schema and catalog, including before
+the first Job. Ultrafast appears only when its access is confirmed. The isolated
+settings reader reuses the existing CLI validation; it does not depend on an
+execution worker or start a trial turn.
+
+The picker offers speed grades only: **Standard**, **Fast** and eligible
+**Ultrafast**. Legacy scope and inheritance remain internal compatibility states.
+Existing Fast is displayed as Fast and an existing cleared tier as Standard
+without changing either saved behavior. An inherited, unknown or unavailable
+saved choice has no guessed grade: the picker asks for a speed while retaining
+its original setting. Unrelated saves do not change speed. Only deliberately
+choosing an available speed moves to the new per-Job setting.
 
 ## Choose a speed
 
@@ -19,14 +28,12 @@ admitted, so changing it does not alter work already running or queued.
 
 | Choice | What it requests |
 | --- | --- |
-| Inherit conversation speed | A new conversation follows its CLI configuration; a retained conversation keeps its own processing tier. |
 | Standard | Standard processing for this new Job only. |
 | Fast | The eligible faster tier for this new Job only. |
-| Ultrafast | The eligible Ultrafast tier for this new Job only. |
-| Legacy | Preserves the older Fast checkbox behavior, including its persistent conversation scope, until you deliberately choose a new mode. |
+| Ultrafast | The eligible Ultrafast tier for this new Job only, offered when account and workspace access is confirmed. |
 
 Availability depends on the selected CLI's protocol, the current model catalog,
-and policy. A faster choice can affect usage or charges; selecting it is not
+policy, and confirmed access where required. A faster choice can affect usage or charges; selecting it is not
 proof of account entitlement or of the tier actually applied. Unsupported or
 unknown choices block new execution instead of silently falling back.
 

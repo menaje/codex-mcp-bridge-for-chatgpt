@@ -92,6 +92,21 @@ struct SettingsDraft: Equatable {
         policyState != originalPolicyState
     }
 
+    static func processingSpeedChoices(in snapshot: SettingsSnapshot) -> [String] {
+        let available = snapshot.capabilities.availableProcessingSpeeds ?? []
+        return ["standard", "fast", "ultrafast"].filter { available.contains($0) }
+    }
+
+    func processingSpeedSelection(in snapshot: SettingsSnapshot) -> String {
+        let speed = processingSpeed == "legacy" ? (usePriorityServiceTier ? "fast" : "standard") : processingSpeed
+        return Self.processingSpeedChoices(in: snapshot).contains(speed) ? speed : ""
+    }
+
+    mutating func selectProcessingSpeed(_ speed: String, in snapshot: SettingsSnapshot) {
+        guard Self.processingSpeedChoices(in: snapshot).contains(speed) else { return }
+        processingSpeed = speed
+    }
+
     func isUltraDisabled(_ choice: ModelChoice) -> Bool {
         !allowDelegation && choice.reasoningEffort == "ultra"
     }
