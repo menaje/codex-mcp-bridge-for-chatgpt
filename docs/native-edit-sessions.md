@@ -248,6 +248,28 @@ it precedes the separate search exit-guard exclusion and the latest localization
 updates. The final exit-guard behavior is covered by a mounted native test.
 
 The Japanese/Chinese candidate matrix remains pending until recorded.
+The agent also tried installed Japanese Romaji and both Chinese Pinyin input
+sources on 2026-10-06. In the unmodified baseline field, automatic `nihongo` and
+`hanzi` plus Space stayed literal, with no marked range or candidate window.
+Automatic letter keys even delivered Korean jamo under those selected sources;
+resetting the control connection did not fix that. The Japanese
+[reverse-conversion shortcut](https://support.apple.com/guide/japanese-input-method/reverse-a-conversion-jpim10309/mac)
+also did not open a candidate window in the baseline. These attempts cannot
+establish either a Bridge defect or an installed IME acceptance pass.
+
+The final-source fixture (SHA-256
+`3134a80e53814485f8409a41eb0ef3a0764934ee148bd7db40a85e62bbc11b65`)
+passed agent-operated Unicode paste and Command-S for Japanese, Simplified and
+Traditional Chinese, combining accents/kana, Arabic, Hebrew and emoji. Exact
+submitted payload comparison preserved the verbatim line's NFD and surrounding
+spaces, plus the document's four CRLFs, embedded BOM and final newline. Name
+submission used NFC as intended. Document Undo/Redo restored the exact source
+and dirty state. Search preserved the mixed-language query, Enter did not submit
+the form, and the native cancel button cleared the query. SwiftUI added display
+isolation marks around the RTL query; the editable query itself stayed exact.
+The temporary three input sources and automatically added dictation languages
+were removed. ABC and Korean Two Set, active Korean Two Set, dictation off and
+Korean-only dictation language were verified restored; the trial app was closed.
 The temporary fixture also does not
 validate the installed product build. Keep #236 open while physical acceptance
 is incomplete; local source integration is not a release or installation of the
