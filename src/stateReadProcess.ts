@@ -119,6 +119,7 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
   private lastHeartbeatAt?: number;
   private lastSnapshotAt?: number;
   private activeOperation?: StateReadServiceHealth["activeOperation"];
+  private readonly activeOperations = new Map<string, NonNullable<StateReadServiceHealth["activeOperation"]>>();
   private readonly pending = new Map<string, Pending>();
   private closed = false;
   private closePromise?: Promise<void>;
@@ -288,6 +289,7 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
     this.generation = undefined;
     this.lastHeartbeatAt = undefined;
     this.activeOperation = undefined;
+    this.activeOperations.clear();
     return new Promise<void>((resolve, reject) => {
       let settled = false;
       const finish = (error?: Error) => {
@@ -337,15 +339,18 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
           return;
         }
         if (value.type === "operation") {
-          this.activeOperation = {
+          const operation = {
             method: value.method,
             phase: value.phase,
             startedAt: value.startedAt,
             observedAt: value.observedAt
           };
+          this.activeOperations.set(value.requestId, operation);
+          this.activeOperation = operation;
           return;
         }
-        this.activeOperation = undefined;
+        this.activeOperations.delete(value.requestId);
+        this.activeOperation = [...this.activeOperations.values()].at(-1);
         const pending = this.pending.get(value.requestId);
         if (!pending) return;
         clearTimeout(pending.timer);
@@ -367,6 +372,7 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
     this.generation = undefined;
     this.lastHeartbeatAt = undefined;
     this.activeOperation = undefined;
+    this.activeOperations.clear();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       if (!pending.abandoned) {
@@ -401,6 +407,8 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
       }
     }
     this.pending.clear();
+    this.activeOperation = undefined;
+    this.activeOperations.clear();
     const child = this.child;
     this.child = undefined;
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -433,7 +441,14 @@ async function runChild(file: string): Promise<void> {
   const codexService = new CodexService(process.env);
   let closing = false;
   let inFlight = 0;
-  let tail: Promise<void> = Promise.resolve();
+  // Settings can await CLI/model discovery. Keep that work off the queue used
+  // by database-only Dashboard reads, with a reusable connection for each.
+  const lanes: Record<"dashboard" | "settings", {
+    tail: Promise<void>; inFlight: number; store?: BridgeStateStore;
+  }> = {
+    dashboard: { tail: Promise.resolve(), inFlight: 0 },
+    settings: { tail: Promise.resolve(), inFlight: 0 }
+  };
   const send = (message: ChildMessage) => {
     if (!process.connected || !process.send) return;
     try { process.send(message, () => {}); } catch { /* Parent owns recovery. */ }
@@ -449,13 +464,16 @@ async function runChild(file: string): Promise<void> {
     if (closing) return;
     closing = true;
     clearInterval(heartbeat);
-    await tail.catch(() => undefined);
+    await Promise.all(Object.values(lanes).map(lane => lane.tail.catch(() => undefined)));
+    for (const lane of Object.values(lanes)) lane.store?.close();
     if (process.connected) process.disconnect();
   };
   try {
-    // Validate the query-only connection before advertising readiness.
-    const validation = new BridgeStateStore({ file, readOnly: true });
-    validation.close();
+    // Connections hold no transaction between requests, so subsequent reads
+    // see current WAL commits. Registries remain fresh for every request.
+    for (const lane of Object.values(lanes)) {
+      lane.store = new BridgeStateStore({ file, readOnly: true });
+    }
     send({
       type: "ready",
       version: PROTOCOL_VERSION,
@@ -469,7 +487,9 @@ async function runChild(file: string): Promise<void> {
         return;
       }
       if (value.generation !== generation) return;
+      const lane = lanes[value.method === "settingsSnapshot" ? "settings" : "dashboard"];
       inFlight += 1;
+      lane.inFlight += 1;
       const startedAt = Date.now();
       const observe = (phase: OperationMessage["phase"]) => send({
         type: "operation",
@@ -480,11 +500,11 @@ async function runChild(file: string): Promise<void> {
         startedAt,
         observedAt: Date.now()
       });
-      observe(inFlight > 1 ? "queue-wait" : "read-snapshot");
-      const run = tail.then(async () => {
+      observe(lane.inFlight > 1 ? "queue-wait" : "read-snapshot");
+      const run = lane.tail.then(async () => {
         observe("read-snapshot");
         // Bridge read permissions do not depend on an execution login snapshot.
-        const result = await executeProjection(file, value.method, value.args, codexService);
+        const result = await executeProjection(file, lane.store!, value.method, value.args, codexService);
         observe("serializing");
         const encoded = JSON.stringify(result === undefined ? null : result);
         if (Buffer.byteLength(encoded, "utf8") > MAX_MESSAGE_BYTES) {
@@ -504,8 +524,11 @@ async function runChild(file: string): Promise<void> {
         requestId: value.requestId,
         ok: false,
         error: error instanceof Error ? error.message : String(error)
-      })).finally(() => { inFlight = Math.max(0, inFlight - 1); });
-      tail = run;
+      })).finally(() => {
+        inFlight = Math.max(0, inFlight - 1);
+        lane.inFlight = Math.max(0, lane.inFlight - 1);
+      });
+      lane.tail = run;
     });
     process.once("disconnect", () => { void close(); });
     process.once("SIGTERM", () => { void close(); });
@@ -519,6 +542,7 @@ async function runChild(file: string): Promise<void> {
 
 async function executeProjection(
   file: string,
+  stateStore: BridgeStateStore,
   method: ReadMethod,
   args: unknown[],
   codexService: CodexService
@@ -530,7 +554,6 @@ async function executeProjection(
   // Settings are read in a separate process. They still need the applied CLI
   // selection for model discovery, even though no task worker runs here.
   config.codexService = codexService;
-  const stateStore = new BridgeStateStore({ file, readOnly: true });
   const upstream = new ProjectionUpstream();
   const sessions = new SessionRegistry({
     stateStore,
@@ -576,7 +599,6 @@ async function executeProjection(
   } finally {
     await server.close();
     await upstream.close();
-    stateStore.close();
   }
 }
 

@@ -253,6 +253,13 @@ phase. If it fails, the native/card presentation retains the last successful
 view with an explicit stale marker. It must not replace Jobs with an empty list
 or treat stale content as current cancellation/completion authority.
 
+Dashboard/history requests and Settings requests use independent queues and
+reusable query-only connections. A Settings model-discovery wait cannot delay
+database-only Dashboard reads. Each request loads fresh registries without
+holding a transaction between requests. Dashboard titles and displayed thread
+connections are fetched in deduplicated batches of at most 500 identities;
+matching a runtime problem to recovery history resolves its incident key once.
+
 An exact mutation command is always revalidated by the writer against current
 scope, permission and expected-version state. A fresh read result does not
 reserve that version.

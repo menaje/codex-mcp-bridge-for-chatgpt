@@ -1446,6 +1446,10 @@ export class BridgeStateStore {
     }));
   }
 
+  dashboardActivityTitles(activityIds: readonly string[]): Map<string, string> {
+    return this.dashboardReadModel.activityTitles(activityIds);
+  }
+
   dashboardArchivedCounts(scopeId?: string): DashboardArchivedCounts {
     return this.dashboardReadModel.archivedCounts(scopeId);
   }

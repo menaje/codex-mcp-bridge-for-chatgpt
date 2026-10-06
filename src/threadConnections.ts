@@ -58,6 +58,19 @@ export class ThreadConnectionStore {
     return row ? this.decode(row as Record<string, unknown>) : undefined;
   }
 
+  listByThreadIds(threadIds: readonly string[]): ThreadConnectionRecord[] {
+    const records: ThreadConnectionRecord[] = [];
+    const uniqueIds = [...new Set(threadIds)];
+    for (let offset = 0; offset < uniqueIds.length; offset += 500) {
+      const chunk = uniqueIds.slice(offset, offset + 500);
+      const placeholders = chunk.map(() => "?").join(",");
+      records.push(...this.db.prepare(`SELECT * FROM thread_connections
+        WHERE thread_id IN (${placeholders})`).all(...chunk)
+        .map(row => this.decode(row as Record<string, unknown>)));
+    }
+    return records;
+  }
+
   list(): ThreadConnectionRecord[] {
     return this.db.prepare("SELECT * FROM thread_connections ORDER BY updated_at, thread_id").all()
       .map(row => this.decode(row as Record<string, unknown>));

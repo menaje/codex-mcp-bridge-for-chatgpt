@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -68,6 +69,62 @@ async function waitFor(
 }
 
 describe("isolated state read projection", () => {
+  it("serves simultaneous Dashboard reads while Settings waits for model discovery", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "bridge-state-read-settings-wait-"));
+    roots.push(root);
+    const file = path.join(root, "state.sqlite");
+    const entered = path.join(root, "models-entered");
+    const released = path.join(root, "models-released");
+    const command = path.join(root, "codex-models.mjs");
+    await writeFile(command, `#!/usr/bin/env node
+if (process.argv[2] === 'debug' && process.argv[3] === 'models') {
+  const fs = await import('node:fs');
+  fs.writeFileSync(${JSON.stringify(entered)}, 'waiting');
+  while (!fs.existsSync(${JSON.stringify(released)})) await new Promise(resolve => setTimeout(resolve, 20));
+  console.log(JSON.stringify({models: []}));
+  process.exit(0);
+}
+await import(${JSON.stringify(new URL("./fixtures/fake-codex-app-server.mjs", import.meta.url).href)});
+`, { mode: 0o700 });
+    const environment = {
+      ...process.env, HOME: root, CODEX_HOME: path.join(root, "codex"),
+      CODEX_MCP_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_CODEX: command,
+      CODEX_MCP_BRIDGE_RUNTIME_HOME: path.join(root, "runtime"),
+      CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: file,
+      CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: path.join(root, "models.json"),
+      CODEX_MCP_BRIDGE_SKILLS_DIRECTORY: path.join(root, "skills")
+    };
+    const store = new BridgeStateStore({ file });
+    const settings = new UserSettingsStore(loadConfig(environment), { stateStore: store });
+    new ScopeResolver({ stateStore: store });
+    const before = bridgeInstanceCount(file);
+    const service = await ChildProcessStateReadService.start(file, environment, { requestDeadlineMs: 1_000 });
+    const settingsRead = service.settingsSnapshot({ refreshModels: true }).catch(error => error);
+    try {
+      await waitFor(() => existsSync(entered));
+      settings.update({ uiLocalePreference: "ko" }, 0);
+      const snapshots = await Promise.all([
+        service.dashboardSnapshot({ inspectRuntime: false, includeHistory: false }),
+        service.dashboardSnapshot({ inspectRuntime: false, includeHistory: false })
+      ]);
+      expect(snapshots).toEqual([
+        expect.objectContaining({ uiLocalePreference: "ko" }),
+        expect.objectContaining({ uiLocalePreference: "ko" })
+      ]);
+      expect(existsSync(released)).toBe(false);
+      expect(service.health().activeOperation).toMatchObject({ method: "settingsSnapshot", phase: "read-snapshot" });
+      expect(bridgeInstanceCount(file)).toBe(before);
+      await writeFile(released, "continue");
+      await settingsRead;
+      await waitFor(() => service.health().inFlight === 0);
+    } finally {
+      await writeFile(released, "continue");
+      await settingsRead;
+      await service.close();
+      store.close();
+    }
+  }, 15_000);
+
   it("keeps a session visible through IPC during account loss, change and reader restart", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "bridge-state-read-owner-"));
     roots.push(root);

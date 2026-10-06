@@ -5387,13 +5387,7 @@ export function registerBridgeTools(
         cacheHits: view.enrichment.cacheHits
       });
       const serializationStartedAt = Date.now();
-      for (const row of [...view.activeRows, ...view.terminalRows, ...view.idleRows, ...(view.statusRows || [])]) {
-        const threadId = row.codexThreadUrl?.replace("codex://threads/", "");
-        const connection = threadId ? jobs.admissionStateStore.threadConnections.get(threadId) : undefined;
-        if (connection) row.handoff = { phase: connection.phase,
-          ...(connection.reason !== undefined ? { reason: connection.reason } : {}),
-          requested: connection.handoffRequested, canOpen: connection.phase === "released" && Boolean(connection.evidence) };
-      }
+      projectDashboardHandoffs(view, jobs);
       JSON.stringify(view);
       cardPerformance.record("dashboard.serialization", Date.now() - serializationStartedAt);
       return view;
@@ -5443,25 +5437,7 @@ export function registerBridgeTools(
         cacheHits: view.enrichment.cacheHits
       });
       const serializationStartedAt = Date.now();
-      for (const row of [
-        ...view.activeRows,
-        ...view.terminalRows,
-        ...view.idleRows,
-        ...(view.statusRows || [])
-      ]) {
-        const threadId = row.codexThreadUrl?.replace("codex://threads/", "");
-        const connection = threadId
-          ? jobs.admissionStateStore.threadConnections.get(threadId)
-          : undefined;
-        if (connection) {
-          row.handoff = {
-            phase: connection.phase,
-            ...(connection.reason !== undefined ? { reason: connection.reason } : {}),
-            requested: connection.handoffRequested,
-            canOpen: connection.phase === "released" && Boolean(connection.evidence)
-          };
-        }
-      }
+      projectDashboardHandoffs(view, jobs);
       JSON.stringify(view);
       cardPerformance.record("dashboard.serialization", Date.now() - serializationStartedAt);
       return view;
@@ -11412,6 +11388,24 @@ function dashboardHistoryRevision(agent: Pick<BridgeAgent, "agentId" | "version"
     job?.jobId || null,job?.status || null,job?.updatedAt || null])).digest("hex");
 }
 
+function projectDashboardHandoffs(view: DashboardView, jobs: CodexJobRegistry): void {
+  const rows = [...view.activeRows, ...view.terminalRows, ...view.idleRows, ...(view.statusRows || [])];
+  const threadIds = rows.flatMap(row => row.codexThreadUrl
+    ? [row.codexThreadUrl.replace("codex://threads/", "")] : []);
+  const connections = new Map(jobs.admissionStateStore.threadConnections.listByThreadIds(threadIds)
+    .map(connection => [connection.threadId, connection]));
+  for (const row of rows) {
+    const threadId = row.codexThreadUrl?.replace("codex://threads/", "");
+    const connection = threadId ? connections.get(threadId) : undefined;
+    if (connection) row.handoff = {
+      phase: connection.phase,
+      ...(connection.reason !== undefined ? { reason: connection.reason } : {}),
+      requested: connection.handoffRequested,
+      canOpen: connection.phase === "released" && Boolean(connection.evidence)
+    };
+  }
+}
+
 function dashboardRuntimeProblemIdentity(jobs: CodexJobRegistry, agent: BridgeAgent) {
   const job = agent.currentJobId ? jobs.get(agent.currentJobId) : undefined;
   const latest = jobs.admissionStateStore.workHistory.latestJob(agent.agentId);
@@ -12510,11 +12504,11 @@ async function buildDashboardView(
   const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
   const currentThreadByAgent = new Map(jobs.listCurrentAgentThreads().map(thread => [thread.agentId, thread]));
   const sessionById = new Map(allSessions.map(session => [session.threadId, session]));
-  const activityById = new Map<string, ReturnType<CodexJobRegistry["getActivity"]>>();
-  const activityFor = (id: string) => {
-    if (!activityById.has(id)) activityById.set(id, jobs.getActivity(id));
-    return activityById.get(id);
-  };
+  const activityTitles = jobs.admissionStateStore.dashboardActivityTitles([
+    ...allJobs.map(job => job.activityId),
+    ...archivedJobs.map(job => job.activityId),
+    ...problemJobRecords.map(job => job.activityId)
+  ]);
   const currentThreadFor = (agentId: string | undefined): BridgeAgentThread | undefined => {
     if (!agentId) return undefined;
     return currentThreadByAgent.get(agentId);
@@ -12634,7 +12628,7 @@ async function buildDashboardView(
     const cancellation = cancellationForDashboardJob(job.jobId);
     return {
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
-      activityTitle: activityFor(job.activityId)?.title || null,
+      activityTitle: activityTitles.get(job.activityId) || null,
       ...(execution ? { execution } : {}),
       ...dashboardJobTokenUsage(job.jobId, summaryCache),
       status: statusForJob(job),
@@ -12651,7 +12645,7 @@ async function buildDashboardView(
     const cancellation = cancellationForDashboardJob(job.jobId);
     return {
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
-      activityTitle: activityFor(job.activityId)?.title || null,
+      activityTitle: activityTitles.get(job.activityId) || null,
       ...(execution ? { execution } : {}),
       ...dashboardJobTokenUsage(job.jobId, summaryCache),
       status: job.status as DashboardStatus,
@@ -12735,7 +12729,7 @@ async function buildDashboardView(
     const job = agent.currentJobId
       ? jobs.get(agent.currentJobId)
       : latestJobByAgent.get(agent.agentId);
-    if (!job || !activityFor(job.activityId)) return null;
+    if (!job || !activityTitles.has(job.activityId)) return null;
     return job.pendingInteractions.some(interaction => !ordinaryCodexQuestion(interaction)) ? "request" : null;
   };
 
@@ -13112,13 +13106,17 @@ async function buildDashboardView(
       const observed = inspectionFailed ? cachedRuntime?.attemptedAt : cachedRuntime?.observedAt;
       const runtimeRow = {...row,controlKind:null,status:kind === "unknown" ? "liveness-unknown" as const : row.status,
         history:[],historyCount:0};
+      // Resolve this identity once; doing it inside find() repeated the same
+      // database query for every historical recovery record.
+      const automaticKey = automaticRecords.length === 0 ? undefined
+        : kind === "termination-failed" && currentJob
+          ? automaticRecoveryKey("retry-stop",[currentJob.jobId,currentJob.workerId,currentJob.workerGeneration,currentJob.upstreamRequestId,currentJob.cancelRequestedAt])
+          : jobs.admissionStateStore.automaticRecovery.recheckCandidate(recheckRecoveryIdentity(jobs,agent))?.key;
       entries.push({problemKey:problemKey("runtime",agent.agentId),revision:identity.revision,kind,source:"runtime",
         review:resolvedAt ? "acknowledged" : "pending",acknowledgedAt:resolvedAt ? new Date(resolvedAt).toISOString() : null,
         observedAt:new Date(observed || agent.updatedAt).toISOString(),
         reason:currentJob?.error ? redactSensitiveText(currentJob.error).slice(0,1000) : null,
-        automatic:automaticSummary(automaticRecords.find(automatic => automatic.key === (kind === "termination-failed" && currentJob
-          ? automaticRecoveryKey("retry-stop",[currentJob.jobId,currentJob.workerId,currentJob.workerGeneration,currentJob.upstreamRequestId,currentJob.cancelRequestedAt])
-          : jobs.admissionStateStore.automaticRecovery.recheckCandidate(recheckRecoveryIdentity(jobs,agent))?.key))),
+        automatic:automaticSummary(automaticRecords.find(automatic => automatic.key === automaticKey)),
         canAcknowledge:false,canUnacknowledge:false,canRecheck:!resolvedAt && Boolean(thread && backendSupports(thread.backendKind,"supportsThreadInspection")),
         canRetryStop:currentJob?.status === "termination-failed" && Boolean(identity.stopImpact),
         ...(identity.stopImpact ? {stopImpact:identity.stopImpact} : {}),projectRow:()=>runtimeRow});
@@ -13148,10 +13146,14 @@ async function buildDashboardView(
     const offset = Math.min(problemQuery.offset,maximumOffset);
     const selectedEntries = filtered.slice(offset,offset+limit);
     const selectedJobIds = selectedEntries.flatMap((entry) => entry.jobId ? [entry.jobId] : []);
-    for (const retained of jobs.admissionStateStore.listDashboardRetainedJobsByIds(
+    const selectedRetainedJobs = jobs.admissionStateStore.listDashboardRetainedJobsByIds(
       selectedJobIds,
       scopeId
-    )) archivedById.set(retained.jobId, retained);
+    );
+    for (const retained of selectedRetainedJobs) archivedById.set(retained.jobId, retained);
+    for (const [activityId, title] of jobs.admissionStateStore.dashboardActivityTitles(
+      selectedRetainedJobs.map(job => job.activityId).filter(id => !activityTitles.has(id))
+    )) activityTitles.set(activityId, title);
     for (const [jobId, summary] of jobs.admissionStateStore.dashboardJobSummaries(selectedJobIds)) {
       summaryCache.set(jobId, summary);
     }
