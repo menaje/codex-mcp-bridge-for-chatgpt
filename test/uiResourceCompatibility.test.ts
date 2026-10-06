@@ -8,6 +8,7 @@ import { SETTINGS_CARD_HTML, uiBridgeErrorMessage } from "../src/settingsCard.js
 import { UI_RESOURCE_MANIFEST } from "../src/uiManifest.generated.js";
 import { serializeUiFunction } from "../src/uiFunctionSerialization.js";
 import { uiJsonTextIsWellFormed } from "../src/uiHostToolResult.js";
+import { settingsSpeedChoices, settingsSpeedSelection } from "../src/processingSpeedPresentation.js";
 import { executionSpeedBadge } from "../src/executionPresentation.js";
 import {
   currentUiResourceRevision,
@@ -50,6 +51,17 @@ describe("serialized card runtime compatibility", () => {
     const badge = runInNewContext(`(${serializeUiFunction(compiled.executionSpeedBadge!)})`);
     expect(badge({ processingSpeed: "fast" })).toBe("⚡ Fast");
     expect(badge({ processingSpeed: "ultrafast" })).toBe("🚀 Ultrafast");
+  });
+
+  it("keeps the speed picker projection identical in source and compiled cards", () => {
+    const source = readFileSync(fileURLToPath(new URL("../src/processingSpeedPresentation.ts", import.meta.url)), "utf8");
+    const compiled: Record<string, Function> = {};
+    const { outputText } = transpileModule(source, {
+      compilerOptions: { target: ScriptTarget.ES2022, module: ModuleKind.CommonJS }
+    });
+    runInNewContext(outputText, { exports: compiled });
+    expect(serializeUiFunction(compiled.settingsSpeedChoices!)).toBe(serializeUiFunction(settingsSpeedChoices));
+    expect(serializeUiFunction(compiled.settingsSpeedSelection!)).toBe(serializeUiFunction(settingsSpeedSelection));
   });
 
   for (const [name, currentHtml] of Object.entries({
