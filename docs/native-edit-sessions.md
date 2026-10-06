@@ -247,7 +247,9 @@ hold and Enter, with no form submission. That fixture's source SHA-256 is
 it precedes the separate search exit-guard exclusion and the latest localization
 updates. The final exit-guard behavior is covered by a mounted native test.
 
-The Japanese/Chinese candidate matrix remains pending until recorded.
+The Japanese/Chinese physical candidate matrix remains unverified. The closure
+decision below uses the user's revised acceptance criterion, without promoting
+these physical results to passes.
 The agent also tried installed Japanese Romaji and both Chinese Pinyin input
 sources on 2026-10-06. In the unmodified baseline field, automatic `nihongo` and
 `hanzi` plus Space stayed literal, with no marked range or candidate window.
@@ -270,7 +272,42 @@ isolation marks around the RTL query; the editable query itself stayed exact.
 The temporary three input sources and automatically added dictation languages
 were removed. ABC and Korean Two Set, active Korean Two Set, dictation off and
 Korean-only dictation language were verified restored; the trial app was closed.
-The temporary fixture also does not
-validate the installed product build. Keep #236 open while physical acceptance
-is incomplete; local source integration is not a release or installation of the
-fix. The 2026-10-04 fixture was closed after those tests.
+The temporary fixture also does not validate the installed product build. Local
+source integration is not a release or installation of the fix. The 2026-10-04
+fixture was closed after those tests.
+
+## Multilingual source review and closure decision — 2026-10-06
+
+The user explicitly requested web research in place of further non-Korean
+physical trials: close #236 if no additional input defect is identified, or
+research and apply a remedy first if one is found. The review compared primary
+Apple, Swift and Unicode documentation with the integrated production adapters,
+edit-session owners and regression tests. The host is macOS 26.6.2; the Apple
+input-method links below use the macOS 26 edition.
+
+| Input behavior and source | Protection in the integrated source and evidence |
+| --- | --- |
+| Japanese [candidate selection](https://support.apple.com/guide/japanese-input-method/use-the-candidate-window-jpim10262/6.3/mac/26), [Live Conversion](https://support.apple.com/guide/japanese-input-method/change-japanese-settings-jpim662a12b9/6.3/mac/26) and [reverse conversion](https://support.apple.com/guide/japanese-input-method/reverse-a-conversion-jpim10309/6.3/mac/26) can replace existing preedit, select part of a phrase and use Return to confirm it. | Native AppKit keeps composition and selection. Owners freeze host replacement while marked; search refuses older binding writes while its field editor is active or a change is queued. Candidate Return is guarded before submission. Native tests exercise successive kana/kanji replacements, refreshed fields/search/documents and explicit reconversion ranges. Session tests exercise candidate Return and marked save entry. |
+| Chinese [Pinyin/Zhuyin candidate selection](https://support.apple.com/guide/chinese-input-method/use-the-candidate-window-cim12992/104/mac/26) uses Space, number keys or Return depending on the input source. Candidates can also contain emoji. | The bridge leaves key interpretation to native controls; it does not map candidate keys to text itself. Search publishes the committed query. Simplified/Traditional candidate stages and supplementary characters are covered by mounted native protocol tests. Search Enter does not submit a form in the human Korean reacceptance and mixed-language Unicode UI trial. |
+| Apple's [text editing architecture](https://developer.apple.com/library/archive/documentation/TextFonts/Conceptual/CocoaTextArchitecture/TextEditing/TextEditing.html) shares a field editor within a window and routes key events through the input context. [Unmarking](https://developer.apple.com/documentation/appkit/nstextinputclient/unmarktext()) accepts visible preedit; [discardMarkedText](https://developer.apple.com/documentation/appkit/nstextinputcontext/discardmarkedtext()) terminates the conversion session after the client clears its marked range. | Owners check the actual control, field-editor delegate and first responder before synchronization. Explicit submission unmarks that owner's buffer before terminating its conversion session, verifies it is no longer marked, and reads the latest text. Ambiguous ownership blocks submission with the draft retained. Tests cover shared-field-editor isolation, synchronization failure and late native notifications. |
+| Swift [canonical string equality](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/stringsandcharacters/#String-and-Character-Equality) can hide an NFC/NFD byte change. Apple [NSString length](https://developer.apple.com/documentation/foundation/nsstring/length) counts UTF-16 units, unlike user-perceived characters. Unicode [grapheme rules](https://www.unicode.org/reports/tr29/) include combining marks, Indic conjuncts and emoji joiner sequences. | Input events and binding setters compare exact UTF-8; raw document updates also carry a byte snapshot. Selection/replacement uses native UTF-16 ranges. NFC applies only under the human-text policy at submission. Tests preserve accents, kana marks, Devanagari ZWJ/ZWNJ, Thai, emoji, BOM, CRLF, spaces and final newlines. Policy validation does not classify joiners as control characters. |
+| Unicode's [bidirectional algorithm](https://www.unicode.org/reports/tr9/) separates logical storage order from Arabic/Hebrew display order. Japanese settings can produce [full-width digits](https://support.apple.com/guide/japanese-input-method/enter-full-width-or-half-width-numbers-jpim10268/6.3/mac/26). | Native text layout handles direction, with no manual reversal or removal of joiners/directional format characters from drafts. Exact payload tests and the mixed-RTL UI trial compare stored bytes independently of display isolation. Numeric drafts retain empty/partial input and parse Unicode decimal digits only at submission; Arabic-Indic unit tests and the full-width `１２` UI trial pass. Verbatim fields do not receive compatibility width folding. |
+
+No additional unresolved bridge defect was identified by this source review.
+That is a conclusion from the documented contracts, source inspection and
+existing tests, not proof that every input method or physical candidate window
+has passed. The previous actual Japanese/Chinese keyboard attempts remain
+unverified. Observed marked-save acceptance and verification of the installed
+product build also remain unverified. Per the user's explicit decision, those
+physical trials are no longer blockers for closing this implementation issue;
+they remain useful release checks. No further production change was needed.
+
+The existing integrated-source checks remain the implementation evidence:
+macOS 262 total / 260 passed / 2 optional integration skips / 0 failed, native
+input 16 passed, and Node input-contract tests 8 passed. The full Node run had
+1,402 passes and six timeouts out of 1,408 tests; all six passed on the targeted
+retry with unchanged timeout limits. It was not a single clean full-suite run.
+`validate:fast` also passed using the repository's CLI 0.153.3 pin: release and
+localization checks succeeded, and all 416 JSON / 827 TypeScript App Server schema
+files matched. The closure comment separates local `dev` integration from remote
+rollout.
