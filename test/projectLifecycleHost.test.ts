@@ -471,4 +471,73 @@ describe("project retirement through the host boundary (#240)", () => {
     );
     checkDb();
   }, 20_000);
+
+  it("replays a lost delete response through Settings and MCP without deleting a new same-cwd identity or bypassing other CAS checks", async () => {
+    const project = await register();
+    await archive(project);
+    const snapshot = await server.applicationService.settingsSnapshot();
+    const deletion = {
+      expectedRegistryRevision: snapshot.settings.registryRevision,
+      operation: {
+        kind: "patch" as const,
+        settings: {
+          projectOperations: [
+            { kind: "delete" as const, projectId: project.id },
+          ],
+        },
+      },
+    };
+    await server.applicationService.updateSettings(deletion);
+    // Response loss retains this exact old registry revision on the caller.
+    await server.applicationService.updateSettings(deletion);
+    expect(settings.current.projects).toEqual([]);
+    const replacement = await register();
+    expect(replacement.id).not.toBe(project.id);
+    const revision = settings.current.registryRevision;
+    const locale = settings.current.uiLocalePreference;
+    await server.applicationService.updateSettings(deletion);
+    const replay = await client.callTool({
+      name: "codex_update_settings",
+      arguments: deletion,
+    });
+    expect(replay.isError, JSON.stringify(replay)).not.toBe(true);
+    expect(settings.current.projects.map((p) => p.id)).toEqual([
+      replacement.id,
+    ]);
+    expect(settings.current.registryRevision).toBe(revision);
+    await expect(
+      server.applicationService.updateSettings({
+        ...deletion,
+        expectedSettingsRevision: settings.current.settingsRevision,
+        operation: {
+          kind: "patch",
+          settings: {
+            ...deletion.operation.settings,
+            uiLocalePreference: "ko",
+          },
+        },
+      }),
+    ).rejects.toThrow("PROJECT_REGISTRY_REVISION_CONFLICT");
+    await expect(
+      server.applicationService.updateSettings({
+        ...deletion,
+        operation: {
+          kind: "patch",
+          settings: {
+            projectOperations: [
+              ...deletion.operation.settings.projectOperations,
+              { kind: "delete", projectId: replacement.id },
+            ],
+          },
+        },
+      }),
+    ).rejects.toThrow("PROJECT_REGISTRY_REVISION_CONFLICT");
+    expect(settings.current.uiLocalePreference).toBe(locale);
+    expect(settings.current.projects.map((p) => p.id)).toEqual([
+      replacement.id,
+    ]);
+    expect(settings.current.registryRevision).toBe(revision);
+    expect(calls).toBe(0);
+    checkDb();
+  });
 });

@@ -7940,7 +7940,12 @@ export function registerBridgeTools(
     if (hasGeneralMutation) {
       userSettings.assertExpectedRevision(args.expectedSettingsRevision as number);
     }
-    if (projectOperations.length > 0) {
+    // Pure deletion has no pre-write catalog lookup. Let its transaction
+    // distinguish an already removed identity (an exact retry after response
+    // loss) from any still-present target that requires the original CAS.
+    // Mixed settings/registry edits retain the strict preflight check.
+    if (projectOperations.length > 0 && (hasGeneralMutation ||
+        !projectOperations.every(operation => operation.kind === "delete"))) {
       userSettings.assertExpectedRegistryRevision(args.expectedRegistryRevision as number);
     }
     const current = userSettings.current;

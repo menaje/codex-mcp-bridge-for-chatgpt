@@ -49,6 +49,9 @@ new context.
 Delete is a single SQLite transaction after confirmed archive. It physically
 removes the project, its Activities, Jobs, sessions and result/history projections.
 Repeating delete after removal succeeds even with the old registry revision.
+The Settings API defers the registry CAS for pure deletion to that transaction;
+an existing target still requires the exact revision. Mixed settings/registry
+mutations keep their strict preflight revision checks.
 Concurrent delete before confirmation fails without partially changing settings.
 A new registration at the same cwd receives a new UUID/reference and session;
 old idle contexts do not pin the folder. Actual active executions and another
