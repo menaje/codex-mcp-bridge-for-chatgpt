@@ -1,0 +1,8 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 26 skipped (27)
+   Start at  22:11:03
+   Duration  21.86s (transform 7.86s, setup 0ms, import 10.14s, tests 11.18s, environment 1ms)

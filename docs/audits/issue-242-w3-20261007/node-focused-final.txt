@@ -1,0 +1,33 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion
+
+ × test/issue242Completion.test.ts > issue 242 W3 durable native completions > emits readiness only after the outer durable commit; excludes progress, verify, duplicates and rollback 1416ms
+   → Only an open Activity can be sealed.
+ ✓ test/issue242Completion.test.ts > issue 242 W3 durable native completions > has zero empty writer transactions and distinguishes a concurrent consumer winning after preflight 466ms
+ ✓ test/issue242Completion.test.ts > issue 242 W3 durable native completions > drains 25 durable completions in batches of at most ten with stable IDs and no Job execution 953ms
+ ✓ test/issue242Completion.test.ts > issue 242 W3 durable native completions > persists bounded delivery backoff, ignores wrong owners and recovers ack loss, lease expiry and restart 266ms
+ ✓ test/issue242Completion.test.ts > issue 242 W3 durable native completions > carries epoch and per-topic revision for lost/coalesced events and ignores unknown cursors 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/issue242Completion.test.ts > issue 242 W3 durable native completions > emits readiness only after the outer durable commit; excludes progress, verify, duplicates and rollback
+Error: Only an open Activity can be sealed.
+ ❯ src/stateStore.ts:2963:15
+    2961|       const activity = this.requireActivity(activityId);
+    2962|       if (activity.lifecycle !== "open") {
+    2963|         throw new Error("Only an open Activity can be sealed.");
+       |               ^
+    2964|       }
+    2965|       if (activity.counts.total === 0) {
+ ❯ BridgeStateStore.transaction src/stateStore.ts:1131:22
+ ❯ BridgeStateStore.sealActivity src/stateStore.ts:2960:17
+ ❯ CodexJobRegistry.sealActivity src/tools.ts:3326:41
+ ❯ test/issue242Completion.test.ts:54:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 passed (5)
+   Start at  21:40:19
+   Duration  16.95s (transform 10.38s, setup 0ms, import 13.15s, tests 3.11s, environment 0ms)
