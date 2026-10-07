@@ -112,6 +112,39 @@ cache and skill directory under its own temporary root. Its composed state store
 was already isolated; this also excludes unused default operational paths from
 the fixture configuration. No operational data was migrated or removed.
 
+## Additional final-contract corrections
+
+The first clean, strict full execution at
+`36132bf3e7288eed4bb49db78104814a3cc99f27` passed **126 files / 1,428 tests** in
+761.64 seconds. Focused 188, migration 16, impact 145 and native 223 passed
+(native also skipped two opt-in tests). The extra #221 browser check failed:
+its unchanged baseline script expected `/v4.html`, while both baseline and task
+manifest/shipped Dashboard HTML specify v5. Script SHA-256 at both references
+was `2d9cf3f326e78a22a606593f45e9c32d8d9107c4b29835affc4b9b36e47c13d3`;
+Dashboard HTML SHA-256 was
+`804ca4044e523ed510d91a3891f0dcbbd5c61b254d7b1694c70741cfe64402d6`.
+The test now requires the exact canonical current resource URI, retaining every
+message/teardown assertion and its existing fixture timers. All six scenarios
+passed after correction; per-scenario observations are saved as ignored evidence.
+
+Contract inspection also found a real API gap not covered by that green Node
+snapshot: Settings preflight rejected an identical delete retry carrying the old
+registry revision, despite the storage transaction's intended idempotency. A new
+host case reproduced `PROJECT_REGISTRY_REVISION_CONFLICT` in 164 ms before the fix.
+Commit `61f1d979bf5bc1b9718dc686c9d52d6ad37ebdfb` defers only pure deletion's
+registry CAS to the existing transaction. Absent identities succeed; any present
+target still requires exact CAS. Mixed setting edits retain the preflight check.
+The new case verifies Native Settings and MCP replay after response loss and
+after same-cwd/name re-registration, no revision advance, no new execution, and
+rejection of stale mixed settings or a batch containing a new existing identity.
+It uses the unchanged default five-second test deadline and passed in 221 ms.
+The three host cases passed together. No existing timeout or protection assertion
+was weakened.
+
+These corrections are committed before the final repeated verification. All
+required checks, including the unfiltered complete Node suite, run again at the
+new published HEAD; the earlier 1,428-pass snapshot is not substituted for it.
+
 ## Final verification protocol and limitations
 
 Freeze and commit all product/test/documentation changes, build from that exact
