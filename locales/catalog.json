@@ -28310,55 +28310,55 @@
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Versionsverwaltung"
+              "value": "Codex CLI-Versionsverwaltung"
             }
           },
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Version management"
+              "value": "Codex CLI version management"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Gestión de versiones"
+              "value": "Gestión de versiones de Codex CLI"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Gestion des versions"
+              "value": "Gestion des versions de Codex CLI"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "バージョン管理"
+              "value": "Codex CLI のバージョン管理"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "버전 관리"
+              "value": "Codex CLI 버전 관리"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Gerenciamento de versões"
+              "value": "Gerenciamento de versões do Codex CLI"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "版本管理"
+              "value": "Codex CLI 版本管理"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "版本管理"
+              "value": "Codex CLI 版本管理"
             }
           }
         }
@@ -51313,55 +51313,55 @@
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Codex aktualisieren"
+              "value": "Codex CLI aktualisieren"
             }
           },
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Update Codex"
+              "value": "Update Codex CLI"
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Actualizar Codex"
+              "value": "Actualizar Codex CLI"
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "Mettre à jour Codex"
+              "value": "Mettre à jour Codex CLI"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "Codex を更新"
+              "value": "Codex CLI を更新"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "코덱스 업데이트"
+              "value": "Codex CLI 업데이트"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "Atualizar Codex"
+              "value": "Atualizar Codex CLI"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "更新 Codex"
+              "value": "更新 Codex CLI"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "更新 Codex"
+              "value": "更新 Codex CLI"
             }
           }
         }
@@ -57061,6 +57061,65 @@
             "stringUnit": {
               "state": "translated",
               "value": "Bridge CLI (Recomendado)"
+            }
+          }
+        }
+      },
+      "macos.codexCliUpdate.description": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Updates the Codex CLI managed by Bridge."
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "브리지가 관리하는 Codex CLI를 업데이트합니다."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "ブリッジが管理する Codex CLI を更新します。"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "更新由 Bridge 管理的 Codex CLI。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "更新由 Bridge 管理的 Codex CLI。"
+            }
+          },
+          "es": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Actualiza Codex CLI administrado por Bridge."
+            }
+          },
+          "fr": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Met à jour Codex CLI géré par Bridge."
+            }
+          },
+          "de": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Aktualisiert die von der Bridge verwaltete Codex CLI."
+            }
+          },
+          "pt": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Atualiza o Codex CLI gerenciado pelo Bridge."
             }
           }
         }

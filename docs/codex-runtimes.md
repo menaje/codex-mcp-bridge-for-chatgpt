@@ -88,6 +88,8 @@ These settings govern Codex launched through the bridge. They do not rewrite
 
 Updates are manual. A version check or notification never downloads or activates a release. Pins, skipped releases and notification preferences survive restart. External app/terminal files can change independently of the saved path.
 
+When an update is available for the selected Bridge-managed CLI and update notifications are enabled, the local macOS menu-bar popover shows a download-circle icon beside Settings. Its tooltip and accessibility information say **Update Codex CLI**, show the installed and available versions, and identify the Bridge-managed CLI as the update target. Clicking it updates that CLI; Bridge application updates have their own release lifecycle. The same **Update Codex CLI** wording is used in Settings.
+
 A new managed installation resolves the latest stable release unless the user specifies or pins a version. Reinstall preserves the selected version. Failed registry lookup offers retry; it does not silently install the CI baseline. Previously installed versions remain available for explicit recovery.
 
 Managed files live under `~/.codex-mcp-bridge/runtimes` or `CODEX_MCP_BRIDGE_RUNTIME_HOME`. Each installation gets a separate version directory. HTTPS downloads, publisher integrity checks, safe archive extraction and recorded executable hashes protect installation integrity. The bridge does not alter external app bundles or global package-manager installations.
