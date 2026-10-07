@@ -10,6 +10,10 @@ records accepted shutdown intent; `unresolved` records an incomplete attempt and
 its concrete `archive_reasons`; `complete` records confirmed shutdown and sets
 `archived_at`. `archive_revision` fences stale cleanup attempts. The Settings API,
 card and macOS Settings expose these states and allow cleanup retries.
+The Settings resource advances to `v6` because cached deletion guidance and
+shutdown controls do not satisfy this contract. Close older Settings mounts,
+refresh the connector and reopen Settings before deployment acceptance; a URI
+change cannot revoke an already open mount.
 
 Archive commits a short intent transaction before any external operation.
 Admission, continue/fork, input responses, approved followups and automatic

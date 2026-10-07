@@ -11,8 +11,8 @@ integrity checks; it is not part of the file name or URI.
 
 | Card | Source file | Packaged file | Resource URI |
 | --- | --- | --- | --- |
-| Settings | `ui-resources/settings.html` | `dist/ui/settings.html` | `ui://codex-mcp-bridge/settings/v4.html` |
-| Dashboard | `ui-resources/dashboard.html` | `dist/ui/dashboard.html` | `ui://codex-mcp-bridge/dashboard/v4.html` |
+| Settings | `ui-resources/settings.html` | `dist/ui/settings.html` | `ui://codex-mcp-bridge/settings/v6.html` |
+| Dashboard | `ui-resources/dashboard.html` | `dist/ui/dashboard.html` | `ui://codex-mcp-bridge/dashboard/v5.html` |
 
 Activity, Question, and Decision are retired presentation resources. Their
 historical state remains only where migration or current orchestration requires
@@ -51,6 +51,14 @@ new script started. A current file on disk alone is not live-serving evidence.
 Product SemVer and card URI versions are independent. A product release does
 not change a card URI by itself, and the two cards can advance their URI
 versions separately.
+
+Settings `v6` introduces confirmed project shutdown and physical removal of Bridge
+management records. Older cached deletion guidance incorrectly promises retained
+work history, and older cards cannot show pending/unresolved shutdown or retry it.
+Close older Settings mounts, refresh connector discovery, and reopen Settings
+before applying this contract. A new URI does not revoke an already open iframe;
+live-host teardown and refresh acceptance remain a deployment check. Dashboard
+stays at `v5`; there is still only one packaged file per card.
 
 ## Release rules
 

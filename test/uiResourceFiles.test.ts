@@ -47,7 +47,7 @@ describe("single-file UI resource lifecycle", () => {
       }
 
       const initial = syncUiResources(root, manifest);
-      expect(initial.resources.settings.uri).toBe("ui://codex-mcp-bridge/settings/v5.html");
+      expect(initial.resources.settings.uri).toBe("ui://codex-mcp-bridge/settings/v6.html");
       expect(initial.resources.dashboard.uri).toBe("ui://codex-mcp-bridge/dashboard/v5.html");
       expect(sourceFiles(root)).toEqual(["dashboard.html", "settings.html"]);
       expect(packagedFiles(root)).toEqual(["dashboard.html", "settings.html"]);
