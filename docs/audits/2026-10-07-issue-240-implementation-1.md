@@ -1,5 +1,9 @@
 # Issue #240 — implementation 1, local verification
 
+This is the historical first handoff. Its verification limits are superseded by
+the [strict follow-up audit](2026-10-07-issue-240-independent-review.md) and the
+exact-HEAD final results in Draft PR #241 / the linked issue progress comment.
+
 Date: 2026-10-07 (Asia/Seoul). This is a Draft PR handoff, **not permission to
 merge, close #240, deploy, migrate an operational database, or replace the app**.
 The exact published HEAD is recorded in the PR and issue comment; this audit is
