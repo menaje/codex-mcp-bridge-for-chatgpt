@@ -72,6 +72,7 @@ describe("project retirement through the host boundary (#240)", () => {
   let server: BridgeHttpServer,
     client: Client,
     contract: Record<string, { const?: unknown }>;
+  let config: ReturnType<typeof loadConfig>, upstream: CodexUpstream;
   let calls: number, failStop: boolean;
   let reader: ChildProcessStateReadService | undefined;
   const held = new Map<
@@ -93,7 +94,7 @@ describe("project retirement through the host boundary (#240)", () => {
     mkdirSync(cwd);
     file = path.join(root, "state.sqlite");
     state = new BridgeStateStore({ file });
-    const config = loadConfig({
+    config = loadConfig({
       CODEX_MCP_BRIDGE_NO_AUTH: "1",
       CODEX_MCP_BRIDGE_ROOTS: root,
       CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: file,
@@ -117,7 +118,7 @@ describe("project retirement through the host boundary (#240)", () => {
     reader = undefined;
     held.clear();
     stops.length = 0;
-    const upstream = {
+    upstream = {
       async listTools() {
         return { tools: [{ name: "codex" }] };
       },
@@ -175,6 +176,9 @@ describe("project retirement through the host boundary (#240)", () => {
           value.finish(result(value.assignment.threadId!));
       },
     } as unknown as CodexUpstream;
+    await connectHost();
+  });
+  async function connectHost() {
     server = createHttpServer(config, upstream, catalog, { stateStore: state });
     await new Promise<void>((resolve) =>
       server.listen(0, "127.0.0.1", resolve),
@@ -193,7 +197,7 @@ describe("project retirement through the host boundary (#240)", () => {
     contract = (await client.listTools()).tools.find(
       (tool) => tool.name === "codex_task",
     )!.inputSchema.properties as typeof contract;
-  });
+  }
   afterEach(async () => {
     await reader?.close();
     for (const value of held.values())
@@ -370,6 +374,13 @@ describe("project retirement through the host boundary (#240)", () => {
           arguments: input,
         });
         expect(JSON.stringify(retry)).toContain("PROJECT_MANAGEMENT_ENDED");
+        const conflictingRetry = await client.callTool({
+          name: "codex_task",
+          arguments: { ...input, prompt: "different accepted request content" },
+        });
+        expect(JSON.stringify(conflictingRetry)).toContain(
+          "REQUEST_ID_CONFLICT",
+        );
         expect(calls).toBe(previousCalls);
         const oldStatus = await client.callTool({
           name: "codex_status",
@@ -392,6 +403,85 @@ describe("project retirement through the host boundary (#240)", () => {
     );
     expect(readFileSync(conversation, "utf8")).toBe('{"original":true}');
   }, 20_000);
+
+  it.each([true, false])(
+    "fences task retries across host restart and same-cwd registration with public envelope known=%s",
+    async (known) => {
+      const project = await register();
+      const input = args(project),
+        job = await admit(input);
+      await eventually(() =>
+        state
+          .listJobs()
+          .some(
+            (value) =>
+              value.jobId === job.jobId && value.status === "completed",
+          ),
+      );
+      if (!known) {
+        // Authentic old/compacted Jobs may retain admission without the public
+        // envelope. No discarded project or prompt is reconstructed for them.
+        const fixture = new Database(file);
+        fixture
+          .prepare(
+            "UPDATE jobs SET payload=json_remove(payload,'$.requestEnvelopeHash') WHERE job_id=?",
+          )
+          .run(job.jobId);
+        fixture.close();
+      }
+      await archive(project);
+      await mutate({ kind: "delete", projectId: project.id });
+      const replacement = await register();
+      await client.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      state.close();
+      state = new BridgeStateStore({ file });
+      settings = new UserSettingsStore(config, { stateStore: state });
+      await connectHost();
+      const before = calls;
+      const retry = await client.callTool({
+        name: "codex_task",
+        arguments: input,
+      });
+      expect(JSON.stringify(retry)).toContain("PROJECT_MANAGEMENT_ENDED");
+      const changed = await client.callTool({
+        name: "codex_task",
+        arguments: { ...input, prompt: "changed after restart" },
+      });
+      expect(JSON.stringify(changed)).toContain(
+        known ? "REQUEST_ID_CONFLICT" : "PROJECT_MANAGEMENT_ENDED",
+      );
+      const rebound = await client.callTool({
+        name: "codex_task",
+        arguments: { ...input, project: args(replacement).project },
+      });
+      expect(JSON.stringify(rebound)).toContain(
+        known ? "REQUEST_ID_CONFLICT" : "PROJECT_MANAGEMENT_ENDED",
+      );
+      expect(calls).toBe(before);
+      expect(settings.current.projects.map((value) => value.id)).toEqual([
+        replacement.id,
+      ]);
+      expect(state.listJobs()).toEqual([]);
+      const receipt = state.projectLifecycle.receipt(
+        "task-envelope-v1",
+        scopeId,
+        input.requestId,
+      );
+      expect(
+        state.projectLifecycle.jobReceipt(job.jobId)?.request_hash,
+      ).toMatch(/^[a-f0-9]{64}$/);
+      if (known) {
+        expect(receipt).toMatchObject({
+          subject_id: null,
+          hash_version: 1,
+          outcome: "completed",
+        });
+        expect(receipt?.request_hash).toMatch(/^[a-f0-9]{64}$/);
+      } else expect(receipt).toBeUndefined();
+      checkDb();
+    },
+  );
 
   it("blocks fresh/continue/fork during failed cleanup and preserves a shared worker peer across delete and late callbacks", async () => {
     const project = await register(),

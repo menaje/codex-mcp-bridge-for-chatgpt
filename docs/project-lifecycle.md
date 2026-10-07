@@ -73,7 +73,14 @@ cwd or transfers late results to a new registration.
 
 Job status/result/continuation management after delete returns
 `PROJECT_MANAGEMENT_ENDED`. Retrying the same accepted request never executes it
-again; a known changed hash returns `REQUEST_ID_CONFLICT`. Memory caches, deferred
+again; a known changed hash returns `REQUEST_ID_CONFLICT`. Ordinary task API
+retries compare the existing public-envelope digest in a separate
+`task-envelope-v1` receipt before resolving the deleted project or execution
+context. The admission digest remains separately available for internal retry
+checks. Neither receipt stores content or a project relationship. Legacy Jobs
+without an envelope digest and followups whose envelope required discarded
+approval journals fail closed using the admission receipt; no digest is inferred.
+Memory caches, deferred
 progress and settlement snapshots consult these durable receipts, including after
 restart. Undelivered completion/event records are removed, not marked delivered.
 

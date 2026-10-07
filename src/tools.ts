@@ -8104,6 +8104,14 @@ export function registerBridgeTools(
         );
         taskScopeId = scope.scopeId;
         args.mcpPrincipal = authenticatedMcpPrincipal(extra);
+        const lifecycle = jobs.admissionStateStore.projectLifecycle;
+        if (lifecycle.receipt("task", scope.scopeId, args.requestId)) {
+          lifecycle.assertRequest(
+            "task-envelope-v1", scope.scopeId, args.requestId,
+            taskRequestEnvelopeHash(args, scope.scopeId)
+          );
+          lifecycle.assertRequest("task", scope.scopeId, args.requestId);
+        }
         if (args.followup) {
           args = resolveApprovedFollowup(args, jobs, scope.scopeId);
           const prior = jobs.peekRequest(scope.scopeId, args.requestId);
@@ -8140,7 +8148,6 @@ export function registerBridgeTools(
         };
         signal?.addEventListener("abort", onAbort, { once: true });
         removeTaskAbortObserver = () => signal?.removeEventListener("abort", onAbort);
-        jobs.admissionStateStore.projectLifecycle.assertRequest("task",scope.scopeId,args.requestId);
         const existingRequest = jobs.peekRequest(scope.scopeId, args.requestId);
         if (!existingRequest && jobs.admissionStateStore.getArchivedJobAdmissionReceipt(
           scope.scopeId,

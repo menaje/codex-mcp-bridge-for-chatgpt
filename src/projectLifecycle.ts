@@ -414,6 +414,22 @@ export class ProjectLifecycleStore {
         String(job.status),
         now,
       );
+      // The admission hash also includes deleted routing/execution context.
+      // Preserve the already observed public-envelope digest separately so an
+      // API retry can compare content without reconstructing that context.
+      // Followup envelopes were expanded from approval journals; after those
+      // journals end, only their admission fence is independently comparable.
+      if (!payload.followup && typeof payload.requestEnvelopeHash === "string")
+        this.retain(
+          "task-envelope-v1",
+          String(job.scope_id),
+          String(job.request_id),
+          null,
+          payload.requestEnvelopeHash,
+          1,
+          String(job.status),
+          now,
+        );
     }
     // Hashes and observed outcomes survive; control payloads and relationships do not.
     for (const table of ["cancellation_operations", "steering_deliveries"]) {
