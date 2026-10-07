@@ -1,0 +1,8 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-r502
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  22:13:21
+   Duration  18.82s (transform 4.10s, setup 0ms, import 5.51s, tests 12.92s, environment 0ms)
