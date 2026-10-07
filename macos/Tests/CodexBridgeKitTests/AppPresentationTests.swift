@@ -573,7 +573,12 @@ final class AppPresentationTests: XCTestCase {
         }
         model.recordLocalConnectionStatus(try helperStatus())
         model.recordCompletionChangeNotice(try notice(0))
-        try await Task.sleep(for: .milliseconds(250))
+        for _ in 0..<200 {
+            if server.count("completion.availability") > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertGreaterThan(server.count("completion.availability"), 0)
+        try await Task.sleep(for: .milliseconds(100))
         let initialReads = server.count("completion.availability")
         for i in 1...400 { model.recordCompletionChangeNotice(try notice(i)) }
         try await Task.sleep(for: .milliseconds(250))
