@@ -84,6 +84,7 @@ export class McpEventStore {
    * must merge them from a fresh exact read, never a list/verification snapshot. */
   save(record: EventSubscription, expectedRevision: number): boolean {
     return this.state.transaction(() => {
+      if (this.state.projectLifecycle.jobReceipt(record.jobId)) return false;
       const existing = this.get(record.jobId, record.id);
       if (expectedRevision === 0 ? existing !== undefined : existing?.revision !== expectedRevision) return false;
       if (record.revision < 1 || (record.revision !== expectedRevision && record.revision !== expectedRevision + 1)) {

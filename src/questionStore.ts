@@ -216,7 +216,7 @@ export class QuestionStore {
       row.status === "delivered" || row.status === "uncertain" ? row.status : "uncertain";
   }
 
-  beginDelivery(scopeId: string, requestId: string, questionRef: string, hash: string): void {
+  beginDelivery(scopeId: string, requestId: string, questionRef: string, hash: string, jobId?: string): void {
     const existing = this.db.prepare("SELECT request_id,action_hash,status FROM codex_question_deliveries WHERE scope_id=? AND question_ref=?")
       .get(scopeId, questionRef) as { request_id: string; action_hash: string; status: string } | undefined;
     if (existing) {
@@ -231,8 +231,8 @@ export class QuestionStore {
       if (resumed.changes !== 1) throw new Error("QUESTION_ALREADY_DISPATCHED: Another answer attempt is in progress.");
       return;
     }
-    this.db.prepare("INSERT INTO codex_question_deliveries VALUES(?,?,?,?,?,?)")
-      .run(scopeId, requestId, questionRef, hash, "dispatching", Date.now());
+    this.db.prepare("INSERT INTO codex_question_deliveries(scope_id,request_id,question_ref,action_hash,status,created_at,job_id) VALUES(?,?,?,?,?,?,?)")
+      .run(scopeId, requestId, questionRef, hash, "dispatching", Date.now(), jobId || null);
   }
 
   finishDelivery(scopeId: string, requestId: string, status: "not-delivered" | "delivered" | "uncertain"): void {

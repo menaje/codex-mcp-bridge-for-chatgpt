@@ -560,7 +560,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
     graceMs?: number,
-    options?: { interruptOnly: true }
+    options?: { interruptOnly?: true; retirementThreadIds?: readonly string[] }
   ): Promise<JsonRpcTerminationResult> {
     return this.request("forceTerminateWorker", [assignment, correlation, graceMs, options]);
   }
@@ -677,6 +677,7 @@ export class ChildProcessCodexExecutionService implements CodexUpstream {
       canRelease = release.canRelease;
       wireArgs = [args[0], {
         eligibleThreadIds: [...release.eligibleThreadIds],
+        ...(release.retireContext === true ? { retireContext: true } : {}),
         ...(release.previousWorkerPid !== undefined
           ? { previousWorkerPid: release.previousWorkerPid }
           : {})

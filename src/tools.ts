@@ -1,3 +1,4 @@
+import { ProjectLifecycleController } from "./projectLifecycle.js";
 import { withExecutionIdentity } from "./executionIdentity.js";
 import { dashboardHistoryActionInput, ISSUE_ATTENTION_DAYS, type HistoryRetentionDays, type DashboardHistoryActionInput } from "./workHistory.js";
 import { DASHBOARD_STATUS_FILTERS, dashboardSummaryCategory, type DashboardStatusFilter } from "./dashboardPresentation.js";
@@ -272,6 +273,7 @@ const MODEL_PRIMARY_ANSWER_TRUNCATION_WARNING =
   "The model-authoritative primary answer was truncated by the structured-output byte limit. Request a narrower report only if the missing sections are required.";
 
 type ForceTerminateOptions = {
+  retirementThreadIds?: readonly string[];
   interruptOnly?: true;
   acknowledgeAffectedJobIds?: string[];
   /** Durable intents for every job the caller explicitly intended to stop. */
@@ -311,7 +313,7 @@ export class TaskProjectAvailabilityProjection {
   selectable(settings: BridgeUserSettings): ProjectTarget[] {
     this.synchronizeRegistry(settings);
     return settings.projects.filter((project) =>
-      project.archivedAt === undefined && this.stable.get(project.projectRef)?.available === true
+      (project.archiveState === undefined || project.archiveState === "active") && project.archivedAt === undefined && this.stable.get(project.projectRef)?.available === true
     );
   }
 
@@ -360,7 +362,7 @@ export class TaskProjectAvailabilityProjection {
       if (current?.projectRevision === project.projectRevision) continue;
       this.stable.set(project.projectRef, {
         projectRevision: project.projectRevision,
-        available: project.archivedAt === undefined && this.probe(project)
+        available: (project.archiveState === undefined || project.archiveState === "active") && project.archivedAt === undefined && this.probe(project)
       });
       this.pending.delete(project.projectRef);
     }
@@ -899,7 +901,11 @@ const bridgeUserSettingsOutputSchema = z.strictObject({
     sortOrder: z.number().int(),
     createdAt: z.number(),
     updatedAt: z.number(),
-    archivedAt: z.number().optional()
+    archivedAt: z.number().optional(),
+    archiveState: z.enum(["active","processing","unresolved","complete"]).optional(),
+    archiveRevision: z.number().int().optional(),
+    archiveRequestedAt: z.number().optional(),
+    archiveReasons: z.array(z.string()).optional()
   })),
   uiLocalePreference: z.enum(UI_LOCALE_PREFERENCES),
   maxConcurrentJobs: z.number().int().positive(),
@@ -1905,6 +1911,8 @@ type CodexJob = {
   approvedFollowups?: ApprovedFollowup[];
   followup?: FollowupReference;
   executionReceipt?: boolean;
+  /** Durable dispatch boundary; absence in legacy data means unknown. */
+  executionDispatched?: boolean;
   /** Non-secret owner boundary captured when this execution was admitted. */
   authBoundary?: string;
   threadPersistence?: UpstreamWorkerAssignment["threadPersistence"];
@@ -2284,6 +2292,8 @@ export class CodexJobRegistry {
   private readonly changeListeners = new Set<(
     reason?: CodexJobWakeReason, agentId?: string
   ) => void>();
+  private projectController?: ProjectLifecycleController;
+  private readonly dispatchedJobs = new Set<string>();
   private threadController?: ThreadConnectionController;
   private maintenanceScheduler?: StateMaintenanceScheduler;
   private recoveryController?: AutomaticRecoveryController;
@@ -2354,6 +2364,7 @@ export class CodexJobRegistry {
     if (this.retainedJobMaintenanceTimer) clearTimeout(this.retainedJobMaintenanceTimer);
     this.retainedJobMaintenanceTimer = undefined;
     await this.recoveryController?.close();
+    await this.projectController?.close();
     await this.threadController?.close();
   }
 
@@ -2452,10 +2463,65 @@ export class CodexJobRegistry {
       throw new Error("Codex job registry is already attached to another upstream.");
     }
     this.upstream = upstream;
+    if (!this.projectionOnly && !this.projectController) {
+      this.projectController = new ProjectLifecycleController(this.activityStore,this,upstream);
+      this.projectController.start();
+    }
     if (this.recoveryStarted || !this.recoverExecutions || !sessions || this.projectionOnly) return;
     this.recoveryStarted = true;
     this.recoverySessions = sessions;
     this.resumeAuthorizedRecoveries();
+  }
+
+  sweepProjectArchives(): Promise<void> { return this.projectController?.sweep() || Promise.resolve(); }
+
+  assertJobMayExecute(jobId: string): void {
+    const job = this.jobs.get(jobId);
+    if (!job || job.status !== "running") throw new Error("PROJECT_MANAGEMENT_ENDED: Execution admission has ended.");
+    try {
+      this.activityStore.transaction(()=>{
+        this.activityStore.projectLifecycle.assertActive(job.projectId);
+        job.executionDispatched=true;
+        this.persistJob(job);
+      });
+    } catch (error) { job.executionDispatched=false; throw error; }
+    this.dispatchedJobs.add(jobId);
+  }
+
+  refreshRetiredProjectState(): void { this.projectedProjectRevision = -1; this.refreshProjectIdentities(); }
+
+  async stopForProjectArchive(jobId: string): Promise<void> {
+    const job=this.get(jobId);
+    if (!job || isTerminalActivityJobStatus(job.status)) return;
+    const pending=this.terminations.get(jobId);
+    if (pending) { await pending.promise; if (!isTerminalActivityJobStatus(job.status)) throw new Error(job.error || "Termination remains unconfirmed."); return; }
+    if (!job.workerId && (this.dispatchedJobs.has(jobId) || job.executionDispatched !== false)) throw new Error("Waiting for dispatched or unknown execution ownership; admission is closed.");
+    const requestId=randomUUID();
+    const actionHash=createHash("sha256").update(JSON.stringify(["project-archive",job.projectId,jobId,job.version])).digest("hex");
+    const {intent}=this.activityStore.beginCancellationOperation({scopeId:job.scopeId,requestId,actionHash,
+      source:"operator",toolName:"settings.update",actionName:"project-archive",target:cancellationTargetForJob(job),
+      expectedVersion:job.version,reasonCode:"project-archive"});
+    if (!job.workerId) {
+      const previous={...job};
+      try {
+        this.activityStore.transaction(()=>{
+          job.status="cancelled"; job.terminalOrigin="explicit-cancellation"; job.cancellationIntentId=intent.intentId;
+          job.pendingInteractions=[]; job.error="Project archive cancelled this Job before execution dispatch.";
+          job.updatedAt=Date.now(); job.version+=1;
+          this.setCancellationIntentStatus(intent.intentId,"dispatched"); this.persistJob(job); this.setCancellationIntentStatus(intent.intentId,"succeeded");
+        });
+      } catch (error) { Object.assign(job,previous); throw error; }
+      this.deferredExecutions.get(jobId)?.discard();
+      this.notify(jobId,"terminal");
+    } else {
+      const affected=this.jobsForWorker(job);
+      if (job.backendKind !== "app-server" && affected.some(peer=>peer.projectId !== job.projectId)) throw new Error("Shared worker has another project's active execution.");
+      await this.cancel(jobId,intent,job.backendKind === "app-server" && affected.some(peer=>peer.projectId !== job.projectId)
+        ? {interruptOnly:true} : {acknowledgeAffectedJobIds:affected.map(peer=>peer.jobId),
+          ...(job.backendKind === "app-server" ? {retirementThreadIds:this.activityStore.projectLifecycle.threadIds(job.projectId!)} : {})});
+    }
+    this.completeCancellationOperation(job.scopeId,requestId,{code:isTerminalActivityJobStatus(job.status) ? "ARCHIVE_STOP_CONFIRMED" : "ARCHIVE_STOP_UNCONFIRMED"},isTerminalActivityJobStatus(job.status) ? "completed" : "failed");
+    if (!isTerminalActivityJobStatus(job.status)) throw new Error(job.error || "Termination remains unconfirmed.");
   }
 
   /** Recover exact retained executions even when new-execution authentication is unavailable. */
@@ -2464,6 +2530,7 @@ export class CodexJobRegistry {
     const sessions = this.recoverySessions;
     if (!upstream || !sessions || !this.recoveryStarted || this.projectionOnly) return;
     const record = (job: CodexJob, threadId: string | undefined, lineage: { sessionId?: string; forkedFromThreadId?: string }) => {
+      if (this.activityStore.projectLifecycle.jobReceipt(job.jobId) || (job.projectId && !this.activityStore.projectLifecycle.active(job.projectId))) return;
       const agent = job.agentId ? this.getAgent(job.agentId) : undefined;
       if (!threadId || !agent || !job.executionDecision || !isCodexBackendKind(job.backendKind)) return;
       return recordAdmittedThread({ sessions, jobs: this, sessionDecision: job.sessionDecision,
@@ -2580,6 +2647,7 @@ export class CodexJobRegistry {
   }
 
   findRequest(scopeId: string, requestId: string, requestHash: string): CodexJob | undefined {
+    this.activityStore.projectLifecycle.assertRequest("task",scopeId,requestId,requestHash);
     const job = [...this.jobs.values()].find(
       (entry) => entry.scopeId === scopeId && entry.requestId === requestId
     );
@@ -2683,6 +2751,7 @@ export class CodexJobRegistry {
 
   private deleteIndexedJob(jobId: string): void {
     this.jobs.delete(jobId);
+    this.dispatchedJobs.delete(jobId);
     const agentId = this.indexedJobAgent.get(jobId);
     if (agentId) {
       const ids = this.jobsByAgent.get(agentId);
@@ -3293,10 +3362,12 @@ export class CodexJobRegistry {
     activeLimit = this.maxConcurrentJobs,
     rejectIfSelectionActive = false,
     onAssigned?: (assignment: UpstreamWorkerAssignment, job: CodexJob) => void,
-    deferExecution = false
+    deferExecution = false,
+    prepareExecution = false
   ): CodexJob {
     const replay = this.findRequest(input.scopeId, input.requestId, input.requestHash);
     if (replay) return replay;
+    this.activityStore.projectLifecycle.assertActive(input.projectId);
     this.activityStore.threadConnections.assertAdmission(input.agentId, input.sessionDecision.threadId || input.sourceThreadId);
     if (!Number.isInteger(activeLimit) || activeLimit < 1 || activeLimit > this.maxConcurrentJobs) {
       throw new Error(`Invalid active Codex job limit: ${activeLimit}.`);
@@ -3346,6 +3417,7 @@ export class CodexJobRegistry {
       completionDeliveryPolicy: input.completionDeliveryPolicy || "direct-wait",
       jobId: randomUUID(),
       executionReceipt: this.upstream?.supportsExecutionRecovery?.() === true,
+      executionDispatched: false,
       createdAt: now,
       updatedAt: now,
       lastProgressAt: now,
@@ -3364,15 +3436,21 @@ export class CodexJobRegistry {
       throw error;
     }
     const execute = () => Promise.resolve()
-      .then(() =>
-        withExecutionIdentity(job.jobId, () => run(
+      .then(() => {
+        if (!prepareExecution) this.assertJobMayExecute(job.jobId);
+        else {
+          if (job.status !== "running") throw new Error("PROJECT_MANAGEMENT_ENDED: Execution admission has ended.");
+          this.activityStore.projectLifecycle.assertActive(job.projectId);
+        }
+        return withExecutionIdentity(job.jobId, () => run(
           (progress) => this.recordProgress(job, progress),
           (assignment) => {
+            if (isTerminalActivityJobStatus(job.status) || this.activityStore.projectLifecycle.jobReceipt(job.jobId)) return;
             this.recordWorkerAssignment(job, assignment);
-            onAssigned?.(assignment, job);
+            if (!job.projectId || this.activityStore.projectLifecycle.active(job.projectId)) onAssigned?.(assignment, job);
           }
-        ))
-      )
+        ));
+      })
       .then((result) => {
         if (job.status === "terminating") {
           this.deferredSettlements.set(job.jobId, { kind: "resolved", result, onComplete });
@@ -3711,6 +3789,7 @@ export class CodexJobRegistry {
       if (!current || !isActiveActivityJobStatus(current.status)) {
         throw new Error("The selected Codex job is not active.");
       }
+      this.activityStore.projectLifecycle.assertActive(current.projectId);
       this.assertOriginalJobControl(current);
       if (current.workerId && current.workerGeneration !== undefined &&
           !interactionId.startsWith(`${current.workerId}:${current.workerGeneration}:`)) {
@@ -4130,7 +4209,7 @@ export class CodexJobRegistry {
         assignment,
         cancellationTerminationCorrelation(primaryIntent),
         undefined,
-        options.interruptOnly ? {interruptOnly:true} : undefined
+        options.interruptOnly ? {interruptOnly:true} : options.retirementThreadIds ? {retirementThreadIds:options.retirementThreadIds} : undefined
       );
       if (result.mode === "already-completed") {
         this.activityTransaction(() => {
@@ -4427,6 +4506,14 @@ export class CodexJobRegistry {
         job.trackingState = "liveness-unknown";
         this.recoveryJobs.add(job.jobId);
       } else if (isActiveActivityJobStatus(job.status)) {
+        if (job.projectId && job.executionDispatched !== false) {
+          job.status="termination-failed";
+          job.trackingState="liveness-unknown";
+          job.error="Restarted with dispatched or unknown project execution; termination requires ownership confirmation.";
+          job.updatedAt=now; job.version+=1; changed=true;
+          this.setIndexedJob(job);
+          continue;
+        }
         job.status = "interrupted";
         job.terminalOrigin = "bridge-restart";
         job.trackingState = "orphaned";
@@ -4473,6 +4560,7 @@ export class CodexJobRegistry {
   }
 
   private persistJob(job: CodexJob, removed: string[] = [], notifyScope = true): void {
+    if (this.activityStore.projectLifecycle.jobReceipt(job.jobId)) { this.deleteIndexedJob(job.jobId); return; }
     const { promise: _promise, ...persisted } = job;
     this.activityStore.transaction(() => {
       this.activityStore.upsertJob(persisted);
@@ -4629,7 +4717,7 @@ export class CodexJobRegistry {
 
   private persistDeferredProgress(snapshot: ProgressPersistenceSnapshot): void {
     const current = this.jobs.get(snapshot.jobId);
-    if (!current || isTerminalActivityJobStatus(current.status)) return;
+    if (!current || isTerminalActivityJobStatus(current.status) || this.activityStore.projectLifecycle.jobReceipt(snapshot.jobId)) return;
     const persisted = this.progressPersisted.get(snapshot.jobId);
     if (persisted && persisted.version >= snapshot.version) return;
     this.persistProgressSnapshotBestEffort(snapshot);
@@ -4813,6 +4901,16 @@ export class CodexJobRegistry {
       ])
     );
     for (const job of this.jobs.values()) {
+      if (this.activityStore.projectLifecycle.jobReceipt(job.jobId)) {
+        this.deferredExecutions.get(job.jobId)?.discard();
+        this.deferredSettlements.delete(job.jobId);
+        this.progressPersistenceQueue.remove(snapshot=>snapshot.jobId === job.jobId);
+        this.progressPersisted.delete(job.jobId);
+        this.dispatchedJobs.delete(job.jobId);
+        this.deleteIndexedJob(job.jobId);
+        this.notify(job.jobId);
+        continue;
+      }
       const activity = activities.get(job.activityId);
       if (!activity) {
         delete job.projectId;
@@ -4896,8 +4994,31 @@ const appMutationOperations = new WeakMap<CodexJobRegistry, Map<string, {
   actionHash: string; promise: Promise<unknown>;
 }>>();
 
+/** Query-only facade; mutation methods and MCP dispatch are never exposed. */
+export function createBridgeReadProjectionService(
+  config: BridgeConfig,
+  upstream: CodexUpstream,
+  sessions: SessionRegistry,
+  jobs: CodexJobRegistry,
+  modelCatalog: CodexModelCatalogProvider,
+  userSettings: UserSettingsStore,
+  scopeResolver: ScopeResolver,
+  projectAvailability?: TaskProjectAvailabilityProjection
+): BridgeReadProjectionService {
+  const { applicationService: app } = registerBridgeTools(undefined, config,
+    upstream, sessions, jobs, modelCatalog, userSettings, scopeResolver, projectAvailability);
+  return {
+    dashboardSnapshot: options => app.dashboardSnapshot(options),
+    dashboardHistoryDetail: options => app.dashboardHistoryDetail!(options),
+    settingsSnapshot: options => app.settingsSnapshot(options),
+    dashboardRuntimePlan: options => app.dashboardRuntimePlan!(options),
+    dashboardSnapshotWithEnrichment: (options, enrichment) =>
+      app.dashboardSnapshotWithEnrichment!(options, enrichment)
+  };
+}
+
 export function registerBridgeTools(
-  server: McpServer,
+  server: McpServer | undefined,
   config: BridgeConfig,
   upstream: CodexUpstream,
   sessions: SessionRegistry,
@@ -4918,12 +5039,14 @@ export function registerBridgeTools(
   applicationService: BridgeApplicationService;
   dispose(): void;
 } {
+  if (!server && !jobs.admissionStateStore.readOnly) {
+    throw new Error("STATE_READ_WRITABLE_STORE: Application-only projection requires a query-only state store.");
+  }
+  if (!server && (userSettings.admissionStateStore !== jobs.admissionStateStore ||
+      sessions.admissionStateStore !== jobs.admissionStateStore)) {
+    throw new Error("PROJECT_ADMISSION_STORE_MISMATCH: Read projections must share one state store.");
+  }
   jobs.attachUpstream(upstream, sessions);
-  // MCP 2026 list results must be deterministic. Register immutable card
-  // resources in URI order; input tools do not add a resource.
-  registerDashboardCardResource(server);
-  const codexInputs = registerCodexInputTools(server, jobs, scopeResolver);
-  registerSettingsCardResource(server);
   const cardPerformance = sharedCardPerformance || new CardPerformanceTracker();
   const effectiveSkillLibrary = skillLibrary || new SkillLibrary({
     directory: config.bridgeSkillsDirectory
@@ -5563,6 +5686,16 @@ export function registerBridgeTools(
     applicationService.settingsSnapshot = options =>
       readProjection.settingsSnapshot(options);
   }
+  // The isolated reader needs the same fresh application projections, but no
+  // wire tools, cards or execution handlers. Building their schemas for every
+  // read can itself exhaust the observation deadline. Never cache the registry
+  // graph: retirement and same-cwd registration must be visible on the next read.
+  if (!server) return { applicationService, dispose: () => undefined };
+  // MCP 2026 list results must be deterministic. Register immutable card
+  // resources in URI order; input tools do not add a resource.
+  registerDashboardCardResource(server);
+  const codexInputs = registerCodexInputTools(server, jobs, scopeResolver);
+  registerSettingsCardResource(server);
   const currentTaskAdmissionRef = (
     settings: BridgeUserSettings = userSettings.current,
     catalogFingerprint = admissionFingerprintForCatalog(
@@ -6237,6 +6370,7 @@ export function registerBridgeTools(
         if (!initial || initial.scopeId !== scopeId) {
           const receipt = jobs.admissionStateStore.getArchivedJobAdmissionReceipt(scopeId, jobQuery);
           if (!receipt) throw scopedHandleUnavailable("job");
+          if (receipt.managementEnded) throw new Error("PROJECT_MANAGEMENT_ENDED: This request was accepted and terminated; its project, results and resume management have ended. The requestId remains reserved.");
           const completed = receipt.status === "completed";
           const structured = compactStatusProjection({
             kind: "job",
@@ -7806,7 +7940,12 @@ export function registerBridgeTools(
     if (hasGeneralMutation) {
       userSettings.assertExpectedRevision(args.expectedSettingsRevision as number);
     }
-    if (projectOperations.length > 0) {
+    // Pure deletion has no pre-write catalog lookup. Let its transaction
+    // distinguish an already removed identity (an exact retry after response
+    // loss) from any still-present target that requires the original CAS.
+    // Mixed settings/registry edits retain the strict preflight check.
+    if (projectOperations.length > 0 && (hasGeneralMutation ||
+        !projectOperations.every(operation => operation.kind === "delete"))) {
       userSettings.assertExpectedRegistryRevision(args.expectedRegistryRevision as number);
     }
     const current = userSettings.current;
@@ -7886,6 +8025,8 @@ export function registerBridgeTools(
         userSettings.update(patch, args.expectedSettingsRevision as number);
       }
     }
+    void jobs.sweepProjectArchives();
+    jobs.refreshRetiredProjectState();
     const projectionStatus = publishTaskProjection(validatedCatalog);
     return buildSettingsView(
       config,
@@ -7903,7 +8044,7 @@ export function registerBridgeTools(
     {
       title: `Save ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Save or reset bridge settings from the settings card. Reset preserves registered projects; removing a registration preserves its files and work history.",
+        "Save or reset bridge settings from the settings card. Reset preserves registered projects. Archive confirms execution shutdown; delete removes Bridge sessions, assignments and execution records while preserving files, Git and original Codex/ChatGPT conversations.",
       inputSchema: settingsInput,
       outputSchema: settingsViewOutputSchema,
       annotations: {
@@ -7963,6 +8104,14 @@ export function registerBridgeTools(
         );
         taskScopeId = scope.scopeId;
         args.mcpPrincipal = authenticatedMcpPrincipal(extra);
+        const lifecycle = jobs.admissionStateStore.projectLifecycle;
+        if (lifecycle.receipt("task", scope.scopeId, args.requestId)) {
+          lifecycle.assertRequest(
+            "task-envelope-v1", scope.scopeId, args.requestId,
+            taskRequestEnvelopeHash(args, scope.scopeId)
+          );
+          lifecycle.assertRequest("task", scope.scopeId, args.requestId);
+        }
         if (args.followup) {
           args = resolveApprovedFollowup(args, jobs, scope.scopeId);
           const prior = jobs.peekRequest(scope.scopeId, args.requestId);
@@ -10033,6 +10182,7 @@ async function runCodex(input: {
         requireProcessingSpeedAccess(input.executionDecision.processingSpeed ||
           (input.executionDecision.effectiveSelection.serviceTier === "ultrafast" ? "ultrafast" : "legacy"));
         assertAdmittedSelectionSupported(input.executionDecision.effectiveSelection, catalog);
+        input.jobs.assertJobMayExecute(job.jobId);
         return input.run(onProgress, onAssigned);
       },
       input.onComplete
@@ -10043,6 +10193,7 @@ async function runCodex(input: {
       input.onAssigned
         ? (assignment, currentJob) => input.onAssigned?.(assignment, agent, currentJob)
         : undefined,
+      true,
       true
     );
     deferredAdmissionJobId = job.jobId;
@@ -13233,7 +13384,7 @@ async function buildDashboardView(
   const trackedProjects = jobs.admissionStateStore
     .getProjectRegistrySnapshot()
     .projects
-    .filter((project) => project.archivedAt === undefined &&
+    .filter((project) => (project.archiveState === undefined || project.archiveState === "active") && project.archivedAt === undefined &&
       (!scopedProjectIds || scopedProjectIds.has(project.id)))
     .length;
 
@@ -14916,6 +15067,7 @@ function readPersistedJob(value: unknown): PersistedCodexJob | undefined {
     jobId,
     authBoundary: value.authBoundary as string | undefined,
     executionReceipt: value.executionReceipt === true,
+    executionDispatched: typeof value.executionDispatched === "boolean" ? value.executionDispatched : undefined,
     activityId,
     ...(project || {}),
     ...(projectRequest ? { projectRequest } : {}),
@@ -16250,7 +16402,7 @@ function projectStatusResult(name: string, userSettings: UserSettingsStore): Too
   const registry = userSettings.projectRegistry;
   const project = registry.selectableProjects.find(candidate => candidate.nameKey === key);
   const matches = registry.projects.filter(candidate => candidate.nameKey === key);
-  const registered = matches.find(candidate => candidate.archivedAt === undefined) ?? matches[0];
+  const registered = matches.find(candidate => candidate.archivedAt === undefined && (!candidate.archiveState || candidate.archiveState === "active")) ?? matches[0];
   const code = registry.projects.length === 0 ? PROJECT_SETUP_REQUIRED
     : registered ? PROJECT_UNAVAILABLE : "PROJECT_NOT_FOUND";
   const result = {
@@ -16259,6 +16411,8 @@ function projectStatusResult(name: string, userSettings: UserSettingsStore): Too
     ...(!project ? { error: {
       code, message: registry.projects.length === 0
         ? "No project is registered. No work was admitted."
+        : registered?.archiveState === "processing" || registered?.archiveState === "unresolved"
+          ? `Project use is ending (${registered.archiveState}). Retry cleanup in Settings. ${registered.archiveReasons?.join("; ") || "Termination confirmation is pending."} No work was admitted.`
         : registered?.archivedAt !== undefined
           ? `The requested project ${JSON.stringify(normalized)} is archived. No work was admitted.`
           : registered

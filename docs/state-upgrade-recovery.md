@@ -1,8 +1,8 @@
 # State upgrade and recovery runbook
 
 This runbook owns the release-time contract for the bridge SQLite database.
-The current target is schema 30. Supported source schemas are 3 through 29;
-schemas 1 and 2, databases newer than 30, and the retired standalone Settings,
+The current target is schema 31. Supported source schemas are 3 through 30;
+schemas 1 and 2, databases newer than 31, and the retired standalone Settings,
 session, and Job JSON stores are rejected. `release-manifest.json` and
 `state-migrations.json` are the machine-readable authorities.
 

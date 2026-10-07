@@ -817,7 +817,7 @@ export function createModelCatalog(
 ): CodexModelCatalogProvider {
   const service = config.codexService;
   if (!service) {
-    // Read-only projections construct the MCP tool registry without starting
+    // Read-only projections use the application service without starting
     // an execution runtime. Keep those structural reads available, but never
     // let a model request fall back to a command found on this process's PATH.
     return {

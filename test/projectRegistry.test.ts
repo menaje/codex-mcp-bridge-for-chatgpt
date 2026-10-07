@@ -2,6 +2,8 @@ import { mkdtempSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { projectRecoveryGuidance } from "../src/projectGuidance.js";
+import { guidance } from "../src/nextActions.js";
 import {
   MAX_REGISTERED_PROJECTS,
   PROJECT_CWD_CONFLICT,
@@ -28,6 +30,18 @@ const REF_A = "prj_AAAAAAAAAAAAAAAAAAAAAA";
 const REF_B = "prj_BBBBBBBBBBBBBBBBBBBBBB";
 
 describe("project registry", () => {
+  it.each(["processing", "unresolved"] as const)("guides %s registrations to cleanup rather than a folder repair", (archiveState) => {
+    const root = temporaryDirectory("project-cleanup-guidance-");
+    const registration = { ...project(UUID_A, "Ending", root), archiveState, archiveReasons: ["Exact termination is unconfirmed"] };
+    const registry = new ProjectRegistry([registration], [root], 3);
+    expect(registry.selectableProjects).toEqual([]);
+    for (const requested of [undefined, { name: registration.name, projectRef: registration.projectRef }]) {
+      const actions = projectRecoveryGuidance(registry, requested, () => guidance("Unexpected lookup"));
+      expect(actions).toEqual([expect.objectContaining({ kind: "tool", tool: "codex_settings", message: expect.stringContaining("retry archive cleanup") })]);
+      expect(JSON.stringify(actions)).not.toContain("repair the unavailable folder");
+    }
+  });
+
   it("accepts only internal UUID identities and never derives them from names", () => {
     expect(normalizeProjectId(UUID_A.toUpperCase())).toBe(UUID_A);
     for (const legacy of ["default", "bridge", "Bridge Core", "/tmp/project"]) {

@@ -305,7 +305,7 @@ export class CodexBackendRouter implements CodexUpstream {
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
     graceMs?: number,
-    options?: { interruptOnly: true }
+    options?: { interruptOnly?: true; retirementThreadIds?: readonly string[] }
   ): Promise<JsonRpcTerminationResult> {
     const backend = this.backend(assignment.backendKind);
     if (!backend.forceTerminateWorker) {

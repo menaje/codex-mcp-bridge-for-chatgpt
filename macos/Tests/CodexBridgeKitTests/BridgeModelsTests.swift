@@ -25,6 +25,16 @@ final class BridgeModelsTests: XCTestCase {
         XCTAssertEqual(current.recoverableProjects?.first?.projectRevision, 4)
     }
 
+    func testProjectArchiveIntentAndUnresolvedReasonsDecodeWithoutCompletionMarker() throws {
+        let data = Data(#"{"id":"11111111-1111-4111-8111-111111111111","projectRef":"prj_fixture","projectRevision":1,"name":"Project","nameKey":"project","cwd":"/tmp/project","sortOrder":0,"createdAt":1,"updatedAt":123,"archiveState":"unresolved","archiveRevision":2,"archiveRequestedAt":123,"archiveReasons":["Termination unconfirmed"]}"#.utf8)
+        let project = try JSONDecoder().decode(BridgeProject.self, from: data)
+        XCTAssertEqual(project.archiveState, "unresolved")
+        XCTAssertEqual(project.archiveRevision, 2)
+        XCTAssertEqual(project.archiveRequestedAt, 123)
+        XCTAssertEqual(project.archiveReasons, ["Termination unconfirmed"])
+        XCTAssertNil(project.archivedAt)
+    }
+
     func testBridgeProjectDecodesTheServerProjectContract() throws {
         let data = #"""
         {

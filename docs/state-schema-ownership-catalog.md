@@ -1,6 +1,6 @@
 # State schema ownership catalog
 
-This catalog is the schema-30 operational inventory and telemetry schema
+This catalog is the schema-31 operational inventory and telemetry schema
 inventory required by issues #142 and #143. In production the operational
 state-owner process is the only `state.sqlite` writer, the read process opens it
 read-only, and the telemetry process is the only `telemetry.sqlite` writer.
@@ -18,7 +18,9 @@ queries only.
 | `bridge_instances` | `BridgeStateStore` runtime registration and shutdown | startup recovery and forensics | live/old owner detection and termination evidence | state |
 | `scopes` | Activity/Agent/Job Units of Work | exact status, Dashboard and scope event cursors | scope version is authorization and ordering evidence | state |
 | `project_registry` | project/settings mutations | task admission and project projection refresh | monotonic registry revision | state |
-| `projects` | project/settings mutations | admission, Settings and Dashboard projections | project identity, archived/deleted state and pinned path | state |
+| `projects` | project/settings mutations | admission, Settings and Dashboard projections | project identity and restartable archive intent/confirmation | state |
+| `retired_requests` | project lifecycle delete UoW | request retry and exact management-ended status | independent admission/control deduplication; no registration FK | state |
+| `retired_threads` | project lifecycle archive completion UoW | session/thread assignment guards | independent stale-write fence | state |
 | `user_settings` | `UserSettingsStore` mutation | Settings and task admission | execution policy and settings revision | state |
 | `model_description_versions` | `UserSettingsStore` mutation through `BridgeStateStore` | macOS Settings and Settings card history reads | retained user-authored description versions and official-selection markers | state |
 | `sessions` | `SessionRegistry` and Activity admission UoW | resume, Agent thread and backend routing queries | retained backend context and persistence classification | state |
@@ -73,13 +75,15 @@ parent table and is covered by the same owner above.
 - `cancellation_operations`: `cancellation_operations_target_activity`,
   `cancellation_operations_target_job`
 - `completion_outbox`: `completion_outbox_pending`
+- `codex_question_deliveries`: `codex_question_deliveries_job`
 - `job_completion_deliveries`: `job_completion_deliveries_claimable`
 - `job_events`: `job_events_job_cursor`, `job_events_scope_cursor`
 - `job_interactions`: `job_interactions_blocking`
 - `jobs`: `jobs_activity_recent`, `jobs_agent_active`, `jobs_agent_recent_history`, `jobs_scope_recent`,
   `jobs_history_retention`, `jobs_source_thread_active`, `jobs_status_recent`, `jobs_thread_active`
 - `operational_command_receipts`: `operational_command_receipts_committed`
-- `projects`: `projects_active_cwd`, `projects_active_name`, `projects_ordered`
+- `projects`: `projects_active_cwd`, `projects_active_name`, `projects_ordered`, `projects_archive_pending`
+- `retired_requests`: `retired_requests_subject`
 - `sessions`: `sessions_project_recent`, `sessions_scope_recent`
 - `steering_deliveries`: `steering_deliveries_job_recent`,
   `steering_deliveries_status_recent`
@@ -151,7 +155,7 @@ diagnostic events.
 
 ## Coverage rule
 
-`test/stateSchemaOwnership.test.ts` opens a fresh schema-30 fixture and requires
+`test/stateSchemaOwnership.test.ts` opens a fresh schema-31 fixture and requires
 every non-SQLite-internal table, explicit index and trigger in `sqlite_master` to
 appear in this catalog. Adding or renaming a schema object without updating its
 owner and destination therefore fails the test.

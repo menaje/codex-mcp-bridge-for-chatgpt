@@ -263,10 +263,12 @@ export class SessionRegistry {
   }
 
   size(): number {
+    this.refreshProjectIdentities();
     return this.sessions.size;
   }
 
   sizeForScope(scopeId: string): number {
+    this.refreshProjectIdentities();
     return [...this.sessions.values()].filter(session => session.scopeId === scopeId).length;
   }
 
@@ -319,6 +321,8 @@ export class SessionRegistry {
       if (identity?.projectId && identity.projectName) {
         session.projectId = identity.projectId;
         session.projectName = identity.projectName;
+      } else if (!identity) {
+        this.sessions.delete(threadId);
       } else {
         delete session.projectId;
         delete session.projectName;

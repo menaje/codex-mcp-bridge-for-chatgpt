@@ -1,9 +1,9 @@
 /**
  * Schema 19 remains the immutable released base DDL used by its recorded
- * migration. Fresh databases apply the v20 through v30 projections below in the
+ * migration. Fresh databases apply the v20 through v31 projections below in the
  * same transaction; older databases follow the append-only migration catalog.
  */
-export const CURRENT_STATE_SCHEMA_VERSION = "30";
+export const CURRENT_STATE_SCHEMA_VERSION = "31";
 
 export const CURRENT_STATE_SCHEMA = `
   CREATE TABLE scopes (
@@ -637,4 +637,42 @@ export const V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA = `
  * current login retroactively when adding durable ownership. */
 export const V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA = `
   ALTER TABLE sessions ADD COLUMN auth_boundary TEXT;
+`;
+
+/** Restartable project retirement. No receipt has a relationship to a folder,
+ * project, Activity, session or Agent: it is only a replay/admission fence. */
+export const V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA = `
+  ALTER TABLE projects ADD COLUMN archive_state TEXT NOT NULL DEFAULT 'active'
+    CHECK(archive_state IN ('active','processing','unresolved','complete'));
+  ALTER TABLE projects ADD COLUMN archive_revision INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE projects ADD COLUMN archive_requested_at INTEGER;
+  ALTER TABLE projects ADD COLUMN archive_reasons TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(archive_reasons));
+  UPDATE projects SET archive_state='processing',archive_revision=1,
+    archive_requested_at=COALESCE(archived_at,deleted_at),archived_at=NULL
+    WHERE archived_at IS NOT NULL OR deleted_at IS NOT NULL;
+  DROP INDEX projects_active_name;
+  DROP INDEX projects_active_cwd;
+  CREATE UNIQUE INDEX projects_active_name ON projects(name_key)
+    WHERE archive_state='active' AND deleted_at IS NULL;
+  CREATE UNIQUE INDEX projects_active_cwd ON projects(cwd)
+    WHERE archive_state='active' AND deleted_at IS NULL;
+  CREATE INDEX projects_archive_pending ON projects(archive_state,updated_at,project_id);
+  CREATE TABLE retired_requests (
+    namespace TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    subject_id TEXT,
+    request_hash TEXT,
+    hash_version INTEGER,
+    outcome TEXT NOT NULL,
+    retired_at INTEGER NOT NULL,
+    PRIMARY KEY(namespace,scope_id,request_id)
+  ) STRICT;
+  CREATE INDEX retired_requests_subject ON retired_requests(namespace,subject_id);
+  ALTER TABLE codex_question_deliveries ADD COLUMN job_id TEXT;
+  CREATE INDEX codex_question_deliveries_job ON codex_question_deliveries(job_id);
+  CREATE TABLE retired_threads (
+    thread_id TEXT PRIMARY KEY,
+    retired_at INTEGER NOT NULL
+  ) STRICT;
 `;

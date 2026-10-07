@@ -1117,6 +1117,7 @@ describe("CodexAppServerUpstreamPool", () => {
       expect(first?.workerPid).toBe(second?.workerPid);
       const correlation={kind:"cancellation-intent" as const,intentId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",requestId:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",source:"operator" as const,reasonCode:"prior-stop-intent-retry"};
       await expect(pool.forceTerminateWorker(first!,correlation,10,{interruptOnly:true})).rejects.toThrow(/PRECISE_INTERRUPTION_UNCONFIRMED/);
+      await expect(pool.forceTerminateWorker(first!,correlation,10,{retirementThreadIds:[first!.threadId!]})).rejects.toThrow(/PROJECT_ARCHIVE_SHARED_WORKER/);
       await expect(pool.probeThread(second!.threadId!)).resolves.toMatchObject({state:"busy"});
       await expect(pool.probeThread(first!.threadId!)).resolves.toMatchObject({state:"busy"});
       await expect(pool.forceTerminateWorker({...first!,upstreamRequestId:"obsolete-turn"},correlation,10,{interruptOnly:true})).rejects.toThrow(/PRECISE_INTERRUPTION_UNCONFIRMED/);
@@ -1124,6 +1125,18 @@ describe("CodexAppServerUpstreamPool", () => {
       await expect(pool.probeThread(first!.threadId!)).resolves.toMatchObject({state:"busy"});
       await other;
     } finally {await pool.close();await running;await other;}
+  },15_000);
+
+  it("permits archive worker fallback only when every loaded turn belongs to the retirement set", async () => {
+    const pool=new CodexAppServerUpstreamPool(FIXTURE,1,{interruptTimeoutMs:40});
+    let assignment:UpstreamWorkerAssignment|undefined;
+    const running=pool.callTool("codex",task("hold and ignore interrupt"),undefined,value=>{assignment=value;}).catch(error=>error);
+    try {
+      await eventually(()=>Boolean(assignment?.upstreamRequestId));
+      const correlation={kind:"cancellation-intent" as const,intentId:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",requestId:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",source:"operator" as const,reasonCode:"project-archive"};
+      await expect(pool.forceTerminateWorker(assignment!,correlation,10,{retirementThreadIds:[assignment!.threadId!]})).resolves.toMatchObject({workerExited:true});
+      await running;
+    } finally {await pool.close();await running;}
   },15_000);
 
   it("confirms exact turn interruption before falling back to process termination", async () => {

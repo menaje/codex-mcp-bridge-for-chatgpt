@@ -408,6 +408,10 @@ public struct BridgeProject: Codable, Identifiable, Sendable {
     public let sortOrder: Int
     public let createdAt: Double
     public let updatedAt: Double
+    public let archiveState: String?
+    public let archiveRevision: Int?
+    public let archiveRequestedAt: Double?
+    public let archiveReasons: [String]?
     public let archivedAt: Double?
 }
 

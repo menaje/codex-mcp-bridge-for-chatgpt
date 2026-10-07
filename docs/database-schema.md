@@ -1,11 +1,11 @@
 # Bridge database schema and lifecycle
 
-Schema 30 is the current SQLite schema. `src/stateSchema.ts` contains the complete
+Schema 31 is the current SQLite schema. `src/stateSchema.ts` contains the complete
 DDL and projections used for a new installation. `src/stateStore.ts` contains
-upgrade code for schemas 3 through 29; schemas 1 and 2 are rejected. The published v0.2 and
+upgrade code for schemas 3 through 30; schemas 1 and 2 are rejected. The published v0.2 and
 v0.3 line used schema 3, and the pre-change development installation used schema
 18. Every supported upgrade ends with the same tables, columns, constraints,
-indexes, and triggers as direct schema-30 creation.
+indexes, and triggers as direct schema-31 creation.
 
 The database is the durable authority for Bridge business state: admission,
 scope and permission decisions, project and Activity relationships, request
@@ -31,11 +31,11 @@ compatibility; the isolated production path does not write it.
 current default folder, order, and archive/delete state. Other tables store a
 `project_id` only when they need a relationship. Readers join `projects.name`, so
 a rename appears consistently in Settings, current work, and history. There is no
-project-name history table or snapshot fallback. Archiving keeps the relationship
-and current name. Deleting a registration excludes it from Settings, selection,
-new admission, and tracked-project counts, while its tombstone remains the naming
-authority for already retained history. A row with no valid project relationship
-is shown without a project and is never guessed from a name or folder.
+project-name history table or snapshot fallback. Archive ends project use before
+it marks completion. Delete removes the registration and its Bridge work/result
+relationships, retaining only independent deduplication receipts. Ownership is
+never inferred from a name or folder. See [project lifecycle](project-lifecycle.md)
+for the state machine, race fences and table-level cleanup rules.
 
 A registered project's current default folder is different from an admitted
 execution folder:
@@ -57,7 +57,7 @@ input state. There is no `job_summaries` table, and progress events do not write
 full Job document. `scopes.version` is the one scope CAS/event sequence; there is
 no `scope_versions` mirror.
 
-## Complete schema-30 table matrix
+## Complete schema-31 table matrix
 
 The retention column describes bridge cleanup. SQLite free pages are reusable but
 remain allocated until an offline compaction; physical erasure is therefore a
@@ -95,7 +95,9 @@ sessions keep a null boundary because an upgrade cannot infer their owner.
 | `scopes` | Scope resolver and all scoped mutations; `scope_id`, `version`, creation/update time | Keep as scope identity and the single atomic sequence. Retained while referenced. `scope_versions` was merged here. |
 | `bridge_instances` | Restart ownership, cancellation/delivery provenance, diagnostics; process and stop facts | Keep as an append-only operational journal. Open older instances are marked superseded at startup; rows remain while provenance can reference them. |
 | `project_registry` | Project registry CAS; singleton `registry_revision`, `updated_at` | Keep separately because registry-wide CAS has a different lifetime from each project revision. |
-| `projects` | Settings, admission, current-name projection; UUID/ref/revision, current `name`, canonical key, current `cwd`, order, archive/delete times | Sole registered-project authority. Archived/deleted rows remain while execution relationships refer to them; a deleted tombstone can label retained history but cannot be selected or admitted. Active name and cwd are unique. |
+| `projects` | Settings/admission authority; UUID/ref/revision, name/cwd/order, archive state/revision/reasons and times | Archive records intent then confirmed shutdown. Delete physically removes registration and managed work. Active name/cwd are unique. |
+| `retired_requests` | Independent scoped admission/control hash and observed outcome receipt | Retain indefinitely for fail-closed deduplication; no project/folder/session ownership or execution content. |
+| `retired_threads` | Opaque retired thread identity and timestamp | Retain indefinitely to reject late context recreation; no project/folder relationship. |
 | `user_settings` | `UserSettingsStore`; ordinary settings JSON plus independent settings CAS and update time | Keep one JSON object because presentation/policy settings evolve together and are not joined individually. Project arrays/default aliases are forbidden here. |
 | `model_description_versions` | Per-model user description revisions, save time, and official-selection markers | Append a version in the same transaction as the active override change. Never copy official catalog text into history. Retain history through general Settings reset and catalog disappearance. Fetch one model at a time in bounded pages. |
 | `sessions` | Session registry, continue/fork, Agent thread projection, cwd reuse; thread/scope/project relationship, `auth_boundary`, and structured backend execution context | Canonical retained-thread execution context. A null legacy owner remains historical and cannot be resumed under the current login. Global session retention removes old unreferenced sessions; an Agent thread prevents deletion. No payload or project-name copy. |
@@ -127,17 +129,14 @@ sessions keep a null boundary because an upgrade cannot infer their owner.
 | `automatic_recovery_incidents` | Stable incident identity to active recovery relationship | Keep current and historical incident identity so a restart does not reset attempt limits; one recovery key per incident. |
 | `operational_command_receipts` | Isolated-state command ID, operation, payload digest, optional aggregate/version, compact result, committing generation and time | Keep through the unresolved IPC uncertainty window. Idempotent `maintain` receipts are eligible after 24 hours and are removed in bounded 500-row slices; future business-command receipts require a separate reference-aware policy. An identical retained command retry returns the original result; a changed operation, payload hash, or aggregate fails closed. Receipt storage does not prove an external recipient accepted an effect. |
 
-Project registration deletion requires an archived project with no resumable
-Activity, current non-orphaned Agent thread, or running/unsettled Job. A rejected
-delete leaves both settings and registry revisions unchanged. Older deleted
-registrations that still own such work appear in the private Settings recovery
-list (up to the 100 most recent entries, refreshed after each recovery). Restoring
-an explicitly selected tombstone clears its archive/delete markers, preserves
-its UUID, selection reference and all work relationships, and advances the
-project and registry revisions under the ordinary registry CAS. It checks the
-current name, folder, allowed roots, registered-project limit and managed
-credentials location before committing. It never transfers retained work to a
-new registration or removes that work to free a folder.
+Project deletion requires confirmed `archive_state='complete'` and no active Job.
+Archive is an intent/external-confirmation/CAS sequence, not a settings transaction
+that waits for execution shutdown. Legacy archived/tombstoned registrations enter
+that same cleanup sequence. Completed archive removes old execution context;
+restore reactivates only the registration. Delete physically removes the row and
+managed work. Independent `retired_requests` and `retired_threads` preserve only
+request idempotency and stale-write fences; they never reserve a cwd. Full rules
+are in [project lifecycle](project-lifecycle.md).
 
 Schema 18 also had `scope_versions` and `job_summaries`; both are removed above.
 Its other project label/UUID/name/cwd snapshot columns, session payload, Agent archive
@@ -204,7 +203,7 @@ copy, not end-to-end service latency or evidence of a live replacement.
 
 ## Upgrade and legacy-data rules
 
-A fresh database creates schema 30 directly. A persistent supported older database
+A fresh database creates schema 31 directly. A persistent supported older database
 is inspected before a writable SQLite connection opens. The canonical-file lock,
 live-owner check, integrity and foreign-key checks, permissions, free-space
 calculation, verified backup, sequential conversion, and final verification all
@@ -263,7 +262,7 @@ relationship. Migration never creates a project from a slug, name, cwd, or old
 snapshot.
 
 The supported schema-3 fixture is taken from the published v0.3.0 implementation
-and passes every fixed checkpoint through schema 30. Exact deployed-development
+and passes every fixed checkpoint through schema 31. Exact deployed-development
 fixtures cover schemas 16 and 18; schemas 4 through 15, 17, and 19 through 29 are generated
 only as named, committed checkpoints from those sources. `state-migrations.json` binds
 their provenance and hashes to the shipped implementation. Schemas 1 and 2 are
@@ -273,7 +272,7 @@ restarts.
 
 ## Capacity, backups, and offline compaction
 
-The schema-30 table/write/read/maintenance ownership matrix and the command,
+The schema-31 table/write/read/maintenance ownership matrix and the command,
 query, and bounded scheduler contracts are documented in
 [State data access and maintenance ownership](state-data-access.md).
 The selected two-database process, IPC, readiness, migration and fault contract
@@ -325,7 +324,7 @@ the live database untouched. A report with `liveDatabaseReplacementPerformed:
 false` is implementation evidence, not evidence that an operator has compacted or
 released a production installation.
 
-The complete schema-30 table, explicit index and trigger ownership inventory,
+The complete schema-31 table, explicit index and trigger ownership inventory,
 including command/query consumers, recovery dependencies, future destination and
 two-database file security rules, is in
 [State schema ownership catalog](state-schema-ownership-catalog.md).

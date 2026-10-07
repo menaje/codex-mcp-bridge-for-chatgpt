@@ -12,7 +12,7 @@ import { SETTINGS_CARD_HTML } from "../src/settingsCard.js";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { UI_TRANSLATIONS } from "../src/uiI18n.js";
 import { UserSettingsStore } from "../src/userSettings.js";
-import { tombstoneProjectForTest } from "../test/helpers/sqliteSettings.js";
+import { SessionRegistry } from "../src/sessionRegistry.js";
 import { cardPrelude } from "./card-browser-fixtures.js";
 import { connectCurrentMcpServer } from "./current-mcp-test-harness.js";
 
@@ -23,14 +23,25 @@ mkdirSync(output, { recursive: true });
 const root = mkdtempSync(path.join(tmpdir(), "issue-224-browser-"));
 const file = path.join(root, "state.sqlite");
 const state = new BridgeStateStore({ file });
-const config = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_ROOTS: root });
+const config = loadConfig({
+  CODEX_MCP_BRIDGE_NO_AUTH: "1",
+  CODEX_MCP_BRIDGE_ROOTS: root,
+  CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: file,
+  CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE: path.join(root, "telemetry.sqlite"),
+  CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: path.join(root, "models.json"),
+  CODEX_MCP_BRIDGE_SKILLS_DIRECTORY: path.join(root, "skills")
+});
 const settings = new UserSettingsStore(config, { stateStore: state });
 settings.update({ uiLocalePreference: "ko" }, 0);
 settings.updateWithProjectOperations({}, [{ kind: "add", project: { name: "Recovery original", cwd: root } }], undefined, 0);
 const project = settings.current.projects[0]!;
 const activity = state.createActivity({ scopeId: "11111111-1111-4111-8111-111111111111",
   projectId: project.id, projectName: project.name, projectCwd: project.cwd });
-tombstoneProjectForTest(file, project.id);
+let releaseAllowed = false;
+const sessions = new SessionRegistry({ stateStore: state, allowedRoots: [root] });
+sessions.record({ threadId: "fixture-idle-thread", scopeId: activity.scopeId, projectId: project.id,
+  projectName: project.name, cwd: root, backendKind: "app-server", sandbox: "read-only",
+  persistence: "ephemeral", createdAt: 1, updatedAt: 1, lastUsedAt: 1 });
 const catalog = new BackendAwareModelCatalog("app-server", {
   async getCatalog() { throw new Error("No CLI fallback in this fixture"); }
 }, async () => ({ data: [{ id: "gpt-6-astra", model: "gpt-6-astra", displayName: "GPT-6 Astra",
@@ -39,11 +50,17 @@ const catalog = new BackendAwareModelCatalog("app-server", {
 const bridge = createBridgeMcpServer(config, {
   async listTools() { return { tools: [] }; },
   async callTool() { throw new Error("Model execution is outside this regression"); },
+  async releaseThreadConnection() { return releaseAllowed
+    ? { phase: "released" as const, evidence: "thread-unloaded" as const }
+    : { phase: "release-failed" as const, reason: "fixture termination confirmation unavailable" }; },
   async close() {}
 }, undefined, undefined, catalog, settings);
 const connection = await connectCurrentMcpServer(bridge, { name: "issue-224-browser", version: "1" });
 const server = createServer(async (request, response) => {
   try {
+    if (request.method === "POST" && request.url === "/allow-release") {
+      releaseAllowed = true; response.writeHead(200); response.end("ok"); return;
+    }
     if (request.method === "POST" && request.url === "/tool") {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -87,47 +104,42 @@ try {
     const waitSaved=()=>page.waitForFunction(()=>!document.querySelector('#save').disabled);
     const save=async()=>{await page.locator('#save').click();await waitSaved();};
     const row=page.locator('#project-list .project-row').first();
-    await page.locator('#project-recovery button').waitFor();
-    check(await page.locator('#project-list .project-row').count()===0,'Deleted registration stays outside admission/form');
+    const read=async()=>(await tool('codex_ui_read',{view:'settings'})).structuredContent;
+    const waitState=async(state)=>{for(let i=0;i<150;i++){if((await read()).settings.projects[0]?.archiveState===state)return;await page.waitForTimeout(100);}throw new Error('archive state '+state)};
+    await waitSaved();
     await page.locator('#concurrency').fill('7');
-    await page.locator('#project-recovery button').click();
-    check(await row.getAttribute('data-project-id')===${JSON.stringify(project.id)},'Stage original UUID');
-    check(await row.getAttribute('data-restore')==='true','Stage explicit restore');
     await page.locator('#ui-language').selectOption('en');
     check(await page.locator('#concurrency').inputValue()==='7','Locale change preserves ordinary draft');
     await page.locator('#ui-language').selectOption('ko');
-    await save();
-    let current=(await tool('codex_ui_read',{view:'settings'})).structuredContent;
-    check(current.settings.projects[0].id===${JSON.stringify(project.id)},'Restore original UUID');
-    check(current.settings.projects[0].projectRef===${JSON.stringify(project.projectRef)},'Restore original ref');
-    check(current.settings.maxConcurrentJobs===7,'Save preserves unrelated draft');
-    check(current.capabilities.recoverableProjects.length===0,'Recovered tombstone leaves recovery list');
-    const mutation=await page.evaluate(()=>window.__recoveryCalls.find(x=>x.name==='codex_update_settings'));
-    check(mutation.args.operation.settings.projectOperations[0].kind==='restore','Never implicitly add a new identity');
     await row.locator('.project-remove').click();await save();
-    const revision=(await tool('codex_ui_read',{view:'settings'})).structuredContent.settings.registryRevision;
-    await row.locator('.project-delete').click();
-    await row.locator('.project-delete-confirm-accept').click();await save();
-    check(await page.locator('#project-error').textContent()===${JSON.stringify(UI_TRANSLATIONS.ko["settings.projectDeleteStillPinned"])},'Explain why retained work prevents deletion');
-    check((await tool('codex_ui_read',{view:'settings'})).structuredContent.settings.registryRevision===revision,'Rejected delete preserves CAS');
-    await row.locator('.project-delete').click();
-    await page.locator('#add-project').click();
-    let added=page.locator('#project-list .project-row').last();
-    await added.locator('.project-label-input').fill('New identity');
-    await added.locator('.project-cwd-input').fill(${JSON.stringify(root)});await save();
-    check(await page.locator('#project-error').textContent()===${JSON.stringify(UI_TRANSLATIONS.ko["settings.projectCwdStillPinned"])},'Pinned cwd points to recovery');
-    await page.locator('#project-error').screenshot({path:${JSON.stringify(path.join(output, "pinned-cwd-ko.png"))}});
+    await waitState('unresolved');await page.reload();await waitSaved();
+    check((await row.locator('.project-availability').textContent()).includes(${JSON.stringify(UI_TRANSLATIONS.ko["settings.projectArchiveUnresolved"])}),'Show unresolved archive');
+    check((await row.locator('.project-availability').textContent()).includes('fixture termination confirmation unavailable'),'Show concrete unresolved reason');
+    check(await row.locator('.project-delete').isHidden(),'No delete before confirmation');
+    await row.screenshot({path:${JSON.stringify(path.join(output, "unresolved-ko.png"))}});
+    await page.evaluate(()=>fetch('/allow-release',{method:'POST'}));
+    await row.locator('.project-remove').click();await save();await waitState('complete');
     await page.reload();await waitSaved();
-    await row.locator('.project-remove').click();await save();
-    await page.locator('#add-project').click();
-    added=page.locator('#project-list .project-row').last();
-    await added.locator('.project-label-input').fill('Duplicate active folder');
-    await added.locator('.project-cwd-input').fill(${JSON.stringify(root)});await save();
-    check(await page.locator('#project-error').textContent()===${JSON.stringify(UI_TRANSLATIONS.ko["settings.projectDuplicatePath"])},'Active conflict has a separate explanation');
-    return {restorePreservedIdentity:true,deleteProtected:true,cwdMessagesDistinct:true,draftPreserved:true};
+    check((await read()).settings.maxConcurrentJobs===7,'Save preserves unrelated draft');
+    const identities=[${JSON.stringify(project.id)}];
+    for(let cycle=0;cycle<2;cycle++){
+      await row.locator('.project-delete').click();await row.locator('.project-delete-confirm-accept').click();await save();
+      check((await read()).settings.projects.length===0,'Delete removes registration');
+      await page.locator('#add-project').click();
+      const added=page.locator('#project-list .project-row').last();
+      await added.locator('.project-label-input').fill('New identity '+cycle);
+      await added.locator('.project-cwd-input').fill(${JSON.stringify(root)});await save();
+      const current=(await read()).settings.projects[0];
+      check(!identities.includes(current.id),'Same cwd receives new identity');identities.push(current.id);
+      await row.locator('.project-remove').click();await save();await waitState('complete');
+      await page.reload();await waitSaved();
+    }
+    await row.locator('.project-delete').click();await row.locator('.project-delete-confirm-accept').click();await save();
+    check((await read()).settings.projects.length===0,'Repeated final delete succeeds');
+    return {archiveUnresolvedVisible:true,retryConfirmed:true,deleteRemovesManagement:true,sameCwdNewIdentity:identities,draftPreserved:true};
   }`);
-  assert.equal(state.getActivityProjectAdmission(activity.activityId)?.projectId, project.id);
-  assert.equal(settings.current.projects[0]?.id, project.id);
+  assert.equal(state.getActivityProjectAdmission(activity.activityId), undefined);
+  assert.equal(settings.current.projects.length, 0);
   writeFileSync(path.join(output, "result.txt"), result);
   console.log(result);
 } catch (error) {

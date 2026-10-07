@@ -44,6 +44,10 @@ export type ProjectTarget = {
   sortOrder: number;
   createdAt: number;
   updatedAt: number;
+  archiveState?: import("./projectLifecycle.js").ProjectArchiveState;
+  archiveRevision?: number;
+  archiveRequestedAt?: number;
+  archiveReasons?: string[];
   archivedAt?: number;
 };
 
@@ -204,7 +208,7 @@ export class ProjectRegistry {
           throw new Error(`${PROJECT_REF_INVALID}: Duplicate project selection reference.`);
         }
         refs.add(project.projectRef);
-        if (project.archivedAt === undefined) {
+        if (isProjectActive(project)) {
           if (activeNames.has(project.nameKey)) {
             throw new Error(`${PROJECT_NAME_CONFLICT}: Active project names must be unique.`);
           }
@@ -220,17 +224,17 @@ export class ProjectRegistry {
           available = canonicalProjectCwd(project.cwd, this.allowedRoots) === project.cwd;
           if (!available) {
             unavailableReason = "The saved folder no longer resolves canonically.";
-            if (!options.retainUnavailable && project.archivedAt === undefined) {
+            if (!options.retainUnavailable && isProjectActive(project)) {
               throw new Error(`${PROJECT_UNAVAILABLE}: ${unavailableReason}`);
             }
           }
         } catch (error) {
-          if (!options.retainUnavailable && project.archivedAt === undefined) throw error;
+          if (!options.retainUnavailable && isProjectActive(project)) throw error;
           unavailableReason = error instanceof Error ? error.message : String(error);
         }
         return {
           project,
-          available: project.archivedAt === undefined && available,
+          available: isProjectActive(project) && available,
           ...(unavailableReason ? { unavailableReason } : {})
         };
       });
@@ -246,18 +250,18 @@ export class ProjectRegistry {
 
   get selectableProjects(): ProjectTarget[] {
     return this.entries
-      .filter((entry) => entry.available && entry.project.archivedAt === undefined)
+      .filter((entry) => entry.available && isProjectActive(entry.project))
       .map(({ project }) => ({ ...project }));
   }
 
   get unavailableProjectIds(): string[] {
     return this.entries
-      .filter((entry) => entry.project.archivedAt === undefined && !entry.available)
+      .filter((entry) => isProjectActive(entry.project) && !entry.available)
       .map(({ project }) => project.id);
   }
 
   resolve(selection?: RuntimeProjectSelection): ProjectTarget {
-    const active = this.entries.filter((entry) => entry.project.archivedAt === undefined);
+    const active = this.entries.filter((entry) => isProjectActive(entry.project));
     if (!selection) {
       if (this.entries.length === 0) {
         throw new Error(
@@ -313,7 +317,7 @@ export class ProjectRegistry {
           `${PROJECT_REGISTRY_CHANGED}: The selected project name changed. Refresh the tool descriptor and retry.`
         );
       }
-      if (entry.project.archivedAt !== undefined) {
+      if (!isProjectActive(entry.project)) {
         throw new Error(`${PROJECT_NOT_FOUND}: The selected project is archived.`);
       }
     }
@@ -368,6 +372,9 @@ function validateProjectTarget(value: ProjectTarget, index: number): ProjectTarg
     sortOrder: value.sortOrder,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
+    ...(value.archiveState ? { archiveState:value.archiveState,archiveRevision:value.archiveRevision,archiveRequestedAt:value.archiveRequestedAt,archiveReasons:value.archiveReasons } : {}),
     ...(value.archivedAt === undefined ? {} : { archivedAt: value.archivedAt })
   };
 }
+
+export function isProjectActive(project: ProjectTarget): boolean { return project.archivedAt === undefined && (!project.archiveState || project.archiveState === "active"); }

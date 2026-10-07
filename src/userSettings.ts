@@ -364,7 +364,9 @@ export class UserSettingsStore {
         this.stateStore.assertSettingsRevision(expectedSettingsRevision as number);
       }
       if (operations.length > 0) {
-        this.stateStore.assertProjectRegistryRevision(expectedRegistryRevision as number);
+        if (!operations.every(operation => operation.kind === "delete" && !this.stateStore.projectLifecycle.exists(operation.projectId))) {
+          this.stateStore.assertProjectRegistryRevision(expectedRegistryRevision as number);
+        }
       }
       if (generalChanged) {
         const persisted = {
@@ -538,6 +540,7 @@ export class UserSettingsStore {
 
   private noteUnavailableProjects(): void {
     for (const entry of this.projectRegistry.availability) {
+      if (entry.project.archiveState && entry.project.archiveState !== "active") continue;
       if (entry.project.archivedAt !== undefined || entry.available) continue;
       this.warnings.push(
         `PROJECT_UNAVAILABLE: Saved project "${entry.project.name}" is unavailable and cannot admit new work.`

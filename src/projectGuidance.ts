@@ -27,6 +27,9 @@ export function projectRecoveryGuidance(
     if (exact) return [projectSelectorRetryAction(exact)];
     const identity = JSON.stringify({ name: requested.name, ...(requested.projectRef ? { projectRef: requested.projectRef } : {}) });
     if (!matches.length) return [guidance(`The requested project ${identity} is not registered. Confirm the intended project with the user before choosing another registration.`)];
+    if (matches.some(cleanupPending)) {
+      return [settingsAction(`Project use for ${identity} is ending. The user can inspect unresolved reasons and retry archive cleanup in Settings. Complete cleanup before restoring that registration and repeating its lookup. Do not substitute another project.`)];
+    }
     if (matches.every(project => project.archivedAt !== undefined)) {
       return [settingsAction(`The user can restore the intended archived registration for ${identity}, then repeat the lookup for that project. Do not substitute another project.`)];
     }
@@ -35,9 +38,16 @@ export function projectRecoveryGuidance(
   if (registered.every(project => project.archivedAt !== undefined)) {
     return [settingsAction("All registered projects are archived. The user can restore the intended existing registration, then look up that project.")];
   }
+  if (!selectable.length && registered.some(cleanupPending)) {
+    return [settingsAction("Project use is ending. The user can inspect unresolved reasons and retry archive cleanup in Settings, then explicitly restore the intended registration after cleanup completes.")];
+  }
   if (!selectable.length) {
     return [settingsAction("No active project folder is available. The user can repair the intended registered project, then look it up again.")];
   }
   const names = selectable.slice(0, 8).map(project => project.name);
   return [lookupAction(names, selectable.length - names.length)];
+}
+
+function cleanupPending(project: ProjectTarget): boolean {
+  return project.archiveState === "processing" || project.archiveState === "unresolved";
 }

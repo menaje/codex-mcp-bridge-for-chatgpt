@@ -12070,55 +12070,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mark this project registration for deletion? It will be removed from bridge tracking when you save. The folder, files, and existing work history will remain. You can cancel before saving; after it is saved, the registration cannot be restored."
+            "value": "Delete this project registration and its Bridge sessions, assignments and execution results when you save? Files, folders, Git and original Codex/ChatGPT conversations are preserved."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "이 프로젝트 등록을 삭제 예정으로 표시할까요? 저장 버튼을 누르면 브리지 추적 대상에서 제거됩니다. 실제 폴더와 파일, 기존 작업 기록은 유지됩니다. 저장 전에는 취소할 수 있지만 저장 후에는 등록을 복원할 수 없습니다."
+            "value": "저장하면 프로젝트 등록과 브리지 세션·배정·실행 결과를 삭제합니다. 실제 폴더·파일·Git·원본 Codex/ChatGPT 대화는 그대로 유지됩니다."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このプロジェクト登録を削除予定にしますか？保存するとブリッジの追跡対象から削除されます。実際のフォルダー、ファイル、既存の作業履歴は保持されます。保存前は取り消せますが、保存後は登録を復元できません。"
+            "value": "保存すると登録とブリッジのセッション・割当・実行結果を削除します。フォルダー、ファイル、Git、元のCodex/ChatGPT会話は保持します。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "将此项目注册标记为待删除吗？保存后，它将从桥接器跟踪中移除。实际文件夹、文件和现有工作记录会保留。保存前可以取消，保存后无法恢复该注册。"
+            "value": "保存后删除项目注册及桥接器会话、分配和执行结果。文件夹、文件、Git 和原始 Codex/ChatGPT 对话保持不变。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "要將此專案註冊標記為待刪除嗎？儲存後，它會從橋接器追蹤中移除。實際資料夾、檔案和現有工作記錄會保留。儲存前可以取消，儲存後無法復原此註冊。"
+            "value": "儲存後刪除專案註冊及橋接器工作階段、指派和執行結果。資料夾、檔案、Git 和原始 Codex/ChatGPT 對話保持不變。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "¿Marcar este proyecto para eliminarlo? Al guardar, se quitará del seguimiento del puente. La carpeta, los archivos y el historial existente se conservarán. Puedes cancelar antes de guardar; después no se podrá restaurar el registro."
+            "value": "Al guardar se eliminan el registro, las sesiones, las asignaciones y los resultados del puente. Se conservan carpetas, archivos, Git y conversaciones originales de Codex/ChatGPT."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Marquer ce projet pour suppression ? Lors de l’enregistrement, il sera retiré du suivi du pont. Le dossier, les fichiers et l’historique seront conservés. Vous pouvez annuler avant d’enregistrer ; ensuite, l’enregistrement ne pourra plus être restauré."
+            "value": "L’enregistrement, les sessions, les affectations et les résultats du pont seront supprimés. Les dossiers, fichiers, Git et conversations Codex/ChatGPT d’origine sont conservés."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Diese Projektregistrierung zum Löschen vormerken? Beim Speichern wird sie aus der Bridge-Erfassung entfernt. Ordner, Dateien und Arbeitsverlauf bleiben erhalten. Vor dem Speichern kann dies abgebrochen werden; danach lässt sich die Registrierung nicht wiederherstellen."
+            "value": "Beim Speichern werden Registrierung, Bridge-Sitzungen, Zuweisungen und Ergebnisse gelöscht. Ordner, Dateien, Git und ursprüngliche Codex/ChatGPT-Gespräche bleiben erhalten."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Marcar este registro de projeto para exclusão? Ao salvar, ele será removido do rastreamento da ponte. A pasta, os arquivos e o histórico serão mantidos. Você pode cancelar antes de salvar; depois, o registro não poderá ser restaurado."
+            "value": "Ao salvar, o registro, as sessões, as atribuições e os resultados da ponte serão removidos. Pastas, arquivos, Git e conversas originais do Codex/ChatGPT serão preservados."
           }
         }
       }
@@ -12177,6 +12177,180 @@
           "stringUnit": {
             "state": "translated",
             "value": "Arquivado"
+          }
+        }
+      }
+    },
+    "settings.projectArchiveProcessing": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ending project use…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "프로젝트 사용 종료 중…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロジェクトの使用を終了中…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在结束项目使用…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在結束專案使用…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finalizando el uso del proyecto…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fin de l’utilisation du projet…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Projektnutzung wird beendet…"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finalizando o uso do projeto…"
+          }
+        }
+      }
+    },
+    "settings.projectArchiveUnresolved": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Archive unresolved. Retry cleanup."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보관 미해결. 정리를 다시 시도하세요."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "終了を確認できません。再試行してください。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "归档未解决。请重试清理。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "封存未解決。請重試清理。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Archivo sin resolver. Reintenta la limpieza."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Archivage non résolu. Relancez le nettoyage."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Archivierung ungeklärt. Bereinigung erneut versuchen."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arquivamento não resolvido. Tente a limpeza novamente."
+          }
+        }
+      }
+    },
+    "settings.retryProjectArchive": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retry archive"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "보관 재시도"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アーカイブを再試行"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重试归档"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重試封存"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reintentar archivo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réessayer l’archivage"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Archivierung wiederholen"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tentar arquivar novamente"
           }
         }
       }
@@ -28310,55 +28484,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Recover deleted projects"
+            "value": "Pending project cleanup"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "삭제된 프로젝트 복구"
+            "value": "프로젝트 정리 대기"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "削除したプロジェクトを復元"
+            "value": "プロジェクトの終了処理待ち"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "恢复已删除的项目"
+            "value": "项目清理待完成"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "復原已刪除的專案"
+            "value": "專案清理待完成"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Recuperar proyectos eliminados"
+            "value": "Limpieza del proyecto pendiente"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Récupérer les projets supprimés"
+            "value": "Nettoyage du projet en attente"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Gelöschte Projekte wiederherstellen"
+            "value": "Projektbereinigung ausstehend"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Recuperar projetos eliminados"
+            "value": "Limpeza do projeto pendente"
           }
         }
       }
@@ -28368,55 +28542,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "These deleted registrations still have resumable work. Restore the existing project to keep its conversations and history."
+            "value": "Earlier deleted registrations need confirmed cleanup. Retry ending project use before registering the folder again."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "삭제된 등록에 재개 가능한 작업이 남아 있습니다. 기존 프로젝트를 복구하면 대화와 작업 기록이 유지됩니다."
+            "value": "이전에 삭제된 등록의 정리를 확인해야 합니다. 같은 폴더를 다시 등록하기 전에 프로젝트 사용 종료를 재시도하세요."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "削除した登録に再開可能な作業が残っています。既存のプロジェクトを復元すると、会話と作業履歴を維持できます。"
+            "value": "以前削除した登録の終了処理を確認する必要があります。同じフォルダーを登録する前に再試行してください。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这些已删除的注册仍有可恢复的工作。恢复原项目可保留会话和工作历史。"
+            "value": "先前删除的注册需要确认清理。再次注册该文件夹之前，请重试结束项目使用。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "這些已刪除的註冊仍有可繼續的工作。復原原專案可保留對話和工作記錄。"
+            "value": "先前刪除的註冊需要確認清理。再次註冊此資料夾前，請重試結束專案使用。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Estos registros eliminados conservan trabajo que puede reanudarse. Restaura el proyecto existente para conservar sus conversaciones e historial."
+            "value": "Las inscripciones eliminadas necesitan una limpieza confirmada. Reinténtala antes de registrar la carpeta de nuevo."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ces inscriptions supprimées conservent du travail pouvant être repris. Restaurez le projet existant pour conserver ses conversations et son historique."
+            "value": "Les anciennes inscriptions supprimées nécessitent un nettoyage confirmé. Réessayez avant de réinscrire le dossier."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Diese gelöschten Registrierungen enthalten fortsetzbare Arbeit. Stellen Sie das bestehende Projekt wieder her, um Gespräche und Verlauf zu erhalten."
+            "value": "Früher gelöschte Registrierungen benötigen eine bestätigte Bereinigung. Wiederholen Sie diese vor der erneuten Registrierung."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Estes registos eliminados mantêm trabalho que pode ser retomado. Restaure o projeto existente para preservar as conversas e o histórico."
+            "value": "Registros excluídos precisam de limpeza confirmada. Tente novamente antes de registrar a pasta outra vez."
           }
         }
       }
@@ -28426,55 +28600,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Earlier resumable work still owns this folder. Restore its existing project; deleted registrations appear under Recover deleted projects."
+            "value": "This folder has active work or unfinished project cleanup. Finish or retry that cleanup first."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "이전 작업의 재개 가능한 연결이 이 폴더를 계속 사용하고 있습니다. 기존 프로젝트를 복원하세요. 삭제된 등록은 ‘삭제된 프로젝트 복구’에서 복구할 수 있습니다."
+            "value": "이 폴더에 실행 중인 작업이나 미완료 프로젝트 정리가 있습니다. 먼저 종료하거나 정리를 다시 시도하세요."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "以前の再開可能な作業がこのフォルダを使用しています。既存のプロジェクトを復元してください。削除した登録は「削除したプロジェクトを復元」に表示されます。"
+            "value": "このフォルダーで実行中の作業または未完了の終了処理があります。先に終了または再試行してください。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "之前可恢复的工作仍在使用此文件夹。请恢复原项目；已删除的注册显示在“恢复已删除的项目”中。"
+            "value": "此文件夹存在正在运行的任务或未完成的项目清理。请先完成或重试清理。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "先前可繼續的工作仍在使用此資料夾。請復原原專案；已刪除的註冊顯示於「復原已刪除的專案」。"
+            "value": "此資料夾有執行中的工作或未完成的專案清理。請先完成或重試清理。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "El trabajo anterior que puede reanudarse sigue usando esta carpeta. Restaura su proyecto; los registros eliminados aparecen en Recuperar proyectos eliminados."
+            "value": "Esta carpeta tiene trabajo activo o una limpieza incompleta. Termina o reintenta la limpieza primero."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Un travail antérieur pouvant être repris utilise encore ce dossier. Restaurez son projet ; les inscriptions supprimées figurent dans Récupérer les projets supprimés."
+            "value": "Ce dossier contient une tâche active ou un nettoyage inachevé. Terminez ou réessayez le nettoyage."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Frühere fortsetzbare Arbeit verwendet diesen Ordner weiterhin. Stellen Sie das bestehende Projekt wieder her; gelöschte Registrierungen stehen unter Gelöschte Projekte wiederherstellen."
+            "value": "Dieser Ordner enthält aktive Arbeit oder eine unvollständige Bereinigung. Beenden oder wiederholen Sie diese zuerst."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Trabalho anterior que pode ser retomado ainda utiliza esta pasta. Restaure o projeto existente; os registos eliminados aparecem em Recuperar projetos eliminados."
+            "value": "Esta pasta tem trabalho ativo ou limpeza incompleta. Conclua ou tente a limpeza novamente."
           }
         }
       }
@@ -28484,55 +28658,55 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This project still has resumable work or active jobs. Keep it archived, or finish and release those contexts before deleting its registration."
+            "value": "Archive cleanup is not confirmed. Retry cleanup before deleting the registration."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "이 프로젝트에 재개 가능한 작업이나 실행 중인 작업이 남아 있습니다. 보관 상태로 유지하거나 해당 작업과 연결을 종료한 뒤 등록을 삭제하세요."
+            "value": "보관 정리가 확인되지 않았습니다. 등록을 삭제하기 전에 정리를 다시 시도하세요."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このプロジェクトには再開可能な作業または実行中のジョブが残っています。アーカイブしたままにするか、作業と接続を終了してから登録を削除してください。"
+            "value": "終了処理が確認できていません。登録を削除する前に再試行してください。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此项目仍有可恢复的工作或正在运行的任务。请保持归档状态，或先结束工作并释放连接，再删除注册。"
+            "value": "尚未确认归档清理。删除注册之前，请重试清理。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "此專案仍有可繼續的工作或執行中的任務。請維持封存狀態，或先結束工作並釋放連線，再刪除註冊。"
+            "value": "尚未確認封存清理。刪除註冊前請重試清理。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Este proyecto conserva trabajo que puede reanudarse o tareas activas. Mantenlo archivado o finaliza el trabajo y libera sus conexiones antes de eliminar el registro."
+            "value": "La limpieza no está confirmada. Reinténtala antes de eliminar la inscripción."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ce projet conserve du travail pouvant être repris ou des tâches actives. Gardez-le archivé ou terminez le travail et libérez ses connexions avant de supprimer son inscription."
+            "value": "Le nettoyage n’est pas confirmé. Réessayez avant de supprimer l’inscription."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Dieses Projekt enthält fortsetzbare Arbeit oder aktive Aufträge. Lassen Sie es archiviert oder beenden Sie die Arbeit und geben Sie die Verbindungen frei, bevor Sie die Registrierung löschen."
+            "value": "Die Bereinigung ist nicht bestätigt. Wiederholen Sie diese vor dem Löschen der Registrierung."
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "Este projeto mantém trabalho que pode ser retomado ou tarefas ativas. Mantenha-o arquivado ou conclua o trabalho e liberte as ligações antes de eliminar o registo."
+            "value": "A limpeza não foi confirmada. Tente novamente antes de excluir o registro."
           }
         }
       }
@@ -46036,55 +46210,55 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Der Ordner „%@“ und der vorhandene Arbeitsverlauf bleiben erhalten."
+            "value": "Registrierung „%@“ und Bridge-Ergebnisse werden gelöscht. Dateien, Git und ursprüngliche Codex/ChatGPT-Gespräche bleiben erhalten."
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The ‘%@’ folder and existing work history will be preserved."
+            "value": "The “%@” registration and Bridge execution records will be removed. Files, Git and original Codex/ChatGPT conversations are preserved."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Se conservarán la carpeta «%@» y el historial de trabajo existente."
+            "value": "Se eliminan el registro «%@» y los resultados del puente. Se conservan archivos, Git y conversaciones originales de Codex/ChatGPT."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Le dossier « %@ » et l’historique de travail existant seront conservés."
+            "value": "L’enregistrement « %@ » et les résultats du pont seront supprimés. Les fichiers, Git et conversations Codex/ChatGPT d’origine sont conservés."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "「%@」フォルダと既存の作業履歴は保持されます。"
+            "value": "「%@」の登録とブリッジ実行記録を削除します。ファイル、Git、元のCodex/ChatGPT会話は保持します。"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "A pasta “%@” e o histórico de trabalho existente serão preservados."
+            "value": "O registro “%@” e os resultados da ponte serão removidos. Arquivos, Git e conversas originais do Codex/ChatGPT serão preservados."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "“%@”文件夹和现有工作记录将会保留。"
+            "value": "删除“%@”注册及桥接器执行记录。文件、Git 和原始 Codex/ChatGPT 对话保持不变。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "“%@”資料夾和現有工作記錄將會保留。"
+            "value": "刪除「%@」註冊及橋接器執行記錄。檔案、Git 和原始 Codex/ChatGPT 對話保持不變。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "‘%@’ 폴더와 기존 작업 기록은 그대로 유지됩니다."
+            "value": "“%@” 등록과 브리지 실행 기록을 삭제합니다. 실제 파일·Git·원본 Codex/ChatGPT 대화는 그대로 유지됩니다."
           }
         }
       }
@@ -49992,55 +50166,55 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Beim Löschen der Registrierung bleiben die tatsächlichen Ordner, Dateien und der vorhandene Arbeitsverlauf erhalten."
+            "value": "Das Löschen einer Registrierung entfernt auch Bridge-Sitzungen, Zuweisungen und Ausführungsdaten. Ordner, Dateien, Git und ursprüngliche Codex/ChatGPT-Unterhaltungen bleiben erhalten."
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Removing a registration preserves the actual folder, files, and existing work history."
+            "value": "Deleting a registration also removes Bridge sessions, assignments and execution records. The actual folder, files, Git and original Codex/ChatGPT conversations are preserved."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Al eliminar el registro se conservan las carpetas, los archivos y el historial de trabajo existentes."
+            "value": "Al eliminar el registro también se eliminan las sesiones, asignaciones y registros de ejecución de Bridge. Se conservan la carpeta, los archivos, Git y las conversaciones originales de Codex/ChatGPT."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "La suppression de l’inscription conserve les dossiers, fichiers et historiques de travail existants."
+            "value": "La suppression de l’inscription supprime aussi les sessions, affectations et données d’exécution de Bridge. Le dossier, les fichiers, Git et les conversations Codex/ChatGPT d’origine sont conservés."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "登録を削除しても、実際のフォルダ、ファイル、既存の作業履歴は保持されます。"
+            "value": "登録を削除すると、Bridge のセッション・割り当て・実行記録も削除されます。実際のフォルダ・ファイル・Git・元の Codex/ChatGPT の会話は保持されます。"
           }
         },
         "pt": {
           "stringUnit": {
             "state": "translated",
-            "value": "A exclusão do registro preserva as pastas, os arquivos e o histórico de trabalho existentes."
+            "value": "Excluir o registro também remove as sessões, atribuições e registros de execução do Bridge. A pasta, os arquivos, Git e as conversas originais do Codex/ChatGPT são preservados."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "删除注册不会移除实际文件夹、文件或现有工作记录。"
+            "value": "删除注册也会移除 Bridge 会话、分配和执行记录。实际文件夹、文件、Git 和原始 Codex/ChatGPT 对话会保留。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "刪除註冊不會移除實際資料夾、檔案或現有工作記錄。"
+            "value": "刪除註冊也會移除 Bridge 工作階段、指派和執行記錄。實際資料夾、檔案、Git 和原始 Codex/ChatGPT 對話會保留。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "등록을 삭제해도 실제 폴더·파일과 기존 작업 기록은 그대로 유지됩니다."
+            "value": "프로젝트 등록을 삭제하면 브리지 세션·배정·실행 기록도 삭제됩니다. 실제 폴더·파일·Git·원본 Codex/ChatGPT 대화는 유지됩니다."
           }
         }
       }
