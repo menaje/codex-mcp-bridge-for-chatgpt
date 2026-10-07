@@ -39,4 +39,3 @@ If this is a long-running test, pass a timeout value as the last argument or con
       Tests  2 failed | 35 skipped (37)
    Start at  22:04:43
    Duration  40.43s (transform 17.30s, setup 0ms, import 27.22s, tests 10.51s, environment 11ms)
-

@@ -34,4 +34,3 @@ AssertionError: expected { status: 200, complete: false, …(2) } to match objec
       Tests  1 failed (1)
    Start at  21:34:20
    Duration  71.13s (transform 38.33s, setup 0ms, import 46.83s, tests 21.73s, environment 0ms)
-
