@@ -23,7 +23,14 @@ mkdirSync(output, { recursive: true });
 const root = mkdtempSync(path.join(tmpdir(), "issue-224-browser-"));
 const file = path.join(root, "state.sqlite");
 const state = new BridgeStateStore({ file });
-const config = loadConfig({ CODEX_MCP_BRIDGE_NO_AUTH: "1", CODEX_MCP_BRIDGE_ROOTS: root });
+const config = loadConfig({
+  CODEX_MCP_BRIDGE_NO_AUTH: "1",
+  CODEX_MCP_BRIDGE_ROOTS: root,
+  CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: file,
+  CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE: path.join(root, "telemetry.sqlite"),
+  CODEX_MCP_BRIDGE_MODEL_CATALOG_STATE_FILE: path.join(root, "models.json"),
+  CODEX_MCP_BRIDGE_SKILLS_DIRECTORY: path.join(root, "skills")
+});
 const settings = new UserSettingsStore(config, { stateStore: state });
 settings.update({ uiLocalePreference: "ko" }, 0);
 settings.updateWithProjectOperations({}, [{ kind: "add", project: { name: "Recovery original", cwd: root } }], undefined, 0);
