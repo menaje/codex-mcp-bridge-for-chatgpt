@@ -1,0 +1,219 @@
+[
+  {
+    "id": "final-build",
+    "source": "e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 c83078898053470fb9b7e96e1760ab009addb790 fceada340f793e6190a178caf8d236b642041c9e",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-final-Vc3WEL",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "npm",
+      "run",
+      "build"
+    ],
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:57:25.050Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 3871,
+    "finishedAt": "2026-10-07T18:57:28.928Z"
+  },
+  {
+    "id": "final-tsc-noemit",
+    "source": "e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 c83078898053470fb9b7e96e1760ab009addb790 fceada340f793e6190a178caf8d236b642041c9e",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-final-Vc3WEL",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/tsc",
+      "--noEmit",
+      "-p",
+      "tsconfig.json"
+    ],
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:57:29.002Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 2381,
+    "finishedAt": "2026-10-07T18:57:31.384Z"
+  },
+  {
+    "id": "final-validate-fast",
+    "source": "e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 c83078898053470fb9b7e96e1760ab009addb790 fceada340f793e6190a178caf8d236b642041c9e",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-final-Vc3WEL",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "npm",
+      "run",
+      "validate:fast"
+    ],
+    "envOverrides": {
+      "CODEX_MCP_BRIDGE_CODEX": "/tmp/codex-cli-0.153.3/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex"
+    },
+    "startedAt": "2026-10-07T18:57:31.450Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 1317,
+    "finishedAt": "2026-10-07T18:57:32.768Z"
+  },
+  {
+    "id": "final-r502-retirement",
+    "source": "e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 c83078898053470fb9b7e96e1760ab009addb790 fceada340f793e6190a178caf8d236b642041c9e",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-final-Vc3WEL",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/vitest",
+      "run",
+      "test/issue242R502.test.ts",
+      "test/httpDiagnostics.test.ts",
+      "test/experimentRetirement.test.ts",
+      "--maxWorkers=1",
+      "--reporter=default",
+      "--reporter=json",
+      "--outputFile.json=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/final-r502-retirement.json"
+    ],
+    "envOverrides": {
+      "ISSUE_242_R502_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/final-proxy-matrix.json"
+    },
+    "startedAt": "2026-10-07T18:57:32.841Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 24937,
+    "finishedAt": "2026-10-07T18:57:57.779Z",
+    "counts": {
+      "passed": 38,
+      "failed": 0,
+      "skipped": 0,
+      "total": 38,
+      "files": 3,
+      "failedFiles": 0
+    }
+  },
+  {
+    "id": "baseline-proxy-controls",
+    "source": "f710974b33fc40432653c815d175058cba1adaee 04ddf63ada7cc6a7172f4190b0909e8bd6d8a3b7 bef9e8603b790327152beea63fa230f638f7aac4",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-base",
+    "tmpdir": "/tmp/cb242-final-Vc3WEL",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-base/node_modules/.bin/vitest",
+      "run",
+      "test/issue242ProxyCharacterization.test.ts",
+      "--maxWorkers=1",
+      "--reporter=default",
+      "--reporter=json",
+      "--outputFile.json=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/baseline-proxy-controls.json"
+    ],
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:57:57.848Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 2873,
+    "finishedAt": "2026-10-07T18:58:00.722Z",
+    "counts": {
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "total": 5,
+      "files": 1,
+      "failedFiles": 0
+    }
+  },
+  {
+    "id": "final-characterization-1200",
+    "source": "e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 c83078898053470fb9b7e96e1760ab009addb790 fceada340f793e6190a178caf8d236b642041c9e",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-final-Vc3WEL",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/tsx",
+      "scripts/issue-242-characterization.ts",
+      "1200"
+    ],
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:58:00.788Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 3855,
+    "finishedAt": "2026-10-07T18:58:04.644Z"
+  },
+  {
+    "id": "final-completion-counts",
+    "source": "e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 c83078898053470fb9b7e96e1760ab009addb790 fceada340f793e6190a178caf8d236b642041c9e",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-final-Vc3WEL",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/tsx",
+      "scripts/issue-242-completion.ts"
+    ],
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:58:04.708Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 568,
+    "finishedAt": "2026-10-07T18:58:05.277Z"
+  },
+  {
+    "id": "final-tunnel-cost",
+    "source": "e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 c83078898053470fb9b7e96e1760ab009addb790 fceada340f793e6190a178caf8d236b642041c9e",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-final-Vc3WEL",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "node",
+      "scripts/issue-242-runtime-cost.mjs",
+      "compare",
+      "/opt/homebrew/bin/tunnel-client"
+    ],
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:58:05.347Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 10299,
+    "finishedAt": "2026-10-07T18:58:15.647Z"
+  },
+  {
+    "id": "final-node-full",
+    "source": "e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 c83078898053470fb9b7e96e1760ab009addb790 fceada340f793e6190a178caf8d236b642041c9e",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "tmpdir": "/tmp/cb242-final-Vc3WEL",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/vitest",
+      "run",
+      "--maxWorkers=1",
+      "--reporter=default",
+      "--reporter=json",
+      "--outputFile.json=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/final-node-full.json"
+    ],
+    "envOverrides": {
+      "ISSUE_242_R502_TUNNEL_BINARY": "/opt/homebrew/bin/tunnel-client",
+      "ISSUE_242_R502_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/final-node-proxy-matrix.json",
+      "ISSUE_242_R502_TUNNEL_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/final-node-tunnel-matrix.json"
+    },
+    "startedAt": "2026-10-07T18:58:15.731Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 787216,
+    "finishedAt": "2026-10-07T19:11:22.949Z",
+    "counts": {
+      "passed": 1493,
+      "failed": 0,
+      "skipped": 0,
+      "total": 1493,
+      "files": 135,
+      "failedFiles": 0
+    }
+  }
+]

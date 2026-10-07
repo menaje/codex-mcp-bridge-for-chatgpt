@@ -1,0 +1,240 @@
+[
+  {
+    "id": "harness-typecheck",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/tsc",
+      "--noEmit",
+      "--target",
+      "ES2022",
+      "--module",
+      "NodeNext",
+      "--moduleResolution",
+      "NodeNext",
+      "--strict",
+      "--skipLibCheck",
+      "--esModuleInterop",
+      "scripts/issue-242-characterization.ts",
+      "scripts/issue-242-completion.ts",
+      "scripts/issue-242-fixture.ts"
+    ],
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:53:49.482Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 2336,
+    "finishedAt": "2026-10-07T18:53:51.826Z"
+  },
+  {
+    "id": "w1-followup-contracts",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/vitest",
+      "run",
+      "test/issue242Reads.test.ts",
+      "test/displayReadPool.test.ts",
+      "test/remoteCompanionServer.test.ts",
+      "test/mcpEvents.test.ts",
+      "--maxWorkers=1",
+      "--reporter=default",
+      "--reporter=json",
+      "--outputFile.json=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/w1-followup-contracts.json"
+    ],
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:53:51.960Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 20295,
+    "finishedAt": "2026-10-07T18:54:12.256Z",
+    "counts": {
+      "passed": 66,
+      "failed": 0,
+      "skipped": 0,
+      "total": 66,
+      "files": 4,
+      "failedFiles": 0
+    }
+  },
+  {
+    "id": "w3-compiled",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "node",
+      "docs/audits/issue-242-w3-20261007/runtime-probe.mjs"
+    ],
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:54:12.349Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 854,
+    "finishedAt": "2026-10-07T18:54:13.204Z"
+  },
+  {
+    "id": "tunnel-pinned",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/vitest",
+      "run",
+      "test/issue242R502Tunnel.test.ts",
+      "--maxWorkers=1",
+      "--reporter=default",
+      "--reporter=json",
+      "--outputFile.json=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/tunnel-pinned.json"
+    ],
+    "envOverrides": {
+      "ISSUE_242_R502_TUNNEL_BINARY": "/opt/homebrew/bin/tunnel-client",
+      "ISSUE_242_R502_TUNNEL_REPORT": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/tunnel-pinned-matrix.json"
+    },
+    "startedAt": "2026-10-07T18:54:13.272Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 9558,
+    "finishedAt": "2026-10-07T18:54:22.831Z",
+    "counts": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "total": 1,
+      "files": 1,
+      "failedFiles": 0
+    }
+  },
+  {
+    "id": "baseline-build",
+    "source": "f710974b33fc40432653c815d175058cba1adaee 04ddf63ada7cc6a7172f4190b0909e8bd6d8a3b7 bef9e8603b790327152beea63fa230f638f7aac4",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-base",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "npm",
+      "run",
+      "build"
+    ],
+    "envOverrides": {
+      "TMPDIR": "/tmp/cb242-base-o0Ceo2"
+    },
+    "startedAt": "2026-10-07T18:54:22.910Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 5140,
+    "finishedAt": "2026-10-07T18:54:28.051Z"
+  },
+  {
+    "id": "baseline-characterization-1200",
+    "source": "f710974b33fc40432653c815d175058cba1adaee 04ddf63ada7cc6a7172f4190b0909e8bd6d8a3b7 bef9e8603b790327152beea63fa230f638f7aac4",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-base",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-base/node_modules/.bin/tsx",
+      "scripts/issue-242-characterization.ts",
+      "1200"
+    ],
+    "envOverrides": {
+      "TMPDIR": "/tmp/cb242-base-o0Ceo2"
+    },
+    "startedAt": "2026-10-07T18:54:28.118Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 4378,
+    "finishedAt": "2026-10-07T18:54:32.497Z"
+  },
+  {
+    "id": "baseline-progress",
+    "source": "f710974b33fc40432653c815d175058cba1adaee 04ddf63ada7cc6a7172f4190b0909e8bd6d8a3b7 bef9e8603b790327152beea63fa230f638f7aac4",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-base",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-base/node_modules/.bin/tsx",
+      "/tmp/cb242-int-tswwmblu/base-progress.ts"
+    ],
+    "envOverrides": {
+      "TMPDIR": "/tmp/cb242-base-o0Ceo2"
+    },
+    "startedAt": "2026-10-07T18:54:32.549Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 390,
+    "finishedAt": "2026-10-07T18:54:32.940Z"
+  },
+  {
+    "id": "baseline-selected-failures",
+    "source": "f710974b33fc40432653c815d175058cba1adaee 04ddf63ada7cc6a7172f4190b0909e8bd6d8a3b7 bef9e8603b790327152beea63fa230f638f7aac4",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-base",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-base/node_modules/.bin/vitest",
+      "run",
+      "test/experimentRetirement.test.ts",
+      "--maxWorkers=1",
+      "--reporter=default",
+      "--reporter=json",
+      "--outputFile.json=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/baseline-selected-failures.json",
+      "-t",
+      "checks GitHub open work and deletes only the archived remote branch"
+    ],
+    "envOverrides": {
+      "TMPDIR": "/tmp/cb242-base-o0Ceo2"
+    },
+    "startedAt": "2026-10-07T18:54:33.063Z",
+    "code": 0,
+    "signal": null,
+    "durationMs": 4364,
+    "finishedAt": "2026-10-07T18:54:37.428Z",
+    "counts": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 19,
+      "total": 20,
+      "files": 1,
+      "failedFiles": 0
+    }
+  },
+  {
+    "id": "candidate-selected-failures",
+    "source": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+    "cwd": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review",
+    "command": "/usr/sbin/taskpolicy",
+    "args": [
+      "-a",
+      "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/node_modules/.bin/vitest",
+      "run",
+      "test/issue242R502.test.ts",
+      "test/experimentRetirement.test.ts",
+      "--maxWorkers=1",
+      "--reporter=default",
+      "--reporter=json",
+      "--outputFile.json=/Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/candidate-selected-failures.json",
+      "-t",
+      "joins public ingress with the real supervised child and application response|checks GitHub open work and deletes only the archived remote branch"
+    ],
+    "envOverrides": {},
+    "startedAt": "2026-10-07T18:54:37.501Z",
+    "code": 1,
+    "signal": null,
+    "durationMs": 2796,
+    "finishedAt": "2026-10-07T18:54:40.298Z",
+    "counts": {
+      "passed": 1,
+      "failed": 1,
+      "skipped": 33,
+      "total": 35,
+      "files": 2,
+      "failedFiles": 1
+    }
+  }
+]

@@ -1,0 +1,32 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review
+
+ ✓ test/issue242R502.test.ts (15 tests) 7354ms
+     ✓ returns capacity exactly once after an idle expiry delayed by a high event-loop stall  369ms
+     ✓ returns structured unavailable for a real child response exceeding the idle budget before headers  595ms
+     ✓ observes the real child's later response after its complete-body caller disconnects  600ms
+ ✓ test/experimentRetirement.test.ts (20 tests) 16250ms
+   ✓ verifies a standalone restore and preserves source state during inspection  1198ms
+   ✓ retires the unmerged experiment without changing dev or main and retains recovery evidence  1046ms
+   ✓ rejects a file archive that cannot preserve the original state  413ms
+   ✓ rejects a prerequisite archive that cannot preserve the original state  328ms
+   ✓ rejects untracked work that the archive does not preserve  415ms
+   ✓ rejects ignored work that the archive does not preserve  415ms
+   ✓ rejects tracked work that the archive does not preserve  392ms
+   ✓ rejects cache work that the archive does not preserve  301ms
+   ✓ blocks active processes and an incomplete or stale open-work review  1333ms
+   ✓ rejects archives within active worktrees, a current checkout, and protected branches  470ms
+   ✓ preserves a branch that changes after initial verification  469ms
+   ✓ restores backed-up files if ordinary worktree removal fails  631ms
+   ✓ checks GitHub open work and deletes only the archived remote branch  2729ms
+   ✓ preserves the experiment when remote review finds open-pr  1728ms
+   ✓ preserves the experiment when remote review finds open-issue  1723ms
+   ✓ preserves the experiment when remote review finds changed-head  1584ms
+ ✓ test/httpDiagnostics.test.ts (3 tests) 8ms
+
+ Test Files  3 passed (3)
+      Tests  38 passed (38)
+   Start at  03:57:33
+   Duration  24.73s (transform 677ms, setup 0ms, import 917ms, tests 23.61s, environment 0ms)
+
+JSON report written to /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/final-r502-retirement.json

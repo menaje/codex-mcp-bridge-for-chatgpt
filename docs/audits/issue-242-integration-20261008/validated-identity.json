@@ -1,0 +1,15 @@
+{
+  "base": "f710974b33fc40432653c815d175058cba1adaee 04ddf63ada7cc6a7172f4190b0909e8bd6d8a3b7 bef9e8603b790327152beea63fa230f638f7aac4",
+  "initialValidatedImplementation": "c83078898053470fb9b7e96e1760ab009addb790 73e92d36100b2da192394d90bdd095d723945c32 fe411f1f4214f9adc1b2482e46bb00ea01547390",
+  "finalValidatedImplementation": "e1cc5aea23da3fb8464301d00c0e905cca1b7bb7 c83078898053470fb9b7e96e1760ab009addb790 fceada340f793e6190a178caf8d236b642041c9e",
+  "postInitialChange": [
+    "M\ttest/issue242R502.test.ts"
+  ],
+  "nativeSubtreeAtNativeValidation": "432943c71dc0c6d0aba31057eab2e2407b058632",
+  "nativeSubtreeAtFinalImplementation": "432943c71dc0c6d0aba31057eab2e2407b058632",
+  "unchangedProductSinceInitial": true,
+  "chosenIntegrationTarget": "codex/issue-242-integration-review",
+  "devIntegration": "Explicitly held; this is a local review candidate, not a release candidate or a dev merge.",
+  "builtSourceHash": "87fb93928ab0aed801804dc686661ff3d9998014ad7a89cd5aff40aa419c65eb",
+  "builtSourceHashMatchesWorkingSource": true
+}

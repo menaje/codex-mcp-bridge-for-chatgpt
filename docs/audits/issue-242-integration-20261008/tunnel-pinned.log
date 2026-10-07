@@ -1,0 +1,12 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review
+
+ ✓ test/issue242R502Tunnel.test.ts (1 test) 8337ms
+   ✓ compares direct resets and bridge responses with the pinned local Go tunnel classification  7433ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  03:54:13
+   Duration  9.37s (transform 718ms, setup 0ms, import 964ms, tests 8.34s, environment 0ms)
+
+JSON report written to /Volumes/Data/Dev/codex-mcp-bridge-issue-242-integration-review/docs/audits/issue-242-integration-20261008/tunnel-pinned.json

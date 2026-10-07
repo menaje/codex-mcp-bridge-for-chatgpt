@@ -1,0 +1,1419 @@
+{
+  "sourceBase": "f710974b33fc40432653c815d175058cba1adaee",
+  "measuredHead": "e1cc5aea23da3fb8464301d00c0e905cca1b7bb7",
+  "conditions": "Same 1,200-Job workload and taskpolicy -a; stages are sequential, fixture IDs/roots differ, filesystem cache and global host load uncontrolled. Baseline was run after the first combined profile; final profile was rerun afterward. Ten warm samples: p99 is sample maximum, not a population estimate.",
+  "reads": {
+    "list-history-false-warm": {
+      "before": {
+        "endToEndMs": {
+          "samples": 10,
+          "p50": 33.0655840000004,
+          "p95": 36.66141599999992,
+          "p99": 36.66141599999992,
+          "max": 36.66141599999992
+        },
+        "queueMs": {
+          "samples": 10,
+          "p50": 0.0182079999999587,
+          "p95": 0.03258399999992889,
+          "p99": 0.03258399999992889,
+          "max": 0.03258399999992889
+        },
+        "configMs": {
+          "samples": 10,
+          "p50": 0.16491700000000264,
+          "p95": 0.21966700000007222,
+          "p99": 0.21966700000007222,
+          "max": 0.21966700000007222
+        },
+        "databaseOpenMs": {
+          "samples": 10,
+          "p50": 0.5754590000000235,
+          "p95": 0.6595419999999876,
+          "p99": 0.6595419999999876,
+          "max": 0.6595419999999876
+        },
+        "sessionsMs": {
+          "samples": 10,
+          "p50": 0.4441669999999931,
+          "p95": 0.6418329999999628,
+          "p99": 0.6418329999999628,
+          "max": 0.6418329999999628
+        },
+        "jobsMs": {
+          "samples": 10,
+          "p50": 17.37504100000001,
+          "p95": 18.850792000000013,
+          "p99": 18.850792000000013,
+          "max": 18.850792000000013
+        },
+        "settingsMs": {
+          "samples": 10,
+          "p50": 0.1705000000000041,
+          "p95": 0.25212500000009186,
+          "p99": 0.25212500000009186,
+          "max": 0.25212500000009186
+        },
+        "facadeMs": {
+          "samples": 10,
+          "p50": 0.07566600000006929,
+          "p95": 0.09862499999996999,
+          "p99": 0.09862499999996999,
+          "max": 0.09862499999996999
+        },
+        "projectionMs": {
+          "samples": 10,
+          "p50": 13.495667000000026,
+          "p95": 16.694208000000003,
+          "p99": 16.694208000000003,
+          "max": 16.694208000000003
+        },
+        "cleanupMs": {
+          "samples": 10,
+          "p50": 0.1780830000000151,
+          "p95": 0.23241700000005494,
+          "p99": 0.23241700000005494,
+          "max": 0.23241700000005494
+        },
+        "jsonPreflightMs": {
+          "samples": 10,
+          "p50": 0.008207999999967797,
+          "p95": 0.009957999999983258,
+          "p99": 0.009957999999983258,
+          "max": 0.009957999999983258
+        },
+        "responseBytes": {
+          "samples": 10,
+          "p50": 1587,
+          "p95": 1587,
+          "p99": 1587,
+          "max": 1587
+        },
+        "sqlStatements": {
+          "samples": 10,
+          "p50": 39,
+          "p95": 39,
+          "p99": 39,
+          "max": 39
+        },
+        "selectStatements": {
+          "samples": 10,
+          "p50": 36,
+          "p95": 36,
+          "p99": 36,
+          "max": 36
+        }
+      },
+      "after": {
+        "endToEndMs": {
+          "samples": 10,
+          "p50": 30.509457999999995,
+          "p95": 40.29591699999992,
+          "p99": 40.29591699999992,
+          "max": 40.29591699999992
+        },
+        "queueMs": {
+          "samples": 10,
+          "p50": 0.01883399999996982,
+          "p95": 0.04795799999999417,
+          "p99": 0.04795799999999417,
+          "max": 0.04795799999999417
+        },
+        "configMs": {
+          "samples": 10,
+          "p50": 0.15699999999998226,
+          "p95": 0.22754199999997127,
+          "p99": 0.22754199999997127,
+          "max": 0.22754199999997127
+        },
+        "databaseOpenMs": {
+          "samples": 10,
+          "p50": 0.5590839999999844,
+          "p95": 0.6478749999999991,
+          "p99": 0.6478749999999991,
+          "max": 0.6478749999999991
+        },
+        "sessionsMs": {
+          "samples": 10,
+          "p50": 0.3979590000000144,
+          "p95": 0.6524580000000242,
+          "p99": 0.6524580000000242,
+          "max": 0.6524580000000242
+        },
+        "jobsMs": {
+          "samples": 10,
+          "p50": 16.193874999999935,
+          "p95": 22.73037499999998,
+          "p99": 22.73037499999998,
+          "max": 22.73037499999998
+        },
+        "settingsMs": {
+          "samples": 10,
+          "p50": 0.13608299999998508,
+          "p95": 0.20520800000002737,
+          "p99": 0.20520800000002737,
+          "max": 0.20520800000002737
+        },
+        "facadeMs": {
+          "samples": 10,
+          "p50": 0.06708299999996825,
+          "p95": 0.08995900000002166,
+          "p99": 0.08995900000002166,
+          "max": 0.08995900000002166
+        },
+        "projectionMs": {
+          "samples": 10,
+          "p50": 12.339334000000008,
+          "p95": 15.440499999999986,
+          "p99": 15.440499999999986,
+          "max": 15.440499999999986
+        },
+        "cleanupMs": {
+          "samples": 10,
+          "p50": 0.15800000000001546,
+          "p95": 0.16783299999997325,
+          "p99": 0.16783299999997325,
+          "max": 0.16783299999997325
+        },
+        "jsonPreflightMs": {
+          "samples": 10,
+          "p50": 0.006958000000054199,
+          "p95": 0.008125000000006821,
+          "p99": 0.008125000000006821,
+          "max": 0.008125000000006821
+        },
+        "responseBytes": {
+          "samples": 10,
+          "p50": 1587,
+          "p95": 1587,
+          "p99": 1587,
+          "max": 1587
+        },
+        "sqlStatements": {
+          "samples": 10,
+          "p50": 39,
+          "p95": 39,
+          "p99": 39,
+          "max": 39
+        },
+        "selectStatements": {
+          "samples": 10,
+          "p50": 36,
+          "p95": 36,
+          "p99": 36,
+          "max": 36
+        }
+      },
+      "medianDeltaPercent": -7.730472868709571
+    },
+    "list-history-true-warm": {
+      "before": {
+        "endToEndMs": {
+          "samples": 10,
+          "p50": 31.14691700000003,
+          "p95": 35.29750000000013,
+          "p99": 35.29750000000013,
+          "max": 35.29750000000013
+        },
+        "queueMs": {
+          "samples": 10,
+          "p50": 0.01125000000001819,
+          "p95": 0.018041999999923064,
+          "p99": 0.018041999999923064,
+          "max": 0.018041999999923064
+        },
+        "configMs": {
+          "samples": 10,
+          "p50": 0.13345799999990504,
+          "p95": 0.16975000000002183,
+          "p99": 0.16975000000002183,
+          "max": 0.16975000000002183
+        },
+        "databaseOpenMs": {
+          "samples": 10,
+          "p50": 0.5193749999999682,
+          "p95": 0.5944160000000238,
+          "p99": 0.5944160000000238,
+          "max": 0.5944160000000238
+        },
+        "sessionsMs": {
+          "samples": 10,
+          "p50": 0.37962499999991905,
+          "p95": 0.3947090000000344,
+          "p99": 0.3947090000000344,
+          "max": 0.3947090000000344
+        },
+        "jobsMs": {
+          "samples": 10,
+          "p50": 13.50958300000002,
+          "p95": 14.636875000000032,
+          "p99": 14.636875000000032,
+          "max": 14.636875000000032
+        },
+        "settingsMs": {
+          "samples": 10,
+          "p50": 0.10029199999996763,
+          "p95": 0.12650000000007822,
+          "p99": 0.12650000000007822,
+          "max": 0.12650000000007822
+        },
+        "facadeMs": {
+          "samples": 10,
+          "p50": 0.05525000000000091,
+          "p95": 0.06600000000003092,
+          "p99": 0.06600000000003092,
+          "max": 0.06600000000003092
+        },
+        "projectionMs": {
+          "samples": 10,
+          "p50": 15.616125000000011,
+          "p95": 20.292625000000044,
+          "p99": 20.292625000000044,
+          "max": 20.292625000000044
+        },
+        "cleanupMs": {
+          "samples": 10,
+          "p50": 0.15354199999990215,
+          "p95": 0.19229200000006585,
+          "p99": 0.19229200000006585,
+          "max": 0.19229200000006585
+        },
+        "jsonPreflightMs": {
+          "samples": 10,
+          "p50": 0.05391599999995833,
+          "p95": 0.06441699999993489,
+          "p99": 0.06441699999993489,
+          "max": 0.06441699999993489
+        },
+        "responseBytes": {
+          "samples": 10,
+          "p50": 37587,
+          "p95": 37587,
+          "p99": 37587,
+          "max": 37587
+        },
+        "sqlStatements": {
+          "samples": 10,
+          "p50": 39,
+          "p95": 39,
+          "p99": 39,
+          "max": 39
+        },
+        "selectStatements": {
+          "samples": 10,
+          "p50": 36,
+          "p95": 36,
+          "p99": 36,
+          "max": 36
+        }
+      },
+      "after": {
+        "endToEndMs": {
+          "samples": 10,
+          "p50": 31.509500000000116,
+          "p95": 36.08095800000001,
+          "p99": 36.08095800000001,
+          "max": 36.08095800000001
+        },
+        "queueMs": {
+          "samples": 10,
+          "p50": 0.011292000000025837,
+          "p95": 0.02483299999994415,
+          "p99": 0.02483299999994415,
+          "max": 0.02483299999994415
+        },
+        "configMs": {
+          "samples": 10,
+          "p50": 0.12354200000004312,
+          "p95": 0.18600000000003547,
+          "p99": 0.18600000000003547,
+          "max": 0.18600000000003547
+        },
+        "databaseOpenMs": {
+          "samples": 10,
+          "p50": 0.5205419999999776,
+          "p95": 0.6627089999999498,
+          "p99": 0.6627089999999498,
+          "max": 0.6627089999999498
+        },
+        "sessionsMs": {
+          "samples": 10,
+          "p50": 0.37266599999998107,
+          "p95": 0.40820899999994253,
+          "p99": 0.40820899999994253,
+          "max": 0.40820899999994253
+        },
+        "jobsMs": {
+          "samples": 10,
+          "p50": 13.837666999999897,
+          "p95": 14.820125000000075,
+          "p99": 14.820125000000075,
+          "max": 14.820125000000075
+        },
+        "settingsMs": {
+          "samples": 10,
+          "p50": 0.10441600000001472,
+          "p95": 0.13362500000005184,
+          "p99": 0.13362500000005184,
+          "max": 0.13362500000005184
+        },
+        "facadeMs": {
+          "samples": 10,
+          "p50": 0.05558299999995597,
+          "p95": 0.06662500000004457,
+          "p99": 0.06662500000004457,
+          "max": 0.06662500000004457
+        },
+        "projectionMs": {
+          "samples": 10,
+          "p50": 15.720042000000035,
+          "p95": 20.243208000000095,
+          "p99": 20.243208000000095,
+          "max": 20.243208000000095
+        },
+        "cleanupMs": {
+          "samples": 10,
+          "p50": 0.15020800000002055,
+          "p95": 0.19200000000000728,
+          "p99": 0.19200000000000728,
+          "max": 0.19200000000000728
+        },
+        "jsonPreflightMs": {
+          "samples": 10,
+          "p50": 0.05349999999998545,
+          "p95": 0.06866700000000492,
+          "p99": 0.06866700000000492,
+          "max": 0.06866700000000492
+        },
+        "responseBytes": {
+          "samples": 10,
+          "p50": 37587,
+          "p95": 37587,
+          "p99": 37587,
+          "max": 37587
+        },
+        "sqlStatements": {
+          "samples": 10,
+          "p50": 39,
+          "p95": 39,
+          "p99": 39,
+          "max": 39
+        },
+        "selectStatements": {
+          "samples": 10,
+          "p50": 36,
+          "p95": 36,
+          "p99": 36,
+          "max": 36
+        }
+      },
+      "medianDeltaPercent": 1.164105583869146
+    },
+    "detailWarm": {
+      "before": {
+        "endToEndMs": {
+          "samples": 10,
+          "p50": 2.473457999999937,
+          "p95": 3.6751670000003287,
+          "p99": 3.6751670000003287,
+          "max": 3.6751670000003287
+        },
+        "queueMs": {
+          "samples": 10,
+          "p50": 0.008249999999861757,
+          "p95": 0.020166999999901236,
+          "p99": 0.020166999999901236,
+          "max": 0.020166999999901236
+        },
+        "configMs": {
+          "samples": 10,
+          "p50": 0.1037499999999909,
+          "p95": 0.12362499999994725,
+          "p99": 0.12362499999994725,
+          "max": 0.12362499999994725
+        },
+        "databaseOpenMs": {
+          "samples": 10,
+          "p50": 0.4225409999999101,
+          "p95": 0.5469170000001213,
+          "p99": 0.5469170000001213,
+          "max": 0.5469170000001213
+        },
+        "sessionsMs": {
+          "samples": 10,
+          "p50": 0.35195900000007896,
+          "p95": 0.46024999999985994,
+          "p99": 0.46024999999985994,
+          "max": 0.46024999999985994
+        },
+        "jobsMs": {
+          "samples": 10,
+          "p50": 0.33829199999991033,
+          "p95": 0.4667090000000371,
+          "p99": 0.4667090000000371,
+          "max": 0.4667090000000371
+        },
+        "settingsMs": {
+          "samples": 10,
+          "p50": 0.06549999999992906,
+          "p95": 0.0785000000000764,
+          "p99": 0.0785000000000764,
+          "max": 0.0785000000000764
+        },
+        "facadeMs": {
+          "samples": 10,
+          "p50": 0.0422080000000733,
+          "p95": 0.0522920000000795,
+          "p99": 0.0522920000000795,
+          "max": 0.0522920000000795
+        },
+        "projectionMs": {
+          "samples": 10,
+          "p50": 0.96225000000004,
+          "p95": 1.8804579999998623,
+          "p99": 1.8804579999998623,
+          "max": 1.8804579999998623
+        },
+        "cleanupMs": {
+          "samples": 10,
+          "p50": 0.07283300000017334,
+          "p95": 0.08608400000002803,
+          "p99": 0.08608400000002803,
+          "max": 0.08608400000002803
+        },
+        "jsonPreflightMs": {
+          "samples": 10,
+          "p50": 0.005583000000115135,
+          "p95": 0.0060829999999896245,
+          "p99": 0.0060829999999896245,
+          "max": 0.0060829999999896245
+        },
+        "responseBytes": {
+          "samples": 10,
+          "p50": 2331,
+          "p95": 2331,
+          "p99": 2331,
+          "max": 2331
+        },
+        "sqlStatements": {
+          "samples": 10,
+          "p50": 30,
+          "p95": 30,
+          "p99": 30,
+          "max": 30
+        },
+        "selectStatements": {
+          "samples": 10,
+          "p50": 27,
+          "p95": 27,
+          "p99": 27,
+          "max": 27
+        }
+      },
+      "after": {
+        "endToEndMs": {
+          "samples": 10,
+          "p50": 2.4862499999999272,
+          "p95": 7.082083000000239,
+          "p99": 7.082083000000239,
+          "max": 7.082083000000239
+        },
+        "queueMs": {
+          "samples": 10,
+          "p50": 0.00987499999996544,
+          "p95": 0.029124999999794454,
+          "p99": 0.029124999999794454,
+          "max": 0.029124999999794454
+        },
+        "configMs": {
+          "samples": 10,
+          "p50": 0.11458299999981136,
+          "p95": 0.21729200000004312,
+          "p99": 0.21729200000004312,
+          "max": 0.21729200000004312
+        },
+        "databaseOpenMs": {
+          "samples": 10,
+          "p50": 0.4399999999998272,
+          "p95": 0.6154160000000957,
+          "p99": 0.6154160000000957,
+          "max": 0.6154160000000957
+        },
+        "sessionsMs": {
+          "samples": 10,
+          "p50": 0.35237500000016553,
+          "p95": 0.3750840000000153,
+          "p99": 0.3750840000000153,
+          "max": 0.3750840000000153
+        },
+        "jobsMs": {
+          "samples": 10,
+          "p50": 0.3495829999999387,
+          "p95": 0.46841699999981756,
+          "p99": 0.46841699999981756,
+          "max": 0.46841699999981756
+        },
+        "settingsMs": {
+          "samples": 10,
+          "p50": 0.06412499999987631,
+          "p95": 0.0914580000001024,
+          "p99": 0.0914580000001024,
+          "max": 0.0914580000001024
+        },
+        "facadeMs": {
+          "samples": 10,
+          "p50": 0.04333300000007512,
+          "p95": 0.057624999999916326,
+          "p99": 0.057624999999916326,
+          "max": 0.057624999999916326
+        },
+        "projectionMs": {
+          "samples": 10,
+          "p50": 0.9671250000001237,
+          "p95": 1.879458999999997,
+          "p99": 1.879458999999997,
+          "max": 1.879458999999997
+        },
+        "cleanupMs": {
+          "samples": 10,
+          "p50": 0.0805840000000444,
+          "p95": 0.09162500000002183,
+          "p99": 0.09162500000002183,
+          "max": 0.09162500000002183
+        },
+        "jsonPreflightMs": {
+          "samples": 10,
+          "p50": 0.005750000000034561,
+          "p95": 0.005959000000075321,
+          "p99": 0.005959000000075321,
+          "max": 0.005959000000075321
+        },
+        "responseBytes": {
+          "samples": 10,
+          "p50": 2331,
+          "p95": 2331,
+          "p99": 2331,
+          "max": 2331
+        },
+        "sqlStatements": {
+          "samples": 10,
+          "p50": 30,
+          "p95": 30,
+          "p99": 30,
+          "max": 30
+        },
+        "selectStatements": {
+          "samples": 10,
+          "p50": 27,
+          "p95": 27,
+          "p99": 27,
+          "max": 27
+        }
+      },
+      "medianDeltaPercent": 0.5171706978647217
+    },
+    "burst8": {
+      "before": {
+        "endToEndMs": {
+          "samples": 1,
+          "p50": 26.03508299999976,
+          "p95": 26.03508299999976,
+          "p99": 26.03508299999976,
+          "max": 26.03508299999976
+        },
+        "queueMs": {
+          "samples": 1,
+          "p50": 0.007832999999891399,
+          "p95": 0.007832999999891399,
+          "p99": 0.007832999999891399,
+          "max": 0.007832999999891399
+        },
+        "configMs": {
+          "samples": 1,
+          "p50": 0.1018330000001697,
+          "p95": 0.1018330000001697,
+          "p99": 0.1018330000001697,
+          "max": 0.1018330000001697
+        },
+        "databaseOpenMs": {
+          "samples": 1,
+          "p50": 0.4182499999999436,
+          "p95": 0.4182499999999436,
+          "p99": 0.4182499999999436,
+          "max": 0.4182499999999436
+        },
+        "sessionsMs": {
+          "samples": 1,
+          "p50": 0.3510830000000169,
+          "p95": 0.3510830000000169,
+          "p99": 0.3510830000000169,
+          "max": 0.3510830000000169
+        },
+        "jobsMs": {
+          "samples": 1,
+          "p50": 13.367166999999881,
+          "p95": 13.367166999999881,
+          "p99": 13.367166999999881,
+          "max": 13.367166999999881
+        },
+        "settingsMs": {
+          "samples": 1,
+          "p50": 0.08558300000004238,
+          "p95": 0.08558300000004238,
+          "p99": 0.08558300000004238,
+          "max": 0.08558300000004238
+        },
+        "facadeMs": {
+          "samples": 1,
+          "p50": 0.04475000000002183,
+          "p95": 0.04475000000002183,
+          "p99": 0.04475000000002183,
+          "max": 0.04475000000002183
+        },
+        "projectionMs": {
+          "samples": 1,
+          "p50": 11.416375000000016,
+          "p95": 11.416375000000016,
+          "p99": 11.416375000000016,
+          "max": 11.416375000000016
+        },
+        "cleanupMs": {
+          "samples": 1,
+          "p50": 0.1418340000000171,
+          "p95": 0.1418340000000171,
+          "p99": 0.1418340000000171,
+          "max": 0.1418340000000171
+        },
+        "jsonPreflightMs": {
+          "samples": 1,
+          "p50": 0.00620800000001509,
+          "p95": 0.00620800000001509,
+          "p99": 0.00620800000001509,
+          "max": 0.00620800000001509
+        },
+        "responseBytes": {
+          "samples": 1,
+          "p50": 1587,
+          "p95": 1587,
+          "p99": 1587,
+          "max": 1587
+        },
+        "sqlStatements": {
+          "samples": 1,
+          "p50": 39,
+          "p95": 39,
+          "p99": 39,
+          "max": 39
+        },
+        "selectStatements": {
+          "samples": 1,
+          "p50": 36,
+          "p95": 36,
+          "p99": 36,
+          "max": 36
+        },
+        "callers": 8,
+        "physicalReads": 1,
+        "coalescedCallers": 7,
+        "callerLatencyMs": {
+          "samples": 8,
+          "p50": 26.13933300000008,
+          "p95": 26.225750000000062,
+          "p99": 26.225750000000062,
+          "max": 26.225750000000062
+        }
+      },
+      "after": {
+        "endToEndMs": {
+          "samples": 1,
+          "p50": 26.700582999999824,
+          "p95": 26.700582999999824,
+          "p99": 26.700582999999824,
+          "max": 26.700582999999824
+        },
+        "queueMs": {
+          "samples": 1,
+          "p50": 0.008833000000095126,
+          "p95": 0.008833000000095126,
+          "p99": 0.008833000000095126,
+          "max": 0.008833000000095126
+        },
+        "configMs": {
+          "samples": 1,
+          "p50": 0.1085840000000644,
+          "p95": 0.1085840000000644,
+          "p99": 0.1085840000000644,
+          "max": 0.1085840000000644
+        },
+        "databaseOpenMs": {
+          "samples": 1,
+          "p50": 0.4422910000000684,
+          "p95": 0.4422910000000684,
+          "p99": 0.4422910000000684,
+          "max": 0.4422910000000684
+        },
+        "sessionsMs": {
+          "samples": 1,
+          "p50": 0.35370899999998073,
+          "p95": 0.35370899999998073,
+          "p99": 0.35370899999998073,
+          "max": 0.35370899999998073
+        },
+        "jobsMs": {
+          "samples": 1,
+          "p50": 13.624415999999883,
+          "p95": 13.624415999999883,
+          "p99": 13.624415999999883,
+          "max": 13.624415999999883
+        },
+        "settingsMs": {
+          "samples": 1,
+          "p50": 0.10195900000007896,
+          "p95": 0.10195900000007896,
+          "p99": 0.10195900000007896,
+          "max": 0.10195900000007896
+        },
+        "facadeMs": {
+          "samples": 1,
+          "p50": 0.047166000000061103,
+          "p95": 0.047166000000061103,
+          "p99": 0.047166000000061103,
+          "max": 0.047166000000061103
+        },
+        "projectionMs": {
+          "samples": 1,
+          "p50": 11.739499999999907,
+          "p95": 11.739499999999907,
+          "p99": 11.739499999999907,
+          "max": 11.739499999999907
+        },
+        "cleanupMs": {
+          "samples": 1,
+          "p50": 0.15695900000014262,
+          "p95": 0.15695900000014262,
+          "p99": 0.15695900000014262,
+          "max": 0.15695900000014262
+        },
+        "jsonPreflightMs": {
+          "samples": 1,
+          "p50": 0.005167000000028565,
+          "p95": 0.005167000000028565,
+          "p99": 0.005167000000028565,
+          "max": 0.005167000000028565
+        },
+        "responseBytes": {
+          "samples": 1,
+          "p50": 1587,
+          "p95": 1587,
+          "p99": 1587,
+          "max": 1587
+        },
+        "sqlStatements": {
+          "samples": 1,
+          "p50": 39,
+          "p95": 39,
+          "p99": 39,
+          "max": 39
+        },
+        "selectStatements": {
+          "samples": 1,
+          "p50": 36,
+          "p95": 36,
+          "p99": 36,
+          "max": 36
+        },
+        "callers": 8,
+        "physicalReads": 1,
+        "coalescedCallers": 7,
+        "callerLatencyMs": {
+          "samples": 8,
+          "p50": 26.812667000000147,
+          "p95": 26.92291699999987,
+          "p99": 26.92291699999987,
+          "max": 26.92291699999987
+        }
+      },
+      "medianDeltaPercent": 2.5561662315425338
+    },
+    "settingsFirst": {
+      "before": {
+        "endToEndMs": {
+          "samples": 1,
+          "p50": 228.5191249999998,
+          "p95": 228.5191249999998,
+          "p99": 228.5191249999998,
+          "max": 228.5191249999998
+        },
+        "queueMs": {
+          "samples": 1,
+          "p50": 0.03104199999984303,
+          "p95": 0.03104199999984303,
+          "p99": 0.03104199999984303,
+          "max": 0.03104199999984303
+        },
+        "configMs": {
+          "samples": 1,
+          "p50": 0.18087500000001455,
+          "p95": 0.18087500000001455,
+          "p99": 0.18087500000001455,
+          "max": 0.18087500000001455
+        },
+        "databaseOpenMs": {
+          "samples": 1,
+          "p50": 0.5905410000000302,
+          "p95": 0.5905410000000302,
+          "p99": 0.5905410000000302,
+          "max": 0.5905410000000302
+        },
+        "sessionsMs": {
+          "samples": 1,
+          "p50": 0.3727920000001177,
+          "p95": 0.3727920000001177,
+          "p99": 0.3727920000001177,
+          "max": 0.3727920000001177
+        },
+        "jobsMs": {
+          "samples": 1,
+          "p50": 0.011874999999918145,
+          "p95": 0.011874999999918145,
+          "p99": 0.011874999999918145,
+          "max": 0.011874999999918145
+        },
+        "settingsMs": {
+          "samples": 1,
+          "p50": 0.09420799999998053,
+          "p95": 0.09420799999998053,
+          "p99": 0.09420799999998053,
+          "max": 0.09420799999998053
+        },
+        "facadeMs": {
+          "samples": 1,
+          "p50": 0.057624999999916326,
+          "p95": 0.057624999999916326,
+          "p99": 0.057624999999916326,
+          "max": 0.057624999999916326
+        },
+        "projectionMs": {
+          "samples": 1,
+          "p50": 222.97300000000018,
+          "p95": 222.97300000000018,
+          "p99": 222.97300000000018,
+          "max": 222.97300000000018
+        },
+        "cleanupMs": {
+          "samples": 1,
+          "p50": 0.07150000000001455,
+          "p95": 0.07150000000001455,
+          "p99": 0.07150000000001455,
+          "max": 0.07150000000001455
+        },
+        "jsonPreflightMs": {
+          "samples": 1,
+          "p50": 0.010416999999961263,
+          "p95": 0.010416999999961263,
+          "p99": 0.010416999999961263,
+          "max": 0.010416999999961263
+        },
+        "responseBytes": {
+          "samples": 1,
+          "p50": 2812,
+          "p95": 2812,
+          "p99": 2812,
+          "max": 2812
+        },
+        "sqlStatements": {
+          "samples": 1,
+          "p50": 27,
+          "p95": 27,
+          "p99": 27,
+          "max": 27
+        },
+        "selectStatements": {
+          "samples": 1,
+          "p50": 25,
+          "p95": 25,
+          "p99": 25,
+          "max": 25
+        }
+      },
+      "after": {
+        "endToEndMs": {
+          "samples": 1,
+          "p50": 201.92937500000016,
+          "p95": 201.92937500000016,
+          "p99": 201.92937500000016,
+          "max": 201.92937500000016
+        },
+        "queueMs": {
+          "samples": 1,
+          "p50": 0.030749999999898137,
+          "p95": 0.030749999999898137,
+          "p99": 0.030749999999898137,
+          "max": 0.030749999999898137
+        },
+        "configMs": {
+          "samples": 1,
+          "p50": 0.10787500000014916,
+          "p95": 0.10787500000014916,
+          "p99": 0.10787500000014916,
+          "max": 0.10787500000014916
+        },
+        "databaseOpenMs": {
+          "samples": 1,
+          "p50": 0.48762499999998,
+          "p95": 0.48762499999998,
+          "p99": 0.48762499999998,
+          "max": 0.48762499999998
+        },
+        "sessionsMs": {
+          "samples": 1,
+          "p50": 0.35504199999991215,
+          "p95": 0.35504199999991215,
+          "p99": 0.35504199999991215,
+          "max": 0.35504199999991215
+        },
+        "jobsMs": {
+          "samples": 1,
+          "p50": 0.007624999999961801,
+          "p95": 0.007624999999961801,
+          "p99": 0.007624999999961801,
+          "max": 0.007624999999961801
+        },
+        "settingsMs": {
+          "samples": 1,
+          "p50": 0.06808300000011513,
+          "p95": 0.06808300000011513,
+          "p99": 0.06808300000011513,
+          "max": 0.06808300000011513
+        },
+        "facadeMs": {
+          "samples": 1,
+          "p50": 0.04320800000004965,
+          "p95": 0.04320800000004965,
+          "p99": 0.04320800000004965,
+          "max": 0.04320800000004965
+        },
+        "projectionMs": {
+          "samples": 1,
+          "p50": 200.5525419999999,
+          "p95": 200.5525419999999,
+          "p99": 200.5525419999999,
+          "max": 200.5525419999999
+        },
+        "cleanupMs": {
+          "samples": 1,
+          "p50": 0.06616699999995035,
+          "p95": 0.06616699999995035,
+          "p99": 0.06616699999995035,
+          "max": 0.06616699999995035
+        },
+        "jsonPreflightMs": {
+          "samples": 1,
+          "p50": 0.009457999999995081,
+          "p95": 0.009457999999995081,
+          "p99": 0.009457999999995081,
+          "max": 0.009457999999995081
+        },
+        "responseBytes": {
+          "samples": 1,
+          "p50": 2812,
+          "p95": 2812,
+          "p99": 2812,
+          "max": 2812
+        },
+        "sqlStatements": {
+          "samples": 1,
+          "p50": 27,
+          "p95": 27,
+          "p99": 27,
+          "max": 27
+        },
+        "selectStatements": {
+          "samples": 1,
+          "p50": 25,
+          "p95": 25,
+          "p99": 25,
+          "max": 25
+        }
+      },
+      "medianDeltaPercent": -11.635678195424415
+    }
+  },
+  "completion": {
+    "empty20": {
+      "before": {
+        "wallMs": 1.1456250000001091,
+        "sql": {
+          "BEGIN": 20,
+          "SELECT": 20,
+          "COMMIT": 20
+        },
+        "changedRows": 0,
+        "walFileBytesDelta": 0
+      },
+      "after": {
+        "wallMs": 0.7562080000002425,
+        "sql": {
+          "SELECT": 20
+        },
+        "changedRows": 0,
+        "walFileBytesDelta": 0
+      }
+    },
+    "releaseReclaim10": {
+      "before": {
+        "wallMs": 2.286667000000307,
+        "sql": {
+          "BEGIN": 20,
+          "SELECT": 30,
+          "UPDATE": 20,
+          "COMMIT": 20
+        },
+        "changedRows": 20,
+        "walFileBytesDelta": 0
+      },
+      "after": {
+        "wallMs": 0.4126249999999345,
+        "sql": {
+          "BEGIN": 1,
+          "SELECT": 11,
+          "UPDATE": 1,
+          "COMMIT": 1
+        },
+        "changedRows": 1,
+        "walFileBytesDelta": 0,
+        "methods": {
+          "release": 1,
+          "claim": 10
+        }
+      }
+    },
+    "progressBefore": {
+      "sourceHead": "f710974b33fc40432653c815d175058cba1adaee",
+      "fixture": {
+        "retainedJobs": 40,
+        "progressJobs": 4,
+        "progressEvents": 400
+      },
+      "progress400": {
+        "wallMs": 0.719250000000045,
+        "sql": {},
+        "changedRows": 0,
+        "walFileBytesDelta": 0,
+        "topics": {
+          "dashboard": 400
+        }
+      },
+      "limits": [
+        "Native claims are not inferred from direct registry notices. Legacy scheduling reads each dashboard notice; Swift measurements are separate."
+      ]
+    },
+    "afterCounts": {
+      "schema": 1,
+      "sourceHead": "e1cc5aea23da3fb8464301d00c0e905cca1b7bb7",
+      "sourceDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "environment": {
+        "node": "v24.11.1",
+        "platform": "darwin",
+        "arch": "arm64",
+        "sqlite": "3.53.4"
+      },
+      "fixture": {
+        "retainedJobs": 40,
+        "progressJobs": 4,
+        "progressEvents": 400,
+        "backlog": 25
+      },
+      "progress400": {
+        "wallMs": 0.7212499999999977,
+        "sql": {},
+        "changedRows": 0,
+        "walFileBytesDelta": 0,
+        "topics": {
+          "dashboard": 400
+        },
+        "nativeClaimsTriggered": 0
+      },
+      "empty20": {
+        "wallMs": 0.5760419999999726,
+        "sql": {
+          "SELECT": 20
+        },
+        "changedRows": 0,
+        "walFileBytesDelta": 0,
+        "methods": {
+          "claim": 20
+        }
+      },
+      "availability20": {
+        "wallMs": 0.2860409999999547,
+        "sql": {
+          "SELECT": 20
+        },
+        "changedRows": 0,
+        "walFileBytesDelta": 0,
+        "methods": {
+          "availability": 20
+        }
+      },
+      "enqueue25": {
+        "wallMs": 62.41829200000001,
+        "sql": {
+          "BEGIN": 100,
+          "SELECT": 1100,
+          "INSERT": 475,
+          "PRAGMA": 100,
+          "UPDATE": 250,
+          "COMMIT": 100,
+          "DELETE": 50
+        },
+        "changedRows": 775,
+        "walFileBytesDelta": 3283640,
+        "readinessNotices": 25
+      },
+      "drain25": {
+        "wallMs": 3.088458000000003,
+        "sql": {
+          "SELECT": 82,
+          "BEGIN": 6,
+          "UPDATE": 50,
+          "COMMIT": 6
+        },
+        "changedRows": 50,
+        "walFileBytesDelta": 0,
+        "batches": [
+          10,
+          10,
+          5
+        ],
+        "methods": {
+          "claim": 4,
+          "delivered": 3
+        }
+      },
+      "releaseReclaim10": {
+        "wallMs": 0.34133299999996325,
+        "sql": {
+          "BEGIN": 1,
+          "SELECT": 11,
+          "UPDATE": 1,
+          "COMMIT": 1
+        },
+        "changedRows": 1,
+        "walFileBytesDelta": 0,
+        "methods": {
+          "claim": 10,
+          "release": 1
+        },
+        "attemptCount": 1
+      },
+      "dueRetry": {
+        "wallMs": 0.16220900000001848,
+        "sql": {
+          "SELECT": 3,
+          "BEGIN": 1,
+          "UPDATE": 1,
+          "COMMIT": 1
+        },
+        "changedRows": 1,
+        "walFileBytesDelta": 0
+      },
+      "claimDiagnostics": {
+        "emptyPreflights": 31,
+        "transactions": 5,
+        "lostRaces": 0
+      },
+      "limits": [
+        "Counts are direct application/store calls on temporary SQLite, not installed-app rates.",
+        "Native real-socket method counts and event scheduling are verified separately by Swift tests.",
+        "WAL file byte delta is not frame writes, fsync, disk IO or lock wait.",
+        "Wall time is descriptive only; concurrent development/builds and filesystem cache were uncontrolled.",
+        "Fixture progress is in-memory under the existing immediate persistence budget; no required durable progress/terminal record is removed."
+      ]
+    }
+  },
+  "tunnel": {
+    "sameFixtureBefore": {
+      "healthExec": {
+        "n": 60,
+        "p50": 13.172,
+        "p95": 13.601,
+        "p99": 16.264,
+        "max": 16.264
+      },
+      "healthFailureCount": 0,
+      "emptyNodeExec": {
+        "n": 60,
+        "p50": 20.649,
+        "p95": 22.084,
+        "p99": 23.454,
+        "max": 23.454
+      },
+      "emptyNodeSpawnEvent": {
+        "n": 60,
+        "p50": 0.319,
+        "p95": 0.39,
+        "p99": 0.405,
+        "max": 0.405
+      },
+      "emptyNodeSpawnExit": {
+        "n": 60,
+        "p50": 20.551,
+        "p95": 21.969,
+        "p99": 24.098,
+        "max": 24.098
+      },
+      "managedAtomicJSON": {
+        "n": 60,
+        "p50": 6.472,
+        "p95": 8.004,
+        "p99": 10.597,
+        "max": 10.597
+      },
+      "managedJSONBytes": 461,
+      "fileFsync": {
+        "n": 60,
+        "p50": 2.828,
+        "p95": 3.807,
+        "p99": 3.846,
+        "max": 3.846
+      },
+      "directoryFsync": {
+        "n": 60,
+        "p50": 2.874,
+        "p95": 3.847,
+        "p99": 7.273,
+        "max": 7.273
+      }
+    },
+    "after": {
+      "directHealth": {
+        "n": 60,
+        "p50": 4.236,
+        "p95": 5.56,
+        "p99": 15.472,
+        "max": 15.472
+      },
+      "repetitiveHealthSubprocesses": 0,
+      "managedAtomicJSON": {
+        "n": 60,
+        "p50": 7.628,
+        "p95": 8.117,
+        "p99": 9.516,
+        "max": 9.516
+      },
+      "managedJSONBytes": 800,
+      "fileFsync": {
+        "n": 60,
+        "p50": 3.103,
+        "p95": 3.356,
+        "p99": 4.285,
+        "max": 4.285
+      },
+      "directoryFsync": {
+        "n": 60,
+        "p50": 2.893,
+        "p95": 3.391,
+        "p99": 3.735,
+        "max": 3.735
+      },
+      "writeCadenceMs": 5000
+    },
+    "delayFixtures": [
+      {
+        "endpointDelayMs": 700,
+        "before": {
+          "durationMs": 1043.7797499999997,
+          "code": 2,
+          "healthz": null,
+          "readyz": null,
+          "pollOK": true
+        },
+        "after": {
+          "durationMs": 705.277,
+          "connected": true,
+          "processRunning": true,
+          "reason": null,
+          "observation": {
+            "healthz": {
+              "status": 200,
+              "failure": null
+            },
+            "readyz": {
+              "status": 200,
+              "failure": null
+            },
+            "controlPlanePoll": {
+              "lastSuccessfulAt": "2026-10-07T18:58:10.880Z",
+              "fresh": true,
+              "failure": null
+            },
+            "failure": null
+          }
+        }
+      },
+      {
+        "endpointDelayMs": 3000,
+        "before": {
+          "durationMs": 1044.4869589999998,
+          "code": 2,
+          "healthz": null,
+          "readyz": null,
+          "pollOK": true
+        },
+        "after": {
+          "durationMs": 2005.173,
+          "connected": true,
+          "processRunning": true,
+          "reason": "timeout",
+          "observation": {
+            "healthz": {
+              "status": null,
+              "failure": "timeout"
+            },
+            "readyz": {
+              "status": null,
+              "failure": "timeout"
+            },
+            "controlPlanePoll": {
+              "lastSuccessfulAt": "2026-10-07T18:58:12.629Z",
+              "fresh": true,
+              "failure": null
+            },
+            "failure": "timeout"
+          }
+        }
+      }
+    ],
+    "healthP50DeltaPercent": -67.84087458244763,
+    "healthP95DeltaPercent": -59.12065289316962
+  },
+  "limits": [
+    "Child SQL counts include connection PRAGMAs; parent revision SELECT/PRAGMA checks are separate and not counted. No per-statement duration or lock-wait measurement.",
+    "projectionMs includes SQL and model/presentation work. jsonPreflightMs excludes IPC's second encoding.",
+    "endToEndMs includes parent send/child queue/encoding/receive; transport-only time is not isolated.",
+    "WAL file length delta is not WAL frame writes, fsync or physical I/O.",
+    "Over-native-budget fraction is an IPC latency comparison, not measured Swift socket timeouts.",
+    "Uninstrumented control uses a second child on the same unchanged fixture; OS cache and load are uncontrolled.",
+    "Baseline list/burst options are preserved for comparison; legacy unfiltered non-history responses have no rows. Native filtered page coverage is tested separately.",
+    "No native event/timer rate or installed app/tunnel evidence is inferred from this synthetic workload."
+  ],
+  "historicalP0": {
+    "sourceHead": "11cd8b9cee9167b97ce8a335a09f60479fffe039",
+    "conditions": "Historical baseline; wall times cannot be attributed to code across changed host scheduling policy. SQL counts and physical query sharing are reported separately.",
+    "sql": {
+      "list-history-false-warm": {
+        "beforeSelect": 1350,
+        "afterSelect": 36
+      },
+      "list-history-true-warm": {
+        "beforeSelect": 2430,
+        "afterSelect": 36
+      },
+      "detailWarm": {
+        "beforeSelect": 1226,
+        "afterSelect": 27
+      }
+    }
+  }
+}
