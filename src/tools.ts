@@ -8004,7 +8004,7 @@ export function registerBridgeTools(
     {
       title: `Save ${PRODUCT_INFO.displayName} Settings`,
       description:
-        "Save or reset bridge settings from the settings card. Reset preserves registered projects; removing a registration preserves its files and work history.",
+        "Save or reset bridge settings from the settings card. Reset preserves registered projects. Archive confirms execution shutdown; delete removes Bridge sessions, assignments and execution records while preserving files, Git and original Codex/ChatGPT conversations.",
       inputSchema: settingsInput,
       outputSchema: settingsViewOutputSchema,
       annotations: {

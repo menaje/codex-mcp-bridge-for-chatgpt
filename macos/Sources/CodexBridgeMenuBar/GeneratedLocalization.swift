@@ -750,7 +750,7 @@ enum BridgeGeneratedLocalization {
         "macos.removethecodexinstallationmanagedbythebridge": "Remove the Codex installation managed by the bridge?",
         "macos.removethisarchivedprojectregistration": "Remove this archived project registration?",
         "macos.removeunavailablesavedmodelcombinationsfromtheallowlist": "Remove unavailable saved model combinations from the allowlist.",
-        "macos.removingaregistrationpreservestheactualfolderfiles": "Removing a registration preserves the actual folder, files, and existing work history.",
+        "macos.removingaregistrationpreservestheactualfolderfiles": "Deleting a registration also removes Bridge sessions, assignments and execution records. The actual folder, files, Git and original Codex/ChatGPT conversations are preserved.",
         "macos.renameproject": "Rename Project",
         "macos.repairprofileafterfinishingwork": "Repair Profile After Finishing Work",
         "macos.repairsecuremcptunnelprofile": "Repair Secure MCP Tunnel Profile",

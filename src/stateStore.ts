@@ -307,18 +307,6 @@ export type ArchivedJobAdmissionReceipt = {
 
 type JsonRow = { payload: string };
 type CountRow = { count: number };
-// Deletion and tombstone discovery share one identity-owned context boundary.
-// Older paths of a relocated project remain protected by assertProjectCwdReusable().
-const PROJECT_RESUMABLE_CONTEXT_PREDICATE = `
-  EXISTS (SELECT 1 FROM activities a WHERE a.project_id = p.project_id
-    AND a.lifecycle IN ('open','sealed','terminating'))
-  OR EXISTS (SELECT 1 FROM agent_threads t JOIN sessions s ON s.thread_id = t.thread_id
-    JOIN agents a ON a.agent_id = t.agent_id
-    WHERE s.project_id = p.project_id AND t.is_current = 1 AND a.lifecycle <> 'orphaned')
-  OR EXISTS (SELECT 1 FROM jobs j JOIN activities a ON a.activity_id = j.activity_id
-    WHERE a.project_id = p.project_id AND j.archived_at IS NULL
-      AND j.status IN ('running','terminating','termination-failed'))
-`;
 type ProjectStorageRow = {
   project_id: string;
   project_ref: string;

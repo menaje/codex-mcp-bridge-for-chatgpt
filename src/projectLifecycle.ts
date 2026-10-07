@@ -635,6 +635,7 @@ export class ProjectLifecycleController {
         for (const jobId of this.state.projectLifecycle.jobIds(
           intent.projectId,
         )) {
+          if (this.closed || this.state.isClosed) return;
           try {
             await this.external(this.jobs.stopForProjectArchive(jobId));
           } catch (error) {
@@ -648,6 +649,7 @@ export class ProjectLifecycleController {
             intent.projectId,
           );
           for (const threadId of threads) {
+            if (this.closed || this.state.isClosed) return;
             if (
               this.state.projectLifecycle.threadProtected(
                 threadId,
@@ -739,6 +741,7 @@ export class ProjectLifecycleController {
             }
           }
         }
+        if (this.closed || this.state.isClosed) return;
         this.state.transaction(() => {
           if (reasons.length)
             this.state.projectLifecycle.unresolved(

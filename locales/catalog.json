@@ -25109,55 +25109,55 @@
           "de": {
             "stringUnit": {
               "state": "translated",
-              "value": "Beim Löschen der Registrierung bleiben die tatsächlichen Ordner, Dateien und der vorhandene Arbeitsverlauf erhalten."
+              "value": "Das Löschen einer Registrierung entfernt auch Bridge-Sitzungen, Zuweisungen und Ausführungsdaten. Ordner, Dateien, Git und ursprüngliche Codex/ChatGPT-Unterhaltungen bleiben erhalten."
             }
           },
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Removing a registration preserves the actual folder, files, and existing work history."
+              "value": "Deleting a registration also removes Bridge sessions, assignments and execution records. The actual folder, files, Git and original Codex/ChatGPT conversations are preserved."
             }
           },
           "es": {
             "stringUnit": {
               "state": "translated",
-              "value": "Al eliminar el registro se conservan las carpetas, los archivos y el historial de trabajo existentes."
+              "value": "Al eliminar el registro también se eliminan las sesiones, asignaciones y registros de ejecución de Bridge. Se conservan la carpeta, los archivos, Git y las conversaciones originales de Codex/ChatGPT."
             }
           },
           "fr": {
             "stringUnit": {
               "state": "translated",
-              "value": "La suppression de l’inscription conserve les dossiers, fichiers et historiques de travail existants."
+              "value": "La suppression de l’inscription supprime aussi les sessions, affectations et données d’exécution de Bridge. Le dossier, les fichiers, Git et les conversations Codex/ChatGPT d’origine sont conservés."
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "登録を削除しても、実際のフォルダ、ファイル、既存の作業履歴は保持されます。"
+              "value": "登録を削除すると、Bridge のセッション・割り当て・実行記録も削除されます。実際のフォルダ・ファイル・Git・元の Codex/ChatGPT の会話は保持されます。"
             }
           },
           "pt": {
             "stringUnit": {
               "state": "translated",
-              "value": "A exclusão do registro preserva as pastas, os arquivos e o histórico de trabalho existentes."
+              "value": "Excluir o registro também remove as sessões, atribuições e registros de execução do Bridge. A pasta, os arquivos, Git e as conversas originais do Codex/ChatGPT são preservados."
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "删除注册不会移除实际文件夹、文件或现有工作记录。"
+              "value": "删除注册也会移除 Bridge 会话、分配和执行记录。实际文件夹、文件、Git 和原始 Codex/ChatGPT 对话会保留。"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "刪除註冊不會移除實際資料夾、檔案或現有工作記錄。"
+              "value": "刪除註冊也會移除 Bridge 工作階段、指派和執行記錄。實際資料夾、檔案、Git 和原始 Codex/ChatGPT 對話會保留。"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "등록을 삭제해도 실제 폴더·파일과 기존 작업 기록은 그대로 유지됩니다."
+              "value": "프로젝트 등록을 삭제하면 브리지 세션·배정·실행 기록도 삭제됩니다. 실제 폴더·파일·Git·원본 Codex/ChatGPT 대화는 유지됩니다."
             }
           }
         }

@@ -142,7 +142,7 @@
       "job-state-json"
     ],
     "migrationCatalog": "state-migrations.json",
-    "migrationCatalogSha256": "865156ea8d9ffd4c19037f12d628dcaf7ecc1ffff286027dff9689184c43b6f6",
+    "migrationCatalogSha256": "e9a2fc589cce86f2ec46857821cee35eb389de0b470312a0d7bfabd417daa337",
     "stateProfilePolicy": "release-stage-isolated-v1",
     "rollbackPolicy": "verified-original-before-service-open-v1",
     "persistentContracts": {

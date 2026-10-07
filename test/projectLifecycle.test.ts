@@ -497,6 +497,63 @@ describe("project retirement contract (#240)", () => {
     ).toBe(false);
     checkDb();
   });
+  it("leaves unfinished cleanup restartable when the runtime closes during an exact stop", async () => {
+    const project = register();
+    const ownership = new Map<string, UpstreamWorkerAssignment>();
+    upstream.supportsExecutionRecovery = () => true;
+    upstream.recoverExecution = async (jobId, _progress, assigned) => {
+      assigned(ownership.get(jobId)!);
+      return new Promise(() => {});
+    };
+    for (const suffix of ["a", "b"]) {
+      const job = jobs.start(input(project), async (_progress, assigned) => {
+        const assignment: UpstreamWorkerAssignment = {
+          backendKind: "app-server",
+          workerId: `worker-${suffix}`,
+          workerGeneration: 1,
+          threadId: `thread-${suffix}`,
+          upstreamRequestId: `turn-${suffix}`,
+        };
+        ownership.set(job.jobId, assignment);
+        assigned(assignment);
+        return new Promise(() => {});
+      });
+    }
+    await Promise.resolve();
+    await Promise.resolve();
+    let entered!: () => void, finishStop!: (value: unknown) => void;
+    const stopping = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    stops.mockImplementationOnce(() => {
+      entered();
+      return new Promise((resolve) => {
+        finishStop = resolve;
+      });
+    });
+    apply({ kind: "archive", projectId: project.id });
+    const sweep = jobs.sweepProjectArchives();
+    await stopping;
+    const closing = jobs.closeThreadConnections();
+    finishStop({
+      exited: true,
+      workerExited: false,
+      mode: "turn-interrupt",
+      escalated: false,
+    });
+    await Promise.all([sweep, closing]);
+    expect(stops).toHaveBeenCalledTimes(1);
+    expect(settings.current.projects[0].archiveState).toBe("processing");
+    expect(state.projectLifecycle.unfinished(project.id)).toBe(true);
+    state.close();
+    state = new BridgeStateStore({ file });
+    initialize();
+    await jobs.sweepProjectArchives();
+    expect(settings.current.projects[0].archiveReasons).toEqual([]);
+    expect(settings.current.projects[0].archiveState).toBe("complete");
+    expect(state.projectLifecycle.unfinished(project.id)).toBe(false);
+    checkDb();
+  });
   it("stops loaded background terminals and confirms their absence before releasing idle threads", async () => {
     const project = register();
     session(project);

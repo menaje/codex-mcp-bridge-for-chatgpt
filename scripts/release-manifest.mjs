@@ -154,7 +154,7 @@ const STATE_MIGRATION_DEFINITIONS = [
   [29, 30, "migrateV29ToV30", "2a177a258ace53624a6c6b839f803bf24e028ad5", [
     ["src/stateSchema.ts", "V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA"]
   ]],
-  [30, 31, "migrateV30ToV31", "c06be6782d4acd7d5f02628375522ea659ec5685", [
+  [30, 31, "migrateV30ToV31", "cce99c5fdfeaafe2e50861d826dffd15cdd0f6b1", [
     ["src/stateSchema.ts", "V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA"]
   ]]
 ];
