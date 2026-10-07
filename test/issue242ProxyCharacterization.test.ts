@@ -11,7 +11,7 @@ const redirect = vi.hoisted(() => ({ port: 0 }));
 // fixture runtime remain in use; no production listener or runtime is contacted.
 vi.mock("node:http", async importOriginal => {
   const actual = await importOriginal<typeof import("node:http")>();
-  return { ...actual, request: (options: import("node:http").RequestOptions, callback: Parameters<typeof actual.request>[1]) =>
+  return { ...actual, request: (options: import("node:http").RequestOptions, callback: (res: import("node:http").IncomingMessage) => void) =>
     actual.request(typeof options.path === "string" && options.path.startsWith("/mcp?issue242=")
       ? { ...options, port: redirect.port } : options, callback) };
 });

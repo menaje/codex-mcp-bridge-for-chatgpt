@@ -52,18 +52,19 @@ export async function issue242Fixture(size: number) {
     for (let i = 0; i < size; i++) {
       if (i % 10 === 0) {
         agentId = store.createAgent({ scopeId: fixtureScope, agentName: `Fixture ${i / 10}` }).agentId;
-        sessions.record({ threadId: `fixture-${i / 10}`, agentId, scopeId: fixtureScope,
+        sessions.record({ threadId: `fixture-${i / 10}`, scopeId: fixtureScope,
           backendKind: "mcp-server", cwd: root, sandbox: "read-only",
           createdAt: now, updatedAt: now, lastUsedAt: now });
       }
       const jobId = randomUUID();
-      store.upsertJob({ jobId, agentId, activityId: randomUUID(), scopeId: fixtureScope,
+      const seededJob = { jobId, agentId, activityId: randomUUID(), scopeId: fixtureScope,
         requestId: `fixture-${i}`, requestHash: "a".repeat(64), requestHashVersion: 11,
         operation: "start", backendKind: "mcp-server", status: i % 5 === 0 ? "failed" : "completed",
         createdAt: now - size + i, updatedAt: now - size + i, lastProgressAt: now - size + i,
         cwd: root, sandbox: "read-only", version: 1, completionDeliveryPolicy: "direct-wait",
-        exclusiveKeys: [], sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new" },
-        publicEvents: [], pendingInteractions: [], result: { content: [{ type: "text", text: "synthetic" }] } });
+        exclusiveKeys: [], sessionDecision: { requestedMode: "new", action: "start", reason: "explicit-new", threadId: `fixture-${Math.floor(i / 10)}` },
+        publicEvents: [], pendingInteractions: [], result: { content: [{ type: "text", text: "synthetic" }] } };
+      store.upsertJob(seededJob);
     }
   });
   const jobs = new CodexJobRegistry({ stateStore: store, allowedRoots: [root], projectionOnly: true,
