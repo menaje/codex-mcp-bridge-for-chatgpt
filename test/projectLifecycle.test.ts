@@ -1,5 +1,6 @@
 import { removeSchema31ForFixture } from "./helpers/stateSchemaFixtures.js";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -201,8 +202,38 @@ describe("project retirement contract (#240)", () => {
     const cwd = path.join(root, "project");
     mkdirSync(cwd);
     writeFileSync(path.join(cwd, "sentinel.txt"), "preserved");
-    mkdirSync(path.join(cwd, ".git"));
-    writeFileSync(path.join(cwd, ".git", "HEAD"), "ref: refs/heads/dev\n");
+    const git = (...args: string[]) =>
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "core.hooksPath=/dev/null",
+          "-c",
+          "commit.gpgSign=false",
+          ...args,
+        ],
+        { cwd, encoding: "utf8" },
+      );
+    git("init", "--quiet", "--initial-branch=dev");
+    git("add", "sentinel.txt");
+    git(
+      "-c",
+      "user.name=Lifecycle fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "--quiet",
+      "-m",
+      "fixture",
+    );
+    writeFileSync(path.join(cwd, "staged.txt"), "staged work");
+    git("add", "staged.txt");
+    writeFileSync(path.join(cwd, "untracked.txt"), "untracked work");
+    writeFileSync(path.join(cwd, ".gitignore"), "ignored.txt\n");
+    writeFileSync(path.join(cwd, "ignored.txt"), "ignored evidence");
+    const gitHead = git("rev-parse", "HEAD");
+    const gitStatus = git("status", "--porcelain=v1", "--untracked-files=all");
+    const gitIndex = readFileSync(path.join(cwd, ".git", "index"));
     const original = path.join(root, "original-codex-conversation.jsonl");
     writeFileSync(original, "original conversation");
     const projectIds = new Set(),
@@ -257,8 +288,19 @@ describe("project retirement contract (#240)", () => {
     expect(readFileSync(path.join(cwd, "sentinel.txt"), "utf8")).toBe(
       "preserved",
     );
-    expect(readFileSync(path.join(cwd, ".git", "HEAD"), "utf8")).toBe(
-      "ref: refs/heads/dev\n",
+    expect(git("rev-parse", "HEAD")).toBe(gitHead);
+    expect(git("status", "--porcelain=v1", "--untracked-files=all")).toBe(
+      gitStatus,
+    );
+    expect(readFileSync(path.join(cwd, ".git", "index"))).toEqual(gitIndex);
+    expect(readFileSync(path.join(cwd, "staged.txt"), "utf8")).toBe(
+      "staged work",
+    );
+    expect(readFileSync(path.join(cwd, "untracked.txt"), "utf8")).toBe(
+      "untracked work",
+    );
+    expect(readFileSync(path.join(cwd, "ignored.txt"), "utf8")).toBe(
+      "ignored evidence",
     );
     expect(readFileSync(original, "utf8")).toBe("original conversation");
   });
