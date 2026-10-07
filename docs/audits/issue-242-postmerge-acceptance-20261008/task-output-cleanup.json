@@ -1,0 +1,22 @@
+[
+  {
+    "path": "/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-acceptance-20261008/macos/.build",
+    "openProcessIds": [],
+    "removed": true
+  },
+  {
+    "path": "/tmp/bridge-startup-D2hXpV",
+    "openProcessIds": [],
+    "removed": true
+  },
+  {
+    "path": "/tmp/bridge-startup-mOFKHG",
+    "openProcessIds": [],
+    "removed": true
+  },
+  {
+    "path": "/tmp/cb242-accept/permission-module-cache",
+    "openProcessIds": [],
+    "removed": true
+  }
+]

@@ -1,0 +1,99 @@
+/tmp/bridge-startup-mOFKHG/Bridge Startup Acceptance.app: replacing existing signature
+{
+  "passed": true,
+  "root": "/tmp/bridge-startup-mOFKHG",
+  "runtimeBuild": "612f230b16d8:87fb93928ab0",
+  "nativeEntryPoint": "CodexBridgeMenuBarApp",
+  "scope": "Exact release-bundle native executable and packaged helper/dependencies; copied runtime with synthetic launcher/Tunnel/workload and CLI; simulated installation only; no menu interaction",
+  "events": [
+    {
+      "event": "app-launched",
+      "pid": 45652,
+      "at": "2026-10-07T20:55:49.643Z"
+    },
+    {
+      "event": "runtime-ready",
+      "pid": 45664,
+      "at": "2026-10-07T20:55:51.168Z",
+      "lifecycle": {
+        "requestId": "54b77d19-bbe2-4999-8d8c-db55ffd1df65",
+        "kind": "start",
+        "force": false,
+        "phase": "completed",
+        "createdAt": "2026-10-07T20:55:50.380Z",
+        "updatedAt": "2026-10-07T20:55:51.139Z",
+        "reasons": [],
+        "error": null,
+        "targetDescription": "Codex",
+        "cancellable": false
+      }
+    },
+    {
+      "event": "app-launched",
+      "pid": 45692,
+      "at": "2026-10-07T20:55:51.170Z"
+    },
+    {
+      "event": "app-exited",
+      "pid": 45692,
+      "code": 0,
+      "signal": null
+    },
+    {
+      "event": "app-exited",
+      "pid": 45652,
+      "code": 0,
+      "signal": null
+    },
+    {
+      "event": "app-shutdown-completed",
+      "pid": 45652,
+      "at": "2026-10-07T20:55:51.593Z",
+      "receipt": {
+        "outcome": "completed",
+        "requestId": "e2a909ff-c512-4ac6-b4fc-92a402bbfbfd"
+      }
+    },
+    {
+      "event": "app-launched",
+      "pid": 45709,
+      "at": "2026-10-07T20:55:51.594Z"
+    },
+    {
+      "event": "runtime-ready",
+      "pid": 45712,
+      "at": "2026-10-07T20:55:52.423Z",
+      "lifecycle": {
+        "requestId": "976FC3F6-9DCA-48A1-B814-DAECE05D819B",
+        "kind": "start",
+        "force": false,
+        "phase": "completed",
+        "createdAt": "2026-10-07T20:55:52.058Z",
+        "updatedAt": "2026-10-07T20:55:52.345Z",
+        "reasons": [],
+        "error": null,
+        "targetDescription": "Codex",
+        "cancellable": false
+      }
+    },
+    {
+      "event": "manual-stop-stayed-stopped",
+      "at": "2026-10-07T20:55:59.303Z"
+    },
+    {
+      "event": "app-exited",
+      "pid": 45709,
+      "code": 0,
+      "signal": null
+    },
+    {
+      "event": "app-shutdown-completed",
+      "pid": 45709,
+      "at": "2026-10-07T20:55:59.830Z",
+      "receipt": {
+        "requestId": "8818c7c4-4ac5-40a4-a84f-c9ef7537ccf9",
+        "outcome": "completed"
+      }
+    }
+  ]
+}

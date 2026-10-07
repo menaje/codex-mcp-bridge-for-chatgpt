@@ -1,0 +1,30 @@
+/tmp/bridge-startup-D2hXpV/Bridge Startup Acceptance.app: replacing existing signature
+{
+  "root": "/tmp/bridge-startup-D2hXpV",
+  "events": [
+    {
+      "event": "app-launched",
+      "pid": 42586,
+      "at": "2026-10-07T20:52:27.026Z"
+    }
+  ],
+  "journal": null
+}
+/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-evidence-20261008/artifact-startup.mts:143
+  throw new Error(message, { cause: error });
+        ^
+
+Error: native app did not automatically prepare the runtime
+    at until (/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-evidence-20261008/artifact-startup.mts:143:9)
+    at async ready (/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-evidence-20261008/artifact-startup.mts:74:3)
+    at async <anonymous> (/Volumes/Data/Dev/codex-mcp-bridge-issue-242-postmerge-evidence-20261008/artifact-startup.mts:95:23) {
+  [cause]: Error: connect ENOENT /tmp/bridge-startup-D2hXpV/codex-mcp-bridge/run/helper.sock
+      at PipeConnectWrap.afterConnect [as oncomplete] (node:net:1637:16) {
+    errno: -2,
+    code: 'ENOENT',
+    syscall: 'connect',
+    address: '/tmp/bridge-startup-D2hXpV/codex-mcp-bridge/run/helper.sock'
+  }
+}
+
+Node.js v24.11.1

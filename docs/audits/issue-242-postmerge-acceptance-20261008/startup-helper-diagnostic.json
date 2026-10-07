@@ -1,0 +1,33 @@
+{
+  "args": [
+    "node",
+    "/tmp/bridge-startup-D2hXpV/runtime/dist/macosHelper.js",
+    "--bridge-root",
+    "/tmp/bridge-startup-D2hXpV/runtime",
+    "--env-file",
+    "/tmp/bridge-startup-D2hXpV/codex-mcp-bridge/.env",
+    "--socket",
+    "/tmp/cb242-accept/diagnostic/helper.sock",
+    "--bridge-socket",
+    "/tmp/cb242-accept/diagnostic/bridge.sock",
+    "--runtime-lock-directory",
+    "/tmp/cb242-accept/diagnostic/launcher.lock",
+    "--no-auto-start"
+  ],
+  "env": {
+    "PATH": "/tmp/cb242-accept/guard:/Users/seongsik/.codex-mcp-bridge/runtimes/cli/0.160.0-0aaba513-7ed3-43d4-8a4b-2447bb6373cd/package/vendor/aarch64-apple-darwin/codex-path:/Users/seongsik/.opencode/bin:/Users/seongsik/.local/bin:/Users/seongsik/.antigravity/antigravity/bin:/opt/homebrew/opt/libpq/bin:/Users/seongsik/.local/bin:/Users/seongsik/.antigravity/antigravity/bin:/Users/seongsik/bin:/Users/seongsik/.nvm/versions/node/v24.11.1/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/seongsik/.codex-mcp-bridge/runtimes/auth-profiles/254a4a39-5164-4417-9c56-9ce48d4c5577/tmp/arg0/codex-arg0Le7UXn:/Users/seongsik/.codex-mcp-bridge/runtimes/cli/0.160.0-0aaba513-7ed3-43d4-8a4b-2447bb6373cd/package/vendor/aarch64-apple-darwin/codex-path:/Users/seongsik/.nvm/versions/node/v24.11.1/bin:/Users/seongsik/.local/bin:/Users/seongsik/.npm-global/bin:/Users/seongsik/.lmstudio/bin",
+    "HOME": "/tmp/cb242-accept/home",
+    "CODEX_HOME": "/tmp/cb242-accept/codex",
+    "TMPDIR": "/tmp/cb242-accept/tmp",
+    "XDG_CONFIG_HOME": "/tmp/cb242-accept/diagnostic",
+    "XDG_STATE_HOME": "/tmp/cb242-accept/diagnostic",
+    "CODEX_MCP_BRIDGE_STATE_DATABASE_FILE": "/tmp/cb242-accept/diagnostic/state.sqlite",
+    "CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE": "/tmp/cb242-accept/diagnostic/telemetry.sqlite",
+    "CODEX_MCP_BRIDGE_RUNTIME_HOME": "/tmp/cb242-accept/diagnostic/cli",
+    "CODEX_MCP_BRIDGE_CODEX": "/tmp/bridge-startup-D2hXpV/fixture-codex",
+    "CODEX_MCP_BRIDGE_DISABLE_LAUNCH_AGENT": "1"
+  },
+  "exit": 1,
+  "state": "exited",
+  "scope": "isolated no-auto-start helper; no execution or production connection"
+}

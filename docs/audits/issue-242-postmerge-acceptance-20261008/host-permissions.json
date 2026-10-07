@@ -1,0 +1,6 @@
+{
+  "accessibilityTrustedWithoutPrompt" : false,
+  "guiSessionAvailable" : true,
+  "process" : "swift-frontend",
+  "screenCapturePreflightWithoutPrompt" : false
+}
