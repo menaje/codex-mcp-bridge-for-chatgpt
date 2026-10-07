@@ -555,6 +555,47 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testW3ProgressDoesNotClaimAndReadyDrainsTwentyFiveInDebouncedBatches() async throws {
+        let root = URL(fileURLWithPath: "/tmp/cb-w3-model-\(UUID().uuidString.prefix(8))")
+        let paths = RuntimePaths(environment: ["XDG_CONFIG_HOME": root.path])
+        try FileManager.default.createDirectory(at: paths.bridgeSocket.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let outbox = W3NativeOutboxFixture()
+        let server = try NativeRPCFixture(path: paths.bridgeSocket.path, requestReply: { method, input in outbox.reply(method, input) })
+        let delivery = W3CompletionDeliveryFixture()
+        let model = AppModel(paths: paths, completionNotifications: CompletionNotifications(delivery: delivery))
+        defer { model.cancelAllPolling(); server.stop(); try? FileManager.default.removeItem(at: root) }
+        func notice(_ version: Int, ready: Bool = false) throws -> ChangeNotice {
+            let body: [String: Any] = ["revision": "epoch:\(version)",
+                "supportedTopics": ["completion-outbox-ready"],
+                "topics": ready ? ["completion-outbox-ready"] : ["dashboard", "settings"],
+                "topicRevisions": ready ? ["completion-outbox-ready": "epoch:\(version)"] : [:]]
+            return try JSONDecoder().decode(ChangeNotice.self, from: JSONSerialization.data(withJSONObject: body))
+        }
+        model.recordLocalConnectionStatus(try helperStatus())
+        model.recordCompletionChangeNotice(try notice(0))
+        try await Task.sleep(for: .milliseconds(250))
+        let initialReads = server.count("completion.availability")
+        for i in 1...400 { model.recordCompletionChangeNotice(try notice(i)) }
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(server.count("completion.availability"), initialReads)
+        XCTAssertEqual(server.count("completion.claim"), 0)
+        outbox.enqueue(25)
+        model.recordCompletionChangeNotice(try notice(401, ready: true))
+        for _ in 0..<200 {
+            if delivery.ids.count == 25 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(delivery.ids.count, 25)
+        XCTAssertEqual(outbox.batchSizes, [10, 10, 5])
+        XCTAssertEqual(server.count("completion.claim"), 3)
+        XCTAssertEqual(server.count("completion.delivered"), 3)
+        for _ in 0..<20 { model.recordCompletionChangeNotice(try notice(401, ready: true)) }
+        model.recordCompletionChangeNotice(try notice(400, ready: true))
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(server.count("completion.claim"), 3)
+    }
+
+    @MainActor
     func testIssue242HelperRPCFailureRetainsObservationAfterGrace() async throws {
         let model = AppModel()
         let start = Date(timeIntervalSince1970: 100)

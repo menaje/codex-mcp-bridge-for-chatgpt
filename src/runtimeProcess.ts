@@ -102,6 +102,7 @@ const APPLICATION_RPC_METHODS = [
   "runtimeSnapshot",
   "beginDrain",
   "cancelDrain",
+  "nativeCompletionAvailability",
   "claimNativeCompletionNotifications",
   "markNativeCompletionNotificationsDelivered",
   "releaseNativeCompletionNotifications",
@@ -127,6 +128,7 @@ type ApplicationRpcKind = "command" | "query" | "control";
 const OBSERVATION_READ_METHODS = new Set<ApplicationRpcMethod>(["dashboardSnapshot", "dashboardHistoryDetail", "settingsSnapshot"]);
 
 const APPLICATION_QUERY_METHODS = new Set<ApplicationRpcMethod>([
+  "nativeCompletionAvailability",
   "dashboardSnapshot",
   "dashboardHistoryDetail",
   "settingsSnapshot",
@@ -140,6 +142,7 @@ const APPLICATION_QUERY_METHODS = new Set<ApplicationRpcMethod>([
 ]);
 
 const APPLICATION_CONTROL_METHODS = new Set<ApplicationRpcMethod>([
+  "nativeCompletionAvailability",
   "beginDrain",
   "cancelDrain",
   "claimNativeCompletionNotifications",
@@ -181,7 +184,7 @@ type RuntimeOperationClearMessage = {
 type RuntimeChangeMessage = {
   type: "change";
   generation: string;
-  topic: "dashboard" | "settings" | "enrichment";
+  topic: "dashboard" | "settings" | "enrichment" | "completion-outbox-ready";
 };
 
 type RuntimeExecutionProcessMessage = {
@@ -402,7 +405,7 @@ class IsolatedRuntimeController {
   private readonly pending = new Map<string, PendingRpc>();
   private readonly abandoned = new Set<string>();
   private readonly changeListeners = new Set<
-    (topic: "dashboard" | "settings" | "enrichment") => void
+    (topic: "dashboard" | "settings" | "enrichment" | "completion-outbox-ready") => void
   >();
   private activeProxyRequests = 0;
   private activeProxyBytes = 0;
@@ -473,6 +476,7 @@ class IsolatedRuntimeController {
       runtimeHealth: () => this.runtimeHealth(),
       beginDrain: (...args) => rpc("beginDrain", ...args),
       cancelDrain: (...args) => rpc("cancelDrain", ...args),
+      nativeCompletionAvailability: (...args) => rpc("nativeCompletionAvailability", ...args),
       claimNativeCompletionNotifications: (...args) =>
         rpc("claimNativeCompletionNotifications", ...args),
       markNativeCompletionNotificationsDelivered: (...args) =>
@@ -1709,7 +1713,7 @@ function isRuntimeChildMessage(value: unknown): value is RuntimeChildMessage {
   if (message.type === "operation-clear") return typeof message.generation === "string";
   if (message.type === "change") {
     return typeof message.generation === "string" &&
-      ["dashboard", "settings", "enrichment"].includes(String(message.topic));
+      ["dashboard", "settings", "enrichment", "completion-outbox-ready"].includes(String(message.topic));
   }
   if (message.type === "execution-process") {
     return typeof message.generation === "string" &&

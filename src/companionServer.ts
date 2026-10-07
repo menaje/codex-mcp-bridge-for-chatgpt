@@ -79,6 +79,7 @@ const requestSchema = z.strictObject({
     "skills.package.update",
     "skills.package.export",
     "completion.claim",
+    "completion.availability",
     "completion.delivered",
     "completion.release",
     "runtime.snapshot",
@@ -337,7 +338,7 @@ export type PrivateJsonLineServerOptions = {
 export async function startBridgeCompanionServer(
   options: BridgeCompanionServerOptions
 ): Promise<BridgeCompanionServer> {
-  const changes = new ChangeSignal(["dashboard", "settings", "enrichment"]);
+  const changes = new ChangeSignal(["dashboard", "settings", "enrichment", "completion-outbox-ready"]);
   const unsubscribe = options.applicationService.subscribeChanges?.(topic => changes.notify(topic));
   let ordinaryRequests = 0;
   const server = await startPrivateJsonLineServer({
@@ -458,7 +459,7 @@ function isPriorityCompanionRequest(line: string): boolean {
     const request = requestSchema.safeParse(parsed);
     if (!request.success) return false;
     const { method, params } = request.data;
-    if (["completion.claim", "completion.delivered", "completion.release",
+    if (["completion.claim", "completion.availability", "completion.delivered", "completion.release",
       "runtime.health", "runtime.beginDrain", "runtime.cancelDrain"].includes(method)) return true;
     if (method === "dashboard.problem" && params && typeof params === "object" &&
         !Array.isArray(params) && (params as Record<string, unknown>).action === "retry-stop") return true;
@@ -679,6 +680,11 @@ async function dispatchRequest(
       return requireSkillPackages(applicationService).exportBridgeSkillPackage(
         bridgeSkillReferenceSchema.parse(request.params || {})
       );
+    case "completion.availability": {
+      emptyParamsSchema.parse(request.params || {});
+      if (!applicationService.nativeCompletionAvailability) throw new Error("CHANGES_UNSUPPORTED");
+      return applicationService.nativeCompletionAvailability();
+    }
     case "completion.claim": {
       if (!applicationService.claimNativeCompletionNotifications) {
         throw new Error("COMPLETION_NOTIFICATIONS_UNAVAILABLE");
