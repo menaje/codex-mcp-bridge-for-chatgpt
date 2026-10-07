@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { performance } from "node:perf_hooks";
 import { createServer, request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
@@ -35,6 +34,8 @@ import type {
   BridgeRuntimeAdmissionSnapshot
 } from "./tools.js";
 import { decodeUtf8Strict } from "./textIntegrity.js";
+import { BoundedHttpDiagnostics, HTTP_DIAGNOSTIC_HEADER, isChildHttpObservation, httpDiagnosticContext,
+  type HttpDiagnosticSession, type HttpObservation } from "./httpDiagnostics.js";
 
 type RuntimeStateServiceStatus = NonNullable<
   BridgeRuntimeAdmissionSnapshot["stateService"]
@@ -51,19 +52,11 @@ const RPC_OBSERVATION_TIMEOUT_MS = 120_000;
 const PROXY_IDLE_TIMEOUT_MS = 120_000;
 
 /** Private, opt-in phase evidence; never includes headers, body, URL or MCP ID. */
-export type ProxyObservation = {
-  requestId: string;
-  phase: "dispatch" | "request-finished" | "response-headers" | "response-end" |
-    "upstream-request-error" | "upstream-response-error" | "idle-timeout" |
-    "caller-aborted" | "caller-closed" | "body-rejected";
-  elapsedMs: number;
-  responseStarted: boolean;
-  headersSent: boolean;
-  outcome: "not-observed" | "unknown";
-  firstTermination: boolean;
-};
+export type ProxyObservation = HttpObservation;
 type ProxyDiagnostics = {
   observe: (value: ProxyObservation) => void;
+  /** Whole-runtime request budget, clamped to 0..128 (32 records per request). */
+  maximumRequests?: number;
   /** Fixture-only idle limit; does not change the default production budget. */
   idleTimeoutMs?: number;
 };
@@ -203,6 +196,7 @@ type RuntimeRpcResponseMessage = {
 };
 
 type RuntimeFatalMessage = { type: "fatal"; message: string };
+type RuntimeHttpObservationMessage = { type: "http-observation"; generation: string; observation: HttpObservation };
 
 type RuntimeChildMessage =
   | RuntimeReadyMessage
@@ -212,6 +206,7 @@ type RuntimeChildMessage =
   | RuntimeChangeMessage
   | RuntimeExecutionProcessMessage
   | RuntimeRpcResponseMessage
+  | RuntimeHttpObservationMessage
   | RuntimeFatalMessage;
 
 type RuntimeRpcRequestMessage = {
@@ -417,6 +412,8 @@ class IsolatedRuntimeController {
   private startupReject?: (error: Error) => void;
   private startupTimer?: NodeJS.Timeout;
   private stderr = "";
+  private readonly httpDiagnostics?: BoundedHttpDiagnostics;
+  private readonly httpTraces = new WeakMap<import("node:http").IncomingMessage, HttpDiagnosticSession>();
 
   private constructor(
     private readonly transport: RuntimeTransport,
@@ -428,7 +425,10 @@ class IsolatedRuntimeController {
     private readonly onExecutionProcessSpawn?: (processId: number) => void,
     private readonly restartStartupTimeoutMs = STARTUP_TIMEOUT_MS,
     private readonly proxyDiagnostics?: ProxyDiagnostics
-  ) {}
+  ) {
+    if (proxyDiagnostics) this.httpDiagnostics = new BoundedHttpDiagnostics(
+      proxyDiagnostics.observe, proxyDiagnostics.maximumRequests);
+  }
 
   static async start(
     transport: RuntimeTransport,
@@ -628,7 +628,47 @@ class IsolatedRuntimeController {
       ordinarySlotReserved: boolean;
     }
   ): void {
+    let trace = this.httpTraces.get(incoming);
+    if (!bufferedRequest) {
+      trace = this.httpDiagnostics?.start("ingress");
+      if (trace) {
+        this.httpTraces.set(incoming, trace);
+        trace.record("admitted");
+        incoming.once("aborted", () => trace!.record("caller-aborted", true));
+        const writeHead = outgoing.writeHead;
+        outgoing.writeHead = function (this: import("node:http").ServerResponse, ...args: Parameters<typeof writeHead>) {
+          trace!.record("response-header-start");
+          const result = writeHead.apply(this, args);
+          trace!.headersSent = this.headersSent;
+          return result;
+        } as typeof outgoing.writeHead;
+        outgoing.once("finish", () => {
+          trace!.callerComplete = true;
+          trace!.headersSent = outgoing.headersSent;
+          trace!.record("response-complete");
+        });
+        outgoing.once("close", () => {
+          trace!.headersSent = outgoing.headersSent;
+          trace!.record("caller-closed", !outgoing.writableFinished);
+        });
+      }
+    }
+    const observe = (phase: ProxyObservation["phase"], terminal = false, reusedSocket?: boolean) => {
+      if (!trace) return;
+      trace.headersSent = outgoing.headersSent;
+      trace.record(phase, terminal, {
+        activeRequests: this.activeProxyRequests, activeBytes: this.activeProxyBytes,
+        ...(reusedSocket !== undefined ? { reusedSocket } : {})
+      });
+    };
+    // Rejected requests have no proxy allocation; observe their final boundary.
+    const rejected = () => {
+      observe("admission-rejected", true);
+      outgoing.once("finish", () => observe("cleanup"));
+      outgoing.once("close", () => { if (!outgoing.writableFinished) observe("cleanup"); });
+    };
     if (this.port === undefined || !this.child?.connected) {
+      rejected();
       if (bufferedRequest) {
         this.activeProxyRequests -= 1;
         writeUnavailable(outgoing, this.readiness(), "not-observed", {}, bufferedRequest.capture.id());
@@ -637,6 +677,7 @@ class IsolatedRuntimeController {
     }
     const declaredLength = requestContentLength(incoming.headers);
     if (declaredLength !== undefined && declaredLength > MAX_RPC_BYTES) {
+      rejected();
       bufferedRequest?.capture.dispose();
       if (bufferedRequest) this.activeProxyRequests -= 1;
       writeJson(outgoing, 413, {
@@ -648,6 +689,7 @@ class IsolatedRuntimeController {
     }
     if (!bufferedRequest && declaredLength !== undefined &&
         this.activeProxyBytes + declaredLength > MAX_PROXY_BYTES_IN_FLIGHT) {
+      rejected();
       writeMcpUnavailable(incoming, outgoing, this.readiness(), "not-observed", {
         reason: "state-capacity", limitations: ["state-capacity"]
       });
@@ -676,6 +718,7 @@ class IsolatedRuntimeController {
           normalAdmission: unknownLengthMcpPost && !needsPriorityReservation
         });
       } else {
+        rejected();
         writeMcpUnavailable(incoming, outgoing, this.readiness(), "not-observed");
       }
       return;
@@ -687,6 +730,7 @@ class IsolatedRuntimeController {
     if (bufferedOrdinaryOverCapacity ||
         (declaredLength !== undefined || bufferedRequest) &&
         this.activeProxyBytes + (bufferedRequest?.body.length ?? declaredLength ?? 0) > MAX_PROXY_BYTES_IN_FLIGHT) {
+      rejected();
       const failure = { reason: "state-capacity" as const, limitations: ["state-capacity"] };
       if (bufferedRequest) {
         this.activeProxyRequests -= 1;
@@ -701,20 +745,6 @@ class IsolatedRuntimeController {
     let responseStarted = false;
     let settled = false;
     let requestOutcome: ProxyRequestOutcome = "not-observed";
-    const diagnosticId = this.proxyDiagnostics ? randomUUID() : "";
-    const diagnosticStart = this.proxyDiagnostics ? performance.now() : 0;
-    let diagnosticEvents = 0;
-    let terminationObserved = false;
-    const observe = (phase: ProxyObservation["phase"], terminal = false) => {
-      if (!this.proxyDiagnostics || diagnosticEvents >= 10) return;
-      diagnosticEvents += 1;
-      const firstTermination = terminal && !terminationObserved;
-      terminationObserved ||= terminal;
-      try { this.proxyDiagnostics.observe({ requestId: diagnosticId, phase,
-        elapsedMs: performance.now() - diagnosticStart, responseStarted,
-        headersSent: outgoing.headersSent, outcome: requestOutcome, firstTermination }); }
-      catch { /* Diagnostics cannot change proxy transport or accounting. */ }
-    };
     observe("dispatch");
     const requestIdCapture = bufferedRequest?.capture || new McpRequestIdCapture();
     const finish = () => {
@@ -723,6 +753,7 @@ class IsolatedRuntimeController {
       requestIdCapture.dispose();
       this.activeProxyRequests = Math.max(0, this.activeProxyRequests - 1);
       this.activeProxyBytes = Math.max(0, this.activeProxyBytes - requestBytes);
+      observe("cleanup");
     };
     const rejectBody = (reason: "request-bytes" | "state-capacity") => {
       observe("body-rejected", true);
@@ -752,32 +783,42 @@ class IsolatedRuntimeController {
       port,
       method: incoming.method,
       path: incoming.url,
-      headers: requestHeaders(incoming.headers)
+      headers: { ...requestHeaders(incoming.headers),
+        ...(trace ? { [HTTP_DIAGNOSTIC_HEADER]: trace.requestId } : {}) }
     }, response => {
       responseStarted = true;
+      if (trace) trace.responseStarted = true;
       observe("response-headers");
-      if (outgoing.destroyed) {
+      response.once("end", () => {
+        if (trace) trace.upstreamComplete = response.complete;
+        observe("response-end", true);
+        finish();
+      });
+      response.once("error", error => {
+        observe("upstream-response-error", true);
+        if (settled) return;
+        if (!outgoing.destroyed) outgoing.destroy(error);
+        finish();
+      });
+      response.once("close", () => observe("upstream-close"));
+      if (settled || outgoing.destroyed) {
         response.destroy();
         finish();
         return;
       }
       outgoing.writeHead(response.statusCode || 502, responseHeaders(response.headers));
       response.pipe(outgoing);
-      response.once("end", () => { observe("response-end", true); finish(); });
-      response.once("error", error => {
-        observe("upstream-response-error", true);
-        if (!outgoing.destroyed) outgoing.destroy(error);
-        finish();
-      });
     });
     proxied.once("finish", () => {
       // The full request crossed the supervisor boundary. The child may have
       // acted even if its response or next heartbeat is never observed.
       requestOutcome = "unknown";
-      observe("request-finished");
+      if (trace) trace.outcome = requestOutcome;
+      observe("request-finished", false, proxied.reusedSocket);
     });
     proxied.setTimeout(this.proxyDiagnostics?.idleTimeoutMs ?? PROXY_IDLE_TIMEOUT_MS, () => {
       observe("idle-timeout", true);
+      if (settled) return;
       proxied.destroy(new Error("RUNTIME_RESPONSE_UNCONFIRMED"));
       if (!responseStarted && !outgoing.headersSent) {
         writeUnavailable(outgoing, this.readiness(), requestOutcome, {}, requestIdCapture.id());
@@ -788,6 +829,7 @@ class IsolatedRuntimeController {
     });
     proxied.once("error", error => {
       observe("upstream-request-error", true);
+      if (settled) return;
       if (!outgoing.headersSent) {
         writeUnavailable(
           outgoing,
@@ -805,13 +847,12 @@ class IsolatedRuntimeController {
       finish();
     });
     incoming.once("aborted", () => {
-      observe("caller-aborted", true);
+      if (settled) return;
       proxied.destroy();
       finish();
     });
     outgoing.once("close", () => {
       if (outgoing.writableEnded) return;
-      observe("caller-closed", true);
       // A completed request body does not emit IncomingMessage.aborted when
       // its caller disconnects while waiting for the response.
       proxied.destroy();
@@ -848,6 +889,8 @@ class IsolatedRuntimeController {
     const capture = new McpRequestIdCapture();
     let settled = false;
     let reservedBytes = 0;
+    const trace = this.httpTraces.get(incoming);
+    trace?.record("queued", false, { activeRequests: this.activeProxyRequests, activeBytes: this.activeProxyBytes });
     const releaseBytes = () => {
       this.activeProxyBytes = Math.max(0, this.activeProxyBytes - reservedBytes);
       reservedBytes = 0;
@@ -865,6 +908,8 @@ class IsolatedRuntimeController {
       cleanup();
       releaseBytes();
       this.activeProxyRequests -= 1;
+      trace?.record("body-rejected", true);
+      trace?.record("cleanup", false, { activeRequests: this.activeProxyRequests, activeBytes: this.activeProxyBytes });
       const id = capture.id();
       capture.dispose();
       if (reason === "request-bytes") {
@@ -1037,6 +1082,7 @@ class IsolatedRuntimeController {
       : [modulePath, CHILD_FLAG];
     if (this.transport === "stdio") args.push(CHILD_STDIO_FLAG);
     if (this.conformanceFixtures) args.push("--conformance-fixtures");
+    if (this.httpDiagnostics) args.push("--http-diagnostics");
     const child = spawn(process.execPath, args, {
       cwd: process.cwd(),
       env: this.childEnvironment,
@@ -1117,6 +1163,10 @@ class IsolatedRuntimeController {
       return;
     }
     if (value.generation !== this.generation) return;
+    if (value.type === "http-observation") {
+      this.httpDiagnostics?.receiveChild(value.observation);
+      return;
+    }
     if (value.type === "heartbeat") {
       this.lastHeartbeatAt = value.heartbeatAt;
       this.lastRuntimeHealth = value.runtimeHealth;
@@ -1232,6 +1282,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
     }
   };
   const observeTransaction = (phase: OperationalStateOperationObservation["phase"]) => {
+    const trace = httpDiagnosticContext.getStore();
+    trace?.recordOnce(phase === "responding" ? "state-yield" : "state-start");
     const token = ++observationToken;
     if (phase === "write-lock-wait" || operationStartedAt === 0) {
       operationStartedAt = Date.now();
@@ -1293,6 +1345,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
     if (activeOperation?.access === "write") return;
     const statement = sql.trimStart().toUpperCase();
     if (!/^(SELECT|WITH|PRAGMA|EXPLAIN)\b/u.test(statement)) return;
+    const trace = httpDiagnosticContext.getStore();
+    if (trace?.recordOnce("state-start")) queueMicrotask(() => trace.recordOnce("state-yield"));
     // A synchronous projection can execute many reads before the event loop
     // yields. Keep its first read observation instead of sending one IPC
     // message per statement; the queued microtask closes the whole span.
@@ -1441,7 +1495,9 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         healthDiagnostics: () => ({ appServerLateResponses: appServerLateResponses.status() }),
         conformanceFixtures,
         onOperationFailure: observeStorageFailure,
-        canAcceptNewJobs: canAcceptExecution
+        canAcceptNewJobs: canAcceptExecution,
+        httpDiagnostics: process.argv.includes("--http-diagnostics")
+          ? observation => send({ type: "http-observation", generation, observation }) : undefined
       });
       await new Promise<void>((resolve, reject) => {
         httpServer?.once("error", reject);
@@ -1711,6 +1767,7 @@ function isRuntimeChildMessage(value: unknown): value is RuntimeChildMessage {
     return typeof message.generation === "string" && isOperation(message.observation);
   }
   if (message.type === "operation-clear") return typeof message.generation === "string";
+  if (message.type === "http-observation") return typeof message.generation === "string" && isChildHttpObservation(message.observation);
   if (message.type === "change") {
     return typeof message.generation === "string" &&
       ["dashboard", "settings", "enrichment", "completion-outbox-ready"].includes(String(message.topic));
@@ -1782,6 +1839,7 @@ function isOperation(value: unknown): value is OperationalStateOperationObservat
 function requestHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   const result = { ...headers };
   for (const name of HOP_BY_HOP_HEADERS) delete result[name];
+  delete result[HTTP_DIAGNOSTIC_HEADER];
   return result;
 }
 
@@ -1797,6 +1855,7 @@ function requestContentLength(headers: IncomingHttpHeaders): number | undefined 
 function responseHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   const result = { ...headers };
   for (const name of HOP_BY_HOP_HEADERS) delete result[name];
+  delete result[HTTP_DIAGNOSTIC_HEADER];
   return result;
 }
 
