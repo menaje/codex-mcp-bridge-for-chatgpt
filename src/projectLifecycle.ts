@@ -602,6 +602,7 @@ function references(
 /** No external await occurs inside a SQLite transaction. Each attempt can be
  * repeated after process loss; a stale attempt cannot complete a newer intent. */
 export class ProjectLifecycleController {
+  lastError?: string;
   private pending?: Promise<void>;
   private timer?: NodeJS.Timeout;
   private closed = false;
@@ -612,6 +613,7 @@ export class ProjectLifecycleController {
     private readonly externalTimeoutMs = 10_000,
   ) {}
   start(): void {
+    if (this.closed || this.timer) return;
     this.timer = setInterval(() => void this.sweep(), 10_000);
     this.timer.unref();
     void this.sweep();
@@ -622,9 +624,21 @@ export class ProjectLifecycleController {
       if (this.timer) clearInterval(this.timer);
     }
     if (this.closed) return Promise.resolve();
-    return (this.pending ||= this.run().finally(() => {
-      this.pending = undefined;
-    }));
+    return (this.pending ||= this.run()
+      .then(
+        () => {
+          this.lastError = undefined;
+        },
+        (error) => {
+          // SQLite may be unavailable even before intents can be listed, or while
+          // recording an unresolved attempt. Keep the durable intent untouched
+          // and allow the next sweep/startup to retry without an unhandled rejection.
+          this.lastError = message(error);
+        },
+      )
+      .finally(() => {
+        this.pending = undefined;
+      }));
   }
   private async run(): Promise<void> {
     for (const intent of this.state.projectLifecycle.pending()) {

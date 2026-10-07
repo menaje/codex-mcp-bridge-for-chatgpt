@@ -84,10 +84,13 @@ describe("single-file UI resource lifecycle", () => {
 });
 
 function writeRenderer(root: string, marker: string): void {
+  const catalog = JSON.parse(readFileSync(path.join(root, "ui-release-catalog.json"), "utf8")) as {
+    currentContracts: Record<string, { uriVersion: number }>;
+  };
   const resources = Object.fromEntries(["settings", "dashboard"].map((name) => [
     name,
     {
-      uri: `ui://codex-mcp-bridge/${name}/v5.html`,
+      uri: `ui://codex-mcp-bridge/${name}/v${catalog.currentContracts[name]!.uriVersion}.html`,
       html: `<!doctype html><html><body>${name}-${marker}</body></html>`,
       metadata: {
         descriptor: {

@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
+import { ProjectLifecycleController } from "../src/projectLifecycle.js";
 import { CodexJobRegistry } from "../src/tools.js";
 import { SessionRegistry } from "../src/sessionRegistry.js";
 import { UserSettingsStore } from "../src/userSettings.js";
@@ -182,6 +183,58 @@ describe("project retirement contract (#240)", () => {
     }
   }
 
+  it.each(["intent-read", "unresolved-write"] as const)(
+    "preserves cleanup intent and retries after a %s failure",
+    async (fault) => {
+      await jobs.sweepProjectArchives();
+      const project = register();
+      apply({ kind: "archive", projectId: project.id });
+      const controller = new ProjectLifecycleController(state, jobs, upstream);
+      const lifecycle = state.projectLifecycle;
+      vi.spyOn(state, "projectLifecycle", "get").mockReturnValue(lifecycle);
+      const detail =
+        fault === "intent-read"
+          ? "SQLITE_BUSY: cleanup snapshot unavailable"
+          : "SQLITE_FULL: cleanup checkpoint unavailable";
+      if (fault === "intent-read") {
+        vi.spyOn(state.projectLifecycle, "pending").mockImplementationOnce(
+          () => {
+            throw new Error(detail);
+          },
+        );
+      } else {
+        vi.spyOn(state.projectLifecycle, "complete").mockImplementationOnce(
+          () => {
+            throw new Error("cleanup completion write unavailable");
+          },
+        );
+        vi.spyOn(state.projectLifecycle, "unresolved").mockImplementationOnce(
+          () => {
+            throw new Error(detail);
+          },
+        );
+      }
+      try {
+        await expect(controller.sweep()).resolves.toBeUndefined();
+        expect(controller.lastError).toBe(detail);
+        expect(settings.current.projects[0]).toMatchObject({
+          archiveState: "processing",
+          archiveRevision: 1,
+        });
+        expect(settings.current.projects[0]?.archivedAt).toBeUndefined();
+        expect(() => apply({ kind: "delete", projectId: project.id })).toThrow(
+          "PROJECT_DELETE_REQUIRES_ARCHIVE",
+        );
+        await controller.sweep();
+        expect(controller.lastError).toBeUndefined();
+        expect(settings.current.projects[0]?.archiveState).toBe("complete");
+        checkDb();
+      } finally {
+        await controller.close();
+      }
+    },
+  );
+
   it("does not dispatch when the durable dispatch boundary cannot commit", async () => {
     const project = register();
     const original = state.upsertJob.bind(state);
@@ -264,6 +317,8 @@ describe("project retirement contract (#240)", () => {
         const beforeArchive = state.getScopeVersion(scopeId);
         expect((await archive(project)).archiveState).toBe("complete");
         expect(state.getScopeVersion(scopeId)).toBeGreaterThan(beforeArchive);
+        expect(sessions.size()).toBe(0);
+        expect(sessions.sizeForScope(scopeId)).toBe(0);
         expect(sessions.get(retained.threadId)).toBeUndefined();
         expect(
           state.getAgent(retained.agent.agentId)?.currentThreadId,

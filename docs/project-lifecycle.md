@@ -33,6 +33,10 @@ The controller performs external work outside SQLite transactions, then commits
 completion under an archive-revision CAS and a fresh active-Job/connection check.
 Every startup and periodic sweep resumes pending intents. Timeout means unknown,
 not success; a late original operation can settle and a later sweep confirms it.
+If SQLite cannot list intents or write a cleanup checkpoint, the controller keeps
+the existing intent, records its diagnostic `lastError`, and retries on the next
+sweep. It cannot claim completion or persist an unresolved reason while the
+database itself rejects that write. Normal database health reporting still applies.
 Completion removes project-owned session/connection and Agent-thread mappings,
 clears only matching current pointers, releases assignments and abandons unfinished
 Activity goals. An idle/open historical record alone does not delay shutdown.

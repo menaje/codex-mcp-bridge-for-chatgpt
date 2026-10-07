@@ -263,10 +263,12 @@ export class SessionRegistry {
   }
 
   size(): number {
+    this.refreshProjectIdentities();
     return this.sessions.size;
   }
 
   sizeForScope(scopeId: string): number {
+    this.refreshProjectIdentities();
     return [...this.sessions.values()].filter(session => session.scopeId === scopeId).length;
   }
 
