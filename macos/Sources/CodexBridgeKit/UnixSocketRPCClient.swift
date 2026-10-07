@@ -150,6 +150,8 @@ public struct UnixSocketRPCClient: Sendable {
             try cancellation.check()
             try Task.checkCancellation()
             return result
+        } catch is CancellationError {
+            throw CancellationError()
         } catch let error as LocalRPCError {
             throw error
         } catch is DecodingError {

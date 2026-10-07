@@ -41,6 +41,35 @@ final class UnixSocketRPCClientTests: XCTestCase {
         XCTAssertEqual(RPCObservationFailure(LocalRPCError.malformedResponse("test")).kind, .contractMismatch)
     }
 
+    func testIssue242CancellationDuringDecodeRemainsCancellation() async throws {
+        struct CancelledResult: Decodable {
+            init(from decoder: Decoder) throws { throw CancellationError() }
+        }
+        let path = "/tmp/cb-242-decode-cancel-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { _ in NativeFixtureReply(body: #"{"result":{}}"#) }
+        defer { server.stop() }
+        do {
+            let _: CancelledResult = try await UnixSocketRPCClient(socketPath: path).call("test", params: EmptyParameters())
+            XCTFail("Cancelled decoder must not publish a value")
+        } catch { XCTAssertEqual(RPCObservationFailure(error).kind, .cancelled) }
+    }
+
+    func testIssue242DecoderCannotPublishAfterAbsoluteDeadline() async throws {
+        struct SlowResult: Decodable {
+            init(from decoder: Decoder) throws { Thread.sleep(forTimeInterval: 2) }
+        }
+        let path = "/tmp/cb-242-decode-deadline-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { _ in NativeFixtureReply(body: #"{"result":{}}"#) }
+        defer { server.stop() }
+        do {
+            let _: SlowResult = try await UnixSocketRPCClient(socketPath: path, timeout: 1).call("test", params: EmptyParameters())
+            XCTFail("A synchronous decoder cannot publish after its deadline")
+        } catch {
+            XCTAssertEqual(RPCObservationFailure(error).kind, .timeout)
+            XCTAssertEqual(RPCObservationFailure(error).phase, .decode)
+        }
+    }
+
     func testIssue242RefusalPeerCloseAndMissingResultStayDistinct() async throws {
         let path = "/tmp/cb-242-errors-\(UUID().uuidString.prefix(8)).sock"
         do {

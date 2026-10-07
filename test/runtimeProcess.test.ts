@@ -1539,7 +1539,7 @@ describe("isolated production runtime", () => {
       );
       const settled = await Promise.all(first);
       expect(settled.every(value => value instanceof Error &&
-        value.message.includes("RUNTIME_RESPONSE_UNCONFIRMED"))).toBe(true);
+        value.message.includes("STATE_READ_STALE"))).toBe(true);
       await expect(runtime.server.applicationService.settingsSnapshot())
         .rejects.toThrow(/RUNTIME_CAPACITY/);
       const controls = await Promise.all(Array.from({ length: 8 }, () =>
