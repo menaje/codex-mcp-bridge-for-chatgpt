@@ -234,3 +234,20 @@ Issue #242's production 502 investigation remains open.
 Integration conflict assessment and exact task commits are recorded in
 `validation.json` after tests. No task branch/worktree is removed while its
 commits are outside dev; unrelated worktrees and the local dev HEAD remain intact.
+
+The read-only `merge-tree` preview at local dev
+`ea8f93e2acbb9f4b6deca113165d27e8c9c23857` finds ten conflicts. The exact
+baseline preview has the identical list, and no R502-edited file conflicts:
+`docs/ui-release-compatibility.md`, native `AppModel.swift` and
+`SkillsLibraryViews.swift`, `src/stateReadModels.ts`, `src/stateReadProcess.ts`,
+`src/threadConnections.ts`, `src/tools.ts`, `src/uiManifest.generated.ts`,
+`ui-manifest.lock.json`, and `ui-resources/settings.html`. This preview writes
+only Git objects; it does not integrate a branch or modify either checkout.
+Resolve these inherited W1/W2/local-dev conflicts during a separately authorized
+integration. No conflict resolution, dev merge or task-worktree removal happened.
+
+The baseline control archive's source and lockfile bytes were verified against
+the exact commit, its open-file/process scan was empty, and that task-owned
+non-Git temporary archive was removed. Its receipt remains in
+`baseline-control-receipt.json`; the committed R502 worktree and all evidence
+remain available.
