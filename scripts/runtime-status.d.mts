@@ -1,3 +1,11 @@
+export type TunnelEndpointObservation = { status: number | null; failure: string | null };
+export type TunnelHealthObservation = {
+  healthz: TunnelEndpointObservation;
+  readyz: TunnelEndpointObservation;
+  controlPlanePoll: { lastSuccessfulAt: string | null; fresh: boolean; failure: string | null };
+  failure: string | null;
+};
+
 export type ManagedTunnelStatus = {
   phase: string;
   profile: string | null;
@@ -8,6 +16,7 @@ export type ManagedTunnelStatus = {
   lastCheckedAt: string | null;
   lastError: string | null;
   lastProblem: StatusProblem | null;
+  observation?: TunnelHealthObservation;
 };
 
 export type StatusProblem = {

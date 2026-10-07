@@ -525,6 +525,9 @@ final class AppModel: ObservableObject {
         }
         if status.phase != "running" || !status.bridge.connected { return .problem(.runtime) }
         if networkAvailable == false || !status.tunnel.connected { return .problem(.tunnel) }
+        // Recent external success can survive a local probe timeout. That
+        // incomplete observation cannot count toward continuous recovery.
+        if tunnelResponseUnconfirmed { return .problem(.responseUnconfirmed) }
         guard let auth = authStatus else { return authErrorMessage == nil ? .unknown : .problem(.authenticationStatus) }
         if !auth.installed { return .problem(.installation) }
         return auth.authenticated ? .healthy : .problem(.authentication)
@@ -730,6 +733,12 @@ final class AppModel: ObservableObject {
         return false
     }
 
+    var tunnelResponseUnconfirmed: Bool {
+        !isRemoteClient && helperStatus?.phase == "running" &&
+            helperStatus?.tunnel.processRunning == true && helperStatus?.tunnel.connected == true &&
+            helperStatus?.tunnel.lastProblem?.code == "tunnel-health-probe-failed"
+    }
+
     var bridgeStateStorageError: String? {
         guard !isRemoteClient, helperStatus?.phase == "running" else { return nil }
         return helperStatus?.bridge.stateServiceStorageError
@@ -843,7 +852,7 @@ final class AppModel: ObservableObject {
         if currentActionRequiredProblem != nil { return .attention }
         if isBridgeConnectionChecking { return .checking }
         if bridgeStateStorageError != nil { return .attention }
-        if bridgeResponseUnconfirmed { return .attention }
+        if bridgeResponseUnconfirmed || tunnelResponseUnconfirmed { return .attention }
         if bridgeReadProjectionDelayed { return .attention }
         if isRemoteClient {
             guard activeRemoteProfile != nil, remoteHello != nil else { return .unavailable }
