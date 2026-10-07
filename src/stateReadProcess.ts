@@ -11,6 +11,7 @@ import { BridgeStateStore } from "./stateStore.js";
 import {
   CodexJobRegistry,
   createBridgeReadProjectionService,
+  dashboardAgentForDetail,
   TaskProjectAvailabilityProjection,
   type BridgeApplicationService,
   type BridgeDashboardEnrichment,
@@ -25,9 +26,10 @@ import {
 } from "./tools.js";
 import type { CodexUpstream, ToolResult } from "./upstream.js";
 import { UserSettingsStore } from "./userSettings.js";
+import { DisplayReadPool, observeDisplayRead, type ReadObservationContext } from "./displayReadPool.js";
 
 const CHILD_FLAG = "--bridge-state-read-child";
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 const HEARTBEAT_MS = 250;
 const STALE_MS = 2_000;
 const STARTUP_TIMEOUT_MS = 10_000;
@@ -112,15 +114,18 @@ type RequestMessage = {
   args: unknown[];
   authBoundary: CodexSessionAuthBoundaryEvidence | null;
   measure?: boolean;
+  deadlineAt: number;
 };
 type CloseMessage = { type: "close" };
-type ParentMessage = RequestMessage | CloseMessage;
+type CancelMessage = { type: "cancel"; generation: string; requestId: string };
+type ParentMessage = RequestMessage | CloseMessage | CancelMessage;
 
 type Pending = {
   resolve(value: unknown): void;
   reject(error: Error): void;
-  timer: NodeJS.Timeout;
-  /** Caller deadline elapsed, but the child request still occupies capacity. */
+  key: string;
+  registryRevision: number;
+  /** All observers left, but the child still occupies capacity. */
   abandoned: boolean;
   started: number;
 };
@@ -147,7 +152,11 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
   private lastHeartbeatAt?: number;
   private lastSnapshotAt?: number;
   private activeOperation?: StateReadServiceHealth["activeOperation"];
+  private readonly operations = new Map<string, NonNullable<StateReadServiceHealth["activeOperation"]>>();
   private readonly pending = new Map<string, Pending>();
+  private readonly reads = new DisplayReadPool<unknown>(CAPACITY);
+  private queryEpoch = 0;
+  private readonly revisionStore: BridgeStateStore;
   private closed = false;
   private closePromise?: Promise<void>;
   private restartTimer?: NodeJS.Timeout;
@@ -159,7 +168,9 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
     private readonly requestDeadlineMs: number,
     private readonly authBoundary: () => CodexSessionAuthBoundaryEvidence | null,
     private readonly onMeasurement?: (value: StateReadObservation) => void
-  ) {}
+  ) {
+    this.revisionStore = new BridgeStateStore({ file, readOnly: true });
+  }
 
   static async start(
     file: string,
@@ -187,31 +198,31 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
     }
   }
 
-  dashboardSnapshot(options?: BridgeDashboardSnapshotOptions): Promise<DashboardView> {
-    return this.rpc("dashboardSnapshot", [options || {}]) as Promise<DashboardView>;
+  dashboardSnapshot(options?: BridgeDashboardSnapshotOptions, context?: ReadObservationContext): Promise<DashboardView> {
+    return this.rpc("dashboardSnapshot", [options || {}], context) as Promise<DashboardView>;
   }
 
   dashboardHistoryDetail(
-    options: BridgeDashboardHistoryDetailOptions
+    options: BridgeDashboardHistoryDetailOptions, context?: ReadObservationContext
   ): Promise<DashboardHistoryDetail> {
-    return this.rpc("dashboardHistoryDetail", [options]) as Promise<DashboardHistoryDetail>;
+    return this.rpc("dashboardHistoryDetail", [options], context) as Promise<DashboardHistoryDetail>;
   }
 
-  settingsSnapshot(options?: BridgeSettingsSnapshotOptions): Promise<SettingsView> {
-    return this.rpc("settingsSnapshot", [options || {}]) as Promise<SettingsView>;
+  settingsSnapshot(options?: BridgeSettingsSnapshotOptions, context?: ReadObservationContext): Promise<SettingsView> {
+    return this.rpc("settingsSnapshot", [options || {}], context) as Promise<SettingsView>;
   }
 
   dashboardRuntimePlan(
-    options?: BridgeDashboardSnapshotOptions
+    options?: BridgeDashboardSnapshotOptions, context?: ReadObservationContext
   ): Promise<BridgeDashboardRuntimePlan> {
-    return this.rpc("dashboardRuntimePlan", [options || {}]) as Promise<BridgeDashboardRuntimePlan>;
+    return this.rpc("dashboardRuntimePlan", [options || {}], context) as Promise<BridgeDashboardRuntimePlan>;
   }
 
   dashboardSnapshotWithEnrichment(
     options: BridgeDashboardSnapshotOptions,
-    enrichment: BridgeDashboardEnrichment
+    enrichment: BridgeDashboardEnrichment, context?: ReadObservationContext
   ): Promise<DashboardView> {
-    return this.rpc("dashboardSnapshotWithEnrichment", [options, enrichment]) as Promise<DashboardView>;
+    return this.rpc("dashboardSnapshotWithEnrichment", [options, enrichment], context) as Promise<DashboardView>;
   }
 
   /** Test/supervisor visibility only; never exposed through the Bridge protocol. */
@@ -232,7 +243,7 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
         ? "read-starting"
         : !fresh
           ? "read-stale"
-          : this.pending.size >= CAPACITY
+          : this.reads.inFlight >= CAPACITY
             ? "read-capacity"
             : "ready";
     return {
@@ -240,7 +251,7 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
       reason,
       ...(this.generation ? { generation: this.generation } : {}),
       ...(heartbeatAgeMs !== undefined ? { heartbeatAgeMs } : {}),
-      inFlight: this.pending.size,
+      inFlight: this.reads.inFlight,
       capacity: CAPACITY,
       ...(this.lastSnapshotAt !== undefined ? { lastSnapshotAt: this.lastSnapshotAt } : {}),
       ...(this.activeOperation ? { activeOperation: { ...this.activeOperation } } : {})
@@ -252,50 +263,61 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
     return this.closePromise;
   }
 
-  private rpc(method: ReadMethod, args: unknown[]): Promise<unknown> {
+  private rpc(method: ReadMethod, args: unknown[], context: ReadObservationContext = {}): Promise<unknown> {
+    if (context.deadlineAt !== undefined && (!Number.isSafeInteger(context.deadlineAt) || context.deadlineAt <= Date.now())) {
+      return Promise.reject(new Error("STATE_READ_STALE: Observation deadline expired or invalid."));
+    }
+    if (context.signal?.aborted) return Promise.reject(new Error("STATE_READ_CANCELLED: Observation cancelled."));
+    if (this.closed || !this.child?.connected || !this.generation) {
+      return Promise.reject(new Error("STATE_READ_UNAVAILABLE: Read projection is recovering."));
+    }
+    const registryRevision = this.revisionStore.getProjectRegistryRevision();
+    // In-flight sharing only. Every committed write and reader generation changes
+    // the key. Neither identities nor completed views are cached, especially by cwd.
+    const key = JSON.stringify([this.generation, this.queryEpoch,
+      this.revisionStore.readObservationVersion(), registryRevision, method, canonicalReadArgs(args)]);
+    const read = this.reads.start(key, isCurrent => {
+      if (!isCurrent()) throw new Error("STATE_READ_CANCELLED: Observation cancelled before dispatch.");
+      return this.dispatchRead(method, args, key, registryRevision);
+    }, () => undefined);
+    if (!read) return Promise.reject(new Error("STATE_READ_CAPACITY: Read projection capacity is exhausted."));
+    return observeDisplayRead(read, {
+      ...context, deadlineAt: Math.min(context.deadlineAt ?? Infinity, Date.now() + this.requestDeadlineMs)
+    }, () => {
+      this.reads.invalidate(candidate => candidate === key);
+      this.queryEpoch += 1;
+      for (const [requestId, pending] of this.pending) {
+        if (pending.key !== key || pending.abandoned) continue;
+        pending.abandoned = true;
+        this.child?.send({ type: "cancel", generation: this.generation!, requestId } satisfies CancelMessage, () => {});
+      }
+    });
+  }
+
+  private dispatchRead(method: ReadMethod, args: unknown[], key: string, registryRevision: number): Promise<unknown> {
     const child = this.child;
     if (this.closed || !child?.connected || !this.generation) {
       return Promise.reject(new Error("STATE_READ_UNAVAILABLE: Read projection is recovering."));
     }
-    if (this.pending.size >= CAPACITY) {
-      return Promise.reject(new Error("STATE_READ_CAPACITY: Read projection capacity is exhausted."));
-    }
     const requestId = randomUUID();
     let authBoundary: CodexSessionAuthBoundaryEvidence | null;
-    try { authBoundary = this.authBoundary(); }
-    catch { authBoundary = null; }
+    try { authBoundary = this.authBoundary(); } catch { authBoundary = null; }
     const message: RequestMessage = {
-      type: "request",
-      generation: this.generation,
-      requestId,
-      method,
-      args,
-      authBoundary,
+      type: "request", generation: this.generation, requestId, method, args, authBoundary,
+      deadlineAt: Date.now() + this.requestDeadlineMs,
       ...(this.onMeasurement ? { measure: true } : {})
     };
     if (Buffer.byteLength(JSON.stringify(message), "utf8") > MAX_MESSAGE_BYTES) {
       return Promise.reject(new Error("STATE_READ_REQUEST_TOO_LARGE: Read request exceeds its IPC limit."));
     }
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const pending = this.pending.get(requestId);
-        if (!pending || pending.abandoned) return;
-        pending.abandoned = true;
-        reject(new Error(
-          "STATE_READ_STALE: The read projection missed its observation deadline; retain the last confirmed view."
-        ));
-      }, this.requestDeadlineMs);
-      timer.unref();
-      this.pending.set(requestId, { resolve, reject, timer, abandoned: false, started: performance.now() });
+      this.pending.set(requestId, { resolve, reject, key, registryRevision, abandoned: false, started: performance.now() });
       child.send(message, error => {
         if (!error) return;
         const pending = this.pending.get(requestId);
         if (!pending) return;
-        clearTimeout(pending.timer);
         this.pending.delete(requestId);
-        if (!pending.abandoned) {
-          pending.reject(new Error(`STATE_READ_SEND_FAILED: ${error.message}`));
-        }
+        pending.reject(new Error(`STATE_READ_SEND_FAILED: ${error.message}`));
       });
     });
   }
@@ -320,6 +342,7 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
     this.generation = undefined;
     this.lastHeartbeatAt = undefined;
     this.activeOperation = undefined;
+    this.operations.clear();
     return new Promise<void>((resolve, reject) => {
       let settled = false;
       const finish = (error?: Error) => {
@@ -369,25 +392,34 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
           return;
         }
         if (value.type === "operation") {
-          this.activeOperation = {
+          const operation = {
             method: value.method,
             phase: value.phase,
             startedAt: value.startedAt,
             observedAt: value.observedAt
           };
+          this.operations.set(value.requestId, operation);
+          this.activeOperation = operation;
           return;
         }
-        this.activeOperation = undefined;
+        this.operations.delete(value.requestId);
+        this.activeOperation = [...this.operations.values()].at(-1);
         const pending = this.pending.get(value.requestId);
         if (!pending) return;
-        clearTimeout(pending.timer);
         this.pending.delete(value.requestId);
         if (value.measurement) {
           try { this.onMeasurement?.({ ...value.measurement, requestId: value.requestId,
             endToEndMs: performance.now() - pending.started, callerAbandoned: pending.abandoned }); }
           catch { /* Diagnostics cannot change read settlement or capacity. */ }
         }
-        if (pending.abandoned) return;
+        if (pending.abandoned) {
+          pending.reject(new Error("STATE_READ_CANCELLED: All observers left."));
+          return;
+        }
+        if (pending.registryRevision !== this.revisionStore.getProjectRegistryRevision()) {
+          pending.reject(new Error("STATE_READ_TARGET_CHANGED: Project identities changed during this observation; refresh."));
+          return;
+        }
         if (value.ok) {
           this.lastSnapshotAt = Date.now();
           pending.resolve(value.result);
@@ -404,12 +436,8 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
     this.generation = undefined;
     this.lastHeartbeatAt = undefined;
     this.activeOperation = undefined;
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      if (!pending.abandoned) {
-        pending.reject(new Error(`STATE_READ_UNAVAILABLE: ${error.message}`));
-      }
-    }
+    this.operations.clear();
+    for (const pending of this.pending.values()) pending.reject(new Error(`STATE_READ_UNAVAILABLE: ${error.message}`));
     this.pending.clear();
     if (!this.closed) this.scheduleRestart();
   }
@@ -431,13 +459,10 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
   private async closeChild(): Promise<void> {
     this.closed = true;
     if (this.restartTimer) clearTimeout(this.restartTimer);
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      if (!pending.abandoned) {
-        pending.reject(new Error("STATE_READ_CLOSED: Read projection closed."));
-      }
-    }
+    for (const pending of this.pending.values()) pending.reject(new Error("STATE_READ_CLOSED: Read projection closed."));
     this.pending.clear();
+    this.reads.invalidate(() => true);
+    this.revisionStore.close();
     const child = this.child;
     this.child = undefined;
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -470,7 +495,8 @@ async function runChild(file: string): Promise<void> {
   const codexService = new CodexService(process.env);
   let closing = false;
   let inFlight = 0;
-  let tail: Promise<void> = Promise.resolve();
+  const lanes = { dashboard: Promise.resolve(), settings: Promise.resolve() };
+  const requests = new Map<string, { cancelled: boolean }>();
   const send = (message: ChildMessage) => {
     if (!process.connected || !process.send) return;
     try { process.send(message, () => {}); } catch { /* Parent owns recovery. */ }
@@ -486,7 +512,7 @@ async function runChild(file: string): Promise<void> {
     if (closing) return;
     closing = true;
     clearInterval(heartbeat);
-    await tail.catch(() => undefined);
+    await Promise.all(Object.values(lanes).map(tail => tail.catch(() => undefined)));
     if (process.connected) process.disconnect();
   };
   try {
@@ -506,6 +532,14 @@ async function runChild(file: string): Promise<void> {
         return;
       }
       if (value.generation !== generation) return;
+      if (value.type === "cancel") {
+        const request = requests.get(value.requestId);
+        if (request) request.cancelled = true;
+        return;
+      }
+      const request = { cancelled: false };
+      requests.set(value.requestId, request);
+      const lane = value.method === "settingsSnapshot" ? "settings" : "dashboard";
       inFlight += 1;
       const startedAt = Date.now();
       const queuedAt = performance.now();
@@ -524,11 +558,17 @@ async function runChild(file: string): Promise<void> {
         observedAt: Date.now()
       });
       observe(inFlight > 1 ? "queue-wait" : "read-snapshot");
-      const run = tail.then(async () => {
+      const run = lanes[lane].then(async () => {
         if (measurement) measurement.queueMs = performance.now() - queuedAt;
+        // Yield once so a queued cancellation can be consumed before synchronous SQL.
+        await new Promise<void>(resolve => setImmediate(resolve));
+        if (request.cancelled) throw new Error("STATE_READ_CANCELLED: Queued observation cancelled.");
+        if (Date.now() >= value.deadlineAt) throw new Error("STATE_READ_STALE: Queue deadline expired.");
         observe("read-snapshot");
         // Bridge read permissions do not depend on an execution login snapshot.
         const result = await executeProjection(file, value.method, value.args, codexService, measurement);
+        if (request.cancelled) throw new Error("STATE_READ_CANCELLED: Observation cancelled.");
+        if (Date.now() >= value.deadlineAt) throw new Error("STATE_READ_STALE: Projection deadline expired.");
         observe("serializing");
         const encodingAt = measurement ? performance.now() : 0;
         const encoded = JSON.stringify(result === undefined ? null : result);
@@ -556,8 +596,11 @@ async function runChild(file: string): Promise<void> {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
         ...(measurement ? { measurement } : {})
-      })).finally(() => { inFlight = Math.max(0, inFlight - 1); });
-      tail = run;
+      })).finally(() => {
+        requests.delete(value.requestId);
+        inFlight = Math.max(0, inFlight - 1);
+      });
+      lanes[lane] = run;
     });
     process.once("disconnect", () => { void close(); });
     process.once("SIGTERM", () => { void close(); });
@@ -599,43 +642,48 @@ async function executeProjection(
     } } : {}) });
   mark("databaseOpenMs");
   const upstream = new ProjectionUpstream();
-  const sessions = new SessionRegistry({
-    stateStore,
-    allowedRoots: config.allowedRoots,
-    maxSessions: 1_000_000,
-    projectionOnly: true,
-  });
-  mark("sessionsMs");
-  const jobs = new CodexJobRegistry({
-    maxConcurrentJobs: config.maxConcurrentJobs,
-    ttlMs: config.jobTtlMs,
-    maxJobs: Math.max(config.maxRetainedJobs, config.maxConcurrentJobs),
-    maxResultBytes: config.maxJobResultBytes,
-    staleAfterMs: config.jobStaleAfterMs,
-    stateStore,
-    allowedRoots: config.allowedRoots,
-    projectionOnly: true
-  });
-  mark("jobsMs");
-  const userSettings = new UserSettingsStore(config, {
-    stateStore,
-    projectionOnly: true
-  });
-  mark("settingsMs");
-  const scopeResolver = new ScopeResolver({ stateStore });
-  const projectAvailability = new TaskProjectAvailabilityProjection(config);
-  const applicationService = createBridgeReadProjectionService(
-    config,
-    upstream,
-    sessions,
-    jobs,
-    createModelCatalog(config, upstream),
-    userSettings,
-    scopeResolver,
-    projectAvailability
-  );
-  mark("facadeMs");
+  let jobs: CodexJobRegistry | undefined;
   try {
+    const sessions = new SessionRegistry({
+      stateStore,
+      allowedRoots: config.allowedRoots,
+      maxSessions: 1_000_000,
+      projectionOnly: true,
+    });
+    mark("sessionsMs");
+    const detailAgent = method === "dashboardHistoryDetail"
+      ? dashboardAgentForDetail(stateStore, args[0] as BridgeDashboardHistoryDetailOptions) : undefined;
+    jobs = new CodexJobRegistry({
+      ...(method === "settingsSnapshot" ? { projectionJobs: false as const }
+        : method === "dashboardHistoryDetail" ? { projectionJobs: detailAgent ? { agentId: detailAgent.agentId } : false as const } : {}),
+      maxConcurrentJobs: config.maxConcurrentJobs,
+      ttlMs: config.jobTtlMs,
+      maxJobs: Math.max(config.maxRetainedJobs, config.maxConcurrentJobs),
+      maxResultBytes: config.maxJobResultBytes,
+      staleAfterMs: config.jobStaleAfterMs,
+      stateStore,
+      allowedRoots: config.allowedRoots,
+      projectionOnly: true
+    });
+    mark("jobsMs");
+    const userSettings = new UserSettingsStore(config, {
+      stateStore,
+      projectionOnly: true
+    });
+    mark("settingsMs");
+    const scopeResolver = new ScopeResolver({ stateStore });
+    const projectAvailability = new TaskProjectAvailabilityProjection(config);
+    const applicationService = createBridgeReadProjectionService(
+      config,
+      upstream,
+      sessions,
+      jobs,
+      createModelCatalog(config, upstream),
+      userSettings,
+      scopeResolver,
+      projectAvailability
+    );
+    mark("facadeMs");
     const operation = applicationService[method];
     if (typeof operation !== "function") {
       throw new Error(`Unsupported read projection method: ${method}`);
@@ -647,7 +695,7 @@ async function executeProjection(
     mark("projectionMs");
     return result;
   } finally {
-    await jobs.closeThreadConnections();
+    await jobs?.closeThreadConnections();
     await upstream.close();
     stateStore.close();
     mark("cleanupMs");
@@ -676,6 +724,13 @@ function isChildMessage(value: unknown): value is ChildMessage {
     typeof message.requestId === "string" && typeof message.ok === "boolean";
 }
 
+function canonicalReadArgs(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalReadArgs);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value)
+    .sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, canonicalReadArgs(entry)]));
+  return value;
+}
+
 function publicReadMethod(method: ReadMethod): PublicReadMethod {
   return method === "settingsSnapshot"
     ? "settingsSnapshot"
@@ -688,7 +743,8 @@ function isParentMessage(value: unknown): value is ParentMessage {
   if (!value || typeof value !== "object") return false;
   const message = value as Record<string, unknown>;
   if (message.type === "close") return true;
-  return message.type === "request" && typeof message.generation === "string" &&
+  if (message.type === "cancel") return typeof message.generation === "string" && typeof message.requestId === "string";
+  return Number.isSafeInteger(message.deadlineAt) && message.type === "request" && typeof message.generation === "string" &&
     typeof message.requestId === "string" && READ_METHODS.includes(message.method as ReadMethod) &&
     Array.isArray(message.args) && isReadBoundaryEvidence(message.authBoundary) &&
     Buffer.byteLength(JSON.stringify(message), "utf8") <= MAX_MESSAGE_BYTES;

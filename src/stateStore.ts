@@ -1305,7 +1305,7 @@ export class BridgeStateStore {
     return Number((row as CountRow).count);
   }
 
-  listJobs(): StoredJobRecord[] {
+  listJobs(agentId?: string): StoredJobRecord[] {
     return this.database
       .prepare(`
         SELECT j.payload,j.job_id,j.scope_id,j.request_id,j.activity_id,j.thread_id,
@@ -1330,10 +1330,16 @@ export class BridgeStateStore {
           JOIN activities a ON a.activity_id=j.activity_id
           LEFT JOIN projects p ON p.project_id=a.project_id
          WHERE j.archived_at IS NULL
+           ${agentId ? "AND j.agent_id=?" : ""}
          ORDER BY j.updated_at ASC
       `)
-      .all()
+      .all(...(agentId ? [agentId] : []))
       .map((row) => hydrateJobPayload(row as JobStorageRow));
+  }
+
+  /** Connection-local commit observation; holds no WAL snapshot between reads. */
+  readObservationVersion(): number {
+    return Number(this.database.pragma("data_version", { simple: true }));
   }
 
   /** Exact scoped admission proof after the result body leaves ordinary Job retention. */

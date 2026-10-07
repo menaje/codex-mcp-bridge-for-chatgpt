@@ -238,8 +238,8 @@ describe("isolated state read projection", () => {
       process.kill(processId!, "SIGSTOP");
       stopped = true;
       // Exercise the shared IPC limit without coupling it to CLI inspection.
-      const timedOut = Array.from({ length: 16 }, () =>
-        service.dashboardSnapshot({ enrich: false }).then(
+      const timedOut = Array.from({ length: 16 }, (_, terminalOffset) =>
+        service.dashboardSnapshot({ inspectRuntime: false, terminalOffset }).then(
           () => "resolved",
           error => error instanceof Error ? error.message : String(error)
         )

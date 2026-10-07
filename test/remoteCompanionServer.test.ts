@@ -173,7 +173,7 @@ describe("remote native companion", () => {
       idleOffset: 0,
       inspectRuntime: false,
       includeHistory: false
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
     expect(manager.status().devices[0]?.lastSeenAt).not.toBeNull();
 
     const deferredHistory = await jsonRequest(`${endpoint}/remote-companion/v1/rpc`, "POST",
@@ -182,7 +182,7 @@ describe("remote native companion", () => {
     expect(deferredHistory).toMatchObject({ status: 200, body: { result: {
       kind: "dashboard-history", historyCount: 0, historyRevision: "b".repeat(64)
     } } });
-    expect(applicationService.dashboardHistoryDetail).toHaveBeenCalledWith({ rowKey: "a".repeat(32) });
+    expect(applicationService.dashboardHistoryDetail).toHaveBeenCalledWith({ rowKey: "a".repeat(32) }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
 
     const historyParams = {rowKey:"a".repeat(32),expectedRevision:"b".repeat(64),action:"acknowledge",requestId:"11111111-1111-4111-8111-111111111111"};
     const history = await jsonRequest(`${endpoint}/remote-companion/v1/rpc`,"POST",

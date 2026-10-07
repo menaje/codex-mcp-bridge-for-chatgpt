@@ -360,7 +360,12 @@ export class RemoteCompanionManager implements RemoteCompanionControl {
           return;
         }
         this.noteDeviceSeen(device);
-        const result = await dispatchCompanionPayload(payload, this.applicationService);
+        const cancellation = new AbortController();
+        const cancel = () => { if (!response.writableFinished) cancellation.abort(); };
+        response.once("close", cancel);
+        let result: Record<string, unknown>;
+        try { result = await dispatchCompanionPayload(payload, this.applicationService, undefined, undefined, cancellation.signal); }
+        finally { response.removeListener("close", cancel); }
         if (method === "companion.hello" && !result.error) {
           result.result = this.hello();
         }

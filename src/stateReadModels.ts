@@ -39,6 +39,30 @@ const retainedHistoryPredicate = `
 export class DashboardReadModel {
   constructor(private readonly db: Database.Database) {}
 
+  activityTitles(ids: readonly string[]): Map<string, string> {
+    const titles = new Map<string, string>();
+    const unique = [...new Set(ids)];
+    for (let offset = 0; offset < unique.length; offset += 500) {
+      const chunk = unique.slice(offset, offset + 500);
+      const rows = this.db.prepare(`SELECT activity_id,title FROM activities
+        WHERE activity_id IN (${chunk.map(() => "?").join(",")})`).all(...chunk) as Array<{ activity_id: string; title: string }>;
+      for (const row of rows) titles.set(row.activity_id, row.title);
+    }
+    return titles;
+  }
+
+  retiredJobIds(ids: readonly string[]): Set<string> {
+    const retired = new Set<string>();
+    const unique = [...new Set(ids)];
+    for (let offset = 0; offset < unique.length; offset += 500) {
+      const chunk = unique.slice(offset, offset + 500);
+      const rows = this.db.prepare(`SELECT subject_id FROM retired_requests WHERE namespace='task'
+        AND subject_id IN (${chunk.map(() => "?").join(",")})`).all(...chunk) as Array<{ subject_id: string }>;
+      for (const row of rows) retired.add(row.subject_id);
+    }
+    return retired;
+  }
+
   archivedByAgent(
     scopeId: string | undefined,
     perAgentLimit: number,

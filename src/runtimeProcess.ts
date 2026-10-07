@@ -18,6 +18,7 @@ import {
 } from "./server.js";
 import type { OperationalStateOperationObservation } from "./stateService.js";
 import { operationalStateErrorCode } from "./stateServiceProcess.js";
+import type { ReadObservationContext } from "./displayReadPool.js";
 import { ChildProcessStateReadService } from "./stateReadProcess.js";
 import { BridgeStateStore } from "./stateStore.js";
 import {
@@ -123,6 +124,7 @@ const APPLICATION_RPC_METHODS = [
 
 type ApplicationRpcMethod = (typeof APPLICATION_RPC_METHODS)[number];
 type ApplicationRpcKind = "command" | "query" | "control";
+const OBSERVATION_READ_METHODS = new Set<ApplicationRpcMethod>(["dashboardSnapshot", "dashboardHistoryDetail", "settingsSnapshot"]);
 
 const APPLICATION_QUERY_METHODS = new Set<ApplicationRpcMethod>([
   "dashboardSnapshot",
@@ -218,10 +220,12 @@ type RuntimeRpcRequestMessage = {
   kind: ApplicationRpcKind;
   method: ApplicationRpcMethod;
   args: unknown[];
+  deadlineAt?: number;
 };
 
+type RuntimeCancelReadMessage = { type: "cancel-read"; generation: string; requestId: string };
 type RuntimeCloseMessage = { type: "close" };
-type RuntimeParentMessage = RuntimeRpcRequestMessage | RuntimeCloseMessage;
+type RuntimeParentMessage = RuntimeRpcRequestMessage | RuntimeCloseMessage | RuntimeCancelReadMessage;
 
 type PendingRpc = {
   resolve(value: unknown): void;
@@ -461,9 +465,9 @@ class IsolatedRuntimeController {
       problemAction: (...args) => rpc("problemAction", ...args),
       historyAction: (...args) => rpc("historyAction", ...args),
       threadHandoff: (...args) => rpc("threadHandoff", ...args),
-      dashboardSnapshot: (...args) => rpc("dashboardSnapshot", ...args),
-      dashboardHistoryDetail: (...args) => rpc("dashboardHistoryDetail", ...args),
-      settingsSnapshot: (...args) => rpc("settingsSnapshot", ...args),
+      dashboardSnapshot: (options, context) => this.rpc("dashboardSnapshot", [options || {}], context) as ReturnType<BridgeApplicationService["dashboardSnapshot"]>,
+      dashboardHistoryDetail: (options, context) => this.rpc("dashboardHistoryDetail", [options], context) as Promise<import("./tools.js").DashboardHistoryDetail>,
+      settingsSnapshot: (options, context) => this.rpc("settingsSnapshot", [options || {}], context) as ReturnType<BridgeApplicationService["settingsSnapshot"]>,
       updateSettings: (...args) => rpc("updateSettings", ...args),
       runtimeSnapshot: (...args) => rpc("runtimeSnapshot", ...args),
       runtimeHealth: () => this.runtimeHealth(),
@@ -953,7 +957,8 @@ class IsolatedRuntimeController {
     );
   }
 
-  private rpc(method: ApplicationRpcMethod, args: unknown[]): Promise<unknown> {
+  private rpc(method: ApplicationRpcMethod, args: unknown[], context?: ReadObservationContext): Promise<unknown> {
+    if (context?.signal?.aborted) return Promise.reject(new Error("STATE_READ_CANCELLED: Observation cancelled."));
     if (!this.child?.connected || !this.generation) {
       return Promise.reject(new Error(
         "RUNTIME_RESPONSE_UNCONFIRMED: The isolated Bridge runtime is not currently responsive."
@@ -976,26 +981,36 @@ class IsolatedRuntimeController {
       requestId,
       kind: applicationRpcKind(method),
       method,
-      args
+      args,
+      ...(context?.deadlineAt !== undefined ? { deadlineAt: context.deadlineAt } : {})
     };
     if (Buffer.byteLength(JSON.stringify(message), "utf8") > MAX_RPC_BYTES) {
       return Promise.reject(new Error("RUNTIME_REQUEST_TOO_LARGE: Runtime request exceeds its IPC limit."));
     }
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const abandon = (error: Error) => {
         const pending = this.pending.get(requestId);
         if (!pending) return;
         this.pending.delete(requestId);
         this.abandoned.add(requestId);
-        pending.reject(new Error(
-          "RUNTIME_RESPONSE_UNCONFIRMED: The isolated Bridge runtime did not answer within the observation budget; the operation outcome is unknown."
-        ));
-      }, this.rpcObservationTimeoutMs());
+        pending.reject(error);
+        if (OBSERVATION_READ_METHODS.has(method)) this.child?.send({ type: "cancel-read",
+          generation: message.generation, requestId } satisfies RuntimeCancelReadMessage, () => {});
+      };
+      const cancel = () => abandon(new Error("STATE_READ_CANCELLED: Observation cancelled."));
+      const timer = setTimeout(() => {
+        abandon(new Error(OBSERVATION_READ_METHODS.has(method)
+          ? "STATE_READ_STALE: Observation deadline expired; retain the last confirmed view."
+          : "RUNTIME_RESPONSE_UNCONFIRMED: The isolated Bridge runtime did not answer within the observation budget; the operation outcome is unknown."));
+      }, Math.max(1, Math.min(this.rpcObservationTimeoutMs(), (context?.deadlineAt ?? Infinity) - Date.now())));
       timer.unref();
+      const cleanup = () => { clearTimeout(timer); context?.signal?.removeEventListener("abort", cancel); };
       this.pending.set(requestId, {
-        resolve: value => { clearTimeout(timer); resolve(value); },
-        reject: error => { clearTimeout(timer); reject(error); }
+        resolve: value => { cleanup(); resolve(value); },
+        reject: error => { cleanup(); reject(error); }
       });
+      context?.signal?.addEventListener("abort", cancel, { once: true });
+      if (context?.signal?.aborted) cancel();
       this.child?.send(message, error => {
         if (!error) return;
         const pending = this.pending.get(requestId);
@@ -1560,6 +1575,7 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
       timer.unref();
     }
 
+    const readObservers = new Map<string, AbortController>();
     process.on("message", value => {
       if (!isRuntimeParentMessage(value) || closing) return;
       if (value.type === "close") {
@@ -1567,7 +1583,11 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
         return;
       }
       if (value.generation !== generation) return;
-      void dispatchApplicationRpc(applicationService as BridgeApplicationService, value).then(
+      if (value.type === "cancel-read") { readObservers.get(value.requestId)?.abort(); return; }
+      const observer = OBSERVATION_READ_METHODS.has(value.method) ? new AbortController() : undefined;
+      if (observer) readObservers.set(value.requestId, observer);
+      void dispatchApplicationRpc(applicationService as BridgeApplicationService, value,
+        observer ? { signal: observer.signal, deadlineAt: value.deadlineAt } : undefined).then(
         result => send({
           type: "rpc-response",
           generation,
@@ -1588,7 +1608,7 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
             }
           });
         }
-      );
+      ).finally(() => readObservers.delete(value.requestId));
     });
     if (transport === "stdio") process.stdin.once("end", () => { void close(0, false); });
     process.once("disconnect", () => { void close(0, false); });
@@ -1602,7 +1622,8 @@ async function runRuntimeChild(transport: RuntimeTransport): Promise<void> {
 
 async function dispatchApplicationRpc(
   applicationService: BridgeApplicationService,
-  request: RuntimeRpcRequestMessage
+  request: RuntimeRpcRequestMessage,
+  context?: ReadObservationContext
 ): Promise<unknown> {
   const operation = applicationService[request.method];
   if (typeof operation !== "function") {
@@ -1610,7 +1631,7 @@ async function dispatchApplicationRpc(
   }
   const result = await (operation as (...args: unknown[]) => unknown).apply(
     applicationService,
-    request.args
+    context ? [...request.args, context] : request.args
   );
   const encoded = JSON.stringify(result === undefined ? null : result);
   if (Buffer.byteLength(encoded, "utf8") > MAX_RPC_BYTES) {
@@ -1705,7 +1726,8 @@ function isRuntimeParentMessage(value: unknown): value is RuntimeParentMessage {
   if (!value || typeof value !== "object") return false;
   const message = value as Record<string, unknown>;
   if (message.type === "close") return true;
-  return message.type === "rpc" &&
+  if (message.type === "cancel-read") return typeof message.generation === "string" && typeof message.requestId === "string";
+  return (message.deadlineAt === undefined || Number.isSafeInteger(message.deadlineAt)) && message.type === "rpc" &&
     message.protocol === STATE_OWNER_PROTOCOL &&
     message.protocolVersion === STATE_OWNER_PROTOCOL_VERSION &&
     typeof message.generation === "string" &&
