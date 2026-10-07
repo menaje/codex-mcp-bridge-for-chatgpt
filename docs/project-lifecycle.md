@@ -82,3 +82,13 @@ upgrade use the same appended schema step. Rollback and pre-upgrade backups foll
 [the existing schema recovery policy](state-upgrade-recovery.md). Cleanup requires
 a runtime execution owner capable of establishing termination evidence; uncertain
 ownership remains unresolved for operator retry.
+
+The controller also resumes a legacy deleted row already at the confirmed archive
+checkpoint, covering process loss between confirmation and physical deletion.
+It retries deletion directly without releasing confirmed context again. A failed
+legacy deletion returns to unresolved cleanup with its concrete failure reason;
+if the database rejects that checkpoint too, the still-confirmed legacy row stays
+in the durable pending selection and is retried after storage recovers. Each
+external cleanup step checks that its intent is still current.
+An old deleted identity cannot be restored during that checkpoint gap; it must
+finish deletion before the folder is registered with a new identity.

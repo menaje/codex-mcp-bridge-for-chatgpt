@@ -15,6 +15,8 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeStateStore } from "../src/stateStore.js";
 import { ProjectLifecycleController } from "../src/projectLifecycle.js";
+import { registerCodexInputTools } from "../src/questionTools.js";
+import { questionHash } from "../src/questionStore.js";
 import { CodexJobRegistry } from "../src/tools.js";
 import { SessionRegistry } from "../src/sessionRegistry.js";
 import { UserSettingsStore } from "../src/userSettings.js";
@@ -747,6 +749,64 @@ describe("project retirement contract (#240)", () => {
     register("Again", project.cwd);
     checkDb();
   });
+  it("ends input management even for a legacy unattributed question journal without redispatch", async () => {
+    const project = register();
+    const owner = session(project);
+    const job = jobs.start(
+      { ...input(project), agentId: owner.agent.agentId },
+      async () => result(owner.threadId),
+    );
+    await job.promise;
+    const args = {
+      requestId: randomUUID(),
+      jobId: job.jobId,
+      questionRef: "a".repeat(64),
+      answers: { color: ["Blue"] },
+    };
+    state.questions.beginDelivery(
+      scopeId,
+      args.requestId,
+      args.questionRef,
+      questionHash(args),
+    );
+    state.questions.finishDelivery(scopeId, args.requestId, "delivered");
+    let answer!: (input: typeof args, extra: unknown) => Promise<unknown>;
+    const { readInput: read } = registerCodexInputTools(
+      {
+        registerTool: (
+          _name: string,
+          _descriptor: unknown,
+          callback: typeof answer,
+        ) => {
+          answer = callback;
+        },
+      } as unknown as Parameters<typeof registerCodexInputTools>[0],
+      jobs,
+      { require: () => ({ scopeId }) } as unknown as Parameters<
+        typeof registerCodexInputTools
+      >[2],
+    );
+    const extra = {
+      mcpReq: { _meta: {}, signal: new AbortController().signal },
+    } as Parameters<typeof read>[1];
+    await expect(answer(args, extra)).resolves.toMatchObject({
+      structuredContent: { delivery: "delivered" },
+    });
+    await archive(project);
+    apply({ kind: "delete", projectId: project.id });
+    expect(
+      state.projectLifecycle.receipt("question", scopeId, args.requestId),
+    ).toBeUndefined();
+    await expect(answer(args, extra)).rejects.toThrow(
+      "PROJECT_MANAGEMENT_ENDED",
+    );
+    await expect(read({ jobId: job.jobId }, extra)).rejects.toThrow(
+      "PROJECT_MANAGEMENT_ENDED",
+    );
+    expect(upstream.respondToInteraction).not.toHaveBeenCalled();
+    checkDb();
+  });
+
   it("cleans indirect control/event/followup/command records without fabricating delivery", async () => {
     const project = register();
     const owner = session(project);
@@ -810,6 +870,76 @@ describe("project retirement contract (#240)", () => {
     ).toThrow("PROJECT_MANAGEMENT_ENDED");
     checkDb();
   });
+  it.each([false, true])(
+    "resumes confirmed legacy deletion across process loss and delete failure=%s",
+    async (failDelete) => {
+      const project = register();
+      const retained = session(project);
+      const job = jobs.start(input(project), async () =>
+        result(retained.threadId),
+      );
+      await job.promise;
+      expect((await archive(project)).archiveState).toBe("complete");
+      await jobs.closeThreadConnections();
+      state.close();
+      // This fixture is the durable checkpoint after legacy archive confirmation
+      // but before the following physical-delete transaction has committed.
+      const checkpoint = new Database(file);
+      checkpoint
+        .prepare("UPDATE projects SET deleted_at=12 WHERE project_id=?")
+        .run(project.id);
+      checkpoint.close();
+      state = new BridgeStateStore({ file });
+      expect(() =>
+        state.transaction(() =>
+          state.applyProjectOperations(
+            [{ kind: "restore", projectId: project.id }],
+            state.getProjectRegistryRevision(),
+            [root],
+          ),
+        ),
+      ).toThrow("PROJECT_MANAGEMENT_ENDED");
+      if (failDelete) {
+        vi.spyOn(state, "applyProjectOperations").mockImplementationOnce(() => {
+          throw new Error("Legacy physical deletion did not commit");
+        });
+      }
+      releases.mockClear();
+      initialize();
+      await jobs.sweepProjectArchives();
+      expect(releases).not.toHaveBeenCalled();
+      if (failDelete) {
+        expect(state.getRecoverableProjects()[0]).toMatchObject({
+          id: project.id,
+          archiveState: "unresolved",
+          archiveReasons: ["Legacy physical deletion did not commit"],
+        });
+        expect(state.getRecoverableProjects()[0]?.archivedAt).toBeUndefined();
+      } else {
+        expect(state.projectLifecycle.exists(project.id)).toBe(false);
+      }
+      await jobs.closeThreadConnections();
+      state.close();
+      state = new BridgeStateStore({ file });
+      initialize();
+      await jobs.sweepProjectArchives();
+      expect(state.projectLifecycle.exists(project.id)).toBe(false);
+      expect(() =>
+        jobs.findRequest(scopeId, job.requestId, job.requestHash),
+      ).toThrow("PROJECT_MANAGEMENT_ENDED");
+      const replacement = register("Replacement", project.cwd);
+      const fresh = session(replacement);
+      expect(fresh.threadId).not.toBe(retained.threadId);
+      const next = jobs.start(input(replacement), async () =>
+        result(fresh.threadId),
+      );
+      await next.promise;
+      await archive(replacement);
+      apply({ kind: "delete", projectId: replacement.id });
+      checkDb();
+    },
+  );
+
   it.each([false, true])(
     "migrates legacy archived/deleted=%s data and cleans it through two restarts without DB editing by users",
     async (deleted) => {

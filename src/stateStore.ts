@@ -3940,17 +3940,11 @@ export class BridgeStateStore {
           changed = true;
           continue;
         }
+        if (row.deleted_at !== null) {
+          throw new Error("PROJECT_MANAGEMENT_ENDED: A deleted legacy registration must finish cleanup; register the folder again after deletion.");
+        }
         if (row.archive_state !== "active" && row.archive_state !== "complete") {
           throw new Error("PROJECT_ARCHIVE_PENDING: Finish archive cleanup before restoring this registration.");
-        }
-
-        if (row.deleted_at !== null) {
-          const count = Number((this.database.prepare(
-            "SELECT COUNT(*) AS count FROM projects WHERE deleted_at IS NULL"
-          ).get() as CountRow).count);
-          if (count >= MAX_REGISTERED_PROJECTS) {
-            throw new Error(`${PROJECT_LIMIT_EXCEEDED}: At most ${MAX_REGISTERED_PROJECTS} projects may be registered.`);
-          }
         }
         if (row.archive_state === "active" && row.deleted_at === null) {
           if (operation.name !== undefined || operation.cwd !== undefined) {

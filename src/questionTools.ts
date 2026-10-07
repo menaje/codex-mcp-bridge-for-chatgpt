@@ -49,6 +49,9 @@ export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistr
   const scope = (meta: unknown) => scopeResolver.require(meta as ToolCallMetadata, undefined, "Codex input orchestration").scopeId;
   const ownedJob = (scopeId: string, id: string) => {
     const job = jobs.get(id);
+    if (!job && jobs.admissionStateStore.projectLifecycle.jobReceipt(id)?.scope_id === scopeId) {
+      throw new Error("PROJECT_MANAGEMENT_ENDED: This Job's input management has ended.");
+    }
     const activity = job && jobs.getActivity(job.activityId);
     const agent = job?.agentId && jobs.getAgent(job.agentId);
     if (!job || job.scopeId !== scopeId || activity?.scopeId !== scopeId || !agent || agent.scopeId !== scopeId) {

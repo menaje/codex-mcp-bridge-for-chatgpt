@@ -126,9 +126,28 @@ export class ProjectLifecycleStore {
   pending(): Array<{ projectId: string; revision: number }> {
     return this.db
       .prepare(
-        "SELECT project_id AS projectId,archive_revision AS revision FROM projects WHERE archive_state IN ('processing','unresolved') ORDER BY updated_at,project_id",
+        "SELECT project_id AS projectId,archive_revision AS revision FROM projects WHERE archive_state IN ('processing','unresolved') OR (deleted_at IS NOT NULL AND archive_state='complete') ORDER BY updated_at,project_id",
       )
       .all() as Array<{ projectId: string; revision: number }>;
+  }
+  isIntentCurrent(projectId: string, revision: number): boolean {
+    return Boolean(
+      this.db
+        .prepare(
+          `SELECT 1 FROM projects WHERE project_id=? AND archive_revision=?
+      AND (archive_state IN ('processing','unresolved') OR (deleted_at IS NOT NULL AND archive_state='complete'))`,
+        )
+        .get(projectId, revision),
+    );
+  }
+  confirmed(projectId: string, revision: number): boolean {
+    return Boolean(
+      this.db
+        .prepare(
+          "SELECT 1 FROM projects WHERE project_id=? AND archive_revision=? AND archive_state='complete'",
+        )
+        .get(projectId, revision),
+    );
   }
   jobIds(projectId: string): string[] {
     return (
@@ -185,8 +204,10 @@ export class ProjectLifecycleStore {
   ): void {
     const changed = this.db
       .prepare(
-        `UPDATE projects SET archive_state='unresolved',archive_reasons=?,updated_at=?
-      WHERE project_id=? AND archive_revision=? AND archive_state IN ('processing','unresolved') AND archive_reasons!=?`,
+        `UPDATE projects SET archived_at=CASE WHEN archive_state='complete' AND deleted_at IS NOT NULL THEN NULL ELSE archived_at END,
+      archive_state='unresolved',archive_reasons=?,updated_at=?
+      WHERE project_id=? AND archive_revision=? AND (archive_state IN ('processing','unresolved') OR (archive_state='complete' AND deleted_at IS NOT NULL))
+        AND (archive_state!='unresolved' OR archive_reasons!=?)`,
       )
       .run(
         JSON.stringify(reasons),
@@ -641,15 +662,41 @@ export class ProjectLifecycleController {
       }));
   }
   private async run(): Promise<void> {
-    for (const intent of this.state.projectLifecycle.pending()) {
+    intents: for (const intent of this.state.projectLifecycle.pending()) {
       if (this.closed) return;
+      if (
+        !this.state.projectLifecycle.isIntentCurrent(
+          intent.projectId,
+          intent.revision,
+        )
+      )
+        continue;
       const reasons: string[] = [];
       const confirmedThreads: string[] = [];
       try {
+        if (
+          this.state.projectLifecycle.legacyDeleted(intent.projectId) &&
+          this.state.projectLifecycle.confirmed(
+            intent.projectId,
+            intent.revision,
+          )
+        ) {
+          this.deleteLegacy(intent.projectId);
+          this.jobs.refreshRetiredProjectState();
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          continue;
+        }
         for (const jobId of this.state.projectLifecycle.jobIds(
           intent.projectId,
         )) {
           if (this.closed || this.state.isClosed) return;
+          if (
+            !this.state.projectLifecycle.isIntentCurrent(
+              intent.projectId,
+              intent.revision,
+            )
+          )
+            continue intents;
           try {
             await this.external(this.jobs.stopForProjectArchive(jobId));
           } catch (error) {
@@ -664,6 +711,13 @@ export class ProjectLifecycleController {
           );
           for (const threadId of threads) {
             if (this.closed || this.state.isClosed) return;
+            if (
+              !this.state.projectLifecycle.isIntentCurrent(
+                intent.projectId,
+                intent.revision,
+              )
+            )
+              continue intents;
             if (
               this.state.projectLifecycle.threadProtected(
                 threadId,
@@ -701,6 +755,14 @@ export class ProjectLifecycleController {
                 ),
               );
               for (const process of processes || []) {
+                if (this.closed || this.state.isClosed) return;
+                if (
+                  !this.state.projectLifecycle.isIntentCurrent(
+                    intent.projectId,
+                    intent.revision,
+                  )
+                )
+                  continue intents;
                 if (!this.upstream.terminateBackgroundTerminal)
                   throw new Error("Background termination is unsupported.");
                 const stopped = await this.external(
@@ -727,6 +789,14 @@ export class ProjectLifecycleController {
               )
                 throw new Error("Background processes remain active.");
             }
+            if (this.closed || this.state.isClosed) return;
+            if (
+              !this.state.projectLifecycle.isIntentCurrent(
+                intent.projectId,
+                intent.revision,
+              )
+            )
+              continue intents;
             const result = await this.external(
               this.upstream.releaseThreadConnection?.(threadId, {
                 eligibleThreadIds: threads,
@@ -734,6 +804,11 @@ export class ProjectLifecycleController {
                 retireContext: true,
                 canRelease: (id) =>
                   !this.closed &&
+                  !this.state.isClosed &&
+                  this.state.projectLifecycle.isIntentCurrent(
+                    intent.projectId,
+                    intent.revision,
+                  ) &&
                   threads.includes(id) &&
                   !this.state.projectLifecycle.unfinished(intent.projectId) &&
                   !this.state.projectLifecycle.threadProtected(
@@ -779,17 +854,12 @@ export class ProjectLifecycleController {
         });
         if (
           this.state.projectLifecycle.legacyDeleted(intent.projectId) &&
-          !this.state.projectLifecycle
-            .pending()
-            .some((row) => row.projectId === intent.projectId)
+          this.state.projectLifecycle.confirmed(
+            intent.projectId,
+            intent.revision,
+          )
         ) {
-          this.state.transaction(() => {
-            this.state.applyProjectOperations(
-              [{ kind: "delete", projectId: intent.projectId }],
-              this.state.getProjectRegistryRevision(),
-              [],
-            );
-          });
+          this.deleteLegacy(intent.projectId);
         }
         this.jobs.refreshRetiredProjectState();
       } catch (error) {
@@ -804,6 +874,15 @@ export class ProjectLifecycleController {
       }
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
+  }
+  private deleteLegacy(projectId: string): void {
+    this.state.transaction(() => {
+      this.state.applyProjectOperations(
+        [{ kind: "delete", projectId }],
+        this.state.getProjectRegistryRevision(),
+        [],
+      );
+    });
   }
   private async external<T>(operation: Promise<T>): Promise<T> {
     let timer: NodeJS.Timeout | undefined;
