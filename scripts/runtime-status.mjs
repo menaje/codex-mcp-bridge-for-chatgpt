@@ -65,7 +65,8 @@ export function readManagedRuntimeStatus(filePath, { maximumAgeMs = 20_000 } = {
         parsed.tunnel.lastCheckedAt === null
       ) ||
       !(typeof parsed.tunnel.lastError === "string" || parsed.tunnel.lastError === null) ||
-      !validStatusProblem(parsed.tunnel.lastProblem)
+      !validStatusProblem(parsed.tunnel.lastProblem) ||
+      !validTunnelObservation(parsed.tunnel.observation)
     ) {
       return null;
     }
@@ -107,4 +108,19 @@ function validStatusProblem(value) {
     typeof entry === "string" &&
     entry.length <= 500
   );
+}
+
+function validTunnelObservation(value) {
+  if (value === undefined) return true; // Version 1 launchers without diagnostics.
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const validFailure = failure => failure === null ||
+    (typeof failure === "string" && /^[a-z-]{1,80}$/.test(failure));
+  const endpoint = entry => entry && typeof entry === "object" &&
+    (entry.status === null || (Number.isInteger(entry.status) && entry.status >= 100 && entry.status <= 599)) &&
+    validFailure(entry.failure);
+  const poll = value.controlPlanePoll;
+  return endpoint(value.healthz) && endpoint(value.readyz) && validFailure(value.failure) &&
+    poll && typeof poll === "object" && typeof poll.fresh === "boolean" && validFailure(poll.failure) &&
+    (poll.lastSuccessfulAt === null || (typeof poll.lastSuccessfulAt === "string" &&
+      Number.isFinite(Date.parse(poll.lastSuccessfulAt))));
 }

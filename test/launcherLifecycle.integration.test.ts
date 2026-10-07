@@ -79,6 +79,22 @@ describe("managed launcher lifecycle", () => {
     expect(initializationCount(initializationLog)).toBe(2);
   }, 45_000);
 
+  it("publishes actual daemon exit independently of the previous healthy snapshot", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-launcher-exit-"));
+    const envFile = path.join(root, "config", ".env");
+    mkdirSync(path.dirname(envFile), { recursive: true, mode: 0o700 });
+    writeFileSync(envFile, "CONTROL_PLANE_API_KEY=sk-launcher-test-1234567890123456\nCONTROL_PLANE_TUNNEL_ID=tunnel_llllllllllllllllllllllllllllllll\n", { mode: 0o600 });
+    const fakeCodex = path.join(root, "codex.mjs"), fakeTunnel = path.join(root, "tunnel.mjs");
+    writeExecutable(fakeCodex, "process.exit(2);");
+    writeExecutable(fakeTunnel, fakeTunnelSource({ profileFile: path.join(root, "profile.yaml"),
+      initializationLog: path.join(root, "init.log"), shutdownLog: path.join(root, "shutdown.log"),
+      controlPlaneReadyFile: path.join(root, "ready"), codexEnvironmentLog: path.join(root, "environment.json") }));
+    await runLauncher({ envFile, fakeCodex, fakeTunnel, profileMetadataFile: path.join(root, "profile.json"),
+      runtimeStatusFile: path.join(root, "run", "status.json"), healthURLFile: path.join(root, "run", "health.url"),
+      tunnelPIDFile: path.join(root, "run", "tunnel.pid"), runtimeLockDirectory: path.join(root, "lock"),
+      unexpectedDaemonExit: true });
+  }, 20_000);
+
   it("waits for tunnel readiness and shutdown, then reuses only an unchanged profile", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "codex-launcher-lifecycle-"));
     const configDirectory = path.join(root, "config");
@@ -216,6 +232,7 @@ import {
   writeFileSync
 } from "node:fs";
 import path from "node:path";
+import { createServer } from "node:http";
 
 const args = process.argv.slice(2);
 writeFileSync(${JSON.stringify(paths.codexEnvironmentLog)}, JSON.stringify({
@@ -264,33 +281,25 @@ if (args[0] === "doctor") {
   process.exit(0);
 }
 if (args[0] === "health") {
-  try {
-    if (!existsSync(controlPlaneReadyFile)) process.exit(1);
-    if (readFileSync(controlPlaneReadyFile, "utf8") === "fail") {
-      console.log(JSON.stringify({ readyz: { status: 503, body: "sk-health-secret-1234567890123456" },
-        control_plane_poll: { ok: false }, process: { running: true } }));
-      console.error("sk-health-secret-1234567890123456");
-      process.exit(1);
-    }
-    if (readFileSync(controlPlaneReadyFile, "utf8") === "slow") {
-      writeFileSync(controlPlaneReadyFile + ".checking", String(process.pid));
-      await new Promise(resolve => setTimeout(resolve, 4_000));
-    }
-    const url = readFileSync(option("--url-file"), "utf8").trim();
-    const pid = Number(readFileSync(option("--pid-file"), "utf8").trim());
-    process.kill(pid, 0);
-    const stale = readFileSync(controlPlaneReadyFile, "utf8") === "stale";
-    console.log(JSON.stringify({ control_plane_poll: { ok: true, value: Math.floor(Date.now() / 1000) - (stale ? 76 : 0) } }));
-    process.exit(url.startsWith("http://127.0.0.1:") ? 0 : 1);
-  } catch {
-    process.exit(1);
-  }
+  // Repetitive health commands must disappear from the launcher.
+  throw new Error("Launcher should use direct health endpoints");
 }
 if (args[0] === "run") {
   writeFileSync(${JSON.stringify(paths.codexEnvironmentLog + ".tunnel-run-args.json")}, JSON.stringify(args));
   const healthFile = option("--health.url-file");
   const pidFile = option("--pid.file");
-  writeFileSync(healthFile, "http://127.0.0.1:43123\\n", { mode: 0o600 });
+  const healthServer = createServer((request, response) => {
+    const state = existsSync(controlPlaneReadyFile) ? readFileSync(controlPlaneReadyFile, "utf8").trim() : "pending";
+    if (state === "slow") writeFileSync(controlPlaneReadyFile + ".checking", String(process.pid));
+    setTimeout(() => {
+      response.statusCode = request.url === "/readyz" && (state === "fail" || state === "pending") ? 503 : 200;
+      if (request.url === "/metrics") response.end("commands_poll_last_successful_timestamp_seconds " +
+        (state === "pending" || state === "fail" ? 0 : Math.floor(Date.now()/1000) - (state === "stale" ? 76 : 0)) + "\\n");
+      else response.end(state === "fail" ? "sk-health-secret-1234567890123456" : "ready");
+    }, state === "slow" ? 4000 : 0);
+  });
+  await new Promise(resolve => healthServer.listen(0, "127.0.0.1", resolve));
+  writeFileSync(healthFile, "http://127.0.0.1:" + healthServer.address().port + "\\n", { mode: 0o600 });
   writeFileSync(pidFile, String(process.pid) + "\\n", { mode: 0o600 });
   try { unlinkSync(controlPlaneReadyFile); } catch (error) {
     if (error.code !== "ENOENT") throw error;
@@ -327,6 +336,7 @@ async function runLauncher(paths: {
   runtimeLockDirectory: string;
   controlPlaneReadyFile?: string;
   detachOutput?: boolean;
+  unexpectedDaemonExit?: boolean;
   transport?: "http" | "stdio";
   port?: number;
   checkWhileConnected?: () => Promise<void>;
@@ -335,6 +345,7 @@ async function runLauncher(paths: {
   delete environment.CONTROL_PLANE_API_KEY;
   delete environment.CONTROL_PLANE_TUNNEL_ID;
   delete environment.OPENAI_API_KEY;
+  delete environment.CODEX_HOME;
   // The launcher acquires a canonical ownership lock before reading the
   // supplied dotenv. Keep that lock inside this fixture so a user's running
   // bridge cannot make the integration test fail before it publishes status.
@@ -365,12 +376,23 @@ async function runLauncher(paths: {
   child.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
   child.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
   try {
-    await waitForConnectedStatus(paths.runtimeStatusFile, child);
+    try { await waitForConnectedStatus(paths.runtimeStatusFile, child); }
+    catch (error) { throw new Error(`${String(error)}; fixture launcher output: ${output.replace(/sk-[^\s]{8,}/g, "[REDACTED]")}`); }
     await paths.checkWhileConnected?.();
     expect(existsSync(paths.runtimeLockDirectory)).toBe(true);
     expect(existsSync(
       path.join(path.dirname(paths.envFile), "run", "launcher.lock")
     )).toBe(true);
+    if (paths.unexpectedDaemonExit) {
+      process.kill(Number(readFileSync(paths.tunnelPIDFile, "utf8").trim()), "SIGTERM");
+      const result = await waitForProcessExit(child, 5_000);
+      expect(result.code).toBe(1);
+      expect(readStatus(paths.runtimeStatusFile)).toMatchObject({ phase: "failed", tunnel: {
+        processRunning: false, connected: false, lastProblem: { code: "tunnel-process-exited" },
+        observation: { failure: "process-exited", controlPlanePoll: { fresh: false } }
+      } });
+      return { output };
+    }
     if (paths.controlPlaneReadyFile) {
       if (paths.detachOutput) { child.stdout?.destroy(); child.stderr?.destroy(); }
       const launcherPid = readStatus(paths.runtimeStatusFile).launcherPid;
@@ -391,10 +413,10 @@ async function runLauncher(paths: {
     child.kill("SIGTERM");
     const result = await waitForProcessExit(child, 10_000);
     if (paths.controlPlaneReadyFile) {
-      // A pending four-second probe must not hold up shutdown or outlive its owner.
+      // A pending direct request must not hold up shutdown or outlive its daemon.
       expect(Date.now() - shutdownStarted).toBeLessThan(2_000);
-      const probePid = Number(readFileSync(paths.controlPlaneReadyFile + ".checking", "utf8"));
-      expect(() => process.kill(probePid, 0)).toThrow();
+      const daemonPid = Number(readFileSync(paths.controlPlaneReadyFile + ".checking", "utf8"));
+      expect(() => process.kill(daemonPid, 0)).toThrow();
     }
     if (result.code !== 0) {
       throw new Error(`Launcher exited with ${result.code ?? result.signal}: ${output}`);
@@ -402,8 +424,9 @@ async function runLauncher(paths: {
     return { output };
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGKILL");
-      await waitForProcessExit(child, 2_000).catch(() => undefined);
+      child.kill("SIGTERM");
+      try { await waitForProcessExit(child, 10_000); }
+      catch { child.kill("SIGKILL"); await waitForProcessExit(child, 2_000).catch(() => undefined); }
     }
   }
 }
@@ -437,7 +460,8 @@ async function waitForConnectedStatus(filePath: string, child: ChildProcess): Pr
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error("Timed out waiting for the managed tunnel status.");
+  const last = existsSync(filePath) ? readStatus(filePath) : {};
+  throw new Error(`Timed out waiting for managed tunnel status; runtime=${last.phase}; tunnel=${last.tunnel?.phase}; observation=${last.tunnel?.observation?.failure}`);
 }
 
 function waitForProcessExit(
