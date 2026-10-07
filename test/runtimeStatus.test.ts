@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   MANAGED_RUNTIME_STATUS_PROTOCOL,
   hasRecentTunnelControlPlanePoll,
@@ -56,6 +56,35 @@ describe("managed runtime status", () => {
         }
       }
     });
+  });
+
+  it("keeps unchanged healthy heartbeats fresh across 20 seconds and marks a stopped writer stale", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "codex-runtime-heartbeat-"));
+    const file = path.join(root, "status.json");
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-10-07T00:00:00Z"));
+      for (let interval = 0; interval < 6; interval++) {
+        writeManagedRuntimeStatus(file, { phase: "running", runtimeBuildId: "fixture", tunnel: connectedTunnel() });
+        vi.advanceTimersByTime(5_000);
+        expect(readManagedRuntimeStatus(file)?.stale).toBe(false);
+      }
+      vi.advanceTimersByTime(15_001);
+      expect(readManagedRuntimeStatus(file)?.stale).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("accepts additive observation evidence and rejects malformed evidence while retaining old version 1 compatibility", () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "codex-runtime-evidence-")), "status.json");
+    const observation = { healthz: { status: null, failure: "timeout" }, readyz: { status: 200, failure: null },
+      controlPlanePoll: { lastSuccessfulAt: new Date().toISOString(), fresh: true, failure: null }, failure: "timeout" };
+    writeManagedRuntimeStatus(file, { phase: "running", runtimeBuildId: "fixture", tunnel: { ...connectedTunnel(), observation } });
+    expect(readManagedRuntimeStatus(file)?.tunnel.observation).toEqual(observation);
+    writeManagedRuntimeStatus(file, { phase: "running", runtimeBuildId: "fixture", tunnel: { ...connectedTunnel(),
+      observation: { ...observation, healthz: { status: "200", failure: null } } } });
+    expect(readManagedRuntimeStatus(file)).toBeNull();
+    writeManagedRuntimeStatus(file, { phase: "running", runtimeBuildId: "fixture", tunnel: connectedTunnel() });
+    expect(readManagedRuntimeStatus(file)?.tunnel.observation).toBeUndefined();
   });
 
   it("does not let a caller override authoritative envelope fields", () => {

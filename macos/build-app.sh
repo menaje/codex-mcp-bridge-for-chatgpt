@@ -120,6 +120,7 @@ cp "$repository_root/scripts/runtime-status.d.mts" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/start-codex-mcp-bridge.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/text-integrity.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/text-integrity.d.mts" "$runtime_directory/scripts/"
+cp "$repository_root/scripts/tunnel-health.mjs" "$runtime_directory/scripts/"
 cp "$repository_root/scripts/tunnel-profile.mjs" "$runtime_directory/scripts/"
 
 package_version="$(node -p "require('./package.json').version")"

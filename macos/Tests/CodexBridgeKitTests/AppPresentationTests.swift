@@ -576,6 +576,39 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testTunnelObservationFailureRetainsRuntimeAndDoesNotCountAsRecovery() throws {
+        let model = AppModel()
+        model.authStatus = try loginStatus(installed: true, authenticated: true)
+        model.dashboard = try dashboardStatus(scope: "issue-242-tunnel")
+        model.recordLocalConnectionStatus(try helperStatus(tunnelProbeFailed: true))
+        XCTAssertTrue(model.bridgeConnected)
+        XCTAssertFalse(model.bridgeResponseUnconfirmed)
+        XCTAssertTrue(model.tunnelResponseUnconfirmed)
+        XCTAssertEqual(model.health, .attention)
+        XCTAssertEqual(model.operationalObservation, .problem(.responseUnconfirmed))
+        XCTAssertEqual(model.dashboard?.scope, "issue-242-tunnel")
+
+        var policy = OperationalNotificationPolicy()
+        let scope = OperationalNotificationPolicy.scope("issue-242-fixture")
+        let now = Date(timeIntervalSince1970: 1_000)
+        _ = policy.observe(.problem(.tunnel), scope: scope, now: now)
+        policy.markDelivered(scope: scope, problem: .tunnel)
+        _ = policy.observe(.healthy, scope: scope, now: now.addingTimeInterval(10))
+        _ = policy.observe(model.operationalObservation, scope: scope, now: now.addingTimeInterval(30))
+        XCTAssertNil(policy.healthySince[scope])
+        XCTAssertEqual(policy.observe(model.operationalObservation, scope: scope, now: now.addingTimeInterval(90)), .responseUnconfirmed)
+
+        model.recordLocalConnectionStatus(try helperStatus())
+        XCTAssertFalse(model.tunnelResponseUnconfirmed)
+        XCTAssertEqual(model.operationalObservation, .healthy)
+        _ = policy.observe(model.operationalObservation, scope: scope, now: now.addingTimeInterval(100))
+        _ = policy.observe(model.operationalObservation, scope: scope, now: now.addingTimeInterval(120))
+        _ = policy.observe(model.operationalObservation, scope: scope, now: now.addingTimeInterval(140))
+        _ = policy.observe(model.operationalObservation, scope: scope, now: now.addingTimeInterval(160))
+        XCTAssertTrue(policy.entries.isEmpty)
+    }
+
+    @MainActor
     func testReadProjectionDelayIsPartialAndDoesNotClaimRuntimeOrWritesFailed() throws {
         let model = AppModel()
         model.authStatus = try loginStatus(installed: true, authenticated: true)
@@ -2273,8 +2306,10 @@ private func helperStatus(
     bridgeObservation: String? = nil,
     bridgeLastSuccessfulAt: String? = nil,
     readServiceStatus: String? = nil,
-    stateServiceStorageError: String? = nil
+    stateServiceStorageError: String? = nil,
+    tunnelProbeFailed: Bool = false
 ) throws -> HelperStatus {
+    let tunnelProblemJSON = tunnelProbeFailed ? ",\"lastProblem\":{\"code\":\"tunnel-health-probe-failed\",\"arguments\":{}}" : ""
     let bridgeObservationJSON = bridgeObservation.map { ",\"observation\":\"\($0)\"" } ?? ""
     let bridgeLastSuccessfulAtJSON = bridgeLastSuccessfulAt.map { ",\"lastSuccessfulAt\":\"\($0)\"" } ?? ""
     let readServiceStatusJSON = readServiceStatus.map { ",\"readServiceStatus\":\"\($0)\"" } ?? ""
@@ -2288,7 +2323,7 @@ private func helperStatus(
       "restartAttempt":0,
       "configuration":{"path":"/private/.env","exists":true,"valid":\#(configurationValid),"hasApiKey":true,"hasTunnelId":true,"tunnelId":"tunnel_native123","issue":null},
       "bridge":{"socketPath":"/private/bridge.sock","connected":\#(bridgeConnected)\#(bridgeObservationJSON)\#(bridgeLastSuccessfulAtJSON)\#(readServiceStatusJSON)\#(stateServiceStorageErrorJSON),"acceptingNewJobs":true,"activeJobs":0,"pendingAdmissions":0,"backgroundProcessState":"confirmed","backgroundProcesses":0,"backgroundProcessAgents":0,"backgroundProcessUnknownAgents":0},
-      "tunnel":{"phase":"connected","profile":"managed","transport":"stdio","doctorPassed":true,"processRunning":true,"connected":\#(tunnelConnected),"lastCheckedAt":null,"lastError":null}
+      "tunnel":{"phase":"connected","profile":"managed","transport":"stdio","doctorPassed":true,"processRunning":true,"connected":\#(tunnelConnected),"lastCheckedAt":null,"lastError":null\#(tunnelProblemJSON)}
     }
     """#.data(using: .utf8)!
     return try JSONDecoder().decode(HelperStatus.self, from: json)

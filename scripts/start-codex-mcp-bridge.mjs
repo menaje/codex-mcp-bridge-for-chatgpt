@@ -3,7 +3,7 @@ import { existsSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn, spawnSync, execFile } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { computeSourceHash } from "./build-fingerprint.mjs";
 import { parseLauncherArgs, requiredBuildOutputs } from "./launcher-options.mjs";
@@ -32,9 +32,9 @@ import {
   readTunnelClientVersion,
   recordTunnelProfileMetadata
 } from "./tunnel-profile.mjs";
-import { hasRecentTunnelControlPlanePoll, writeManagedRuntimeStatus } from "./runtime-status.mjs";
+import { writeManagedRuntimeStatus } from "./runtime-status.mjs";
+import { createTunnelHealthObserver } from "./tunnel-health.mjs";
 import {
-  assertJsonTextIntegrity,
   assertWellFormedUnicode,
   decodeUtf8Strict,
   parseJsonUtf8Strict
@@ -112,6 +112,7 @@ let ownsRuntimeState = false;
 let tunnelHealthTimer;
 let tunnelHealthProbeRunning = false;
 let tunnelHealthCancellation;
+let tunnelHealthObserver;
 let tunnelHealthFailedAt;
 let runtimePhase = "starting";
 let activeRuntimeBuildId = "unbuilt";
@@ -417,7 +418,10 @@ async function startSecureTunnel({ apiKey, tunnelId }) {
   ], { env: childEnvironment });
   tunnelState = { ...tunnelState, processRunning: true };
   publishRuntimeStatus();
-  await waitForTunnelReady(tunnelClient, childEnvironment, tunnel);
+  tunnelHealthObserver = createTunnelHealthObserver({
+    urlFile: tunnelHealthUrlFile, pidFile: tunnelPidFile, expectedPid: tunnel.pid
+  });
+  await waitForTunnelReady(tunnel);
   runtimePhase = "running";
   tunnelState = {
     ...tunnelState,
@@ -429,7 +433,7 @@ async function startSecureTunnel({ apiKey, tunnelId }) {
     lastProblem: null
   };
   publishRuntimeStatus();
-  beginTunnelHealthMonitoring(tunnelClient, childEnvironment, tunnel);
+  beginTunnelHealthMonitoring(tunnel);
   console.log(
     `Secure MCP Tunnel is running with profile ${profile} over ${tunnelTransport}.`
   );
@@ -506,7 +510,8 @@ function spawnChild(command, childArgs, options = {}) {
           connected: false,
           lastCheckedAt: new Date().toISOString(),
           lastError: "The tunnel-client process exited unexpectedly.",
-          lastProblem: statusProblem("tunnel-process-exited")
+          lastProblem: statusProblem("tunnel-process-exited"),
+          observation: stoppedTunnelObservation("process-exited")
         };
         tryPublishRuntimeStatus();
       }
@@ -550,19 +555,20 @@ function installedRuntimeBuildId() {
   return "unbuilt";
 }
 
-async function waitForTunnelReady(tunnelClient, environment, child) {
+async function waitForTunnelReady(child) {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error("tunnel-client exited before the control-plane connection became ready.");
     }
-    const { connected } = await probeTunnelHealth(tunnelClient, environment);
+    const { connected, observation } = await probeTunnelHealth();
     if (shuttingDown || child.exitCode !== null || child.signalCode !== null) throw new Error("Tunnel stopped while checking readiness.");
     tunnelState = {
       ...tunnelState,
       phase: connected ? "connected" : "starting",
       processRunning: true,
       connected,
+      observation,
       lastCheckedAt: new Date().toISOString(),
       // A control-plane poll that has not succeeded yet is normal startup
       // progress, not an error. The native client presents phase=starting in
@@ -577,30 +583,35 @@ async function waitForTunnelReady(tunnelClient, environment, child) {
   throw new Error("Timed out waiting for a successful Secure MCP Tunnel control-plane poll.");
 }
 
-function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
+function beginTunnelHealthMonitoring(child) {
   tunnelHealthTimer = setInterval(async () => {
     if (shuttingDown || tunnelHealthProbeRunning) return;
     tunnelHealthProbeRunning = true;
     try {
       const processRunning = child.exitCode === null && child.signalCode === null;
       const probe = processRunning
-        ? await probeTunnelHealth(tunnelClient, environment)
+        ? await probeTunnelHealth()
         : { connected: false, reason: "tunnel process is not running" };
       if (shuttingDown || child.exitCode !== null || child.signalCode !== null) return;
-      const { connected } = probe;
-      recordTunnelHealthTransition(connected, probe.reason, child.pid);
+      const { connected, observation } = probe;
+      recordTunnelHealthTransition(connected && !observation?.failure, probe.reason, child.pid);
       tunnelState = {
         ...tunnelState,
         phase: connected ? "connected" : "degraded",
         processRunning,
         connected,
+        observation,
         lastCheckedAt: new Date().toISOString(),
-        lastError: connected
+        lastError: observation?.failure
+          ? "The tunnel health observation could not be confirmed."
+          : connected
           ? null
           : processRunning
             ? "The tunnel readiness probe is failing; reconnecting may be in progress."
             : "The tunnel-client process is not running.",
-        lastProblem: connected
+        lastProblem: observation?.failure && connected
+          ? statusProblem("tunnel-health-probe-failed")
+          : connected
           ? null
           : statusProblem(
               processRunning
@@ -628,58 +639,14 @@ function beginTunnelHealthMonitoring(tunnelClient, environment, child) {
   tunnelHealthTimer.unref();
 }
 
-async function probeTunnelHealth(tunnelClient, environment) {
-  if (!existsSync(tunnelHealthUrlFile) || !existsSync(tunnelPidFile)) {
-    return { connected: false, reason: "health endpoint locator or pid file is missing" };
-  }
+async function probeTunnelHealth() {
   const cancellation = new AbortController();
   tunnelHealthCancellation = cancellation;
-  const result = await new Promise(resolveProbe => execFile(tunnelClient, [
-    "health",
-    "--json",
-    "--url-file",
-    tunnelHealthUrlFile,
-    "--pid-file",
-    tunnelPidFile,
-    "--require-control-plane-poll"
-  ], {
-    cwd: repoRoot,
-    env: environment,
-    timeout: 5_000,
-    signal: cancellation.signal,
-    killSignal: "SIGKILL",
-    maxBuffer: 64 * 1024
-  }, (error, stdout) => resolveProbe({
-    status: error ? (typeof error.code === "number" ? error.code : null) : 0,
-    error, signal: error?.signal, stdout
-  })));
-  if (tunnelHealthCancellation === cancellation) tunnelHealthCancellation = undefined;
-  if (result.status === 0) {
-    try {
-      if (hasRecentTunnelControlPlanePoll(parseProcessJson(result.stdout, "Tunnel health report"))) {
-        return { connected: true };
-      }
-    } catch { /* Missing or malformed successful-poll evidence is not readiness. */ }
-    return { connected: false, reason: "control-plane-poll-stale-or-unverified" };
-  }
-  const evidence = [`exit=${result.status ?? "none"}`];
-  if (result.error?.code) evidence.push(`error=${safeStatusText(result.error.code)}`);
-  if (result.signal) evidence.push(`signal=${result.signal}`);
-  // Only retain known non-secret fields. Never log the CLI's raw output,
-  // response bodies, URLs, or credentials returned by a failed endpoint.
   try {
-    const report = parseProcessJson(result.stdout, "Tunnel health report");
-    for (const name of ["healthz", "readyz"]) {
-      if (Number.isInteger(report[name]?.status)) evidence.push(`${name}=${report[name].status}`);
-    }
-    if (typeof report.control_plane_poll?.ok === "boolean") {
-      evidence.push(`control-plane-poll=${report.control_plane_poll.ok}`);
-    }
-    if (typeof report.process?.running === "boolean") evidence.push(`process-running=${report.process.running}`);
-  } catch {
-    // A command that could not execute may not produce a JSON report.
+    return await tunnelHealthObserver.probe({ signal: cancellation.signal });
+  } finally {
+    if (tunnelHealthCancellation === cancellation) tunnelHealthCancellation = undefined;
   }
-  return { connected: false, reason: evidence.join(", ") };
 }
 
 function processOutputText(value, field) {
@@ -691,13 +658,6 @@ function processOutputText(value, field) {
   return "";
 }
 
-function parseProcessJson(value, field) {
-  if (value instanceof Uint8Array) return parseJsonUtf8Strict(value, field);
-  const parsed = JSON.parse(processOutputText(value, field));
-  assertJsonTextIntegrity(parsed, field);
-  return parsed;
-}
-
 function recordTunnelHealthTransition(connected, reason, pid) {
   if (!connected && tunnelHealthFailedAt === undefined) {
     tunnelHealthFailedAt = Date.now();
@@ -706,6 +666,16 @@ function recordTunnelHealthTransition(connected, reason, pid) {
     console.error(`Tunnel health check recovered (pid ${pid ?? "unknown"}, unavailable for ${Date.now() - tunnelHealthFailedAt}ms).`);
     tunnelHealthFailedAt = undefined;
   }
+}
+
+function stoppedTunnelObservation(failure) {
+  if (!tunnelState.observation) return undefined;
+  return {
+    healthz: { status: null, failure: "not-observed" },
+    readyz: { status: null, failure: "not-observed" },
+    controlPlanePoll: { ...tunnelState.observation.controlPlanePoll, fresh: false, failure: "not-observed" },
+    failure: tunnelState.observation.failure === "process-exited" ? "process-exited" : failure
+  };
 }
 
 function publishRuntimeStatus() {
@@ -789,6 +759,7 @@ function shutdown(code = 0, phase = "stopped") {
   if (shutdownPromise) return shutdownPromise;
   shuttingDown = true;
   tunnelHealthCancellation?.abort();
+  tunnelHealthObserver?.close();
   shutdownPromise = (async () => {
     if (tunnelHealthTimer) {
       clearInterval(tunnelHealthTimer);
@@ -799,6 +770,7 @@ function shutdown(code = 0, phase = "stopped") {
       ...tunnelState,
       phase: tunnelState.phase === "not-applicable" ? "not-applicable" : "stopping",
       connected: false,
+      observation: stoppedTunnelObservation("aborted"),
       lastCheckedAt: new Date().toISOString()
     };
     tryPublishRuntimeStatus();
@@ -814,6 +786,7 @@ function shutdown(code = 0, phase = "stopped") {
       phase: tunnelState.phase === "not-applicable" ? "not-applicable" : phase,
       processRunning: false,
       connected: false,
+      observation: stoppedTunnelObservation("aborted"),
       lastCheckedAt: new Date().toISOString()
     };
     tryPublishRuntimeStatus();
