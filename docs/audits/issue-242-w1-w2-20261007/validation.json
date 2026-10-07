@@ -1,0 +1,167 @@
+{
+  "schema": 1,
+  "base": "264fa5c99ca1c8edeef50af247614204c8f3df53",
+  "startingTaskHead": "8474165e523b47d881f688bd09caf2e4c78ac7af",
+  "w1CodeHead": "4b8d935cc381db875c6133e1e960d0e57b78eb7b",
+  "w2CodeHead": "047156605d8556fa0de1c52f375d2da4f9d39b03",
+  "finalCodeHead": "04ddf63ada7cc6a7172f4190b0909e8bd6d8a3b7",
+  "integrationTarget": "dev",
+  "integration": "pending by explicit user instruction; no merge/push/cleanup",
+  "checks": [
+    {
+      "command": "npm run build",
+      "exitCode": 0,
+      "log": "build.txt",
+      "scope": "src build plus localization, release manifest and release policy"
+    },
+    {
+      "command": "npx tsc --noEmit --module nodenext --target es2022 --strict --skipLibCheck --esModuleInterop scripts/issue-242-fixture.ts scripts/issue-242-characterization.ts test/issue242Characterization.test.ts test/issue242ProxyCharacterization.test.ts test/issue242Reads.test.ts test/issue242ReadTransport.test.ts",
+      "exitCode": 0,
+      "log": "harness-typecheck.txt"
+    },
+    {
+      "command": "npx vitest run test/issue242Reads.test.ts test/issue242ReadTransport.test.ts test/issue242Characterization.test.ts test/stateReadProcess.test.ts test/displayReadPool.test.ts --maxWorkers=1",
+      "exitCode": 0,
+      "passed": 19,
+      "files": 5,
+      "log": "read-contract-tests.txt"
+    },
+    {
+      "command": "npx vitest run test/issue242ProxyCharacterization.test.ts test/projectLifecycle.test.ts test/projectLifecycleHost.test.ts test/tools.test.ts -t 'issue 242|Dashboard|dashboard|repeats registration/use/archive/delete/re-registration|fences late session/thread/Job snapshots|replays a lost delete response through Settings' --maxWorkers=1 --testTimeout=15000",
+      "exitCode": 0,
+      "passed": 12,
+      "skipped": 80,
+      "files": 4,
+      "log": "node-regressions.txt"
+    },
+    {
+      "command": "npx vitest run test/companionServer.test.ts test/remoteCompanionServer.test.ts -t '^(?!.*full worst-case JSON-escaped)' --maxWorkers=1 --testTimeout=15000",
+      "exitCode": 0,
+      "passed": 25,
+      "skipped": 1,
+      "files": 2,
+      "log": "companion-tests.txt",
+      "note": "Pre-existing Skills byte-envelope stress case characterized separately against current and P0 source."
+    },
+    {
+      "command": "npx vitest run test/runtimeProcess.test.ts -t 'preserves a forwarded MCP request through a stale heartbeat|separates a proxy connection failure from still-fresh runtime readiness|releases the HTTP observer when a complete caller disconnects|keeps timed-out native requests reserved|finishes valid question, cancellation and exact result controls' --maxWorkers=1 --testTimeout=15000",
+      "exitCode": 1,
+      "passed": 4,
+      "failed": 1,
+      "skipped": 21,
+      "log": "runtime-controls.txt",
+      "note": "Existing read timeout string assertion was stale after the intentional STATE_READ_STALE contract. Other four controls passed; capacity assertion updated and rerun below."
+    },
+    {
+      "command": "npx vitest run test/runtimeProcess.test.ts -t 'keeps timed-out native requests reserved' --maxWorkers=1 --testTimeout=15000",
+      "exitCode": 0,
+      "passed": 1,
+      "skipped": 25,
+      "log": "runtime-capacity-recheck.txt",
+      "note": "Read-specific error expectation; unchanged 128-slot/control outcome/physical settlement checks pass."
+    },
+    {
+      "command": "env -u CODEX_MCP_BRIDGE_LIVE_COMPANION_SOCKET -u CODEX_MCP_BRIDGE_LIVE_REMOTE_INVITATION -u CODEX_MCP_BRIDGE_LIFECYCLE_FAILURE_PREVIEW -u CODEX_MCP_BRIDGE_LIFECYCLE_PREVIEW npm run macos:check",
+      "exitCode": 0,
+      "cases": 235,
+      "skipped": 2,
+      "failed": 0,
+      "log": "native-check.txt",
+      "note": "Initial complete W2 suite before final decode-cancellation correction."
+    },
+    {
+      "command": "swift test --package-path macos -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors --filter UnixSocketRPCClientTests/testIssue242CancellationDuringDecodeRemainsCancellation",
+      "exitCode": 1,
+      "cases": 1,
+      "failed": 1,
+      "log": "decode-cancellation-red.txt",
+      "note": "Red: cancellation during decoding was incorrectly wrapped as contractMismatch. Fixed by preserving CancellationError."
+    },
+    {
+      "command": "env -u CODEX_MCP_BRIDGE_LIVE_COMPANION_SOCKET -u CODEX_MCP_BRIDGE_LIVE_REMOTE_INVITATION -u CODEX_MCP_BRIDGE_LIFECYCLE_FAILURE_PREVIEW -u CODEX_MCP_BRIDGE_LIFECYCLE_PREVIEW npm run macos:check",
+      "exitCode": 0,
+      "cases": 236,
+      "skipped": 2,
+      "failed": 0,
+      "log": "native-check-final.txt",
+      "note": "Final product source, including decoder cancellation. One additional test-only decode deadline case added and run afterward."
+    },
+    {
+      "command": "swift test --package-path macos -Xswiftc -strict-concurrency=complete -Xswiftc -warnings-as-errors --filter UnixSocketRPCClientTests/testIssue242DecoderCannotPublishAfterAbsoluteDeadline",
+      "exitCode": 0,
+      "cases": 1,
+      "failed": 0,
+      "log": "decode-deadline-test.txt",
+      "note": "Synthetic two-second synchronous decode under one-second budget: timeout/decode, no publication. No preemption claim."
+    },
+    {
+      "command": "npx vitest run test/companionServer.test.ts -t 'full worst-case JSON-escaped' --maxWorkers=1",
+      "exitCode": 1,
+      "failed": 1,
+      "skipped": 18,
+      "logs": [
+        "large-skill-node.txt",
+        "large-skill-node-quiet.txt"
+      ],
+      "note": "Existing 20-second test budget exceeded in concurrent and quiet executions. No product or Node test budget raised."
+    },
+    {
+      "command": "./node_modules/.bin/vitest run test/companionServer.test.ts -t 'full worst-case JSON-escaped' --maxWorkers=1",
+      "exitCode": 1,
+      "failed": 1,
+      "skipped": 18,
+      "log": "large-skill-node-p0-control.txt",
+      "source": "8474165e523b47d881f688bd09caf2e4c78ac7af",
+      "note": "Identical isolated git-archive P0 source snapshot and task dependencies also exceed existing 20-second test budget. Owned snapshot removed after settlement."
+    },
+    {
+      "command": "npx tsx scripts/issue-242-characterization.ts 1200",
+      "exitCode": 0,
+      "physicalReadCount": 34,
+      "logicalCalls": 41,
+      "burstCallers": 8,
+      "burstPhysicalReads": 1,
+      "report": "read-1200-after.json",
+      "source": "047156605d8556fa0de1c52f375d2da4f9d39b03",
+      "sourceDiffEmpty": true,
+      "conditions": "benchmark-conditions.json"
+    }
+  ],
+  "artifactSha256": {
+    "README.md": "db8fe9dfeae5f57329aaa38aae611ba7620dc070b7134b9a0992b48c6ff3ff06",
+    "benchmark-conditions.json": "035ff66db584dae2545f27a4266e6bcb44e99e240a7ef8fa01f1a00de0e205bc",
+    "build.txt": "efe273fd9cf4d943a8d476d932877fdafb34a52d249433979b490debfbf941ff",
+    "companion-tests.txt": "53687eb74cc71c84affa03803d5aa1b333fa2d3d84e9aa0e39c1834ffdcb2b8b",
+    "comparison.json": "9324d158d764ecbf338b8bfae7371aa88ca67c38c92e155cb0df78370b41dc33",
+    "decode-cancellation-red.txt": "43cb293607e19b62467d5a78b805c48436426748b218e3b97c4606d9625c05c0",
+    "decode-deadline-test.txt": "bdf297c5cb5b3c5daeef4bfab31ab81c300082a066140c101cc087d5b24b46d8",
+    "harness-typecheck.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "large-skill-node-p0-control.txt": "95ef5f4e9d627f3067a531f1738e329e4c28998fd5f69834eb0f4f1d1df6f11c",
+    "large-skill-node-quiet.txt": "46c7fbaea994dae3c7c93449add31884acce5a6a832fa93f089d20e45704a02f",
+    "large-skill-node.txt": "17713fcb12c9369dbb681ff7eb889f882f3a4bc023c75043b7933596de2b4740",
+    "local-preservation.json": "d0dbf05f4918192d64bfa4879a8b0353ced126961bb84fa564b9fa4fdfa8b23e",
+    "native-check-final.txt": "95655811dcb1d70b36ac0bfa63ca6e8e6ce5e8ba9767b4b134a4b8b48193a226",
+    "native-check.txt": "247cd940aa8952c0d745f3f27308237b75d000456e73355419cd3be654f1508c",
+    "node-regressions.txt": "9599e59540edffbe9d779067d128eb1169268f37af60c67d41c91e2c7d985fc4",
+    "read-1200-after.json": "ba66682ac5d3f462473e85e4a3bdba5228e3b7ec3dd3c2df6757bbda8fb7110e",
+    "read-contract-tests.txt": "5823961b9c7623b3ea252eb70837765a540ecc68c13040534779e6e1aa6071f5",
+    "remote-refs.txt": "30eb975ef7082ffd00b5d46947d5fb97aff643fb2430cfeab6e845074971725b",
+    "runtime-capacity-recheck.txt": "fc7b66a58ba3032b15275eaa6dccdcbd2ca9998b03598d452e6e5539e50aac7f",
+    "runtime-controls.txt": "cc06ddd9758ce3b731d1459978956974bb4144f781b1490b6e51a34af5b40f6a"
+  },
+  "excluded": [
+    "full Node repository suite",
+    "installed production bundle/data",
+    "GitHub Actions",
+    "W3/W4/R502 implementation"
+  ],
+  "remainingRisks": [
+    "worst-case 18MiB Skills fixture/performance gap on P0 and current source",
+    "synchronous SQL and decode CPU cannot be preempted; late publication is fenced",
+    "larger and production-distribution performance samples",
+    "event/timer rates, physical I/O, launcher/probe cost",
+    "production 502 correlation and installed artifact acceptance",
+    "preserved divergent local dev integration conflicts"
+  ],
+  "authorization": "W1/W2 implementation and task-owned commits authorized; integration expressly withheld"
+}

@@ -1,0 +1,32 @@
+{
+  "originalHead": "ea8f93e2acbb9f4b6deca113165d27e8c9c23857",
+  "originalStatus": "",
+  "dev": "ea8f93e2acbb9f4b6deca113165d27e8c9c23857",
+  "originDev": "264fa5c99ca1c8edeef50af247614204c8f3df53",
+  "main": "8bb81b1b27745532b7bc2113bb00e66c43df3bbb",
+  "originMain": "8bb81b1b27745532b7bc2113bb00e66c43df3bbb",
+  "taskCodeHead": "04ddf63ada7cc6a7172f4190b0909e8bd6d8a3b7",
+  "taskBranch": "codex/issue-242-p0-w0",
+  "worktrees": "worktree /Volumes/Data/Dev/codex-mcp-bridge\nHEAD ea8f93e2acbb9f4b6deca113165d27e8c9c23857\nbranch refs/heads/dev\n\nworktree /Volumes/Data/Dev/codex-mcp-bridge-issue-242-p0-w0\nHEAD 04ddf63ada7cc6a7172f4190b0909e8bd6d8a3b7\nbranch refs/heads/codex/issue-242-p0-w0",
+  "p0ArtifactHashesMatch": {
+    "build.txt": true,
+    "existing-node-tests.txt": true,
+    "final-focused-tests.txt": true,
+    "issue-snapshot.json": true,
+    "lifecycle-node-tests.txt": true,
+    "local-preservation.txt": true,
+    "native-tests.txt": true,
+    "native-transport-tests.txt": true,
+    "new-node-tests.txt": true,
+    "original-work-after.json": true,
+    "proxy-phases.json": true,
+    "read-100.json": true,
+    "read-1200-loaded-preliminary.json": true,
+    "read-1200.json": true,
+    "runtime-readiness-recheck.txt": true
+  },
+  "p0EvidenceDiff": "",
+  "localDevDivergence": "23\t17",
+  "remoteRefsConfirmedAtFinish": "264fa5c99ca1c8edeef50af247614204c8f3df53\trefs/heads/dev\n8bb81b1b27745532b7bc2113bb00e66c43df3bbb\trefs/heads/main",
+  "verifiedAt": "2026-10-07T12:05:33.771019+00:00"
+}

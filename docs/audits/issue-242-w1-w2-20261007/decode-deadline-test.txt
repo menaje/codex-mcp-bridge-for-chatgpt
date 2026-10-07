@@ -1,0 +1,24 @@
+[0/1] Planning build
+Building for debugging...
+[0/5] Write sources
+[1/5] Write swift-version--58304C5D6DBC2206.txt
+[3/5] Compiling CodexBridgeKitTests UnixSocketRPCClientTests.swift
+[4/5] Emitting module CodexBridgeKitTests
+[4/6] Write Objects.LinkFileList
+[5/6] Linking CodexBridgeMacPackageTests
+Build complete! (13.82s)
+Test Suite 'Selected tests' started at 2026-10-07 21:03:24.657.
+Test Suite 'CodexBridgeMacPackageTests.xctest' started at 2026-10-07 21:03:24.664.
+Test Suite 'UnixSocketRPCClientTests' started at 2026-10-07 21:03:24.664.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testIssue242DecoderCannotPublishAfterAbsoluteDeadline]' started.
+Test Case '-[CodexBridgeKitTests.UnixSocketRPCClientTests testIssue242DecoderCannotPublishAfterAbsoluteDeadline]' passed (2.205 seconds).
+Test Suite 'UnixSocketRPCClientTests' passed at 2026-10-07 21:03:26.870.
+	 Executed 1 test, with 0 failures (0 unexpected) in 2.205 (2.206) seconds
+Test Suite 'CodexBridgeMacPackageTests.xctest' passed at 2026-10-07 21:03:26.870.
+	 Executed 1 test, with 0 failures (0 unexpected) in 2.205 (2.207) seconds
+Test Suite 'Selected tests' passed at 2026-10-07 21:03:26.871.
+	 Executed 1 test, with 0 failures (0 unexpected) in 2.205 (2.214) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
