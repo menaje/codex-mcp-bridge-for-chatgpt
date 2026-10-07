@@ -19,7 +19,7 @@ describe("issue 242 latest-dev characterization", () => {
       const views = await Promise.all(Array.from({ length: 4 }, () => service.dashboardSnapshot({ limit: 2, includeHistory: false })));
       expect(views.map(view => view.counts.retainedJobs)).toEqual([100, 100, 100, 100]);
       expect(views.map(view => view.terminalRows.map(row => row.rowKey))).toEqual(Array(4).fill(views[0].terminalRows.map(row => row.rowKey)));
-      expect(rows).toHaveLength(4);
+      expect(rows).toHaveLength(1);
       for (const row of rows) {
         expect(row.sqlStatements).toBeGreaterThan(0);
         expect(row.selectStatements).toBeGreaterThan(0);

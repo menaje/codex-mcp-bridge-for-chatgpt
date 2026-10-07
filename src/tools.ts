@@ -19,7 +19,7 @@ import {
   settingsAction,
   statusAction
 } from "./nextActions.js";
-import { DisplayReadPool, waitForDisplay } from "./displayReadPool.js";
+import { DisplayReadPool, waitForDisplay, type ReadObservationContext } from "./displayReadPool.js";
 import type { CodexAccountSnapshot } from "./codexAccount.js";
 import { uiControlProofs, type UiControlClaims } from "./uiControlProofs.js";
 import {
@@ -2048,6 +2048,8 @@ export type CodexJobRegistryOptions = {
   telemetry?: BridgeTelemetryService;
   /** Read-worker snapshot: load persisted state without recovery mutations. */
   projectionOnly?: boolean;
+  /** Query-only worker: detail hydrates one Agent; Settings hydrates no Jobs. */
+  projectionJobs?: { agentId: string } | false;
   allowedRoots?: string[];
 };
 
@@ -2414,7 +2416,10 @@ export class CodexJobRegistry {
       perScopeCapacity: PROGRESS_PERSISTENCE_PER_PROJECT_CAPACITY,
       run: snapshot => this.persistDeferredProgress(snapshot)
     });
-    this.load();
+    if (options.projectionJobs !== undefined && (!this.projectionOnly || !this.stateStore?.readOnly)) {
+      throw new Error("Partial Job hydration requires a query-only projection.");
+    }
+    this.load(options.projectionJobs);
   }
 
   get persistent(): boolean {
@@ -4466,9 +4471,9 @@ export class CodexJobRegistry {
     }
   }
 
-  private load(): void {
-    if (!this.stateStore) return;
-    const stored = this.stateStore.listJobs();
+  private load(filter?: { agentId: string } | false): void {
+    if (!this.stateStore || filter === false) return;
+    const stored = this.stateStore.listJobs(filter?.agentId);
     const changed = this.loadJobs(stored);
     for (const job of this.jobs.values()) {
       this.progressPersisted.set(job.jobId, {
@@ -4900,8 +4905,10 @@ export class CodexJobRegistry {
         activity
       ])
     );
+    const retired = this.projectionOnly
+      ? this.activityStore.dashboardReadModel.retiredJobIds([...this.jobs.keys()]) : undefined;
     for (const job of this.jobs.values()) {
-      if (this.activityStore.projectLifecycle.jobReceipt(job.jobId)) {
+      if (retired ? retired.has(job.jobId) : this.activityStore.projectLifecycle.jobReceipt(job.jobId)) {
         this.deferredExecutions.get(job.jobId)?.discard();
         this.deferredSettlements.delete(job.jobId);
         this.progressPersistenceQueue.remove(snapshot=>snapshot.jobId === job.jobId);
@@ -5510,13 +5517,7 @@ export function registerBridgeTools(
         cacheHits: view.enrichment.cacheHits
       });
       const serializationStartedAt = Date.now();
-      for (const row of [...view.activeRows, ...view.terminalRows, ...view.idleRows, ...(view.statusRows || [])]) {
-        const threadId = row.codexThreadUrl?.replace("codex://threads/", "");
-        const connection = threadId ? jobs.admissionStateStore.threadConnections.get(threadId) : undefined;
-        if (connection) row.handoff = { phase: connection.phase,
-          ...(connection.reason !== undefined ? { reason: connection.reason } : {}),
-          requested: connection.handoffRequested, canOpen: connection.phase === "released" && Boolean(connection.evidence) };
-      }
+      projectDashboardHandoffs(view, jobs);
       JSON.stringify(view);
       cardPerformance.record("dashboard.serialization", Date.now() - serializationStartedAt);
       return view;
@@ -5566,25 +5567,7 @@ export function registerBridgeTools(
         cacheHits: view.enrichment.cacheHits
       });
       const serializationStartedAt = Date.now();
-      for (const row of [
-        ...view.activeRows,
-        ...view.terminalRows,
-        ...view.idleRows,
-        ...(view.statusRows || [])
-      ]) {
-        const threadId = row.codexThreadUrl?.replace("codex://threads/", "");
-        const connection = threadId
-          ? jobs.admissionStateStore.threadConnections.get(threadId)
-          : undefined;
-        if (connection) {
-          row.handoff = {
-            phase: connection.phase,
-            ...(connection.reason !== undefined ? { reason: connection.reason } : {}),
-            requested: connection.handoffRequested,
-            canOpen: connection.phase === "released" && Boolean(connection.evidence)
-          };
-        }
-      }
+      projectDashboardHandoffs(view, jobs);
       JSON.stringify(view);
       cardPerformance.record("dashboard.serialization", Date.now() - serializationStartedAt);
       return view;
@@ -5659,9 +5642,9 @@ export function registerBridgeTools(
     }
   };
   if (readProjection) {
-    applicationService.dashboardSnapshot = async (options = {}) => {
+    applicationService.dashboardSnapshot = async (options = {}, context) => {
       if (!options.inspectRuntime) {
-        const view = await readProjection.dashboardSnapshot(options);
+        const view = await readProjection.dashboardSnapshot(options, context);
         projectAccountForDisplay(view);
         return view;
       }
@@ -5671,20 +5654,20 @@ export function registerBridgeTools(
             value: { value: null, failed: true }
           }))
         : undefined;
-      const plan = await readProjection.dashboardRuntimePlan(options);
+      const plan = await readProjection.dashboardRuntimePlan(options, context);
       const projectedEnrichment = await enrichDashboardRuntimePlan(upstream, plan, undefined,
         !config.codexService);
       const view = await readProjection.dashboardSnapshotWithEnrichment(
         options,
-        projectedEnrichment
+        projectedEnrichment, context
       );
       projectAccountForDisplay(view, accountRead ? await accountRead : undefined);
       return view;
     };
-    applicationService.dashboardHistoryDetail = options =>
-      readProjection.dashboardHistoryDetail(options);
-    applicationService.settingsSnapshot = options =>
-      readProjection.settingsSnapshot(options);
+    applicationService.dashboardHistoryDetail = (options, context) =>
+      readProjection.dashboardHistoryDetail(options, context);
+    applicationService.settingsSnapshot = (options, context) =>
+      readProjection.settingsSnapshot(options, context);
   }
   // The isolated reader needs the same fresh application projections, but no
   // wire tools, cards or execution handlers. Building their schemas for every
@@ -11142,16 +11125,16 @@ export type BridgeApplicationService = {
   historyAction?(input: DashboardHistoryActionInput): Promise<{ok: true}>;
   threadHandoff?(input: { rowKey: string; codexThreadUrl: string; action: "request" | "cancel" | "status" }): Promise<{ phase: string; reason?: string; requested: boolean; canOpen: boolean }>;
   subscribeChanges?(listener: (topic: "dashboard" | "settings" | "enrichment") => void): () => void;
-  dashboardSnapshot(options?: BridgeDashboardSnapshotOptions): Promise<DashboardView>;
-  dashboardHistoryDetail?(options: BridgeDashboardHistoryDetailOptions): Promise<DashboardHistoryDetail>;
+  dashboardSnapshot(options?: BridgeDashboardSnapshotOptions, context?: ReadObservationContext): Promise<DashboardView>;
+  dashboardHistoryDetail?(options: BridgeDashboardHistoryDetailOptions, context?: ReadObservationContext): Promise<DashboardHistoryDetail>;
   /** Internal read-worker planning boundary; never registered as an MCP/native method. */
-  dashboardRuntimePlan?(options?: BridgeDashboardSnapshotOptions): Promise<BridgeDashboardRuntimePlan>;
+  dashboardRuntimePlan?(options?: BridgeDashboardSnapshotOptions, context?: ReadObservationContext): Promise<BridgeDashboardRuntimePlan>;
   /** Internal read-worker render boundary; enrichment contains no database authority. */
   dashboardSnapshotWithEnrichment?(
     options: BridgeDashboardSnapshotOptions,
-    enrichment: BridgeDashboardEnrichment
+    enrichment: BridgeDashboardEnrichment, context?: ReadObservationContext
   ): Promise<DashboardView>;
-  settingsSnapshot(options?: BridgeSettingsSnapshotOptions): Promise<SettingsView>;
+  settingsSnapshot(options?: BridgeSettingsSnapshotOptions, context?: ReadObservationContext): Promise<SettingsView>;
   modelDescriptionHistory(input: { modelId: string; beforeVersion?: number }): Promise<ModelDescriptionHistoryPage>;
   updateSettings(input: BridgeSettingsMutationInput): Promise<SettingsView>;
   runtimeSnapshot(options?: BridgeRuntimeSnapshotOptions): Promise<BridgeRuntimeAdmissionSnapshot>;
@@ -11561,6 +11544,28 @@ function dashboardHistoryRevision(agent: Pick<BridgeAgent, "agentId" | "version"
   job?: {jobId:string;status:string;updatedAt:number}): string {
   return createHash("sha256").update(JSON.stringify([agent.agentId,agent.version,
     job?.jobId || null,job?.status || null,job?.updatedAt || null])).digest("hex");
+}
+
+function projectDashboardHandoffs(view: DashboardView, jobs: CodexJobRegistry): void {
+  const rows = [...view.activeRows, ...view.terminalRows, ...view.idleRows, ...(view.statusRows || [])];
+  const connections = new Map(jobs.admissionStateStore.threadConnections.listByThreadIds(rows.flatMap(row =>
+    row.codexThreadUrl ? [row.codexThreadUrl.replace("codex://threads/", "")] : []))
+    .map(connection => [connection.threadId, connection]));
+  for (const row of rows) {
+    const connection = row.codexThreadUrl ? connections.get(row.codexThreadUrl.replace("codex://threads/", "")) : undefined;
+    if (connection) row.handoff = { phase: connection.phase,
+      ...(connection.reason !== undefined ? { reason: connection.reason } : {}),
+      requested: connection.handoffRequested, canOpen: connection.phase === "released" && Boolean(connection.evidence) };
+  }
+}
+
+/** Resolve the opaque row identity from fresh Agent rows, never a cwd lookup. */
+export function dashboardAgentForDetail(store: BridgeStateStore, options: BridgeDashboardHistoryDetailOptions): BridgeAgent | undefined {
+  for (let offset = 0; ; offset += 1_000) {
+    const page = store.listAgents(options.scopeId, 1_000, offset);
+    const match = page.find(agent => dashboardRowKey(agent.agentId) === options.rowKey);
+    if (match || page.length < 1_000) return match;
+  }
 }
 
 function dashboardRuntimeProblemIdentity(jobs: CodexJobRegistry, agent: BridgeAgent) {
@@ -12292,8 +12297,7 @@ function buildDashboardHistoryDetail(
   modelCatalog: CodexModelCatalogProvider,
   options: BridgeDashboardHistoryDetailOptions
 ): DashboardHistoryDetail {
-  const agent = listAllDashboardAgents(jobs, options.scopeId)
-    .find((candidate) => dashboardRowKey(candidate.agentId) === options.rowKey);
+  const agent = dashboardAgentForDetail(jobs.admissionStateStore, options);
   if (!agent) {
     throw new Error("DASHBOARD_HISTORY_TARGET_CHANGED: Refresh the selected execution.");
   }
@@ -12661,11 +12665,10 @@ async function buildDashboardView(
   const agentById = new Map(allAgents.map((agent) => [agent.agentId, agent]));
   const currentThreadByAgent = new Map(jobs.listCurrentAgentThreads().map(thread => [thread.agentId, thread]));
   const sessionById = new Map(allSessions.map(session => [session.threadId, session]));
-  const activityById = new Map<string, ReturnType<CodexJobRegistry["getActivity"]>>();
-  const activityFor = (id: string) => {
-    if (!activityById.has(id)) activityById.set(id, jobs.getActivity(id));
-    return activityById.get(id);
-  };
+  const activityTitles = jobs.admissionStateStore.dashboardReadModel.activityTitles([
+    ...allJobs.map(job => job.activityId), ...archivedJobs.map(job => job.activityId),
+    ...problemJobRecords.map(job => job.activityId)
+  ]);
   const currentThreadFor = (agentId: string | undefined): BridgeAgentThread | undefined => {
     if (!agentId) return undefined;
     return currentThreadByAgent.get(agentId);
@@ -12785,7 +12788,7 @@ async function buildDashboardView(
     const cancellation = cancellationForDashboardJob(job.jobId);
     return {
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
-      activityTitle: activityFor(job.activityId)?.title || null,
+      activityTitle: activityTitles.get(job.activityId) || null,
       ...(execution ? { execution } : {}),
       ...dashboardJobTokenUsage(job.jobId, summaryCache),
       status: statusForJob(job),
@@ -12802,7 +12805,7 @@ async function buildDashboardView(
     const cancellation = cancellationForDashboardJob(job.jobId);
     return {
       activityKey: dashboardActivityKey(job.activityId, job.jobId),
-      activityTitle: activityFor(job.activityId)?.title || null,
+      activityTitle: activityTitles.get(job.activityId) || null,
       ...(execution ? { execution } : {}),
       ...dashboardJobTokenUsage(job.jobId, summaryCache),
       status: job.status as DashboardStatus,
@@ -12840,6 +12843,7 @@ async function buildDashboardView(
     );
   };
 
+  const deferredHistories = new Map<DashboardTurn[], () => DashboardTurn[]>();
   const historyForAgent = (
     agentId: string | undefined,
     representativeJobId: string | undefined
@@ -12862,10 +12866,11 @@ async function buildDashboardView(
         (left, right) =>
           right.updatedAt - left.updatedAt || right.jobId.localeCompare(left.jobId)
       );
+    const turns: DashboardTurn[] = [];
+    if (includeHistory) deferredHistories.set(turns, () =>
+      retained.slice(0, DASHBOARD_HISTORY_LIMIT_PER_AGENT).map(entry => entry.turn()));
     return {
-      turns: includeHistory
-        ? retained.slice(0, DASHBOARD_HISTORY_LIMIT_PER_AGENT).map((entry) => entry.turn())
-        : [],
+      turns,
       total: Math.max(
         retained.length,
         (jobsByAgent.get(agentId)?.length || 0) +
@@ -12886,7 +12891,7 @@ async function buildDashboardView(
     const job = agent.currentJobId
       ? jobs.get(agent.currentJobId)
       : latestJobByAgent.get(agent.agentId);
-    if (!job || !activityFor(job.activityId)) return null;
+    if (!job || !activityTitles.has(job.activityId)) return null;
     return job.pendingInteractions.some(interaction => !ordinaryCodexQuestion(interaction)) ? "request" : null;
   };
 
@@ -13299,10 +13304,10 @@ async function buildDashboardView(
     const offset = Math.min(problemQuery.offset,maximumOffset);
     const selectedEntries = filtered.slice(offset,offset+limit);
     const selectedJobIds = selectedEntries.flatMap((entry) => entry.jobId ? [entry.jobId] : []);
-    for (const retained of jobs.admissionStateStore.listDashboardRetainedJobsByIds(
-      selectedJobIds,
-      scopeId
-    )) archivedById.set(retained.jobId, retained);
+    const selectedRetained = jobs.admissionStateStore.listDashboardRetainedJobsByIds(selectedJobIds, scopeId);
+    for (const retained of selectedRetained) archivedById.set(retained.jobId, retained);
+    for (const [id, title] of jobs.admissionStateStore.dashboardReadModel.activityTitles(
+      selectedRetained.map(job => job.activityId).filter(id => !activityTitles.has(id)))) activityTitles.set(id, title);
     for (const [jobId, summary] of jobs.admissionStateStore.dashboardJobSummaries(selectedJobIds)) {
       summaryCache.set(jobId, summary);
     }
@@ -13372,6 +13377,9 @@ async function buildDashboardView(
     limit
   );
   for (const row of [...activePage.rows, ...terminalPage.rows, ...idlePage.rows, ...statusRows]) {
+    // Counts and ordering use lightweight rows; format history only after paging.
+    const history = row.history ? deferredHistories.get(row.history) : undefined;
+    if (history) row.history = history();
     const agentId = agentIdByRowKey.get(row.rowKey);
     if (agentId) visibleAgentIdsOut?.add(agentId);
   }
@@ -15298,11 +15306,13 @@ function extractResultBackendKind(result: ToolResult): CodexBackendKind | undefi
   return value === "mcp-server" || value === "app-server" || value === "codex-sdk" ? value : undefined;
 }
 
+const runtimeMetadataSchema = z.object({ codex: z.string().regex(/^\d+\.\d+\.\d+$/),
+  sdk: z.string().regex(/^\d+\.\d+\.\d+$/).optional(), python: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
+  channel: z.literal("stable").optional(), requestedAuthMode: z.enum(["chatgpt", "api-key"]).optional(), resolvedAuthMode: z.enum(["chatgpt", "api-key"]).optional()
+});
 function safeRuntimeMetadata(value: unknown): UpstreamWorkerAssignment["runtime"] | undefined {
-  const parsed = z.object({ codex: z.string().regex(/^\d+\.\d+\.\d+$/),
-    sdk: z.string().regex(/^\d+\.\d+\.\d+$/).optional(), python: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
-    channel: z.literal("stable").optional(), requestedAuthMode: z.enum(["chatgpt", "api-key"]).optional(), resolvedAuthMode: z.enum(["chatgpt", "api-key"]).optional()
-  }).safeParse(value);
+  if (value === undefined) return undefined;
+  const parsed = runtimeMetadataSchema.safeParse(value);
   return parsed.success ? parsed.data : undefined;
 }
 

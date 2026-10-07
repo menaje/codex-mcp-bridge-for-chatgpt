@@ -449,7 +449,7 @@ describe("native companion server", () => {
     })).toMatchObject({ result: {
       kind: "dashboard-history", rowKey: params.rowKey, historyRevision: "b".repeat(64)
     } });
-    expect(applicationService.dashboardHistoryDetail).toHaveBeenCalledWith(params);
+    expect(applicationService.dashboardHistoryDetail).toHaveBeenCalledWith(params, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
     expect(await request(socketPath, {
       jsonrpc: "2.0", id: "invalid-history-detail", method: "dashboard.history-detail", params: { rowKey: "bad" }
     })).toHaveProperty("error");
@@ -494,7 +494,7 @@ describe("native companion server", () => {
       idleOffset: 7,
       inspectRuntime: false,
       includeHistory: false
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
     expect(dashboard).toMatchObject({ id: 1, result: { kind: "dashboard" } });
 
     await request(socketPath, {
@@ -511,7 +511,7 @@ describe("native companion server", () => {
       idleOffset: undefined,
       inspectRuntime: true,
       includeHistory: true
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
 
     await request(socketPath, {
       jsonrpc: "2.0",
@@ -527,7 +527,7 @@ describe("native companion server", () => {
       idleOffset: undefined,
       inspectRuntime: true,
       includeHistory: true
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
 
     const settings = await request(socketPath, {
       jsonrpc: "2.0",
@@ -535,7 +535,7 @@ describe("native companion server", () => {
       method: "settings.snapshot",
       params: { refreshModels: true }
     });
-    expect(applicationService.settingsSnapshot).toHaveBeenCalledWith({ refreshModels: true });
+    expect(applicationService.settingsSnapshot).toHaveBeenCalledWith({ refreshModels: true }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
     expect(settings).toMatchObject({ id: 2, result: { settings: { settingsRevision: 3 } } });
 
     const mutation = {
@@ -584,7 +584,7 @@ describe("native companion server", () => {
       idleOffset: undefined,
       inspectRuntime: false,
       includeHistory: false
-    });
+    }, expect.objectContaining({ signal: expect.any(AbortSignal), deadlineAt: expect.any(Number) }));
   });
 
   it("localizes native Settings warnings using the requested locale", async () => {

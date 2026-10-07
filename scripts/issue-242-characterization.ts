@@ -43,8 +43,15 @@ try {
     groups.detailWarm = aggregates(observations.slice(offset));
   }
   let offset = observations.length;
-  await Promise.all(Array.from({ length: 8 }, () => service.dashboardSnapshot({ limit: 12, includeHistory: false })));
-  groups.burst8 = aggregates(observations.slice(offset));
+  const burstLatencies: number[] = [];
+  await Promise.all(Array.from({ length: 8 }, async () => {
+    const at = performance.now();
+    await service.dashboardSnapshot({ limit: 12, includeHistory: false });
+    burstLatencies.push(performance.now() - at);
+  }));
+  const physicalBurst = observations.slice(offset);
+  groups.burst8 = { ...aggregates(physicalBurst), callers: 8, physicalReads: physicalBurst.length,
+    coalescedCallers: 8 - physicalBurst.length, callerLatencyMs: summary(burstLatencies) };
   offset = observations.length;
   await service.settingsSnapshot();
   groups.settingsFirst = aggregates(observations.slice(offset));
@@ -85,27 +92,29 @@ try {
   const after = f.database.prepare("SELECT count(*) AS n FROM bridge_instances").get() as { n: number };
   assert.equal(after.n, before.n, "Read projections must not register a writer.");
   console.log(JSON.stringify({
-    schema: 1, sourceHead: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
-    sourceDiffSha256: (await import("node:crypto")).createHash("sha256").update(execFileSync("git", ["diff", "--", "src/stateReadProcess.ts", "src/runtimeProcess.ts"])).digest("hex"),
+    schema: 2, sourceHead: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+    sourceDiffSha256: (await import("node:crypto")).createHash("sha256").update(execFileSync("git", ["diff", "--", "src", "scripts/issue-242-characterization.ts"])).digest("hex"),
     environment: { node: process.version, platform: process.platform, arch: process.arch,
       sqlite: (f.database.prepare("SELECT sqlite_version() AS v").get() as { v: string }).v },
     fixture: { retainedJobs: size, agents: Math.ceil(size / 10), sessions: Math.ceil(size / 10),
       jobsPerAgent: 10, failedFraction: .2, resultBytesPerJob: 9, pageSize: 12,
       firstRead: "new child; OS filesystem cache uncontrolled", warm: "same child; registries rebuilt each request" },
     groups, uninstrumentedControl: control,
-    overNative3sBudgetFraction: observations.filter(row => row.method === "dashboardSnapshot" && row.endToEndMs > 3_000).length /
-      observations.filter(row => row.method === "dashboardSnapshot").length,
+    overNative3sBudgetFraction: [...observations.filter(row => row.method === "dashboardSnapshot" && !physicalBurst.includes(row))
+      .map(row => row.endToEndMs), ...burstLatencies].filter(ms => ms > 3_000).length / 30,
+    physicalReadCount: observations.length,
     actualReadDeadlineTimeoutFraction: observations.filter(row => row.callerAbandoned).length / observations.length,
     actualReadCapacityAfter: service.health().inFlight,
     completion: { empty20: { ...empty, result: undefined }, claimOne: { ...claimed, result: undefined },
       releaseReclaim10: { ...immediateRetry, result: undefined } },
     parentEventLoopDelayMs: { p50: lag.percentile(50) / 1e6, p95: lag.percentile(95) / 1e6, max: lag.max / 1e6 },
-    limits: ["SQL counts include connection PRAGMAs; no per-statement duration or lock-wait measurement.",
+    limits: ["Child SQL counts include connection PRAGMAs; parent revision SELECT/PRAGMA checks are separate and not counted. No per-statement duration or lock-wait measurement.",
       "projectionMs includes SQL and model/presentation work. jsonPreflightMs excludes IPC's second encoding.",
       "endToEndMs includes parent send/child queue/encoding/receive; transport-only time is not isolated.",
       "WAL file length delta is not WAL frame writes, fsync or physical I/O.",
       "Over-native-budget fraction is an IPC latency comparison, not measured Swift socket timeouts.",
       "Uninstrumented control uses a second child on the same unchanged fixture; OS cache and load are uncontrolled.",
+      "Baseline list/burst options are preserved for comparison; legacy unfiltered non-history responses have no rows. Native filtered page coverage is tested separately.",
       "No native event/timer rate or installed app/tunnel evidence is inferred from this synthetic workload."]
   }, null, 2));
 } finally { lag.disable(); await service.close(); await f.close(); }

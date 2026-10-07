@@ -504,7 +504,7 @@ export async function dispatchCompanionPayload(
           const params = changeWaitParamsSchema.parse(request.params || {});
           return changes.wait(params.after, params.waitMs, signal);
         })()
-      : await dispatchRequest(request, applicationService, remoteManagement);
+      : await dispatchRequest(request, applicationService, remoteManagement, signal);
     return { jsonrpc: "2.0", id: request.id, result };
   } catch (error) {
     return errorResponse(request.id, -32602, safeErrorMessage(error));
@@ -514,7 +514,8 @@ export async function dispatchCompanionPayload(
 async function dispatchRequest(
   request: CompanionRequest,
   applicationService: BridgeApplicationService,
-  remoteManagement?: RemoteCompanionControl
+  remoteManagement?: RemoteCompanionControl,
+  signal?: AbortSignal
 ): Promise<unknown> {
   switch (request.method) {
     case "companion.hello":
@@ -575,7 +576,8 @@ async function dispatchRequest(
         throw new Error("DASHBOARD_HISTORY_DETAIL_UNSUPPORTED");
       }
       return applicationService.dashboardHistoryDetail(
-        dashboardHistoryDetailParamsSchema.parse(request.params)
+        dashboardHistoryDetailParamsSchema.parse(request.params),
+        { signal, deadlineAt: Date.now() + 4_500 }
       );
     }
     case "dashboard.problem": {
@@ -601,13 +603,13 @@ async function dispatchRequest(
         // snapshot behavior. The current client sends false explicitly.
         inspectRuntime: params.enrich !== false,
         includeHistory: params.includeHistory !== false
-      });
+      }, { signal, deadlineAt: Date.now() + (params.enrich !== false ? 9_000 : params.problems ? 2_500 : 1_500) });
     }
     case "settings.snapshot": {
       const params = settingsSnapshotParamsSchema.parse(request.params || {});
       const view = await applicationService.settingsSnapshot({
         refreshModels: params.refreshModels
-      });
+      }, { signal, deadlineAt: Date.now() + 10_000 });
       return localizeSettingsView(view, params.locale);
     }
     case "settings.model-description-history":
