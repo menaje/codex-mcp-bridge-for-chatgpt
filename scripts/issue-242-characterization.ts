@@ -83,16 +83,40 @@ try {
   assert.equal(candidates.length, 1);
   const claimed = await f.measure(() => f.jobs.claimNativeCompletionNotifications(10, "fixture-consumer"));
   const id = claimed.result[0]!.outboxId;
+  let retryBatch = claimed.result;
+  const retryMethods = { release: 0, claim: 0 };
   const immediateRetry = await f.measure(() => {
     for (let i = 0; i < 10; i++) {
-      f.jobs.releaseNativeCompletionNotifications([id], "fixture-consumer");
-      assert.equal(f.jobs.claimNativeCompletionNotifications(10, "fixture-consumer").length, 1);
+      if (retryBatch.length) {
+        retryMethods.release++;
+        f.jobs.releaseNativeCompletionNotifications([id], "fixture-consumer");
+      }
+      retryMethods.claim++;
+      retryBatch = f.jobs.claimNativeCompletionNotifications(10, "fixture-consumer");
+      assert.equal(retryBatch.length, 0, "W3 must defer presentation retry until its durable deadline.");
     }
   });
+  assert.equal(retryMethods.release, 1);
+  assert.equal(immediateRetry.sql.BEGIN, 1);
+  assert.equal(immediateRetry.changedRows, 1);
+  const retryRecord = f.store.getCompletionOutbox(id)!;
+  assert.ok(retryRecord.nextAttemptAt! > Date.now());
+  const originalNow = Date.now;
+  let dueRetry;
+  try {
+    Date.now = () => retryRecord.nextAttemptAt!;
+    dueRetry = await f.measure(() => f.jobs.claimNativeCompletionNotifications(10, "fixture-consumer"));
+    assert.equal(dueRetry.result.length, 1);
+    assert.equal(dueRetry.result[0]!.outboxId, id, "Presentation retries keep the same durable event.");
+  } finally { Date.now = originalNow; }
+  const integrity = f.database.pragma("integrity_check");
+  const foreignKeys = f.database.pragma("foreign_key_check");
+  assert.deepEqual(integrity, [{ integrity_check: "ok" }]);
+  assert.deepEqual(foreignKeys, []);
   const after = f.database.prepare("SELECT count(*) AS n FROM bridge_instances").get() as { n: number };
   assert.equal(after.n, before.n, "Read projections must not register a writer.");
   console.log(JSON.stringify({
-    schema: 2, sourceHead: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+    schema: 3, sourceHead: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
     sourceDiffSha256: (await import("node:crypto")).createHash("sha256").update(execFileSync("git", ["diff", "--", "src", "scripts/issue-242-characterization.ts"])).digest("hex"),
     environment: { node: process.version, platform: process.platform, arch: process.arch,
       sqlite: (f.database.prepare("SELECT sqlite_version() AS v").get() as { v: string }).v },
@@ -106,7 +130,9 @@ try {
     actualReadDeadlineTimeoutFraction: observations.filter(row => row.callerAbandoned).length / observations.length,
     actualReadCapacityAfter: service.health().inFlight,
     completion: { empty20: { ...empty, result: undefined }, claimOne: { ...claimed, result: undefined },
-      releaseReclaim10: { ...immediateRetry, result: undefined } },
+      releaseReclaim10: { ...immediateRetry, result: undefined, methods: retryMethods },
+      dueRetry: { ...dueRetry, result: undefined } },
+    integrity: { sqlite: integrity, foreignKeyViolations: foreignKeys.length },
     parentEventLoopDelayMs: { p50: lag.percentile(50) / 1e6, p95: lag.percentile(95) / 1e6, max: lag.max / 1e6 },
     limits: ["Child SQL counts include connection PRAGMAs; parent revision SELECT/PRAGMA checks are separate and not counted. No per-statement duration or lock-wait measurement.",
       "projectionMs includes SQL and model/presentation work. jsonPreflightMs excludes IPC's second encoding.",
