@@ -112,6 +112,7 @@ try {
       return {...before,datasets,errors,afterMessages:await page.evaluate(()=>window.__messages),teardown:await page.evaluate(()=>window.__teardown)};
     }`);
     const observed = JSON.parse(raw);
+    writeFileSync(path.join(directory, `${scenario}.observed.json`), JSON.stringify(observed, null, 2));
     assert.deepEqual(observed.errors, [], scenario);
     assert.equal(observed.afterMessages, observed.messages, `${scenario}: teardown stops instance`);
     assert.ok(observed.teardown > 0, scenario);
@@ -119,7 +120,7 @@ try {
       assert.equal(observed.messages, 0, scenario);
       assert.ok(observed.events.some((e: any) => e.name === "codex_ui_read" && e.scope === "all"), scenario);
       assert.ok(observed.events.every((e: any) => !["codex_ui_completion", "codex_status", "ui/message"].includes(e.name)), scenario);
-      assert.ok(observed.datasets.every((d: any) => d.cardResourceUri?.endsWith("/v4.html")), scenario);
+      assert.ok(observed.datasets.every((d: any) => d.cardResourceUri === currentUiResourceUri("dashboard")), scenario);
     } else if (scenario === "old-wait-blocked") assert.equal(observed.messages, 0, scenario);
     else assert.equal(observed.messages, 1, `${scenario}: old in-memory host capability requires explicit teardown`);
     results.push({ scenario, ...observed, passed: true });
