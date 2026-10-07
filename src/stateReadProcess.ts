@@ -4,11 +4,12 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { CodexService, type CodexSessionAuthBoundaryEvidence } from "./codexService.js";
 import { ScopeResolver } from "./scopeResolver.js";
-import { createBridgeMcpServer } from "./server.js";
+import { createModelCatalog } from "./server.js";
 import { SessionRegistry } from "./sessionRegistry.js";
 import { BridgeStateStore } from "./stateStore.js";
 import {
   CodexJobRegistry,
+  createBridgeReadProjectionService,
   TaskProjectAvailabilityProjection,
   type BridgeApplicationService,
   type BridgeDashboardEnrichment,
@@ -554,27 +555,27 @@ async function executeProjection(
   });
   const scopeResolver = new ScopeResolver({ stateStore });
   const projectAvailability = new TaskProjectAvailabilityProjection(config);
-  const server = createBridgeMcpServer(
+  const applicationService = createBridgeReadProjectionService(
     config,
     upstream,
     sessions,
     jobs,
-    undefined,
+    createModelCatalog(config, upstream),
     userSettings,
     scopeResolver,
     projectAvailability
   );
   try {
-    const operation = server.applicationService[method];
+    const operation = applicationService[method];
     if (typeof operation !== "function") {
       throw new Error(`Unsupported read projection method: ${method}`);
     }
     return await (operation as (...values: unknown[]) => unknown).apply(
-      server.applicationService,
+      applicationService,
       args
     );
   } finally {
-    await server.close();
+    await jobs.closeThreadConnections();
     await upstream.close();
     stateStore.close();
   }

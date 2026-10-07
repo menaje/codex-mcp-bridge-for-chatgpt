@@ -74,6 +74,13 @@ again; a known changed hash returns `REQUEST_ID_CONFLICT`. Memory caches, deferr
 progress and settlement snapshots consult these durable receipts, including after
 restart. Undelivered completion/event records are removed, not marked delivered.
 
+The isolated read process rebuilds its query-only DB/session/Job/settings graph
+for each observation. It calls the application projections directly without
+registering MCP wire tools or cards, and exposes only the five read methods.
+This avoids spending the observation deadline on unrelated tool-schema setup
+while ensuring the next Settings/Dashboard read observes retirement and a new
+same-cwd identity. It never shares a cached registry graph across those changes.
+
 The 30→31 migration preserves existing active identities. Legacy archived and
 deleted/tombstoned rows become pending cleanup with `archived_at` cleared until
 confirmation. Legacy deleted rows are then physically removed by the same

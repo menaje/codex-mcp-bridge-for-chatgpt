@@ -4994,8 +4994,31 @@ const appMutationOperations = new WeakMap<CodexJobRegistry, Map<string, {
   actionHash: string; promise: Promise<unknown>;
 }>>();
 
+/** Query-only facade; mutation methods and MCP dispatch are never exposed. */
+export function createBridgeReadProjectionService(
+  config: BridgeConfig,
+  upstream: CodexUpstream,
+  sessions: SessionRegistry,
+  jobs: CodexJobRegistry,
+  modelCatalog: CodexModelCatalogProvider,
+  userSettings: UserSettingsStore,
+  scopeResolver: ScopeResolver,
+  projectAvailability?: TaskProjectAvailabilityProjection
+): BridgeReadProjectionService {
+  const { applicationService: app } = registerBridgeTools(undefined, config,
+    upstream, sessions, jobs, modelCatalog, userSettings, scopeResolver, projectAvailability);
+  return {
+    dashboardSnapshot: options => app.dashboardSnapshot(options),
+    dashboardHistoryDetail: options => app.dashboardHistoryDetail!(options),
+    settingsSnapshot: options => app.settingsSnapshot(options),
+    dashboardRuntimePlan: options => app.dashboardRuntimePlan!(options),
+    dashboardSnapshotWithEnrichment: (options, enrichment) =>
+      app.dashboardSnapshotWithEnrichment!(options, enrichment)
+  };
+}
+
 export function registerBridgeTools(
-  server: McpServer,
+  server: McpServer | undefined,
   config: BridgeConfig,
   upstream: CodexUpstream,
   sessions: SessionRegistry,
@@ -5016,12 +5039,14 @@ export function registerBridgeTools(
   applicationService: BridgeApplicationService;
   dispose(): void;
 } {
+  if (!server && !jobs.admissionStateStore.readOnly) {
+    throw new Error("STATE_READ_WRITABLE_STORE: Application-only projection requires a query-only state store.");
+  }
+  if (!server && (userSettings.admissionStateStore !== jobs.admissionStateStore ||
+      sessions.admissionStateStore !== jobs.admissionStateStore)) {
+    throw new Error("PROJECT_ADMISSION_STORE_MISMATCH: Read projections must share one state store.");
+  }
   jobs.attachUpstream(upstream, sessions);
-  // MCP 2026 list results must be deterministic. Register immutable card
-  // resources in URI order; input tools do not add a resource.
-  registerDashboardCardResource(server);
-  const codexInputs = registerCodexInputTools(server, jobs, scopeResolver);
-  registerSettingsCardResource(server);
   const cardPerformance = sharedCardPerformance || new CardPerformanceTracker();
   const effectiveSkillLibrary = skillLibrary || new SkillLibrary({
     directory: config.bridgeSkillsDirectory
@@ -5661,6 +5686,16 @@ export function registerBridgeTools(
     applicationService.settingsSnapshot = options =>
       readProjection.settingsSnapshot(options);
   }
+  // The isolated reader needs the same fresh application projections, but no
+  // wire tools, cards or execution handlers. Building their schemas for every
+  // read can itself exhaust the observation deadline. Never cache the registry
+  // graph: retirement and same-cwd registration must be visible on the next read.
+  if (!server) return { applicationService, dispose: () => undefined };
+  // MCP 2026 list results must be deterministic. Register immutable card
+  // resources in URI order; input tools do not add a resource.
+  registerDashboardCardResource(server);
+  const codexInputs = registerCodexInputTools(server, jobs, scopeResolver);
+  registerSettingsCardResource(server);
   const currentTaskAdmissionRef = (
     settings: BridgeUserSettings = userSettings.current,
     catalogFingerprint = admissionFingerprintForCatalog(
