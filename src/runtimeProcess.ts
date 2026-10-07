@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { createServer, request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
@@ -47,6 +48,24 @@ const HEARTBEAT_STALE_MS = 2_000;
 // These are observation budgets. They never limit the lifetime of a Codex Job.
 const RPC_OBSERVATION_TIMEOUT_MS = 120_000;
 const PROXY_IDLE_TIMEOUT_MS = 120_000;
+
+/** Private, opt-in phase evidence; never includes headers, body, URL or MCP ID. */
+export type ProxyObservation = {
+  requestId: string;
+  phase: "dispatch" | "request-finished" | "response-headers" | "response-end" |
+    "upstream-request-error" | "upstream-response-error" | "idle-timeout" |
+    "caller-aborted" | "caller-closed" | "body-rejected";
+  elapsedMs: number;
+  responseStarted: boolean;
+  headersSent: boolean;
+  outcome: "not-observed" | "unknown";
+  firstTermination: boolean;
+};
+type ProxyDiagnostics = {
+  observe: (value: ProxyObservation) => void;
+  /** Fixture-only idle limit; does not change the default production budget. */
+  idleTimeoutMs?: number;
+};
 const STARTUP_TIMEOUT_MS = 20_000;
 const FORCE_CLOSE_MS = 5_000;
 const MAX_PENDING_REQUESTS = 128;
@@ -245,6 +264,8 @@ export async function createIsolatedHttpServer(
     onExecutionProcessSpawn?: (processId: number) => void;
     /** Test-only override for deterministic replacement-timeout coverage. */
     restartStartupTimeoutMs?: number;
+    /** Bounded private fixture diagnostics, disabled by default. */
+    proxyDiagnostics?: ProxyDiagnostics;
   } = {}
 ): Promise<BridgeHttpServer> {
   const childEnvironment = {
@@ -265,7 +286,8 @@ export async function createIsolatedHttpServer(
     undefined,
     options.onRuntimeProcessSpawn,
     options.onExecutionProcessSpawn,
-    options.restartStartupTimeoutMs
+    options.restartStartupTimeoutMs,
+    options.proxyDiagnostics
   );
   const applicationService = runtime.applicationService();
   const server = createServer((request, response) => {
@@ -397,7 +419,8 @@ class IsolatedRuntimeController {
     private readonly output?: Writable,
     private readonly onRuntimeProcessSpawn?: (processId: number) => void,
     private readonly onExecutionProcessSpawn?: (processId: number) => void,
-    private readonly restartStartupTimeoutMs = STARTUP_TIMEOUT_MS
+    private readonly restartStartupTimeoutMs = STARTUP_TIMEOUT_MS,
+    private readonly proxyDiagnostics?: ProxyDiagnostics
   ) {}
 
   static async start(
@@ -408,7 +431,8 @@ class IsolatedRuntimeController {
     output?: Writable,
     onRuntimeProcessSpawn?: (processId: number) => void,
     onExecutionProcessSpawn?: (processId: number) => void,
-    restartStartupTimeoutMs?: number
+    restartStartupTimeoutMs?: number,
+    proxyDiagnostics?: ProxyDiagnostics
   ): Promise<IsolatedRuntimeController> {
     const runtime = new IsolatedRuntimeController(
       transport,
@@ -418,7 +442,8 @@ class IsolatedRuntimeController {
       output,
       onRuntimeProcessSpawn,
       onExecutionProcessSpawn,
-      restartStartupTimeoutMs
+      restartStartupTimeoutMs,
+      proxyDiagnostics
     );
     try {
       await runtime.spawnAndWait();
@@ -668,6 +693,21 @@ class IsolatedRuntimeController {
     let responseStarted = false;
     let settled = false;
     let requestOutcome: ProxyRequestOutcome = "not-observed";
+    const diagnosticId = this.proxyDiagnostics ? randomUUID() : "";
+    const diagnosticStart = this.proxyDiagnostics ? performance.now() : 0;
+    let diagnosticEvents = 0;
+    let terminationObserved = false;
+    const observe = (phase: ProxyObservation["phase"], terminal = false) => {
+      if (!this.proxyDiagnostics || diagnosticEvents >= 10) return;
+      diagnosticEvents += 1;
+      const firstTermination = terminal && !terminationObserved;
+      terminationObserved ||= terminal;
+      try { this.proxyDiagnostics.observe({ requestId: diagnosticId, phase,
+        elapsedMs: performance.now() - diagnosticStart, responseStarted,
+        headersSent: outgoing.headersSent, outcome: requestOutcome, firstTermination }); }
+      catch { /* Diagnostics cannot change proxy transport or accounting. */ }
+    };
+    observe("dispatch");
     const requestIdCapture = bufferedRequest?.capture || new McpRequestIdCapture();
     const finish = () => {
       if (settled) return;
@@ -677,6 +717,7 @@ class IsolatedRuntimeController {
       this.activeProxyBytes = Math.max(0, this.activeProxyBytes - requestBytes);
     };
     const rejectBody = (reason: "request-bytes" | "state-capacity") => {
+      observe("body-rejected", true);
       proxied.destroy(new Error(
         reason === "request-bytes" ? "RUNTIME_REQUEST_TOO_LARGE" : "RUNTIME_CAPACITY"
       ));
@@ -706,6 +747,7 @@ class IsolatedRuntimeController {
       headers: requestHeaders(incoming.headers)
     }, response => {
       responseStarted = true;
+      observe("response-headers");
       if (outgoing.destroyed) {
         response.destroy();
         finish();
@@ -713,8 +755,9 @@ class IsolatedRuntimeController {
       }
       outgoing.writeHead(response.statusCode || 502, responseHeaders(response.headers));
       response.pipe(outgoing);
-      response.once("end", finish);
+      response.once("end", () => { observe("response-end", true); finish(); });
       response.once("error", error => {
+        observe("upstream-response-error", true);
         if (!outgoing.destroyed) outgoing.destroy(error);
         finish();
       });
@@ -723,8 +766,10 @@ class IsolatedRuntimeController {
       // The full request crossed the supervisor boundary. The child may have
       // acted even if its response or next heartbeat is never observed.
       requestOutcome = "unknown";
+      observe("request-finished");
     });
-    proxied.setTimeout(PROXY_IDLE_TIMEOUT_MS, () => {
+    proxied.setTimeout(this.proxyDiagnostics?.idleTimeoutMs ?? PROXY_IDLE_TIMEOUT_MS, () => {
+      observe("idle-timeout", true);
       proxied.destroy(new Error("RUNTIME_RESPONSE_UNCONFIRMED"));
       if (!responseStarted && !outgoing.headersSent) {
         writeUnavailable(outgoing, this.readiness(), requestOutcome, {}, requestIdCapture.id());
@@ -734,6 +779,7 @@ class IsolatedRuntimeController {
       finish();
     });
     proxied.once("error", error => {
+      observe("upstream-request-error", true);
       if (!outgoing.headersSent) {
         writeUnavailable(
           outgoing,
@@ -751,11 +797,13 @@ class IsolatedRuntimeController {
       finish();
     });
     incoming.once("aborted", () => {
+      observe("caller-aborted", true);
       proxied.destroy();
       finish();
     });
     outgoing.once("close", () => {
       if (outgoing.writableEnded) return;
+      observe("caller-closed", true);
       // A completed request body does not emit IncomingMessage.aborted when
       // its caller disconnects while waiting for the response.
       proxied.destroy();

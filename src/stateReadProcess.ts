@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { CodexService, type CodexSessionAuthBoundaryEvidence } from "./codexService.js";
@@ -75,6 +76,30 @@ type ResponseMessage = {
   ok: boolean;
   result?: unknown;
   error?: string;
+  measurement?: StateReadMeasurement;
+};
+
+/** Opt-in, fixed-size fixture diagnostics. No SQL, arguments, paths or results. */
+export type StateReadMeasurement = {
+  method: ReadMethod;
+  queueMs: number;
+  configMs: number;
+  databaseOpenMs: number;
+  sessionsMs: number;
+  jobsMs: number;
+  settingsMs: number;
+  facadeMs: number;
+  projectionMs: number;
+  cleanupMs: number;
+  jsonPreflightMs: number;
+  responseBytes: number;
+  sqlStatements: number;
+  selectStatements: number;
+};
+export type StateReadObservation = StateReadMeasurement & {
+  requestId: string;
+  endToEndMs: number;
+  callerAbandoned: boolean;
 };
 type FatalMessage = { type: "fatal"; message: string };
 type ChildMessage = ReadyMessage | HeartbeatMessage | OperationMessage | ResponseMessage | FatalMessage;
@@ -86,6 +111,7 @@ type RequestMessage = {
   method: ReadMethod;
   args: unknown[];
   authBoundary: CodexSessionAuthBoundaryEvidence | null;
+  measure?: boolean;
 };
 type CloseMessage = { type: "close" };
 type ParentMessage = RequestMessage | CloseMessage;
@@ -96,6 +122,7 @@ type Pending = {
   timer: NodeJS.Timeout;
   /** Caller deadline elapsed, but the child request still occupies capacity. */
   abandoned: boolean;
+  started: number;
 };
 
 export type StateReadServiceHealth = {
@@ -130,7 +157,8 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
     private readonly file: string,
     private readonly environment: NodeJS.ProcessEnv,
     private readonly requestDeadlineMs: number,
-    private readonly authBoundary: () => CodexSessionAuthBoundaryEvidence | null
+    private readonly authBoundary: () => CodexSessionAuthBoundaryEvidence | null,
+    private readonly onMeasurement?: (value: StateReadObservation) => void
   ) {}
 
   static async start(
@@ -140,6 +168,8 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
       /** Test/diagnostic override. */ requestDeadlineMs?: number;
       /** Read-only ownership evidence from the operational service, never an execution grant. */
       authBoundary?: () => CodexSessionAuthBoundaryEvidence | null;
+      /** Fixture diagnostics only; absent by default and never exposed on the wire. */
+      onMeasurement?: (value: StateReadObservation) => void;
     } = {}
   ): Promise<ChildProcessStateReadService> {
     const requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS;
@@ -147,7 +177,7 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
       throw new Error("STATE_READ_DEADLINE_INVALID: Read deadline must be a positive integer.");
     }
     const service = new ChildProcessStateReadService(file, environment, requestDeadlineMs,
-      options.authBoundary || (() => null));
+      options.authBoundary || (() => null), options.onMeasurement);
     try {
       await service.spawnAndWait();
       return service;
@@ -240,7 +270,8 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
       requestId,
       method,
       args,
-      authBoundary
+      authBoundary,
+      ...(this.onMeasurement ? { measure: true } : {})
     };
     if (Buffer.byteLength(JSON.stringify(message), "utf8") > MAX_MESSAGE_BYTES) {
       return Promise.reject(new Error("STATE_READ_REQUEST_TOO_LARGE: Read request exceeds its IPC limit."));
@@ -255,7 +286,7 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
         ));
       }, this.requestDeadlineMs);
       timer.unref();
-      this.pending.set(requestId, { resolve, reject, timer, abandoned: false });
+      this.pending.set(requestId, { resolve, reject, timer, abandoned: false, started: performance.now() });
       child.send(message, error => {
         if (!error) return;
         const pending = this.pending.get(requestId);
@@ -351,6 +382,11 @@ export class ChildProcessStateReadService implements BridgeReadProjectionService
         if (!pending) return;
         clearTimeout(pending.timer);
         this.pending.delete(value.requestId);
+        if (value.measurement) {
+          try { this.onMeasurement?.({ ...value.measurement, requestId: value.requestId,
+            endToEndMs: performance.now() - pending.started, callerAbandoned: pending.abandoned }); }
+          catch { /* Diagnostics cannot change read settlement or capacity. */ }
+        }
         if (pending.abandoned) return;
         if (value.ok) {
           this.lastSnapshotAt = Date.now();
@@ -472,6 +508,12 @@ async function runChild(file: string): Promise<void> {
       if (value.generation !== generation) return;
       inFlight += 1;
       const startedAt = Date.now();
+      const queuedAt = performance.now();
+      const measurement: StateReadMeasurement | undefined = value.measure ? {
+        method: value.method, queueMs: 0, configMs: 0, databaseOpenMs: 0,
+        sessionsMs: 0, jobsMs: 0, settingsMs: 0, facadeMs: 0, projectionMs: 0,
+        cleanupMs: 0, jsonPreflightMs: 0, responseBytes: 0, sqlStatements: 0, selectStatements: 0
+      } : undefined;
       const observe = (phase: OperationMessage["phase"]) => send({
         type: "operation",
         generation,
@@ -483,12 +525,19 @@ async function runChild(file: string): Promise<void> {
       });
       observe(inFlight > 1 ? "queue-wait" : "read-snapshot");
       const run = tail.then(async () => {
+        if (measurement) measurement.queueMs = performance.now() - queuedAt;
         observe("read-snapshot");
         // Bridge read permissions do not depend on an execution login snapshot.
-        const result = await executeProjection(file, value.method, value.args, codexService);
+        const result = await executeProjection(file, value.method, value.args, codexService, measurement);
         observe("serializing");
+        const encodingAt = measurement ? performance.now() : 0;
         const encoded = JSON.stringify(result === undefined ? null : result);
-        if (Buffer.byteLength(encoded, "utf8") > MAX_MESSAGE_BYTES) {
+        const responseBytes = Buffer.byteLength(encoded, "utf8");
+        if (measurement) {
+          measurement.jsonPreflightMs = performance.now() - encodingAt;
+          measurement.responseBytes = responseBytes;
+        }
+        if (responseBytes > MAX_MESSAGE_BYTES) {
           throw new Error("Read projection response exceeds its IPC limit.");
         }
         observe("responding");
@@ -497,14 +546,16 @@ async function runChild(file: string): Promise<void> {
           generation,
           requestId: value.requestId,
           ok: true,
-          result: result === undefined ? null : result
+          result: result === undefined ? null : result,
+          ...(measurement ? { measurement } : {})
         });
       }).catch(error => send({
         type: "response",
         generation,
         requestId: value.requestId,
         ok: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
+        ...(measurement ? { measurement } : {})
       })).finally(() => { inFlight = Math.max(0, inFlight - 1); });
       tail = run;
     });
@@ -522,8 +573,17 @@ async function executeProjection(
   file: string,
   method: ReadMethod,
   args: unknown[],
-  codexService: CodexService
+  codexService: CodexService,
+  measurement?: StateReadMeasurement
 ): Promise<unknown> {
+  let stageAt = measurement ? performance.now() : 0;
+  const mark = (key: "configMs" | "databaseOpenMs" | "sessionsMs" | "jobsMs" |
+    "settingsMs" | "facadeMs" | "projectionMs" | "cleanupMs") => {
+    if (!measurement) return;
+    const now = performance.now();
+    measurement[key] = now - stageAt;
+    stageAt = now;
+  };
   const config = loadConfig({
     ...process.env,
     CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: file
@@ -531,7 +591,13 @@ async function executeProjection(
   // Settings are read in a separate process. They still need the applied CLI
   // selection for model discovery, even though no task worker runs here.
   config.codexService = codexService;
-  const stateStore = new BridgeStateStore({ file, readOnly: true });
+  mark("configMs");
+  const stateStore = new BridgeStateStore({ file, readOnly: true,
+    ...(measurement ? { traceSql: (sql: string) => {
+      measurement.sqlStatements += 1;
+      if (/^\s*SELECT\b/i.test(sql)) measurement.selectStatements += 1;
+    } } : {}) });
+  mark("databaseOpenMs");
   const upstream = new ProjectionUpstream();
   const sessions = new SessionRegistry({
     stateStore,
@@ -539,6 +605,7 @@ async function executeProjection(
     maxSessions: 1_000_000,
     projectionOnly: true,
   });
+  mark("sessionsMs");
   const jobs = new CodexJobRegistry({
     maxConcurrentJobs: config.maxConcurrentJobs,
     ttlMs: config.jobTtlMs,
@@ -549,10 +616,12 @@ async function executeProjection(
     allowedRoots: config.allowedRoots,
     projectionOnly: true
   });
+  mark("jobsMs");
   const userSettings = new UserSettingsStore(config, {
     stateStore,
     projectionOnly: true
   });
+  mark("settingsMs");
   const scopeResolver = new ScopeResolver({ stateStore });
   const projectAvailability = new TaskProjectAvailabilityProjection(config);
   const applicationService = createBridgeReadProjectionService(
@@ -565,19 +634,23 @@ async function executeProjection(
     scopeResolver,
     projectAvailability
   );
+  mark("facadeMs");
   try {
     const operation = applicationService[method];
     if (typeof operation !== "function") {
       throw new Error(`Unsupported read projection method: ${method}`);
     }
-    return await (operation as (...values: unknown[]) => unknown).apply(
+    const result = await (operation as (...values: unknown[]) => unknown).apply(
       applicationService,
       args
     );
+    mark("projectionMs");
+    return result;
   } finally {
     await jobs.closeThreadConnections();
     await upstream.close();
     stateStore.close();
+    mark("cleanupMs");
   }
 }
 

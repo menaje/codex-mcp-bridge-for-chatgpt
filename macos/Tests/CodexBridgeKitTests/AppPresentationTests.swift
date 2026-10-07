@@ -536,6 +536,46 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testIssue242RepeatedDashboardAndHelperMethodCounts() async throws {
+        let path = "/tmp/cb-242-reads-\(UUID().uuidString.prefix(8)).sock"
+        let helperBody = String(decoding: try JSONEncoder().encode(helperStatus()), as: UTF8.self)
+        let dashboardBody = String(decoding: try JSONEncoder().encode(dashboardStatus()), as: UTF8.self)
+        let server = try NativeRPCFixture(path: path) { method in
+            NativeFixtureReply(body: "{\"result\":\(method == "helper.health" ? helperBody : dashboardBody)}")
+        }
+        defer { server.stop() }
+        let rpc = UnixSocketRPCClient(socketPath: path)
+        for _ in 0..<10 {
+            let _: HelperStatus = try await rpc.call("helper.health", params: EmptyParameters())
+            let _: DashboardSnapshot = try await rpc.call("dashboard.snapshot", params: EmptyParameters())
+        }
+        XCTAssertEqual(server.count("helper.health"), 10)
+        XCTAssertEqual(server.count("dashboard.snapshot"), 10)
+        XCTAssertEqual(server.count("completion.claim"), 0)
+    }
+
+    @MainActor
+    func testIssue242HelperRPCFailureLosesRetainedObservationAfterGrace() async throws {
+        // Characterizes the latest-dev catch path; W2 will change these expectations.
+        let model = AppModel()
+        let start = Date(timeIntervalSince1970: 100)
+        model.recordLocalConnectionStatus(try helperStatus(), at: start)
+        model.dashboard = try dashboardStatus(scope: "issue-242-retained")
+        model.recordLocalConnectionStatus(nil, at: start.addingTimeInterval(1))
+        // refreshStatusOnce's catch also sets this error, ending initial-connect checking.
+        model.statusErrorMessage = "fixture helper RPC timeout"
+        XCTAssertEqual(model.health, .checking)
+        await model.refreshDashboard()
+        XCTAssertEqual(model.dashboard?.scope, "issue-242-retained")
+        model.recordLocalConnectionStatus(nil, at: start.addingTimeInterval(9))
+        XCTAssertFalse(model.hasRetainedBridgeObservation)
+        XCTAssertEqual(model.health, .unavailable)
+        XCTAssertEqual(model.operationalProblem, .runtime)
+        await model.refreshDashboard()
+        XCTAssertNil(model.dashboard)
+    }
+
+    @MainActor
     func testReadProjectionDelayIsPartialAndDoesNotClaimRuntimeOrWritesFailed() throws {
         let model = AppModel()
         model.authStatus = try loginStatus(installed: true, authenticated: true)

@@ -268,6 +268,23 @@ final class OperationalNotificationsTests: XCTestCase {
 
 @MainActor
 final class CompletionNotificationsTests: XCTestCase {
+    func testIssue242RepeatedEmptyClaimsAndPermissionGate() async throws {
+        let path = "/tmp/cb-242-empty-\(UUID().uuidString.prefix(8)).sock"
+        let server = try NativeRPCFixture(path: path) { _ in
+            NativeFixtureReply(body: #"{"result":{"events":[]}}"#)
+        }
+        defer { server.stop() }
+        let delivery = CompletionNotificationDeliveryFixture()
+        let notifications = CompletionNotifications(delivery: delivery)
+        let client = BridgeCompanionClient(socketPath: path)
+        for _ in 0..<20 { await notifications.refresh(client: client, locale: Locale(identifier: "en")) }
+        XCTAssertEqual(server.count("completion.claim"), 20)
+        XCTAssertEqual(server.count("completion.delivered"), 0)
+        delivery.authorized = false
+        for _ in 0..<20 { await notifications.refresh(client: client, locale: Locale(identifier: "en")) }
+        XCTAssertEqual(server.count("completion.claim"), 20)
+    }
+
     func testSuccessfulDeliveryClaimsAndAcknowledgesOpaqueEvents() async throws {
         let path = "/tmp/cb-completion-success-\(UUID().uuidString.prefix(8)).sock"
         let server = try NativeRPCFixture(path: path) { method in
