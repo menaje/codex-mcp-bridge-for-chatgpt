@@ -1,0 +1,20 @@
+{
+  "originalDev": {
+    "head": "ea8f93e2acbb9f4b6deca113165d27e8c9c23857",
+    "status": "",
+    "preserved": true
+  },
+  "baseline": {
+    "head": "f710974b33fc40432653c815d175058cba1adaee",
+    "status": "",
+    "preserved": true
+  },
+  "task": {
+    "validatedHead": "bff15a07b4838b3d5b5cb05a34f8c3c471da2af6",
+    "integrationTarget": "codex/issue-242-p0-w0",
+    "integrated": false,
+    "cleanup": "preserved pending integration/review"
+  },
+  "production": "No installed app/helper, operational DB or user data writes. Synthetic fixtures only.",
+  "remote": "No push, remote write, or GitHub Actions invocation."
+}

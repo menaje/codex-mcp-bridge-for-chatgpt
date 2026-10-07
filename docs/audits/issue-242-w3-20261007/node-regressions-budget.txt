@@ -1,0 +1,76 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion
+
+ ❯ test/tools.test.ts (55 tests | 13 failed) 464342ms
+     × preserves an admitted speed through a settings change and handles later support loss explicitly: false 14439ms
+     × starts a hidden persistent conversation using the independent storage preference 8858ms
+     × verifies the execution owner before looking up a saved Agent or admitting a Job 10408ms
+     × keeps an original Job's completed result and session with its owner through an external login change and commit retry 11811ms
+     × keeps an original Job's failed result and session with its owner through an external login change and commit retry 13158ms
+     × preserves the original Job through a lost queued request, external auth change and transport ACK retries 16449ms
+     × rejects stale Decision Card calls without changing Codex or state 9240ms
+     × does not admit a task when transport fails before dispatch and admits it once on exact retry 12866ms
+     × recovers a durable Job when the admission response is lost in transport 18161ms
+     × deduplicates concurrent exact retries into one durable Job and one upstream execution 13561ms
+     × recovers an approved second turn after response loss and repeated parent reads without stalling independent work 7923ms
+     × records an aborted exact status wait while the same Job keeps running 8342ms
+     × keeps an asynchronous admission valid before App Server assigns its thread 7872ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 13 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > preserves an admitted speed through a settings change and handles later support loss explicitly: false
+ FAIL  test/tools.test.ts > current bridge tool contracts > starts a hidden persistent conversation using the independent storage preference
+ FAIL  test/tools.test.ts > current bridge tool contracts > verifies the execution owner before looking up a saved Agent or admitting a Job
+ FAIL  test/tools.test.ts > current bridge tool contracts > keeps an original Job's completed result and session with its owner through an external login change and commit retry
+ FAIL  test/tools.test.ts > current bridge tool contracts > keeps an original Job's failed result and session with its owner through an external login change and commit retry
+ FAIL  test/tools.test.ts > current bridge tool contracts > preserves the original Job through a lost queued request, external auth change and transport ACK retries
+ FAIL  test/tools.test.ts > current bridge tool contracts > does not admit a task when transport fails before dispatch and admits it once on exact retry
+ FAIL  test/tools.test.ts > current bridge tool contracts > deduplicates concurrent exact retries into one durable Job and one upstream execution
+ FAIL  test/tools.test.ts > current bridge tool contracts > recovers an approved second turn after response loss and repeated parent reads without stalling independent work
+ FAIL  test/tools.test.ts > current bridge tool contracts > records an aborted exact status wait while the same Job keeps running
+ FAIL  test/tools.test.ts > current bridge tool contracts > keeps an asynchronous admission valid before App Server assigns its thread
+TypeError: fetch failed
+ ❯ StreamableHTTPClientTransport._send node_modules/@modelcontextprotocol/client/src/client/streamableHttp.ts:1007:29
+
+Caused by: Error: read ECONNRESET
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { errno: -54, code: 'ECONNRESET', syscall: 'read' }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/13]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > rejects stale Decision Card calls without changing Codex or state
+AssertionError: expected [Function] to throw error matching /not found/i but got 'fetch failed'
+
+- Expected:
+/not found/i
+
++ Received:
+"fetch failed"
+
+ ❯ test/tools.test.ts:1276:80
+    1274|     for (const { name, arguments: args } of retired) {
+    1275|       expect(listed).not.toContain(name);
+    1276|       await expect(client.callTool({ name, arguments: args, _meta: met…
+       |                                                                                ^
+    1277|         .rejects.toThrow(/not found/i);
+    1278|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/13]⎯
+
+ FAIL  test/tools.test.ts > current bridge tool contracts > recovers a durable Job when the admission response is lost in transport
+Error: Hook timed out in 10000ms.
+If this is a long-running hook, pass a timeout value as the last argument or configure it globally with "hookTimeout".
+ ❯ test/tools.test.ts:170:3
+    168|   let endpoint: URL;
+    169|
+    170|   beforeEach(async () => {
+       |   ^
+    171|     root = await mkdtemp(path.join(tmpdir(), "current-tools-"));
+    172|     state = new BridgeStateStore({ file: path.join(root, "state.sqlite…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/13]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  13 failed | 63 passed (76)
+   Start at  21:57:00
+   Duration  636.14s (transform 31.30s, setup 0ms, import 42.41s, tests 590.30s, environment 3ms)
