@@ -2436,13 +2436,19 @@ private struct ProjectsSettingsPane: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(project.name)
+                                    Text(LocalizedStringKey(project.archiveState == "unresolved" ? "settings.projectArchiveUnresolved" : "settings.projectArchiveProcessing"))
+                                        .font(.caption).foregroundStyle(.orange)
+                                    if let reasons = project.archiveReasons, !reasons.isEmpty {
+                                        Text(reasons.joined(separator: "\n"))
+                                            .font(.caption).textSelection(.enabled)
+                                    }
                                     Text(project.cwd)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                         .textSelection(.enabled)
                                 }
                                 Spacer()
-                                Button("settings.restoreProject") { editor = .restore(project) }
+                                Button("settings.retryProjectArchive") { Task { await model.applyProjectOperation(.archive(projectId: project.id)) } }
                                     .disabled(model.isBusy)
                             }
                         }
@@ -2531,14 +2537,21 @@ private struct ProjectRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     Text(project.name).font(.headline)
+                    if project.archiveState == "processing" || project.archiveState == "unresolved" {
+                        Text(LocalizedStringKey(project.archiveState == "unresolved" ? "settings.projectArchiveUnresolved" : "settings.projectArchiveProcessing"))
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                     if project.archivedAt != nil {
                         Text("settings.projectArchived").font(.caption2).padding(4).background(.quaternary, in: Capsule())
                     }
-                    if availability?.available == false {
+                    if availability?.available == false && project.archivedAt == nil && (project.archiveState == nil || project.archiveState == "active") {
                         Label("macos.folderunavailable", systemImage: "exclamationmark.triangle")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
+                }
+                if let reasons = project.archiveReasons, !reasons.isEmpty {
+                    Text(reasons.joined(separator: "\n")).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
                 }
                 Text(project.cwd)
                     .font(.caption.monospaced())
@@ -2548,7 +2561,9 @@ private struct ProjectRow: View {
             }
             Spacer()
             Menu {
-                if project.archivedAt == nil {
+                if project.archiveState == "processing" || project.archiveState == "unresolved" {
+                    Button("settings.retryProjectArchive", action: archive)
+                } else if project.archivedAt == nil {
                     Button("activity.rename", action: rename)
                     Button("macos.changelinkedfolder", action: relocate)
                     Divider()

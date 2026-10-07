@@ -99,6 +99,7 @@ export class TaskFollowupStore {
 
   /** The caller invokes this inside the Job transaction, before execution. */
   admit(job: FollowupJob): void {
+    if (this.state.projectLifecycle.jobReceipt(job.jobId)) throw new Error("PROJECT_MANAGEMENT_ENDED: This Job was retired.");
     if (job.followup) {
       const receipt = this.get(job.followup.followupId);
       if (!receipt || receipt.scopeId !== job.scopeId || receipt.activityId !== job.activityId ||

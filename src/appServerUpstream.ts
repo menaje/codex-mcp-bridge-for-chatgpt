@@ -458,9 +458,13 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
           if ((error as NodeJS.ErrnoException).code === "ESRCH") return { phase: "released", evidence: "worker-exited" };
         }
       }
+      if (options.retireContext && !options.previousWorkerPid && await options.canRelease(threadId)) {
+        this.detachedThreads.add(threadId);
+        return {phase:"released",evidence:"connection-absent"};
+      }
       return { phase: "blocked", reason: "ownership-unconfirmed" };
     }
-    await worker.maintenance;
+    while (worker.maintenance) await worker.maintenance;
     const connection = worker.connection;
     if (!connection || connection.exited || this.closing) return { phase: "blocked", reason: "connection-changed" };
     if (!this.capabilities().supportsThreadUnsubscribe) return { phase: "blocked", reason: "unsupported" };
@@ -474,7 +478,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     const maintenance = worker.maintenance = new Promise<void>(resolve => { unlock = resolve; });
     try {
       if (!(await canRelease(threadId))) return { phase: "blocked", reason: "active-work" };
-      const safety = await connection.releaseSafety(threadId);
+      const safety = await connection.releaseSafety(threadId,options.retireContext);
       if (!safety.safe) return { phase: "blocked", reason: safety.reason };
       if (!(await canRelease(threadId))) return { phase: "blocked", reason: "active-work" };
       this.detachedThreads.add(threadId);
@@ -494,7 +498,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
           loaded.every(id => options.eligibleThreadIds.includes(id)) &&
           await allCanRelease(loaded)) {
         for (const id of loaded) {
-          if (!(await connection.releaseSafety(id)).safe) return { phase: "unsubscribed", reason: "shared-worker-protected" };
+          if (!(await connection.releaseSafety(id,options.retireContext)).safe) return { phase: "unsubscribed", reason: "shared-worker-protected" };
         }
         if (worker.activeCalls === 0 && await allCanRelease(loaded)) {
           for (const id of loaded) {
@@ -707,14 +711,26 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
     graceMs?: number,
-    options?: { interruptOnly: true }
+    options?: { interruptOnly?: true; retirementThreadIds?: readonly string[]; canTerminateWorker?: () => boolean }
   ): Promise<JsonRpcTerminationResult> {
     assertWorkerTerminationCorrelation(correlation);
     const worker = this.workers.find((candidate) => `app-${candidate.index}` === assignment.workerId);
     if (!worker || !worker.connection || worker.generation !== assignment.workerGeneration) {
       throw new Error("The selected App Server worker generation is no longer active.");
     }
-    const result = await worker.connection.interruptOrTerminate(assignment, correlation, graceMs, options);
+    while (worker.maintenance) await worker.maintenance;
+    if (!worker.connection || worker.generation !== assignment.workerGeneration) {
+      throw new Error("The selected App Server worker generation changed during maintenance.");
+    }
+    const connection=worker.connection;
+    let unlock: (()=>void)|undefined;
+    const maintenance=options?.retirementThreadIds ? worker.maintenance=new Promise<void>(resolve=>{unlock=resolve;}) : undefined;
+    let result: JsonRpcTerminationResult;
+    try {
+      result = await connection.interruptOrTerminate(assignment,correlation,graceMs,options?.retirementThreadIds
+        ? {...options,canTerminateWorker:()=>worker.activeCalls === connection.activeTurnCount} : options);
+    } finally { if (maintenance && worker.maintenance === maintenance) worker.maintenance=undefined; unlock?.(); }
+
     if (result.workerExited) {
       worker.connection = undefined;
       this.forgetWorkerThreads(worker.index);
@@ -839,7 +855,7 @@ export class CodexAppServerUpstreamPool implements CodexUpstream {
   }
 
   private async connectionFor(worker: AppWorker): Promise<AppServerConnection> {
-    await worker.maintenance;
+    while (worker.maintenance) await worker.maintenance;
     if (this.closing) throw new Error("Codex App Server upstream is closed.");
     if (worker.connection && !worker.connection.exited) return worker.connection;
     if (!worker.connecting) {
@@ -1277,8 +1293,8 @@ class AppServerConnection {
     return this.listMaterializedBackgroundTerminals(threadId);
   }
 
-  async releaseSafety(threadId: string): Promise<{ safe: boolean; reason?: string }> {
-    if (this.threadPersistence.get(threadId) !== "persistent") return { safe: false, reason: "persistence-unknown" };
+  async releaseSafety(threadId: string, retireContext = false): Promise<{ safe: boolean; reason?: string }> {
+    if (!retireContext && this.threadPersistence.get(threadId) !== "persistent") return { safe: false, reason: "persistence-unknown" };
     if (this.threadTurns.has(threadId) || [...this.pendingInteractions.values()].some(request => request.threadId === threadId)) {
       return { safe: false, reason: "active-work" };
     }
@@ -1571,11 +1587,13 @@ class AppServerConnection {
     return true;
   }
 
+  get activeTurnCount(): number { return this.activeTurns.size; }
+
   async interruptOrTerminate(
     assignment: UpstreamWorkerAssignment,
     correlation: WorkerTerminationCorrelation,
     graceMs = 1_500,
-    options?: { interruptOnly: true }
+    options?: { interruptOnly?: true; retirementThreadIds?: readonly string[]; canTerminateWorker?: () => boolean }
   ): Promise<JsonRpcTerminationResult> {
     assertWorkerTerminationCorrelation(correlation);
     const identity = this.rpc.identity;
@@ -1650,6 +1668,14 @@ class AppServerConnection {
     }
     if (options?.interruptOnly) {
       throw new Error("PRECISE_INTERRUPTION_UNCONFIRMED: The original turn could not be confirmed stopped; shared worker termination was not authorized.");
+    }
+    if (options?.retirementThreadIds) {
+      const allowed=new Set(options.retirementThreadIds);
+      const loaded=await this.listLoadedThreads();
+      if (!loaded.every(thread=>allowed.has(thread)) || ![...this.activeTurns.values()].every(turn=>allowed.has(turn.threadId)) ||
+          [...this.loadedThreads].some(thread=>!allowed.has(thread)) || options.canTerminateWorker?.() !== true) {
+        throw new Error("PROJECT_ARCHIVE_SHARED_WORKER: Worker termination would affect another or unassigned context.");
+      }
     }
     this.terminationRequested = true;
     const result = await this.rpc.forceTerminate(graceMs);

@@ -93,6 +93,7 @@ export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistr
       if (pending.hash !== hash) throw new Error("ANSWER_REQUEST_CONFLICT: A different answer is already being dispatched.");
       return resultOf(await pending.promise);
     }
+    jobs.admissionStateStore.projectLifecycle.assertRequest("question",scopeId,args.requestId,hash);
     const previous = store.delivery(scopeId, args.requestId, hash);
     if (previous && previous !== "not-delivered") {
       return resultOf(answerResult(args.jobId, args.questionRef, previous === "delivered" ? "delivered" : "uncertain"));
@@ -107,7 +108,7 @@ export function registerCodexInputTools(server: McpServer, jobs: CodexJobRegistr
         throw new Error("QUESTION_UNAVAILABLE: This is not a current ordinary question. Refresh codex_status query kind=input.");
       }
       validateAnswers(input.questions!, args.answers);
-      store.beginDelivery(scopeId, args.requestId, args.questionRef, hash);
+      store.beginDelivery(scopeId, args.requestId, args.questionRef, hash, job.jobId);
       try {
         await jobs.respondToInteraction(job.jobId, input.interactionId, { answers: args.answers });
         store.finishDelivery(scopeId, args.requestId, "delivered");

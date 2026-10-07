@@ -377,14 +377,14 @@ describe("isolated Codex execution process", () => {
     }
   }, 30_000);
 
-  it("rechecks authoritative release eligibility across the process boundary", async () => {
+  it.each([false,true])("rechecks release eligibility across the process boundary (retireContext=%s)", async retireContext => {
     const service = await createService({ CODEX_TEST_UNSUBSCRIBE_UNLOAD: "1" });
     let assignment: UpstreamWorkerAssignment | undefined;
     let checks = 0;
     try {
       await service.callTool(
         "codex",
-        task("release after completion"),
+        {...task("release after completion"),ephemeral:retireContext},
         undefined,
         value => { assignment = value; }
       );
@@ -395,6 +395,7 @@ describe("isolated Codex execution process", () => {
           return threadId === assignment!.threadId;
         },
         eligibleThreadIds: [assignment!.threadId!],
+        retireContext,
         previousWorkerPid: assignment!.workerPid
       })).resolves.toMatchObject({ phase: "released", evidence: "thread-unloaded" });
       expect(checks).toBeGreaterThanOrEqual(2);

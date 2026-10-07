@@ -1,3 +1,4 @@
+import { ProjectLifecycleStore } from "./projectLifecycle.js";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
@@ -18,7 +19,8 @@ import {
   V27_DECISION_CARD_RETIREMENT_MIGRATION_SCHEMA,
   V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA,
   V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA,
-  V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA
+  V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA,
+  V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA
 } from "./stateSchema.js";
 import type { ModelDescriptionHistoryPage, ModelDescriptionOverrides } from "./modelDescriptions.js";
 import {
@@ -297,6 +299,7 @@ export type DashboardRetainedJobSummary = {
 };
 
 export type ArchivedJobAdmissionReceipt = {
+  managementEnded?: boolean;
   jobId: string;
   requestId: string;
   status: string;
@@ -328,10 +331,14 @@ type ProjectStorageRow = {
   updated_at: number;
   archived_at: number | null;
   deleted_at: number | null;
+  archive_state: import("./projectLifecycle.js").ProjectArchiveState;
+  archive_revision: number;
+  archive_requested_at: number | null;
+  archive_reasons: string;
 };
 type LegacyProjectStorageRow = Omit<
   ProjectStorageRow,
-  "project_ref" | "project_revision" | "deleted_at"
+  "project_ref" | "project_revision" | "deleted_at" | "archive_state" | "archive_revision" | "archive_requested_at" | "archive_reasons"
 >;
 type ProjectRegistryStorageRow = {
   registry_revision: number;
@@ -776,6 +783,7 @@ export class BridgeStateStore {
           this.database.exec(V28_JOB_HISTORY_INDEX_MIGRATION_SCHEMA);
           this.database.exec(V29_BACKGROUND_WORK_INDEX_MIGRATION_SCHEMA);
           this.database.exec(V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA);
+          this.database.exec(V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA);
           this.setMeta("schema_version", CURRENT_SCHEMA_VERSION);
           this.setMeta("schema_v21_created_at", new Date().toISOString());
           this.setMeta("schema_v22_created_at", new Date().toISOString());
@@ -872,6 +880,7 @@ export class BridgeStateStore {
   get persistent(): boolean {
     return this.options.file !== ":memory:";
   }
+  get isClosed(): boolean { return this.closed; }
 
   get persistencePath(): string | null {
     return this.persistent ? this.options.file : null;
@@ -1246,6 +1255,8 @@ export class BridgeStateStore {
     this.transaction(() => {
       this.ensureScope(session.scopeId, session.lastUsedAt);
       const project = normalizeProjectIdentity(session.projectId, session.projectName);
+      if (this.tableHasColumn("projects","archive_state") && this.projectLifecycle.retiredThread(session.threadId)) throw new Error("PROJECT_MANAGEMENT_ENDED: This thread was retired.");
+      if (this.tableHasColumn("projects","archive_state")) this.projectLifecycle.assertActive(project?.projectId);
       this.database
         .prepare(`
           INSERT INTO sessions(
@@ -1344,6 +1355,8 @@ export class BridgeStateStore {
   ): ArchivedJobAdmissionReceipt | undefined {
     const column = query.kind === "job" ? "job_id" : "request_id";
     const value = query.kind === "job" ? query.id : query.requestId;
+    const retired = query.kind === "job" ? this.projectLifecycle.jobReceipt(query.id,scopeId) : this.projectLifecycle.receipt("task",scopeId,query.requestId);
+    if (retired?.subject_id) return {jobId:retired.subject_id,requestId:retired.request_id,status:retired.outcome,managementEnded:true};
     const row = this.database.prepare(`
       SELECT job_id, request_id, status
         FROM jobs
@@ -1831,6 +1844,7 @@ export class BridgeStateStore {
         // the source project for continue/fork and compatibility callers.
         project ||= sourceProject;
       }
+      if (this.tableHasColumn("projects","archive_state")) this.projectLifecycle.assertActive(project?.projectId);
       const scopeVersion = this.nextScopeVersion(scopeId, now);
       this.insertActivity({
         activityId,
@@ -2078,6 +2092,9 @@ export class BridgeStateStore {
       const backendKind = normalizeRequiredString(input.backendKind, "backend kind", 100);
       const sandbox = normalizeRequiredString(input.sandbox, "sandbox", 100);
       let project = normalizeProjectIdentity(input.projectId, input.projectName);
+      if (this.tableHasColumn("projects","archive_state")) {
+        if (this.projectLifecycle.retiredThread(threadId)) throw new Error("PROJECT_MANAGEMENT_ENDED: Retired thread cannot be selected again.");
+      }
       const owner = this.getAgentForThread(threadId);
       if (owner && owner.agentId !== agent.agentId) {
         throw new Error("The Codex thread is already owned by another bridge Agent.");
@@ -2123,6 +2140,9 @@ export class BridgeStateStore {
           );
         }
         project ||= existingProject;
+      }
+      if (this.tableHasColumn("projects","archive_state")) {
+        this.projectLifecycle.assertActive(project?.projectId);
       }
       const forkedFromThreadId = input.forkedFromThreadId
         ? normalizeRequiredString(input.forkedFromThreadId, "forkedFromThreadId", 200)
@@ -2413,6 +2433,7 @@ export class BridgeStateStore {
   }
 
   getAgentMutation(scopeId: string, requestId: string): { actionHash: string; result: unknown } | undefined {
+    this.projectLifecycle.assertRequest("mutation",scopeId,requestId);
     const row = this.database
       .prepare("SELECT action_hash, result FROM agent_mutations WHERE scope_id = ? AND request_id = ?")
       .get(scopeId, requestId) as { action_hash: string; result: string } | undefined;
@@ -2425,6 +2446,8 @@ export class BridgeStateStore {
   }
 
   recordAgentMutation(scopeId: string, requestId: string, actionHash: string, result: unknown, now = Date.now()): void {
+    this.projectLifecycle.assertRequest("mutation",scopeId,requestId,actionHash);
+    if (this.projectLifecycle.containsRetiredReference(result)) throw new Error("PROJECT_MANAGEMENT_ENDED: Mutation target management has ended.");
     this.database
       .prepare(`
         INSERT INTO agent_mutations(scope_id, request_id, action_hash, result, created_at)
@@ -2467,6 +2490,9 @@ export class BridgeStateStore {
     const promptSha256 = normalizeDigest(input.promptSha256, "steering prompt digest");
     const now = normalizeEventTimestamp(input.now ?? Date.now());
     return this.transaction(() => {
+      this.projectLifecycle.assertRequest("steering",scopeId,requestId,actionHash);
+      if (this.projectLifecycle.jobReceipt(jobId)) throw new Error("PROJECT_MANAGEMENT_ENDED: This Job was retired.");
+      this.projectLifecycle.assertActive((this.database.prepare("SELECT a.project_id FROM jobs j JOIN activities a ON a.activity_id=j.activity_id WHERE j.job_id=?").get(jobId) as {project_id:string}|undefined)?.project_id);
       const existing = this.getSteeringDelivery(scopeId, requestId);
       if (existing) {
         if (existing.actionHash !== actionHash) {
@@ -2604,6 +2630,7 @@ export class BridgeStateStore {
   } {
     const normalized = normalizeCancellationOperationInput(input);
     return this.transaction(() => {
+      this.projectLifecycle.assertRequest("cancellation",normalized.scopeId,normalized.requestId,normalized.actionHash);
       const existing = this.getCancellationOperation(normalized.scopeId, normalized.requestId);
       if (existing) {
         if (existing.actionHash !== normalized.actionHash) {
@@ -3628,6 +3655,8 @@ export class BridgeStateStore {
     }
   }
 
+  get projectLifecycle(): ProjectLifecycleStore { return new ProjectLifecycleStore(this.database); }
+
   getProjectRegistrySnapshot(): ProjectRegistrySnapshot {
     const registry = this.database
       .prepare(`
@@ -3639,7 +3668,7 @@ export class BridgeStateStore {
     const rows = this.database
       .prepare(`
         SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
-               created_at, updated_at, archived_at, deleted_at
+               created_at, updated_at, archived_at, deleted_at, archive_state, archive_revision, archive_requested_at, archive_reasons
           FROM projects
          WHERE deleted_at IS NULL
          ORDER BY sort_order ASC, created_at ASC, project_id ASC
@@ -3664,9 +3693,9 @@ export class BridgeStateStore {
   getRecoverableProjects(): ProjectTarget[] {
     return (this.database.prepare(`
       SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
-             created_at, updated_at, archived_at, deleted_at
+             created_at, updated_at, archived_at, deleted_at, archive_state, archive_revision, archive_requested_at, archive_reasons
         FROM projects p
-       WHERE deleted_at IS NOT NULL AND (${PROJECT_RESUMABLE_CONTEXT_PREDICATE})
+       WHERE deleted_at IS NOT NULL AND archive_state IN ('processing','unresolved')
        ORDER BY deleted_at DESC, project_id ASC
        LIMIT ?
     `).all(MAX_REGISTERED_PROJECTS) as ProjectStorageRow[]).map(readProjectStorageRow);
@@ -3711,9 +3740,9 @@ export class BridgeStateStore {
         const rows = this.database
           .prepare(`
             SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
-                   created_at, updated_at, archived_at, deleted_at
+                   created_at, updated_at, archived_at, deleted_at, archive_state, archive_revision, archive_requested_at, archive_reasons
               FROM projects
-             WHERE name_key = ? AND archived_at IS NULL AND deleted_at IS NULL
+             WHERE name_key = ? AND archive_state='active' AND deleted_at IS NULL
           `)
           .all(nameKey) as ProjectStorageRow[];
         if (rows.length !== 1) {
@@ -3725,7 +3754,7 @@ export class BridgeStateStore {
         const row = this.database
           .prepare(`
             SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
-                   created_at, updated_at, archived_at, deleted_at
+                   created_at, updated_at, archived_at, deleted_at, archive_state, archive_revision, archive_requested_at, archive_reasons
               FROM projects
              WHERE project_ref = ? AND deleted_at IS NULL
           `)
@@ -3748,7 +3777,7 @@ export class BridgeStateStore {
             `${PROJECT_REGISTRY_CHANGED}: The selected project name changed. Refresh the tool descriptor and retry.`
           );
         }
-        if (project.archivedAt !== undefined) {
+        if (project.archiveState !== "active") {
           throw new Error(`${PROJECT_NOT_FOUND}: The selected project is archived.`);
         }
       }
@@ -3781,6 +3810,8 @@ export class BridgeStateStore {
       );
     }
     return this.transaction(() => {
+      if (operations.length > 0 && operations.every(operation => operation.kind === "delete" &&
+        !this.projectLifecycle.exists(normalizeProjectId(operation.projectId)))) return this.getProjectRegistrySnapshot();
       this.assertProjectRegistryRevision(expectedRevision);
       const seen = new Map<string, Set<ProjectRegistryOperation["kind"]>>();
       for (const operation of operations) {
@@ -3849,7 +3880,7 @@ export class BridgeStateStore {
 
         if (operation.kind === "reorder") {
           const active = this.database
-            .prepare("SELECT project_id FROM projects WHERE archived_at IS NULL AND deleted_at IS NULL ORDER BY sort_order, created_at")
+            .prepare("SELECT project_id FROM projects WHERE archive_state='active' AND deleted_at IS NULL ORDER BY sort_order, created_at")
             .all() as Array<{ project_id: string }>;
           const requested = operation.projectIds.map(normalizeProjectId);
           if (
@@ -3872,9 +3903,10 @@ export class BridgeStateStore {
         }
 
         const projectId = normalizeProjectId(operation.projectId);
-        const row = this.requireProjectStorageRow(projectId, operation.kind === "restore");
+        if (operation.kind === "delete" && !this.database.prepare("SELECT 1 FROM projects WHERE project_id=?").get(projectId)) continue;
+        const row = this.requireProjectStorageRow(projectId, operation.kind === "restore" || operation.kind === "archive" || operation.kind === "delete");
         if (operation.kind === "rename") {
-          if (row.archived_at !== null) {
+          if (row.archive_state !== "active") {
             throw new Error(`${PROJECT_ARCHIVED}: Restore an archived project to change its active name.`);
           }
           const name = normalizeProjectName(operation.name);
@@ -3890,7 +3922,7 @@ export class BridgeStateStore {
           continue;
         }
         if (operation.kind === "relocate") {
-          if (row.archived_at !== null) {
+          if (row.archive_state !== "active") {
             throw new Error(`${PROJECT_ARCHIVED}: Restore an archived project to relocate it.`);
           }
           const cwd = canonicalProjectCwd(operation.cwd, allowedRoots);
@@ -3906,35 +3938,22 @@ export class BridgeStateStore {
           continue;
         }
         if (operation.kind === "archive") {
-          if (row.archived_at === null) {
-            this.database
-              .prepare("UPDATE projects SET archived_at = ?, updated_at = ? WHERE project_id = ?")
-              .run(now, now, projectId);
+          if (row.archive_state !== "complete") {
+            this.database.prepare(`UPDATE projects SET archive_state='processing',archive_revision=archive_revision+1,
+              archive_requested_at=COALESCE(archive_requested_at,?),archive_reasons='[]',updated_at=? WHERE project_id=?`)
+              .run(now,now,projectId);
             changed = true;
             changedProjectIds.add(projectId);
           }
           continue;
         }
         if (operation.kind === "delete") {
-          if (row.archived_at === null) {
-            throw new Error(
-              `${PROJECT_DELETE_REQUIRES_ARCHIVE}: Archive the project before deleting its registration.`
-            );
-          }
-          if (this.database.prepare(`
-            SELECT 1 FROM projects p WHERE project_id = ?
-              AND (${PROJECT_RESUMABLE_CONTEXT_PREDICATE})
-          `).get(projectId)) {
-            throw new Error(
-              `${PROJECT_DELETE_STILL_PINNED}: This project still has resumable Activities, current Agent threads, or active Jobs. Keep its registration archived, or finish those contexts before deleting it.`
-            );
-          }
-          this.database
-            .prepare("UPDATE projects SET deleted_at = ?, updated_at = ? WHERE project_id = ?")
-            .run(now, now, projectId);
+          this.projectLifecycle.delete(projectId,now);
           changed = true;
-          changedProjectIds.add(projectId);
           continue;
+        }
+        if (row.archive_state !== "active" && row.archive_state !== "complete") {
+          throw new Error("PROJECT_ARCHIVE_PENDING: Finish archive cleanup before restoring this registration.");
         }
 
         if (row.deleted_at !== null) {
@@ -3945,7 +3964,7 @@ export class BridgeStateStore {
             throw new Error(`${PROJECT_LIMIT_EXCEEDED}: At most ${MAX_REGISTERED_PROJECTS} projects may be registered.`);
           }
         }
-        if (row.archived_at === null && row.deleted_at === null) {
+        if (row.archive_state === "active" && row.deleted_at === null) {
           if (operation.name !== undefined || operation.cwd !== undefined) {
             throw new Error(`${PROJECT_OPERATION_CONFLICT}: The project is already active.`);
           }
@@ -3959,7 +3978,7 @@ export class BridgeStateStore {
         this.database
           .prepare(`
             UPDATE projects
-               SET name = ?, name_key = ?, cwd = ?, archived_at = NULL, deleted_at = NULL, updated_at = ?
+               SET name = ?, name_key = ?, cwd = ?, archived_at = NULL, deleted_at = NULL, archive_state='active', archive_requested_at=NULL, archive_reasons='[]', updated_at = ?
              WHERE project_id = ?
           `)
           .run(name, nameKey, cwd, now, projectId);
@@ -3990,7 +4009,7 @@ export class BridgeStateStore {
     const row = this.database
       .prepare(`
         SELECT project_id, project_ref, project_revision, name, name_key, cwd, sort_order,
-               created_at, updated_at, archived_at, deleted_at
+               created_at, updated_at, archived_at, deleted_at, archive_state, archive_revision, archive_requested_at, archive_reasons
           FROM projects WHERE project_id = ? AND (? OR deleted_at IS NULL)
       `)
       .get(projectId, includeDeleted ? 1 : 0) as ProjectStorageRow | undefined;
@@ -4007,7 +4026,7 @@ export class BridgeStateStore {
       const conflict = this.database
         .prepare(`
           SELECT 1 FROM projects
-           WHERE name_key = ? AND archived_at IS NULL AND deleted_at IS NULL
+           WHERE name_key = ? AND archive_state='active' AND deleted_at IS NULL
              AND (? IS NULL OR project_id <> ?)
            LIMIT 1
         `)
@@ -4020,7 +4039,7 @@ export class BridgeStateStore {
       const conflict = this.database
         .prepare(`
           SELECT 1 FROM projects
-           WHERE cwd = ? AND archived_at IS NULL AND deleted_at IS NULL
+           WHERE cwd = ? AND archive_state='active' AND deleted_at IS NULL
              AND (? IS NULL OR project_id <> ?)
            LIMIT 1
         `)
@@ -4033,23 +4052,16 @@ export class BridgeStateStore {
 
   private assertProjectCwdReusable(cwd: string, projectId: string): void {
     const pinned = this.database.prepare(`
-      SELECT 1 FROM activities
-       WHERE pinned_cwd = ? AND project_id IS NOT ?
-         AND lifecycle IN ('open','sealed','terminating')
-      UNION ALL
-      SELECT 1 FROM agent_threads t JOIN sessions s ON s.thread_id=t.thread_id
-        JOIN agents a ON a.agent_id = t.agent_id
-       WHERE s.cwd = ? AND s.project_id IS NOT ? AND t.is_current = 1
-         AND a.lifecycle <> 'orphaned'
-      UNION ALL
       SELECT 1 FROM jobs j JOIN activities a ON a.activity_id=j.activity_id
-       WHERE j.cwd = ? AND a.project_id IS NOT ? AND j.archived_at IS NULL
+       WHERE j.cwd=? AND a.project_id IS NOT ?
          AND j.status IN ('running','terminating','termination-failed')
+      UNION ALL SELECT 1 FROM projects WHERE cwd=? AND project_id IS NOT ?
+        AND archive_state IN ('processing','unresolved')
       LIMIT 1
-    `).get(cwd, projectId, cwd, projectId, cwd, projectId);
+    `).get(cwd,projectId,cwd,projectId);
     if (pinned) {
       throw new Error(
-        `${PROJECT_CWD_STILL_PINNED}: Another project's resumable context still owns that folder.`
+        `${PROJECT_CWD_STILL_PINNED}: Another project has active execution or unfinished archive cleanup in this folder.`
       );
     }
   }
@@ -4080,6 +4092,12 @@ export class BridgeStateStore {
   }
 
   setMeta(key: string, value: string): void {
+    if (this.tableHasColumn("projects","archive_state")) {
+      let parsed: unknown; try { parsed=JSON.parse(value); } catch { parsed=value; }
+      if (this.projectLifecycle.containsRetiredReference(parsed)) return;
+      const identities=key.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) || [];
+      if (identities.some(id=>this.projectLifecycle.jobReceipt(id))) return;
+    }
     this.database
       .prepare(`
         INSERT INTO bridge_meta(key, value) VALUES (?, ?)
@@ -4106,7 +4124,7 @@ export class BridgeStateStore {
   }
 
   isEventProjectAvailable(projectId: string): boolean {
-    return Boolean(this.database.prepare("SELECT 1 FROM projects WHERE project_id=? AND archived_at IS NULL").get(projectId));
+    return Boolean(this.database.prepare("SELECT 1 FROM projects WHERE project_id=? AND archive_state='active' AND deleted_at IS NULL").get(projectId));
   }
 
   /** Revalidate the predecessor at the same atomic followup admission boundary. */
@@ -4116,7 +4134,8 @@ export class BridgeStateStore {
     const row = this.database.prepare(`SELECT j.thread_id AS threadId,j.sandbox,
       json_extract(j.payload,'$.executionDecision.effectiveSelection') AS selection
       FROM jobs j JOIN job_completion_deliveries d ON d.job_id=j.job_id
-      WHERE j.job_id=? AND j.scope_id=? AND j.job_version=? AND j.status='completed'
+      JOIN activities a ON a.activity_id=j.activity_id LEFT JOIN projects p ON p.project_id=a.project_id
+      WHERE (a.project_id IS NULL OR (p.archive_state='active' AND p.deleted_at IS NULL)) AND j.job_id=? AND j.scope_id=? AND j.job_version=? AND j.status='completed'
         AND j.archived_at IS NULL AND (d.direct_result_offered_at IS NOT NULL OR d.completion_result_offered_at IS NOT NULL)`)
       .get(jobId, scopeId, version) as { threadId: string | null; sandbox: string; selection: string | null } | undefined;
     return row ? { ...row, selection: row.selection ? JSON.parse(row.selection) : null } : undefined;
@@ -4272,6 +4291,7 @@ export class BridgeStateStore {
     this.runMigration("27", "28", originalSourceSchema, () => this.migrateV27ToV28());
     this.runMigration("28", "29", originalSourceSchema, () => this.migrateV28ToV29());
     this.runMigration("29", "30", originalSourceSchema, () => this.migrateV29ToV30());
+    this.runMigration("30", "31", originalSourceSchema, () => this.migrateV30ToV31());
     if (this.getMeta("schema_version") !== CURRENT_SCHEMA_VERSION) {
       throw new Error(`Bridge state migration stopped at unsupported schema version ${this.getMeta("schema_version")}.`);
     }
@@ -5723,6 +5743,14 @@ export class BridgeStateStore {
     });
   }
 
+  private migrateV30ToV31(): void {
+    this.transaction(() => {
+      this.database.exec(V31_PROJECT_LIFECYCLE_MIGRATION_SCHEMA);
+      this.setMeta("schema_version", "31");
+      this.setMeta("schema_v31_migrated_at", new Date().toISOString());
+    });
+  }
+
   private migrateV29ToV30(): void {
     this.transaction(() => {
       this.database.exec(V30_SESSION_AUTH_BOUNDARY_MIGRATION_SCHEMA);
@@ -5807,6 +5835,7 @@ export class BridgeStateStore {
   }
 
   private upsertJobInternal(job: JobRowInput): void {
+    if (this.tableHasColumn("projects","archive_state") && this.projectLifecycle.jobReceipt(job.jobId)) return;
     // Late snapshots cannot resurrect expired display data or release the
     // original request reservation.
     if (this.workHistory?.expired(job.jobId)) return;
@@ -5834,6 +5863,11 @@ export class BridgeStateStore {
          WHERE j.job_id = ?
       `)
       .get(job.jobId) as PreviousJobRow | undefined;
+    if (previous && isTerminalActivityJobStatus(previous.status) && isActiveActivityJobStatus(job.status)) return;
+    if (!previous && this.tableHasColumn("projects","archive_state")) {
+      this.projectLifecycle.assertRequest("task",scopeId,job.requestId);
+      this.projectLifecycle.assertActive(job.projectId || this.getActivityProjectAdmission(activityId)?.projectId);
+    }
     if (!previous && job.status === "running") this.threadConnections.assertAdmission(job.agentId, job.threadId || job.sessionDecision?.threadId || job.sourceThreadId);
     const terminalOrigin = job.terminalOrigin ||
       (previous?.terminal_origin && JOB_TERMINAL_ORIGINS.includes(previous.terminal_origin as JobTerminalOrigin)
@@ -7228,6 +7262,10 @@ function readProjectStorageRow(row: ProjectStorageRow): ProjectTarget {
     sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    archiveState: row.archive_state,
+    archiveRevision: row.archive_revision,
+    archiveReasons: JSON.parse(row.archive_reasons || "[]"),
+    ...(row.archive_requested_at == null ? {} : { archiveRequestedAt: row.archive_requested_at }),
     ...(row.archived_at === null ? {} : { archivedAt: row.archived_at })
   };
 }

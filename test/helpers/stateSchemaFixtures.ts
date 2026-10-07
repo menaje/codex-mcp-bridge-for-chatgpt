@@ -575,3 +575,20 @@ function insertCancellationState(db: Database.Database): void {
     V18_THREAD_ID
   );
 }
+
+/** Test fixture downgrade only: remove every schema-31 addition before replaying
+ * historical upgrades. Never run against an operational database. */
+export function removeSchema31ForFixture(db: Database.Database): void {
+  db.exec(`DROP INDEX projects_archive_pending;
+    DROP INDEX projects_active_name; DROP INDEX projects_active_cwd;
+    ALTER TABLE projects DROP COLUMN archive_state;
+    ALTER TABLE projects DROP COLUMN archive_revision;
+    ALTER TABLE projects DROP COLUMN archive_requested_at;
+    ALTER TABLE projects DROP COLUMN archive_reasons;
+    CREATE UNIQUE INDEX projects_active_name ON projects(name_key) WHERE archived_at IS NULL AND deleted_at IS NULL;
+    CREATE UNIQUE INDEX projects_active_cwd ON projects(cwd) WHERE archived_at IS NULL AND deleted_at IS NULL;
+    DROP TABLE retired_threads; DROP TABLE retired_requests;
+    DROP INDEX codex_question_deliveries_job;
+    ALTER TABLE codex_question_deliveries DROP COLUMN job_id;
+    DELETE FROM bridge_meta WHERE key LIKE 'schema_v31_%';`);
+}

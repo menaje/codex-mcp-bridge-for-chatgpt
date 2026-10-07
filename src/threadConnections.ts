@@ -4,7 +4,7 @@ import { BackgroundWorkSlice, CONNECTION_WORK_LIMITS } from "./backgroundWorkBud
 
 export type ThreadPersistence = "persistent" | "ephemeral" | "unknown";
 export type ThreadConnectionPhase = "connected" | "waiting" | "releasing" | "unsubscribed" | "released" | "blocked";
-export type ThreadReleaseEvidence = "thread-unloaded" | "worker-exited";
+export type ThreadReleaseEvidence = "thread-unloaded" | "worker-exited" | "connection-absent";
 export type ThreadConnectionRecord = {
   threadId: string;
   agentId?: string;
@@ -33,6 +33,8 @@ export type ThreadReleaseOptions = {
   canRelease: (threadId: string) => boolean | Promise<boolean>;
   eligibleThreadIds: readonly string[];
   previousWorkerPid?: number;
+  /** Explicit project retirement may discard idle ephemeral/unknown contexts. */
+  retireContext?: boolean;
 };
 
 /** Upgrade-only schema introduced at v14. Current databases use stateSchema.ts. */
@@ -102,6 +104,7 @@ export class ThreadConnectionStore {
   }
 
   register(input: { threadId: string; agentId?: string; scopeId: string; persistence?: ThreadPersistence; workerPid?: number }, now = Date.now()): void {
+    if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='retired_threads'").get() && this.db.prepare("SELECT 1 FROM retired_threads WHERE thread_id=?").get(input.threadId)) return;
     const previous = this.get(input.threadId);
     const persistence = input.persistence === "unknown" || !input.persistence
       ? previous?.persistence || "unknown" : input.persistence;

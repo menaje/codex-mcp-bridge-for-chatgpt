@@ -26,6 +26,9 @@ export function tombstoneProjectForTest(file: string, projectId: string, now = D
          WHERE project_id = ? AND deleted_at IS NULL
       `).run(now, now, now, projectId);
       if (result.changes !== 1) throw new Error("Expected one legacy project tombstone.");
+      if ((database.pragma("table_info(projects)") as Array<{name:string}>).some(column=>column.name==="archive_state")) {
+        database.prepare("UPDATE projects SET archive_state='processing',archive_revision=archive_revision+1,archive_requested_at=?,archived_at=NULL WHERE project_id=?").run(now,projectId);
+      }
       database.prepare(`UPDATE project_registry SET registry_revision = registry_revision + 1, updated_at = ?`)
         .run(now);
     })();

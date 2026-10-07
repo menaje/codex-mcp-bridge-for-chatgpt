@@ -331,7 +331,7 @@ Each project has a display name and an existing absolute folder on the server co
 - Relocating changes the registered folder without moving files.
 - Archiving hides it from new task selection while preserving history.
 - Restoring makes the same project identity selectable again.
-- Deleting a registration never deletes the actual folder or prior work records.
+- Archive ends project use and confirms execution/context cleanup. Unresolved cleanup can be retried. Delete then removes Bridge registration, sessions, assignments and work/result records. The actual folder, files, Git repository and original Codex/ChatGPT conversations are preserved. See [project lifecycle](project-lifecycle.md).
 
 When settings are opened from a remote client, enter the absolute path as it exists on the selected server.
 

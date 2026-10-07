@@ -476,7 +476,7 @@ describe("current bridge tool contracts", () => {
     expect(state.listJobs()).toHaveLength(4);
   });
 
-  it("exposes legacy project recovery in Settings and restores the original identity through the application service", async () => {
+  it("exposes pending legacy cleanup in Settings and physically retires it through the application service", async () => {
     const project = settings.current.projects[0]!;
     const activity = state.createActivity({ scopeId: "11111111-1111-4111-8111-111111111111",
       projectId: project.id, projectName: project.name, projectCwd: project.cwd });
@@ -486,19 +486,22 @@ describe("current bridge tool contracts", () => {
     expect(view.capabilities.recoverableProjects).toEqual([expect.objectContaining({
       id: project.id, projectRef: project.projectRef
     })]);
-    const updated = await server.applicationService.updateSettings({
+    await server.applicationService.updateSettings({
       expectedRegistryRevision: view.settings.registryRevision,
-      operation: { kind: "patch", settings: { projectOperations: [{ kind: "restore", projectId: project.id }] } }
+      operation: { kind: "patch", settings: { projectOperations: [{ kind: "archive", projectId: project.id }] } }
     });
-    expect(updated.settings.projects[0]).toMatchObject({ id: project.id, projectRef: project.projectRef });
+    await eventually(()=>!state.projectLifecycle.exists(project.id));
+    const updated = await server.applicationService.settingsSnapshot();
+    expect(updated.settings.projects).toEqual([]);
     expect(updated.capabilities.recoverableProjects).toEqual([]);
-    expect(state.getActivityProjectAdmission(activity.activityId)?.projectId).toBe(project.id);
+    expect(state.getActivityProjectAdmission(activity.activityId)).toBeUndefined();
     expect(updated.settings.settingsRevision).toBe(view.settings.settingsRevision);
   });
 
-  it("revalidates the runtime credential boundary when restoring a deleted project without an explicit cwd", async () => {
+  it("revalidates the runtime credential boundary when restoring a confirmed archive without an explicit cwd", async () => {
     const project = settings.current.projects[0]!;
-    tombstoneProjectForTest(path.join(root, "state.sqlite"), project.id);
+    settings.updateWithProjectOperations({},[{kind:"archive",projectId:project.id}],undefined,settings.current.registryRevision);
+    state.transaction(()=>state.projectLifecycle.complete(project.id,1));
     const priorEnv = process.env.CODEX_MCP_BRIDGE_ENV_FILE;
     process.env.CODEX_MCP_BRIDGE_ENV_FILE = path.join(root, "runtime.env");
     try {
@@ -506,7 +509,7 @@ describe("current bridge tool contracts", () => {
         expectedRegistryRevision: settings.current.registryRevision,
         operation: { kind: "patch", settings: { projectOperations: [{ kind: "restore", projectId: project.id }] } }
       })).rejects.toThrow("RUNTIME_ENV_PROJECT_CONFLICT");
-      expect(settings.current.projects).toEqual([]);
+      expect(settings.current.projects[0]?.archiveState).toBe("complete");
     } finally {
       if (priorEnv === undefined) delete process.env.CODEX_MCP_BRIDGE_ENV_FILE;
       else process.env.CODEX_MCP_BRIDGE_ENV_FILE = priorEnv;

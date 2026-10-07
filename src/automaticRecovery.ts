@@ -144,7 +144,19 @@ export class AutomaticRecoveryStore {
       .get(identityKey) as {recovery_key:string;active:number} | undefined;
   }
 
+  private projectAvailable(candidate: AutomaticRecoveryCandidate): boolean {
+    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='retired_requests'").get()) return true;
+    if (candidate.jobId) {
+      if (this.db.prepare("SELECT 1 FROM retired_requests WHERE namespace='task' AND subject_id=?").get(candidate.jobId)) return false;
+      const job=this.db.prepare("SELECT a.project_id FROM jobs j JOIN activities a ON a.activity_id=j.activity_id WHERE j.job_id=?").get(candidate.jobId) as {project_id:string|null}|undefined;
+      if (job?.project_id) return Boolean(this.db.prepare("SELECT 1 FROM projects WHERE project_id=? AND archive_state='active' AND deleted_at IS NULL").get(job.project_id));
+    }
+    const owner=this.db.prepare("SELECT s.project_id FROM agents a JOIN sessions s ON s.thread_id=a.current_thread_id WHERE a.agent_id=?").get(candidate.agentId) as {project_id:string|null}|undefined;
+    return !owner?.project_id || Boolean(this.db.prepare("SELECT 1 FROM projects WHERE project_id=? AND archive_state='active' AND deleted_at IS NULL").get(owner.project_id));
+  }
+
   begin(candidate: AutomaticRecoveryCandidate, now: number): AutomaticRecoveryRecord | undefined {
+    if (!this.projectAvailable(candidate)) return;
     const previous = this.get(candidate.key);
     if (previous && (previous.state !== "retrying" || previous.attempts >= AUTOMATIC_RECOVERY_ATTEMPTS || previous.nextAttemptAt > now)) return;
     const attempts = (previous?.attempts || 0) + 1;
@@ -159,6 +171,7 @@ export class AutomaticRecoveryStore {
   }
 
   canBegin(candidate: AutomaticRecoveryCandidate, now: number): boolean {
+    if (!this.projectAvailable(candidate)) return false;
     const previous = this.get(candidate.key);
     return !previous || previous.state === "retrying" &&
       previous.attempts < AUTOMATIC_RECOVERY_ATTEMPTS && previous.nextAttemptAt <= now;

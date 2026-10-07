@@ -327,26 +327,27 @@ describe("user settings and project registry", () => {
     expect(store.current.projects[0]).toMatchObject({ projectRef, projectRevision: 3 });
     expect(() => store.resolveProject({ name: "Renamed", registryRevision: 3 }))
       .toThrow(PROJECT_NOT_FOUND);
+    state.transaction(() => state.projectLifecycle.complete(id, 1));
 
     store.updateWithProjectOperations(
       {},
       [{ kind: "restore", projectId: id, name: "Restored", cwd: first }],
       undefined,
-      3
+      4
     );
     expect(store.current.projects[0]).toMatchObject({
       id,
       projectRef,
-      projectRevision: 4,
+      projectRevision: 5,
       name: "Restored",
       cwd: first
     });
     expect(store.current.projects[0]).not.toHaveProperty("archivedAt");
-    expect(store.current.registryRevision).toBe(4);
+    expect(store.current.registryRevision).toBe(5);
     state.close();
   });
 
-  it("deletes only archived registrations while retaining finished work history", () => {
+  it("deletes only confirmed archives and ends finished work management", () => {
     const root = temporaryDirectory("settings-delete-project-");
     const state = new BridgeStateStore({ file: ":memory:" });
     const store = new UserSettingsStore(configFor(), { stateStore: state });
@@ -382,20 +383,17 @@ describe("user settings and project registry", () => {
       undefined,
       1
     );
+    state.transaction(() => state.projectLifecycle.complete(project.id, 1));
     store.updateWithProjectOperations(
       {},
       [{ kind: "delete", projectId: project.id }],
       undefined,
-      2
+      3
     );
 
-    expect(store.current).toMatchObject({ registryRevision: 3, projects: [] });
+    expect(store.current).toMatchObject({ registryRevision: 4, projects: [] });
     expect(store.projectRegistry.selectableProjects).toEqual([]);
-    expect(state.getActivityProjectAdmission(activityId)).toEqual({
-      projectId: project.id,
-      projectName: project.name,
-      projectCwd: root
-    });
+    expect(state.getActivityProjectAdmission(activityId)).toBeUndefined();
     expect(() => store.resolveProject({
       name: project.name,
       projectRef: project.projectRef,
@@ -524,7 +522,8 @@ describe("user settings and project registry", () => {
   it("rejects active restore conflicts without changing UUID or revision", () => {
     const first = temporaryDirectory("settings-restore-first-");
     const second = temporaryDirectory("settings-restore-second-");
-    const store = new UserSettingsStore(configFor());
+    const state = new BridgeStateStore({ file: ":memory:" });
+    const store = new UserSettingsStore(configFor(), { stateStore: state });
     store.updateWithProjectOperations(
       {},
       [
@@ -541,17 +540,19 @@ describe("user settings and project registry", () => {
       undefined,
       1
     );
+    state.transaction(() => state.projectLifecycle.complete(one!.id, 1));
     expect(() => store.updateWithProjectOperations(
       {},
       [{ kind: "restore", projectId: one!.id, name: two!.name, cwd: first }],
       undefined,
-      2
+      3
     )).toThrow(PROJECT_NAME_CONFLICT);
-    expect(store.current.registryRevision).toBe(2);
+    expect(store.current.registryRevision).toBe(3);
     expect(store.current.projects.find(({ id }) => id === one!.id)?.archivedAt).toBeTypeOf("number");
+    state.close();
   });
 
-  it("blocks old cwd takeover while another UUID has a resumable Activity pin", () => {
+  it("allows old cwd reuse when only an open Activity remains", () => {
     const first = temporaryDirectory("settings-pin-first-");
     const second = temporaryDirectory("settings-pin-second-");
     const state = new BridgeStateStore({ file: ":memory:" });
@@ -577,18 +578,18 @@ describe("user settings and project registry", () => {
       1
     );
 
-    expect(() => store.updateWithProjectOperations(
+    store.updateWithProjectOperations(
       {},
       [{ kind: "add", project: { name: "Takeover", cwd: first } }],
       undefined,
       2
-    )).toThrow(PROJECT_CWD_STILL_PINNED);
-    expect(store.current.registryRevision).toBe(2);
-    expect(store.current.projects).toHaveLength(1);
+    );
+    expect(store.current.registryRevision).toBe(3);
+    expect(store.current.projects).toHaveLength(2);
     state.close();
   });
 
-  it("blocks old cwd takeover while an idle Agent retains its pinned thread", () => {
+  it("allows old cwd reuse when only an idle current thread remains", () => {
     const first = temporaryDirectory("settings-agent-pin-first-");
     const second = temporaryDirectory("settings-agent-pin-second-");
     const state = new BridgeStateStore({ file: ":memory:" });
@@ -623,13 +624,13 @@ describe("user settings and project registry", () => {
       1
     );
 
-    expect(() => store.updateWithProjectOperations(
+    store.updateWithProjectOperations(
       {},
       [{ kind: "add", project: { name: "Takeover", cwd: first } }],
       undefined,
       2
-    )).toThrow(PROJECT_CWD_STILL_PINNED);
-    expect(store.current.registryRevision).toBe(2);
+    );
+    expect(store.current.registryRevision).toBe(3);
     state.close();
   });
 

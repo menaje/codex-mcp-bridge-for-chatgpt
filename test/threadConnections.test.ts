@@ -146,6 +146,8 @@ describe("durable thread connection lifetime", () => {
 
   it("rechecks release eligibility when another admission arrives while the runtime is inspected", async () => {
     const store = new BridgeStateStore({ file: ":memory:" }); finish(store);
+    const accepted={...job(),jobId:"accepted-before-inspection",requestId:"accepted-request",threadId:undefined};
+    store.upsertJob(accepted);
     let check!: () => boolean, settle!: (result: ThreadReleaseResult) => void;
     const controller = new ThreadConnectionController(store.threadConnections, fake(async (id, options) => {
       check = () => options.canRelease(id); return new Promise(resolve => { settle=resolve; });
@@ -155,6 +157,8 @@ describe("durable thread connection lifetime", () => {
     expect(() => store.threadConnections.assertAdmission(undefined,"thread")).toThrow(/HANDOFF_PENDING/);
     expect(() => store.upsertJob({...job(),jobId:"new-job",requestId:"new-request",updatedAt:3000})).toThrow(/HANDOFF_PENDING/);
     store.upsertJob({...job(),status:"terminating",updatedAt:3000});
+    expect(check()).toBe(true); // A late snapshot cannot resurrect a completed turn.
+    store.upsertJob({...accepted,threadId:"thread",updatedAt:3000});
     expect(check()).toBe(false);
     settle({phase:"blocked",reason:"active-work"}); await sweep;
     expect(store.threadConnections.get("thread")?.phase).not.toBe("released");

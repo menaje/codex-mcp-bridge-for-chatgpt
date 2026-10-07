@@ -319,6 +319,8 @@ export class SessionRegistry {
       if (identity?.projectId && identity.projectName) {
         session.projectId = identity.projectId;
         session.projectName = identity.projectName;
+      } else if (!identity) {
+        this.sessions.delete(threadId);
       } else {
         delete session.projectId;
         delete session.projectName;

@@ -108,3 +108,11 @@ The six-hour connection grace is a conservative operating default, not a cache g
 The bridge subtracts a known start counter from cumulative usage across all requests in one turn. Duplicate samples do not double-charge a Job. Missing baselines, incomplete counters and counter resets remain unknown. `last` is an individual request sample and is not substituted for a whole multi-request Job. Verified usage remains available after result expiry.
 
 `npx tsx scripts/measure-thread-lifecycle.ts --run --codex /absolute/path/to/codex --out /private/output/directory` explicitly opts into live model requests. It compares a loaded continuation, unsubscribe/resume and worker restart, then prints the exact test thread for an app continuation. After the app has released it, rerun with `--resume-only` to check the latest external turn. Do not archive the conversation or stop a shared app worker to make this test pass. See the [acceptance record](audits/2026-09-09-issue-80-lifecycle.md) for measured results and remaining limitations.
+
+## Project archive and delete
+
+Project archive uses the separate [project lifecycle](project-lifecycle.md) contract.
+It closes admission before shutdown, releases persistent/ephemeral/unknown context,
+and removes current-thread selection only after termination/release confirmation.
+Restore activates registration only. Delete removes Bridge management and result
+projections; the original upstream conversation is preserved.

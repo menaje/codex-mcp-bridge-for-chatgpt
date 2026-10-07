@@ -272,7 +272,7 @@ export type CodexUpstream = {
     correlation: WorkerTerminationCorrelation,
     graceMs?: number,
     /** Automatic recovery may interrupt only the exact previously requested turn. */
-    options?: { interruptOnly: true }
+    options?: { interruptOnly?: true; retirementThreadIds?: readonly string[] }
   ): Promise<JsonRpcTerminationResult>;
   respondToInteraction?(
     interactionId: string,

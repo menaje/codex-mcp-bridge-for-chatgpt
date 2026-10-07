@@ -193,9 +193,9 @@ describe("human-facing UI localization", () => {
     expect(UI_TRANSLATIONS.ko["dashboard.unknownProject"]).toBe("프로젝트 미확인");
     expect(UI_TRANSLATIONS.ko["settings.deleteProject"]).toBe("삭제");
     expect(UI_TRANSLATIONS.ko["settings.deleteProjectConfirm"])
-      .toContain("실제 폴더와 파일");
+      .toContain("실제 폴더·파일·Git·원본 Codex/ChatGPT 대화는 그대로 유지됩니다");
     expect(UI_TRANSLATIONS.ko["settings.deleteProjectConfirm"])
-      .toContain("저장 버튼을 누르면");
+      .toContain("프로젝트 등록과 브리지 세션·배정·실행 결과를 삭제");
     expect(UI_TRANSLATIONS.ko["settings.projectDeletePending"])
       .toBe("저장 버튼을 누르면 이 프로젝트 등록이 삭제됩니다.");
     expect(UI_TRANSLATIONS.ko["dashboard.idleAgentDisclosure"])
