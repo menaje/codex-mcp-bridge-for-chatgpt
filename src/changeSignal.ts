@@ -6,7 +6,12 @@ export const changeWaitParamsSchema = z.strictObject({
   waitMs: z.number().int().min(0).max(25_000).default(25_000)
 });
 
-export type ChangeNotice = { revision: string; topics: string[] };
+export type ChangeNotice = {
+  revision: string;
+  topics: string[];
+  supportedTopics: string[];
+  topicRevisions: Record<string, string>;
+};
 
 /** Bounded invalidation notices, never snapshots or credentials. A new epoch resyncs clients after restart. */
 export class ChangeSignal {
@@ -30,6 +35,8 @@ export class ChangeSignal {
     const valid = epoch === this.epoch && Number.isSafeInteger(version) && version >= 0 && version <= this.version;
     return {
       revision: `${this.epoch}:${this.version}`,
+      supportedTopics: [...this.topics],
+      topicRevisions: Object.fromEntries([...this.versions].map(([topic, version]) => [topic, `${this.epoch}:${version}`])),
       topics: valid ? this.topics.filter(topic => (this.versions.get(topic) || 0) > version) : [...this.topics]
     };
   }

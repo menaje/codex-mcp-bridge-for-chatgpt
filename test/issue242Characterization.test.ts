@@ -60,8 +60,8 @@ describe("issue 242 latest-dev characterization", () => {
       expect(f.store.listPendingNotifyCompletionOutbox()).toEqual([]);
       const empty = await f.measure(() => Array.from({ length: 20 }, () => f.jobs.claimNativeCompletionNotifications(10, "fixture-consumer")));
       expect(empty.result.every(rows => rows.length === 0)).toBe(true);
-      expect(empty.sql.BEGIN).toBe(20);
-      expect(empty.sql.COMMIT).toBe(20);
+      expect(empty.sql.BEGIN ?? 0).toBe(0);
+      expect(empty.sql.COMMIT ?? 0).toBe(0);
       expect(empty.sql.UPDATE ?? 0).toBe(0);
       expect(empty.changedRows).toBe(0);
     } finally { unsubscribe(); registration.dispose(); await mcp.close(); await f.close(); }

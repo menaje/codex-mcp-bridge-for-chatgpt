@@ -1,0 +1,26 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion
+
+ ❯ test/issue221Delivery.test.ts (21 tests | 1 failed | 20 skipped) 6807ms
+     × preserves an admitted events B replay carrying its original delivery selector 6803ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/issue221Delivery.test.ts > #221 delivery transition > preserves an admitted events B replay carrying its original delivery selector
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue221Delivery.test.ts:352:44
+    350|     expect(result.items[0].answer).toBe("Completed fixture work.");
+    351|   });
+    352|   it.each(["live-card", "events"] as const)("preserves an admitted %s …
+       |                                            ^
+    353|     const a = await admit({ approvedFollowups: [{ prompt: "Fixture B" …
+    354|     const parent = (await exact((a.structuredContent as any).jobId)).i…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 2 passed | 73 skipped (76)
+   Start at  22:17:06
+   Duration  23.07s (transform 5.31s, setup 0ms, import 8.60s, tests 13.48s, environment 1ms)

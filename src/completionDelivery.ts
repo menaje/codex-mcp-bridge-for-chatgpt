@@ -1,5 +1,16 @@
 import { createHash } from "node:crypto";
 
+/** Retry presentation only; a completion attempt never re-executes a Job. */
+export function nativeCompletionRetryMs(attemptCount: number): number {
+  return Math.min(300_000, 5_000 * 2 ** Math.max(0, Math.min(6, attemptCount - 1)));
+}
+
+export type NativeCompletionAvailability = {
+  available: boolean;
+  /** Earliest retry/lease deadline, in Unix milliseconds; absent for an empty outbox. */
+  nextAvailableAt?: number;
+};
+
 /**
  * Completion delivery is deliberately independent from a card renderer.
  * The local macOS companion consumes the durable outbox; it never relies on

@@ -306,6 +306,50 @@ async function expectTaskStorageUnavailable(
 }
 
 describe("isolated production runtime", () => {
+  it("forwards W3 committed readiness and read-only availability across the runtime generation boundary", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "bridge-w3-runtime-"));
+    const file = path.join(root, "state.sqlite"), scopeId = randomUUID();
+    const store = new BridgeStateStore({ file });
+    const activity = store.createActivity({ scopeId, handoffPolicy: "notify", completionTrigger: "manual" });
+    store.close();
+    let runtime: RunningRuntime | undefined;
+    const client = new Client({ name: "W3-runtime", version: "1" }, { versionNegotiation: { mode: { pin: CURRENT_PROTOCOL } } });
+    let unsubscribe: (() => void) | undefined;
+    try {
+      runtime = await start(undefined, undefined, { CODEX_MCP_BRIDGE_STATE_DATABASE_FILE: file,
+        CODEX_MCP_BRIDGE_TELEMETRY_DATABASE_FILE: path.join(root, "telemetry.sqlite") });
+      const service = runtime.server.applicationService;
+      expect(await service.nativeCompletionAvailability!()).toEqual({ available: false });
+      const topics: string[] = [];
+      unsubscribe = service.subscribeChanges!(topic => topics.push(topic));
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${runtime.baseUrl}/mcp`)));
+      const result = await client.callTool({ name: "codex_activity_update", arguments: {
+        scopeId, activityId: activity.activityId, expectedVersion: activity.version, operation: { kind: "complete" }
+      } });
+      expect(result.isError, JSON.stringify(result)).not.toBe(true);
+      for (let i = 0; i < 100 && !topics.includes("completion-outbox-ready"); i++) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(topics.filter(topic => topic === "completion-outbox-ready")).toHaveLength(1);
+      expect((await service.nativeCompletionAvailability!()).available).toBe(true);
+      const owner = randomUUID();
+      const batch = await service.claimNativeCompletionNotifications!({ limit: 10, leaseOwner: owner });
+      expect(batch).toHaveLength(1);
+      await service.releaseNativeCompletionNotifications!({ outboxIds: batch.map(row => row.outboxId), leaseOwner: owner });
+      expect((await service.nativeCompletionAvailability!()).available).toBe(false);
+      expect(topics.filter(topic => topic === "completion-outbox-ready")).toHaveLength(1);
+    } finally {
+      unsubscribe?.();
+      await client.close();
+      if (runtime) {
+        await new Promise<void>(resolve => runtime!.server.close(() => resolve()));
+        running.splice(running.indexOf(runtime), 1);
+        await rm(runtime.root, { recursive: true, force: true });
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("supervises Codex execution separately from the operational state owner", async () => {
     const stateProcessIds: number[] = [];
     const executionProcessIds: number[] = [];

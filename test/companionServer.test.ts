@@ -38,12 +38,17 @@ describe("native companion server", () => {
     }]);
     service.markNativeCompletionNotificationsDelivered = vi.fn(async () => undefined);
     service.releaseNativeCompletionNotifications = vi.fn(async () => undefined);
+    service.nativeCompletionAvailability = vi.fn(async () => ({ available: false, nextAvailableAt: 123_000 }));
     servers.push(await startBridgeCompanionServer({ socketPath, applicationService: service }));
 
     const hello = await request(socketPath, {
       jsonrpc: "2.0", id: "completion-hello", method: "companion.hello", params: {}
     });
     expect(hello.result.capabilities).toContain("completion-notifications.local-delivery");
+    expect(await request(socketPath, {
+      jsonrpc: "2.0", id: "availability", method: "completion.availability", params: {}
+    })).toMatchObject({ result: { available: false, nextAvailableAt: 123_000 } });
+    expect(REMOTE_COMPANION_APPLICATION_METHODS.has("completion.availability")).toBe(false);
 
     const claimed = await request(socketPath, {
       jsonrpc: "2.0", id: "completion-claim", method: "completion.claim",

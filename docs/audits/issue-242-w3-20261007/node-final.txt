@@ -1,0 +1,41 @@
+
+ RUN  v4.1.11 /Volumes/Data/Dev/codex-mcp-bridge-issue-242-w3-completion
+
+ ❯ test/companionServer.test.ts (19 tests | 1 failed) 20672ms
+     × carries the full worst-case JSON-escaped Bridge skill content over the native socket 20157ms
+ ❯ test/issue242Completion.test.ts (5 tests | 1 failed) 11129ms
+     × emits readiness only after the outer durable commit; excludes progress, verify, duplicates and rollback 5925ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/companionServer.test.ts > native companion server > carries the full worst-case JSON-escaped Bridge skill content over the native socket
+Error: Test timed out in 20000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/companionServer.test.ts:303:3
+    301|   });
+    302|
+    303|   it("carries the full worst-case JSON-escaped Bridge skill content ov…
+       |   ^
+    304|     const socketPath = temporarySocketPath();
+    305|     const service = fakeApplicationService();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  test/issue242Completion.test.ts > issue 242 W3 durable native completions > emits readiness only after the outer durable commit; excludes progress, verify, duplicates and rollback
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ test/issue242Completion.test.ts:23:3
+     21|
+     22| describe("issue 242 W3 durable native completions", () => {
+     23|   it("emits readiness only after the outer durable commit; excludes pr…
+       |   ^
+     24|     const f = await issue242Fixture(40);
+     25|     const upstream: CodexUpstream = { async listTools() { return { too…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 3 passed (5)
+      Tests  2 failed | 29 passed (31)
+   Start at  21:42:45
+   Duration  76.51s (transform 10.66s, setup 0ms, import 24.16s, tests 42.82s, environment 2ms)
